@@ -12,6 +12,24 @@ documentation is intentionally concise while the project is evolving.
 
 Learn more at [causyne.com](https://causyne.com/).
 
+## Install
+
+On macOS, Linux, or WSL:
+
+```sh
+curl -fsSL https://causyne.com/install.sh | bash
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://causyne.com/install.ps1 | iex
+```
+
+Open a project directory and run `causyne`. Managed installations check the
+official npm release channel for updates. Run `causyne doctor` to inspect the
+runtime and update channel.
+
 ## Contact
 
 - General inquiries and business communication: [contact@causyne.com](mailto:contact@causyne.com)

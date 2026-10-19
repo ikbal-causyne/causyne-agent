@@ -42,17 +42,19 @@ export const PRIMARY_ACTIONS = [
     run: async () => (await import('../reporting.js')).buildUsageText()
   },
   { id: 'config', label: 'config', hint: 'provider, model, API key', kind: 'config' },
-  { id: 'more', label: 'more…', hint: 'context · checkpoints · undo · mcp · update', kind: 'more' }
+  { id: 'more', label: 'more…', hint: 'sessions · model · approvals · tools', kind: 'more' }
 ];
 
 /**
  * The second page.
  *
- * These are real, and several of them are destructive, which is why they are
- * one level down rather than absent: hiding `unpair` would not make it safer,
- * it would make it undiscoverable.
+ * These are real local capabilities kept one level down so the first screen
+ * stays readable while the complete command surface remains discoverable.
  */
 export const MORE_ACTIONS = [
+  { id: 'sessions', label: 'sessions', category: 'workspace', hint: 'browse saved local sessions', kind: 'command', command: '/sessions' },
+  { id: 'model', label: 'model', category: 'workspace', hint: 'show the active provider and model', kind: 'command', command: '/model' },
+  { id: 'approvals', label: 'approvals', category: 'workspace', hint: 'review standing session approvals', kind: 'command', command: '/approvals' },
   {
     id: 'context', label: 'context', category: 'reports', hint: 'what fills the context window', kind: 'stay',
     run: async () => (await import('../reporting.js')).buildContextText()
@@ -69,14 +71,21 @@ export const MORE_ACTIONS = [
     command: '/undo'
   },
   { id: 'mcp', label: 'mcp', category: 'tools', hint: 'manage MCP servers', kind: 'mcp' },
+  { id: 'help', label: 'commands', category: 'tools', hint: 'show every slash command', kind: 'command', command: '/help' },
+  {
+    id: 'doctor', label: 'doctor', category: 'tools', hint: 'installation, runtime and update channel', kind: 'stay',
+    run: async () => {
+      const { diagnoseInstallation, formatDoctorReport } = await import('../autoUpdate.js');
+      return formatDoctorReport(await diagnoseInstallation());
+    }
+  },
   {
     id: 'update', label: 'update', category: 'tools', hint: 'update to the latest version', kind: 'takeover',
     run: async () => {
       const { runSelfUpdate } = await import('../autoUpdate.js');
       await runSelfUpdate(true);
     }
-  },
-
+  }
 ];
 
 /** Items in the shape SelectList wants, for the `more…` page. */

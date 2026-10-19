@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 function getDir() {
   if (typeof __dirname !== 'undefined') {
@@ -10,7 +11,7 @@ function getDir() {
     if (metaUrl && typeof metaUrl === 'string') {
       const url = new URL(metaUrl);
       if (url.protocol === 'file:') {
-        return path.dirname(url.pathname);
+        return path.dirname(fileURLToPath(url));
       }
     }
   } catch (e) {}
@@ -35,4 +36,3 @@ export function getPackageVersion() {
 
   return '1.3.14';
 }
-

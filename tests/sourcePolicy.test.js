@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { isDevEmulator } from '../src/devMode.js';
-import { startUpdateChecker, runSelfUpdate } from '../src/autoUpdate.js';
+import { compareVersions, startUpdateChecker, runSelfUpdate } from '../src/autoUpdate.js';
 import { provisionCortexDependencies } from '../src/cortex/provisioner.js';
 
 const read = relative => fs.readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
@@ -29,10 +31,46 @@ test('developer flags never bypass approvals', () => {
   assert.equal(isDevEmulator({ testBypass: true }), false);
   assert.equal(isDevEmulator({ testBypass: 'anything' }), false);
 });
-test('update entry points perform no automatic installation', async () => {
-  startUpdateChecker();
-  assert.equal(await runSelfUpdate(false), false);
-  assert.doesNotMatch(read('src/autoUpdate.js'), /execSync|execAsync|setTimeout|setInterval|fetch\(/);
+test('updates are constrained to the official package and managed installs', async () => {
+  const calls = [];
+  const stateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-update-test-'));
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({ name: '@causyne/agent', version: '9.0.0' })
+  });
+  const spawnSyncImpl = (command, args, options) => {
+    calls.push({ command, args, options });
+    return { status: 0, stdout: '', stderr: '' };
+  };
+  const result = await runSelfUpdate(false, {
+    env: { CAUSYNE_INSTALL_ROOT: '/tmp/causyne-managed', CAUSYNE_NPM_COMMAND: 'npm' },
+    currentVersion: '1.0.0', fetchImpl, spawnSyncImpl,
+    stateFile: path.join(stateRoot, 'update-state.json')
+  });
+  assert.equal(result.updated, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'npm');
+  assert.deepEqual(calls[0].args.slice(0, 4), ['install', '--global', '--prefix', '/tmp/causyne-managed']);
+  assert.ok(calls[0].args.includes('@causyne/agent@9.0.0'));
+  assert.ok(calls[0].args.includes('--ignore-scripts'));
+  assert.equal(calls[0].options.shell, false);
+  assert.equal(calls[0].options.env.CAUSYNE_INSTALL_ROOT, '/tmp/causyne-managed');
+  assert.doesNotMatch(read('src/autoUpdate.js'), /execSync|execAsync|setTimeout|setInterval/);
+  fs.rmSync(stateRoot, { recursive: true, force: true });
+});
+test('version comparison follows stable and prerelease ordering', () => {
+  assert.equal(compareVersions('1.10.7', '1.10.6'), 1);
+  assert.equal(compareVersions('1.10.7-beta.10', '1.10.7-beta.2'), 1);
+  assert.equal(compareVersions('1.10.7', '1.10.7-beta.10'), 1);
+  assert.equal(compareVersions('1.10.7', '1.10.7'), 0);
+});
+test('automatic updates can be disabled and source checkouts are never rewritten', async () => {
+  assert.equal((await startUpdateChecker({ env: { CAUSYNE_DISABLE_AUTOUPDATE: '1' } })).reason, 'disabled');
+  const result = await runSelfUpdate(false, {
+    env: {}, packageRoot: '/tmp/causyne-source',
+    fetchImpl: async () => { throw new Error('must not reach the network'); }
+  });
+  assert.equal(result.reason, 'source-checkout');
 });
 test('missing Cortex dependencies fail explicitly without being installed', async () => {
   await assert.rejects(provisionCortexDependencies(), /Automatic installation is disabled/);

@@ -14,30 +14,19 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: npm-release
   cancel-in-progress: false
 
 jobs:
-  publish:
+  authorize:
+    name: authorize immutable release
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    environment: npm-release
+    timeout-minutes: 5
     steps:
       - name: Check out the selected tag
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-
-      - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-
-      - name: Use a trusted-publishing compatible npm CLI
-        run: npm install --global npm@11.19.1
 
       - name: Validate release authorization and immutable tag
         env:
@@ -62,22 +51,86 @@ jobs:
           if (pkg.repository?.url !== expectedRepository) throw new Error('Package repository metadata does not match the release repository.');
           NODE
 
+  validate:
+    name: release validation (${{ matrix.os }})
+    needs: authorize
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out the selected tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: npm
+
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
-
       - name: Build readable generated source
+        shell: bash
         run: |
           npm run build
           git diff --exit-code
+
+      - name: Validate Unix installer syntax
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash -n install/install.sh
+
+      - name: Validate Windows installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'install/install.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
 
       - name: Verify source, tests, and types
         run: |
           npm run check:public
           npm test
           npm run typecheck:strict
+
+  publish:
+    name: publish with npm provenance
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the selected tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Use a trusted-publishing compatible npm CLI
+        run: npm install --global npm@11.19.1
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Create and inspect the exact tarball
         id: pack

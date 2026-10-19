@@ -1,7 +1,7 @@
 import { program } from 'commander';
 
 import { runTask, chatMode, execCommand, interactiveConfig } from './cliMode.js';
-import { runSelfUpdate } from './autoUpdate.js';
+import { runSelfUpdate, diagnoseInstallation, formatDoctorReport } from './autoUpdate.js';
 import { printContextReport, printUsageReport, printCheckpoints, printUndo, buildStatusText, printReport } from './reporting.js';
 import { runCommand } from './commands.js';
 import { resolveInvocation } from './tui/invocation.js';
@@ -70,9 +70,17 @@ program
 
 program
   .command('update')
-  .description('Show source update guidance (no automatic installation)')
+  .description('Check for and install the latest Causyne Agent release')
   .action(async () => {
     await runSelfUpdate(true);
+  });
+
+program
+  .command('doctor')
+  .description('Inspect the installation, runtime and update channel')
+  .action(async () => {
+    const status = await diagnoseInstallation();
+    printReport(formatDoctorReport(status), { title: 'Doctor' });
   });
 
 program

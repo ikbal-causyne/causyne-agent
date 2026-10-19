@@ -105,7 +105,12 @@ const releaseWorkflow = fs.readFileSync(path.join(root, '.github/workflows/relea
 assert.match(releaseWorkflow, /^\s{2}workflow_dispatch:\s*$/m);
 assert.doesNotMatch(releaseWorkflow, /^\s{2}(?:push|pull_request):\s*$/m, 'Release workflow must not publish from push or pull_request events');
 assert.match(releaseWorkflow, /^\s{2}contents:\s*read\s*$/m);
-assert.match(releaseWorkflow, /^\s{2}id-token:\s*write\s*$/m);
+assert.match(releaseWorkflow, /^\s{6}id-token:\s*write\s*$/m);
 assert.match(releaseWorkflow, /^\s{4}environment:\s*npm-release\s*$/m);
+assert.match(releaseWorkflow, /^\s{4}needs:\s*validate\s*$/m, 'Publishing must wait for the release validation matrix');
+for (const osName of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {
+  assert.match(releaseWorkflow, new RegExp(`\\b${osName}\\b`), `Release validation must include ${osName}`);
+}
+assert.match(releaseWorkflow, /npm publish[^\n]+--provenance/, 'npm publication must emit GitHub Actions provenance');
 
 console.log(`Public-source policy passed for ${files.length} Git candidates. High-confidence scanning found no credential or private-data candidate.`);
