@@ -215,19 +215,21 @@ describe('the wordmark', () => {
   test('the block art is back', () => {
     const rows = wordmark(100, { unicode: true }).map(stripAnsi);
     assert.ok(rows.some((row) => row.includes('█')), 'the CAUSYNE block art must be shown');
-    assert.ok(rows.some((row) => row.includes('Causyne AI Agent')));
+    assert.ok(rows.some((row) => row.includes('Causyne Agent')));
   });
 
   test('a narrow terminal gets the name instead of mojibake', () => {
     const rows = wordmark(30, { unicode: true }).map(stripAnsi);
     assert.ok(!rows.some((row) => row.includes('█')), 'the art must not overflow a narrow terminal');
-    assert.ok(rows.some((row) => row.includes('C A U S Y N E')));
+    assert.ok(rows.some((row) => row.includes('CAUSYNE AGENT')));
+    assert.ok(rows.some((row) => row.includes('#')), 'the logo must retain an ASCII fallback');
   });
 
   test('a terminal without box drawing gets the name, not question marks', () => {
     const rows = wordmark(100, { unicode: false }).map(stripAnsi);
     assert.ok(!rows.some((row) => row.includes('█')));
-    assert.ok(rows.some((row) => row.includes('C A U S Y N E')));
+    assert.ok(rows.some((row) => row.includes('CAUSYNE AGENT')));
+    assert.ok(rows.some((row) => row.includes('+')), 'the signal blade must survive without Unicode');
   });
 
   test('it carries no hardcoded escapes of its own', () => {

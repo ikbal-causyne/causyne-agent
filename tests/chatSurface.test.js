@@ -104,7 +104,11 @@ describe('UX-01 — chat never clears or takes over the terminal', () => {
   test('the banner is the first thing the user sees, and it is real history', () => {
     const bytes = session({ turns: 0 });
     const plain = stripAnsi(bytes);
-    const art = plain.indexOf('█') >= 0 ? plain.indexOf('█') : plain.indexOf('C A U S Y N E');
+    const art = plain.indexOf('█') >= 0
+      ? plain.indexOf('█')
+      : plain.indexOf('#') >= 0
+        ? plain.indexOf('#')
+        : plain.indexOf('CAUSYNE AGENT');
     assert.ok(art >= 0, 'the wordmark must be written');
     assert.equal(plain.slice(0, art).trim(), '',
       'nothing may be printed above the wordmark — the art is the header');
@@ -386,6 +390,23 @@ describe('dialogs live in the region, not in a floating window', () => {
     const answer = h.prompt.confirm('Let it continue?');
     h.prompt.closeLayer();
     assert.equal(await answer, false);
+    try { fs.unlinkSync(h.file); } catch {}
+  });
+
+  test('a confirm preserves explicit approval and its configured Enter default', async () => {
+    const h = host();
+
+    const yes = h.prompt.confirm('Let it continue?');
+    h.prompt.handleKey({ name: 'y' });
+    assert.equal(await yes, true, 'the prompt replaced an explicit yes with no');
+
+    const enterConfirms = h.prompt.confirm('Grant for this session?', { defaultAnswer: true });
+    h.prompt.handleKey({ name: 'enter' });
+    assert.equal(await enterConfirms, true, 'Enter did not confirm the explicit second approval step');
+
+    const enterCancels = h.prompt.confirm('Ordinary confirmation');
+    h.prompt.handleKey({ name: 'enter' });
+    assert.equal(await enterCancels, false, 'ordinary confirmations must retain their safe Enter default');
     try { fs.unlinkSync(h.file); } catch {}
   });
 

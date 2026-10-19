@@ -100,7 +100,11 @@ function makeApprovalHandler(conn, dialogs = null) {
         // The text says exactly what is being given up and for how long.
         const confirmed = await dialogs.confirm(
           `Allow ${bold(detail.tool)} to run WITHOUT asking, for the rest of this session?\n`
-          + `  This lasts until Causyne restarts. Undo it any time with /approvals clear.`
+          + `  This lasts until Causyne restarts. Undo it any time with /approvals clear.`,
+          // Reaching this question already required moving onto Allow always
+          // and pressing Enter. A second Enter is therefore an explicit second
+          // confirmation, rather than a reflex approval on the first dialog.
+          { defaultAnswer: true }
         );
         if (confirmed) break;
         // Cancelled: ask again rather than denying something they never rejected.

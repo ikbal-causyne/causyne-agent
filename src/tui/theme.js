@@ -90,52 +90,54 @@ export const HAS_UNICODE = HAS_COLOR
 // Roles, not colours. A caller asking for `danger` should never care whether
 // that is truecolor crimson or plain ANSI red.
 const DARK_PALETTE = {
-  accent:  [ 96, 205, 255],
-  agent:   [138, 180, 248],
-  user:    [ 90, 200, 160],
-  success: [126, 199, 108],
+  // Causyne brand palette from the canonical site/logo reference:
+  // signal #b6e06f, text #e9edf2, muted #8d96a4, line #272c35,
+  // panel #161920 and background #0f1115.
+  accent:  [182, 224, 111],
+  agent:   [182, 224, 111],
+  user:    [154, 199,  86],
+  success: [182, 224, 111],
   warn:    [230, 190,  90],
   danger:  [235, 110, 110],
-  muted:   [130, 138, 150],
-  ink:     [225, 228, 234],
-  rule:    [ 62,  68,  80],
-  // The scroll rail. A deliberately DARK blue, not the accent.
+  muted:   [141, 150, 164],
+  ink:     [233, 237, 242],
+  rule:    [ 39,  44,  53],
+  // The scroll rail uses a deliberately darker brand green than the accent.
   //
   // The rail is orientation, not information you act on — it says where you are
   // while you read something else, so it must be legible without competing with
-  // the transcript for attention. In `accent` cyan it was the brightest thing on
-  // a screen full of prose. Dark enough to recede, blue enough to read as one
-  // continuous object beside the markers, which keep their own roles.
-  scroll:  [ 58, 110, 170],
+  // the transcript for attention. Dark enough to recede, while remaining part
+  // of the same graphite-and-signal-green visual system as the rest of the CLI.
+  scroll:  [ 99, 125,  63],
   // Background roles. opencode fills its input surface with theme
   // backgroundElement and marks it with a left border in the agent's colour
   // (component/prompt/index.tsx: border={["left"]} + backgroundColor). These are
   // that fill: one step off the terminal's own background, never a block of
   // colour that fights the text sitting on it.
-  surface:  [ 28,  31,  38],
-  surfaceHi:[ 38,  42,  51]
+  surface:  [ 22,  25,  32],
+  surfaceHi:[ 27,  31,  39]
 };
 
 const LIGHT_PALETTE = {
-  accent:  [  0, 110, 170],
-  agent:   [ 40,  80, 170],
-  user:    [ 20, 120,  90],
-  success: [ 30, 120,  40],
+  accent:  [ 91, 130,  29],
+  agent:   [ 91, 130,  29],
+  user:    [ 74, 112,  26],
+  success: [ 74, 112,  26],
   warn:    [155, 110,   0],
   danger:  [185,  40,  40],
-  muted:   [ 95, 102, 112],
-  ink:     [ 25,  28,  34],
-  rule:    [200, 204, 212],
-  scroll:  [ 60, 100, 160],
+  muted:   [105, 112, 123],
+  ink:     [ 58,  63,  71],
+  rule:    [198, 203, 211],
+  scroll:  [ 91, 130,  29],
   surface:  [242, 244, 247],
   surfaceHi:[232, 235, 240]
 };
 
 // Fallback for 16-colour terminals: the closest base ANSI code per role.
 const BASIC_CODES = {
-  accent: 36, agent: 34, user: 32, success: 32,
+  accent: 92, agent: 92, user: 32, success: 92,
   warn: 33, danger: 31, muted: 90, ink: 39, rule: 90,
-  scroll: 34,
+  scroll: 32,
   surface: 39, surfaceHi: 39
 };
 

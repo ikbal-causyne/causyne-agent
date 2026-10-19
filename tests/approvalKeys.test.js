@@ -89,6 +89,19 @@ test('approval dialog: enter alone commits the safe default', () => {
   assert.equal(answer, false, 'a reflex enter approved the action');
 });
 
+test('keys: enhanced keyboard Enter reaches approval dialogs', () => {
+  for (const sequence of ['\x1b[13u', '\x1b[13;1u', '\x1b[10u']) {
+    const key = press(sequence);
+    assert.equal(key.name, 'enter', `${JSON.stringify(sequence)} was not decoded as Enter`);
+
+    let answer = null;
+    const layer = new ApprovalLayer({ request: REQUEST, onAnswer: (v) => { answer = v; } });
+    layer.key(press('\x1b[C'));
+    assert.equal(layer.key(key), 'close');
+    assert.equal(answer, true);
+  }
+});
+
 test('approval dialog: ←/→ move the highlight and enter commits it', () => {
   // The interaction the owner asked for, modelled on opencode's permission
   // prompt: choose with the arrows, confirm with enter.
@@ -135,6 +148,19 @@ test('confirm dialog: y and n work there too', () => {
     const layer = new ConfirmLayer({ message: 'Sure?', onAnswer: (v) => { answer = v; } });
     layer.key(press(bytes));
     assert.equal(answer, expected, `${JSON.stringify(bytes)} gave ${answer}`);
+  }
+});
+
+test('confirm dialog: Enter follows its explicit default', () => {
+  for (const [defaultAnswer, expected] of [[false, false], [true, true]]) {
+    let answer = null;
+    const layer = new ConfirmLayer({
+      message: 'Sure?',
+      defaultAnswer,
+      onAnswer: (value) => { answer = value; }
+    });
+    assert.equal(layer.key(press('\x1b[13u')), 'close');
+    assert.equal(answer, expected);
   }
 });
 

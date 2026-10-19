@@ -130,7 +130,7 @@ describe('UX-03 — the first screen fits, at the reference terminal size', () =
     // the gap must not be "print the banner later".
     const m = measureStartup(REFERENCE_TERMINAL);
     const plain = m.text().replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    const art = plain.search(/[█C]/);
+    const art = plain.search(/[█#]/);
     assert.ok(art >= 0, 'the wordmark must be written');
     assert.equal(plain.slice(0, art).trim(), '', 'nothing may be printed above it');
   });

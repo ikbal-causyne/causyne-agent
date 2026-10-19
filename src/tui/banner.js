@@ -23,9 +23,44 @@ const WORDMARK = [
   ' ████  █   █  ███  ████    █   █   █ █████'
 ];
 
-// A terminal without box-drawing support would render the art as mojibake, so
-// it gets the wordmark spelled out instead of a field of question marks.
-const WORDMARK_PLAIN = ['C A U S Y N E'];
+// A compact terminal rendering of the six-part Causyne aperture. The shape is
+// sampled from the canonical SVG rather than invented as a second logo. Its
+// upper-right blade carries the signal green; the other blades use the neutral
+// brand ink. Each row remains ordinary terminal text and degrades to #/+ ASCII.
+const LOGO_SEGMENTS = [
+  [['ink', '   ███▓']],
+  [['ink', ' ▓███'], ['accent', '███'], ['ink', '▓']],
+  [['ink', '▓███ ▓▓'], ['accent', '██'], ['ink', '▓']],
+  [['ink', '▓██   ▓██▓']],
+  [['ink', '▓███▓ ███▓']],
+  [['ink', ' ███████▓']],
+  [['ink', '   ▓███']]
+];
+
+function logoRows(unicode) {
+  return LOGO_SEGMENTS.map((segments) => segments.map(([role, text]) => {
+    const rendered = unicode
+      ? text
+      : text.replace(/[█▓]/g, role === 'accent' ? '+' : '#');
+    return paint(role, rendered);
+  }).join(''));
+}
+
+function brandArt(width, unicode) {
+  if (!unicode || width < 64) {
+    const logo = logoRows(false);
+    logo[2] = `${padEnd(logo[2], 12)}${bold(paint('ink', 'CAUSYNE AGENT'))}`;
+    return logo;
+  }
+
+  const logo = logoRows(true);
+  return logo.map((line, index) => {
+    const word = WORDMARK[index - 1];
+    return word === undefined
+      ? line
+      : `${padEnd(line, 10)}   ${paint('ink', word)}`;
+  });
+}
 
 /**
  * The banner rows.
@@ -35,10 +70,9 @@ const WORDMARK_PLAIN = ['C A U S Y N E'];
  * never be exercised at all.
  */
 export function wordmark(width = 80, { unicode = HAS_UNICODE } = {}) {
-  const art = (unicode && width >= 54) ? WORDMARK : WORDMARK_PLAIN;
-  const rows = art.map((line) => paint('accent', line));
+  const rows = brandArt(width, unicode);
   rows.push('');
-  rows.push(dim('Causyne AI Agent'));
+  rows.push(dim('Causyne Agent'));
   return rows;
 }
 
@@ -60,7 +94,7 @@ export function wordmark(width = 80, { unicode = HAS_UNICODE } = {}) {
  * header that wraps is worse than a header that is tall.
  */
 export function sessionBanner(info = {}, width = 80, { unicode = HAS_UNICODE } = {}) {
-  const art = (unicode && width >= 54) ? WORDMARK : WORDMARK_PLAIN;
+  const art = brandArt(width, unicode);
   const artWidth = Math.max(...art.map(visibleWidth));
 
   const facts = [];
@@ -82,7 +116,7 @@ export function sessionBanner(info = {}, width = 80, { unicode = HAS_UNICODE } =
 
   // Not enough width for two columns: stack, rather than wrap either one.
   if (room < 24) {
-    return art.map((line) => paint('accent', line))
+    return art
       .concat([''], facts.map(([left, right]) =>
         truncate(right ? `${left}  ${right}` : left, width - 1, GLYPHS.ellipsis)));
   }
@@ -90,7 +124,7 @@ export function sessionBanner(info = {}, width = 80, { unicode = HAS_UNICODE } =
   const rows = [];
   const height = Math.max(art.length, facts.length);
   for (let index = 0; index < height; index++) {
-    const artLine = art[index] === undefined ? '' : paint('accent', art[index]);
+    const artLine = art[index] === undefined ? '' : art[index];
     const fact = facts[index];
     const left = padEnd(artLine, artWidth) + ' '.repeat(GAP);
     if (!fact) { rows.push(artLine); continue; }

@@ -444,12 +444,15 @@ export class ChatPrompt {
   }
 
   /** A plain yes/no, for the questions that are not tool approvals. */
-  confirm(message) {
+  confirm(message, options = {}) {
     return new Promise((resolve) => {
       let settled = false;
       const settle = (answer) => { if (!settled) { settled = true; resolve(Boolean(answer)); } };
-      const layer = new ConfirmLayer({ message, onAnswer: settle });
-      layer.answer = () => settle(false);
+      const layer = new ConfirmLayer({
+        message,
+        defaultAnswer: options.defaultAnswer === true,
+        onAnswer: settle
+      });
       this.openLayer(layer);
     });
   }

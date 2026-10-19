@@ -236,9 +236,9 @@ describe('what the rail shows', () => {
     assert.equal(dots[0], thumb[Math.floor(thumb.length / 2)], 'and it sits at the middle');
   });
 
-  test('the thumb is a darker blue than the accent, so it recedes', () => {
-    // The rail is orientation, not something you act on. In accent cyan it was
-    // the brightest thing on a screen full of prose.
+  test('the thumb is a darker brand green than the accent, so it recedes', () => {
+    // The rail is orientation, not something you act on. It must stay in the
+    // Causyne palette without becoming the brightest thing on a prose screen.
     //
     // This drives the REAL rail in a child with FORCE_COLOR, not the palette.
     // The first version of this test compared the two roles and passed happily
@@ -273,13 +273,16 @@ describe('what the rail shows', () => {
       if (!all) return null;
       return all[all.length - 1].match(/(\d+);(\d+);(\d+)m$/).slice(1).map(Number);
     };
-    const thumb = rows.map(rgbOf).filter(Boolean).filter((c) => c[2] > c[0] && c[2] > c[1]);
-    assert.ok(thumb.length > 0, 'no blue rail cell was painted at all');
+    const SCROLL = [99, 125, 63];
+    const ACCENT = [182, 224, 111];
+    const thumb = rows.map(rgbOf).filter(Boolean).filter((c) =>
+      c.every((channel, index) => channel === SCROLL[index]));
+    assert.ok(thumb.length > 0, 'no Causyne brand-green rail cell was painted at all');
 
     const [r, g, b] = thumb[0];
     const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     // The accent it must not be borrowing.
-    const ACCENT_LUMINANCE = 0.2126 * 96 + 0.7152 * 205 + 0.0722 * 255;
+    const ACCENT_LUMINANCE = 0.2126 * ACCENT[0] + 0.7152 * ACCENT[1] + 0.0722 * ACCENT[2];
     assert.ok(luminance < ACCENT_LUMINANCE,
       `the rail is painted rgb(${r},${g},${b}), no darker than the accent it should have stopped using`);
   });

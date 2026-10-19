@@ -299,9 +299,9 @@ export class TextLayer extends Layer {
  * how dangerous is this, what exactly will it do, and what will change on disk.
  * The diff scrolls, so a 400-line rewrite is inspectable rather than truncated.
  *
- * Deliberately has NO default. `y` and `n` are explicit, enter is not bound, and
- * escape denies. A dialog where the safe answer is one keypress away from the
- * dangerous one is how a person approves something they meant to read.
+ * The highlighted default is Reject. `y` and `n` remain explicit shortcuts;
+ * arrows choose a visible option and Enter commits it. A reflex Enter therefore
+ * denies, while an intentional move to either Allow option works consistently.
  */
 export class ApprovalLayer extends Layer {
   constructor(options = {}) {
@@ -495,7 +495,10 @@ export class ConfirmLayer extends Layer {
     super({ width: options.width || 60, height: options.height || 8, ...options });
     this.message = options.message || 'Are you sure?';
     this.onAnswer = options.onAnswer || null;
-    this.footer = `y yes  ${GLYPHS.dot}  n no  ${GLYPHS.dot}  esc cancel`;
+    this.defaultAnswer = options.defaultAnswer === true;
+    this.footer = this.defaultAnswer
+      ? `enter confirm  ${GLYPHS.dot}  y yes  ${GLYPHS.dot}  n no  ${GLYPHS.dot}  esc cancel`
+      : `enter cancel  ${GLYPHS.dot}  y yes  ${GLYPHS.dot}  n no  ${GLYPHS.dot}  esc cancel`;
     this.settled = false;
   }
 
@@ -523,10 +526,15 @@ export class ConfirmLayer extends Layer {
 
   key(event) {
     if (!event) return null;
-    // Only an explicit `y` approves. Every other key either says no or is
-    // ignored — a mistyped keypress must never approve.
+    // `y` is always an explicit approval. Enter follows the default selected by
+    // the caller: false for ordinary destructive confirmations, true only for
+    // the second step after the user has already selected Allow always.
     if (isChar(event, 'y')) { this.answer(true); return 'close'; }
     if (isChar(event, 'n') || event.name === 'escape') { this.answer(false); return 'close'; }
+    if (event.name === 'enter' || event.name === 'return') {
+      this.answer(this.defaultAnswer);
+      return 'close';
+    }
     return 'handled';
   }
 }

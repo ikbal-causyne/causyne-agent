@@ -273,6 +273,17 @@ export class KeyDecoder {
     } else if (final === 'u') {
       // Kitty keyboard protocol: ESC [ codepoint ; modifiers u
       const codepoint = numbers[0];
+      const controlName = {
+        9: 'tab',
+        10: 'enter',
+        13: 'enter',
+        27: 'escape',
+        127: 'backspace'
+      }[codepoint];
+      if (controlName) {
+        events.push(applyModifier(makeKey(controlName, { sequence }), numbers[1]));
+        return sequence.length;
+      }
       if (Number.isFinite(codepoint) && codepoint >= 32) {
         const character = String.fromCodePoint(codepoint);
         const key = applyModifier(
