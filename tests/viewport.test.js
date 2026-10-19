@@ -23,6 +23,7 @@ import { StageSurface } from '../src/tui/stageSurface.js';
 import { ChatPrompt } from '../src/tui/prompt.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { PromptHistory } from '../src/tui/history.js';
+import { isCommandInput } from '../src/commands.js';
 import { visibleWidth, stripAnsi } from '../src/tui/text.js';
 
 function sink({ columns = 100, rows = 40, isTTY = true } = {}) {
@@ -441,7 +442,8 @@ describe('ChatPrompt on the Stage', () => {
     const file = path.join(os.tmpdir(), `causyne-vp-${process.pid}-${Math.random()}`);
     const prompt = new ChatPrompt({
       input: fakeInput(), out, surface,
-      history: new PromptHistory({ file })
+      history: new PromptHistory({ file }),
+      isCommand: isCommandInput
     });
     prompt.attachSurface(surface);
     prompt.attach(renderer);
@@ -476,6 +478,30 @@ describe('ChatPrompt on the Stage', () => {
     const kinds = surface.transcript.markers(90).map((m) => m.kind);
     assert.ok(kinds.includes('user'));
     assert.match(stripAnsi(surface.transcript.rows(90).join('\n')), /hello from the stage/);
+  });
+
+  test('a submitted command stays out of the conversation transcript', async () => {
+    const { prompt, surface } = host();
+    const pending = prompt.read();
+    prompt.editor.setText('/sessions');
+    prompt.submit();
+
+    assert.equal(await pending, '/sessions');
+    const markers = surface.transcript.markers(90);
+    assert.ok(!markers.some((marker) => marker.kind === 'command'),
+      'local UI commands must not masquerade as chat turns');
+    assert.doesNotMatch(stripAnsi(surface.transcript.rows(90).join('\n')), /\/sessions/);
+  });
+
+  test('command details render as a modal without adding transcript rows', () => {
+    const { prompt, surface } = host();
+    prompt.showText('Sessions', 'one\ntwo\nthree');
+
+    assert.ok(prompt.layer, 'the report must be displayed in a layer');
+    assert.equal(prompt.layer.title, 'Sessions');
+    assert.ok(!surface.transcript.markers(90).some((marker) => marker.kind === 'command'),
+      'opening a report must not mutate conversation history');
+    assert.match(stripAnsi(surface.stage.prev.join('\n')), /one/);
   });
 
   test('the agent answering scrolls the box, not the terminal', () => {

@@ -23,10 +23,10 @@ import { PromptHistory } from './history.js';
 import { FileIndex, suggest, applyCompletion, renderPicker, MAX_VISIBLE } from './completion.js';
 import { paint, dim, bold, GLYPHS, terminalWidth, HAS_COLOR } from './theme.js';
 import { barBlock, GUTTER } from './block.js';
-import { visibleWidth, truncate, wrapBlock, shortenHome } from './text.js';
+import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
-import { commandPalette, skillPicker, ApprovalLayer, ConfirmLayer, HomeLayer } from './dialogs.js';
+import { commandPalette, skillPicker, ApprovalLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 
 const CTRL_C_WINDOW_MS = 2000;
@@ -419,6 +419,19 @@ export class ChatPrompt {
     }));
   }
 
+  /** Show local command output inside the live region, never in chat scrollback. */
+  showText(title, text, options = {}) {
+    const panelWidth = Math.max(28, Math.min(this.width() - 2, options.width || 76));
+    const contentWidth = Math.max(12, panelWidth - 4);
+    const lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth);
+    return this.openLayer(new TextLayer({
+      title: String(title || 'Details'),
+      lines: options.danger ? lines.map((line) => paint('danger', line)) : lines,
+      width: panelWidth,
+      height: options.height || 20
+    }));
+  }
+
   /**
    * Ask for approval of a tool call: risk, arguments and a scrollable diff.
    *
@@ -549,19 +562,11 @@ export class ChatPrompt {
       return;
     }
 
-    // A COMMAND IS NOT A MESSAGE, so it must not be drawn as one.
-    //
-    // This echoed every submitted line as a filled user block BEFORE the caller
-    // had any chance to decide what the line was. Typing `/usage` therefore
-    // rendered exactly like a sentence you had sent to the model — the command
-    // did run, and its output appeared underneath, but the transcript showed a
-    // conversation turn that never happened. opencode draws an invocation here,
-    // not a message, and the difference is the whole reason a command line
-    // exists.
+    // A command is control input, not conversation. Its handler decides whether
+    // to open a picker, show a text dialog, or perform an action. Keeping the
+    // invocation out of the transcript preserves the boundary between local UI
+    // and messages that were actually sent to the model.
     if (this.isCommand(text)) {
-      this.commit('command', (width) => [
-        `${paint('accent', GLYPHS.arrow)} ${bold(truncate(text, Math.max(8, width - 3), GLYPHS.ellipsis))}`
-      ]);
       const settle = this.waiter;
       this.waiter = null;
       if (settle) settle(text);

@@ -11,6 +11,7 @@ import { wrapBlock } from './tui/text.js';
 import { getPackageVersion } from './version.js';
 import { resolveCharPool } from './contextManager.js';
 import { PRIMARY_ACTIONS, homeStatusLine, homeHint, moreLayer, configureInPrompt, mcpPicker, PROVIDERS } from './tui/home.js';
+import { SelectLayer } from './tui/dialogs.js';
 import { askSelect, askText, askConfirm } from './tui/ask.js';
 import { renderReport } from './reporting.js';
 import { grantAlways } from './approvalGrants.js';
@@ -352,8 +353,8 @@ export async function chatMode({ home = false } = {}) {
         root: process.cwd(),
         commands: listCommands('terminal'),
         // The rule for "is this a command" lives in commands.js and is handed
-        // down rather than reimplemented, so the prompt draws a `/usage` as an
-        // invocation instead of as a sentence the user supposedly said.
+        // down rather than reimplemented, so the prompt keeps `/usage` out of
+        // the conversation instead of drawing it as something the user said.
         isCommand: isCommandInput,
         surface,
         onInterrupt: () => loop.abort(),
@@ -455,6 +456,38 @@ export async function chatMode({ home = false } = {}) {
         prompt.browseSkills(commandResult.items, (skill) => {
           prompt.setText(`/skills ${skill.domain}/${skill.id} `);
         });
+        continue;
+      }
+
+      if (commandResult.effect === 'pick-session' && prompt) {
+        const active = commandResult.active;
+        prompt.openLayer(new SelectLayer({
+          title: 'Sessions',
+          emptyText: 'No sessions yet',
+          items: (commandResult.items || []).map((session) => ({
+            id: session.id,
+            label: `${session.id === active ? `${GLYPHS.bullet} ` : ''}${session.title}`,
+            description: `${session.messageCount} messages ${GLYPHS.dot} ${session.workspace || 'no workspace'}`,
+            value: session
+          })),
+          onPick: (item) => {
+            if (item) prompt.deliver(`/sessions switch ${item.value.id}`);
+          }
+        }));
+        continue;
+      }
+
+      if (commandResult.effect === 'pick-mcp' && prompt) {
+        const { empty } = await mcpPicker(prompt, (server) => {
+          const verb = server.granted ? 'revoke' : 'grant';
+          prompt.deliver(`/mcp ${verb} ${server.name}`);
+        });
+        if (empty) prompt.showText('MCP servers', commandResult.output);
+        continue;
+      }
+
+      if (commandResult.effect === 'dialog' && prompt) {
+        prompt.showText(commandResult.title, commandResult.output, { danger: !commandResult.ok });
         continue;
       }
 

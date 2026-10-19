@@ -207,7 +207,7 @@ export async function mcpPicker(prompt, onAction) {
     items: rows.map((server) => ({
       id: server.name,
       label: server.name,
-      description: `${server.granted ? 'granted' : 'not granted'}${server.command ? ` ${GLYPHS.dot} ${server.command}` : ''}`,
+      description: `${server.granted ? 'granted' : 'not granted'}${server.target ? ` ${GLYPHS.dot} ${server.target}` : ''}`,
       category: server.granted ? 'granted' : 'available',
       value: server
     })),

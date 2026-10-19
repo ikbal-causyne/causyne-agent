@@ -229,11 +229,10 @@ test('render: barBlock still honours the width it is given', async () => {
 // TUI: a command drawn as a message, and a wheel that went nowhere
 // ---------------------------------------------------------------------------
 
-test('tui: a slash command is drawn as an invocation, not as a message', async () => {
+test('tui: a slash command is control input, not a transcript message', async () => {
   // WHAT WAS SEEN: typing `/usage` rendered exactly like a sentence sent to the
-  // model. The command DID run and its output appeared underneath, but the
-  // transcript showed a conversation turn that never happened — submit() echoed
-  // every line as a user block BEFORE the caller decided what the line was.
+  // model. Commands now remain local UI input: their picker or dialog appears in
+  // the live region and no synthetic conversation turn is retained.
   const { ChatPrompt } = await import('../src/tui/prompt.js');
   const { isCommandInput } = await import('../src/commands.js');
   const { stripAnsi } = await import('../src/tui/text.js');
@@ -254,8 +253,7 @@ test('tui: a slash command is drawn as an invocation, not as a message', async (
   };
 
   const command = run('/usage');
-  assert.equal(command[0].kind, 'command', '/usage was committed as something other than a command');
-  assert.ok(!command.some((c) => c.kind === 'user'), '/usage was also drawn as a user message');
+  assert.deepEqual(command, [], '/usage leaked into the conversation transcript');
 
   const message = run('buat pena 3d di blender');
   assert.equal(message[0].kind, 'user', 'a real message stopped being drawn as one');

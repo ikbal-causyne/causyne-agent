@@ -123,6 +123,8 @@ describe('commands behave', () => {
   test('/help renders every visible command', async () => {
     const result = await runCommand('help', [], { surface: 'terminal' });
     assert.equal(result.ok, true);
+    assert.equal(result.effect, 'dialog');
+    assert.equal(result.title, 'Commands');
     for (const command of listCommands('terminal')) {
       assert.ok(result.output.includes(command.usage), `/help omitted ${command.name}`);
     }
@@ -261,6 +263,16 @@ describe('commands behave', () => {
   test('/mcp lists configured servers', async () => {
     const result = await runCommand('mcp', [], { surface: 'terminal' });
     assert.equal(result.ok, true);
+    assert.equal(result.effect, 'pick-mcp');
+  });
+
+  test('/sessions returns picker data instead of transcript-only text', async () => {
+    const { createSession } = await import('../src/sessionStore.js');
+    createSession('/tmp/causyne-command-test', 'A session to select');
+    const result = await runCommand('sessions', [], { surface: 'terminal' });
+    assert.equal(result.ok, true);
+    assert.equal(result.effect, 'pick-session');
+    assert.ok(result.items.some((session) => session.title === 'A session to select'));
   });
 
   test('/mcp grant refuses a server that is not configured', async () => {

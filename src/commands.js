@@ -47,6 +47,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/help [command]',
     description: 'List the available commands',
+    dialogTitle: 'Commands',
     run: (argv, ctx) => {
       const [wanted] = argv;
       if (wanted) {
@@ -335,6 +336,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/checkpoints [count]',
     description: 'List recent undo checkpoints',
+    dialogTitle: 'Checkpoints',
     run: (argv) => ok(buildCheckpointsText(parseInt(argv[0], 10) || 15))
   },
 
@@ -344,6 +346,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/context',
     description: 'Show what fills the context window',
+    dialogTitle: 'Context',
     run: () => ok(buildContextText())
   },
 
@@ -353,6 +356,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/usage',
     description: 'Show token usage and estimated cost',
+    dialogTitle: 'Usage',
     run: async () => ok(await buildUsageText())
   },
 
@@ -362,6 +366,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/cortex [list | forget <id> | forget-here]',
     description: 'Inspect what the agent has learned, and forget any of it',
+    dialogTitle: 'Cortex',
     // A memory store you cannot read is not a memory, it is a black box that
     // occasionally changes the agent's behaviour. Section 4 asks for intelligent
     // safety rather than opacity, and section 10 layer 5 asks for a trail a
@@ -426,6 +431,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/sessions [switch <id> | delete <id>]',
     description: 'List chat sessions, or switch to one',
+    dialogTitle: 'Sessions',
     // Sessions replaced ONE global chat_history.json that every directory read.
     // A session you cannot list or switch to is not a session, so this ships
     // with the store rather than after it.
@@ -462,7 +468,8 @@ export const COMMANDS = [
       return ok(
         `${rows.length} session${rows.length === 1 ? '' : 's'} (* = active):\n`
         + lines.join('\n')
-        + '\n\nSwitch with /sessions switch <id>. A new directory always starts a new session.'
+        + '\n\nSwitch with /sessions switch <id>. A new directory always starts a new session.',
+        { effect: 'pick-session', items: rows, active }
       );
     }
   },
@@ -472,6 +479,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/approvals [clear]',
     description: 'List tools granted "Allow always", or revoke them',
+    dialogTitle: 'Approvals',
     // A standing grant with no way to see or revoke it is a trap, not a
     // convenience. This is the way out, and the confirm dialog that grants one
     // names this command so the user is told about it at the moment it matters.
@@ -541,6 +549,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/model [provider/model | model]',
     description: 'Show or change the model in use',
+    dialogTitle: 'Model',
     run: (argv) => {
       const config = loadConfig();
       if (argv.length === 0) {
@@ -567,6 +576,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke <name>]',
     description: 'Manage MCP servers: list, add, remove, grant, revoke',
+    dialogTitle: 'MCP servers',
     run: (argv) => {
       const [action, serverName, ...rest] = argv;
 
@@ -622,7 +632,7 @@ export const COMMANDS = [
 
       const servers = serverStatus();
       if (servers.length === 0) {
-        return ok('No MCP servers are configured.\n\nAdd one with:\n  mcp add <name> <command> [args…]\n  mcp add <name> --url <https://…>\n\n(prefix with / in chat, or `causyne-agent mcp …` in a terminal)');
+        return ok('No MCP servers are configured.\n\nAdd one with:\n  mcp add <name> <command> [args…]\n  mcp add <name> --url <https://…>\n\n(prefix with / in chat, or `causyne-agent mcp …` in a terminal)', { effect: 'pick-mcp' });
       }
       const lines = ['MCP servers', ''];
       for (const server of servers) {
@@ -632,7 +642,7 @@ export const COMMANDS = [
       }
       lines.push('');
       lines.push('  mcp grant <name> to enable, mcp remove <name> to delete.');
-      return ok(lines.join('\n'));
+      return ok(lines.join('\n'), { effect: 'pick-mcp' });
     }
   },
 
@@ -703,6 +713,7 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/status',
     description: 'Show the current provider, autonomy mode and workspace scope',
+    dialogTitle: 'Status',
     // One builder, shared with `causyne status`, so status output cannot drift.
     run: (argv, ctx) => ok(buildStatusText({ loop: ctx.loop || null }))
   },
@@ -791,7 +802,11 @@ export async function runCommand(name, argv = [], ctx = {}) {
   }
 
   try {
-    return await command.run(argv, { ...ctx, surface });
+    const result = await command.run(argv, { ...ctx, surface });
+    if (command.dialogTitle && result && !result.effect) {
+      return { ...result, effect: 'dialog', title: command.dialogTitle };
+    }
+    return result;
   } catch (e) {
     return fail(`/${command.name} failed: ${e.message}`);
   }
