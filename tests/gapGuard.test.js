@@ -28,6 +28,7 @@ import { ChatPrompt } from '../src/tui/prompt.js';
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { stageHeight } from '../src/tui/stage.js';
 import { visibleWidth } from '../src/tui/text.js';
+import { sessionBanner } from '../src/tui/banner.js';
 
 // Reference geometry from the original regression. It stays in the suite so
 // this terminal size cannot regress unnoticed.
@@ -158,6 +159,17 @@ describe('UX-03 — and at every supported geometry', () => {
       const m = measureStartup({ columns: 100, rows });
       assert.equal(stageHeight({ columns: 100, rows }, {}), 0);
       assert.equal(m.opened, false, `${rows} rows must get the scrollback renderer, not a cramped band`);
+    }
+  });
+});
+
+describe('UX-03 — colour and Unicode do not change the startup geometry', () => {
+  test('an 80-column Unicode header uses the compact aperture', () => {
+    const rows = sessionBanner(SESSION, 80, { unicode: true });
+    assert.equal(rows.length, 7, 'session facts must stay beside the compact mark');
+    for (const row of rows) {
+      assert.ok(visibleWidth(row) <= 79,
+        `header row occupied ${visibleWidth(row)} of the 79 safe columns`);
     }
   });
 });

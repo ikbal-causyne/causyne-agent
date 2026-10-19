@@ -450,7 +450,10 @@ describe('command output does not collide with the live region', () => {
   function reconstruct(bytes, cols = 80, rows = 24) {
     const grid = Array.from({ length: rows }, () => Array(cols).fill(' '));
     let r = 0, c = 0, i = 0;
-    const re = /\x1b\[(\d*)([A-Za-z])/g;
+    // CSI parameters can contain semicolons (for example true-colour SGR is
+    // `38;2;r;g;b`). Treat the whole sequence as terminal control data rather
+    // than painting its bytes into the emulated screen.
+    const re = /\x1b\[([0-9;?]*)([A-Za-z])/g;
     // A real terminal does not wrap when the cursor REACHES the margin — it wraps
     // when the next glyph is written from there (DEC "deferred wrap"). Modelling
     // that faithfully matters: a row of exactly `cols` columns is fine, and a row
@@ -465,7 +468,7 @@ describe('command output does not collide with the live region', () => {
       if (ch === '\x1b') {
         re.lastIndex = i; const m = re.exec(bytes);
         if (m && m.index === i) {
-          const n = m[1] ? +m[1] : 0, f = m[2];
+          const n = m[1] ? +(m[1].split(';')[0]) : 0, f = m[2];
           if (f === 'A') r = Math.max(0, r - (n || 1));
           else if (f === 'C') c += n || 1;
           else if (f === 'J') { for (let x = c; x < cols; x++) grid[r][x] = ' '; for (let y = r + 1; y < rows; y++) grid[y].fill(' '); }
@@ -514,7 +517,7 @@ describe('command output does not collide with the live region', () => {
 
     // /skills echoed exactly once. The echo is a left-barred block now, so the
     // marker is the block glyph rather than the old bare arrow.
-    const echoRows = nonEmpty.filter((l) => /^\s*[|>▸▏]\s*\/skills\s*$/.test(l));
+    const echoRows = nonEmpty.filter((l) => /^\s*[|>▸▏▌]\s*\/skills\s*$/.test(l));
     assert.equal(echoRows.length, 1, `/skills was echoed ${echoRows.length} times, expected 1`);
 
     // Every LOGICAL row written must fit the terminal.

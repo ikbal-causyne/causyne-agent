@@ -94,8 +94,8 @@ export function wordmark(width = 80, { unicode = HAS_UNICODE } = {}) {
  * header that wraps is worse than a header that is tall.
  */
 export function sessionBanner(info = {}, width = 80, { unicode = HAS_UNICODE } = {}) {
-  const art = brandArt(width, unicode);
-  const artWidth = Math.max(...art.map(visibleWidth));
+  let art = brandArt(width, unicode);
+  let artWidth = Math.max(...art.map(visibleWidth));
 
   const facts = [];
   if (info.version) facts.push([bold(paint('accent', 'Causyne')), dim(info.version)]);
@@ -112,7 +112,18 @@ export function sessionBanner(info = {}, width = 80, { unicode = HAS_UNICODE } =
   // deferred-wrap state: the cursor sits past the last column, and the next
   // write decides whether that becomes a wrap. Measured on an 80-column pty,
   // the workspace row came back at exactly 80 while every other row was 79.
-  const room = width - artWidth - GAP - 1;
+  let room = width - artWidth - GAP - 1;
+
+  // A coloured 80-column terminal can render the full block wordmark, but it
+  // leaves too little room for the session facts beside it. Stacking those
+  // facts made startup 16 rows tall and overflowed short terminals. Prefer the
+  // compact ASCII aperture in that case: identity and facts remain one object,
+  // and the first prompt still fits without scrolling the banner away.
+  if (room < 24 && unicode && width >= 64) {
+    art = brandArt(width, false);
+    artWidth = Math.max(...art.map(visibleWidth));
+    room = width - artWidth - GAP - 1;
+  }
 
   // Not enough width for two columns: stack, rather than wrap either one.
   if (room < 24) {
