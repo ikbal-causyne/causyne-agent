@@ -396,11 +396,9 @@ describe('Group 6: provider capability declaration', () => {
 // ---------------------------------------------------------------------------
 
 describe('Group 7: sandbox name matching', () => {
-  // Sandbox reads its own config and ignores constructor arguments, so paths
-  // used here must sit inside the default workspace or the path check fires
-  // first and masks the risk classification under test.
-  const sandbox = new Sandbox();
-  const inWorkspace = name => path.join(os.homedir(), 'Desktop', name);
+  const workspace = path.join(os.homedir(), 'Desktop');
+  const sandbox = new Sandbox({ workspaceRoot: workspace });
+  const inWorkspace = name => path.join(workspace, name);
 
   test('destructive tools are risk-classified', () => {
     assert.equal(sandbox.validate('fs_delete', { path: inWorkspace('scratch.txt') }).risk, 'dangerous');

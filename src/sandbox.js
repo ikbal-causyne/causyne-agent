@@ -96,13 +96,10 @@ const INTERPRETER_INVOCATION = /(^|\s)(sh|bash|zsh|ksh|dash|fish|eval|xargs|ssh|
 /**
  * Credential stores and key material.
  *
- * L4 (local-path audit): the DEFAULT workspace scope ends with the home
- * directory itself as a fallback, which silently puts ~/.ssh, ~/.aws and
- * ~/.causyne (the encrypted API key AND the .vault_key that decrypts it) inside
- * the agent's reach with no prompt. Vision section 4 asks for freedom WITH a
- * human in the loop rather than a wall, so these are not blocked — touching one
- * is classified 'extreme', which always requires explicit approval in every
- * autonomy mode, including Mode C.
+ * A user may deliberately select a workspace that contains credential material.
+ * These paths are not silently trusted just because they sit below that root:
+ * touching one is classified 'extreme', which always requires explicit approval
+ * in every autonomy mode, including Mode C.
  */
 const CREDENTIAL_PATHS = [
   /(^|\/)\.ssh(\/|$)/,
@@ -168,22 +165,17 @@ function redirectsIntoSensitiveTarget(maskedCommand) {
 }
 
 export class Sandbox {
-  constructor() {
+  constructor({ workspaceRoot = process.cwd() } = {}) {
     this.config = loadConfig();
-    
-    // V5 Upgrade: Expanded default workspace paths
-    // Instead of only os.homedir() (which was too restrictive and caused path errors),
-    // we now default to common user directories while still blocking system dirs.
-    const home = os.homedir();
-    this.workspacePaths = this.config.workspacePaths || [
-      path.join(home, 'Desktop'),
-      path.join(home, 'Documents'),
-      path.join(home, 'Downloads'),
-      path.join(home, 'Projects'),
-      path.join(home, 'CausyneWorkspace'),
-      path.join(home, 'Causyne'),
-      home  // Fallback: allow home dir itself (covers edge cases like ~/scripts, ~/.config)
-    ];
+
+    // The launch directory is the workspace. A previous default advertised
+    // Desktop, Documents, Downloads, ~/Causyne and the whole home directory as
+    // equally valid roots. That made the model drift into the agent's own source
+    // even when the user launched it from another project, while also making the
+    // sandbox effectively home-wide. Explicit runtime grants can still use
+    // updateWorkspacePaths(), but stale config never overrides the folder the
+    // user selected for this invocation.
+    this.workspacePaths = [path.resolve(workspaceRoot)];
     
     // Developer emulator mode (hardened, secret-gated — see devMode.js) grants
     // full local access for agent development on a Fast-tier emulator. It cannot
@@ -243,9 +235,9 @@ export class Sandbox {
       }
     }
 
-    // L4: a credential store is in reach by default (the home fallback), so it
-    // gets a human in the loop rather than a wall. 'extreme' is the one risk
-    // level Mode C cannot auto-approve.
+    // L4: when an explicitly selected workspace contains credential material,
+    // it gets a human in the loop rather than silent access. 'extreme' is the
+    // one risk level Mode C cannot auto-approve.
     for (const p of pathsToCheck) {
       if (typeof p === 'string' && isCredentialPath(p)) {
         return { allowed: true, risk: 'extreme', reason: `Touches credential material: ${p}` };
@@ -349,20 +341,6 @@ export class Sandbox {
     }
 
     if (isBlocked) {
-      return false;
-    }
-    
-    // V7 Ultimate Self-Preservation: Block access to the agent's own source code
-    // The AGI cannot read, modify, or delete causyne-agent itself.
-    const agentBinOrScript = process.argv[1] || '';
-    let agentRoot = '';
-    if (agentBinOrScript && agentBinOrScript.includes('causyne-agent')) {
-      const idx = agentBinOrScript.lastIndexOf('causyne-agent');
-      agentRoot = path.resolve(agentBinOrScript.slice(0, idx + 'causyne-agent'.length));
-    } else if (typeof __dirname !== 'undefined') {
-      agentRoot = path.resolve(__dirname, '..');
-    }
-    if (agentRoot && resolved.startsWith(agentRoot) && resolved !== path.resolve(os.homedir())) {
       return false;
     }
     

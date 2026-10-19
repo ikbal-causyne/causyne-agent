@@ -7,10 +7,33 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveInvocation, isBareRoot, ROOT_OPTIONS } from '../src/tui/invocation.js';
 
 /** argv as Node hands it over: [execPath, scriptPath, ...args]. */
 const argv = (...args) => ['/usr/bin/node', '/usr/local/bin/causyne', ...args];
+
+test('--cwd changes the real CLI workspace before a command runs', () => {
+  const fixture = mkdtempSync(path.join(os.tmpdir(), 'causyne-cwd-test-'));
+  const workspace = path.join(fixture, 'selected-project');
+  const state = path.join(fixture, 'state');
+  mkdirSync(workspace);
+
+  try {
+    const bin = fileURLToPath(new URL('../bin/causyne.js', import.meta.url));
+    const output = execFileSync(process.execPath, [bin, '--cwd', workspace, 'exec', 'pwd'], {
+      encoding: 'utf8',
+      env: { ...process.env, CAUSYNE_HOME: state }
+    });
+    assert.equal(output.trim().split(/\r?\n/).at(-1), realpathSync(workspace));
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 describe('bare root opens the application', () => {
   test('no arguments at all', () => {
@@ -22,6 +45,12 @@ describe('bare root opens the application', () => {
     // the product's own flag, and it was answered with "Invalid command".
     assert.equal(isBareRoot(argv('--dev-emulator')), true);
     assert.deepEqual(resolveInvocation(argv('--dev-emulator')).rootOptions, ['--dev-emulator']);
+  });
+
+  test('an explicit working directory is still a bare application launch', () => {
+    const result = resolveInvocation(argv('--cwd', '/tmp/project'));
+    assert.equal(result.isBareRoot, true);
+    assert.deepEqual(result.rootOptions, ['--cwd']);
   });
 
   test('everything after `--` is an operand, not a command', () => {
@@ -56,6 +85,12 @@ describe('anything else goes to the dispatcher', () => {
 
   test('a root option before a subcommand still finds the subcommand', () => {
     const result = resolveInvocation(argv('--dev-emulator', 'chat'));
+    assert.equal(result.primary, 'chat');
+    assert.equal(result.isBareRoot, false);
+  });
+
+  test('a working directory before a subcommand consumes its value', () => {
+    const result = resolveInvocation(argv('-C', '/tmp/project', 'chat'));
     assert.equal(result.primary, 'chat');
     assert.equal(result.isBareRoot, false);
   });

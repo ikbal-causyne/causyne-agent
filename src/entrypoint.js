@@ -5,6 +5,29 @@ import { runSelfUpdate } from './autoUpdate.js';
 import { printContextReport, printUsageReport, printCheckpoints, printUndo, buildStatusText, printReport } from './reporting.js';
 import { runCommand } from './commands.js';
 import { resolveInvocation } from './tui/invocation.js';
+import { resolveUserPath } from './utils/paths.js';
+
+function requestedWorkingDirectory(argv = []) {
+  const tokens = Array.isArray(argv) ? argv.slice(2) : [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = String(tokens[index]);
+    if (token === '--') break;
+    if (token === '-C' || token === '--cwd') return tokens[index + 1] || '';
+    if (token.startsWith('--cwd=')) return token.slice('--cwd='.length);
+    if (!token.startsWith('-')) break;
+  }
+  return null;
+}
+
+function applyRequestedWorkingDirectory(argv) {
+  const requested = requestedWorkingDirectory(argv);
+  if (requested === null) return;
+  if (!requested) throw new Error('The --cwd option requires a directory.');
+  const resolved = resolveUserPath(requested);
+  process.chdir(resolved);
+}
+
+applyRequestedWorkingDirectory(process.argv);
 
 // The old flag remains parseable only to explain its retirement.
 function announceDevEmulator(requested) {
@@ -42,6 +65,7 @@ program
   // "Usage: causyne-agent" reasonably concludes they ran the wrong thing.
   .name('causyne')
   .description('Causyne — Local desktop AI harness (alias: causyne-agent)')
+  .option('-C, --cwd <directory>', 'Use this directory as the workspace')
   .version(pkgVersion);
 
 program

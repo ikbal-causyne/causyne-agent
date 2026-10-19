@@ -155,14 +155,24 @@ describe('L4 — credential stores need a human, in every autonomy mode', () => 
     assert.equal(verdict.risk, 'extreme', 'but it cannot use it unattended');
   });
 
-  test('the default scope really does reach the home directory', () => {
-    // This is WHY L4 matters: the default workspacePaths end with a bare home
-    // fallback, so credential stores are in reach out of the box.
-    const sandbox = new Sandbox();
-    assert.ok(sandbox.workspacePaths.includes(os.homedir()),
-      'if this ever stops being true, revisit the L4 rationale');
-    assert.ok(sandbox.workspacePaths.length > 1,
-      'the specific entries are subsumed by that fallback — that is the finding');
+  test('the default scope is only the user-selected workspace', () => {
+    const workspace = '/Users/demo/selected-project';
+    const sandbox = new Sandbox({ workspaceRoot: workspace });
+
+    assert.deepEqual(sandbox.workspacePaths, [workspace]);
+    assert.equal(sandbox.isPathAllowed(`${workspace}/src/index.js`), true);
+    assert.equal(sandbox.isPathAllowed('/Users/demo/Causyne/causyne-agent/src/agentLoop.js'), false,
+      'the agent source must not become a target merely because it has a familiar name');
+    assert.equal(sandbox.isPathAllowed(os.homedir()), false,
+      'the selected project must not silently expand to the whole home directory');
+  });
+
+  test('a selected workspace remains valid when it is the Causyne Agent source', () => {
+    const workspace = '/Users/demo/Causyne AI/causyne-agent';
+    const sandbox = new Sandbox({ workspaceRoot: workspace });
+
+    assert.equal(sandbox.isPathAllowed(`${workspace}/src/agentLoop.js`), true,
+      'the workspace contract must not change based on the project directory name');
   });
 });
 

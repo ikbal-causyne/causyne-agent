@@ -34,6 +34,8 @@ export const ROOT_OPTIONS = new Map([
   ['--help', 0],
   ['-V', 0],
   ['--version', 0],
+  ['-C', 1],
+  ['--cwd', 1],
   ['--dev-emulator', 0]
 ]);
 
