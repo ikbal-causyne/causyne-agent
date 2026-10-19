@@ -33,4 +33,6 @@ test('GitHub release publishing is gated by cross-platform validation and proven
   assert.match(workflow, /publish:\n(?:.|\n)*?needs: validate/);
   assert.match(workflow, /npm publish[^\n]+--provenance/);
   assert.doesNotMatch(workflow, /NPM_TOKEN|NODE_AUTH_TOKEN/);
+  assert.match(workflow, /actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9/,
+    'release evidence must use the pinned Node.js 24 upload-artifact action');
 });
