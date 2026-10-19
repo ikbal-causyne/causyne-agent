@@ -1,0 +1,104 @@
+name: Publish npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version, without a v prefix
+        required: true
+        type: string
+      confirmation:
+        description: Type publish @causyne/agent@VERSION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: npm-release
+    steps:
+      - name: Check out the selected tag
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Use a trusted-publishing compatible npm CLI
+        run: npm install --global npm@11.19.1
+
+      - name: Validate release authorization and immutable tag
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const expectedName = '@causyne/agent';
+          const expectedRepository = 'git+https://github.com/ikbal-causyne/causyne-agent.git';
+          const expectedConfirmation = `publish ${expectedName}@${process.env.RELEASE_VERSION}`;
+
+          if (process.env.RELEASE_REF_TYPE !== 'tag') throw new Error('Run releases from an immutable tag.');
+          if (process.env.RELEASE_REF_NAME !== `v${process.env.RELEASE_VERSION}`) throw new Error('Tag and requested version differ.');
+          if (process.env.RELEASE_CONFIRMATION !== expectedConfirmation) throw new Error(`Confirmation must be exactly: ${expectedConfirmation}`);
+          if (pkg.name !== expectedName) throw new Error(`Unexpected package name: ${pkg.name}`);
+          if (pkg.version !== process.env.RELEASE_VERSION) throw new Error('package.json version and requested version differ.');
+          if (pkg.private === true) throw new Error('The manifest is still publication-locked.');
+          if (pkg.repository?.url !== expectedRepository) throw new Error('Package repository metadata does not match the release repository.');
+          NODE
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build readable generated source
+        run: |
+          npm run build
+          git diff --exit-code
+
+      - name: Verify source, tests, and types
+        run: |
+          npm run check:public
+          npm test
+          npm run typecheck:strict
+
+      - name: Create and inspect the exact tarball
+        id: pack
+        run: |
+          npm pack --dry-run --json --ignore-scripts > npm-pack-dry-run.json
+          npm pack --json --ignore-scripts > npm-pack.json
+          TARBALL="$(node -p "require('./npm-pack.json')[0].filename")"
+          tar -tzf "$TARBALL" | tee npm-tarball-contents.txt
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Retain release evidence
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: npm-release-evidence-${{ inputs.version }}
+          path: |
+            npm-pack-dry-run.json
+            npm-pack.json
+            npm-tarball-contents.txt
+            ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish through npm Trusted Publishing
+        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public --provenance

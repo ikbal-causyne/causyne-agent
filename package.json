@@ -1,0 +1,70 @@
+{
+  "name": "@causyne/agent",
+  "version": "1.10.0",
+  "description": "Agentic AI for software, tools, and computer workflows",
+  "main": "bin/causyne.js",
+  "type": "module",
+  "bin": {
+    "causyne": "bin/causyne.js",
+    "causyne-agent": "bin/causyne.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "native-skills/",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE",
+    "docs/ARCHITECTURE.md",
+    "docs/PROVENANCE.md",
+    "docs/SECURITY_REVIEW.md",
+    "docs/THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "start": "node ./bin/causyne.js",
+    "test": "node --test --import ./tests/helpers/isolateState.js \"tests/**/*.test.js\"",
+    "build": "node scripts/compile_skills.js",
+    "check:release": "node scripts/check_release.js",
+    "check:public": "npm run check:release && node scripts/check_public_release.js",
+    "prepublishOnly": "npm run check:public && npm test && npm run typecheck:strict",
+    "typecheck": "tsc -p tsconfig.json",
+    "typecheck:strict": "tsc -p tsconfig.strict.json"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "automation",
+    "causyne",
+    "cli"
+  ],
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikbal-causyne/causyne-agent.git"
+  },
+  "homepage": "https://causyne.com/",
+  "bugs": {
+    "url": "https://github.com/ikbal-causyne/causyne-agent/issues"
+  },
+  "overrides": {
+    "form-data": "^4.0.0",
+    "axios": "^1.20.0"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.0.4",
+    "acorn-walk": "^8.3.5",
+    "commander": "^11.1.0",
+    "duck-duck-scrape": "^2.2.7",
+    "googlethis": "^1.8.0",
+    "inquirer": "^9.2.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "acorn": "^8.18.0",
+    "typescript": "^7.0.2"
+  },
+  "private": false
+}
