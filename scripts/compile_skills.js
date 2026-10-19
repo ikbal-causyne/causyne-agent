@@ -12,8 +12,11 @@ for (const domain of fs.readdirSync(root, { withFileTypes: true }).sort((a, b) =
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const file = new URL(`${entry.name}/SKILL.md`, domainUrl);
     if (!fs.existsSync(file)) continue;
-    const content = fs.readFileSync(file, 'utf8');
-    const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] || '';
+    // Git may check Markdown out with CRLF on Windows. Normalize before both
+    // parsing and embedding so the generated module is byte-identical on every
+    // supported runner and release artifacts do not depend on checkout policy.
+    const content = fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
+    const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
     const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim() || entry.name;
     const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim() || '';
     skills[domain.name][name] = { name, description, content };
