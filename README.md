@@ -16,7 +16,7 @@ Learn more at [causyne.com](https://causyne.com/).
 
 - General inquiries and business communication: [contact@causyne.com](mailto:contact@causyne.com)
 - Product support and troubleshooting: [help@causyne.com](mailto:help@causyne.com)
-- Partnerships and direct founder communication: [ikbal@causyne.com](mailto:ikbal@causyne.com)
+- Partnerships and direct communication: [ikbal@causyne.com](mailto:ikbal@causyne.com)
 
 ## Development
 
