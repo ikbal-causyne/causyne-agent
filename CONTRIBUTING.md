@@ -4,6 +4,9 @@ Causyne Agent is under active development. Before opening a change, discuss
 large behavioral or architectural changes in an issue so the implementation
 can stay within the project's current direction.
 
+For development, engineering, and contributor-related inquiries, contact
+[dev@causyne.com](mailto:dev@causyne.com).
+
 Use Node.js 24 or newer, install the locked dependency graph without lifecycle
 scripts, and run the local release checks:
 

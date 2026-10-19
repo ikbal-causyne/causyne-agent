@@ -12,6 +12,12 @@ documentation is intentionally concise while the project is evolving.
 
 Learn more at [causyne.com](https://causyne.com/).
 
+## Contact
+
+- General inquiries and business communication: [contact@causyne.com](mailto:contact@causyne.com)
+- Product support and troubleshooting: [help@causyne.com](mailto:help@causyne.com)
+- Partnerships and direct founder communication: [ikbal@causyne.com](mailto:ikbal@causyne.com)
+
 ## Development
 
 Node.js 24 or newer is required.
