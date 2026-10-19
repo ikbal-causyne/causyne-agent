@@ -140,6 +140,16 @@ export const desktopAct = {
       };
     }
 
+    // Validate the complete request before applying platform-specific gates so
+    // malformed model output is rejected consistently on every operating
+    // system and can never reach an interpreter.
+    const argv = [];
+    for (let i = 0; i < actions.length; i++) {
+      const encoded = encodeAction(actions[i], i);
+      if (!encoded.ok) return { success: false, error: encoded.error };
+      argv.push(encoded.argv);
+    }
+
     // THE CHANNEL GUARD. Refusing is the whole point — a doctrine that lives
     // only in a prompt is a suggestion the model may skip on any given turn,
     // and the turn it skips it is the turn it clicks blindly through Blender.
@@ -156,14 +166,6 @@ export const desktopAct = {
       };
     }
 
-    const argv = [];
-    for (let i = 0; i < actions.length; i++) {
-      const encoded = encodeAction(actions[i], i);
-      if (!encoded.ok) return { success: false, error: encoded.error };
-      argv.push(encoded.argv);
-    }
-
-    
     auditLog.log({
       event: 'desktop_act',
       app: app || '(frontmost)',
