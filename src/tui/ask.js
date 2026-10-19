@@ -2,8 +2,8 @@
 //
 // `causyne config` and `causyne pair` run with no chat session behind them, so
 // there is no live region for a dialog to draw into. That is why they were the
-// last two surfaces still on inquirer — and inquirer is a different design
-// system: its own colours, its own glyphs, no NO_COLOR handling, and a list
+// last two surfaces still on a second prompt framework, with its own colours,
+// glyphs, NO_COLOR handling, and list
 // widget that looks nothing like the picker the same user sees inside `causyne`.
 //
 // The fix is NOT a second app shell. That was tried once: screen.js, layout.js,

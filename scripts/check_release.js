@@ -10,7 +10,9 @@ for (const hook of ['preinstall', 'install', 'postinstall', 'prepare']) {
   assert.equal(pkg.scripts?.[hook], undefined, `Unexpected lifecycle hook: ${hook}`);
 }
 assert.equal(pkg.author, undefined, 'Personal author metadata must not be published');
-for (const dep of ['bytenode', 'werift', 'ws']) assert.equal(pkg.dependencies?.[dep], undefined);
+for (const dep of ['bytenode', 'werift', 'ws', 'googlethis', 'duck-duck-scrape', 'inquirer']) {
+  assert.equal(pkg.dependencies?.[dep], undefined, `Retired runtime dependency returned: ${dep}`);
+}
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const pack = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts', '--cache', path.join(root, 'node_modules/.cache/npm')], {
   cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,

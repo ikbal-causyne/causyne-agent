@@ -1,6 +1,5 @@
 import { AgentLoop } from './agentLoop.js';
 import { loadConfig, saveConfig } from './config.js';
-import inquirer from './utils/inquirer.js';
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './tui/prompt.js';
 import { handleInput, listCommands, isCommandInput } from './commands.js';
@@ -78,7 +77,7 @@ function makeApprovalHandler(conn, dialogs = null) {
     conn.stopSpinner();
 
     // An interactive session asks in a panel that shows the risk, the arguments
-    // and a scrollable diff in one frame. The inquirer path below asks the same
+    // and a scrollable diff in one frame. The plain fallback asks the same
     // question in the scrollback, which is all a non-TTY session can do.
     if (dialogs && detail) {
       // Loops only for "Allow always" → Cancel: backing out of the standing
@@ -143,7 +142,7 @@ function makeApprovalHandler(conn, dialogs = null) {
 
     // No live region to draw a panel into (a piped session, or raw mode
     // refused). askConfirm degrades to readline on its own, so this path keeps
-    // the same wording as the panel instead of inquirer's.
+    // the same wording as the panel instead of a second prompt framework's.
     const approved = await askConfirm(message);
 
     if (conn.pendingApprovals) conn.pendingApprovals.delete(toolCallId);
@@ -326,7 +325,7 @@ export async function chatMode({ home = false } = {}) {
   // The prompt owns the keyboard so the chat can offer history, completion and
   // typing while a turn runs. It is skipped when stdin is not a terminal (piped
   // input, CI) or when CAUSYNE_SIMPLE_INPUT=1, and any failure to take raw mode
-  // falls back to the inquirer path below — a better editor must never be the
+  // falls back to the plain readline path below — a better editor must never be the
   // reason chat refuses to start.
   let prompt = null;
   if (isInteractive()) {
@@ -371,9 +370,9 @@ export async function chatMode({ home = false } = {}) {
       // one that was asked for.
       if (surface) prompt.draw();
 
-      // Ask for approval in the prompt's own panel, not inquirer's.
+      // Ask for approval in the prompt's own panel, not a competing reader.
       //
-      // inquirer.prompt() takes stdin while this prompt is already holding it in
+      // A second prompt reader would take stdin while this prompt already holds it in
       // raw mode: the two contend, and the question can land on a half-drawn
       // prompt. The panel shows the risk, the arguments and a scrollable diff in
       // one frame, and dismissing it denies.
@@ -398,12 +397,11 @@ export async function chatMode({ home = false } = {}) {
 
   const readTask = async () => {
     if (prompt) return prompt.read();
-    const { task } = await inquirer.prompt([{
-      type: 'input',
-      name: 'task',
-      message: '\x1b[36mYou:\x1b[0m'
-    }]);
-    return task;
+    // The shared question helper already provides the same plain-readline
+    // fallback when a terminal cannot host the live TUI. Keeping a second
+    // prompt framework here pulled a large, unused transitive graph into every
+    // installation and made the fallback look different from the main CLI.
+    return askText({ title: 'You' });
   };
 
   const finish = () => { if (prompt) prompt.stop(); };
@@ -572,7 +570,7 @@ export async function interactiveConfig(options) {
     return;
   }
 
-  // Asked in the product's own panels rather than inquirer's.
+  // Asked in the product's own panels rather than a second prompt framework.
   //
   // These were the last two surfaces on a second design system — different
   // colours, different glyphs, no NO_COLOR handling, and a list widget nothing

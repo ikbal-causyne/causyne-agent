@@ -12,7 +12,7 @@
 //  * ESC INTERRUPTS — wired to the AgentLoop.abort() that already existed and
 //    was only reachable by typing /stop after the turn had finished.
 //  * FAIL OPEN — if raw mode is unavailable (piped stdin, a CI runner, an
-//    unusual terminal) the caller falls back to inquirer. A fancy editor must
+//    unusual terminal) the caller falls back to plain readline. A fancy editor must
 //    never be the reason chat does not start.
 //
 // Pure Node. No dependency, no shell.

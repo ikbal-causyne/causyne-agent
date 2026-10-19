@@ -492,7 +492,7 @@ describe('prompt — the three behaviours a user feels', () => {
   test('isInteractive respects the documented escape hatch', () => {
     const previous = process.env.CAUSYNE_SIMPLE_INPUT;
     process.env.CAUSYNE_SIMPLE_INPUT = '1';
-    assert.equal(isInteractive(), false, 'CAUSYNE_SIMPLE_INPUT=1 must force the inquirer path');
+    assert.equal(isInteractive(), false, 'CAUSYNE_SIMPLE_INPUT=1 must force the plain-input path');
     if (previous === undefined) delete process.env.CAUSYNE_SIMPLE_INPUT;
     else process.env.CAUSYNE_SIMPLE_INPUT = previous;
   });

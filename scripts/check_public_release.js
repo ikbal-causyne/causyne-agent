@@ -13,7 +13,12 @@ const output = execFileSync(
   ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
   { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }
 );
-const files = output.split('\0').filter(Boolean).sort();
+// `git ls-files --cached` still reports a tracked path after it has been
+// deleted from the worktree. A release scan must inspect the tree that will be
+// committed, not crash while trying to stat a file whose deletion is pending.
+const files = output.split('\0').filter(Boolean)
+  .filter(file => fs.existsSync(path.join(root, file)))
+  .sort();
 
 const forbiddenDocuments = new Set([
   'AGENTS.md',

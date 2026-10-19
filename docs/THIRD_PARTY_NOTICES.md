@@ -9,23 +9,17 @@ license identifiers:
 
 | License expression | Lockfile package entries |
 | --- | ---: |
-| MIT | 87 |
-| Apache-2.0 | 22 |
-| BSD-2-Clause | 8 |
-| ISC | 5 |
-| BSD-3-Clause | 1 |
-| BlueOak-1.0.0 | 1 |
-| 0BSD | 1 |
-| MIT OR CC0-1.0 | 1 |
+| Apache-2.0 | 21 |
+| MIT | 9 |
 
-The lockfile contained 126 dependency entries in total. npm's audit metadata
-reported 106 production dependencies; platform-specific optional entries and
-development dependencies account for the differing views of the graph.
+The lockfile contained 30 dependency entries in total. Three are production
+entries; development and platform-specific optional entries account for the
+rest. npm's audit metadata reported 12 installed packages.
 
-The direct runtime dependencies are `@babel/parser`, `acorn-walk`, `commander`,
-`duck-duck-scrape`, `googlethis`, and `inquirer`. Direct
-development dependencies are `@types/node`, `acorn`, and `typescript`. Exact
-versions and integrity hashes are recorded in `package-lock.json`.
+The direct runtime dependencies are `acorn-walk` and `commander`. Direct
+development dependencies are `@babel/parser`, `@types/node`, `acorn`, and
+`typescript`. Exact versions and integrity hashes are recorded in
+`package-lock.json`.
 
 No dependency in the reviewed main lockfile was marked with an install script.
 Optional capability dependencies are installed only after approval into a
