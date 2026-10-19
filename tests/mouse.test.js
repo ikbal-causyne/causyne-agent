@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { KeyDecoder, mouseTracking } from '../src/tui/keys.js';
 import { StageSurface } from '../src/tui/stageSurface.js';
@@ -284,7 +284,7 @@ describe('UX-02 — the terminal is handed back', () => {
     // process writes on its way out. 'exit' is emitted after an uncaught
     // exception (measured: code 1, stack printed) and that is what carries this.
     const script = `
-      import { StageSurface } from ${JSON.stringify(path.join(here, '..', 'src/tui/stageSurface.js'))};
+      import { StageSurface } from ${JSON.stringify(pathToFileURL(path.join(here, '..', 'src/tui/stageSurface.js')).href)};
       const surface = new StageSurface({
         out: Object.assign(Object.create(process.stdout), {
           isTTY: true, columns: 90, rows: 30,

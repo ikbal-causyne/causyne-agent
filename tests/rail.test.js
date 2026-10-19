@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { ChatPrompt } from '../src/tui/prompt.js';
@@ -245,7 +245,7 @@ describe('what the rail shows', () => {
     // with the rail still painted in accent — it asserted that the colour
     // EXISTS, never that anything uses it.
     const script = `
-      import { StageSurface } from ${JSON.stringify(path.join(here, '..', 'src/tui/stageSurface.js'))};
+      import { StageSurface } from ${JSON.stringify(pathToFileURL(path.join(here, '..', 'src/tui/stageSurface.js')).href)};
       const out = { columns: 100, rows: 30, isTTY: true, write: () => true, on(){}, removeListener(){} };
       const surface = new StageSurface({ out, env: {} });
       surface.open();

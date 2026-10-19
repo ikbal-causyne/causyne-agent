@@ -25,7 +25,7 @@ test('--cwd changes the real CLI workspace before a command runs', () => {
 
   try {
     const bin = fileURLToPath(new URL('../bin/causyne.js', import.meta.url));
-    const output = execFileSync(process.execPath, [bin, '--cwd', workspace, 'exec', 'pwd'], {
+    const output = execFileSync(process.execPath, [bin, '--cwd', workspace, 'exec', 'node -p "process.cwd()"'], {
       encoding: 'utf8',
       env: { ...process.env, CAUSYNE_HOME: state }
     });

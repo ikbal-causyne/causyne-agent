@@ -164,6 +164,13 @@ export function initShadow(worktree) {
     }
   }
 
+  // A checkpoint promises the exact bytes that were present when it was
+  // captured. Git for Windows commonly inherits core.autocrlf=true from the
+  // host, which would turn an LF blob into CRLF during restore. This shadow
+  // repository is a byte store, so text conversion must stay disabled even
+  // when an existing shadow is reused after an upgrade.
+  runGit(['--git-dir', gitDir, 'config', 'core.autocrlf', 'false']);
+
   // Point at the user's object database so blobs are never re-hashed, and adopt
   // their index so already-hashed entries are reused. Both are best-effort: a
   // missing or incompatible source just means a full, slower add.

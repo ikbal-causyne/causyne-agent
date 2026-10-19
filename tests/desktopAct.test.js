@@ -11,7 +11,8 @@ import { TOOL_DEFINITIONS, toolRegistry } from '../src/tools/registry.js';
 import { PACKS } from '../src/toolPacks.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SOURCE = fs.readFileSync(path.join(HERE, '..', 'src', 'tools', 'desktopAct.js'), 'utf8');
+const SOURCE = fs.readFileSync(path.join(HERE, '..', 'src', 'tools', 'desktopAct.js'), 'utf8')
+  .replace(/\r\n?/g, '\n');
 
 // The file documents the ZM rules by naming them. Strip comments before
 // asserting on code, or the test passes on its own documentation.

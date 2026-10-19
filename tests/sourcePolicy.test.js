@@ -42,19 +42,20 @@ test('updates are constrained to the official package and managed installs', asy
     calls.push({ command, args, options });
     return { status: 0, stdout: '', stderr: '' };
   };
+  const managedRoot = path.join(os.tmpdir(), 'causyne-managed');
   const result = await runSelfUpdate(false, {
-    env: { CAUSYNE_INSTALL_ROOT: '/tmp/causyne-managed', CAUSYNE_NPM_COMMAND: 'npm' },
+    env: { CAUSYNE_INSTALL_ROOT: managedRoot, CAUSYNE_NPM_COMMAND: 'npm' },
     currentVersion: '1.0.0', fetchImpl, spawnSyncImpl,
     stateFile: path.join(stateRoot, 'update-state.json')
   });
   assert.equal(result.updated, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, 'npm');
-  assert.deepEqual(calls[0].args.slice(0, 4), ['install', '--global', '--prefix', '/tmp/causyne-managed']);
+  assert.deepEqual(calls[0].args.slice(0, 4), ['install', '--global', '--prefix', path.resolve(managedRoot)]);
   assert.ok(calls[0].args.includes('@causyne/agent@9.0.0'));
   assert.ok(calls[0].args.includes('--ignore-scripts'));
   assert.equal(calls[0].options.shell, false);
-  assert.equal(calls[0].options.env.CAUSYNE_INSTALL_ROOT, '/tmp/causyne-managed');
+  assert.equal(calls[0].options.env.CAUSYNE_INSTALL_ROOT, path.resolve(managedRoot));
   assert.doesNotMatch(read('src/autoUpdate.js'), /execSync|execAsync|setTimeout|setInterval/);
   fs.rmSync(stateRoot, { recursive: true, force: true });
 });

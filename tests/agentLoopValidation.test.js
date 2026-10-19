@@ -8,6 +8,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { AgentLoop } from '../src/agentLoop.js';
 
 const validate = (name, args) => AgentLoop.prototype.validateToolArgs.call({}, name, args);
@@ -44,6 +45,6 @@ describe('validateToolArgs catches missing arguments on the CANONICAL names', ()
     validate('fs_write', { ...args, content: 'x' }); // does not touch our copy
     const live = { path: 'rel/file.txt', content: 'x' };
     validate('fs_write', live);
-    assert.ok(live.path.startsWith('/'), 'a relative path must be made absolute');
+    assert.ok(path.isAbsolute(live.path), 'a relative path must be made absolute');
   });
 });

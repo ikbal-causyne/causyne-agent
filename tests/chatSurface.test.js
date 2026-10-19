@@ -162,6 +162,8 @@ describe('UX-01 — no source can reintroduce a terminal takeover', () => {
     return found;
   }
 
+  const repoRelative = (file) => path.relative(path.join(here, '..'), file).split(path.sep).join('/');
+
   test('nothing in src/ enters the alternate buffer', () => {
     const offenders = [];
     for (const file of sourceFiles()) {
@@ -179,7 +181,7 @@ describe('UX-01 — no source can reintroduce a terminal takeover', () => {
     for (const file of sourceFiles()) {
       const text = fs.readFileSync(file, 'utf8');
       const code = text.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
-      if (/\\x1b\[[23]J/.test(code)) clears.push(path.relative(path.join(here, '..'), file));
+      if (/\\x1b\[[23]J/.test(code)) clears.push(repoRelative(file));
     }
     // ctrl+L in prompt.js is legitimate — the user pressed a key and asked for it.
     assert.deepEqual(clears, ['src/tui/prompt.js'],
@@ -206,6 +208,8 @@ describe('UX-02 — mouse reporting cannot be armed without a way back', () => {
     return found;
   }
 
+  const repoRelative = (file) => path.relative(path.join(here, '..'), file).split(path.sep).join('/');
+
   const stripComments = (text) =>
     text.split('\n').filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*')).join('\n');
 
@@ -213,7 +217,7 @@ describe('UX-02 — mouse reporting cannot be armed without a way back', () => {
     const owners = [];
     for (const file of sourceFiles()) {
       const code = stripComments(fs.readFileSync(file, 'utf8'));
-      if (/\\x1b\[\?100[06]h/.test(code)) owners.push(path.relative(path.join(here, '..'), file));
+      if (/\\x1b\[\?100[06]h/.test(code)) owners.push(repoRelative(file));
     }
     assert.deepEqual(owners, ['src/tui/keys.js'],
       'mouse reporting is armed through mouseTracking(); a second spelling is a second teardown to forget');
@@ -240,7 +244,7 @@ describe('UX-02 — mouse reporting cannot be armed without a way back', () => {
     assert.equal(armers.length, 1, 'exactly one module may arm reporting');
 
     const [file, code] = armers[0];
-    const where = path.relative(path.join(here, '..'), file);
+    const where = repoRelative(file);
     assert.equal(where, 'src/tui/stageSurface.js');
     assert.ok(/mouseTracking\(\s*false\s*\)/.test(code), `${where} arms reporting and never disarms it`);
     assert.ok(/process\.once\(\s*'exit'/.test(code),

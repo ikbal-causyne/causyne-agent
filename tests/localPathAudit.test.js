@@ -147,7 +147,7 @@ describe('L4 — credential stores need a human, in every autonomy mode', () => 
     // synthetic workspace. The real temp dir lives under /private/var, which
     // sandbox.js blocks as a system root — an artefact of the fixture, not the
     // behaviour under test.
-    const workspace = '/Users/demo/work';
+    const workspace = path.resolve('causyne-audit-work');
     sandbox.workspacePaths = [workspace];
 
     const verdict = sandbox.validate('fs_read', { path: `${workspace}/.ssh/id_rsa` });
@@ -156,19 +156,19 @@ describe('L4 — credential stores need a human, in every autonomy mode', () => 
   });
 
   test('the default scope is only the user-selected workspace', () => {
-    const workspace = '/Users/demo/selected-project';
+    const workspace = path.resolve('causyne-selected-project');
     const sandbox = new Sandbox({ workspaceRoot: workspace });
 
     assert.deepEqual(sandbox.workspacePaths, [workspace]);
     assert.equal(sandbox.isPathAllowed(`${workspace}/src/index.js`), true);
-    assert.equal(sandbox.isPathAllowed('/Users/demo/Causyne/causyne-agent/src/agentLoop.js'), false,
+    assert.equal(sandbox.isPathAllowed(path.resolve('causyne-agent-source/src/agentLoop.js')), false,
       'the agent source must not become a target merely because it has a familiar name');
     assert.equal(sandbox.isPathAllowed(os.homedir()), false,
       'the selected project must not silently expand to the whole home directory');
   });
 
   test('a selected workspace remains valid when it is the Causyne Agent source', () => {
-    const workspace = '/Users/demo/Causyne AI/causyne-agent';
+    const workspace = path.resolve('Causyne AI', 'causyne-agent');
     const sandbox = new Sandbox({ workspaceRoot: workspace });
 
     assert.equal(sandbox.isPathAllowed(`${workspace}/src/agentLoop.js`), true,

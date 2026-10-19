@@ -78,7 +78,7 @@ test('paths: a leading ~ is expanded, not treated as a directory', () => {
   assert.ok(!resolveUserPath('~/a.png').includes('~'), 'the tilde survived into the resolved path');
 
   // Absolute and relative paths keep working.
-  assert.equal(resolveUserPath('/tmp/x.png'), '/tmp/x.png');
+  assert.equal(resolveUserPath('/tmp/x.png'), path.resolve('/tmp/x.png'));
   assert.equal(resolveUserPath('a.png'), path.resolve('a.png'));
   // A tilde inside a name is a filename, not a home reference.
   assert.ok(resolveUserPath('./backup~.png').endsWith('backup~.png'));

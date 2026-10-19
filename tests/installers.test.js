@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const read = relative => fs.readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8');
+const read = relative => fs.readFileSync(new URL(`../${relative}`, import.meta.url), 'utf8')
+  .replace(/\r\n?/g, '\n');
 
 test('public installers use the official package without lifecycle scripts', () => {
   for (const file of ['install/install.sh', 'install/install.ps1']) {
