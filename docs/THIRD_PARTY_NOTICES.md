@@ -42,7 +42,7 @@ the licenses of third-party dependencies.
 
 The terms section of `LICENSE` was normalized and compared with the SPDX
 BUSL-1.1 canonical text during this review; it matched. The project-specific
-parameter block selects the named licensor, Causyne Agent 1.10.0 as the licensed
+parameter block selects the named licensor, Causyne Agent 1.10.1 as the licensed
 work, 2030-08-09 as the change date, and Apache-2.0 as the change
 license. The Additional Use Grant permits production use except a paid
 competing commercial offering as defined in that block. These business terms

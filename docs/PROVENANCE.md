@@ -2,8 +2,8 @@
 
 Causyne Agent is the renamed continuation of **Vanexa Agent**. It is not
 presented as an unrelated project or as a way to bypass
-security classification. Version 1.10.0 is the local source migration successor
-to the 1.9.20 working tree. This does not assert a published release.
+security classification. Version 1.10.0 was the first published local-source
+migration successor to the 1.9.20 working tree.
 
 The previous npm identities were `@ikbal_fadilah_vanexa01/vanexa-agent` and
 `@vanexalabs-ai/vanexa-agent`. The dispute at
