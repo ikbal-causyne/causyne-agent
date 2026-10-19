@@ -13,8 +13,16 @@ assert.equal(pkg.author, undefined, 'Personal author metadata must not be publis
 for (const dep of ['bytenode', 'werift', 'ws', 'googlethis', 'duck-duck-scrape', 'inquirer']) {
   assert.equal(pkg.dependencies?.[dep], undefined, `Retired runtime dependency returned: ${dep}`);
 }
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const pack = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts', '--cache', path.join(root, 'node_modules/.cache/npm')], {
+// npm.cmd is a Windows command shim, and Node 24+ refuses to execute it through
+// execFileSync without a shell (EINVAL). npm exposes the JavaScript CLI path to
+// lifecycle scripts; invoking that with the current Node binary stays shell-free
+// and behaves identically across Windows, macOS, and Linux.
+const npmCli = process.env.npm_execpath;
+const npmCommand = npmCli ? process.execPath : 'npm';
+const npmArgs = npmCli
+  ? [npmCli, 'pack', '--dry-run', '--json', '--ignore-scripts', '--cache', path.join(root, 'node_modules/.cache/npm')]
+  : ['pack', '--dry-run', '--json', '--ignore-scripts', '--cache', path.join(root, 'node_modules/.cache/npm')];
+const pack = JSON.parse(execFileSync(npmCommand, npmArgs, {
   cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
   env: {...process.env, npm_config_cache: process.env.npm_config_cache || path.join(root, 'node_modules/.cache/npm')}
 }))[0];
