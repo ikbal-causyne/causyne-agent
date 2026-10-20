@@ -1,10 +1,24 @@
 {
-  "//": "THE RATCHET. The codebase carries 307 pre-existing type errors from years of untyped JavaScript; fixing them is its own project. This config lists the modules that are type-clean TODAY and is checked in CI, so a new module cannot regress and the list can only grow. Add a file here the moment it type-checks \u2014 never remove one.",
-  "extends": "./tsconfig.json",
-  "include": [
-    "src/modelRouter.js",
-    "src/planCache.js",
-    "src/utils/paths.js",
-    "src/uncertainty.js"
-  ]
+  "//": "Real strict TypeScript contract. JavaScript debt is checked separately by tsconfig.js-ratchet.json while migration proceeds.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", "scripts", "native-skills"]
 }

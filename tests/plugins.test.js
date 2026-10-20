@@ -9,10 +9,12 @@ import {
   createPlugin,
   disablePlugin,
   enablePlugin,
+  getPluginSkills,
   getPluginToolDefinitions,
   listPlugins,
   resolvePluginTool
 } from '../src/plugins/pluginManager.js';
+import { listCompiledSkills, readCompiledSkill } from '../src/skillsManager.js';
 
 function createEchoPlugin(overrides = {}) {
   return createPlugin({
@@ -125,4 +127,44 @@ test('plugins: workspace files stay unreadable without an explicit read capabili
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test('plugins: reviewed packages can contribute progressively disclosed skills without executing code', () => {
+  const directory = path.join(PLUGIN_ROOT, 'skill-pack');
+  fs.mkdirSync(directory, { recursive: true });
+  const manifestFile = path.join(directory, 'plugin.json');
+  const skillFile = path.join(directory, 'release-review.md');
+  const markerFile = path.join(directory, 'must-not-run.js');
+  fs.writeFileSync(skillFile, '# Release review\n\nInspect the exact package artifact before publication.\n');
+  fs.writeFileSync(markerFile, 'throw new Error("plugin discovery executed JavaScript");\n');
+  const manifest = {
+    schemaVersion: 1,
+    name: 'skill-pack',
+    version: '0.1.0',
+    description: 'Prompt-only release skills.',
+    skills: [{
+    id: 'release-review',
+    name: 'Release review',
+    description: 'Inspect a release artifact before publishing it.',
+    file: 'release-review.md'
+    }]
+  };
+  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  assert.equal(getPluginSkills().length, 0, 'disabled plugin skill leaked into the catalogue');
+  assert.equal(enablePlugin('skill-pack').ok, true);
+
+  const skills = getPluginSkills();
+  assert.equal(skills.length, 1);
+  assert.equal(skills[0].domain, 'plugin-skill-pack');
+  assert.match(skills[0].content, /exact package artifact/);
+  assert.ok(listCompiledSkills().some((skill) =>
+    skill.domain === 'plugin-skill-pack'
+      && skill.id === 'release-review'
+      && skill.source === 'plugin'));
+  assert.match(readCompiledSkill('plugin-skill-pack', 'release-review'), /Inspect the exact package/);
+
+  fs.appendFileSync(skillFile, '\nChanged after review.\n');
+  assert.equal(getPluginSkills().length, 0, 'modified plugin skill retained stale trust');
+  assert.doesNotMatch(readCompiledSkill('plugin-skill-pack', 'release-review'), /exact package artifact/);
 });

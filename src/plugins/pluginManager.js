@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { causyneHome } from '../utils/paths.js';
+import { parsePluginSkills } from './pluginSkills.js';
 
 const PLUGIN_ROOT = path.join(causyneHome(), 'plugins');
 const STATE_FILE = path.join(PLUGIN_ROOT, 'state.json');
@@ -131,14 +132,15 @@ function readPlugin(directory) {
   if (typeof manifest.description !== 'string' || !manifest.description.trim()) {
     throw new Error('Plugin description is required');
   }
-  if (!Array.isArray(manifest.tools)) throw new Error('Plugin tools must be an array');
-  if (manifest.tools.length > MAX_TOOLS_PER_PLUGIN) {
+  const manifestTools = manifest.tools ?? [];
+  if (!Array.isArray(manifestTools)) throw new Error('Plugin tools must be an array');
+  if (manifestTools.length > MAX_TOOLS_PER_PLUGIN) {
     throw new Error(`Plugin exceeds ${MAX_TOOLS_PER_PLUGIN} tools`);
   }
 
   const pluginCapabilities = validateCapabilities(manifest.capabilities, manifest.name);
   const names = new Set();
-  const tools = manifest.tools.map((tool) => {
+  const tools = manifestTools.map((tool) => {
     if (!TOOL_NAME.test(tool?.name || '')) throw new Error(`Invalid tool name ${JSON.stringify(tool?.name)}`);
     if (names.has(tool.name)) throw new Error(`Duplicate tool name ${tool.name}`);
     names.add(tool.name);
@@ -164,6 +166,10 @@ function readPlugin(directory) {
         : DEFAULT_TIMEOUT_MS
     };
   });
+  const skills = parsePluginSkills(directory, manifest.name, manifest.skills);
+  if (tools.length === 0 && skills.length === 0) {
+    throw new Error('Plugin must contribute at least one tool or skill');
+  }
 
   return {
     directory,
@@ -173,7 +179,8 @@ function readPlugin(directory) {
     // changing plugin.json and would inherit stale trust.
     digest: digestPluginDirectory(directory),
     manifest: { ...manifest, capabilities: pluginCapabilities },
-    tools
+    tools,
+    skills
   };
 }
 
@@ -202,6 +209,7 @@ export function listPlugins() {
         digest: plugin.digest,
         capabilities: plugin.manifest.capabilities,
         tools: plugin.tools.map((tool) => tool.name),
+        skills: plugin.skills.map((skill) => `${skill.domain}/${skill.id}`),
         path: plugin.directory
       });
     } catch (error) {
@@ -218,7 +226,14 @@ export function enablePlugin(name) {
     const state = readState();
     state.plugins[name] = { enabled: true, digest: plugin.digest, enabledAt: Date.now() };
     writeState(state);
-    return { ok: true, name, digest: plugin.digest, capabilities: plugin.manifest.capabilities, tools: plugin.tools.map((tool) => tool.name) };
+    return {
+      ok: true,
+      name,
+      digest: plugin.digest,
+      capabilities: plugin.manifest.capabilities,
+      tools: plugin.tools.map((tool) => tool.name),
+      skills: plugin.skills.map((skill) => `${skill.domain}/${skill.id}`)
+    };
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -312,6 +327,26 @@ export function getPluginToolDefinitions() {
     parameters: tool.parameters,
     xCausyneDeferred: true
   }));
+}
+
+/**
+ * Reviewed, enabled plugins may contribute prompt-only skills. Discovery has
+ * already parsed these as inert UTF-8 data; no plugin module is imported.
+ */
+export function getPluginSkills() {
+  const state = readState();
+  const skills = [];
+  for (const directory of pluginDirectories()) {
+    try {
+      const plugin = readPlugin(directory);
+      const trust = safeObject(state.plugins[plugin.manifest.name]);
+      if (!trust.enabled || trust.digest !== plugin.digest) continue;
+      skills.push(...plugin.skills);
+    } catch (error) {
+      // Invalid or modified plugins contribute nothing to the prompt.
+    }
+  }
+  return skills;
 }
 
 function permissionArgs(tool, workspaceRoot) {

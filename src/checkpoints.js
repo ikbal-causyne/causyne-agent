@@ -7,7 +7,12 @@ import crypto from 'crypto';
 import * as gitBackend from './gitSnapshot.js';
 import { unifiedDiff, looksBinary } from './textDiff.js';
 import { causyneHome } from './utils/paths.js';
-import { getActiveSessionId, SESSION_DIR } from './sessionStore.js';
+import {
+  getActiveSessionId,
+  restoreSessionFromSnapshot,
+  sessionTranscriptFile,
+  SESSION_DIR
+} from './sessionStore.js';
 
 /**
  * Diagnostics, off by default.
@@ -57,7 +62,7 @@ function activeHistoryFile() {
     const id = getActiveSessionId();
     if (id) {
       const safe = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
-      if (safe) return path.join(SESSION_DIR, `${safe}.json`);
+      if (safe) return sessionTranscriptFile(safe);
     }
   } catch (e) { /* fall through to the legacy file */ }
   return HISTORY_FILE;
@@ -890,10 +895,18 @@ export function undoTask(taskId, options = {}) {
           history: { hash: writeObject(buffer), size: buffer.length, file: resolved }
         });
       }
-      assertSafeTarget(resolved);
-      fs.mkdirSync(path.dirname(resolved), { recursive: true });
-      fs.writeFileSync(resolved, readObject(start.history.hash), { mode: 0o600 });
-      historyRestored = true;
+      const snapshot = readObject(start.history.hash);
+      if (path.extname(resolved) === '.jsonl') {
+        historyRestored = restoreSessionFromSnapshot(resolved, snapshot);
+        if (!historyRestored) throw new Error('conversation journal snapshot could not be projected');
+      } else {
+        // Older checkpoints still point at the legacy JSON snapshot. Keep that
+        // recovery path while new sessions remain append-only.
+        assertSafeTarget(resolved);
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        fs.writeFileSync(resolved, snapshot, { mode: 0o600 });
+        historyRestored = true;
+      }
     } catch (e) {
       results.push({ path: target, action: `FAILED: ${e.message}` });
     }

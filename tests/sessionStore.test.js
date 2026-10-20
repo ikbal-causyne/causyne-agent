@@ -6,7 +6,7 @@ import path from 'node:path';
 import {
   createSession, listSessions, resolveSession, switchSession, deleteSession,
   saveSessionMessages, getActiveSessionId, pruneSessions, titleFrom,
-  SESSION_DIR, RESUME_WINDOW_MS
+  sessionTranscriptFile, SESSION_DIR, RESUME_WINDOW_MS
 } from '../src/sessionStore.js';
 import { MemoryManager } from '../src/memoryManager.js';
 
@@ -51,10 +51,11 @@ test('sessions: a stale conversation does NOT silently resume', () => {
   saveSessionMessages(old.id, [{ role: 'user', content: 'something from long ago' }]);
 
   // Age it past the resume window.
-  const file = path.join(SESSION_DIR, `${old.id}.json`);
-  const aged = JSON.parse(fs.readFileSync(file, 'utf8'));
-  aged.updatedAt = Date.now() - RESUME_WINDOW_MS - 60_000;
-  fs.writeFileSync(file, JSON.stringify(aged));
+  const file = sessionTranscriptFile(old.id);
+  const staleAt = Date.now() - RESUME_WINDOW_MS - 60_000;
+  const aged = fs.readFileSync(file, 'utf8').trim().split('\n')
+    .map((line) => ({ ...JSON.parse(line), at: staleAt }));
+  fs.writeFileSync(file, `${aged.map((event) => JSON.stringify(event)).join('\n')}\n`);
 
   const fresh = track(resolveSession(dir));
   assert.notEqual(fresh.id, old.id, 'a stale conversation was silently resumed');
@@ -96,10 +97,62 @@ test('sessions: the count is capped, oldest first', () => {
 
 test('sessions: corrupt files degrade to no session, never to a crash', () => {
   const s = track(createSession(workspace('corrupt'), 'broken'));
-  fs.writeFileSync(path.join(SESSION_DIR, `${s.id}.json`), '{ not json');
+  fs.appendFileSync(sessionTranscriptFile(s.id), '{ not json}\n');
 
   assert.doesNotThrow(() => listSessions());
   assert.equal(switchSession(s.id), null);
+});
+
+test('sessions: normal growth appends events and projects one current conversation', () => {
+  const s = track(createSession(workspace('append-only'), 'journal'));
+  const file = sessionTranscriptFile(s.id);
+  saveSessionMessages(s.id, [{ role: 'user', content: 'first' }]);
+  const firstBytes = fs.readFileSync(file);
+
+  saveSessionMessages(s.id, [
+    { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'second' }
+  ]);
+  const secondBytes = fs.readFileSync(file);
+  assert.ok(secondBytes.subarray(0, firstBytes.length).equals(firstBytes), 'a save rewrote existing journal bytes');
+
+  const events = secondBytes.toString('utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(events.map((event) => event.type), [
+    'session.created', 'messages.appended', 'messages.appended'
+  ]);
+  assert.deepEqual(switchSession(s.id).messages.map((message) => message.content), ['first', 'second']);
+});
+
+test('sessions: a torn final append preserves every complete prior event', () => {
+  const s = track(createSession(workspace('torn-tail'), 'recoverable'));
+  saveSessionMessages(s.id, [{ role: 'user', content: 'preserve me' }]);
+  fs.appendFileSync(sessionTranscriptFile(s.id), '{"version":1,"type":"messages.appended"');
+
+  assert.deepEqual(switchSession(s.id).messages.map((message) => message.content), ['preserve me']);
+});
+
+test('sessions: a bounded sliding window is an append-only projection event', () => {
+  const s = track(createSession(workspace('windowed'), 'bounded'));
+  saveSessionMessages(s.id, [
+    { role: 'user', content: 'one' },
+    { role: 'assistant', content: 'two' },
+    { role: 'user', content: 'three' }
+  ]);
+  const file = sessionTranscriptFile(s.id);
+  const before = fs.readFileSync(file);
+
+  saveSessionMessages(s.id, [
+    { role: 'assistant', content: 'two' },
+    { role: 'user', content: 'three' },
+    { role: 'assistant', content: 'four' }
+  ]);
+  const after = fs.readFileSync(file);
+  assert.ok(after.subarray(0, before.length).equals(before), 'windowing rewrote the durable transcript');
+  const last = JSON.parse(after.toString('utf8').trim().split('\n').at(-1));
+  assert.equal(last.type, 'messages.windowed');
+  assert.equal(last.dropPrefix, 1);
+  assert.deepEqual(last.messages.map((message) => message.content), ['four']);
+  assert.deepEqual(switchSession(s.id).messages.map((message) => message.content), ['two', 'three', 'four']);
 });
 
 test('memory: clearing one conversation leaves every other one alone', () => {

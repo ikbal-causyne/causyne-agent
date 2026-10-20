@@ -344,6 +344,11 @@ export class AgentLoop {
     this.circuitBreakerUnlocked = false;
     this.stopRequested = false;
     this.pendingApprovals = new Map(); // Maps toolCallId -> resolve function
+    // A delegated subagent can tighten these two ceilings. They are applied
+    // after every config refresh so run() cannot accidentally replace a
+    // worker's declared bounds with the parent tier defaults.
+    this.maxStepsCeiling = null;
+    this.taskTokenLimit = null;
     
     // Limits based on tier/budget & emulator fast bypass
     this.updateTierLimits();
@@ -718,6 +723,17 @@ export class AgentLoop {
       this.maxSteps = 400;
     } else {
       this.maxSteps = 300;
+    }
+    if (Number.isInteger(this.maxStepsCeiling) && this.maxStepsCeiling > 0) {
+      this.maxSteps = Math.min(this.maxSteps, this.maxStepsCeiling);
+    }
+    if (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0 && this.tokenTracker) {
+      this.tokenTracker.budget = {
+        ...this.tokenTracker.budget,
+        enabled: true,
+        hardStop: true,
+        maxTokensPerTask: this.taskTokenLimit
+      };
     }
     this.maxCircuitBreaker = this.maxSteps;
   }

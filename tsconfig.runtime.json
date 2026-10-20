@@ -1,0 +1,26 @@
+{
+  "//": "Incremental runtime compiler. TypeScript modules emit readable ESM beside their source so the existing JS runtime can import them without a loader or bundler.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": false,
+    "sourceMap": false,
+    "noEmitOnError": true
+  },
+  "include": ["src/sessionJournal.ts", "src/plugins/pluginSkills.ts", "src/agentProfiles.ts", "src/subagentJournal.ts", "src/taskShape.ts"],
+  "exclude": ["node_modules", "dist", "tests", "scripts", "native-skills"]
+}

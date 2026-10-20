@@ -3,6 +3,7 @@ import path from 'path';
 
 import { COMPILED_SKILLS } from './compiledSkills.js';
 import { loadUserSkills } from './userSkills.js';
+import { getPluginSkills } from './plugins/pluginManager.js';
 
 // User skills are read from disk, and the disk is slow relative to how often
 // these functions are called (every completion keystroke asks for the
@@ -259,6 +260,19 @@ export function listCompiledSkills() {
     });
   }
 
+  // Plugin skills live in a plugin-owned namespace (`plugin-<name>/...`) and
+  // appear only after explicit digest-pinned enablement. A user's own skill can
+  // still shadow one, which preserves local authority over every instruction.
+  for (const skill of getPluginSkills()) {
+    const key = `${skill.domain}/${skill.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      domain: skill.domain, id: skill.id, name: skill.name,
+      description: skill.description, source: 'plugin'
+    });
+  }
+
   for (const [domain, skills] of Object.entries(COMPILED_SKILLS)) {
     for (const [id, data] of Object.entries(skills)) {
       if (seen.has(`${domain}/${id}`)) continue;
@@ -277,6 +291,10 @@ export function readCompiledSkill(domain, skillId) {
   const own = userSkills().skills
     .find((skill) => skill.domain === domain && skill.id === skillId);
   if (own) return own.content;
+
+  const pluginSkill = getPluginSkills()
+    .find((skill) => skill.domain === domain && skill.id === skillId);
+  if (pluginSkill) return pluginSkill.content;
 
   const domainSkills = COMPILED_SKILLS[domain];
   if (!domainSkills) return `Error: Domain ${domain} not found in compiled skills.`;

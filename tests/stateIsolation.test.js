@@ -141,12 +141,14 @@ test('undo: a real session conversation is actually rewound', async () => {
   // it creates a session the way the agent does, lets a task begin, changes the
   // conversation, and asserts undo put it back. Nothing here fabricates the
   // file under test.
-  const { createSession, saveSessionMessages, SESSION_DIR } = await import('../src/sessionStore.js');
+  const {
+    createSession, saveSessionMessages, sessionTranscriptFile, switchSession
+  } = await import('../src/sessionStore.js');
   const { beginTask, undoTask, captureBeforeMutation } = await import('../src/checkpoints.js');
 
   const session = createSession(path.join(os.tmpdir(), 'undo-ws'), 'rewind me');
   saveSessionMessages(session.id, [{ role: 'user', content: 'before the task' }]);
-  const sessionFile = path.join(SESSION_DIR, `${session.id}.json`);
+  const sessionFile = sessionTranscriptFile(session.id);
   assert.ok(fs.existsSync(sessionFile), 'the session store did not create the file');
 
   const taskId = `undo_behaviour_${Date.now()}`;
@@ -168,7 +170,7 @@ test('undo: a real session conversation is actually rewound', async () => {
     assert.equal(result.historyRestored, true,
       'undo restored the files and left the conversation claiming the edits happened');
 
-    const rewound = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+    const rewound = switchSession(session.id);
     assert.equal(rewound.messages.length, 1, 'the conversation did not rewind with the files');
     assert.equal(rewound.messages[0].content, 'before the task');
   } finally {

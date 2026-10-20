@@ -31,18 +31,23 @@ are application policies and require adversarial review.
 | Concern | Source |
 | --- | --- |
 | Invocation and local session | `entrypoint.js`, `cliMode.js`, `tui/` |
-| Orchestration and budgets | `agentLoop.js`, `modelRouter.js`, `tokenTracker.js` |
+| Orchestration and budgets | `agentLoop.js`, `agentProfiles.ts`, `subagentJournal.ts`, `modelRouter.js`, `tokenTracker.js` |
 | Host execution | `tools/registry.js`, `sandbox.js`, `execSafe.js` |
 | Models | `providers/`, `modelCatalogue.js` |
 | Context and memory | `memory.js`, `memoryManager.js`, `contextManager.js`, `cortex/` |
-| Recovery | `checkpoints.js`, `gitSnapshot.js`, `sessionStore.js` |
+| Recovery | `checkpoints.js`, `gitSnapshot.js`, `sessionJournal.ts`, `sessionStore.js` |
 | Extensions | `mcp/`, `plugins/`, `hooks.js`, `skillsManager.js`, `toolPacks.js` |
 | Readable interpreter source | `src/tool-scripts/` |
 
-The current implementation remains JavaScript/ESM on Node.js 24+. The accepted
-language direction is incremental strict TypeScript. Runtime validation is
-still needed at model, filesystem, subprocess and extension boundaries.
-Rust is a possible narrow native worker later; no Rust rewrite is underway.
+The shipping runtime is ESM on Node.js 24+. Incremental strict TypeScript
+migration is active: `tsconfig.runtime.json` emits readable JavaScript beside
+strict TypeScript runtime modules, shared contracts live under `src/types/`,
+and retained JavaScript has a separately named migration ratchet. Session,
+plugin-skill, task-shape and delegated-agent boundaries now compile from strict
+TypeScript.
+Runtime validation is still required at model, filesystem, subprocess and
+extension boundaries. Rust is reserved for a measured, narrow native worker;
+no Rust rewrite is underway.
 
 ## Tool and extension boundaries
 
@@ -54,11 +59,24 @@ the task shape or `tool_search` makes them relevant.
 Local plugins use a static `plugin.json` manifest. Creating a plugin leaves it
 disabled. Enabling it pins a digest of every file the plugin process may read;
 any later manifest, source, helper or asset change revokes trust. Discovery
-validates static manifests and hashes bytes without importing JavaScript, so code cannot run
-during pre-trust initialization. A plugin tool runs in a separate Node process
-with the permission model enabled and only its declared workspace, network, or
-subprocess capabilities. Plugin calls still pass through Causyne's sandbox and
-approval gates.
+validates static manifests and hashes bytes without importing JavaScript, so
+code cannot run during pre-trust initialization. Reviewed plugins may contribute
+namespaced, progressively disclosed Markdown skills; these remain inert data
+and disappear from the catalogue if the digest changes. A plugin tool runs in a
+separate Node process with the permission model enabled and only its declared
+workspace, network, or subprocess capabilities. Plugin calls still pass through
+Causyne's sandbox and approval gates.
+
+User-defined subagent profiles are static JSON manifests under the local Causyne
+state directory. A profile supplies bounded instructions, an allowlist of tools,
+and hard step/token ceilings. It cannot widen its own scope, cannot recursively
+delegate, and does not load executable project code. Calls may narrow a
+profile's tool scope or budgets, but cannot exceed them.
+
+Completed delegated runs write a separate append-only JSONL sidechain under the
+local Causyne state directory. The parent receives only the worker's final
+result, while the bounded sidechain retains its messages and outcome for local
+inspection. A torn final append preserves earlier complete events.
 
 Hooks are user-owned argv arrays stored in the local Causyne configuration.
 They never pass through a shell and project repositories are not searched for
@@ -66,10 +84,19 @@ startup hooks. `PreToolUse` runs after the built-in sandbox and before an
 approval prompt; exit code 2 denies, and any other failure fails closed.
 `PostToolUse` can annotate a result or reject it without rewriting history.
 
-Host execution remains the default because Causyne must work in the directory
-the user selected. Optional container isolation can be added as an execution
-profile later, but it must remain explicit: mounting a workspace into Docker is
-a different trust boundary and cannot silently replace native desktop access.
+Host execution remains the current architecture because Causyne must operate in
+the directory and desktop environment the user selected. Container work is
+deferred and is not part of the present implementation plan.
+
+## Durable sessions
+
+Each workspace-scoped conversation is stored as an append-only JSONL event
+journal. Reads project `session.created`, `messages.appended`,
+`messages.windowed`, and explicit replacement events into the current session.
+A torn final append preserves prior complete events, while complete corruption
+fails safely. Legacy per-session JSON and global history files migrate on read.
+The compatibility `sessionStore.js` entry keeps existing callers stable while
+the strict TypeScript journal emits the JavaScript used at runtime.
 
 ## Plan cache and context pressure
 
