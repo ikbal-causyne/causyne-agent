@@ -43,8 +43,8 @@ The shipping runtime is ESM on Node.js 24+. Incremental strict TypeScript
 migration is active: `tsconfig.runtime.json` emits readable JavaScript beside
 strict TypeScript runtime modules, shared contracts live under `src/types/`,
 and retained JavaScript has a separately named migration ratchet. Session,
-plugin-skill, task-shape, delegated-agent, hook, approval-grant and plan-cache
-boundaries now compile from strict TypeScript.
+plugin-skill, task-shape, delegated-agent, hook, approval-grant, plan-cache and
+MCP boundaries now compile from strict TypeScript.
 Runtime validation is still required at model, filesystem, subprocess and
 extension boundaries. Rust is reserved for a measured, narrow native worker;
 no Rust rewrite is underway.
@@ -66,6 +66,61 @@ and disappear from the catalogue if the digest changes. A plugin tool runs in a
 separate Node process with the permission model enabled and only its declared
 workspace, network, or subprocess capabilities. Plugin calls still pass through
 Causyne's sandbox and approval gates.
+
+MCP uses the official Model Context Protocol client packages rather than a
+project-specific JSON-RPC implementation. It supports local stdio servers and
+remote Streamable HTTP servers, with legacy SSE fallback when configured for
+automatic negotiation. The SDK owns initialization, capability negotiation,
+protocol framing, request cancellation, and transport shutdown. Causyne adds
+connection timeouts, bounded output, current-workspace roots, concurrent
+discovery, `tools/list_changed` refresh, structured content handling, and
+namespaced access to server resources and prompts.
+
+Each MCP grant is bound to a SHA-256 digest of the complete server definition.
+Changing a command, URL, environment, header, working directory, timeout,
+protocol mode, or tool filter invalidates the old grant. Disconnect and revoke
+also invalidate an in-flight handshake so a stale connection cannot become
+active afterward. Per-server include and exclude patterns limit which
+capabilities enter the model's catalogue. Connection state distinguishes
+disabled, connecting, connected, failed, and authentication-required servers;
+one failing server does not prevent native tools or other MCP servers from
+loading. Static bearer or custom headers may be configured locally. Interactive
+browser OAuth is not implemented yet; an HTTP 401 is surfaced as
+`needs_auth` instead of being reported as a generic transport failure.
+
+## Agent browser boundary
+
+Causyne's web foundation has two layers. Lightweight TypeScript search and
+fetch clients work without a browser runtime. Rendered navigation uses a
+dedicated in-process Camoufox adapter derived from the locally reviewed Camofox
+Browser source. The adapter is deliberately smaller than the reference service:
+it does not import an HTTP server, inbound port, cloud deployment layer, VNC,
+telemetry, remote WebSocket control, or OpenClaw integration.
+
+Camoufox and Playwright are exact-pinned optional capability packages installed
+into the user's private Causyne capability directory only after an explicit
+browser capability grant. Causyne does not download a browser binary. Advanced
+rendered browsing requires a separately installed Camoufox bundle selected by
+`CAUSYNE_CAMOFOX_EXECUTABLE` or discovered from a standard system location.
+The main npm package therefore stays small and web search remains useful when
+the optional rendered browser is absent.
+
+The browser runs headless by default with WebRTC blocked and a Causyne-owned
+profile. It provides tabs, navigation, accessibility snapshots with bounded
+pagination, stable element references, form interaction, bounded extraction,
+and atomic downloads restricted to the selected workspace. Search first uses
+bounded DuckDuckGo HTML and Bing RSS providers, then uses rendered provider
+pages when the optional browser is available. Failures remain visible after
+every provider is exhausted instead of being replaced with fabricated results.
+
+Every top-level navigation and browser subresource passes through the public
+URL policy. The policy accepts only HTTP(S), rejects embedded credentials,
+resolves hostnames before access, and blocks loopback, private, link-local,
+multicast, reserved, local, internal, and metadata addresses. Redirects in the
+non-browser fetch path are revalidated one at a time. Responses and extracted
+text are bounded, and network downloads require the existing approval gate.
+These controls reduce SSRF and unbounded-output risk while preserving normal
+public-web use from the user's selected workspace.
 
 User-defined subagent profiles are static JSON manifests under the local Causyne
 state directory. A profile supplies bounded instructions, an allowlist of tools,

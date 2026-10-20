@@ -11,7 +11,8 @@
 import { isGroupDeclined } from './capabilityConsent.js';
 
 export const TOOLS_BY_GROUP = {
-  vision: ['browser_act', 'screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector'],
+  browser: ['browser_act'],
+  vision: ['screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector'],
   ocr: [],
   system: ['process_list'],
   desktop: ['clipboard', 'desktop_open'],

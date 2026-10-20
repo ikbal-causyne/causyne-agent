@@ -1537,18 +1537,24 @@ export class AgentLoop {
             // if it was declined, fall through to the path that needs nothing.
             let visionReady = false;
             let visionDeclined = false;
+            let browserReady = false;
+            let browserDeclined = false;
             try {
               const { groupStatus, isGroupDeclined } = await import('./provisioning/capabilityProvisioner.js');
               visionReady = groupStatus('vision').state === 'ready';
               visionDeclined = isGroupDeclined('vision');
+              browserReady = groupStatus('browser').state === 'ready';
+              browserDeclined = isGroupDeclined('browser');
             } catch (e) { /* treat as not ready */ }
             let webGuardMsg = '';
 
-            if (hasVision && !visionReady && !visionDeclined) {
-              webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project and must look at it before finishing, but the browser and screen-capture capability is not enabled yet. Call \`manage_local_dependencies\` with action "grant_capability" and group "vision" to request it from the user. If the user declines, read the final compiled HTML/CSS instead and verify it that way. This check fires once.]`;
+            if (!browserReady && !browserDeclined) {
+              webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project and must inspect it before finishing, but the dedicated browser capability is not enabled yet. Call \`manage_local_dependencies\` with action "grant_capability" and group "browser" to request the Causyne Camoufox runtime. If the user declines, read the final compiled HTML/CSS instead. This check fires once.]`;
+            } else if (hasVision && !visionReady && !visionDeclined) {
+              webGuardMsg = `[ANTI-SLOP CHECK: The browser is available, but desktop screen capture is not enabled. Call \`manage_local_dependencies\` with action "grant_capability" and group "vision" to request it, or use \`browser_act\` snapshots and its workspace-scoped screenshot action. This check fires once.]`;
             } else if (hasVision && visionReady && !this.webVerificationState.screenshotTaken) {
               webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project but attempted to finish without VISUALLY verifying your work. Use \`screenshot\` or \`vision_inspect_ui\` to look at the UI in a browser. A human looks at their work to avoid slop. This check fires once — if there is genuinely nothing visual to inspect, say so plainly and finish.]`;
-            } else if ((!hasVision || visionDeclined) && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken) {
+            } else if ((!hasVision || visionDeclined) && browserReady && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken) {
               webGuardMsg = `[TRANSCENDENCE CHECK: You are building a Web/UI project. As a vision-disabled model you cannot screenshot, but you MUST use \`browser_act\` to inspect the DOM, or read the final compiled HTML/CSS, to verify semantic correctness before finishing. This check fires once.]`;
             }
 

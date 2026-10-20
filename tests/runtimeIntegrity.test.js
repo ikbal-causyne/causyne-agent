@@ -344,7 +344,7 @@ test('D-6: capability groups are consent-gated and never auto-install', () => {
   // ZM-06: none of these may leak into the published dependency set.
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   const declared = Object.keys(pkg.dependencies || {});
-  for (const name of ['puppeteer-core', 'screenshot-desktop', 'tesseract.js', 'systeminformation', 'clipboardy', 'archiver']) {
+  for (const name of ['camoufox-js', 'playwright-core', 'puppeteer-core', 'screenshot-desktop', 'tesseract.js', 'systeminformation', 'clipboardy', 'archiver']) {
     assert.ok(!declared.includes(name), `${name} must stay out of static dependencies`);
   }
 

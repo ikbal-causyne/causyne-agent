@@ -55,7 +55,7 @@ export const manageLocalDependencies = {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['setup_venv', 'pipInst', 'check_and_setupEng', 'grant_capability', 'list_capabilities', 'grant_mcp_server', 'list_mcp_servers'] },
-        group: { type: 'string', description: 'Capability group for grant_capability: vision (browser + screen capture), ocr (read text from images), system (process and load inspection), desktop (clipboard, open, recycle bin), archive (zip and unzip).' },
+        group: { type: 'string', description: 'Capability group for grant_capability: browser (dedicated Camoufox web runtime), vision (screen capture), ocr (read text from images), system (process and load inspection), desktop (clipboard, open, recycle bin), archive (zip and unzip).' },
         engine: { type: 'string', enum: ['godot', 'blender'], description: 'Engine to locate when action is check_and_setupEng' },
         simulateMissing: { type: 'boolean', description: 'Simulate missing binary to verify sovereign fallback cascade' },
         packages: { type: 'array', items: { type: 'string' }, description: 'Exact PyPI pins only, for example pillow==11.3.0. URLs, paths, VCS references and pip options are rejected.' }

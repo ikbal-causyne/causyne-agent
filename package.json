@@ -1,6 +1,6 @@
 {
   "name": "@causyne/agent",
-  "version": "1.10.15",
+  "version": "1.10.17",
   "description": "Agentic AI for software, tools, and computer workflows",
   "main": "bin/causyne.js",
   "type": "module",
@@ -53,14 +53,18 @@
     "url": "https://github.com/ikbal-causyne/causyne-agent/issues"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
     "acorn-walk": "^8.3.5",
     "commander": "^11.1.0"
   },
   "devDependencies": {
     "@babel/parser": "^8.0.7",
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@types/node": "^22.20.2",
     "acorn": "^8.18.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zod": "4.6.7"
   },
   "private": false
 }

@@ -15,6 +15,10 @@ const CAPABILITY_DIR = path.join(causyneHome(), 'capabilities');
 // ("let it see the screen"), not once per npm package. Names stay in value
 // position — see the D-5 note above.
 const GROUP_PACKAGES = {
+  browser: [
+    ['camoufox-js', '0.11.5'],
+    ['playwright-core', '1.58.0']
+  ],
   vision: [
     ['puppeteer-core', '25.8.0'],
     ['screenshot-desktop', '1.15.6']
@@ -40,6 +44,7 @@ const GROUP_PACKAGES = {
 
 // than listing package names.
 export const GROUP_DESCRIPTIONS = {
+  browser: 'use an existing Camoufox installation for rendered navigation, extraction, and workspace-scoped downloads; Causyne never downloads the browser binary automatically',
   vision: 'drive a browser and capture the screen, so the agent can look at what it built',
   ocr: 'read text out of images and screenshots',
   system: 'list running processes and read system load',

@@ -20,7 +20,10 @@ import {
 } from './userSkills.js';
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
-import { serverStatus, grantServer, revokeServer, addServer, removeServer } from './mcp/mcpRegistry.js';
+import {
+  serverStatus, grantServer, revokeServer, addServer, removeServer,
+  connectServer, disconnectServer, refreshServer
+} from './mcp/mcpRegistry.js';
 import { analyzeFiles, formatFindings } from './slopDetector.js';
 import { suggestMovements, formatMovementBrief, DESIGN_MOVEMENTS } from './designPalettes.js';
 import fs from 'fs';
@@ -657,10 +660,10 @@ export const COMMANDS = [
   {
     name: 'mcp',
     scope: 'local',
-    usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke <name>]',
-    description: 'Manage MCP servers: list, add, remove, grant, revoke',
+    usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke|connect|disconnect|test|refresh <name>]',
+    description: 'Manage and diagnose MCP server connections',
     dialogTitle: 'MCP servers',
-    run: (argv) => {
+    run: async (argv) => {
       const [action, serverName, ...rest] = argv;
 
       if (action === 'add') {
@@ -702,15 +705,40 @@ export const COMMANDS = [
         const known = serverStatus().some(s => s.name === serverName);
         if (!known) return fail(`No MCP server named "${serverName}" is configured.`);
         if (action === 'grant') {
-          grantServer(serverName);
+          const granted = grantServer(serverName);
+          if (!granted.ok) return fail(granted.error);
           return ok(`Granted "${serverName}". Its tools enter the catalogue on the next task.`);
         }
         revokeServer(serverName);
         return ok(`Revoked "${serverName}". Its tools are no longer callable.`);
       }
 
+      if (['connect', 'test', 'refresh', 'disconnect'].includes(action)) {
+        if (!serverName) return fail(`Usage: /mcp ${action} <server>`);
+        const known = serverStatus().some(server => server.name === serverName);
+        if (!known) return fail(`No MCP server named "${serverName}" is configured.`);
+
+        if (action === 'disconnect') {
+          await disconnectServer(serverName);
+          return ok(`Disconnected "${serverName}". Its grant remains in place.`);
+        }
+
+        if (action === 'refresh') {
+          const tools = await refreshServer(serverName);
+          return ok(`Refreshed "${serverName}": ${tools.length} tool(s) available${tools.length ? ` — ${tools.map(tool => tool.name).join(', ')}` : ''}.`);
+        }
+
+        const client = await connectServer(serverName);
+        return ok(
+          `${action === 'test' ? 'MCP test passed' : 'Connected'}: "${serverName}"\n`
+          + `Transport: ${client.status.transport || 'unknown'}\n`
+          + `Server: ${client.serverInfo ? `${client.serverInfo.name} ${client.serverInfo.version}` : 'identity not provided'}\n`
+          + `Tools: ${client.tools.length}${client.tools.length ? ` — ${client.tools.map(tool => tool.name).join(', ')}` : ''}`
+        );
+      }
+
       if (action) {
-        return fail(`Unknown mcp action "${action}". Try: add, remove, grant, revoke, or mcp on its own to list.`);
+        return fail(`Unknown mcp action "${action}". Try: add, remove, grant, revoke, connect, disconnect, test, refresh, or mcp on its own to list.`);
       }
 
       const servers = serverStatus();
@@ -719,12 +747,13 @@ export const COMMANDS = [
       }
       const lines = ['MCP servers', ''];
       for (const server of servers) {
-        lines.push(`  ${server.name}  [${server.transport}]  ${server.granted ? 'granted' : 'NOT granted'}${server.connected ? ', connected' : ''}`);
+        lines.push(`  ${server.name}  [${server.transport}]  ${server.granted ? 'granted' : 'NOT granted'}  ${server.status}`);
         lines.push(`    ${server.target}`);
         if (server.tools.length > 0) lines.push(`    tools: ${server.tools.join(', ')}`);
+        if (server.error) lines.push(`    error: ${server.error}`);
       }
       lines.push('');
-      lines.push('  mcp grant <name> to enable, mcp remove <name> to delete.');
+      lines.push('  mcp grant <name> to enable, mcp test <name> to diagnose, mcp remove <name> to delete.');
       return ok(lines.join('\n'), { effect: 'pick-mcp' });
     }
   },

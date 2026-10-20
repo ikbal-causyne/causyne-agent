@@ -135,6 +135,27 @@ describe('the listing tells you what you are consenting to', () => {
   });
 });
 
+describe('consent is bound to the exact server definition', () => {
+  test('editing a command after approval invalidates the old grant', () => {
+    addServer({ name: 'bound', command: 'node', args: ['first.js'] });
+    grantServer('bound');
+    assert.equal(isServerGranted('bound'), true);
+
+    const config = loadConfig();
+    config.mcpServers[0].args = ['second.js'];
+    saveConfig(config);
+    assert.equal(isServerGranted('bound'), false);
+  });
+
+  test('legacy boolean consent is not silently trusted', () => {
+    addServer({ name: 'legacy', command: 'node' });
+    const config = loadConfig();
+    config.mcpConsent.legacy = true;
+    saveConfig(config);
+    assert.equal(isServerGranted('legacy'), false);
+  });
+});
+
 describe('/mcp drives the whole lifecycle', () => {
   const mcp = (...argv) => runCommand('mcp', argv, { surface: 'terminal' });
 

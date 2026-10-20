@@ -1,6 +1,6 @@
 # Third-party software review
 
-Review date: 2026-10-19.
+Review date: 2026-10-21.
 
 Causyne Agent's npm package declares third-party packages as dependencies; it
 does not bundle their source into the project tarball. Each dependency remains
@@ -9,21 +9,54 @@ license identifiers:
 
 | License expression | Lockfile package entries |
 | --- | ---: |
-| Apache-2.0 | 21 |
-| MIT | 9 |
+| Apache-2.0 | 25 |
+| MIT | 20 |
+| ISC | 2 |
 
-The lockfile contained 30 dependency entries in total. Three are production
-entries; development and platform-specific optional entries account for the
-rest. npm's audit metadata reported 12 installed packages.
+The lockfile contained 47 dependency entries in total. Development and
+platform-specific optional entries account for most of the graph.
 
-The direct runtime dependencies are `acorn-walk` and `commander`. Direct
-development dependencies are `@babel/parser`, `@types/node`, `acorn`, and
-`typescript`. Exact versions and integrity hashes are recorded in
-`package-lock.json`.
+The direct runtime dependencies are `@modelcontextprotocol/client`,
+`acorn-walk`, and `commander`. Direct development dependencies are
+`@babel/parser`, `@modelcontextprotocol/node`, `@modelcontextprotocol/server`,
+`@types/node`, `acorn`, `typescript`, and `zod`. The three direct MCP packages
+are licensed under Apache-2.0. Exact versions, transitive dependencies, license
+identifiers, and integrity hashes are recorded in `package-lock.json`.
 
 No dependency in the reviewed main lockfile was marked with an install script.
 Optional capability dependencies are installed only after approval into a
 separate local environment and are not covered by the main lockfile review.
+
+The optional browser capability installs `camoufox-js` 0.11.5 under MPL-2.0
+and `playwright-core` 1.58.0 under Apache-2.0. They remain separate packages in
+the user's local capability directory and are not copied into Causyne Agent's
+npm tarball. Causyne does not download or bundle the Camoufox browser runtime.
+
+The snapshot windowing and external executable bridge in `src/browser/` are
+adapted from the MIT-licensed Camofox Browser project at source commit
+`2c0036a8b18bf9cd983376751ff4d52dfd9add0f`. Its required notice is:
+
+> MIT License
+>
+> Copyright (c) 2025 Jo, Inc
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
 
 Repository scanning found no third-party copyright header or license marker in
 the project-authored source and skill files. That negative scan alone cannot

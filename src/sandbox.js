@@ -1,5 +1,6 @@
 import path from 'path';
 import os from 'os';
+import { isIP } from 'node:net';
 import { loadConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 
@@ -276,6 +277,27 @@ export class Sandbox {
       }
     }
 
+    if (toolName === 'browser_act') {
+      const actions = Array.isArray(args.actions) ? args.actions : [];
+      let hasDownload = false;
+      for (const action of actions) {
+        if (action && action.url && this.isInternalUrl(action.url)) {
+          return { allowed: false, reason: 'Cannot navigate the agent browser to an internal or invalid URL', risk: 'forbidden' };
+        }
+        if (action && ['download', 'screenshot'].includes(action.type)) {
+          if (!action.outputFile || !this.isPathAllowed(path.resolve(this.workspacePaths[0], action.outputFile))) {
+            return { allowed: false, reason: 'Browser downloads must stay inside the selected workspace', risk: 'forbidden' };
+          }
+          hasDownload = true;
+        }
+      }
+      if (hasDownload) return { allowed: true, risk: 'extreme', reason: 'Writes browser content to the selected workspace' };
+      if (actions.some(action => ['click', 'clickIndex', 'type', 'typeIndex', 'selectOption', 'keyPress'].includes(action?.type))) {
+        return { allowed: true, risk: 'dangerous', reason: 'Interacts with a website through the dedicated agent browser' };
+      }
+      return { allowed: true, risk: 'safe' };
+    }
+
     if (toolName === 'game_asset_fetch' && args.action === 'download_asset') {
       if (!args.url || this.isInternalUrl(args.url)) {
         return { allowed: false, reason: 'Cannot download from an internal or invalid URL', risk: 'forbidden' };
@@ -390,11 +412,19 @@ export class Sandbox {
   isInternalUrl(urlString) {
     try {
       const url = new URL(urlString);
-      const host = url.hostname;
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return true;
+      const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+      if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
       
       // Block localhost, private IPs, cloud metadata
-      const blockedRegex = /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|169\.254\.\d+\.\d+|0\.0\.0\.0)$/;
+      const blockedRegex = /^(localhost|0\.\d+\.\d+\.\d+|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+|192\.168\.\d+\.\d+|192\.0\.(0|2)\.\d+|192\.88\.99\.\d+|198\.(18|19)\.\d+\.\d+|198\.51\.100\.\d+|203\.0\.113\.\d+|(22[4-9]|23\d|24\d|25[0-5])\.\d+\.\d+\.\d+)$/;
       if (blockedRegex.test(host)) return true;
+      if (host === 'metadata.google.internal') return true;
+      if (isIP(host) === 6) {
+        const normalized = host.split('%')[0];
+        if (normalized === '::' || normalized === '::1' || /^(fc|fd|fe8|fe9|fea|feb|fec|fed|fee|fef|ff|2001:db8:|64:ff9b:)/.test(normalized)) return true;
+        if (normalized.startsWith('::ffff:')) return true;
+      }
       
       return false;
     } catch(e) {

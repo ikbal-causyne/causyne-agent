@@ -1,6 +1,6 @@
 # Security review and migration status
 
-Review date: 2026-10-19. This is a scoped source and package review, not a
+Review date: 2026-10-21. This is a scoped source and package review, not a
 claim that Causyne Agent is free from vulnerabilities.
 
 ## OpenSSF records
@@ -65,6 +65,18 @@ The active source takes a different architecture and distribution path:
 - `web_fetch` downloads and curated game-asset downloads require the highest
   approval class. Curated assets are size-limited, constrained to catalog URLs,
   protected from output path traversal, and are not automatically extracted.
+- Web search uses bounded HTTP providers without requiring a browser binary.
+  Interactive rendered browsing uses an outbound, in-process Camoufox adapter.
+  Causyne does not run Camofox Browser's server, inbound port, remote control,
+  VNC, telemetry, cloud deployment, or OpenClaw integration. Optional launcher
+  packages require an explicit capability grant. Causyne never downloads the
+  Camoufox browser binary; an existing external installation must be selected
+  through `CAUSYNE_CAMOFOX_EXECUTABLE` or a standard system location.
+- Browser navigation and subresources accept only public HTTP(S) destinations.
+  Hostnames are resolved and checked against private, loopback, link-local,
+  multicast, reserved, local, internal, and metadata ranges. Non-browser
+  redirects are checked at every hop. Downloads are bounded, atomic, restricted
+  to the selected workspace, and remain in the highest approval class.
 - The package allowlist excludes the legacy archive, Android source, private
   operating documents, credentials, installers, bytecode, and generated
   tarballs.
