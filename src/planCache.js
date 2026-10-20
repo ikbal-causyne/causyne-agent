@@ -35,6 +35,7 @@ import { causyneHome } from './utils/paths.js';
 
 const PLAN_DIR = path.join(causyneHome(), 'plans');
 const PLAN_FILE = path.join(PLAN_DIR, 'index.json');
+const METRICS_FILE = path.join(PLAN_DIR, 'metrics.json');
 
 /** Two plans must overlap this much on keywords before one is offered for the other. */
 // Tuned against the asymmetry, not for elegance. A false positive costs a few
@@ -52,6 +53,24 @@ const MAX_STEPS = 24;
 
 /** Keywords kept per plan. Enough to discriminate, short enough to stay cheap. */
 const MAX_KEYWORDS = 12;
+
+/** Exact keyword-set hits stay O(1); fuzzy matching is a bounded fallback. */
+const RECENT_LOOKUP_WINDOW = 32;
+const MIN_LOOKUPS_BEFORE_DISABLE = 20;
+const MIN_PLANS_BEFORE_DISABLE = 10;
+const MIN_HEALTHY_HIT_RATE = 0.10;
+const DISABLE_COOLDOWN_MS = 5 * 60 * 1000;
+const SEED_FAILURE_CLASSES = new Set([
+  'not_found', 'permission', 'timeout', 'network', 'rate_limited',
+  'invalid_args', 'syntax', 'exit_nonzero', 'failed'
+]);
+const METRICS_FLUSH_INTERVAL = 10;
+
+let plansCache = null;
+let plansMtimeMs = -1;
+let exactIndex = new Map();
+let metricsCache = null;
+let dirtyMetricEvents = 0;
 
 /**
  * Words that carry no intent. Deliberately small: an aggressive list throws
@@ -116,22 +135,50 @@ const STOPWORDS = new Set([
  * @typedef {Object} PlanMatch
  * @property {PlanTemplate} template
  * @property {number}       similarity
+ * @property {'exact'|'fuzzy'} matchType
+ * @property {{keywordCount: number, lookupMs: number}} telemetry
  */
 
 function ensureDir() {
   if (!fs.existsSync(PLAN_DIR)) fs.mkdirSync(PLAN_DIR, { recursive: true, mode: 0o700 });
 }
 
-/**
- * @returns {PlanTemplate[]}
- */
+/** @returns {string} */
+function planSignature(archetype, keywords) {
+  return `${String(archetype || '')}\u0000${[...new Set(keywords || [])].sort().join('\u0001')}`;
+}
+
+function rebuildIndex(plans) {
+  exactIndex = new Map();
+  for (const template of plans) {
+    const signature = planSignature(template.archetype, template.keywords);
+    const current = exactIndex.get(signature);
+    if (!current || (template.wins || 0) > (current.wins || 0)) {
+      exactIndex.set(signature, template);
+    }
+  }
+}
+
 function readAll() {
   try {
-    if (!fs.existsSync(PLAN_FILE)) return [];
+    if (!fs.existsSync(PLAN_FILE)) {
+      plansCache = [];
+      plansMtimeMs = -1;
+      rebuildIndex(plansCache);
+      return plansCache;
+    }
+    const mtimeMs = fs.statSync(PLAN_FILE).mtimeMs;
+    if (plansCache && mtimeMs === plansMtimeMs) return plansCache;
     const parsed = JSON.parse(fs.readFileSync(PLAN_FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
+    plansCache = Array.isArray(parsed) ? parsed : [];
+    plansMtimeMs = mtimeMs;
+    rebuildIndex(plansCache);
+    return plansCache;
   } catch (e) {
-    return []; // a corrupt cache degrades to a cold one, never to a failed task
+    plansCache = [];
+    plansMtimeMs = -1;
+    rebuildIndex(plansCache);
+    return plansCache; // a corrupt cache degrades to a cold one, never to a failed task
   }
 }
 
@@ -145,10 +192,107 @@ function writeAll(plans) {
     const temp = `${PLAN_FILE}.tmp_${process.pid}`;
     fs.writeFileSync(temp, JSON.stringify(plans, null, 2), { mode: 0o600 });
     fs.renameSync(temp, PLAN_FILE); // atomic: a torn write would erase the cache
+    plansCache = plans;
+    plansMtimeMs = fs.statSync(PLAN_FILE).mtimeMs;
+    rebuildIndex(plans);
     return true;
   } catch (e) {
     return false; // losing the cache must never fail the task
   }
+}
+
+function defaultMetrics() {
+  return {
+    version: 1,
+    lookups: 0,
+    hits: 0,
+    exactHits: 0,
+    fuzzyHits: 0,
+    misses: 0,
+    bypassed: 0,
+    records: 0,
+    totalLookupMs: 0,
+    maxLookupMs: 0,
+    totalRecordMs: 0,
+    recent: [],
+    disabledUntil: 0,
+    lastLookupAt: 0,
+    lastRecordAt: 0
+  };
+}
+
+function readMetrics() {
+  if (metricsCache) return metricsCache;
+  try {
+    if (!fs.existsSync(METRICS_FILE)) {
+      metricsCache = defaultMetrics();
+      return metricsCache;
+    }
+    const parsed = JSON.parse(fs.readFileSync(METRICS_FILE, 'utf8'));
+    metricsCache = { ...defaultMetrics(), ...(parsed && typeof parsed === 'object' ? parsed : {}) };
+    if (!Array.isArray(metricsCache.recent)) metricsCache.recent = [];
+  } catch (e) {
+    metricsCache = defaultMetrics();
+  }
+  return metricsCache;
+}
+
+function writeMetrics(force = false) {
+  if (!metricsCache || (!force && dirtyMetricEvents < METRICS_FLUSH_INTERVAL)) return false;
+  try {
+    ensureDir();
+    const temp = `${METRICS_FILE}.tmp_${process.pid}`;
+    fs.writeFileSync(temp, JSON.stringify(metricsCache, null, 2), { mode: 0o600 });
+    fs.renameSync(temp, METRICS_FILE);
+    dirtyMetricEvents = 0;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function recentHitRate(metrics) {
+  if (!metrics.recent.length) return 0;
+  return metrics.recent.reduce((sum, value) => sum + value, 0) / metrics.recent.length;
+}
+
+function shouldTemporarilyDisable(metrics, planCount, now) {
+  if (metrics.disabledUntil > now) return true;
+  if (metrics.disabledUntil > 0 && metrics.disabledUntil <= now) {
+    metrics.disabledUntil = 0;
+    metrics.recent = [];
+  }
+  if (planCount < MIN_PLANS_BEFORE_DISABLE || metrics.recent.length < MIN_LOOKUPS_BEFORE_DISABLE) {
+    return false;
+  }
+  if (recentHitRate(metrics) >= MIN_HEALTHY_HIT_RATE) return false;
+  metrics.disabledUntil = now + DISABLE_COOLDOWN_MS;
+  writeMetrics(true);
+  return true;
+}
+
+function recordLookupTelemetry({ hit, matchType = null, durationMs, bypassed = false }) {
+  const metrics = readMetrics();
+  const now = Date.now();
+  metrics.lastLookupAt = now;
+  if (bypassed) {
+    metrics.bypassed += 1;
+  } else {
+    metrics.lookups += 1;
+    metrics.totalLookupMs += durationMs;
+    metrics.maxLookupMs = Math.max(metrics.maxLookupMs, durationMs);
+    metrics.recent.push(hit ? 1 : 0);
+    if (metrics.recent.length > RECENT_LOOKUP_WINDOW) metrics.recent.shift();
+    if (hit) {
+      metrics.hits += 1;
+      if (matchType === 'exact') metrics.exactHits += 1;
+      if (matchType === 'fuzzy') metrics.fuzzyHits += 1;
+    } else {
+      metrics.misses += 1;
+    }
+  }
+  dirtyMetricEvents += 1;
+  writeMetrics(false);
 }
 
 /**
@@ -256,17 +400,50 @@ export function failureClass(result) {
 /**
  * The best stored plan for this request, if one is close enough.
  *
- * @param   {{prompt: string, archetype?: string}} query
+ * @param   {{prompt: string, archetype?: string, allowFuzzy?: boolean}} query
  * @returns {PlanMatch|null}
  */
 export function lookupPlan(query) {
+  const startedAt = performance.now();
   const keywords = extractKeywords(query?.prompt);
-  if (keywords.length === 0) return null;
+  if (keywords.length === 0) {
+    recordLookupTelemetry({ hit: false, durationMs: performance.now() - startedAt });
+    return null;
+  }
 
   const archetype = String(query?.archetype || '');
+  const plans = readAll();
+  const now = Date.now();
+  if (shouldTemporarilyDisable(readMetrics(), plans.length, now)) {
+    recordLookupTelemetry({ hit: false, durationMs: performance.now() - startedAt, bypassed: true });
+    return null;
+  }
+
+  const exact = exactIndex.get(planSignature(archetype, keywords));
+  if (exact) {
+    const durationMs = performance.now() - startedAt;
+    recordLookupTelemetry({ hit: true, matchType: 'exact', durationMs });
+    return {
+      template: exact,
+      similarity: 1,
+      matchType: 'exact',
+      telemetry: { keywordCount: keywords.length, lookupMs: durationMs }
+    };
+  }
+
+  // Low-confidence task classification is not enough evidence for fuzzy reuse.
+  // Exact matches remain safe; broader reuse waits until the task shape is at
+  // least medium confidence, avoiding the accuracy loss reported for aggressive
+  // fuzzy thresholds in APC Table 6.
+  if (query?.allowFuzzy === false) {
+    const durationMs = performance.now() - startedAt;
+    recordLookupTelemetry({ hit: false, durationMs });
+    return null;
+  }
+
   let best = null;
 
-  for (const template of readAll()) {
+  for (const template of plans) {
     // Archetype is a hard gate, not a score. A "build a 3D scene" plan sharing
     // three words with "debug the build" is not a plan for it.
     if (archetype && template.archetype && template.archetype !== archetype) continue;
@@ -281,8 +458,18 @@ export function lookupPlan(query) {
     if (!best || ranked > best.ranked) best = { template, similarity: score, ranked };
   }
 
-  if (!best) return null;
-  return { template: best.template, similarity: best.similarity };
+  const durationMs = performance.now() - startedAt;
+  if (!best) {
+    recordLookupTelemetry({ hit: false, durationMs });
+    return null;
+  }
+  recordLookupTelemetry({ hit: true, matchType: 'fuzzy', durationMs });
+  return {
+    template: best.template,
+    similarity: best.similarity,
+    matchType: 'fuzzy',
+    telemetry: { keywordCount: keywords.length, lookupMs: durationMs }
+  };
 }
 
 /**
@@ -292,6 +479,7 @@ export function lookupPlan(query) {
  * @returns {PlanTemplate|null} the stored template, or null when there was nothing worth storing
  */
 export function recordPlan(outcome) {
+  const startedAt = performance.now();
   const steps = Array.isArray(outcome?.steps) ? outcome.steps.slice(0, MAX_STEPS) : [];
   // A one-step task teaches nothing a fresh model would not do anyway.
   if (steps.length < 2) return null;
@@ -312,6 +500,12 @@ export function recordPlan(outcome) {
     existing.wins += 1;
     existing.updatedAt = Date.now();
     writeAll(prune(plans));
+    const metrics = readMetrics();
+    metrics.records += 1;
+    metrics.totalRecordMs += performance.now() - startedAt;
+    metrics.lastRecordAt = Date.now();
+    dirtyMetricEvents += 1;
+    writeMetrics(false);
     return existing;
   }
 
@@ -329,7 +523,63 @@ export function recordPlan(outcome) {
 
   plans.push(template);
   writeAll(prune(plans));
+  const metrics = readMetrics();
+  metrics.records += 1;
+  metrics.totalRecordMs += performance.now() - startedAt;
+  metrics.lastRecordAt = Date.now();
+  dirtyMetricEvents += 1;
+  writeMetrics(false);
   return template;
+}
+
+/**
+ * Pre-populate a cold cache from user-supplied, argument-free plan samples.
+ * Only tool names, short action labels and closed-vocabulary outcomes survive;
+ * paths, prompts passed to tools and command lines have no field to enter.
+ */
+export function prewarmPlans(samples) {
+  if (!Array.isArray(samples)) return { accepted: 0, rejected: 1, errors: ['Expected a JSON array'] };
+  const errors = [];
+  let accepted = 0;
+
+  for (const [index, sample] of samples.slice(0, 100).entries()) {
+    const prompt = typeof sample?.prompt === 'string' ? sample.prompt.trim() : '';
+    const archetype = typeof sample?.archetype === 'string' ? sample.archetype.trim().slice(0, 64) : '';
+    const rawSteps = Array.isArray(sample?.steps) ? sample.steps : [];
+    if (!prompt || rawSteps.length < 2) {
+      errors.push(`Sample ${index + 1}: prompt and at least two steps are required`);
+      continue;
+    }
+
+    const steps = [];
+    let invalid = false;
+    for (const rawStep of rawSteps.slice(0, MAX_STEPS)) {
+      const source = typeof rawStep === 'string' ? { tool: rawStep } : rawStep;
+      const tool = typeof source?.tool === 'string' ? source.tool.trim() : '';
+      if (!/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(tool)) {
+        invalid = true;
+        break;
+      }
+      const note = typeof source.action === 'string'
+        ? source.action.toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 32)
+        : '';
+      const step = { tool, note, ok: source.ok !== false };
+      if (!step.ok) {
+        step.why = SEED_FAILURE_CLASSES.has(source.why) ? source.why : 'failed';
+      }
+      steps.push(step);
+    }
+    if (invalid) {
+      errors.push(`Sample ${index + 1}: invalid tool name`);
+      continue;
+    }
+
+    if (recordPlan({ prompt, archetype, steps })) accepted++;
+    else errors.push(`Sample ${index + 1}: could not be stored`);
+  }
+
+  if (samples.length > 100) errors.push(`Only the first 100 of ${samples.length} samples were considered`);
+  return { accepted, rejected: errors.length, errors: errors.slice(0, 20) };
 }
 
 /**
@@ -418,9 +668,27 @@ export function renderPlanHint(match) {
   return lines.join('\n');
 }
 
-/** @returns {{count: number, file: string}} */
+/** @returns {object} */
 export function planStats() {
-  return { count: readAll().length, file: PLAN_FILE };
+  const metrics = readMetrics();
+  return {
+    count: readAll().length,
+    file: PLAN_FILE,
+    metricsFile: METRICS_FILE,
+    lookups: metrics.lookups,
+    hits: metrics.hits,
+    exactHits: metrics.exactHits,
+    fuzzyHits: metrics.fuzzyHits,
+    misses: metrics.misses,
+    bypassed: metrics.bypassed,
+    hitRate: metrics.lookups > 0 ? metrics.hits / metrics.lookups : 0,
+    recentHitRate: recentHitRate(metrics),
+    averageLookupMs: metrics.lookups > 0 ? metrics.totalLookupMs / metrics.lookups : 0,
+    maxLookupMs: metrics.maxLookupMs,
+    averageRecordMs: metrics.records > 0 ? metrics.totalRecordMs / metrics.records : 0,
+    disabledUntil: metrics.disabledUntil,
+    disabled: metrics.disabledUntil > Date.now()
+  };
 }
 
 /**
@@ -431,7 +699,20 @@ export function planStats() {
 export function forgetPlans() {
   const count = readAll().length;
   writeAll([]);
+  metricsCache = defaultMetrics();
+  dirtyMetricEvents = 1;
+  writeMetrics(true);
   return count;
 }
 
-export { PLAN_FILE, PLAN_DIR, MATCH_THRESHOLD, MAX_PLANS };
+export {
+  PLAN_FILE,
+  PLAN_DIR,
+  METRICS_FILE,
+  MATCH_THRESHOLD,
+  MAX_PLANS,
+  MIN_LOOKUPS_BEFORE_DISABLE,
+  MIN_PLANS_BEFORE_DISABLE,
+  MIN_HEALTHY_HIT_RATE,
+  DISABLE_COOLDOWN_MS
+};

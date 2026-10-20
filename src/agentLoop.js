@@ -7,6 +7,7 @@ import { TaskBuffer } from './taskBuffer.js';
 import { TOOL_DEFINITIONS, getDynamicTools, resolveTool, canonicalToolName } from './tools/registry.js';
 import { Sandbox } from './sandbox.js';
 import { auditLog } from './auditLog.js';
+import { hasMatchingHook, runConfiguredHooks } from './hooks.js';
 import { loadConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { TokenTracker } from './tokenTracker.js';
@@ -14,7 +15,7 @@ import { TokenTracker } from './tokenTracker.js';
 import { getMemoryContextString } from './memory.js';
 import { MemoryManager } from './memoryManager.js';
 import { cortexDb } from './cortex/vectorDb.js';
-import { condenseAndSave } from './cortex/autoCondenser.js';
+import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
 import { analyzeTask, buildTaskBrief, packsFromShape } from './taskShape.js';
 import { lookupPlan, recordPlan, recordMiss, renderPlanHint, toStep } from './planCache.js';
 import { routedConfig } from './modelRouter.js';
@@ -497,18 +498,9 @@ export class AgentLoop {
     // once per task rather than once per step.
     let planHint = '';
     try {
-      const match = lookupPlan({
-        prompt: this.currentTaskPrompt || this.userPrompt,
-        archetype: this.taskShape ? this.taskShape.archetype : ''
-      });
-      if (match) {
-        planHint = renderPlanHint(match);
-        this._offeredPlanId = match.template.id;
-        this._planSimilarity = match.similarity;
-        this.debugLog(`plan cache hit ${(match.similarity * 100).toFixed(0)}% (${match.template.steps.length} steps)`);
-      }
+      planHint = renderPlanHint(this._planMatch);
     } catch (e) {
-      this.debugLog(`plan cache lookup skipped: ${e.message}`);
+      this.debugLog(`plan cache hint skipped: ${e.message}`);
     }
 
     return { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint };
@@ -601,6 +593,10 @@ export class AgentLoop {
     for (const toolCall of toolCalls) {
       const functionName = canonicalToolName(toolCall.function.name);
       if (!AgentLoop.READ_ONLY_TOOLS.has(functionName)) continue;
+      // Prefetch begins before the serial dispatch path. If this tool has a
+      // PreToolUse hook, running it here would create a temporal pre-trust
+      // window where the read happens before the hook can deny it.
+      if (hasMatchingHook(this.config.hooks, 'PreToolUse', functionName)) continue;
 
       let args;
       try {
@@ -800,6 +796,7 @@ export class AgentLoop {
     this._planSteps = [];
     this._offeredPlanId = null;
     this._planSimilarity = 0;
+    this._planMatch = null;
     this._lessonSimilarity = 0;
     this._lastToolResult = null;
     this._paradigmShiftPending = false;
@@ -814,6 +811,36 @@ export class AgentLoop {
       const fallback = routePacks(this.userPrompt, this.workspaceContext);
       for (const pack of [...scored, ...fallback]) {
         this.unlockPack(pack);
+      }
+
+      // Reuse a known route before the first model call. Exact keyword-set
+      // matches are always eligible; fuzzy reuse requires at least medium task
+      // classification confidence because APC's threshold study shows that
+      // aggressive fuzzy hits trade accuracy for speed.
+      try {
+        this._planMatch = lookupPlan({
+          prompt: this.userPrompt,
+          archetype: this.taskShape ? this.taskShape.archetype : '',
+          allowFuzzy: this.taskShape?.confidence !== 'low'
+        });
+        if (this._planMatch) {
+          this._offeredPlanId = this._planMatch.template.id;
+          this._planSimilarity = this._planMatch.similarity;
+          for (const step of this._planMatch.template.steps || []) {
+            if (!step.ok || !resolveTool(step.tool)) continue;
+            this.unlockedTools.add(step.tool);
+            const pack = packForTool(step.tool);
+            if (pack) this.unlockPack(pack);
+          }
+          this.debugLog(
+            `plan cache ${this._planMatch.matchType || 'fuzzy'} hit `
+              + `${(this._planMatch.similarity * 100).toFixed(0)}% `
+              + `(${this._planMatch.template.steps.length} steps, `
+              + `${this._planMatch.telemetry?.lookupMs?.toFixed(2) || '0.00'} ms)`
+          );
+        }
+      } catch (e) {
+        this.debugLog(`plan cache lookup skipped: ${e.message}`);
       }
 
       this.debugLog(`task shape: ${this.taskShape.archetype} (${this.taskShape.confidence} confidence)`);
@@ -972,6 +999,13 @@ export class AgentLoop {
         });
         if (compaction.totalReclaimed > 0) {
           this.debugLog(`progressive compaction reclaimed ${(compaction.totalReclaimed / 1024).toFixed(1)} KB [${compaction.stagesFired.join(', ')}]`);
+          auditLog.log({
+            event: 'context_compaction', taskId: this.taskId,
+            kind: 'progressive', stages: compaction.stagesFired,
+            reclaimedChars: compaction.totalReclaimed,
+            finalChars: compaction.finalChars,
+            limitChars: MAX_CHAR_POOL
+          });
         }
 
         const { window: slidingWindow, splitIndex } = buildWindow(this.messages, MAX_CHAR_POOL);
@@ -996,9 +1030,17 @@ export class AgentLoop {
         if (splitIndex >= 1) {
           const dropped = this.messages.slice(1, splitIndex + 1);
           if (dropped.length > 0) {
-            const removed = compactInPlace(this.messages, splitIndex, describeDroppedMessages(dropped));
+            const compactSummary = buildStructuralSummary(dropped) || describeDroppedMessages(dropped);
+            const removed = compactInPlace(this.messages, splitIndex, compactSummary);
             this._lastCompactionIndex = null;
             this.debugLog(`compacted ${removed} messages out of the live context`);
+            auditLog.log({
+              event: 'context_compaction', taskId: this.taskId,
+              kind: 'summary', removedMessages: removed,
+              retainedSummaryChars: compactSummary.length,
+              limitChars: MAX_CHAR_POOL
+            });
+            this.notice(`Context compacted: ${removed} earlier messages condensed into a reviewable summary.`);
 
             // V5 Cortex tiered condensation. Tier 1 (structural, free) always
             // runs so the Digital Brain keeps learning on every provider. Tier 2
@@ -1029,6 +1071,8 @@ export class AgentLoop {
           unlockedTools: this.unlockedTools,
           unlockOrder: this.unlockOrder,
           grantAllTools: this.config.grantAllTools === true,
+          allowedTools: this.sandbox.allowedTools,
+          deniedTools: this.config.deniedTools,
           residentOnly
         });
         // A delegated subagent runs with a declared toolScope. Enforcing it
@@ -1699,6 +1743,66 @@ export class AgentLoop {
           
           this.consecutiveBlockedActions = 0; // Reset counter on allowed action
 
+          // Resolve and validate before asking the user for approval. Unknown or
+          // malformed calls should self-correct without creating approval fatigue.
+          const tool = resolveTool(functionName);
+          if (!tool || typeof tool.execute !== 'function') {
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify({
+                success: false,
+                error: `Tool "${functionName}" does not exist. Call tool_search with a description of the capability you need to discover the correct tool.`
+              })
+            });
+            continue;
+          }
+
+          if (!isCoreTool(functionName) && !this.unlockedTools.has(functionName)) {
+            const pack = packForTool(functionName);
+            if (this.unlockPack(pack)) {
+              this.debugLog(`unlocked capability pack "${pack}" for ${functionName}`);
+            }
+            this.unlockedTools.add(functionName);
+          }
+
+          const validationErrors = this.validateToolArgs(functionName, args);
+          if (validationErrors) {
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify({
+                success: false,
+                error: `Invalid arguments: ${validationErrors}. Please fix and retry.`
+              })
+            });
+            continue;
+          }
+
+          // A policy hook runs after the built-in sandbox but before any user
+          // approval prompt, so a deterministic denial never asks the user to
+          // approve work that will be rejected anyway.
+          const preHook = await this.runPreToolUse(functionName, args, toolCall.id);
+          if (preHook && preHook.denied) {
+            auditLog.log({
+              event: 'hook_denied', taskId: this.taskId, hookEvent: 'PreToolUse',
+              tool: functionName, reason: preHook.reason || 'hook denied'
+            });
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify({
+                success: false,
+                error: `PreToolUse hook denied "${functionName}".`,
+                hookFeedback: (preHook.messages || []).join('\n') || undefined
+              })
+            });
+            continue;
+          }
+
           // Approval flow for dangerous actions (Mode A/B) or ALWAYS for heavy AI downloads
           // The schema name is manage_local_dependencies. Comparing against the
           // old alias meant this consent gate never fired and multi-GB model
@@ -1707,7 +1811,7 @@ export class AgentLoop {
             ['pipInst', 'fetchBin', 'fetchMod'].includes(args.action);
           // A standing approval from "Allow always" lifts the gate for this
           // tool until the process restarts. It is checked HERE rather than
-          
+
           // asking and then auto-answering would still interrupt the user,
           // which is the entire thing they were trying to stop.
           //
@@ -1727,12 +1831,12 @@ export class AgentLoop {
               isHeavyAiDownload ||
               (this.config.autonomyMode !== 'C' && validation.risk === 'dangerous') ||
               this.config.autonomyMode === 'A')) {
-            
+
             // Wait for local approval
             this.emitEvent({ type: 'approval_request', toolCallId: toolCall.id, tool: functionName, args, risk: validation.risk });
 
             const approved = await this.waitForApproval(toolCall.id);
-            
+
             if (!approved) {
               this.messages.push({
                 role: 'tool',
@@ -1742,70 +1846,6 @@ export class AgentLoop {
               });
               continue;
             }
-          }
-
-          // Execute
-          const tool = resolveTool(functionName);
-
-          // GUARD: Prevent crash if LLM hallucinates a non-existent tool name
-          if (!tool || typeof tool.execute !== 'function') {
-            // Only advertise what is currently in context. Listing all 69 names
-            // here re-bloated the very context progressive disclosure protects.
-            this.messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              name: functionName,
-              content: JSON.stringify({
-                success: false,
-                error: `Tool "${functionName}" does not exist. Call tool_search with a description of the capability you need to discover the correct tool.`
-              })
-            });
-            continue;
-          }
-
-          // AUTO-UNLOCK RECOVERY: the model named a real tool whose pack is not
-          // loaded yet (it remembered it from an earlier task, or guessed well).
-          // Unlock the pack and run it rather than dead-ending — capability is
-          // deferred, never removed.
-          if (!isCoreTool(functionName) && !this.unlockedTools.has(functionName)) {
-            const pack = packForTool(functionName);
-            if (this.unlockPack(pack)) {
-              this.debugLog(`unlocked capability pack "${pack}" for ${functionName}`);
-            }
-            this.unlockedTools.add(functionName);
-          }
-
-          // V5: Tool Call Argument Validation Layer
-          const validationErrors = this.validateToolArgs(functionName, args);
-          if (validationErrors) {
-            this.messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              name: functionName,
-              content: JSON.stringify({ 
-                success: false, 
-                error: `Invalid arguments: ${validationErrors}. Please fix and retry.` 
-              })
-            });
-            continue;
-          }
-
-          // Stage 3 seam: PreToolUse hook. A no-op that always allows today; when
-          // hooks are configured it can deny a call before it runs, returned as an
-          // is_error tool result so the model self-corrects (never thrown).
-          const preHook = await this.runPreToolUse(functionName, args, toolCall.id);
-          if (preHook && preHook.denied) {
-            this.messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              name: functionName,
-              content: JSON.stringify({
-                success: false,
-                error: `PreToolUse hook denied "${functionName}".`,
-                hookFeedback: (preHook.messages || []).join('\n') || undefined
-              })
-            });
-            continue;
           }
 
           // P2: snapshot the files this call is about to change, before it runs.
@@ -2393,25 +2433,31 @@ export class AgentLoop {
     return hints[errorType] || hints['unknown_error'];
   }
 
-  // V5: Validate tool call arguments before execution
-  /**
-   * PreToolUse / PostToolUse seams (Stage 3 fills these in).
-   *
-   * Today they are no-ops that always allow, so the dispatch behaviour is exactly
-   * what it was. When `.causyne/settings.json` gains a `hooks` block (Stage 3),
-   * these run the user's shell hooks with the exit-code protocol
-   * (0 allow / 2 deny / else warn) and return { denied, messages }. The loop
-   * already branches on `denied`, so Stage 3 is a fill-in here, not another edit
-   * to the dispatch path. See src/tools/toolDispatch.js for the discipline these
-   * plug into.
-   */
-  async runPreToolUse(_toolName, _args, _toolCallId) {
-    return { denied: false, messages: [] };
+  async runPreToolUse(toolName, args, toolCallId) {
+    return runConfiguredHooks({
+      hooks: this.config?.hooks,
+      event: 'PreToolUse',
+      toolName,
+      args,
+      taskId: this.taskId,
+      toolCallId,
+      workspacePaths: this.sandbox?.workspacePaths
+    });
   }
 
-  async runPostToolUse(_toolName, _args, _result) {
-    return { denied: false, messages: [] };
+  async runPostToolUse(toolName, args, result) {
+    return runConfiguredHooks({
+      hooks: this.config?.hooks,
+      event: 'PostToolUse',
+      toolName,
+      args,
+      result,
+      taskId: this.taskId,
+      workspacePaths: this.sandbox?.workspacePaths
+    });
   }
+
+  // V5: Validate tool call arguments before execution
 
   validateToolArgs(toolName, args) {
     // Check for common LLM mistakes

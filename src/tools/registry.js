@@ -34,6 +34,7 @@ import { generateMediaViaApi } from './generateMediaViaApi.js';
 import { memoryWrite } from './memoryWrite.js';
 import { printerPrint, printerList, printerStatus } from './printer.js';
 import { toolForgeTool } from './toolForge.js';
+import { pluginManagerTool } from './pluginManager.js';
 import { astryxOracle } from './astryxOracle.js';
 import { pdfRead } from './pdfReader.js';
 import { codeVerifySyntax, codeListSymbols } from './codeTools.js';
@@ -67,11 +68,8 @@ import { gameCanvasAudit } from './gameCanvasAudit.js';
 import readNativeSkill from './readNativeSkill.js';
 import { createSkill } from './createSkill.js';
 import { resolveActiveTools } from '../toolPacks.js';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
-import { causyneHome } from '../utils/paths.js';
+import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
 
 // Phase 6 AGI Upgrade: Schema Validation Hook
 function validateSchema(schema) {
@@ -112,7 +110,7 @@ const TOOL_MODULES = [
   codebaseSearch, browserAct, viewImage, webSearch,
   updatePlan, clipboard, screenshot, axSnapshot, desktopAct, archive,
   checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
-  generateMediaViaApi, memoryWrite, printerPrint, printerList, printerStatus, toolForgeTool,
+  generateMediaViaApi, memoryWrite, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool,
   astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
   codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
   godotAutomator, gameBuilder, gameAssetFetcher,
@@ -164,6 +162,7 @@ export function resolveTool(name) {
   // MCP tools are namespaced `mcp__server__tool`, so they can never shadow a
   // native name — the native lookup always wins above.
   if (isMcpToolName(name)) return resolveMcpTool(name);
+  if (normalized.startsWith('plugin__')) return resolvePluginTool(normalized);
   return null;
 }
 
@@ -174,52 +173,6 @@ export function canonicalToolName(name) {
   return TOOL_ALIASES[normalized] || normalized;
 }
 
-// Forged tools are hot-reloadable, but re-importing them with a cache-busting
-// query string on every single agent step leaked one ES module per step and
-// changed the tool ordering between requests, which silently defeats OpenAI and
-// DeepSeek automatic prompt caching. We reload only when a file actually
-// changes, keyed on path + mtime.
-const forgedModuleCache = new Map();
-
-async function loadForgedTools() {
-  const CUSTOM_TOOLS_DIR = path.join(causyneHome(), 'custom_tools');
-  if (!fs.existsSync(CUSTOM_TOOLS_DIR)) return [];
-
-  const forged = [];
-  // Sorted so the resulting schema order is identical across requests.
-  const files = fs.readdirSync(CUSTOM_TOOLS_DIR).filter(f => f.endsWith('.js')).sort();
-
-  for (const file of files) {
-    const fullPath = path.join(CUSTOM_TOOLS_DIR, file);
-    try {
-      const mtime = fs.statSync(fullPath).mtimeMs;
-      const cached = forgedModuleCache.get(fullPath);
-      let imported;
-
-      if (cached && cached.mtime === mtime) {
-        imported = cached.module;
-      } else {
-        imported = await import(`file://${fullPath}?v=${mtime}`);
-        forgedModuleCache.set(fullPath, { mtime, module: imported });
-      }
-
-      for (const key of Object.keys(imported)) {
-        if (imported[key] && imported[key].schema) {
-          const normalizedName = imported[key].schema.name.replace(/\./g, '_');
-          forged.push({ ...imported[key].schema, name: normalizedName });
-          if (!toolRegistry[normalizedName]) {
-            toolRegistry[normalizedName] = imported[key];
-          }
-        }
-      }
-    } catch (e) {
-      console.error(`[TOOL FORGE] Failed to load custom tool ${file}:`, e.message);
-    }
-  }
-
-  return forged;
-}
-
 // Phase 6 AGI Upgrade & V5 Cortex: Dynamic Tool Culling and Hot-Reloading Engine
 //
 // options.unlockedPacks / options.unlockedTools drive Sovereign Progressive
@@ -227,15 +180,56 @@ async function loadForgedTools() {
 // — deferred schemas simply stay out of the context window until the agent
 // pre-warms or searches for them. options.grantAllTools restores the legacy
 // behaviour of loading all 69 schemas up front.
+function dedupeDefinitions(definitions) {
+  const seenNames = new Set();
+  return definitions.filter((definition) => {
+    const name = normalizeToolName(definition?.name);
+    if (!name || seenNames.has(name)) return false;
+    seenNames.add(name);
+    return true;
+  });
+}
+
+export async function getSearchableToolDefinitions() {
+  const plugins = getPluginToolDefinitions();
+  let mcp = [];
+  try {
+    mcp = await discoverTools();
+  } catch (e) { /* a broken third-party server must not hide native tools */ }
+  return dedupeDefinitions([...TOOL_DEFINITIONS, ...plugins, ...mcp]);
+}
+
 export async function getDynamicTools(autonomyMode = 'C', supportsVision = true, options = {}) {
-  const forged = await loadForgedTools();
+  // Plugin discovery reads validated JSON manifests only. Extension JavaScript
+  // is never imported into the host process during startup or tool assembly;
+  // it runs later in a permission-restricted child process after enablement.
+  const plugins = getPluginToolDefinitions();
   // Tools from user-configured MCP servers, appended last so the native
   // schema order — which the provider prompt caches depend on — never shifts.
   let mcp = [];
   try {
     mcp = await discoverTools();
   } catch (e) { /* a broken third-party server must not take the catalogue down */ }
-  let tools = [...TOOL_DEFINITIONS, ...forged, ...mcp];
+  let tools = [...TOOL_DEFINITIONS, ...plugins, ...mcp];
+
+  // Built-ins win name collisions, followed by the first explicitly loaded
+  // extension. This prevents an MCP server or local extension from shadowing a
+  // native safety-sensitive tool while keeping tool ordering deterministic for
+  // provider prompt caches.
+  tools = dedupeDefinitions(tools);
+
+  // Deny/allow policy is applied before the model sees the catalogue. Runtime
+  // validation still runs later; this early filter avoids wasting a model turn
+  // on a tool the harness already knows it will reject.
+  const allowedTools = Array.isArray(options.allowedTools) ? options.allowedTools : ['*'];
+  if (!allowedTools.includes('*')) {
+    const allowed = new Set(allowedTools.map(normalizeToolName));
+    tools = tools.filter((definition) => allowed.has(normalizeToolName(definition.name)));
+  }
+  if (Array.isArray(options.deniedTools) && options.deniedTools.length > 0) {
+    const denied = new Set(options.deniedTools.map(normalizeToolName));
+    tools = tools.filter((definition) => !denied.has(normalizeToolName(definition.name)));
+  }
 
   if (!options.grantAllTools) {
     tools = resolveActiveTools(tools, options.unlockedPacks, options.unlockedTools, options.unlockOrder, {

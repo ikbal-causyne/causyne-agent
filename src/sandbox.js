@@ -183,6 +183,10 @@ export class Sandbox {
     const devMode = isDevEmulator(this.config);
     this.grantAllAccess = devMode ? true : (this.config.grantAllAccess || false);
     this.allowedTools = devMode ? ['*'] : (this.config.allowedTools || ['*']);
+    this.deniedTools = new Set(
+      (devMode ? [] : (this.config.deniedTools || []))
+        .map((name) => String(name).replace(/\./g, '_'))
+    );
   }
 
   
@@ -214,6 +218,9 @@ export class Sandbox {
 
   validate(toolName, args) {
     // 1. Tool availability check
+    if (this.deniedTools.has(String(toolName).replace(/\./g, '_'))) {
+      return { allowed: false, reason: `Tool ${toolName} is denied by local policy`, risk: 'forbidden' };
+    }
     if (!this.allowedTools.includes('*') && !this.allowedTools.includes(toolName)) {
       return { allowed: false, reason: `Tool ${toolName} not allowed on current tier`, risk: 'forbidden' };
     }
@@ -287,6 +294,20 @@ export class Sandbox {
         return { allowed: true, risk: 'extreme' }; // Upgraded from dangerous to extreme for safe C Mode handling
       }
       return { allowed: true, risk: 'moderate' };
+    }
+
+    // Plugins are code extensions. Creation and enablement change the future
+    // executable surface, and an enabled plugin call crosses from Causyne's
+    // reviewed code into user/third-party code. Keep both explicit and
+    // session-revocable even though the plugin process also runs under Node's
+    // filesystem/network/child-process permission model.
+    if (toolName === 'plugin_manager') {
+      return ['create', 'enable'].includes(args.action)
+        ? { allowed: true, risk: 'extreme', reason: 'Creates or trusts executable plugin code' }
+        : { allowed: true, risk: 'safe' };
+    }
+    if (toolName.startsWith('plugin__')) {
+      return { allowed: true, risk: 'extreme', reason: 'Executes an enabled local plugin' };
     }
     
     // Tools that overwrite or delete are inherently dangerous.

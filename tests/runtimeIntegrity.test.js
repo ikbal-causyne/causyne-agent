@@ -195,6 +195,25 @@ test('Mode A never prefetches tools before local approval', async () => {
     'Mode A must reach the serial approval gate before any tool starts');
 });
 
+test('a PreToolUse hook disables speculative execution for its matching read', async () => {
+  const { AgentLoop } = await import('../src/agentLoop.js');
+  const loop = new AgentLoop(null, 'prefetch-hook-test', 'inspect two folders');
+  loop.config.autonomyMode = 'C';
+  loop.config.hooks = [{
+    event: 'PreToolUse',
+    tool: 'fs_list',
+    command: [process.execPath, '-e', 'process.exit(0)']
+  }];
+
+  const calls = [1, 2].map((n) => ({
+    id: `hooked-read-${n}`,
+    function: { name: 'fs_list', arguments: JSON.stringify({ path: process.cwd() }) }
+  }));
+
+  assert.equal(loop.prefetchReadOnlyCalls(calls).size, 0,
+    'a hooked read must wait for the serial pre-execution policy gate');
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // 5. P1-6 — the HitL command gate must not be bypassable by a leading token.
 // ───────────────────────────────────────────────────────────────────────────

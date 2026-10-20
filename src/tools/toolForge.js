@@ -1,124 +1,76 @@
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-import { causyneHome } from '../utils/paths.js';
+import { createPlugin } from '../plugins/pluginManager.js';
 
-const CUSTOM_TOOLS_DIR = path.join(causyneHome(), 'custom_tools');
+function normaliseToolName(value) {
+  return String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .toLowerCase()
+    .replace(/^_+|_+$/g, '');
+}
+
+function pluginNameFor(toolName) {
+  return `forged-${toolName.replace(/_/g, '-')}`.slice(0, 64);
+}
 
 export const toolForgeTool = {
   schema: {
     name: 'tool.forge',
-    description: 'Self-Evolution Engine: Write a new custom Javascript tool that will be permanently added to your capabilities. Use this when you lack a specific tool to accomplish a goal. The tool will be hot-reloaded instantly.',
+    description: 'Compatibility entry point for creating a local custom-tool plugin. The generated plugin is disabled until the user reviews and explicitly enables it with plugin_manager.',
     parameters: {
       type: 'object',
       properties: {
         toolName: {
           type: 'string',
-          description: 'CamelCase name of the tool (e.g. "imageResizer", "pdfExtractor"). Must be alphanumeric without spaces.',
+          description: 'Name of the custom tool. It is normalized to lowercase letters, digits, underscores, and hyphens.'
         },
         toolDescription: {
           type: 'string',
-          description: 'Detailed description of what the tool does, so you know how to use it later.',
+          description: 'Detailed description of what the tool does and when it should be used.'
         },
         parametersSchema: {
           type: 'string',
-          description: 'Stringified JSON schema of the arguments the tool accepts. E.g. {"type":"object","properties":{"filePath":{"type":"string"}},"required":["filePath"]}',
+          description: 'Stringified JSON schema of the arguments the tool accepts.'
         },
         javascriptCode: {
           type: 'string',
-          description: 'The actual Node.js code block for the execute function. MUST be an async function accepting (args, context). Must return an object like { success: true, data: ... }. DO NOT use `export` or `const toolName =`, just provide the raw function body or `async (args, context) => { ... }`.',
+          description: 'Body of async execute(args, context), or a complete module exporting execute.'
         },
+        capabilities: {
+          type: 'array',
+          items: { type: 'string', enum: ['workspace:read', 'workspace:write', 'network', 'subprocess'] },
+          description: 'Explicit host capabilities requested by the plugin subprocess.'
+        }
       },
-      required: ['toolName', 'toolDescription', 'parametersSchema', 'javascriptCode'],
+      required: ['toolName', 'toolDescription', 'parametersSchema', 'javascriptCode']
     }
   },
-  execute: async (args, context) => {
+
+  async execute(args) {
+    const toolName = normaliseToolName(args.toolName);
+    if (!toolName) return { success: false, error: 'toolName is invalid' };
+
+    let parameters;
     try {
-      const { toolName, toolDescription, parametersSchema, javascriptCode } = args;
-
-      // Validate name
-      if (!/^[a-zA-Z0-9_]+$/.test(toolName)) {
-        return { success: false, error: 'Invalid toolName. Use alphanumeric characters only.' };
-      }
-
-      // Ethical Safety Gate Layer 4: Block malicious tool names and descriptions
-      const BANNED_TOOL_NAMES = [
-        /keylog/i, /phish/i, /exploit/i, /malware/i, /trojan/i,
-        /ransomware/i, /rootkit/i, /backdoor/i, /ddos/i,
-        /credential.?harvest/i, /password.?steal/i, /brute.?force/i,
-        /crypto.?mine/i, /wallet.?drain/i, /spyware/i, /surveil/i
-      ];
-
-      for (const pattern of BANNED_TOOL_NAMES) {
-        if (pattern.test(toolName) || pattern.test(toolDescription)) {
-          return {
-            success: false,
-            error: 'Safety violation: Tool name or description indicates malicious intent. Causyne exists to make the world better.'
-          };
-        }
-      }
-
-      
-      const SUBPROCESS_MODULE = "child_process";
-      const BANNED_TOOL_PATTERNS = [
-        /process\.kill\(/,
-        new RegExp(SUBPROCESS_MODULE),
-        new RegExp('require\\s*\\(\\s*[\'"]' + SUBPROCESS_MODULE + '[\'"]\\s*\\)'),
-        /fs\.(rm|rmdir)Sync.*recursive/i,
-        /fs\.writeFileSync\s*\(\s*['"]\/etc/,
-        /fs\.writeFileSync\s*\(\s*['"]C:\\\\Windows/i,
-        /stratum\+tcp/i,
-        /cryptonight|ethash|randomx/i,
-        /iohook|keypress|keylog/i,
-        /getUserMedia|MediaRecorder.*audio|MediaRecorder.*video/i,
-        /sqlmap|nikto|metasploit/i
-      ];
-
-      for (const pattern of BANNED_TOOL_PATTERNS) {
-        if (pattern.test(javascriptCode)) {
-          return {
-            success: false,
-            error: 'Safety violation: Tool code contains a banned pattern. Causyne cannot forge tools designed for harm.'
-          };
-        }
-      }
-
-      // Ensure directory exists
-      if (!fs.existsSync(CUSTOM_TOOLS_DIR)) {
-        fs.mkdirSync(CUSTOM_TOOLS_DIR, { recursive: true, mode: 0o700 });
-      }
-
-      const filePath = path.join(CUSTOM_TOOLS_DIR, `${toolName}.js`);
-
-      // Construct the ES Module file
-      const fileContent = `
-// AUTOGENERATED CUSTOM TOOL: ${toolName}
-// Generated at: ${new Date().toISOString()}
-
-export const ${toolName}Tool = {
-  name: '${toolName}',
-  description: ${JSON.stringify(toolDescription)},
-  parameters: ${parametersSchema},
-  execute: async (args, context) => {
-    // LLM Generated Code Start
-    const llmFunction = ${javascriptCode.trim().startsWith('async') ? javascriptCode : `async (args, context) => { ${javascriptCode} }`};
-    return await llmFunction(args, context);
-    // LLM Generated Code End
-  }
-};
-`;
-
-      fs.writeFileSync(filePath, fileContent.trim());
-
-      return {
-        success: true,
-        message: `Successfully forged new tool '${toolName}'. It is saved to ${filePath}. It will be available on the next loop iteration.`
-      };
+      parameters = JSON.parse(args.parametersSchema);
     } catch (error) {
-      return {
-        success: false,
-        error: `Failed to forge tool: ${error.message}`
-      };
+      return { success: false, error: `parametersSchema is invalid JSON: ${error.message}` };
     }
-  },
+
+    const result = createPlugin({
+      name: pluginNameFor(toolName),
+      description: `Custom Causyne plugin for ${toolName}`,
+      toolName,
+      toolDescription: args.toolDescription,
+      parameters,
+      code: args.javascriptCode,
+      capabilities: args.capabilities || []
+    });
+
+    if (!result.ok) return { success: false, error: result.error };
+    return {
+      success: true,
+      ...result,
+      message: `${result.message} Use plugin_manager with action "enable" and name "${result.name}" after review.`
+    };
+  }
 };

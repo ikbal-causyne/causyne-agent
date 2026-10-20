@@ -36,13 +36,58 @@ are application policies and require adversarial review.
 | Models | `providers/`, `modelCatalogue.js` |
 | Context and memory | `memory.js`, `memoryManager.js`, `contextManager.js`, `cortex/` |
 | Recovery | `checkpoints.js`, `gitSnapshot.js`, `sessionStore.js` |
-| Extensions | `mcpClient.js`, `skillsManager.js`, `toolPacks.js`, user skills and Tool Forge |
+| Extensions | `mcp/`, `plugins/`, `hooks.js`, `skillsManager.js`, `toolPacks.js` |
 | Readable interpreter source | `src/tool-scripts/` |
 
 The current implementation remains JavaScript/ESM on Node.js 24+. The accepted
 language direction is incremental strict TypeScript. Runtime validation is
 still needed at model, filesystem, subprocess and extension boundaries.
 Rust is a possible narrow native worker later; no Rust rewrite is underway.
+
+## Tool and extension boundaries
+
+Tool schemas are assembled once from native tools, explicitly enabled plugins,
+and granted MCP servers. Denied tools are removed before the model sees them,
+native names win collisions, and large capability groups remain deferred until
+the task shape or `tool_search` makes them relevant.
+
+Local plugins use a static `plugin.json` manifest. Creating a plugin leaves it
+disabled. Enabling it pins a digest of every file the plugin process may read;
+any later manifest, source, helper or asset change revokes trust. Discovery
+validates static manifests and hashes bytes without importing JavaScript, so code cannot run
+during pre-trust initialization. A plugin tool runs in a separate Node process
+with the permission model enabled and only its declared workspace, network, or
+subprocess capabilities. Plugin calls still pass through Causyne's sandbox and
+approval gates.
+
+Hooks are user-owned argv arrays stored in the local Causyne configuration.
+They never pass through a shell and project repositories are not searched for
+startup hooks. `PreToolUse` runs after the built-in sandbox and before an
+approval prompt; exit code 2 denies, and any other failure fails closed.
+`PostToolUse` can annotate a result or reject it without rewriting history.
+
+Host execution remains the default because Causyne must work in the directory
+the user selected. Optional container isolation can be added as an execution
+profile later, but it must remain explicit: mounting a workspace into Docker is
+a different trust boundary and cannot silently replace native desktop access.
+
+## Plan cache and context pressure
+
+Completed multi-step runs teach argument-free plan templates. Lookup tries an
+indexed exact signature first, then bounded lexical similarity only for a task
+shape with enough confidence. Latency, hit type and recent hit rate are recorded;
+lookup temporarily cools down when a populated cache repeatedly misses while
+new successful plans may continue warming it. `/plans import` accepts sanitized
+offline samples for known workloads, and `/plans` exposes the measurements.
+`npm run benchmark:plan-cache` measures exact lookup, fuzzy lookup, misses and
+prewarming at bounded cache sizes in an isolated temporary state directory. It
+is a synthetic cache microbenchmark, not evidence for model accuracy, token
+cost, or end-to-end latency claims from the research paper.
+
+Context uses per-tool result budgets, oversized-result snipping, decay, a bounded
+sliding window, and structural summaries. Full tool output is spilled before it
+is shortened. Material compaction is recorded in the audit log, and summary
+collapse emits a quiet terminal notice so context loss is visible.
 
 ## Removed boundaries
 

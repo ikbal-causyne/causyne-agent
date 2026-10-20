@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import { resolveRoute, routedConfig, UTILITY_KINDS } from '../src/modelRouter.js';
 import {
   extractKeywords, similarity, toStep, recordPlan, lookupPlan,
-  recordMiss, renderPlanHint, prune, forgetPlans, MATCH_THRESHOLD, MAX_PLANS
+  recordMiss, renderPlanHint, prune, forgetPlans, planStats, prewarmPlans,
+  MATCH_THRESHOLD, MAX_PLANS, MIN_LOOKUPS_BEFORE_DISABLE, MIN_PLANS_BEFORE_DISABLE
 } from '../src/planCache.js';
 import { resultCapFor, DEFAULT_RESULT_CAP } from '../src/contextManager.js';
 
@@ -109,6 +110,91 @@ test('plan cache: the same job phrased differently still matches', () => {
   const hit = lookupPlan({ prompt: 'bikin pulpen 3D di blender lalu render klip sinematik', archetype: 'media' });
   assert.ok(hit, 'a re-phrasing of the same job missed the cache');
   assert.ok(hit.similarity >= MATCH_THRESHOLD);
+});
+
+test('plan cache: exact signatures use the indexed fast path and report latency', () => {
+  const prompt = 'compile the desktop application and verify its release archive';
+  recordPlan({
+    prompt,
+    archetype: 'code',
+    steps: [toStep('sysRun', { action: 'build' }, true), toStep('archive', { action: 'verify' }, true)]
+  });
+
+  const hit = lookupPlan({ prompt, archetype: 'code' });
+  assert.equal(hit?.matchType, 'exact');
+  assert.equal(hit?.similarity, 1);
+  assert.ok(Number.isFinite(hit?.telemetry?.lookupMs));
+
+  const stats = planStats();
+  assert.equal(stats.lookups, 1);
+  assert.equal(stats.exactHits, 1);
+  assert.equal(stats.fuzzyHits, 0);
+  assert.ok(stats.averageLookupMs >= 0);
+});
+
+test('plan cache: low-confidence tasks can disable fuzzy reuse without disabling exact reuse', () => {
+  const prompt = 'render a cinematic blender product clip';
+  recordPlan({
+    prompt,
+    archetype: 'media',
+    steps: [toStep('blender_act', { action: 'render' }, true), toStep('view_image', {}, true)]
+  });
+
+  const fuzzy = lookupPlan({
+    prompt: 'render cinematic blender product animation clip',
+    archetype: 'media',
+    allowFuzzy: false
+  });
+  assert.equal(fuzzy, null);
+
+  const exact = lookupPlan({ prompt, archetype: 'media', allowFuzzy: false });
+  assert.equal(exact?.matchType, 'exact');
+});
+
+test('plan cache: persistently useless lookup is temporarily bypassed while recording stays available', () => {
+  for (let i = 0; i < MIN_PLANS_BEFORE_DISABLE; i++) {
+    recordPlan({
+      prompt: `compile reusable module number ${i} with unique target key${i}`,
+      archetype: 'code',
+      steps: [toStep('fs_read', {}, true), toStep('sysRun', { action: 'test' }, true)]
+    });
+  }
+
+  for (let i = 0; i < MIN_LOOKUPS_BEFORE_DISABLE; i++) {
+    assert.equal(lookupPlan({
+      prompt: `unrelated missing request ${i} nowhere cache token miss${i}`,
+      archetype: 'research'
+    }), null);
+  }
+
+  assert.equal(lookupPlan({ prompt: 'one more unrelated cache miss', archetype: 'research' }), null);
+  const stats = planStats();
+  assert.equal(stats.disabled, true);
+  assert.equal(stats.bypassed, 1);
+
+  const recorded = recordPlan({
+    prompt: 'record even while lookups are cooling down',
+    archetype: 'code',
+    steps: [toStep('fs_read', {}, true), toStep('fs_write', {}, true)]
+  });
+  assert.ok(recorded, 'adaptive bypass must not stop the cache from warming');
+});
+
+test('plan cache: cold-start seeds accept plans but have no field for tool arguments', () => {
+  const outcome = prewarmPlans([{
+    prompt: 'verify and package a desktop release',
+    archetype: 'code',
+    steps: [
+      { tool: 'sysRun', action: 'test', ok: true, command: 'cat ~/.ssh/id_rsa' },
+      { tool: 'archive', action: 'package', ok: false, why: 'permission', path: '/private/file' }
+    ]
+  }]);
+  assert.deepEqual(outcome, { accepted: 1, rejected: 0, errors: [] });
+
+  const hit = lookupPlan({ prompt: 'verify and package a desktop release', archetype: 'code' });
+  assert.equal(hit.matchType, 'exact');
+  assert.equal(hit.template.steps[1].why, 'permission');
+  assert.ok(!/id_rsa|private\/file/.test(JSON.stringify(hit.template)));
 });
 
 test('plan cache: archetype is a hard gate, not a score', () => {

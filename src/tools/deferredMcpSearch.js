@@ -4,8 +4,8 @@
 // registry.js was always imported first. Loaded on demand instead — execute()
 // is async, so this costs nothing.
 async function toolDefinitions() {
-  const { TOOL_DEFINITIONS } = await import('./registry.js');
-  return TOOL_DEFINITIONS;
+  const { getSearchableToolDefinitions } = await import('./registry.js');
+  return getSearchableToolDefinitions();
 }
 import { PACKS, PACK_NAMES, packForTool, isCoreTool, isResidentTool } from '../toolPacks.js';
 

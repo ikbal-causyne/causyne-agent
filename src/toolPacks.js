@@ -106,6 +106,7 @@ export const PACKS = {
   ],
   advanced: [
     'tool_forge',
+    'plugin_manager',
     'agent_subagent_orchestrate',
     'code_search_ast',
     'code_list_symbols',
@@ -364,7 +365,7 @@ const MEDIA_INTENT = /\b(image|images|picture|photo|gambar|render|3d model|blend
 
 const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|cetak|open in browser|launch app)\b/i;
 
-const ADVANCED_INTENT = /\b(pdf|forge a tool|custom tool|new tool|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
+const ADVANCED_INTENT = /\b(pdf|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 
 const INTENT_MATCHERS = {
   game: GAME_INTENT,
@@ -457,9 +458,11 @@ export function resolveActiveTools(allDefinitions, unlockedPacks, unlockedTools,
       return isResidentTool(def.name) || tools.has(def.name);
     }
     if (tools.has(def.name)) return true;
+    if (def.xCausyneDeferred === true) return false;
     const memberOf = packsForTool(def.name);
-    // A tool with no declared pack is a forged/custom tool: always available,
-    // because the user explicitly created it for this machine.
+    // A native tool with no declared pack stays available. Manifest plugins are
+    // marked xCausyneDeferred and enter through tool_search, so enabling many
+    // plugins does not permanently spend their schemas on unrelated tasks.
     if (!memberOf) return true;
     for (const pack of memberOf) {
       if (packs.has(pack)) return true;

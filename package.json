@@ -1,6 +1,6 @@
 {
   "name": "@causyne/agent",
-  "version": "1.10.12",
+  "version": "1.10.13",
   "description": "Agentic AI for software, tools, and computer workflows",
   "main": "bin/causyne.js",
   "type": "module",
@@ -24,6 +24,7 @@
     "start": "node ./bin/causyne.js",
     "test": "node --test --import ./tests/helpers/isolateState.js \"tests/**/*.test.js\"",
     "build": "node scripts/compile_skills.js",
+    "benchmark:plan-cache": "node src/benchmarks/planCache.js",
     "check:release": "node scripts/check_release.js",
     "check:public": "npm run check:release && node scripts/check_public_release.js",
     "prepublishOnly": "npm run check:public && npm test && npm run typecheck:strict",

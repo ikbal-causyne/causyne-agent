@@ -18,7 +18,7 @@ const PACK_SIGNALS = {
     weak: ['process', 'proses', 'compress', 'extract', 'ekstrak', 'open app', 'launch']
   },
   advanced: {
-    strong: ['pdf', 'forge a tool', 'custom tool', 'subagent', 'sub-agent', 'parallel agent'],
+    strong: ['pdf', 'forge a tool', 'custom tool', 'plugin', 'plugins', 'custom plugin', 'subagent', 'sub-agent', 'parallel agent'],
     weak: ['symbols', 'ast', 'refactor', 'orchestrate', 'swarm']
   }
 };

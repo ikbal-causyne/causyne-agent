@@ -44,7 +44,7 @@ function serialiseContent(content) {
  * Records what was attempted, which files were touched and what failed —
  * exactly the things the agent asks itself again ten steps later.
  */
-function buildStructuralSummary(droppedMessages) {
+export function buildStructuralSummary(droppedMessages) {
   const toolCounts = new Map();
   const touchedPaths = new Set();
   const failures = [];

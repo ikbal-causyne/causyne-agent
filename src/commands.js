@@ -426,6 +426,89 @@ export const COMMANDS = [
   },
 
   {
+    name: 'plans',
+    scope: 'local',
+    usage: '/plans [import <json-file> | forget]',
+    description: 'Inspect, pre-warm, or clear reusable task plans',
+    dialogTitle: 'Plan cache',
+    run: async (args = []) => {
+      const cache = await import('./planCache.js');
+      const verb = String(args[0] || '').toLowerCase();
+
+      if (verb === 'forget') {
+        const removed = cache.forgetPlans();
+        return ok(`Forgot ${removed} cached plan${removed === 1 ? '' : 's'}.`);
+      }
+
+      if (verb === 'import') {
+        const requested = args.slice(1).join(' ').trim();
+        if (!requested) return fail('Usage: /plans import <json-file>');
+        const file = path.resolve(requested.replace(/^~(?=\/)/, os.homedir()));
+        try {
+          const stat = fs.statSync(file);
+          if (!stat.isFile() || stat.size > 1024 * 1024) {
+            return fail('Plan seed must be one JSON file no larger than 1 MB.');
+          }
+          const outcome = cache.prewarmPlans(JSON.parse(fs.readFileSync(file, 'utf8')));
+          const detail = outcome.errors.length > 0 ? `\n${outcome.errors.join('\n')}` : '';
+          return outcome.accepted > 0
+            ? ok(`Imported ${outcome.accepted} plan${outcome.accepted === 1 ? '' : 's'}; rejected ${outcome.rejected}.${detail}`)
+            : fail(`No plans were imported.${detail}`);
+        } catch (error) {
+          return fail(`Could not import plan seeds: ${error.message}`);
+        }
+      }
+
+      const stats = cache.planStats();
+      return ok([
+        `${stats.count} cached plan${stats.count === 1 ? '' : 's'}`,
+        `Hits: ${stats.hits}/${stats.lookups} (${(stats.hitRate * 100).toFixed(1)}%) — exact ${stats.exactHits}, fuzzy ${stats.fuzzyHits}`,
+        `Average lookup: ${stats.averageLookupMs.toFixed(3)} ms; max ${stats.maxLookupMs.toFixed(3)} ms`,
+        stats.disabled
+          ? `Lookup cooling down until ${new Date(stats.disabledUntil).toISOString()} after persistent misses.`
+          : 'Lookup active.',
+        '',
+        'Pre-warm with /plans import <json-file>. Clear with /plans forget.'
+      ].join('\n'));
+    }
+  },
+
+  {
+    name: 'plugins',
+    scope: 'local',
+    usage: '/plugins [enable <name> | disable <name>]',
+    description: 'Inspect or change trust for local plugins',
+    dialogTitle: 'Plugins',
+    run: async (args = []) => {
+      const manager = await import('./plugins/pluginManager.js');
+      const verb = String(args[0] || '').toLowerCase();
+      const name = String(args[1] || '');
+      if (verb === 'enable') {
+        if (!name) return fail('Usage: /plugins enable <name>');
+        const result = manager.enablePlugin(name);
+        return result.ok
+          ? ok(`Enabled ${name} at manifest digest ${result.digest}. Changes will revoke trust automatically.`)
+          : fail(`Could not enable ${name}: ${result.error}`);
+      }
+      if (verb === 'disable') {
+        if (!name) return fail('Usage: /plugins disable <name>');
+        const result = manager.disablePlugin(name);
+        return result.ok ? ok(`Disabled ${name}.`) : fail(`Could not disable ${name}: ${result.error}`);
+      }
+
+      const rows = manager.listPlugins();
+      if (rows.length === 0) return ok(`No local plugins. Plugin root: ${manager.PLUGIN_ROOT}`);
+      return ok(rows.map((plugin) => {
+        const state = plugin.invalid ? 'invalid' : plugin.modified ? 'modified; trust revoked' : plugin.enabled ? 'enabled' : 'disabled';
+        const capabilities = Array.isArray(plugin.capabilities) && plugin.capabilities.length > 0
+          ? plugin.capabilities.join(', ')
+          : 'none';
+        return `  ${plugin.name} ${plugin.version || ''} — ${state}; capabilities: ${capabilities}`;
+      }).join('\n') + `\n\nPlugin root: ${manager.PLUGIN_ROOT}`);
+    }
+  },
+
+  {
     name: 'sessions',
     aliases: ['session'],
     scope: 'local',

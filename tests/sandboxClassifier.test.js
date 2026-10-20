@@ -23,8 +23,10 @@ process.env.USERPROFILE = tmpHome;
 process.env.CAUSYNE_HOME = path.join(tmpHome, '.causyne');
 
 let classify;
+let SandboxClass;
 before(async () => {
   const { Sandbox } = await import('../src/sandbox.js');
+  SandboxClass = Sandbox;
   const sandbox = new Sandbox();
   classify = (cmd) => sandbox.classifyCommandRisk(cmd);
 });
@@ -66,4 +68,13 @@ describe('classifier — existing behaviour preserved', () => {
     assert.strictEqual(classify('ls -la'), 'safe');
     assert.strictEqual(classify('echo "rm -rf /"'), 'safe');
   });
+});
+
+test('denied tools are blocked at runtime even if the model remembers a hidden name', () => {
+  const sandbox = new SandboxClass();
+  sandbox.deniedTools = new Set(['fs_write']);
+  const decision = sandbox.validate('fs_write', { path: path.join(process.cwd(), 'blocked.txt') });
+  assert.strictEqual(decision.allowed, false);
+  assert.strictEqual(decision.risk, 'forbidden');
+  assert.match(decision.reason, /denied by local policy/);
 });
