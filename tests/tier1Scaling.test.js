@@ -282,6 +282,23 @@ test('plan cache: a corrupt store degrades to a cold one, never to a crash', asy
   assert.equal(lookupPlan({ prompt: 'anything at all', archetype: 'code' }), null);
 });
 
+test('plan cache: valid JSON with an invalid shape never enters the typed runtime', async () => {
+  const { PLAN_FILE } = await import('../src/planCache.js');
+  fs.writeFileSync(PLAN_FILE, JSON.stringify([{
+    id: 'poisoned-plan',
+    archetype: 'code',
+    keywords: [42],
+    steps: [{ tool: 'sysRun', note: 'test', ok: 'yes' }],
+    uses: 'many',
+    wins: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }]));
+
+  assert.doesNotThrow(() => lookupPlan({ prompt: 'anything at all', archetype: 'code' }));
+  assert.equal(planStats().count, 0, 'a malformed persisted template was trusted');
+});
+
 test('plan cache: similarity is symmetric and bounded', () => {
   const a = ['blender', 'render', 'clip'];
   const b = ['blender', 'render', 'pen'];

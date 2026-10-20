@@ -21,6 +21,6 @@
     "sourceMap": false,
     "noEmitOnError": true
   },
-  "include": ["src/sessionJournal.ts", "src/plugins/pluginSkills.ts", "src/agentProfiles.ts", "src/subagentJournal.ts", "src/taskShape.ts"],
+  "include": ["src/sessionJournal.ts", "src/plugins/pluginSkills.ts", "src/agentProfiles.ts", "src/subagentJournal.ts", "src/taskShape.ts", "src/hooks.ts", "src/approvalGrants.ts", "src/planCache.ts"],
   "exclude": ["node_modules", "dist", "tests", "scripts", "native-skills"]
 }

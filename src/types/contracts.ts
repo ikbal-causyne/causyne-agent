@@ -130,6 +130,63 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
+export type HookEvent = 'PreToolUse' | 'PostToolUse';
+
+export interface HookRule {
+  event: HookEvent;
+  command: string[];
+  name?: string;
+  tool?: string;
+  tools?: string[];
+  timeoutMs?: number;
+  enabled?: boolean;
+}
+
+export interface HookDecision {
+  denied: boolean;
+  messages: string[];
+  reason?: string;
+}
+
+export type PlanFailureClass =
+  | 'not_found'
+  | 'permission'
+  | 'timeout'
+  | 'network'
+  | 'rate_limited'
+  | 'invalid_args'
+  | 'syntax'
+  | 'exit_nonzero'
+  | 'failed';
+
+export interface PlanStep {
+  tool: string;
+  note: string;
+  ok: boolean;
+  why?: PlanFailureClass;
+}
+
+export interface PlanTemplate {
+  id: string;
+  archetype: string;
+  keywords: string[];
+  steps: PlanStep[];
+  uses: number;
+  wins: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlanMatch {
+  template: PlanTemplate;
+  similarity: number;
+  matchType: 'exact' | 'fuzzy';
+  telemetry: {
+    keywordCount: number;
+    lookupMs: number;
+  };
+}
+
 export type PluginCapability = 'workspace:read' | 'workspace:write' | 'network' | 'subprocess';
 
 export interface PluginToolManifest {

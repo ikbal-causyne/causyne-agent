@@ -36,15 +36,15 @@ are application policies and require adversarial review.
 | Models | `providers/`, `modelCatalogue.js` |
 | Context and memory | `memory.js`, `memoryManager.js`, `contextManager.js`, `cortex/` |
 | Recovery | `checkpoints.js`, `gitSnapshot.js`, `sessionJournal.ts`, `sessionStore.js` |
-| Extensions | `mcp/`, `plugins/`, `hooks.js`, `skillsManager.js`, `toolPacks.js` |
+| Extensions | `mcp/`, `plugins/`, `hooks.ts`, `skillsManager.js`, `toolPacks.js` |
 | Readable interpreter source | `src/tool-scripts/` |
 
 The shipping runtime is ESM on Node.js 24+. Incremental strict TypeScript
 migration is active: `tsconfig.runtime.json` emits readable JavaScript beside
 strict TypeScript runtime modules, shared contracts live under `src/types/`,
 and retained JavaScript has a separately named migration ratchet. Session,
-plugin-skill, task-shape and delegated-agent boundaries now compile from strict
-TypeScript.
+plugin-skill, task-shape, delegated-agent, hook, approval-grant and plan-cache
+boundaries now compile from strict TypeScript.
 Runtime validation is still required at model, filesystem, subprocess and
 extension boundaries. Rust is reserved for a measured, narrow native worker;
 no Rust rewrite is underway.
@@ -104,7 +104,9 @@ Completed multi-step runs teach argument-free plan templates. Lookup tries an
 indexed exact signature first, then bounded lexical similarity only for a task
 shape with enough confidence. Latency, hit type and recent hit rate are recorded;
 lookup temporarily cools down when a populated cache repeatedly misses while
-new successful plans may continue warming it. `/plans import` accepts sanitized
+new successful plans may continue warming it. Persisted plans and metrics are
+validated before entering the typed runtime; malformed entries are ignored.
+`/plans import` accepts sanitized
 offline samples for known workloads, and `/plans` exposes the measurements.
 `npm run benchmark:plan-cache` measures exact lookup, fuzzy lookup, misses and
 prewarming at bounded cache sizes in an isolated temporary state directory. It

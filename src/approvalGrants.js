@@ -8,7 +8,7 @@
 //
 // THE SCOPE IS THE PROCESS, AND THAT IS THE WHOLE SAFETY MODEL.
 // This is a module-level Set. It is never written to config.json, never
-
+// serialized, and never restored. When the process ends, every standing
 // approval is gone — the same contract opencode states to the user in its own
 // words: "This will allow … until OpenCode is restarted."
 //
@@ -17,50 +17,32 @@
 // a session the user has forgotten they configured. If that is ever wanted it
 // should be an explicit, listed, revocable config entry — not a quiet
 // side-effect of a keypress in a modal.
-
 /** Tool names approved for the rest of this process. Deliberately in memory. */
 const standingApprovals = new Set();
-
-/**
- * Record a standing approval for one tool.
- *
- * @param {string} toolName  Canonical tool name, e.g. 'sysRun'.
- */
+function normalizeToolName(toolName) {
+    return String(toolName || '').trim();
+}
+/** Record a standing approval for one canonical tool name. */
 export function grantAlways(toolName) {
-  const name = String(toolName || '').trim();
-  if (name) standingApprovals.add(name);
+    const name = normalizeToolName(toolName);
+    if (name)
+        standingApprovals.add(name);
 }
-
-/**
- * True when this tool may run without asking again.
- *
- * @param {string} toolName
- * @returns {boolean}
- */
+/** True when this tool may run without asking again. */
 export function isAlwaysAllowed(toolName) {
-  return standingApprovals.has(String(toolName || '').trim());
+    return standingApprovals.has(normalizeToolName(toolName));
 }
-
 /** Every standing approval, for `/approvals` and for the audit trail. */
 export function listAlwaysAllowed() {
-  return [...standingApprovals].sort();
+    return [...standingApprovals].sort();
 }
-
-/**
- * Take them all back.
- *
- * A grant with no way out is a trap, so this is reachable from `/approvals
- * clear` as well as from a restart.
- *
- * @returns {number} how many were revoked
- */
+/** Take every standing approval back and return how many were revoked. */
 export function revokeAllAlways() {
-  const count = standingApprovals.size;
-  standingApprovals.clear();
-  return count;
+    const count = standingApprovals.size;
+    standingApprovals.clear();
+    return count;
 }
-
-/** Revoke one. @returns {boolean} true when there was something to revoke. */
+/** Revoke one standing approval. */
 export function revokeAlways(toolName) {
-  return standingApprovals.delete(String(toolName || '').trim());
+    return standingApprovals.delete(normalizeToolName(toolName));
 }
