@@ -87,7 +87,8 @@ export const PACKS = {
     'blender_act',
     'creative_apps',
     'resolve_act',
-    'palmier_act'
+    'palmier_act',
+    'document_forge'
   ],
   system: [
     // Channel B of the Three-Channel Doctrine: reading the screen as structured
@@ -110,6 +111,7 @@ export const PACKS = {
   advanced: [
     'tool_forge',
     'plugin_manager',
+    'document_forge',
     'agent_subagent_orchestrate',
     'code_search_ast',
     'code_list_symbols',
@@ -370,7 +372,7 @@ const MEDIA_INTENT = /\b(image|images|picture|photo|gambar|render|3d model|blend
 
 const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|cetak|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
 
-const ADVANCED_INTENT = /\b(pdf|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
+const ADVANCED_INTENT = /\b(pdf|document|proposal|dokumen|screenplay|naskah|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 
 const INTENT_MATCHERS = {
   game: GAME_INTENT,

@@ -59,7 +59,11 @@
     "src/computerUse/visionGrounding.ts",
     "src/tools/computerUse.ts",
     "src/uiEngine/uiForge.ts",
-    "src/tools/uiForge.ts"
+    "src/tools/uiForge.ts",
+    "src/documentEngine/antiSlopAuditor.ts",
+    "src/documentEngine/screenplayFormatter.ts",
+    "src/documentEngine/documentForge.ts",
+    "src/tools/documentForge.ts"
   ],
   "exclude": [
     "node_modules",
