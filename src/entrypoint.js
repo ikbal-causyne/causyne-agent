@@ -90,7 +90,8 @@ program
 
 program
   .command('config')
-  .description('Configure Direct API Provider (Interactive)')
+  .alias('setup')
+  .description('Guided provider, endpoint, model and autonomy setup')
   .option('-p, --provider <name>', 'Set LLM provider (openai, anthropic, gemini, muse, ollama, dashscope, deepseek)')
   .option('-k, --apikey <key>', 'Set API key')
   .option('-m, --model <name>', 'Set model name')

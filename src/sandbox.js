@@ -298,6 +298,10 @@ export class Sandbox {
       return { allowed: true, risk: 'safe' };
     }
 
+    if (toolName === 'creative_apps') {
+      return { allowed: true, risk: args.action === 'status' ? 'safe' : 'dangerous' };
+    }
+
     if (toolName === 'game_asset_fetch' && args.action === 'download_asset') {
       if (!args.url || this.isInternalUrl(args.url)) {
         return { allowed: false, reason: 'Cannot download from an internal or invalid URL', risk: 'forbidden' };

@@ -51,6 +51,8 @@ export function requiresImplementationPlan(prompt, archetype = '', confidence = 
     return containsAny(text, ARCHITECTURE_TERMS) && containsAny(text, CHANGE_TERMS);
 }
 export function isMutatingToolCall(toolName, args = {}) {
+    if (toolName === 'creative_apps')
+        return args.action !== 'status';
     if (MUTATING_TOOLS.has(toolName)) {
         if (toolName === 'sysRun' || toolName === 'sysRunBg') {
             const command = String(args.command ?? '');

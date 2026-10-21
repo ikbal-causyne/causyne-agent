@@ -38,7 +38,15 @@ export class SelectLayer extends Layer {
       emptyText: options.emptyText
     });
     this.onPick = options.onPick || null;
+    this.settled = false;
     this.footer = options.footer || dialogHint();
+  }
+
+  /** Dismissal must resolve pending picker flows, just like text inputs. */
+  answer() {
+    if (this.settled) return;
+    this.settled = true;
+    if (this.onPick) this.onPick(null);
   }
 
   preferredHeight() {
@@ -66,7 +74,9 @@ export class SelectLayer extends Layer {
 
     if (action === 'select') {
       const item = this.list.current;
+      this.settled = true;
       const result = this.onPick ? this.onPick(item) : null;
+      if (result === 'keep') this.settled = false;
       return result === 'keep' ? 'handled' : 'close';
     }
     if (action === 'cancel') return 'close';
