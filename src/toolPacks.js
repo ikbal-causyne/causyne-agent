@@ -76,7 +76,8 @@ export const PACKS = {
     'screenshot',
     'vision_inspect_ui',
     'view_image',
-    'astryx_oracle'
+    'astryx_oracle',
+    'openui_generate'
   ],
   media: [
     'generate_media_via_api',
@@ -96,6 +97,7 @@ export const PACKS = {
     // Channel C. Ships beside its observer on purpose: acting on a screen you
     // have not read is how an agent clicks the wrong button confidently.
     'desktop_act',
+    'computer_use',
     'process_list',
     'proc_term',
     'archive',
@@ -362,11 +364,11 @@ When the user asks you to build, create, test, expand, or develop ANY game, you 
 
 const GAME_INTENT = /\b(game|games|gamedev|permainan|godot|unity|unreal|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight)\b|\.(tscn|gd)\b/i;
 
-const WEB_INTENT = /\b(web|webpage|website|situs|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive)\b/i;
+const WEB_INTENT = /\b(web|webpage|website|situs|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|openui|component generation|ui component)\b/i;
 
 const MEDIA_INTENT = /\b(image|images|picture|photo|gambar|render|3d model|blender|animation|animate|video|movie|film|klip|audio|sound|sfx|music|musik|song|lagu|voice|suara|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
 
-const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|cetak|open in browser|launch app)\b/i;
+const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|cetak|open in browser|launch app|computer use|ui tars|gui agent|coordinate click|desktop control)\b/i;
 
 const ADVANCED_INTENT = /\b(pdf|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 

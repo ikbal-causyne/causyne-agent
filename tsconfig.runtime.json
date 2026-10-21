@@ -55,7 +55,11 @@
     "src/tools/creativeApps.ts",
     "src/creative/studioScripts.ts",
     "src/creative/pipeline.ts",
-    "src/dynamicCatalogue.ts"
+    "src/dynamicCatalogue.ts",
+    "src/computerUse/uiTars.ts",
+    "src/tools/computerUse.ts",
+    "src/uiEngine/openUi.ts",
+    "src/tools/openUi.ts"
   ],
   "exclude": [
     "node_modules",

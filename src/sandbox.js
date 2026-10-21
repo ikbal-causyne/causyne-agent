@@ -357,8 +357,11 @@ export class Sandbox {
     
     // Mode C. Section 4 says gated, not walled — the capability is real, the
     // human just says yes first.
-    if (toolName === 'desktop_act') {
+    if (toolName === 'desktop_act' || toolName === 'computer_use') {
       return { allowed: true, risk: 'extreme' };
+    }
+    if (toolName === 'openui_generate') {
+      return { allowed: true, risk: 'safe' };
     }
     if (toolName === 'fs_write' || toolName === 'fs_move' || toolName === 'fs_edit' || toolName === 'MultiEdit') {
       return { allowed: true, risk: 'moderate' };
