@@ -54,6 +54,7 @@ import os from 'os';
 import { analyzeFiles, formatFindings, isScannableFile } from './slopDetector.js';
 import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
+import { resolveMentionedContext } from './promptMentions.js';
 
 const SYSTEM_PROMPT = `You are Causyne Agent, a God-Tier Autonomous AI. You operate the user's computer through a local desktop harness. You are not just a coding assistant; you are a general-purpose superintelligence.
 
@@ -378,6 +379,7 @@ export class AgentLoop {
     // prompt-cache prefix intact when a pack loads mid-task.
     this.unlockOrder = [];
     this.workspaceContext = null;
+    this.activeSubproject = null;
     this.taskShape = null;
     // Budget for the billed Tier 2 Cortex condensation pass.
     this._cortexPassesUsed = 0;
@@ -964,6 +966,36 @@ export class AgentLoop {
     }
 
     if (this.userPrompt) {
+      // 1b. RESOLVE @ MENTIONS FOR REFERENCED FILES, DIRECTORIES & SUBPROJECTS
+      try {
+        const subprojects = this.workspaceContext?.subprojects || [];
+        const mentionResult = await resolveMentionedContext(this.userPrompt, {
+          cwd: process.cwd(),
+          subprojects
+        });
+
+        if (mentionResult.detectedSubproject) {
+          this.activeSubproject = mentionResult.detectedSubproject;
+          this.notice(`Focused on subproject '${mentionResult.detectedSubproject}'`);
+        } else if (subprojects.length > 0) {
+          const lowerPrompt = this.userPrompt.toLowerCase();
+          for (const sp of subprojects) {
+            if (lowerPrompt.includes(sp.toLowerCase())) {
+              this.activeSubproject = sp;
+              this.notice(`Focused on subproject '${sp}'`);
+              break;
+            }
+          }
+        }
+
+        if (mentionResult.referencedContext) {
+          this.userPrompt += mentionResult.referencedContext;
+          this.notice(`Loaded ${mentionResult.mentions.length} referenced @ mention(s) into context`);
+        }
+      } catch (mentionErr) {
+        this.debugLog(`mention resolution error: ${mentionErr.message}`);
+      }
+
       this.currentTaskPrompt = this.userPrompt; // Save for notification later
       
       // V5: Multimodal Attachments Support
@@ -1210,12 +1242,15 @@ export class AgentLoop {
           const ctx = this.workspaceContext;
           const facts = [
             ctx.cwd && `Working directory: ${ctx.cwd}`,
+            this.activeSubproject && `Active project focus: ${this.activeSubproject}`,
+            ctx.projectName && `Workspace project: ${ctx.projectName}`,
             ctx.os && `OS: ${ctx.os}`,
             ctx.framework && `Framework: ${ctx.framework}`,
             ctx.projectType && `Project type: ${ctx.projectType}`,
             ctx.packageManager && `Package manager: ${ctx.packageManager}`,
             ctx.gitBranch && `Git branch: ${ctx.gitBranch}`,
             ctx.gitStatus && `Git status: ${ctx.gitStatus}`,
+            Array.isArray(ctx.subprojects) && ctx.subprojects.length > 0 && `Subprojects in workspace: ${ctx.subprojects.join(', ')}`,
             Array.isArray(ctx.keyFiles) && ctx.keyFiles.length > 0 && `Key files: ${ctx.keyFiles.slice(0, 25).join(', ')}`
           ].filter(Boolean);
           if (facts.length > 0) {

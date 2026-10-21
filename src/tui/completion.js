@@ -59,6 +59,7 @@ export function score(candidate, query) {
 
   const base = haystack.slice(haystack.lastIndexOf('/') + 1);
   if (base.startsWith(needle)) return 800 - candidate.length;
+  if (haystack.includes(needle)) return 700 - candidate.length;
   if (base.includes(needle)) return 600 - candidate.length;
 
   // Subsequence: every character of the query in order, gaps allowed. This is
@@ -79,17 +80,25 @@ export function score(candidate, query) {
 /**
  * Score, sort and cap — and report how many matched BEFORE the cap.
  *
- * The cap exists for the file index, which can hold tens of thousands of paths.
- * But the picker's "… N more" line was computed from the capped array, so with
- * 115 skill entries it announced "42 more" when 107 were reachable by scrolling.
- * A count that is wrong is worse than no count: it tells the user to stop
- * looking. The total travels with the items so the caller can say the truth.
+ * If focusDir is supplied (e.g. active subproject like 'pixel2d games'),
+ * items belonging to that directory receive a priority boost so the user's
+ * active workspace files are never buried by unrelated paths.
  */
-function rank(items, query, limit = 50) {
+function rank(items, query, limit = 50, focusDir = null) {
   const scored = [];
+  const focusPrefix = focusDir
+    ? (focusDir.endsWith('/') ? focusDir.toLowerCase() : focusDir.toLowerCase() + '/')
+    : null;
+
   for (const item of items) {
-    const value = score(item.match !== undefined ? item.match : item.value, query);
-    if (value >= 0) scored.push({ item, value });
+    const val = item.match !== undefined ? item.match : item.value;
+    let value = score(val, query);
+    if (value >= 0) {
+      if (focusPrefix && val.toLowerCase().startsWith(focusPrefix)) {
+        value += 3000;
+      }
+      scored.push({ item, value });
+    }
   }
   scored.sort((a, b) => b.value - a.value);
   const ranked = scored.slice(0, limit).map((entry) => entry.item);
@@ -227,6 +236,8 @@ export class FileIndex {
         if (entry.isDirectory()) {
           if (SKIP_DIRECTORIES.has(entry.name) || depth >= MAX_INDEX_DEPTH) continue;
           queue.push({ dir: full, depth: depth + 1 });
+          const relDir = path.relative(this.root, full) + '/';
+          if (isTerminalSafe(relDir)) found.push(relDir);
           continue;
         }
         if (!entry.isFile()) continue;
@@ -321,10 +332,26 @@ export function detectTrigger(text, cursor) {
     };
   }
 
-  const mention = before.match(/(?:^|\s)@([^\s@]*)$/);
+  // 1. Quoted @ file mention: @"pixel2d games/ or @'pixel2d games/
+  // Supports spaces in directory or file names
+  const quotedMention = before.match(/(?:^|\s)@(["'])([^"']*)$/);
+  if (quotedMention) {
+    const quote = quotedMention[1];
+    const query = quotedMention[2];
+    return {
+      kind: 'file',
+      quote,
+      start: cursor - query.length - 2, // accounts for @ and quote char
+      query
+    };
+  }
+
+  // 2. Unquoted @ file mention: @alpha or @src/
+  const mention = before.match(/(?:^|\s)@([^\s@"']*)$/);
   if (mention) {
     return {
       kind: 'file',
+      quote: null,
       start: cursor - mention[1].length - 1,
       query: mention[1]
     };
@@ -356,15 +383,41 @@ export function suggest(text, cursor, options = {}) {
 
   const root = options.root || process.cwd();
   const index = options.index;
+  const focusDir = options.focusDir || null;
   if (index && !index.isReady) index.ensure();
 
-  const pool = index && index.isReady && trigger.query.includes('/') === false && trigger.query
-    ? index.entries.map((relative) => ({
-        value: relative, match: relative, label: relative, description: ''
-      }))
-    : directoryItems(root, trigger.query);
+  let pool;
+  if (index && index.isReady && trigger.query) {
+    pool = index.entries.map((relative) => ({
+      value: relative,
+      match: relative,
+      label: relative,
+      description: relative.endsWith('/') ? 'directory' : ''
+    }));
+  } else {
+    pool = directoryItems(root, trigger.query);
+    if (focusDir) {
+      const focusTarget = path.resolve(root, focusDir);
+      try {
+        if (fs.existsSync(focusTarget) && fs.statSync(focusTarget).isDirectory()) {
+          const focusedItems = directoryItems(focusTarget, trigger.query).map((item) => ({
+            ...item,
+            value: `${focusDir}/${item.value}`,
+            match: `${focusDir}/${item.value}`,
+            label: `${focusDir}/${item.label}`
+          }));
+          pool = pool.concat(focusedItems);
+        }
+      } catch (e) {}
+    }
+  }
 
-  const items = rank(pool, trigger.query.slice(trigger.query.lastIndexOf('/') + 1));
+  // If index had no ready matches for a path with slashes, fall back to directory items
+  if (pool.length === 0 && trigger.query.includes('/')) {
+    pool = directoryItems(root, trigger.query);
+  }
+
+  const items = rank(pool, trigger.query, 50, focusDir);
   if (items.length === 0) return null;
   return { ...trigger, items, total: items.total };
 }
@@ -374,39 +427,42 @@ export function applyCompletion(text, cursor, trigger, item) {
   if (trigger.kind === 'command-argument') {
     const head = text.slice(0, trigger.start);
     const tail = text.slice(cursor);
-
-    // A COMPLETE argument gets a trailing space; a partial one does not.
-    //
-    // This was written the other way round, on the theory that a space would
-    // reopen the picker on a value still being edited. It does not — a
-    // completed argument followed by a space matches no trigger at all. What it
-    // actually did was run the user's next words straight into the argument:
-    // accepting `python/data-processing-pipelines` and typing a question gave
-    // `/skills python/data-processing-pipelineswhy my data is like this ?` and
-    // a "skill not found" error.
-    //
-    // The distinction is the same one file completion already makes between a
-    // directory and a file: a domain (`devops`) is a place you may want to
-    // descend into with `/`, so it gets no space; a full `domain/skill` id is
-    // finished, so it gets one and the next thing typed is the instruction.
     const complete = item.value.includes('/');
     const replaced = head + item.value + (complete ? ' ' : '');
     return { text: replaced + tail, cursor: replaced.length };
   }
 
-  const value = trigger.kind === 'command' ? item.value : '@' + item.value;
+  if (trigger.kind === 'command') {
+    const head = text.slice(0, trigger.start);
+    const tail = text.slice(cursor);
+    const replaced = head + item.value + ' ';
+    return { text: replaced + tail, cursor: replaced.length };
+  }
+
+  // trigger.kind === 'file'
   const head = text.slice(0, trigger.start);
   const tail = text.slice(cursor);
-  // A directory keeps the picker useful: no trailing space, so the next
-  // keystroke drills in rather than starting a new word.
-  //
-  // Everything else — including a skill picked from the slash menu, whose value
-  // is a whole `/skills domain/id` command — gets one, so the next thing typed
-  // is a new word rather than more of the last one. The exclusion that used to
-  // sit here for values containing a space was the same mistake as above: it
-  // made `/docker` complete to `/skills devops/docker-multi-stage-builds` with
-  // nothing after it, and the user's instruction fused onto the id.
-  const suffix = (trigger.kind === 'file' && item.value.endsWith('/')) ? '' : ' ';
+  const isDir = item.value.endsWith('/');
+  const hasSpace = item.value.includes(' ');
+  const quote = trigger.quote || (hasSpace ? '"' : '');
+
+  let value;
+  let suffix;
+  if (quote) {
+    if (isDir) {
+      // Drilling into directory: open quote without closing quote, no trailing space
+      value = `@${quote}${item.value}`;
+      suffix = '';
+    } else {
+      // Complete file: close quote and add trailing space
+      value = `@${quote}${item.value}${quote}`;
+      suffix = ' ';
+    }
+  } else {
+    value = '@' + item.value;
+    suffix = isDir ? '' : ' ';
+  }
+
   const replaced = head + value + suffix;
   return { text: replaced + tail, cursor: replaced.length };
 }

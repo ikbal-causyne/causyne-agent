@@ -84,6 +84,56 @@ export const COMMANDS = [
   },
 
   {
+    name: 'cd',
+    aliases: ['cwd', 'workspace'],
+    scope: 'local',
+    usage: '/cd [directory]',
+    description: 'View or change active working directory and project focus',
+    complete: () => {
+      try {
+        const entries = fs.readdirSync(process.cwd(), { withFileTypes: true });
+        return entries
+          .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+          .map(e => ({
+            value: e.name.includes(' ') ? `"${e.name}"` : e.name,
+            label: e.name + '/',
+            description: 'directory'
+          }));
+      } catch (e) {
+        return [];
+      }
+    },
+    run: async (argv, ctx) => {
+      const target = argv.join(' ').trim().replace(/^["']|["']$/g, '');
+      if (!target) {
+        return ok(`Current working directory: ${process.cwd()}`);
+      }
+      const resolved = path.resolve(process.cwd(), target.replace(/^~\//, os.homedir() + '/'));
+      if (!fs.existsSync(resolved)) {
+        return fail(`Directory not found: ${resolved}`);
+      }
+      const stat = fs.statSync(resolved);
+      if (!stat.isDirectory()) {
+        return fail(`Not a directory: ${resolved}`);
+      }
+      try {
+        process.chdir(resolved);
+      } catch (err) {
+        return fail(`Cannot switch to ${resolved}: ${err.message}`);
+      }
+      if (ctx.prompt && typeof ctx.prompt.setWorkingRoot === 'function') {
+        ctx.prompt.setWorkingRoot(resolved);
+      }
+      if (ctx.loop && ctx.loop.perception) {
+        try {
+          ctx.loop.workspaceContext = await ctx.loop.perception.buildContext(resolved);
+        } catch (e) {}
+      }
+      return ok(`Working directory changed to: ${resolved}`);
+    }
+  },
+
+  {
     name: 'skill',
     scope: 'local',
     usage: '/skill new <domain>/<name> | /skill edit <domain>/<name> | /skill rm <domain>/<name> | /skill mine',

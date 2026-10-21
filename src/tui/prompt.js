@@ -20,7 +20,7 @@
 import { KeyDecoder, bracketedPaste } from './keys.js';
 import { LineEditor } from './lineEditor.js';
 import { PromptHistory } from './history.js';
-import { FileIndex, suggest, applyCompletion, renderPicker, MAX_VISIBLE } from './completion.js';
+import { FileIndex, suggest, applyCompletion, detectTrigger, renderPicker, MAX_VISIBLE } from './completion.js';
 import { paint, dim, bold, GLYPHS, terminalWidth, HAS_COLOR } from './theme.js';
 import { barBlock, GUTTER } from './block.js';
 import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay } from './text.js';
@@ -84,6 +84,7 @@ export class ChatPrompt {
     this.out = options.out || process.stdout;
     this.input = options.input || process.stdin;
     this.root = options.root || process.cwd();
+    this.focusDir = options.focusDir || null;
     this.onInterrupt = options.onInterrupt || (() => {});
 
     // The Stage, when one is running. Null means the scrollback renderer, which
@@ -920,6 +921,14 @@ export class ChatPrompt {
   // Completion
   // -------------------------------------------------------------------------
 
+  /** Dynamically re-target the prompt root and optional focused subproject. */
+  setWorkingRoot(newRoot, focusDir = null) {
+    this.root = newRoot;
+    this.focusDir = focusDir;
+    this.index = new FileIndex(newRoot);
+    this.index.ensure();
+  }
+
   cursorOffset() {
     const before = this.editor.lines
       .slice(0, this.editor.line)
@@ -929,13 +938,14 @@ export class ChatPrompt {
 
   openCompletion(force = false) {
     const text = this.editor.getText();
-    const result = suggest(text, this.cursorOffset(), { root: this.root, index: this.index });
+    const result = suggest(text, this.cursorOffset(), {
+      root: this.root,
+      index: this.index,
+      focusDir: this.focusDir
+    });
     if (!result) {
       if (force) this.notice = 'nothing to complete here';
-      // Close a picker whose trigger has gone. refreshCompletion() documents
-      // this ("close it when the trigger is gone") but this early return never
-      // did it — so typing past the end of an argument left the suggestions on
-      // screen, still offering matches for text that was no longer there.
+      // Close a picker whose trigger has gone.
       this.completion = null;
       return;
     }
@@ -946,19 +956,9 @@ export class ChatPrompt {
   /** Re-run completion after an edit; close it when the trigger is gone. */
   refreshCompletion() {
     if (!this.completion) {
-      // `/` at the start and `@` anywhere open the picker without a keystroke,
-      // which is the behaviour both openclaw and opencode settled on.
       const text = this.editor.getText();
       const offset = this.cursorOffset();
-      const tail = text.slice(0, offset);
-      // `/` at the start, `@` anywhere, and the argument of a slash command all
-      // open the picker without a keystroke. The third is what makes `/skills d`
-      // suggest as you type instead of only after Tab — the behaviour both
-      // references settled on, and the reason a hundred-skill library is usable
-      // by someone who already knows the name they want.
-      const opens = /^\/[a-z0-9_?-]*$/i.test(tail)
-        || /(?:^|\s)@[^\s@]*$/.test(tail)
-        || /^\/[a-z0-9_?-]+[ \t]+\S*$/i.test(tail);
+      const opens = Boolean(detectTrigger(text, offset));
       if (opens) this.openCompletion(false);
       return;
     }
