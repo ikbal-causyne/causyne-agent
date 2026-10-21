@@ -12,7 +12,7 @@ import { getPackageVersion } from './version.js';
 import { resolveCharPool } from './contextManager.js';
 import { PRIMARY_ACTIONS, homeStatusLine, homeHint, moreLayer, configureInPrompt, mcpPicker, PROVIDERS } from './tui/home.js';
 import { SelectLayer } from './tui/dialogs.js';
-import { askSelect, askText, askConfirm } from './tui/ask.js';
+import { askSelect, askText, askConfirm, askDecision } from './tui/ask.js';
 import { renderReport } from './reporting.js';
 import { grantAlways } from './approvalGrants.js';
 import { auditLog } from './auditLog.js';
@@ -151,6 +151,15 @@ function makeApprovalHandler(conn, dialogs = null) {
   };
 }
 
+/** Keep implementation choices distinct from tool permission decisions. */
+function makeDecisionHandler(conn, dialogs = null) {
+  return async (request) => {
+    conn.stopSpinner();
+    if (dialogs && typeof dialogs.decide === 'function') return await dialogs.decide(request);
+    return await askDecision(request);
+  };
+}
+
 /** Muted one-liner for menu feedback that is not success and not an error. */
 function dimNotice(text) { return paint('muted', text); }
 
@@ -263,6 +272,7 @@ export async function runTask(task) {
   
   // Local human-in-the-loop, showing WHAT is being approved (see L6).
   loop.waitForApproval = makeApprovalHandler(conn);
+  loop.waitForDecision = makeDecisionHandler(conn);
 
   await loop.run();
   console.log('\n\x1b[32m[DONE]\x1b[0m Task completed.\n');
@@ -322,6 +332,7 @@ export async function chatMode({ home = false } = {}) {
   });
   
   loop.waitForApproval = makeApprovalHandler(conn);
+  loop.waitForDecision = makeDecisionHandler(conn);
 
   // The prompt owns the keyboard so the chat can offer history, completion and
   // typing while a turn runs. It is skipped when stdin is not a terminal (piped
@@ -378,6 +389,7 @@ export async function chatMode({ home = false } = {}) {
       // prompt. The panel shows the risk, the arguments and a scrollable diff in
       // one frame, and dismissing it denies.
       loop.waitForApproval = makeApprovalHandler(conn, prompt);
+      loop.waitForDecision = makeDecisionHandler(conn, prompt);
       // From here the modal asks the question, so the renderer must stop
       // printing the full request into the transcript as well — see
       // ChatRenderer.onApprovalRequest().

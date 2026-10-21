@@ -20,6 +20,7 @@ import { analyzeTask, buildTaskBrief, packsFromShape } from './taskShape.js';
 import { lookupPlan, recordPlan, recordMiss, renderPlanHint, toStep } from './planCache.js';
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
+import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import {
   routePacks,
@@ -75,10 +76,14 @@ Specifically, you excel at:
 - **No Chitchat**: Tools are for actions, text output is *only* for communication. Do not add explanatory comments within tool calls or code blocks.
 - **File Paths**: ALWAYS output the absolute path of any file you create, modify, or generate so the user knows exactly where it is.
 
-# Task Management & Planning (TodoWrite)
-- ALWAYS use the TodoWrite tool to track and manage tasks before starting implementation. Create atomic, verb-led, clear outcome items.
+# Task Management & Planning
+- Use update_plan to create a visible implementation checklist before complex implementation. Create atomic, verb-led, verifiable steps and keep exactly one step in progress.
 - Check off completed TODOs immediately before reporting progress. Do not batch up multiple task completions.
 - Reconcile and close the todo list when all goal tasks are done. If the user asks you to implement, do not output a separate text-based plan. Just build and display the todo list.
+
+# Durable Decisions
+- Use request_decision when multiple materially different architecture, product, data, security, or workflow directions are valid. Give 2-4 concrete options with consequences; the UI adds a custom-answer choice.
+- A decision is separate from permission. Do not ask for routine implementation details that can be resolved from the repository. Even in Mode C, pause for an unresolved durable architecture decision before changing the system.
 
 # Maximize Parallel Tool Calls (Speed is Key)
 - CRITICAL INSTRUCTION: For maximum efficiency, whenever you perform multiple operations, invoke all relevant tools concurrently (in parallel) rather than sequentially. 
@@ -344,6 +349,12 @@ export class AgentLoop {
     this.circuitBreakerUnlocked = false;
     this.stopRequested = false;
     this.pendingApprovals = new Map(); // Maps toolCallId -> resolve function
+    this.waitForDecision = async () => null;
+    this._decisionAnswers = new Map();
+    this._decisionRequirement = { required: false, kind: 'architecture', reason: '' };
+    this._decisionResolved = true;
+    this._implementationPlan = [];
+    this._implementationPlanRequired = false;
     // A delegated subagent can tighten these two ceilings. They are applied
     // after every config refresh so run() cannot accidentally replace a
     // worker's declared bounds with the parent tier defaults.
@@ -700,6 +711,58 @@ export class AgentLoop {
     }
   }
 
+  updateImplementationPlan(update) {
+    this._implementationPlan = update.plan.map(item => ({ ...item }));
+    this.emitEvent({
+      type: 'agent_plan',
+      explanation: update.explanation || '',
+      plan: this._implementationPlan.map(item => ({ status: item.status, text: item.step, id: item.id }))
+    });
+    auditLog.log({
+      event: 'implementation_plan_updated', taskId: this.taskId,
+      steps: this._implementationPlan.length,
+      completed: this._implementationPlan.filter(item => item.status === 'completed').length
+    });
+  }
+
+  async requestDecision(request) {
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify({ kind: request.kind, question: request.question, options: request.options.map(option => option.id) }))
+      .digest('hex');
+    const remembered = this._decisionAnswers.get(fingerprint);
+    if (remembered) return remembered;
+
+    this.emitEvent({ type: 'decision_request', request });
+    auditLog.log({ event: 'decision_requested', taskId: this.taskId, kind: request.kind, optionCount: request.options.length });
+    const answer = await this.waitForDecision(request);
+    if (!answer || typeof answer.label !== 'string' || !answer.label.trim()) {
+      this.emitEvent({ type: 'decision_result', request, answer: null });
+      return null;
+    }
+    const normalized = {
+      requestId: request.id,
+      optionId: typeof answer.optionId === 'string' ? answer.optionId : null,
+      label: answer.label.trim(),
+      custom: answer.custom === true
+    };
+    this._decisionAnswers.set(fingerprint, normalized);
+    if (request.kind === 'architecture') this._decisionResolved = true;
+    this.emitEvent({ type: 'decision_result', request, answer: normalized });
+    auditLog.log({ event: 'decision_answered', taskId: this.taskId, kind: request.kind, custom: normalized.custom });
+    return normalized;
+  }
+
+  mutationCheckpoint(functionName, args = {}) {
+    if (!isMutatingToolCall(functionName, args)) return null;
+    if (this._decisionRequirement.required && !this._decisionResolved) {
+      return 'ARCHITECTURE_DECISION_REQUIRED: Before changing the system, call request_decision with kind "architecture", 2-4 concrete options, their consequences, and a clear reason. Do not ask about routine details; this checkpoint exists because the current request crosses a durable architecture boundary.';
+    }
+    if (this._implementationPlanRequired && this._implementationPlan.length === 0) {
+      return 'IMPLEMENTATION_PLAN_REQUIRED: Call update_plan with atomic, verifiable steps and exactly one in_progress step before mutating this complex task.';
+    }
+    return null;
+  }
+
   updateTierLimits() {
     this.config = loadConfig();
     if (typeof this.initializeProvider === 'function') {
@@ -816,10 +879,26 @@ export class AgentLoop {
     this._lessonSimilarity = 0;
     this._lastToolResult = null;
     this._paradigmShiftPending = false;
+    this._implementationPlan = [];
+    this._decisionAnswers = new Map();
+    this._decisionRequirement = assessDecisionRequirement(this.userPrompt || '');
+    this._decisionResolved = !this._decisionRequirement.required;
+    this._implementationPlanRequired = false;
     if (this.vfeTracker) this.vfeTracker.reset();
 
     if (this.userPrompt) {
       this.taskShape = analyzeTask(this.userPrompt, this.workspaceContext);
+      this._implementationPlanRequired = requiresImplementationPlan(
+        this.userPrompt,
+        this.taskShape?.archetype || '',
+        this.taskShape?.confidence || ''
+      );
+      // request_decision is comparatively large and most tasks never need it.
+      // On providers without server-side schema deferral, expose it from the
+      // first model call only when the deterministic task policy found an
+      // unresolved durable choice. This keeps the resident prompt within its
+      // measured budget without making the checkpoint undiscoverable.
+      if (this._decisionRequirement.required) this.unlockedTools.add('request_decision');
 
       // Scored routing, with the regex router as a safety net so a pack can
       // never be missed just because it scored below threshold.
@@ -1077,9 +1156,8 @@ export class AgentLoop {
         // `tool_search_tool_regex`) keep the whole core in context for free —
         // the API holds the schemas server-side and expands them on demand,
         // with no discovery round trip. Every OTHER provider was serialising
-        // all 24 core schemas into every request: 3,341 tokens to advertise
-        // tools a typical turn never calls. There, ship the resident 8 (1,059
-        // tokens) and let `tool_search` — the same mechanism that already
+        // all 24 core schemas into every request. There, ship the small resident
+        // set and let `tool_search` — the same mechanism that already
         // unlocks packs — fetch the rest.
         const residentOnly = this.llm.supportsToolSearch?.() !== true;
         let dynamicTools = await getDynamicTools(this.config.autonomyMode, this.llm.supportsVision, {
@@ -1408,18 +1486,6 @@ export class AgentLoop {
         this.messages.push(assistantMsg);
         
         if (response.content) {
-          // V5: Parse TodoWrite checklist for visual plan display
-          const planRegex = /-\s*\[([ xX\/])\]\s*(.*)/g;
-          const planMatch = [...response.content.matchAll(planRegex)];
-          if (planMatch.length > 0) {
-            const planTasks = planMatch.map(m => {
-              const marker = m[1].toLowerCase();
-              const status = marker === 'x' ? 'completed' : (marker === '/' ? 'in_progress' : 'pending');
-              return { status, text: m[2].trim() };
-            });
-            this.emitEvent({ type: 'agent_plan', plan: planTasks });
-          }
-          
           this.emitEvent({ type: 'agent_message', content: response.content });
         }
 
@@ -1549,7 +1615,7 @@ export class AgentLoop {
             let webGuardMsg = '';
 
             if (!browserReady && !browserDeclined) {
-              webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project and must inspect it before finishing, but the dedicated browser capability is not enabled yet. Call \`manage_local_dependencies\` with action "grant_capability" and group "browser" to request the Causyne Camoufox runtime. If the user declines, read the final compiled HTML/CSS instead. This check fires once.]`;
+              webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project and must inspect it before finishing, but the dedicated browser capability is not enabled yet. Call \`manage_local_dependencies\` with action "grant_capability" and group "browser" to request the Causyne Browser runtime. If the user declines, read the final compiled HTML/CSS instead. This check fires once.]`;
             } else if (hasVision && !visionReady && !visionDeclined) {
               webGuardMsg = `[ANTI-SLOP CHECK: The browser is available, but desktop screen capture is not enabled. Call \`manage_local_dependencies\` with action "grant_capability" and group "vision" to request it, or use \`browser_act\` snapshots and its workspace-scoped screenshot action. This check fires once.]`;
             } else if (hasVision && visionReady && !this.webVerificationState.screenshotTaken) {
@@ -1798,6 +1864,20 @@ export class AgentLoop {
               content: JSON.stringify({
                 success: false,
                 error: `Invalid arguments: ${validationErrors}. Please fix and retry.`
+              })
+            });
+            continue;
+          }
+
+          const checkpointError = this.mutationCheckpoint(functionName, args);
+          if (checkpointError) {
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify({
+                success: false,
+                error: checkpointError
               })
             });
             continue;
@@ -2266,7 +2346,7 @@ export class AgentLoop {
             //
             // Only payloads worth the trade are folded. A small `{"success":true}`
             // ack costs less than the pointer that would replace it, and every
-            // TodoWrite would otherwise collide with every other TodoWrite.
+            // Plan updates would otherwise collide with unrelated plan updates.
             const OBSERVATION_FOLD_FLOOR = 600;
             if (resultString.length >= OBSERVATION_FOLD_FLOOR) {
               const digest = createHash('sha256').update(resultString).digest('hex');

@@ -489,6 +489,97 @@ export class ApprovalLayer extends Layer {
   }
 }
 
+/** A structured product or architecture choice, separate from permissions. */
+export class DecisionLayer extends Layer {
+  constructor(options = {}) {
+    super({ width: options.width || 82, height: options.height || 24, ...options });
+    this.request = options.request || {};
+    this.onAnswer = options.onAnswer || null;
+    this.options = Array.isArray(this.request.options) ? this.request.options.slice(0, 4) : [];
+    this.selected = 0;
+    this.customIndex = this.options.length;
+    this.customMode = false;
+    this.editor = new LineEditor();
+    this.answered = false;
+    this.title = safeDisplay(this.request.header || 'decision required');
+    this.footer = `↑↓ choose  ${GLYPHS.dot}  enter select  ${GLYPHS.dot}  esc cancel`;
+  }
+
+  preferredHeight() {
+    const questionRows = wrap(safeDisplay(this.request.question || ''), Math.max(20, this.width - 6)).length;
+    const reasonRows = wrap(safeDisplay(this.request.reason || ''), Math.max(20, this.width - 6)).length;
+    return Math.min(this.height, questionRows + reasonRows + (this.options.length * 2) + 7);
+  }
+
+  body(width, height) {
+    const rows = [];
+    rows.push(...wrap(bold(safeDisplay(this.request.question || 'Choose a direction')), width).slice(0, 4));
+    if (this.request.reason) rows.push(...wrap(dim(safeDisplay(this.request.reason)), width).slice(0, 3));
+    rows.push('');
+
+    for (const [index, option] of this.options.entries()) {
+      const selected = index === this.selected;
+      const marker = selected ? paint('accent', GLYPHS.arrow) : paint('muted', GLYPHS.dot);
+      rows.push(`${marker} ${selected ? bold(safeDisplay(option.label || '')) : safeDisplay(option.label || '')}`);
+      if (option.description) rows.push(`  ${dim(truncate(safeDisplay(option.description), Math.max(1, width - 2), GLYPHS.ellipsis))}`);
+    }
+
+    const customSelected = this.selected === this.customIndex;
+    rows.push(`${customSelected ? paint('accent', GLYPHS.arrow) : paint('muted', GLYPHS.dot)} ${customSelected ? bold('Type your own answer') : 'Type your own answer'}`);
+    if (this.customMode) {
+      const value = this.editor.getText();
+      rows.push(`${paint('accent', `${GLYPHS.arrow} `)}${value || dim('Describe the direction you want')}`);
+      this.cursor = { x: 2 + visibleWidth(value.slice(0, this.editor.col)), y: rows.length - 1 };
+      this.footer = `enter submit  ${GLYPHS.dot}  esc choices`;
+    } else {
+      this.cursor = null;
+      this.footer = `↑↓ choose  ${GLYPHS.dot}  enter select  ${GLYPHS.dot}  esc cancel`;
+    }
+    return rows.slice(0, height);
+  }
+
+  key(event) {
+    if (!event) return null;
+    if (this.customMode) {
+      if (event.name === 'escape') { this.customMode = false; return 'handled'; }
+      if (event.name === 'enter' || event.name === 'return') {
+        const label = this.editor.getText().replace(/\s+/g, ' ').trim();
+        if (!label) return 'handled';
+        this.answer({ requestId: this.request.id, optionId: null, label, custom: true });
+        return 'close';
+      }
+      if (event.name === 'backspace') { this.editor.backspace(); return 'handled'; }
+      if (event.name === 'delete') { this.editor.deleteForward(); return 'handled'; }
+      if (event.name === 'left') { this.editor.moveLeft(); return 'handled'; }
+      if (event.name === 'right') { this.editor.moveRight(); return 'handled'; }
+      if (event.name === 'home') { this.editor.moveHome(); return 'handled'; }
+      if (event.name === 'end') { this.editor.moveEnd(); return 'handled'; }
+      if (event.name === 'paste') { this.editor.insert(event.text); return 'handled'; }
+      if (event.name === 'char') { this.editor.insert(event.text); return 'handled'; }
+      return 'handled';
+    }
+
+    if (event.name === 'escape') { this.answer(null); return 'close'; }
+    const count = this.options.length + 1;
+    if (event.name === 'up') { this.selected = (this.selected - 1 + count) % count; return 'handled'; }
+    if (event.name === 'down') { this.selected = (this.selected + 1) % count; return 'handled'; }
+    if (event.name === 'enter' || event.name === 'return') {
+      if (this.selected === this.customIndex) { this.customMode = true; return 'handled'; }
+      const option = this.options[this.selected];
+      if (!option) return 'handled';
+      this.answer({ requestId: this.request.id, optionId: option.id, label: option.label, custom: false });
+      return 'close';
+    }
+    return 'handled';
+  }
+
+  answer(value = null) {
+    if (this.answered) return;
+    this.answered = true;
+    if (this.onAnswer) this.onAnswer(value);
+  }
+}
+
 /** A yes/no confirm, for destructive commands that are not tool approvals. */
 export class ConfirmLayer extends Layer {
   constructor(options = {}) {

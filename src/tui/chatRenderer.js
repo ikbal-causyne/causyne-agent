@@ -211,6 +211,7 @@ export class ChatRenderer {
     this.spinnerIndex = 0;
     this.currentStatus = '';
     this.pendingApprovals = new Map();
+    this.latestPlan = [];
     this.status = new StatusLine();
     this.turnStartedAt = null;
 
@@ -548,7 +549,32 @@ export class ChatRenderer {
   onAgentPlan(msg) {
     if (!Array.isArray(msg.plan) || msg.plan.length === 0) return;
     const plan = msg.plan.slice();
+    this.latestPlan = plan;
+    if (this.onPlanChange) this.onPlanChange(plan);
     this.frame('plan', () => this.renderPlan(plan), { items: plan.length });
+  }
+
+  onDecisionRequest(msg) {
+    if (this.dialogWillAsk) return;
+    const request = msg.request || {};
+    this.frame('approval', () => {
+      this.write();
+      this.write(`${paint('accent', GLYPHS.arrow)} ${bold(safeDisplay(request.header || 'decision required'))}`);
+      for (const row of wrapBlock(safeDisplay(request.question || ''), Math.max(20, this.width() - 4))) this.write(`  ${row}`);
+      this.write();
+    }, { kind: request.kind || 'other' });
+  }
+
+  onDecisionResult(msg) {
+    const request = msg.request || {};
+    const answer = msg.answer;
+    this.frame('approval', () => {
+      if (!answer) {
+        this.write(`  ${paint('muted', 'decision dismissed')}  ${safeDisplay(request.header || '')}`);
+        return;
+      }
+      this.write(`  ${paint('success', GLYPHS.check)} ${bold(safeDisplay(answer.label || ''))}${answer.custom ? dim('  custom choice') : ''}`);
+    }, { kind: request.kind || 'other', answered: Boolean(answer) });
   }
 
   renderPlan(plan) {
@@ -940,6 +966,8 @@ export class ChatRenderer {
       case 'step_error':       this.onStepError(msg); return true;
       case 'checkpoint':       this.onCheckpoint(msg); return true;
       case 'approval_request': this.onApprovalRequest(msg); return true;
+      case 'decision_request': this.onDecisionRequest(msg); return true;
+      case 'decision_result':  this.onDecisionResult(msg); return true;
       case 'error':            this.onError(msg); return true;
       case 'budget_warning':   this.onBudgetWarning(msg); return true;
       case 'notice':           this.onNotice(msg); return true;

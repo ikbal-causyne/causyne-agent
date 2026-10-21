@@ -66,12 +66,12 @@ The active source takes a different architecture and distribution path:
   approval class. Curated assets are size-limited, constrained to catalog URLs,
   protected from output path traversal, and are not automatically extracted.
 - Web search uses bounded HTTP providers without requiring a browser binary.
-  Interactive rendered browsing uses an outbound, in-process Camoufox adapter.
-  Causyne does not run Camofox Browser's server, inbound port, remote control,
+  Interactive rendered browsing uses an outbound, in-process Causyne Browser adapter.
+  Causyne does not run an inbound browser-control server, inbound port, remote control,
   VNC, telemetry, cloud deployment, or OpenClaw integration. Optional launcher
   packages require an explicit capability grant. Causyne never downloads the
-  Camoufox browser binary; an existing external installation must be selected
-  through `CAUSYNE_CAMOFOX_EXECUTABLE` or a standard system location.
+  browser runtime; an existing external installation must be selected
+  through `CAUSYNE_BROWSER_EXECUTABLE` or a standard system location.
 - Browser navigation and subresources accept only public HTTP(S) destinations.
   Hostnames are resolved and checked against private, loopback, link-local,
   multicast, reserved, local, internal, and metadata ranges. Non-browser

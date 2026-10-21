@@ -36,8 +36,8 @@ export const CORE_TOOLS = [
   'code_verify_syntax',
   'web_search',
   'web_fetch',
-  'TodoWrite',
   'update_plan',
+  'request_decision',
   'memory_write',
   'fs_read_skill',
   'skill_create',
@@ -130,9 +130,11 @@ export const PACK_NAMES = Object.keys(PACKS);
  *
  * WHAT IS IN, AND WHY EXACTLY THESE: read, write, edit, list and search cover
  * every file operation a first turn can need; `sysRun` is the escape hatch that
- * can reach anything the other seven cannot; `TodoWrite` is how a multi-step
- * task announces its plan on step one; `tool_search` is the door to the other
- * 62. With this set the agent is never stuck — worst case it spends one call
+ * can reach anything the other resident tools cannot; `update_plan` is how a
+ * multi-step task announces its plan on step one; `tool_search` is the door to
+ * deferred tools. `request_decision` is injected on the first turn only when
+ * task policy detects an unresolved durable choice. With this set the agent is
+ * never stuck — worst case it spends one call
  * discovering the tool it wants, and the tool it discovers stays loaded for the
  * rest of the task.
  *
@@ -147,7 +149,7 @@ export const RESIDENT_TOOLS = [
   'fs_list',
   'fs_search',
   'sysRun',
-  'TodoWrite',
+  'update_plan',
   'tool_search'
 ];
 

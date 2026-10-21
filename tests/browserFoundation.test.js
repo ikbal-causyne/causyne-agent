@@ -12,7 +12,7 @@ import {
 import { isPrivateAddress, assertPublicWebUrl } from '../src/browser/urlPolicy.js';
 import { MAX_SNAPSHOT_CHARS, windowSnapshot } from '../src/browser/snapshotWindow.js';
 import { parseBingRss, parseDuckDuckGoHtml, searchPublicWeb } from '../src/browser/searchProviders.js';
-import { resolveCamoufoxRuntime } from '../src/browser/camofoxRuntime.js';
+import { resolveBrowserRuntime } from '../src/browser/browserRuntime.js';
 import { htmlToReadableText } from '../src/tools/webFetch.js';
 import { TOOLS_BY_GROUP } from '../src/provisioning/capabilityTools.js';
 import { Sandbox } from '../src/sandbox.js';
@@ -92,11 +92,11 @@ function fakeRuntime() {
     profileDirectory: path.join(workspace, '.profile'),
     ensureBrowserCapability: async () => ({ ok: true }),
     resolveRuntime: () => ({
-      installDirectory: '/fake/camoufox',
+      installDirectory: '/fake/causyne-browser',
       resourceDirectory: '/fake/resources',
       source: 'environment'
     }),
-    loadCamoufox: async () => ({ Camoufox: async () => session }),
+    loadBrowserEngine: async () => ({ Camoufox: async () => session }),
     validateUrl: async value => new URL(value)
   });
   return { workspace, session, browser };
@@ -244,14 +244,14 @@ describe('lightweight web search', () => {
     assert.equal(results[0].snippet, 'A practical guide.');
   });
 
-  test('external Camoufox resolver never downloads a missing runtime', () => {
-    const previous = process.env.CAUSYNE_CAMOFOX_EXECUTABLE;
-    process.env.CAUSYNE_CAMOFOX_EXECUTABLE = path.join(os.tmpdir(), 'definitely-missing-camoufox');
+  test('external Causyne Browser resolver never downloads a missing runtime', () => {
+    const previous = process.env.CAUSYNE_BROWSER_EXECUTABLE;
+    process.env.CAUSYNE_BROWSER_EXECUTABLE = path.join(os.tmpdir(), 'definitely-missing-causyne-browser');
     try {
-      assert.throws(resolveCamoufoxRuntime, /does not download browser binaries automatically/);
+      assert.throws(resolveBrowserRuntime, /does not download browser binaries automatically/);
     } finally {
-      if (previous === undefined) delete process.env.CAUSYNE_CAMOFOX_EXECUTABLE;
-      else process.env.CAUSYNE_CAMOFOX_EXECUTABLE = previous;
+      if (previous === undefined) delete process.env.CAUSYNE_BROWSER_EXECUTABLE;
+      else process.env.CAUSYNE_BROWSER_EXECUTABLE = previous;
     }
   });
 

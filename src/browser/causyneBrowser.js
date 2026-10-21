@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { capabilityDirectory, ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-import { resolveCamoufoxRuntime } from './camofoxRuntime.js';
+import { resolveBrowserRuntime } from './browserRuntime.js';
 import { assertPublicWebUrl } from './urlPolicy.js';
 import { windowSnapshot } from './snapshotWindow.js';
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -113,7 +113,7 @@ const SEARCH_EXTRACT_SCRIPT = `(() => {
 export class CausyneBrowser {
     workspace;
     ensureBrowserCapability;
-    loadCamoufox;
+    loadBrowserEngine;
     resolveRuntime;
     profileDirectory;
     visible;
@@ -129,8 +129,8 @@ export class CausyneBrowser {
     constructor(options = {}) {
         this.workspace = path.resolve(options.workspace ?? process.cwd());
         this.ensureBrowserCapability = options.ensureBrowserCapability ?? (() => ensureCapability('browser'));
-        this.loadCamoufox = options.loadCamoufox ?? (async () => await loadCapabilityPackage('camoufox-js'));
-        this.resolveRuntime = options.resolveRuntime ?? resolveCamoufoxRuntime;
+        this.loadBrowserEngine = options.loadBrowserEngine ?? (async () => await loadCapabilityPackage('camoufox-js'));
+        this.resolveRuntime = options.resolveRuntime ?? resolveBrowserRuntime;
         this.profileDirectory = path.resolve(options.profileDirectory ?? path.join(capabilityDirectory(), 'browser-profile'));
         this.visible = options.visible ?? process.env.CAUSYNE_BROWSER_VISIBLE === '1';
         this.validateUrl = options.validateUrl ?? assertPublicWebUrl;
@@ -215,9 +215,9 @@ export class CausyneBrowser {
             const runtime = this.resolveRuntime();
             process.env.CAMOUFOX_INSTALL_DIR = runtime.installDirectory;
             await fs.mkdir(this.profileDirectory, { recursive: true, mode: 0o700 });
-            const module = await this.loadCamoufox();
+            const module = await this.loadBrowserEngine();
             if (!module || typeof module.Camoufox !== 'function')
-                throw new Error('The Camoufox capability has no usable launcher');
+                throw new Error('Causyne Browser has no usable launcher');
             this.session = await module.Camoufox({
                 headless: !this.visible,
                 user_data_dir: this.profileDirectory,

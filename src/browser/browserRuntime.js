@@ -4,7 +4,7 @@ import path from 'node:path';
 function assertExecutable(candidate) {
     const stat = statSync(candidate);
     if (!stat.isFile() && !stat.isSymbolicLink()) {
-        throw new Error(`Camoufox executable is not a file: ${candidate}`);
+        throw new Error(`Causyne Browser executable is not a file: ${candidate}`);
     }
     if (process.platform !== 'win32')
         accessSync(candidate, constants.X_OK);
@@ -61,33 +61,28 @@ function resourceDirectoryFor(executablePath) {
     }
     return path.dirname(executablePath);
 }
-export function resolveCamoufoxRuntime() {
-    const configured = process.env.CAUSYNE_CAMOFOX_EXECUTABLE?.trim();
-    const configuredHome = process.env.CAMOUFOX_INSTALL_DIR?.trim();
-    const candidates = configured
-        ? [path.resolve(configured)]
-        : configuredHome
-            ? [expectedExecutable(path.resolve(configuredHome))]
-            : candidateExecutables();
+export function resolveBrowserRuntime() {
+    const configured = process.env.CAUSYNE_BROWSER_EXECUTABLE?.trim();
+    const candidates = configured ? [path.resolve(configured)] : candidateExecutables();
     const executablePath = candidates.find(existsSync);
     if (!executablePath) {
-        throw new Error('Camoufox is not installed. Causyne does not download browser binaries automatically. ' +
-            'Install a trusted Camoufox build separately, then set CAUSYNE_CAMOFOX_EXECUTABLE to its executable path.');
+        throw new Error('Causyne Browser runtime is not installed. Causyne does not download browser binaries automatically. ' +
+            'Install a supported browser runtime separately, then set CAUSYNE_BROWSER_EXECUTABLE to its executable path.');
     }
     assertExecutable(executablePath);
     const resolvedExecutable = realpathSync(executablePath);
     const installDirectory = findInstallDirectory(resolvedExecutable);
     if (!installDirectory) {
-        throw new Error(`Camoufox at ${resolvedExecutable} is not inside a complete distribution. ` +
-            'Keep the distribution version.json beside its platform bundle and point CAUSYNE_CAMOFOX_EXECUTABLE at that bundle.');
+        throw new Error(`Causyne Browser runtime at ${resolvedExecutable} is not a complete distribution. ` +
+            'Keep version.json beside its platform bundle and point CAUSYNE_BROWSER_EXECUTABLE at that bundle.');
     }
     const resourceDirectory = resourceDirectoryFor(resolvedExecutable);
     if (!existsSync(path.join(resourceDirectory, 'properties.json'))) {
-        throw new Error(`Camoufox properties.json was not found in ${resourceDirectory}.`);
+        throw new Error(`Causyne Browser runtime metadata was not found in ${resourceDirectory}.`);
     }
     return {
         installDirectory,
         resourceDirectory,
-        source: configured || configuredHome ? 'environment' : 'system'
+        source: configured ? 'environment' : 'system'
     };
 }

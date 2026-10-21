@@ -44,7 +44,7 @@ const GROUP_PACKAGES = {
 
 // than listing package names.
 export const GROUP_DESCRIPTIONS = {
-  browser: 'use an existing Camoufox installation for rendered navigation, extraction, and workspace-scoped downloads; Causyne never downloads the browser binary automatically',
+  browser: 'use the Causyne Browser runtime for rendered navigation, extraction, and workspace-scoped downloads; Causyne never downloads the browser binary automatically',
   vision: 'drive a browser and capture the screen, so the agent can look at what it built',
   ocr: 'read text out of images and screenshots',
   system: 'list running processes and read system load',

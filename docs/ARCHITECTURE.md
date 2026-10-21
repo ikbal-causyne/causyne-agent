@@ -31,7 +31,7 @@ are application policies and require adversarial review.
 | Concern | Source |
 | --- | --- |
 | Invocation and local session | `entrypoint.js`, `cliMode.js`, `tui/` |
-| Orchestration and budgets | `agentLoop.js`, `agentProfiles.ts`, `subagentJournal.ts`, `modelRouter.js`, `tokenTracker.js` |
+| Orchestration and budgets | `agentLoop.js`, `decisionPolicy.ts`, `implementationPlan.ts`, `agentProfiles.ts`, `subagentJournal.ts`, `modelRouter.js`, `tokenTracker.js` |
 | Host execution | `tools/registry.js`, `sandbox.js`, `execSafe.js` |
 | Models | `providers/`, `modelCatalogue.js` |
 | Context and memory | `memory.js`, `memoryManager.js`, `contextManager.js`, `cortex/` |
@@ -48,6 +48,20 @@ MCP boundaries now compile from strict TypeScript.
 Runtime validation is still required at model, filesystem, subprocess and
 extension boundaries. Rust is reserved for a measured, narrow native worker;
 no Rust rewrite is underway.
+
+## Planning and durable decisions
+
+Complex implementation uses `update_plan` to maintain a validated checklist in
+session state. The TUI keeps the current steps visible beside the input surface;
+plans are not written into the user's project. A mutating tool call on a complex
+task is held until the model has created this plan.
+
+`request_decision` handles choices with durable product, architecture, data,
+security, or workflow consequences. It presents two to four concrete options
+and a custom-answer path. This checkpoint is distinct from a tool permission:
+selecting a design never grants filesystem or command access. The checkpoint
+runs in the provider-independent agent loop, so Mode C can remove routine
+approval friction without silently choosing an unresolved architecture.
 
 ## Tool and extension boundaries
 
@@ -92,16 +106,19 @@ browser OAuth is not implemented yet; an HTTP 401 is surfaced as
 
 Causyne's web foundation has two layers. Lightweight TypeScript search and
 fetch clients work without a browser runtime. Rendered navigation uses a
-dedicated in-process Camoufox adapter derived from the locally reviewed Camofox
-Browser source. The adapter is deliberately smaller than the reference service:
+dedicated in-process Causyne Browser adapter built from a locally reviewed
+upstream browser engine. Required upstream names and licenses remain in the
+third-party notices. The adapter is deliberately smaller than the reference
+service:
 it does not import an HTTP server, inbound port, cloud deployment layer, VNC,
 telemetry, remote WebSocket control, or OpenClaw integration.
 
-Camoufox and Playwright are exact-pinned optional capability packages installed
-into the user's private Causyne capability directory only after an explicit
-browser capability grant. Causyne does not download a browser binary. Advanced
-rendered browsing requires a separately installed Camoufox bundle selected by
-`CAUSYNE_CAMOFOX_EXECUTABLE` or discovered from a standard system location.
+The browser engine and Playwright are exact-pinned optional capability packages
+installed into the user's private Causyne capability directory only after an
+explicit browser capability grant. Causyne does not download a browser binary. Advanced
+rendered browsing requires a separately installed supported browser runtime
+selected by `CAUSYNE_BROWSER_EXECUTABLE` or discovered from a standard system
+location.
 The main npm package therefore stays small and web search remains useful when
 the optional rendered browser is absent.
 

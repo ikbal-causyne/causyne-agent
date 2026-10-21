@@ -25,7 +25,7 @@
 
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './prompt.js';
-import { SelectLayer, InputLayer, ConfirmLayer } from './dialogs.js';
+import { SelectLayer, InputLayer, ConfirmLayer, DecisionLayer } from './dialogs.js';
 
 /**
  * Run one layer on a temporary prompt host.
@@ -161,4 +161,44 @@ export async function askConfirm(message) {
   }
   const raw = await fallbackQuestion(`${message} [y/N]`);
   return /^y(es)?$/i.test(String(raw).trim());
+}
+
+/**
+ * Ask for a durable product or architecture choice.
+ *
+ * This remains separate from permissions: choosing an implementation direction
+ * never grants a tool the right to mutate files or execute a command.
+ */
+export async function askDecision(request = {}) {
+  const options = Array.isArray(request.options) ? request.options : [];
+
+  if (canAskInPanel()) {
+    const answer = await hostOneLayer((resolve) => new DecisionLayer({
+      request,
+      onAnswer: resolve
+    }));
+    if (answer !== undefined) return answer;
+  }
+
+  const custom = { id: '__custom__', label: 'Type your own answer', description: '' };
+  const selected = await askSelect({
+    title: request.header || 'Decision required',
+    items: [...options, custom]
+  });
+  if (!selected) return null;
+  if (selected.id === custom.id) {
+    const label = await askText({
+      title: request.question || 'Describe the direction you want',
+      lines: request.reason ? [request.reason] : [],
+      validate: (value) => String(value).trim() ? null : 'An answer is required.'
+    });
+    if (!label) return null;
+    return { requestId: request.id, optionId: null, label: String(label).trim(), custom: true };
+  }
+  return {
+    requestId: request.id,
+    optionId: selected.id,
+    label: selected.label,
+    custom: false
+  };
 }

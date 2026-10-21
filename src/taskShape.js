@@ -49,7 +49,7 @@ const ARCHETYPES = {
             weak: ['app', 'aplikasi', 'project', 'proyek', 'tool', 'system', 'sistem']
         },
         phases: [
-            { name: 'Plan', tools: ['TodoWrite'], note: 'Break the build into atomic, verifiable steps before touching the filesystem.' },
+            { name: 'Plan', tools: ['update_plan'], note: 'Create a visible atomic implementation plan before touching the filesystem.' },
             { name: 'Scaffold', tools: ['fs_write', 'sysRun'], note: 'Create structure and install dependencies at verified current versions.' },
             { name: 'Implement', tools: ['fs_write', 'fs_edit', 'MultiEdit'], note: 'Write runnable code with every import and dependency present.' },
             { name: 'Verify', tools: ['code_verify_syntax', 'sysRun'], note: 'Build, lint and run it. Never assume code works.' }

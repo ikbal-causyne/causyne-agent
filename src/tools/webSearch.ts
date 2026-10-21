@@ -15,7 +15,7 @@ function renderResults(query: string, results: SearchResult[]): string {
 export const webSearch = {
   schema: {
     name: 'web_search',
-    description: 'Search the public web through lightweight providers, with the optional Causyne Camoufox browser as a rendered-page fallback. No browser binary is downloaded automatically.',
+    description: 'Search the public web through lightweight providers, with the optional Causyne Browser as a rendered-page fallback. No browser binary is downloaded automatically.',
     parameters: {
       type: 'object',
       properties: {

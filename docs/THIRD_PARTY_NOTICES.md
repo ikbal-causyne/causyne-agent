@@ -27,6 +27,9 @@ No dependency in the reviewed main lockfile was marked with an install script.
 Optional capability dependencies are installed only after approval into a
 separate local environment and are not covered by the main lockfile review.
 
+The product-facing browser capability is **Causyne Browser**. Upstream names
+below are used only for required attribution and exact dependency identifiers.
+
 The optional browser capability installs `camoufox-js` 0.11.5 under MPL-2.0
 and `playwright-core` 1.58.0 under Apache-2.0. They remain separate packages in
 the user's local capability directory and are not copied into Causyne Agent's

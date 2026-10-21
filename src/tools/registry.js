@@ -12,7 +12,6 @@ import { processList } from './processList.js';
 import { procTerm } from './procTerm.js';
 import { webFetch } from './webFetch.js';
 import { desktopOpen } from './desktopOpen.js';
-import { todoWrite } from './todoWrite.js';
 import { multiEdit } from './multiEdit.js';
 import { codebaseSearch } from './codebaseSearch.js';
 import { browserAct } from './browserAutomator.js';
@@ -22,6 +21,7 @@ import { palmierAutomator } from './palmierAutomator.js';
 import { viewImage } from './viewImage.js';
 import { webSearch } from './webSearch.js';
 import { updatePlan } from './updatePlan.js';
+import { requestDecision } from './requestDecision.js';
 import { clipboard } from './clipboard.js';
 import { screenshot } from './screenshot.js';
 import { axSnapshot } from './axSnapshot.js';
@@ -106,9 +106,9 @@ const TOOL_MODULES = [
   sysRun, sysRunBg, fsRead, fsWrite,
   fsEdit, fsFind, fsSearch, fsList, fsMove,
   fsDelete, gitExec, processList, procTerm,
-  webFetch, desktopOpen, todoWrite, multiEdit,
+  webFetch, desktopOpen, multiEdit,
   codebaseSearch, browserAct, viewImage, webSearch,
-  updatePlan, clipboard, screenshot, axSnapshot, desktopAct, archive,
+  updatePlan, requestDecision, clipboard, screenshot, axSnapshot, desktopAct, archive,
   checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
   generateMediaViaApi, memoryWrite, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool,
   astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
@@ -145,6 +145,7 @@ for (const module of TOOL_MODULES) {
 // a tool whose canonical schema name is different. Resolved only at execution
 // time — never advertised, so they cost no context.
 const TOOL_ALIASES = {
+  TodoWrite: 'update_plan',
   manage_local_ai_dependencies: 'manage_local_dependencies',
   procTerm: 'proc_term',
   gitExec: 'gitOp',

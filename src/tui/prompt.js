@@ -26,7 +26,7 @@ import { barBlock, GUTTER } from './block.js';
 import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
-import { commandPalette, skillPicker, ApprovalLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
+import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 
 const CTRL_C_WINDOW_MS = 2000;
@@ -264,6 +264,7 @@ export class ChatPrompt {
       this.statusMessage = message;
       this.scheduleDraw();
     };
+    renderer.onPlanChange = () => this.scheduleDraw();
   }
 
   /**
@@ -319,6 +320,26 @@ export class ChatPrompt {
     const trailing = [status.provider, status.tier].filter(Boolean).join(' ');
     const full = trailing ? `${line}  ${dim(trailing)}` : line;
     return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
+  }
+
+  /** Persistent checklist shown outside the chat transcript. */
+  planRows(width) {
+    const plan = this.renderer && Array.isArray(this.renderer.latestPlan) ? this.renderer.latestPlan : [];
+    if (plan.length === 0) return [];
+    const completed = plan.filter(item => item.status === 'completed').length;
+    const rows = [`${bold(paint('accent', 'implementation plan'))}  ${dim(`${completed}/${plan.length}`)}`];
+    const limit = Math.min(plan.length, 5);
+    for (const item of plan.slice(0, limit)) {
+      const mark = item.status === 'completed'
+        ? paint('success', GLYPHS.check)
+        : item.status === 'in_progress'
+          ? paint('accent', GLYPHS.arrow)
+          : paint('muted', GLYPHS.dot);
+      rows.push(`  ${mark} ${truncate(safeDisplay(item.text || item.step || ''), Math.max(8, width - 5), GLYPHS.ellipsis)}`);
+    }
+    if (plan.length > limit) rows.push(`  ${dim(`${GLYPHS.ellipsis} ${plan.length - limit} more`)}`);
+    rows.push('');
+    return rows;
   }
 
   startTick() {
@@ -453,6 +474,13 @@ export class ChatPrompt {
         verb,
         onAnswer: (approved, scope) => resolve({ approved, scope: scope || (approved ? 'once' : 'reject') })
       }));
+    });
+  }
+
+  /** Ask for a durable implementation choice, with a free-form option. */
+  decide(request = {}) {
+    return new Promise((resolve) => {
+      this.openLayer(new DecisionLayer({ request, onAnswer: resolve }));
     });
   }
 
@@ -1136,12 +1164,13 @@ export class ChatPrompt {
     const status = this.statusRow(width);
     const gap = status.length > 0 ? new Array(FOOTER_GAP).fill('') : [];
 
+    const planRows = this.planRows(width);
     const all = this.clampRows(
-      boxRows.concat(pickerRows, noticeRows, gap, status), width
+      planRows.concat(boxRows, pickerRows, noticeRows, gap, status), width
     );
 
     // Park the cursor where the user is typing, not at the end of the picker.
-    this.present(all, caretRow + padTop, layout.cursorCol + inset);
+    this.present(all, planRows.length + caretRow + padTop, layout.cursorCol + inset);
   }
 
   /**

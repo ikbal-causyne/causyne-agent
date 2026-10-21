@@ -144,7 +144,7 @@ export const webFetch = {
             if (!response.ok && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
                 const fallback = await browserFallback(finalUrl.href);
                 if (fallback.success)
-                    return { ...fallback, status: response.status, finalUrl: finalUrl.href, via: 'camoufox' };
+                    return { ...fallback, status: response.status, finalUrl: finalUrl.href, via: 'causyne-browser' };
                 return { success: false, error: `HTTP ${response.status}; browser fallback failed: ${fallback.error}`, requiresConsent: fallback.requiresConsent };
             }
             if (!response.ok)

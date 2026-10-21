@@ -3,7 +3,7 @@ import { BrowserCapabilityError, causyneBrowser, type BrowserAction } from '../b
 export const browserAct = {
   schema: {
     name: 'browser.act',
-    description: 'Use the dedicated Causyne Camoufox browser for resilient search, navigation, accessible snapshots, interaction, extraction, and workspace-scoped downloads. Take a snapshot before interacting by ref.',
+    description: 'Use the dedicated Causyne Browser for resilient search, navigation, accessible snapshots, interaction, extraction, and workspace-scoped downloads. Take a snapshot before interacting by ref.',
     parameters: {
       type: 'object',
       properties: {

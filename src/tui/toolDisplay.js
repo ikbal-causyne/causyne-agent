@@ -82,7 +82,6 @@ const TOOL_DISPLAY = new Map([
   ['code_verify_syntax',  (a) => ({ verb: 'verify', detail: pathDetail(firstString(a, ['path', 'file_path'])) })],
 
   ['memory_write',  (a) => ({ verb: 'remember', detail: firstString(a, ['fact', 'key', 'project']) })],
-  ['TodoWrite',     (a) => ({ verb: 'plan',     detail: countDetail(a.todos, 'item') })],
   ['update_plan',   (a) => ({ verb: 'plan',     detail: countDetail(a.plan, 'step') })],
   ['tool_search',   (a) => ({ verb: 'discover', detail: firstString(a, ['query', 'description']) })],
   ['fs_read_skill', (a) => ({ verb: 'skill',    detail: firstString(a, ['id', 'skillId', 'domain']) })],
