@@ -568,6 +568,7 @@ export class AgentLoop {
   }
 
   initializeProvider() {
+    if (!this.config?.provider) return null;
     return createProvider(this.config);
   }
 
@@ -808,6 +809,9 @@ export class AgentLoop {
     this.rearmAbortController();
     // Refresh tier limits on every task run
     this.updateTierLimits();
+    if (!this.llm) {
+      throw new Error("API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.");
+    }
 
     // 1. PERCEIVE — runs once per task so the agent starts with real workspace
     // awareness instead of burning steps rediscovering it. The result used to be

@@ -34,22 +34,52 @@
  * The label keys are a stable configuration format, not display sugar.
  */
 export const MODEL_CATALOGUE = {
-  'DeepSeek': ['deepseek-v4-pro', 'deepseek-v4-flash'],
-  'Qwen': ['qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash'],
+  'DeepSeek': ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro', 'deepseek-v4-flash'],
+  'Qwen': [
+    'qwen2.5-coder-32b-instruct',
+    'qwen2.5-72b-instruct',
+    'qwen-max',
+    'qwen-plus',
+    'qwen-turbo',
+    'qwen3.7-max',
+    'qwen3.7-plus',
+    'qwen3.6-flash'
+  ],
   // Anthropic ids use DASHES and carry no date suffix. A dotted id here is a
   // bug, not a variant — see src/modelIds.js.
   'Anthropic': [
+    'claude-3-7-sonnet',
+    'claude-3-5-sonnet',
+    'claude-3-5-haiku',
+    'claude-3-opus',
     'claude-fable-5-1',
     'claude-opus-5',
     'claude-opus-4-8',
     'claude-sonnet-5',
     'claude-haiku-4-5'
   ],
-  // GPT-6 Astra leads: it is the current flagship and the only model in the
-  // line-up trained for computer use. It is also the priciest ($10/$50 against
-  // Sol's $5/$30), which is why it heads the list but is not the default.
-  'OpenAI': ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4-mini'],
-  'Gemini': ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-pro', 'gemini-3.1-flash-lite'],
+  'OpenAI': [
+    'gpt-4o',
+    'gpt-4o-mini',
+    'o3-mini',
+    'o1',
+    'gpt-6-astra',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-5.4-mini'
+  ],
+  'Gemini': [
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-pro',
+    'gemini-3.1-flash-lite'
+  ],
   // Standard first. The -contributor variants are cheaper because Meta trains
   // on the user's prompts and completions, so they must be a choice made
   // deliberately, never the one at the top of the list.
@@ -60,14 +90,15 @@ export const MODEL_CATALOGUE = {
     'muse-spark-1.3-contributor',
     'muse-spark-1.2-contributor'
   ],
-  'Ollama (Local)': ['llama3', 'mistral', 'gemma2', 'custom'],
+  'Ollama (Local)': ['llama3.3', 'qwen2.5-coder', 'deepseek-r1', 'llama3', 'mistral', 'gemma2', 'custom'],
   'Alibaba (DashScope)': [
+    'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder-32b-instruct',
     'qwen3.7-max', 'qwen3.7-plus', 'kimi-k2.7-code', 'kimi-k2.6',
     'kimi-k2.5', 'kimi-k2-thinking', 'Moonshot-Kimi-K2-Instruct',
     'deepseek-v4-flash', 'deepseek-v4-pro'
   ],
   'Moonshot (Kimi)': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
-  'xAI (Grok)': ['grok-4.5', 'grok-latest']
+  'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest']
 };
 
 /** Provider labels in picker order. */
@@ -75,17 +106,17 @@ export const PROVIDER_LABELS = Object.keys(MODEL_CATALOGUE);
 
 
 export const DEFAULT_MODEL_BY_PROVIDER = {
-  deepseek: 'deepseek-v4-pro',
-  qwen: 'qwen3.7-plus',
-  'dashscope-byok': 'qwen3.7-plus',
-  dashscope: 'qwen3.7-plus',
+  deepseek: 'deepseek-chat',
+  qwen: 'qwen2.5-coder-32b-instruct',
+  'dashscope-byok': 'qwen-plus',
+  dashscope: 'qwen-plus',
   muse: 'muse-spark-1.3',
-  anthropic: 'claude-opus-5',
-  openai: 'gpt-5.6-sol',
-  gemini: 'gemini-3.5-flash',
+  anthropic: 'claude-3-7-sonnet',
+  openai: 'gpt-4o',
+  gemini: 'gemini-2.5-pro',
   moonshot: 'kimi-k3',
-  xai: 'grok-4.5',
-  ollama: 'llama3',
+  xai: 'grok-3',
+  ollama: 'llama3.3',
   'openai-compatible': ''
 };
 

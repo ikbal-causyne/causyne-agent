@@ -237,7 +237,9 @@ function shortPath(p, maxw) {
 }
 function statusLine(info, maxw, unicode) {
     const sep = unicode ? '  ·  ' : '  |  ';
-    const parts = [info.version ? 'v' + String(info.version).replace(/^v/, '') : '', [info.provider, info.model].filter(Boolean).join('/'), info.mode ?? '', info.cwd ?? ''].filter(Boolean);
+    const providerModel = [info.provider, info.model].filter(Boolean).join('/');
+    const providerPart = providerModel || 'select provider';
+    const parts = [info.version ? 'v' + String(info.version).replace(/^v/, '') : '', providerPart, info.mode ?? '', info.cwd ?? ''].filter(Boolean);
     const fits = () => parts.join(sep).length <= maxw;
     if (!fits() && info.cwd) {
         const others = parts.slice(0, -1).join(sep).length + (parts.length > 1 ? sep.length : 0);

@@ -8,6 +8,10 @@ import { LLMProvider } from './base.js';
 // full capability, none of the token cost. Older models fall back to the
 // client-side progressive disclosure in src/toolPacks.js.
 const TOOL_SEARCH_MODELS = [
+  'claude-3-7-sonnet',
+  'claude-3-5-sonnet',
+  'claude-3-5-haiku',
+  'claude-3-opus',
   'claude-fable-5',
   'claude-mythos-5',
   'claude-opus-5',

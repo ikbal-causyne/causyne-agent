@@ -548,6 +548,11 @@ export async function chatMode({ home = false } = {}) {
     const startedAt = Date.now();
     if (prompt) prompt.setBusy(true);
     try {
+      if (!loop.config.provider || (!loop.config.apiKey && loop.config.provider !== 'ollama')) {
+        conn.renderer.write('\n' + paint('warn', '  No API provider or key configured.') + '\n' +
+          paint('muted', '  Run /setup or select setup from the home menu to configure your provider.\n'));
+        continue;
+      }
       await loop.run();
     } finally {
       // Must be released on the error path too, or one failed turn leaves the

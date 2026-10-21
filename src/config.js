@@ -78,14 +78,26 @@ export function loadConfig() {
         }
       }
 
-      // Self-heal a model id written before src/modelIds.js existed. The
-      // provider normalises too, but tokenTracker.getPricing() and the /model
-      // display both read config.model directly —
-      // they must agree with what is actually sent, not with what a stale
-      // Android build once wrote here.
+      // Self-heal a model id written before src/modelIds.js existed.
       const canonicalModel = canonicalModelId(parsed.model);
       if (canonicalModel !== parsed.model) {
         parsed.model = canonicalModel;
+        saveConfig(parsed);
+      }
+
+      // Self-heal legacy unconfigured DashScope bug:
+      // If config was written with provider 'dashscope' or 'dashscope-byok' but without an apiKey,
+      // it was an unintended default from older builds. Heal to an environment key or unconfigured.
+      if ((parsed.provider === 'dashscope' || parsed.provider === 'dashscope-byok') && !parsed.apiKey) {
+        const envDetected = detectEnvironmentProvider();
+        if (envDetected) {
+          parsed.provider = envDetected.provider;
+          parsed.model = envDetected.model;
+          parsed.apiKey = envDetected.apiKey;
+        } else {
+          parsed.provider = '';
+          parsed.model = '';
+        }
         saveConfig(parsed);
       }
 
@@ -95,13 +107,12 @@ export function loadConfig() {
     }
   }
   
-    // Default config
+  // Default config: auto-detect from environment if available, otherwise unconfigured
+  const envDetected = detectEnvironmentProvider();
   const defaultConfig = {
-    provider: 'dashscope',
-    // From the catalogue, not repeated here — this had been left at the
-    // long-retired `qwen-plus` while the picker had moved to qwen3.7.
-    model: DEFAULT_MODEL_BY_PROVIDER.dashscope,
-    apiKey: '',
+    provider: envDetected ? envDetected.provider : '',
+    model: envDetected ? envDetected.model : '',
+    apiKey: envDetected ? envDetected.apiKey : '',
     autonomyMode: 'B',
     tokenBudget: {
       enabled: false,
@@ -114,6 +125,64 @@ export function loadConfig() {
   };
   saveConfig(defaultConfig);
   return defaultConfig;
+}
+
+/**
+ * Auto-detect available API keys from environment variables.
+ * Precedence matches frontier capability: Gemini, Anthropic, OpenAI, DeepSeek, xAI, Moonshot, Qwen/DashScope.
+ */
+export function detectEnvironmentProvider() {
+  const env = process.env;
+  if (env.GEMINI_API_KEY || env.GOOGLE_API_KEY) {
+    return {
+      provider: 'gemini',
+      apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY || '',
+      model: DEFAULT_MODEL_BY_PROVIDER.gemini
+    };
+  }
+  if (env.ANTHROPIC_API_KEY) {
+    return {
+      provider: 'anthropic',
+      apiKey: env.ANTHROPIC_API_KEY,
+      model: DEFAULT_MODEL_BY_PROVIDER.anthropic
+    };
+  }
+  if (env.OPENAI_API_KEY) {
+    return {
+      provider: 'openai',
+      apiKey: env.OPENAI_API_KEY,
+      model: DEFAULT_MODEL_BY_PROVIDER.openai
+    };
+  }
+  if (env.DEEPSEEK_API_KEY) {
+    return {
+      provider: 'deepseek',
+      apiKey: env.DEEPSEEK_API_KEY,
+      model: DEFAULT_MODEL_BY_PROVIDER.deepseek
+    };
+  }
+  if (env.XAI_API_KEY || env.GROK_API_KEY) {
+    return {
+      provider: 'xai',
+      apiKey: env.XAI_API_KEY || env.GROK_API_KEY || '',
+      model: DEFAULT_MODEL_BY_PROVIDER.xai
+    };
+  }
+  if (env.MOONSHOT_API_KEY) {
+    return {
+      provider: 'moonshot',
+      apiKey: env.MOONSHOT_API_KEY,
+      model: DEFAULT_MODEL_BY_PROVIDER.moonshot
+    };
+  }
+  if (env.DASHSCOPE_API_KEY || env.QWEN_API_KEY) {
+    return {
+      provider: 'dashscope-byok',
+      apiKey: env.DASHSCOPE_API_KEY || env.QWEN_API_KEY || '',
+      model: DEFAULT_MODEL_BY_PROVIDER['dashscope-byok']
+    };
+  }
+  return null;
 }
 
 export function saveConfig(config) {

@@ -7,11 +7,16 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 
 /** Local runtime and provider summary. */
 export function homeStatusLine({ config = {} } = {}) {
-  const model = config.model ? `${config.provider || 'default'}/${config.model}` : (config.provider || 'no provider');
-  const configured = config.apiKey || config.provider === 'ollama';
+  const hasProvider = Boolean(config.provider && config.provider !== 'unconfigured');
+  const model = hasProvider
+    ? (config.model ? `${config.provider}/${config.model}` : config.provider)
+    : 'no provider configured';
+  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama');
   return '  ' + [
     paint('success', `${GLYPHS.bullet} local desktop`),
-    configured ? dim(model) : paint('warn', `${model} — no key`)
+    configured
+      ? dim(model)
+      : (hasProvider ? paint('warn', `${model} — no key`) : paint('warn', 'no provider configured — run /setup'))
   ].join(dim(`  ${GLYPHS.dot}  `));
 }
 
