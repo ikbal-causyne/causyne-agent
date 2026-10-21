@@ -2,24 +2,24 @@
  * Copyright (c) 2011-2024 Thesys Inc.
  * SPDX-License-Identifier: MIT
  *
- * OpenUI Generative Component Tool for Causyne Agent.
+ * Causyne UI Forge Tool Wrapper.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { generateHtmlComponent, generatePreviewHtml, generateReactComponent, type UIComponentSpec, type UIFramework } from '../uiEngine/openUi.js';
+import { generateHtmlComponent, generatePreviewHtml, generateReactComponent, type UIComponentSpec, type UIFramework } from '../uiEngine/uiForge.js';
 import { resolveUserPath } from '../utils/paths.js';
 
-export interface OpenUiToolArgs {
+export interface UiForgeArgs {
   framework?: UIFramework;
   spec?: UIComponentSpec;
   outputPath?: string;
 }
 
-export const openUiTool = {
+export const uiForge = {
   schema: {
-    name: 'openui_generate',
-    description: 'Generate production-grade accessible, responsive UI components (cards, dashboards, forms, tables) using OpenUI component specifications. Emits clean semantic HTML/CSS, React+Tailwind, or Svelte/Vue with a self-contained live preview.',
+    name: 'ui_forge',
+    description: 'Causyne UI Forge: Generate production-grade accessible, responsive UI components (cards, dashboards, forms, tables) and design systems. Emits clean semantic HTML/CSS, React+Tailwind, or Svelte/Vue with a self-contained live preview.',
     parameters: {
       type: 'object',
       properties: {
@@ -79,9 +79,9 @@ export const openUiTool = {
     }
   },
 
-  async execute(args: OpenUiToolArgs = {}): Promise<{ success: boolean; output?: string; code?: string; previewPath?: string; error?: string }> {
+  async execute(args: UiForgeArgs = {}): Promise<{ success: boolean; output?: string; code?: string; previewPath?: string; error?: string }> {
     if (!args.spec || !args.spec.type) {
-      return { success: false, error: 'OpenUI specification with a valid component "type" is required.' };
+      return { success: false, error: 'UI Forge specification with a valid component "type" is required.' };
     }
 
     const framework: UIFramework = args.framework || 'html-css';
@@ -113,7 +113,6 @@ export const openUiTool = {
         fs.writeFileSync(resolved, code, 'utf8');
         writtenFiles.push(resolved);
 
-        // Also write standalone preview alongside
         const ext = path.extname(resolved);
         const previewFile = path.join(dir, `${path.basename(resolved, ext)}.preview.html`);
         fs.writeFileSync(previewFile, previewHtml, 'utf8');
@@ -124,7 +123,7 @@ export const openUiTool = {
     }
 
     const reportLines = [
-      `Generated ${spec.type} component using OpenUI engine (${framework}).`,
+      `Generated ${spec.type} component using Causyne UI Forge (${framework}).`,
       `Theme: ${spec.theme || 'dark'} | Items: ${(spec.items || []).length} | Actions: ${(spec.actions || []).length}`
     ];
 

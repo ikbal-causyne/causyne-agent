@@ -8,11 +8,11 @@ import {
   generateHtmlComponent,
   generatePreviewHtml,
   generateReactComponent
-} from '../src/uiEngine/openUi.js';
-import { openUiTool } from '../src/tools/openUi.js';
+} from '../src/uiEngine/uiForge.js';
+import { uiForge } from '../src/tools/uiForge.js';
 import { TOOL_DEFINITIONS, toolRegistry } from '../src/tools/registry.js';
 
-test('openui: generates semantic accessible HTML and CSS card', () => {
+test('ui forge: generates semantic accessible HTML and CSS card', () => {
   const result = generateHtmlComponent({
     type: 'card',
     title: 'Deployment Overview',
@@ -23,11 +23,11 @@ test('openui: generates semantic accessible HTML and CSS card', () => {
 
   assert.ok(result.html.includes('Deployment Overview'));
   assert.ok(result.html.includes('System health and cluster metrics'));
-  assert.ok(result.html.includes('openui-btn-primary'));
-  assert.ok(result.css.includes('.openui-card'));
+  assert.ok(result.html.includes('causyne-ui-btn-primary'));
+  assert.ok(result.css.includes('.causyne-ui-card'));
 });
 
-test('openui: generates dashboard stats grid with items', () => {
+test('ui forge: generates dashboard stats grid with items', () => {
   const result = generateHtmlComponent({
     type: 'dashboard-stats',
     title: 'Cluster Resources',
@@ -40,10 +40,10 @@ test('openui: generates dashboard stats grid with items', () => {
   assert.ok(result.html.includes('CPU Usage'));
   assert.ok(result.html.includes('42%'));
   assert.ok(result.html.includes('18.4 GB'));
-  assert.ok(result.html.includes('openui-grid'));
+  assert.ok(result.html.includes('causyne-ui-grid'));
 });
 
-test('openui: generates React + Tailwind component code', () => {
+test('ui forge: generates React + Tailwind component code', () => {
   const reactCode = generateReactComponent({
     name: 'ServerMetricsCard',
     type: 'dashboard-stats',
@@ -56,18 +56,18 @@ test('openui: generates React + Tailwind component code', () => {
   assert.ok(reactCode.includes('1250'));
 });
 
-test('openui: generatePreviewHtml creates standalone preview document', () => {
+test('ui forge: generatePreviewHtml creates standalone preview document', () => {
   const preview = generatePreviewHtml('<div>Test</div>', 'body { color: red; }', 'dark');
   assert.ok(preview.includes('<!DOCTYPE html>'));
-  assert.ok(preview.includes('OpenUI Component Preview'));
+  assert.ok(preview.includes('Causyne UI Forge Preview'));
   assert.ok(preview.includes('<div>Test</div>'));
 });
 
-test('openui: tool execution generates code and writes preview if requested', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-openui-test-'));
+test('ui forge: tool execution generates code and writes preview if requested', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-uiforge-test-'));
   try {
     const targetFile = path.join(tempDir, 'Card.html');
-    const result = await openUiTool.execute({
+    const result = await uiForge.execute({
       spec: {
         type: 'card',
         title: 'Workspace Status',
@@ -84,9 +84,9 @@ test('openui: tool execution generates code and writes preview if requested', as
   }
 });
 
-test('openui: tool schema and registry integration', () => {
-  assert.ok(toolRegistry.openui_generate, 'openui_generate missing from toolRegistry');
-  const def = TOOL_DEFINITIONS.find((t) => t.name === 'openui_generate');
-  assert.ok(def, 'openui_generate missing from TOOL_DEFINITIONS');
-  assert.equal(typeof openUiTool.execute, 'function');
+test('ui forge: tool schema and registry integration', () => {
+  assert.ok(toolRegistry.ui_forge, 'ui_forge missing from toolRegistry');
+  const def = TOOL_DEFINITIONS.find((t) => t.name === 'ui_forge');
+  assert.ok(def, 'ui_forge missing from TOOL_DEFINITIONS');
+  assert.equal(typeof uiForge.execute, 'function');
 });

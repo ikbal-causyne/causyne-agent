@@ -360,7 +360,7 @@ export class Sandbox {
     if (toolName === 'desktop_act' || toolName === 'computer_use') {
       return { allowed: true, risk: 'extreme' };
     }
-    if (toolName === 'openui_generate') {
+    if (toolName === 'ui_forge') {
       return { allowed: true, risk: 'safe' };
     }
     if (toolName === 'fs_write' || toolName === 'fs_move' || toolName === 'fs_edit' || toolName === 'MultiEdit') {

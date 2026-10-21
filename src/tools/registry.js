@@ -1,6 +1,6 @@
 import { creativeApps } from './creativeApps.js';
 import { computerUse } from './computerUse.js';
-import { openUiTool } from './openUi.js';
+import { uiForge } from './uiForge.js';
 import { sysRun, sysRunBg } from './sysRun.js';
 import { fsRead } from './fsRead.js';
 import { fsWrite } from './fsWrite.js';
@@ -123,7 +123,7 @@ const TOOL_MODULES = [
   gameShaderForge, gameSceneBuilder, gameEntitySpawner,
   gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
   gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
-  computerUse, openUiTool
+  computerUse, uiForge
 ];
 
 // Base static definitions (backwards compatible). Order is preserved from the

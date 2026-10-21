@@ -2,30 +2,29 @@
  * Copyright (c) 2011-2024 Thesys Inc.
  * SPDX-License-Identifier: MIT
  *
- * Adapted for Causyne Agent Generative UI & Component Engine.
+ * Adapted for Causyne UI Forge — Generative Component & Design Engine.
  */
 /**
- * Generate semantic, modern HTML + CSS component code.
+ * Generate semantic, modern HTML + CSS component code under Causyne UI Forge.
  */
 export function generateHtmlComponent(spec) {
     const isDark = spec.theme !== 'light';
-    const bg = isDark ? '#0f172a' : '#f8fafc';
-    const cardBg = isDark ? 'rgba(30, 41, 59, 0.7)' : 'rgba(255, 255, 255, 0.9)';
-    const border = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+    const cardBg = isDark ? 'rgba(30, 41, 59, 0.75)' : 'rgba(255, 255, 255, 0.95)';
+    const border = isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)';
     const text = isDark ? '#f8fafc' : '#0f172a';
     const textMuted = isDark ? '#94a3b8' : '#64748b';
     const accent = '#6366f1';
     const accentHover = '#4f46e5';
     const css = `
-/* OpenUI Generated Component Styles - Responsive & Accessible */
-.openui-root {
+/* Causyne UI Forge Generated Styles - Responsive, Accessible & Performant */
+.causyne-ui-root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: ${text};
   line-height: 1.5;
   box-sizing: border-box;
 }
-.openui-root * { box-sizing: border-box; margin: 0; padding: 0; }
-.openui-card {
+.causyne-ui-root * { box-sizing: border-box; margin: 0; padding: 0; }
+.causyne-ui-card {
   background: ${cardBg};
   backdrop-filter: blur(12px);
   border: 1px solid ${border};
@@ -34,23 +33,23 @@ export function generateHtmlComponent(spec) {
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
-.openui-card:hover {
+.causyne-ui-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 20px 30px -10px rgba(0, 0, 0, 0.3);
 }
-.openui-header { margin-bottom: 16px; }
-.openui-title { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; }
-.openui-desc { font-size: 0.875rem; color: ${textMuted}; margin-top: 4px; }
-.openui-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 16px 0; }
-.openui-stat-box {
+.causyne-ui-header { margin-bottom: 16px; }
+.causyne-ui-title { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; }
+.causyne-ui-desc { font-size: 0.875rem; color: ${textMuted}; margin-top: 4px; }
+.causyne-ui-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 16px 0; }
+.causyne-ui-stat-box {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid ${border};
   border-radius: 8px;
   padding: 16px;
 }
-.openui-stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: ${textMuted}; }
-.openui-stat-value { font-size: 1.75rem; font-weight: 700; color: ${accent}; margin-top: 4px; }
-.openui-btn {
+.causyne-ui-stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: ${textMuted}; }
+.causyne-ui-stat-value { font-size: 1.75rem; font-weight: 700; color: ${accent}; margin-top: 4px; }
+.causyne-ui-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -62,11 +61,11 @@ export function generateHtmlComponent(spec) {
   border: 1px solid transparent;
   transition: all 0.15s ease;
 }
-.openui-btn-primary { background: ${accent}; color: #ffffff; }
-.openui-btn-primary:hover { background: ${accentHover}; }
-.openui-btn-secondary { background: transparent; border-color: ${border}; color: ${text}; }
-.openui-btn-secondary:hover { background: rgba(255, 255, 255, 0.05); }
-.openui-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+.causyne-ui-btn-primary { background: ${accent}; color: #ffffff; }
+.causyne-ui-btn-primary:hover { background: ${accentHover}; }
+.causyne-ui-btn-secondary { background: transparent; border-color: ${border}; color: ${text}; }
+.causyne-ui-btn-secondary:hover { background: rgba(255, 255, 255, 0.05); }
+.causyne-ui-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
 `.trim();
     let html = '';
     const title = spec.title || 'Component';
@@ -74,20 +73,20 @@ export function generateHtmlComponent(spec) {
     if (spec.type === 'dashboard-stats' || (spec.items && spec.items.length > 0)) {
         const itemsHtml = (spec.items || [])
             .map((item) => `
-    <div class="openui-stat-box">
-      <div class="openui-stat-label">${escapeHtml(item.label)}</div>
-      <div class="openui-stat-value">${escapeHtml(String(item.value ?? '—'))}</div>
-      ${item.description ? `<div class="openui-desc">${escapeHtml(item.description)}</div>` : ''}
+    <div class="causyne-ui-stat-box">
+      <div class="causyne-ui-stat-label">${escapeHtml(item.label)}</div>
+      <div class="causyne-ui-stat-value">${escapeHtml(String(item.value ?? '—'))}</div>
+      ${item.description ? `<div class="causyne-ui-desc">${escapeHtml(item.description)}</div>` : ''}
     </div>`)
             .join('\n');
         html = `
-<div class="openui-root">
-  <div class="openui-card">
-    <div class="openui-header">
-      <h3 class="openui-title">${escapeHtml(title)}</h3>
-      ${desc ? `<p class="openui-desc">${escapeHtml(desc)}</p>` : ''}
+<div class="causyne-ui-root">
+  <div class="causyne-ui-card">
+    <div class="causyne-ui-header">
+      <h3 class="causyne-ui-title">${escapeHtml(title)}</h3>
+      ${desc ? `<p class="causyne-ui-desc">${escapeHtml(desc)}</p>` : ''}
     </div>
-    <div class="openui-grid">
+    <div class="causyne-ui-grid">
 ${itemsHtml}
     </div>
     ${renderActions(spec.actions)}
@@ -95,13 +94,12 @@ ${itemsHtml}
 </div>`.trim();
     }
     else {
-        // General card or form
         html = `
-<div class="openui-root">
-  <div class="openui-card">
-    <div class="openui-header">
-      <h3 class="openui-title">${escapeHtml(title)}</h3>
-      ${desc ? `<p class="openui-desc">${escapeHtml(desc)}</p>` : ''}
+<div class="causyne-ui-root">
+  <div class="causyne-ui-card">
+    <div class="causyne-ui-header">
+      <h3 class="causyne-ui-title">${escapeHtml(title)}</h3>
+      ${desc ? `<p class="causyne-ui-desc">${escapeHtml(desc)}</p>` : ''}
     </div>
     ${renderActions(spec.actions)}
   </div>
@@ -113,10 +111,10 @@ function renderActions(actions) {
     if (!actions || actions.length === 0)
         return '';
     const btns = actions
-        .map((a) => `<button class="openui-btn ${a.primary ? 'openui-btn-primary' : 'openui-btn-secondary'}" data-action="${escapeHtml(a.action)}">${escapeHtml(a.label)}</button>`)
+        .map((a) => `<button class="causyne-ui-btn ${a.primary ? 'causyne-ui-btn-primary' : 'causyne-ui-btn-secondary'}" data-action="${escapeHtml(a.action)}">${escapeHtml(a.label)}</button>`)
         .join('\n      ');
     return `
-    <div class="openui-actions">
+    <div class="causyne-ui-actions">
       ${btns}
     </div>`;
 }
@@ -137,7 +135,7 @@ export function generatePreviewHtml(html, css, theme = 'dark') {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenUI Component Preview</title>
+  <title>Causyne UI Forge Preview</title>
   <style>
     body {
       margin: 0;
@@ -158,10 +156,10 @@ export function generatePreviewHtml(html, css, theme = 'dark') {
 </html>`;
 }
 /**
- * Generate React + Tailwind component code.
+ * Generate React + Tailwind component code under Causyne UI Forge.
  */
 export function generateReactComponent(spec) {
-    const compName = (spec.name || 'GeneratedCard').replace(/[^a-zA-Z0-9]/g, '');
+    const compName = (spec.name || 'CausyneCard').replace(/[^a-zA-Z0-9]/g, '');
     const title = spec.title || 'Component';
     const desc = spec.description || '';
     return `import React from 'react';

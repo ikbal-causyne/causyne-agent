@@ -2,15 +2,15 @@
  * Copyright (c) 2025 Bytedance, Inc. and its affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
- * Computer Use & UI-TARS Tool Wrapper for Causyne Agent.
+ * Causyne Vision Desktop & Coordinate Grounding Tool Wrapper.
  */
-import { parseUiTarsPrediction, uiTarsToDesktopAct, groundBoxCenter } from '../computerUse/uiTars.js';
+import { parseVisionGroundingPrediction, visionGroundingToDesktopAct, groundBoxCenter } from '../computerUse/visionGrounding.js';
 import { desktopAct } from './desktopAct.js';
 import { auditLog } from '../auditLog.js';
 export const computerUse = {
     schema: {
         name: 'computer_use',
-        description: 'Ground and execute graphical computer-use actions (click coordinates, type text, send key presses, drag, wait) derived from vision-language models and UI-TARS predictions. Automatically translates normalized bounding boxes and coordinates against current screen dimensions with safety boundary checks. Requires explicit approval.',
+        description: 'Ground and execute graphical computer-use actions (click coordinates, type text, send key presses, drag, wait) derived from vision-language models and coordinate grounding predictions. Automatically translates normalized bounding boxes and coordinates against current screen dimensions with safety boundary checks. Requires explicit approval.',
         parameters: {
             type: 'object',
             properties: {
@@ -21,7 +21,7 @@ export const computerUse = {
                 },
                 prediction: {
                     type: 'string',
-                    description: 'Raw prediction text from a UI-TARS or vision-language model, e.g. "Thought: Click search bar. Action: click(start_box=\'(500, 200)\')".'
+                    description: 'Raw prediction text from a vision-language model or coordinate grounding engine, e.g. "Thought: Click search bar. Action: click(start_box=\'(500, 200)\')".'
                 },
                 coordinates: {
                     type: 'array',
@@ -60,17 +60,17 @@ export const computerUse = {
         const screen = args.screenContext || { width: 1920, height: 1080, scaleFactor: 1 };
         const app = typeof args.app === 'string' ? args.app.trim() : '';
         let desktopActions = [];
-        // Mode 1: Parse full model prediction from UI-TARS
+        // Mode 1: Parse full model prediction from vision grounding engine
         if (args.prediction || args.action === 'execute_prediction') {
             const pred = args.prediction || '';
             if (!pred.trim()) {
                 return { success: false, error: 'No prediction string provided for execute_prediction.' };
             }
-            const parsed = parseUiTarsPrediction(pred, screen);
+            const parsed = parseVisionGroundingPrediction(pred, screen);
             if (parsed.actions.length === 0) {
                 return { success: false, error: 'Could not parse any executable GUI actions from prediction string.' };
             }
-            desktopActions = uiTarsToDesktopAct(parsed.actions);
+            desktopActions = visionGroundingToDesktopAct(parsed.actions);
         }
         else {
             // Mode 2: Direct action request

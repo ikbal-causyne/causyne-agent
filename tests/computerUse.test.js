@@ -6,9 +6,9 @@ import {
   groundPoint,
   groundBoxCenter,
   parseSingleAction,
-  parseUiTarsPrediction,
-  uiTarsToDesktopAct
-} from '../src/computerUse/uiTars.js';
+  parseVisionGroundingPrediction,
+  visionGroundingToDesktopAct
+} from '../src/computerUse/visionGrounding.js';
 import { computerUse } from '../src/tools/computerUse.js';
 import { TOOL_DEFINITIONS, toolRegistry } from '../src/tools/registry.js';
 
@@ -31,7 +31,7 @@ test('computer use: coordinate grounding translates normalized values to screen 
   assert.equal(boxCenter.y, 540);
 });
 
-test('computer use: single action parsing handles standard UI-TARS syntax', () => {
+test('computer use: single action parsing handles standard vision grounding syntax', () => {
   const screen = { width: 1920, height: 1080, scaleFactor: 1 };
 
   const clickAct = parseSingleAction("click(start_box='(200, 400)')", screen);
@@ -57,7 +57,7 @@ test('computer use: single action parsing handles standard UI-TARS syntax', () =
   assert.equal(waitAct.seconds, 2.5);
 });
 
-test('computer use: multi-line UI-TARS prediction with thoughts parses cleanly', () => {
+test('computer use: multi-line prediction with thoughts parses cleanly into desktop acts', () => {
   const prediction = `
 Thought: I need to click the search bar and submit query.
 Action: click(start_box='(500, 200)')
@@ -67,14 +67,14 @@ Action: type(content='autonomous agent')
 Action: hotkey(key='return')
 `;
 
-  const parsed = parseUiTarsPrediction(prediction, { width: 1000, height: 1000, scaleFactor: 1 });
+  const parsed = parseVisionGroundingPrediction(prediction, { width: 1000, height: 1000, scaleFactor: 1 });
   assert.equal(parsed.thought, 'I need to click the search bar and submit query.');
   assert.equal(parsed.actions.length, 3);
   assert.equal(parsed.actions[0].action, 'click');
   assert.equal(parsed.actions[1].action, 'type');
   assert.equal(parsed.actions[2].action, 'hotkey');
 
-  const desktopActs = uiTarsToDesktopAct(parsed.actions);
+  const desktopActs = visionGroundingToDesktopAct(parsed.actions);
   assert.equal(desktopActs.length, 3);
   assert.equal(desktopActs[0].verb, 'clickxy');
   assert.equal(desktopActs[1].verb, 'type');

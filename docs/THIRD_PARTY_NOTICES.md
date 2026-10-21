@@ -61,8 +61,9 @@ adapted from the MIT-licensed Camofox Browser project at source commit
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
-The computer-use action parser and coordinate grounding engine in `src/computerUse/`
-and `src/tools/computerUse.ts` are adapted from the UI-TARS project:
+The computer-use action parser and coordinate grounding engine in `src/computerUse/visionGrounding.ts`
+and `src/tools/computerUse.ts` power **Causyne Vision Desktop** (`computer_use`). Algorithms for coordinate
+grounding and action grammar contain adaptations from upstream open-source work:
 
 > Copyright (c) 2025 Bytedance, Inc. and its affiliates.
 > Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,8 +78,9 @@ and `src/tools/computerUse.ts` are adapted from the UI-TARS project:
 > See the License for the specific language governing permissions and
 > limitations under the License.
 
-The generative UI component and preview engine in `src/uiEngine/` and
-`src/tools/openUi.ts` are adapted from the OpenUI project:
+The generative UI component and preview engine in `src/uiEngine/uiForge.ts` and
+`src/tools/uiForge.ts` power **Causyne UI Forge** (`ui_forge`). Code generation algorithms
+contain adaptations from upstream open-source work:
 
 > MIT License
 >

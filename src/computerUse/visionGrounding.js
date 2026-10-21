@@ -2,7 +2,7 @@
  * Copyright (c) 2025 Bytedance, Inc. and its affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
- * Adapted for Causyne Agent Computer Use & GUI Grounding Engine.
+ * Adapted for Causyne Vision Desktop & Coordinate Grounding Engine.
  */
 const DEFAULT_FACTOR = [1000, 1000];
 /**
@@ -26,7 +26,6 @@ export function groundPoint(nums, screen = { width: 1920, height: 1080, scaleFac
     const rawX = nums[0] ?? 0;
     const rawY = nums[1] ?? 0;
     const scale = screen.scaleFactor || 1;
-    // Normalized 0..1000 to pixel dimensions
     const normX = Math.max(0, Math.min(1, rawX / factor[0]));
     const normY = Math.max(0, Math.min(1, rawY / factor[1]));
     return {
@@ -52,7 +51,7 @@ export function groundBoxCenter(nums, screen = { width: 1920, height: 1080, scal
     return groundPoint([midX, midY], screen, factor);
 }
 /**
- * Parse UI-TARS action string format:
+ * Parse vision grounding action format:
  * E.g. Action: click(start_box='(240, 500)')
  */
 export function parseSingleAction(rawAction, screenContext = { width: 1920, height: 1080, scaleFactor: 1 }) {
@@ -68,7 +67,6 @@ export function parseSingleAction(rawAction, screenContext = { width: 1920, heig
     }
     const funcName = callMatch[1]?.toLowerCase();
     const argsRaw = callMatch[2] || '';
-    // Extract key-value pairs or positional args: start_box='(...)', content='...', key='...'
     const argsMap = {};
     const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*['"]([^'"]+)['"]/g;
     let match;
@@ -79,7 +77,6 @@ export function parseSingleAction(rawAction, screenContext = { width: 1920, heig
             argsMap[key] = val;
         }
     }
-    // Handle positional box if no explicit key: e.g. click('(100, 200)')
     if (Object.keys(argsMap).length === 0) {
         const boxMatch = argsRaw.match(/['"]?(\([0-9\s,.]+\)|\[[0-9\s,.]+\])['"]?/);
         if (boxMatch && boxMatch[1]) {
@@ -129,14 +126,12 @@ export function parseSingleAction(rawAction, screenContext = { width: 1920, heig
     return actionObj;
 }
 /**
- * Parse complete UI-TARS prediction text with Thought and Action blocks.
+ * Parse complete vision grounding prediction text with Thought and Action blocks.
  */
-export function parseUiTarsPrediction(predictionText, screenContext = { width: 1920, height: 1080, scaleFactor: 1 }) {
+export function parseVisionGroundingPrediction(predictionText, screenContext = { width: 1920, height: 1080, scaleFactor: 1 }) {
     let thought;
     let reflection;
-    let actionBlock = '';
     const text = (predictionText || '').trim();
-    // Parse Thought / Reflection
     if (text.includes('Thought:')) {
         const tMatch = text.match(/Thought:\s*([\s\S]+?)(?=\s*Action[:：]|$)/i);
         if (tMatch && tMatch[1]) {
@@ -149,11 +144,9 @@ export function parseUiTarsPrediction(predictionText, screenContext = { width: 1
             reflection = rMatch[1].trim();
         }
     }
-    // Extract action lines across all Action: markers
     const actionLines = [];
     if (/Action[:：]/i.test(text)) {
         const parts = text.split(/Action[:：]/i);
-        // parts[0] contains Thoughts/Reflections before the first Action:
         for (let i = 1; i < parts.length; i++) {
             const seg = parts[i] || '';
             const lines = seg.split(/\n+/).map((l) => l.trim()).filter(Boolean);
@@ -176,9 +169,6 @@ export function parseUiTarsPrediction(predictionText, screenContext = { width: 1
     }
     return { thought, reflection, actions };
 }
-/**
- * Map standard keyboard keys to macOS virtual keyCodes for the actuator.
- */
 const MAC_KEY_CODES = {
     return: 36,
     enter: 36,
@@ -193,9 +183,9 @@ const MAC_KEY_CODES = {
     right: 124
 };
 /**
- * Convert parsed UI-TARS actions into Causyne desktop_act equivalent instructions.
+ * Convert parsed vision grounding actions into Causyne desktop_act equivalent instructions.
  */
-export function uiTarsToDesktopAct(actions) {
+export function visionGroundingToDesktopAct(actions) {
     const result = [];
     for (const act of actions) {
         switch (act.action) {

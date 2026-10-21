@@ -2,7 +2,7 @@
  * Copyright (c) 2025 Bytedance, Inc. and its affiliates.
  * SPDX-License-Identifier: Apache-2.0
  *
- * Adapted for Causyne Agent Computer Use & GUI Grounding Engine.
+ * Adapted for Causyne Vision Desktop & Coordinate Grounding Engine.
  */
 
 export interface ScreenContext {
@@ -29,7 +29,7 @@ export type ActionVerb =
   | 'wait'
   | 'finished';
 
-export interface UITarsAction {
+export interface VisionAction {
   action: ActionVerb;
   thought?: string;
   reflection?: string;
@@ -80,7 +80,6 @@ export function groundPoint(
   const rawY = nums[1] ?? 0;
   const scale = screen.scaleFactor || 1;
 
-  // Normalized 0..1000 to pixel dimensions
   const normX = Math.max(0, Math.min(1, rawX / factor[0]));
   const normY = Math.max(0, Math.min(1, rawY / factor[1]));
 
@@ -113,13 +112,13 @@ export function groundBoxCenter(
 }
 
 /**
- * Parse UI-TARS action string format:
+ * Parse vision grounding action format:
  * E.g. Action: click(start_box='(240, 500)')
  */
 export function parseSingleAction(
   rawAction: string,
   screenContext: ScreenContext = { width: 1920, height: 1080, scaleFactor: 1 }
-): UITarsAction | null {
+): VisionAction | null {
   const line = rawAction.trim();
   if (!line) return null;
 
@@ -134,7 +133,6 @@ export function parseSingleAction(
   const funcName = callMatch[1]?.toLowerCase() as ActionVerb;
   const argsRaw = callMatch[2] || '';
 
-  // Extract key-value pairs or positional args: start_box='(...)', content='...', key='...'
   const argsMap: Record<string, string> = {};
   const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*['"]([^'"]+)['"]/g;
   let match: RegExpExecArray | null;
@@ -146,7 +144,6 @@ export function parseSingleAction(
     }
   }
 
-  // Handle positional box if no explicit key: e.g. click('(100, 200)')
   if (Object.keys(argsMap).length === 0) {
     const boxMatch = argsRaw.match(/['"]?(\([0-9\s,.]+\)|\[[0-9\s,.]+\])['"]?/);
     if (boxMatch && boxMatch[1]) {
@@ -154,7 +151,7 @@ export function parseSingleAction(
     }
   }
 
-  const actionObj: UITarsAction = {
+  const actionObj: VisionAction = {
     action: funcName,
     rawStr: line
   };
@@ -202,19 +199,17 @@ export function parseSingleAction(
 }
 
 /**
- * Parse complete UI-TARS prediction text with Thought and Action blocks.
+ * Parse complete vision grounding prediction text with Thought and Action blocks.
  */
-export function parseUiTarsPrediction(
+export function parseVisionGroundingPrediction(
   predictionText: string,
   screenContext: ScreenContext = { width: 1920, height: 1080, scaleFactor: 1 }
-): { thought?: string | undefined; reflection?: string | undefined; actions: UITarsAction[] } {
+): { thought?: string | undefined; reflection?: string | undefined; actions: VisionAction[] } {
   let thought: string | undefined;
   let reflection: string | undefined;
-  let actionBlock = '';
 
   const text = (predictionText || '').trim();
 
-  // Parse Thought / Reflection
   if (text.includes('Thought:')) {
     const tMatch = text.match(/Thought:\s*([\s\S]+?)(?=\s*Action[:：]|$)/i);
     if (tMatch && tMatch[1]) {
@@ -228,11 +223,9 @@ export function parseUiTarsPrediction(
     }
   }
 
-  // Extract action lines across all Action: markers
   const actionLines: string[] = [];
   if (/Action[:：]/i.test(text)) {
     const parts = text.split(/Action[:：]/i);
-    // parts[0] contains Thoughts/Reflections before the first Action:
     for (let i = 1; i < parts.length; i++) {
       const seg = parts[i] || '';
       const lines = seg.split(/\n+/).map((l) => l.trim()).filter(Boolean);
@@ -242,7 +235,7 @@ export function parseUiTarsPrediction(
     actionLines.push(...text.split(/\n+/).map((l) => l.trim()).filter(Boolean));
   }
 
-  const actions: UITarsAction[] = [];
+  const actions: VisionAction[] = [];
 
   for (const line of actionLines) {
     const parsed = parseSingleAction(line, screenContext);
@@ -256,9 +249,6 @@ export function parseUiTarsPrediction(
   return { thought, reflection, actions };
 }
 
-/**
- * Map standard keyboard keys to macOS virtual keyCodes for the actuator.
- */
 const MAC_KEY_CODES: Record<string, number> = {
   return: 36,
   enter: 36,
@@ -274,9 +264,9 @@ const MAC_KEY_CODES: Record<string, number> = {
 };
 
 /**
- * Convert parsed UI-TARS actions into Causyne desktop_act equivalent instructions.
+ * Convert parsed vision grounding actions into Causyne desktop_act equivalent instructions.
  */
-export function uiTarsToDesktopAct(actions: UITarsAction[]): DesktopActEquivalent[] {
+export function visionGroundingToDesktopAct(actions: VisionAction[]): DesktopActEquivalent[] {
   const result: DesktopActEquivalent[] = [];
 
   for (const act of actions) {

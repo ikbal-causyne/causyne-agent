@@ -56,10 +56,10 @@
     "src/creative/studioScripts.ts",
     "src/creative/pipeline.ts",
     "src/dynamicCatalogue.ts",
-    "src/computerUse/uiTars.ts",
+    "src/computerUse/visionGrounding.ts",
     "src/tools/computerUse.ts",
-    "src/uiEngine/openUi.ts",
-    "src/tools/openUi.ts"
+    "src/uiEngine/uiForge.ts",
+    "src/tools/uiForge.ts"
   ],
   "exclude": [
     "node_modules",
