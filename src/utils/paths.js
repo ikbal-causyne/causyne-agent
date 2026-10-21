@@ -1,6 +1,5 @@
-import os from 'os';
-import path from 'path';
-
+import os from 'node:os';
+import path from 'node:path';
 /**
  * Resolve a path the model supplied, expanding a leading `~`.
  *
@@ -15,23 +14,21 @@ import path from 'path';
  * look at its own work, which is the one step that separates a good render from
  * a bad one.
  *
- * @param   {string} input  A path, possibly starting with `~`.
- * @returns {string}        An absolute path.
+ * @param input A path, possibly starting with `~`.
+ * @returns An absolute path.
  */
 export function resolveUserPath(input) {
-  const raw = String(input ?? '').trim();
-  if (raw === '~') return os.homedir();
-  if (raw.startsWith('~/') || raw.startsWith('~\\')) {
-    return path.resolve(path.join(os.homedir(), raw.slice(2)));
-  }
-  return path.resolve(raw);
+    const raw = String(input ?? '').trim();
+    if (raw === '~')
+        return os.homedir();
+    if (raw.startsWith('~/') || raw.startsWith('~\\')) {
+        return path.resolve(path.join(os.homedir(), raw.slice(2)));
+    }
+    return path.resolve(raw);
 }
-
-
-const STATE_ROOT = process.env.CAUSYNE_HOME && String(process.env.CAUSYNE_HOME).trim()
-  ? path.resolve(String(process.env.CAUSYNE_HOME).trim())
-  : path.join(os.homedir(), '.causyne');
-
+const STATE_ROOT = process.env['CAUSYNE_HOME'] && String(process.env['CAUSYNE_HOME']).trim()
+    ? path.resolve(String(process.env['CAUSYNE_HOME']).trim())
+    : path.join(os.homedir(), '.causyne');
 export function causyneHome() {
-  return STATE_ROOT;
+    return STATE_ROOT;
 }

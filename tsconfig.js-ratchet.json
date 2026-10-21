@@ -2,8 +2,6 @@
   "//": "Legacy JavaScript ratchet retained during migration. This is intentionally not strict and must never be described as full-project type safety.",
   "extends": "./tsconfig.json",
   "include": [
-    "src/modelRouter.js",
-    "src/utils/paths.js",
-    "src/uncertainty.js"
+    "src/modelRouter.js"
   ]
 }

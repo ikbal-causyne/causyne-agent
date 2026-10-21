@@ -63,7 +63,16 @@
     "src/documentEngine/antiSlopAuditor.ts",
     "src/documentEngine/screenplayFormatter.ts",
     "src/documentEngine/documentForge.ts",
-    "src/tools/documentForge.ts"
+    "src/tools/documentForge.ts",
+    "src/promptMentions.ts",
+    "src/perception.ts",
+    "src/utils/paths.ts",
+    "src/uncertainty.ts",
+    "src/modelRouter.ts",
+    "src/textDiff.ts",
+    "src/execSafe.ts",
+    "src/procSignal.ts",
+    "src/vfeTracker.ts"
   ],
   "exclude": [
     "node_modules",
