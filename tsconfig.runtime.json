@@ -54,7 +54,8 @@
     "src/creative/blenderBatch.ts",
     "src/tools/creativeApps.ts",
     "src/creative/studioScripts.ts",
-    "src/creative/pipeline.ts"
+    "src/creative/pipeline.ts",
+    "src/dynamicCatalogue.ts"
   ],
   "exclude": [
     "node_modules",

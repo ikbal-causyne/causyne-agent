@@ -20,6 +20,7 @@ import {
 } from './userSkills.js';
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
+import { resolveAvailableModels, getCuratedModels } from './dynamicCatalogue.js';
 import {
   serverStatus, grantServer, revokeServer, addServer, removeServer,
   connectServer, disconnectServer, refreshServer
@@ -643,20 +644,54 @@ export const COMMANDS = [
 
   {
     name: 'model',
+    aliases: ['models'],
     scope: 'local',
-    usage: '/model [provider/model | model]',
-    description: 'Show or change the model in use',
+    usage: '/model [list | refresh | provider/model | model]',
+    description: 'Show, list or change the model in use',
     dialogTitle: 'Model',
-    run: (argv) => {
+    complete: () => {
+      const config = loadConfig();
+      const currentProvider = config.provider || '';
+      const curated = getCuratedModels(currentProvider);
+      const items = [
+        { value: 'list', label: 'list', description: 'list models for active provider' },
+        { value: 'refresh', label: 'refresh', description: 'poll provider API for live models' }
+      ];
+      for (const m of curated) {
+        items.push({ value: m, label: m, description: currentProvider || 'model' });
+      }
+      return items;
+    },
+    run: async (argv) => {
       const config = loadConfig();
       if (argv.length === 0) {
-        return ok(`Provider : ${config.provider || 'default'}\nModel    : ${config.model || 'default'}`);
+        return ok(`Provider : ${config.provider || 'no provider configured'}\nModel    : ${config.model || 'none'}\n\nUse /model list to see models, or /model refresh to poll provider API.`);
+      }
+      const first = argv[0].toLowerCase();
+      if (first === 'list' || first === 'ls') {
+        const targetProvider = argv[1] || config.provider;
+        if (!targetProvider) return fail('No provider specified or configured. Run /setup first.');
+        const result = await resolveAvailableModels(targetProvider, config);
+        const active = config.model;
+        const lines = [
+          `Available models for ${targetProvider} (source: ${result.source}):`,
+          ''
+        ];
+        for (const m of result.models) {
+          const isCurrent = m === active;
+          lines.push(`  ${isCurrent ? '• ' : '  '}${m}${isCurrent ? '  (active)' : ''}`);
+        }
+        lines.push('');
+        lines.push('Use /model <name> to select, or /model refresh to poll the provider API.');
+        return ok(lines.join('\n'));
+      }
+      if (first === 'refresh') {
+        if (!config.provider) return fail('No provider configured. Run /setup first.');
+        const result = await resolveAvailableModels(config.provider, config, true);
+        return ok(`Refreshed ${config.provider} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
       }
       const requested = argv.join(' ').trim();
       const separator = requested.indexOf('/');
-      // A bare name changes only the model; "provider/model" changes both. Any
-      // string is accepted — model ids move faster than any hardcoded list, and
-      // guessing from memory is exactly what .agents/AGENTS.md §3 forbids.
       if (separator > 0) {
         const provider = requested.slice(0, separator);
         if (provider !== config.provider) { config.apiKey = ''; delete config.baseUrl; }
