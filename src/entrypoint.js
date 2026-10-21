@@ -194,6 +194,19 @@ program
     await execCommand(command);
   });
 
+program
+  .command('acp')
+  .description('Start Causyne as an Agent Client Protocol (ACP) server over stdio')
+  .action(async () => {
+    const { AcpServer } = await import('./acp/server.js');
+    const server = new AcpServer({
+      input: process.stdin,
+      output: process.stdout,
+      agentVersion: getPackageVersion()
+    });
+    server.start();
+  });
+
 // Setup fallback for missing commands
 program.on('command:*', function () {
   console.error('Invalid command: %s\nSee --help for a list of available commands.', program.args.join(' '));

@@ -72,7 +72,15 @@
     "src/textDiff.ts",
     "src/execSafe.ts",
     "src/procSignal.ts",
-    "src/vfeTracker.ts"
+    "src/vfeTracker.ts",
+    "src/observer/evidence.ts",
+    "src/observer/advisory.ts",
+    "src/observer/coldObserver.ts",
+    "src/acp/protocol.ts",
+    "src/acp/peerProfiles.ts",
+    "src/acp/server.ts",
+    "src/acp/client.ts",
+    "src/tools/peerAgent.ts"
   ],
   "exclude": [
     "node_modules",

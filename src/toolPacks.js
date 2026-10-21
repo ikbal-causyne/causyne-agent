@@ -113,6 +113,7 @@ export const PACKS = {
     'plugin_manager',
     'document_forge',
     'agent_subagent_orchestrate',
+    'peer_agent_delegate',
     'code_search_ast',
     'code_list_symbols',
     'pdf_read'

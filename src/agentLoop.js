@@ -22,6 +22,7 @@ import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
 import { VFETracker } from './vfeTracker.js';
+import { coldObserver } from './observer/coldObserver.js';
 import {
   routePacks,
   packForTool,
@@ -322,7 +323,9 @@ export class AgentLoop {
     this.eventSink = eventSink;
     this.taskId = taskId;
     this.userPrompt = userPrompt;
-    
+    this.workspaceRoot = process.cwd();
+    this.autonomyOverride = null;
+
     this.config = loadConfig();
     this.sandbox = new Sandbox();
 
@@ -400,6 +403,7 @@ export class AgentLoop {
     // P6: rendered surfaces this task wrote, for the anti-slop gate to read back.
     this.webArtifacts = new Set();
     this.slopGateFired = false;
+    this.coldObserverGuardFired = false;
 
     this.gameCascadeState = { active: true, currentStage: 1, stageHistory: [], verificationPassed: false };
     this.gameToolStats = { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
@@ -534,6 +538,15 @@ export class AgentLoop {
     if (this.abortController) {
       this.abortController.abort();
     }
+  }
+
+  setAutonomyMode(mode) {
+    const normalized = String(mode || '').trim().toUpperCase();
+    if (!['A', 'B', 'C'].includes(normalized)) {
+      throw new Error('autonomy mode must be A, B, or C');
+    }
+    this.autonomyOverride = normalized;
+    this.config.autonomyMode = normalized;
   }
 
   /**
@@ -768,6 +781,7 @@ export class AgentLoop {
 
   updateTierLimits() {
     this.config = loadConfig();
+    if (this.autonomyOverride) this.config.autonomyMode = this.autonomyOverride;
     if (typeof this.initializeProvider === 'function') {
       this.llm = this.initializeProvider();
       this._utilityLlm = null; // the route is derived from the model; re-derive it
@@ -819,6 +833,8 @@ export class AgentLoop {
     // awareness instead of burning steps rediscovering it. The result used to be
     // assigned to a local variable and thrown away.
     auditLog.log({ event: 'task_start', taskId: this.taskId, request: this.userPrompt });
+    this.workspaceRoot = process.cwd();
+    coldObserver.beginTask(this.taskId);
     this.emitEvent({ type: 'status', message: 'Analyzing workspace...' });
 
     // P2: open the undo group for this task. This snapshots the CONVERSATION as
@@ -874,6 +890,7 @@ export class AgentLoop {
     this.webGuardFired = false;
     this.webArtifacts = new Set();
     this.slopGateFired = false;
+    this.coldObserverGuardFired = false;
     this.staticContext = null;
     // Plan cache: the procedure THIS task follows, and the template (if any)
     // that was offered to it. Both reset per task — a plan is a property of one
@@ -1675,6 +1692,32 @@ export class AgentLoop {
             }
           }
 
+          // Cold Observer: Overconfidence & Loop Verification Check
+          if (!this.coldObserverGuardFired) {
+            try {
+              const coldAudit = await coldObserver.auditTurnVerification({
+                taskId: this.taskId,
+                userPrompt: this.currentTaskPrompt || this.userPrompt || '',
+                agentClaim: response.content || '',
+                toolHistory: [],
+                stepsCompleted: this.stepsCompleted
+              });
+
+              if (coldAudit.overconfident) {
+                this.coldObserverGuardFired = true;
+                this.emitEvent({ type: 'status', message: `Cold Observer: ${coldAudit.discrepancy}` });
+                this.messages.push({
+                  role: 'system',
+                  content: coldAudit.coldDirective
+                });
+                this.memoryManager.saveHistory(this.messages);
+                continue;
+              }
+            } catch (_err) {
+              // Cold observer fail-open
+            }
+          }
+
           this.emitEvent({ type: 'status', message: 'Task completed.' });
           this.memoryManager.saveHistory(this.messages); // Save final state
 
@@ -1751,7 +1794,7 @@ export class AgentLoop {
             continue;
           }
           
-          this.emitEvent({ type: 'step_start', tool: functionName, args: args });
+          this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });
           this.consecutiveCommands++;
           
           if (functionName === 'screenshot' || functionName === 'vision_inspect_ui') {
@@ -1799,7 +1842,7 @@ export class AgentLoop {
             
             if ((['fs_write'].includes(functionName) && isGameFileOrDir) || isEchoingToFile || isCustomScriptBlock) {
               const interceptMsg = `[SOVEREIGN CASCADE VIOLATION: You attempted to skip from Stage ${this.gameCascadeState.currentStage} to Stage 7 without completing Stages 3, 4, 5, and 6 modularly. DO NOT write monolithic 20 KB custom scripts!]`;
-              this.emitEvent({ type: 'step_error', tool: functionName, error: '⚡ Sovereign Game Intercept: Cascade violation detected.' });
+              this.emitEvent({ type: 'step_error', tool: functionName, error: 'Sovereign Game Intercept: Cascade violation detected.', toolCallId: toolCall.id });
               this.messages.push({
                 role: 'tool',
                 tool_call_id: toolCall.id,
@@ -1837,7 +1880,7 @@ export class AgentLoop {
             // Hard Circuit Breaker (Transcendence Context Consciousness)
             if (this.consecutiveBlockedActions >= 4) {
               const fatalMsg = `FATAL ERROR: Infinite Token Drain Detected. Agent repeatedly attempted blocked/forbidden actions 4 times in a row. Forcibly aborting task to save tokens.`;
-              this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg });
+              this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
               auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
               
               // Save memory of failure for RLTF
@@ -1852,7 +1895,11 @@ export class AgentLoop {
             }
             
             auditLog.log({ event: 'tool_blocked', taskId: this.taskId, tool: functionName, args, reason: validation.reason });
-            this.emitEvent({ type: 'step_error', tool: functionName, error: validation.reason });
+            coldObserver.recordToolOutcome(this.taskId, functionName, args, {
+              success: false,
+              error: validation.reason
+            });
+            this.emitEvent({ type: 'step_error', tool: functionName, error: validation.reason, toolCallId: toolCall.id });
             
             // Feed error back to LLM with absolute command to stop repeating
             this.messages.push({
@@ -1931,6 +1978,10 @@ export class AgentLoop {
               event: 'hook_denied', taskId: this.taskId, hookEvent: 'PreToolUse',
               tool: functionName, reason: preHook.reason || 'hook denied'
             });
+            coldObserver.recordToolOutcome(this.taskId, functionName, args, {
+              success: false,
+              error: `PreToolUse hook denied "${functionName}".`
+            });
             this.messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
@@ -1950,6 +2001,39 @@ export class AgentLoop {
           // downloads ran unannounced.
           const isHeavyAiDownload = functionName === 'manage_local_dependencies' &&
             ['pipInst', 'fetchBin', 'fetchMod'].includes(args.action);
+
+          // Cold Observer: Assess blast radius and mutation risk
+          try {
+            const coldMutation = await coldObserver.evaluateMutation(functionName, args, {
+              workspaceRoot: this.workspaceRoot
+            });
+            if (coldMutation.veto) {
+              this.emitEvent({
+                type: 'status',
+                message: `Cold Observer Veto: Action blocked (${coldMutation.reason})`
+              });
+              coldObserver.recordToolOutcome(this.taskId, functionName, args, {
+                success: false,
+                error: `[COLD OBSERVER VETO]: ${coldMutation.reason}`
+              });
+              this.messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: functionName,
+                content: JSON.stringify({
+                  success: false,
+                  error: `[COLD OBSERVER VETO]: ${coldMutation.reason}. Modify your approach to avoid project damage.`
+                })
+              });
+              continue;
+            }
+            if (coldMutation.requiresConfirmation) {
+              validation.risk = 'dangerous';
+            }
+          } catch (_err) {
+            // Cold observer mutation assessment fail-open
+          }
+
           // A standing approval from "Allow always" lifts the gate for this
           // tool until the process restarts. It is checked HERE rather than
 
@@ -1979,6 +2063,10 @@ export class AgentLoop {
             const approved = await this.waitForApproval(toolCall.id);
 
             if (!approved) {
+              coldObserver.recordToolOutcome(this.taskId, functionName, args, {
+                success: false,
+                error: 'User denied this action'
+              });
               this.messages.push({
                 role: 'tool',
                 tool_call_id: toolCall.id,
@@ -2066,7 +2154,8 @@ export class AgentLoop {
               this.emitEvent({ 
                 type: 'step_error', 
                 tool: functionName, 
-                error: `${errorType}: ${toolError.message} (retry ${currentRetries + 1}/${MAX_RETRIES} in ${backoffMs/1000}s)` 
+                error: `${errorType}: ${toolError.message} (retry ${currentRetries + 1}/${MAX_RETRIES} in ${backoffMs/1000}s)`,
+                toolCallId: toolCall.id
               });
               
               auditLog.log({ 
@@ -2101,7 +2190,12 @@ export class AgentLoop {
               this.emitEvent({ 
                 type: 'step_error', 
                 tool: functionName, 
-                error: `Failed after ${MAX_RETRIES} attempts: ${toolError.message}` 
+                error: `Failed after ${MAX_RETRIES} attempts: ${toolError.message}`,
+                toolCallId: toolCall.id
+              });
+              coldObserver.recordToolOutcome(this.taskId, functionName, args, {
+                success: false,
+                error: `PERMANENT FAILURE after ${MAX_RETRIES} retries: ${toolError.message}`
               });
               
               this.messages.push({
@@ -2139,6 +2233,11 @@ export class AgentLoop {
             };
           }
 
+          // The journal is the observer's own record of what actually ran. It
+          // is written only after post-hook review, so a formatter that rejects
+          // a write is remembered as a failure rather than a success.
+          coldObserver.recordToolOutcome(this.taskId, functionName, args, result);
+
           // PROGRESSIVE DISCLOSURE: honour unlock signals from tool_search.
           // The control fields are stripped before the result reaches the LLM.
           if (result && (result._unlock_tools || result._unlock_packs)) {
@@ -2156,7 +2255,7 @@ export class AgentLoop {
           // Buffer output for disconnect resilience
           await this.taskBuffer.appendOutput(this.taskId, { tool: functionName, result });
 
-          this.emitEvent({ type: 'step_complete', tool: functionName, result: result._is_image_marker ? '[IMAGE DATA]' : result });
+          this.emitEvent({ type: 'step_complete', tool: functionName, result: result._is_image_marker ? '[IMAGE DATA]' : result, toolCallId: toolCall.id });
           this.stepsCompleted++;
 
           // The procedure, as it actually ran. Tool name plus a whitelisted

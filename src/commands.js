@@ -929,6 +929,159 @@ export const COMMANDS = [
   },
 
   {
+    name: 'observer',
+    scope: 'local',
+    usage: '/observer [status|toggle|mode <deterministic|advisory>|endpoint <url|none>|model <name>|strictness <relaxed|standard|strict>|test|audit|reset]',
+    description: 'Inspect or configure the Cold Observer',
+    dialogTitle: 'Cold Observer',
+    run: async (argv) => {
+      const { coldObserver } = await import('./observer/coldObserver.js');
+      const sub = (argv[0] || 'status').toLowerCase();
+
+      if (sub === 'toggle') {
+        const current = coldObserver.getConfig();
+        coldObserver.updateConfig({ enabled: !current.enabled });
+        return ok(`Cold Observer is now ${!current.enabled ? 'ENABLED' : 'DISABLED'}.`);
+      }
+
+      if (sub === 'mode') {
+        const targetMode = String(argv[1] || '').toLowerCase();
+        if (!['deterministic', 'advisory', 'local', 'hybrid'].includes(targetMode)) {
+          return fail('Invalid mode. Choose: deterministic or advisory.');
+        }
+        coldObserver.updateConfig({ mode: targetMode });
+        return ok(`Cold Observer mode set to "${coldObserver.getConfig().mode}".`);
+      }
+
+      if (sub === 'endpoint') {
+        const target = String(argv[1] || '').trim();
+        try {
+          coldObserver.updateConfig({ endpoint: target === 'none' ? '' : target });
+        } catch (error) {
+          return fail(error instanceof Error ? error.message : 'Invalid endpoint.');
+        }
+        const endpoint = coldObserver.getConfig().endpoint;
+        return ok(endpoint ? `Advisory endpoint set to ${endpoint}.` : 'Advisory endpoint cleared.');
+      }
+
+      if (sub === 'model') {
+        const target = String(argv[1] || '').trim();
+        coldObserver.updateConfig({ model: target === 'none' ? '' : target });
+        const model = coldObserver.getConfig().model;
+        return ok(model ? `Advisory model set to ${model}.` : 'Advisory model cleared.');
+      }
+
+      if (sub === 'strictness') {
+        const target = String(argv[1] || '').toLowerCase();
+        if (!['relaxed', 'standard', 'strict', 'moderate', 'paranoid'].includes(target)) {
+          return fail('Invalid strictness. Choose: relaxed, standard, or strict.');
+        }
+        coldObserver.updateConfig({ strictness: target });
+        return ok(`Cold Observer strictness set to "${coldObserver.getConfig().strictness}".`);
+      }
+
+      if (sub === 'test') {
+        const health = await coldObserver.healthCheck();
+        if (!health.endpoint) {
+          return ok('No advisory endpoint configured. The deterministic observer needs no endpoint and remains active.');
+        }
+        return ok([
+          `Endpoint: ${health.endpoint}`,
+          `Model:    ${health.model || '(unset)'}`,
+          `Healthy:  ${health.healthy ? 'yes' : 'no'} (${health.latencyMs}ms)`,
+          `Detail:   ${health.detail}`
+        ].join('\n'));
+      }
+
+      if (sub === 'reset') {
+        coldObserver.updateConfig({
+          enabled: true,
+          mode: 'deterministic',
+          endpoint: '',
+          model: '',
+          timeoutMs: 800,
+          strictness: 'standard'
+        });
+        return ok('Cold Observer configuration reset to defaults.');
+      }
+
+      if (sub === 'audit') {
+        const audits = coldObserver.getAuditHistory();
+        if (audits.length === 0) {
+          return ok('No Cold Observer audit records yet.');
+        }
+        const lines = audits.slice(-10).map((a) => {
+          const time = new Date(a.timestamp).toLocaleTimeString();
+          const tag = a.type === 'mutation' ? `[mutation ${a.tool || ''}]` : '[verification]';
+          const score = typeof a.riskScore === 'number' ? `(risk ${(a.riskScore * 100).toFixed(0)}%)` : '';
+          const veto = a.veto ? 'VETO' : 'pass';
+          return `${time} ${tag} ${veto} ${score} ${a.details}`;
+        });
+        return ok(`Recent Cold Observer audits (last 10):\n\n${lines.join('\n')}`);
+      }
+
+      const cfg = coldObserver.getConfig();
+      const audits = coldObserver.getAuditHistory();
+      const vetoes = audits.filter((a) => a.veto).length;
+      return ok([
+        'Cold Observer',
+        '──────────────────────────────────────────────',
+        `Status:       ${cfg.enabled ? 'Active (mutations and completion claims)' : 'Disabled'}`,
+        `Mode:         ${cfg.mode.toUpperCase()}`,
+        `Strictness:   ${cfg.strictness}`,
+        `Advisory:     ${cfg.endpoint ? `${cfg.model || '(model unset)'} at ${cfg.endpoint}` : 'not configured (deterministic only)'}`,
+        `Audit events: ${audits.length} recorded (${vetoes} vetoes enforced)`,
+        '',
+        'Subcommands:',
+        '  /observer toggle                            Enable or disable protection',
+        '  /observer mode <deterministic|advisory>     Choose the review mode',
+        '  /observer endpoint <url|none>               Set a loopback advisory endpoint',
+        '  /observer model <name>                      Set the advisory model name',
+        '  /observer strictness <relaxed|standard|strict>',
+        '  /observer test                              Probe the advisory endpoint',
+        '  /observer audit                             Inspect recent audits',
+        '  /observer reset                             Restore defaults'
+      ].join('\n'));
+    }
+  },
+
+  {
+    name: 'acp',
+    scope: 'local',
+    usage: '/acp [status|peers]',
+    description: 'Agent Client Protocol (ACP) server and peer delegation status',
+    dialogTitle: 'Agent Client Protocol',
+    run: async (argv) => {
+      const sub = (argv[0] || 'status').toLowerCase();
+      if (sub === 'peer' || sub === 'peers') {
+        const { loadPeerProfiles, peerProfilesPath } = await import('./acp/peerProfiles.js');
+        const profiles = loadPeerProfiles();
+        return ok([
+          'Peer delegation (ACP)',
+          '──────────────────────────────────────────────',
+          `Profiles file: ${peerProfilesPath()}`,
+          `Configured:    ${profiles.length === 0 ? 'none' : profiles.map((p) => `${p.id} (${p.policy})`).join(', ')}`,
+          '',
+          'The model selects a profile id and writes a prompt. Executable, arguments,',
+          'working directory, and environment always come from the profile file.'
+        ].join('\n'));
+      }
+      return ok([
+        'Agent Client Protocol (ACP) - Causyne Agent',
+        '──────────────────────────────────────────────',
+        'Version:        ACP v1 (JSON-RPC 2.0 over stdio)',
+        'Server command: causyne acp',
+        'Wire:           newline-delimited JSON-RPC',
+        'Sessions:       session/new, session/prompt, session/cancel, session/update',
+        'Optional:       session/list, session/close, session/set_mode',
+        'Workspace:      one workspace per server process',
+        '',
+        'Run "causyne acp" to connect this agent to any ACP client.'
+      ].join('\n'));
+    }
+  },
+
+  {
     name: 'exit',
     aliases: ['quit'],
     scope: 'local',
