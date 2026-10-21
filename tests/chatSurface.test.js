@@ -104,11 +104,8 @@ describe('UX-01 — chat never clears or takes over the terminal', () => {
   test('the banner is the first thing the user sees, and it is real history', () => {
     const bytes = session({ turns: 0 });
     const plain = stripAnsi(bytes);
-    const art = plain.indexOf('█') >= 0
-      ? plain.indexOf('█')
-      : plain.indexOf('#') >= 0
-        ? plain.indexOf('#')
-        : plain.indexOf('CAUSYNE AGENT');
+    const firstMark = plain.search(/[▀▄█▒■#]/);
+    const art = firstMark >= 0 ? firstMark : plain.indexOf('CAUSYNE AGENT');
     assert.ok(art >= 0, 'the wordmark must be written');
     assert.equal(plain.slice(0, art).trim(), '',
       'nothing may be printed above the wordmark — the art is the header');

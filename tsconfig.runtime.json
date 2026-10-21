@@ -21,6 +21,6 @@
     "sourceMap": false,
     "noEmitOnError": true
   },
-  "include": ["src/sessionJournal.ts", "src/plugins/pluginSkills.ts", "src/agentProfiles.ts", "src/subagentJournal.ts", "src/taskShape.ts", "src/hooks.ts", "src/approvalGrants.ts", "src/planCache.ts", "src/decisionPolicy.ts", "src/implementationPlan.ts", "src/mcp/mcpClient.ts", "src/mcp/mcpRegistry.ts", "src/browser/urlPolicy.ts", "src/browser/snapshotWindow.ts", "src/browser/browserRuntime.ts", "src/browser/searchProviders.ts", "src/browser/causyneBrowser.ts", "src/tools/requestDecision.ts", "src/tools/updatePlan.ts", "src/tools/browserAutomator.ts", "src/tools/webSearch.ts", "src/tools/webFetch.ts"],
+  "include": ["src/sessionJournal.ts", "src/plugins/pluginSkills.ts", "src/agentProfiles.ts", "src/subagentJournal.ts", "src/taskShape.ts", "src/hooks.ts", "src/approvalGrants.ts", "src/planCache.ts", "src/decisionPolicy.ts", "src/implementationPlan.ts", "src/mcp/mcpClient.ts", "src/mcp/mcpRegistry.ts", "src/browser/urlPolicy.ts", "src/browser/snapshotWindow.ts", "src/browser/browserRuntime.ts", "src/browser/searchProviders.ts", "src/browser/causyneBrowser.ts", "src/tools/requestDecision.ts", "src/tools/updatePlan.ts", "src/tools/browserAutomator.ts", "src/tools/webSearch.ts", "src/tools/webFetch.ts", "src/tui/banner.ts"],
   "exclude": ["node_modules", "dist", "tests", "scripts", "native-skills"]
 }

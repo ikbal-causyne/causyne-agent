@@ -384,7 +384,7 @@ export class ChatRenderer {
     // nineteen rows of chrome before the user could type. Both references open
     // in eight or fewer, with the identity and the facts as a single object.
     this.write();
-    for (const row of sessionBanner(info, width)) this.write(row);
+    for (const row of sessionBanner(info, width, { height: this.out?.rows })) this.write(row);
     this.write();
 
     const hints = [

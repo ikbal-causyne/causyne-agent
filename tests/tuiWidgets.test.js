@@ -18,7 +18,7 @@ import { SelectList, fuzzyScore, fuzzyFilter } from '../src/tui/selectList.js';
 import { OverlayStack, Layer, drawPanel } from '../src/tui/overlay.js';
 import { ApprovalLayer, TextLayer, commandPalette, skillPicker } from '../src/tui/dialogs.js';
 import { listCompiledSkills } from '../src/skillsManager.js';
-import { wordmark } from '../src/tui/banner.js';
+import { renderBanner, wordmark } from '../src/tui/banner.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 
 /**
@@ -212,35 +212,48 @@ describe('the palette', () => {
 
 
 describe('the wordmark', () => {
-  test('the block art is back', () => {
+  test('the canonical aperture and pixel wordmark are shown', () => {
     const rows = wordmark(100, { unicode: true }).map(stripAnsi);
-    assert.ok(rows.some((row) => row.includes('█')), 'the CAUSYNE block art must be shown');
-    assert.ok(rows.some((row) => row.includes('Causyne Agent')));
+    assert.equal(rows.length, 12);
+    assert.ok(rows.some((row) => /[▀▄█▒]/.test(row)), 'the aperture must be shown');
+    assert.ok(rows.some((row) => row.includes('From intention to meaningful progress.')));
   });
 
   test('a narrow terminal gets the name instead of mojibake', () => {
     const rows = wordmark(30, { unicode: true }).map(stripAnsi);
     assert.ok(!rows.some((row) => row.includes('█')), 'the art must not overflow a narrow terminal');
     assert.ok(rows.some((row) => row.includes('CAUSYNE AGENT')));
-    assert.ok(rows.some((row) => row.includes('#')), 'the logo must retain an ASCII fallback');
+    assert.ok(rows.some((row) => row.includes('■')), 'the mini mark must remain visible');
   });
 
   test('a terminal without box drawing gets the name, not question marks', () => {
     const rows = wordmark(100, { unicode: false }).map(stripAnsi);
     assert.ok(!rows.some((row) => row.includes('█')));
-    assert.ok(rows.some((row) => row.includes('CAUSYNE AGENT')));
-    assert.ok(rows.some((row) => row.includes('+')), 'the signal blade must survive without Unicode');
+    assert.ok(rows.some((row) => row.replaceAll(' ', '').includes('CAUSYNEAGENT')));
+    assert.ok(rows.some((row) => row.includes('@')), 'the signal blade must survive without Unicode');
   });
 
-  test('it carries no hardcoded escapes of its own', () => {
-    // The old LOGO was a raw \x1b[1m\x1b[36m string, so it ignored NO_COLOR.
-    for (const row of wordmark(100, { unicode: true })) {
-      const escapes = row.match(/\x1b\[[0-9;]*m/g) || [];
-      for (const escape of escapes) {
-        assert.ok(!/\x1b\[36m|\x1b\[1;36m/.test(escape),
-          'the wordmark must be painted through the theme, not with a hardcoded colour');
+  test('NO_COLOR produces plain terminal history', () => {
+    for (const row of wordmark(100, { unicode: true, color: 'none' })) {
+      assert.ok(!row.includes('\x1b'), 'the wordmark must not leak ANSI escapes');
+    }
+  });
+
+  test('every adaptive variant stays inside its terminal', () => {
+    for (const [width, height] of [[30, 12], [60, 20], [80, 24], [120, 40]]) {
+      const rows = renderBanner({ width, height, unicode: true, color: 'none' }).split('\n');
+      for (const row of rows) {
+        assert.ok(visibleWidth(row) < width,
+          `${width}x${height}: banner row occupied ${visibleWidth(row)} columns`);
       }
     }
+  });
+
+  test('the active aperture blade can move without changing geometry', () => {
+    const first = renderBanner({ variant: 'full', width: 100, height: 30, unicode: true, color: 'truecolor', active: 0 });
+    const next = renderBanner({ variant: 'full', width: 100, height: 30, unicode: true, color: 'truecolor', active: 1 });
+    assert.notEqual(first, next, 'the highlighted blade must move');
+    assert.deepEqual(first.split('\n').map((row) => visibleWidth(row)), next.split('\n').map((row) => visibleWidth(row)));
   });
 });
 
