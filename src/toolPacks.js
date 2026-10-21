@@ -84,6 +84,7 @@ export const PACKS = {
     'check_system_specs',
     'manage_local_dependencies',
     'blender_act',
+    'creative_apps',
     'resolve_act',
     'palmier_act'
   ],

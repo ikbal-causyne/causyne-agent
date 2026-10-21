@@ -17,10 +17,9 @@
 // ~200 tokens on every request to describe a decision the runtime can make on
 // its own, and a decision the model is allowed to skip is not a guard.
 //
-// EXTENDING IT: a Higgsfield-style plugin (Photoshop UXP, a Blender add-on) is
+// EXTENDING IT: A native automation bridge (ExtendScript bridge, Blender Python engine) is
 // one more CHANNEL_A row, not a parallel architecture. That is the whole point
-// of the table — the lesson from Higgsfield is "a native app API beats pixels",
-// not "build our own Higgsfield".
+// of the table — "a native app API beats pixels".
 
 /**
  * Apps that already have a Channel A tool, keyed by matcher.
@@ -38,6 +37,11 @@ const CHANNEL_A = [
     match: /\b(chrome|chromium|safari|firefox|edge|brave|arc)\b/,
     tool: 'browser_act',
     app: 'a web browser'
+  },
+  {
+    match: /\b(photo-studio|video-studio|motion-studio|photostudio|videostudio|motionstudio)\b/,
+    tool: 'creative_apps',
+    app: 'Creative Studio Bridge'
   }
 ];
 

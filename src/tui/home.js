@@ -2,6 +2,7 @@
 
 import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, dim, bold, badge, GLYPHS } from './theme.js';
+import { runSetup } from './setup.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 
 /** Local runtime and provider summary. */
@@ -41,7 +42,7 @@ export const PRIMARY_ACTIONS = [
     kind: 'stay',
     run: async () => (await import('../reporting.js')).buildUsageText()
   },
-  { id: 'config', label: 'config', hint: 'provider, model, API key', kind: 'config' },
+  { id: 'config', label: 'setup', hint: 'provider · endpoint · model · permissions', kind: 'config' },
   { id: 'more', label: 'more…', hint: 'sessions · model · approvals · tools', kind: 'more' }
 ];
 
@@ -69,6 +70,13 @@ export const MORE_ACTIONS = [
     // typed command gets. An action that wrote files straight from a menu would
     // be the one path around the gate.
     command: '/undo'
+  },
+  {
+    id: 'creative', label: 'creative apps', category: 'tools', hint: 'check installed apps and adapter readiness', kind: 'stay',
+    run: async () => {
+      const { creativeAppStatus } = await import('../creative/apps.js');
+      return (await creativeAppStatus()).map(app => `${app.label}: ${app.available ? 'available' : 'not connected'}\n  ${app.detail}`).join('\n');
+    }
   },
   { id: 'mcp', label: 'mcp', category: 'tools', hint: 'manage MCP servers', kind: 'mcp' },
   { id: 'help', label: 'commands', category: 'tools', hint: 'show every slash command', kind: 'command', command: '/help' },
@@ -111,16 +119,8 @@ export function homeHint() {
 export { badge };
 
 // ---------------------------------------------------------------------------
-// The two flows that need a keyboard
+// Provider setup and MCP navigation
 //
-// Both of these used inquirer, which takes stdin while ChatPrompt is already
-// holding it in raw mode — the two contend and the question lands on a
-// half-drawn prompt. Inside home there IS a live region and a modal stack, so
-// they can be asked properly. `causyne config` invoked on its own still uses the
-// inquirer wizard, because standalone there is no live region to draw into and
-// building a second one is how the deleted alt-screen shell started.
-// ---------------------------------------------------------------------------
-
 /** Provider choices for local CLI configuration. */
 // Suggested models come from src/modelCatalogue.js rather than being repeated
 // here. This list had drifted to `gpt-4o` and `gemini-2.5-pro` — two
@@ -140,65 +140,17 @@ export const PROVIDERS = [
   { id: 'ollama', label: 'Ollama', hint: 'local / offline' }
 ].map((entry) => ({ ...entry, model: DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
 
-/**
- * Ask for provider, then model, then key — each in the prompt's own panel.
- *
- * Resolves when the last answer is in, or when any step is dismissed. Dismissing
- * cancels the whole flow rather than saving a half-configuration, because a
- * provider saved without its key leaves the agent in a state that fails on the
- * next turn with an error about credentials rather than about the cancel.
- */
-export function configureInPrompt(prompt, { loadConfig, saveConfig }) {
-  return new Promise((resolve) => {
-    const config = loadConfig();
-
-    prompt.openLayer(new SelectLayer({
-      title: 'provider',
-      items: PROVIDERS.map((p) => ({ id: p.id, label: p.label, description: p.hint, value: p })),
-      onPick: (item) => {
-        if (!item) { resolve(null); return; }
-        const provider = item.value;
-        askModel(provider);
-      }
-    }));
-
-    function askModel(provider) {
-      const suggested = (config.provider === provider.id && config.model) ? config.model : provider.model;
-      prompt.openLayer(new InputLayer({
-        title: `model for ${provider.label}`,
-        lines: [
-          'Model ids change often. Type the one you want, or accept the suggestion.'
-        ],
-        value: suggested,
-        placeholder: 'model id',
-        onSubmit: (model) => askKey(provider, (model || '').trim() || suggested),
-        onCancel: () => resolve(null)
-      }));
-    }
-
-    function askKey(provider, model) {
-      prompt.openLayer(new InputLayer({
-        title: 'API key',
-        lines: [
-          `${provider.label} ${GLYPHS.arrow} ${model}`,
-          '',
-          'Stored encrypted in ~/.causyne/config.json. It never leaves this machine.'
-        ],
-        mask: true,
-        value: '',
-        placeholder: 'paste your key (blank keeps the current one)',
-        onSubmit: (apiKey) => {
-          const next = loadConfig();
-          next.provider = provider.id;
-          next.model = model;
-          if (apiKey) next.apiKey = apiKey;
-          saveConfig(next);
-          resolve({ provider: provider.id, model });
-        },
-        onCancel: () => resolve(null)
-      }));
-    }
-  });
+/** Run the shared setup transaction inside the existing prompt. */
+export function configureInPrompt(prompt, store) {
+  return runSetup({
+    select: (options) => new Promise((resolve) => {
+      const layer = new SelectLayer({ ...options, onPick: resolve });
+      prompt.openLayer(layer);
+    }),
+    text: (options) => new Promise((resolve) => {
+      prompt.openLayer(new InputLayer({ ...options, onSubmit: resolve, onCancel: () => resolve(null) }));
+    })
+  }, PROVIDERS, store);
 }
 
 /** The MCP server list, as something you can act on rather than read. */

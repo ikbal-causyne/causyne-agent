@@ -45,6 +45,17 @@ function fail(output) {
 
 export const COMMANDS = [
   {
+    name: 'setup', aliases: ['config', 'connect'], scope: 'local', usage: '/setup',
+    description: 'Configure provider, endpoint, model and autonomy',
+    run: async (_argv, ctx) => {
+      if (!ctx.prompt) return ok('Run causyne setup in an interactive terminal.');
+      const { configureInPrompt } = await import('./tui/home.js');
+      const result = await configureInPrompt(ctx.prompt, { loadConfig, saveConfig });
+      return ok(result ? `Saved ${result.provider} / ${result.model}. Connection has not been tested.` : 'Cancelled. Nothing was changed.');
+    }
+  },
+
+  {
     name: 'help',
     aliases: ['?', 'commands'],
     scope: 'local',
@@ -647,7 +658,9 @@ export const COMMANDS = [
       // string is accepted — model ids move faster than any hardcoded list, and
       // guessing from memory is exactly what .agents/AGENTS.md §3 forbids.
       if (separator > 0) {
-        config.provider = requested.slice(0, separator);
+        const provider = requested.slice(0, separator);
+        if (provider !== config.provider) { config.apiKey = ''; delete config.baseUrl; }
+        config.provider = provider;
         config.model = requested.slice(separator + 1);
       } else {
         config.model = requested;

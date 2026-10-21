@@ -190,6 +190,26 @@ sliding window, and structural summaries. Full tool output is spilled before it
 is shortened. Material compaction is recorded in the audit log, and summary
 collapse emits a quiet terminal notice so context loss is visible.
 
+## Guided setup and creative applications
+
+`causyne setup` (also `causyne config`), `/setup` and the home setup menu share
+one TypeScript configuration transaction. Provider, endpoint, model, credentials
+and autonomy choices are reviewed before saving. Cancellation preserves the
+previous configuration. Credentials are not reused across providers or changed
+custom endpoints. Setup validates input locally; it does not claim provider
+connectivity or make a billable model request.
+
+The deferred `creative_apps` tool exposes installed-application status and native
+automation adapters for 3D and media creative applications. The file-based Blender batch
+adapter creates and manipulates 3D primitives (cubes, spheres, cylinders, planes, cameras,
+lights, materials, rendering) and saves a new `.blend` scene file without running model-supplied
+arbitrary code. Native ExtendScript adapters connect Photo Studio (image resizing,
+rotations, layer modifications, flattening to PSD/PNG/JPG/WEBP), Video Studio (sequence
+timelines, media import, markers, cuts to PRPROJ/XML), and Motion Studio (compositions,
+footage import, typography to AEP). It validates workspace paths, refuses overwrites,
+and applies timeout, output, and cancellation limits. No inbound control service or expensive
+remote protocols are opened.
+
 ## Removed boundaries
 
 No active pairing, relay, WebRTC/P2P, mobile command surface, background daemon

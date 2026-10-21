@@ -1,10 +1,11 @@
+import { runSetup } from './tui/setup.js';
 import { AgentLoop } from './agentLoop.js';
 import { loadConfig, saveConfig } from './config.js';
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './tui/prompt.js';
 import { handleInput, listCommands, isCommandInput } from './commands.js';
 import { ChatRenderer } from './tui/chatRenderer.js';
-import { paint, bold, badge, GLYPHS, terminalWidth } from './tui/theme.js';
+import { paint, bold, dim, badge, GLYPHS, terminalWidth } from './tui/theme.js';
 import { wordmark } from './tui/banner.js';
 import { createStageSurface } from './tui/stageSurface.js';
 import { wrapBlock } from './tui/text.js';
@@ -227,7 +228,7 @@ async function runHomeAction(action, { prompt, conn, finish }) {
       if (!prompt) { await interactiveConfig({}); return 'exit'; }
       const chosen = await configureInPrompt(prompt, { loadConfig, saveConfig });
       conn.renderer.write('\n' + (chosen
-        ? paint('success', `  Saved. Using ${chosen.provider} / ${chosen.model}.`)
+        ? paint('success', `  Saved. Using ${chosen.provider} / ${chosen.model}. Connection has not been tested.`)
         : dimNotice('  Cancelled. Nothing was changed.')) + '\n');
       reopen();
       return null;
@@ -604,9 +605,14 @@ export async function execCommand(command) {
 export async function interactiveConfig(options) {
   const config = loadConfig();
 
-  console.log(logoLines() + '\n' + bold('Configuration') + '\n');
+  console.log(logoLines() + '\n' + bold('  Causyne Agent · Guided Setup & Configuration') + '\n'
+    + dim('  Standardized UI/UX · Models · Providers · Permissions · Creative Studio Bridge\n'));
 
   if (options.provider || options.apikey || options.model) {
+    if (options.provider && options.provider !== config.provider) {
+      config.apiKey = '';
+      delete config.baseUrl;
+    }
     if (options.provider) config.provider = options.provider;
     if (options.apikey) config.apiKey = options.apikey;
     if (options.model) config.model = options.model;
@@ -615,71 +621,26 @@ export async function interactiveConfig(options) {
     return;
   }
 
-  // Asked in the product's own panels rather than a second prompt framework.
-  //
-  // These were the last two surfaces on a second design system — different
-  // colours, different glyphs, no NO_COLOR handling, and a list widget nothing
-  // like the picker the same user sees inside `causyne`. askSelect/askText host a
-  // real dialog on a temporary ChatPrompt and fall back to readline wherever raw
-  // mode is unavailable. PROVIDERS is shared with the in-chat config flow, so
-  // the two can no longer offer different lists.
-  const provider = await askSelect({
-    title: 'AI provider',
-    items: PROVIDERS.map((entry) => ({ id: entry.id, label: entry.label, description: entry.hint }))
-  });
-  if (!provider) { console.log('  Cancelled. Nothing was changed.\n'); return; }
+  const result = await runSetup({ select: askSelect, text: askText }, PROVIDERS, { loadConfig, saveConfig });
+  if (!result) { console.log('  Cancelled. Nothing was changed.\n'); return; }
 
-  const preset = PROVIDERS.find((entry) => entry.id === provider.id) || { model: '' };
-  const suggested = (config.provider === provider.id && config.model) ? config.model : preset.model;
+  let creativeSummary = '';
+  try {
+    const { creativeAppStatus } = await import('./creative/apps.js');
+    const apps = await creativeAppStatus();
+    const ready = apps.filter(a => a.available).map(a => a.label);
+    creativeSummary = ready.length > 0
+      ? `  ${paint('success', GLYPHS.bullet)} Creative Studio Bridge: ${ready.join(', ')} connected`
+      : `  ${dim(GLYPHS.bullet + ' Creative Studio Bridge: install Blender, Premiere, Photoshop, or After Effects to activate')}`;
+  } catch { /* ignore */ }
 
-  const model = await askText({
-    title: 'model',
-    lines: [
-      `${provider.label}`,
-      '',
-      'Model ids change often. Type the one you want, or accept the suggestion.'
-    ],
-    value: suggested,
-    placeholder: 'model id'
-  });
-  if (model === null) { console.log('  Cancelled. Nothing was changed.\n'); return; }
-
-  const apiKey = await askText({
-    title: 'API key',
-    lines: [
-      `${provider.label} ${GLYPHS.arrow} ${model || suggested}`,
-      '',
-      'Stored encrypted in ~/.causyne/config.json. It never leaves this machine.'
-    ],
-    mask: true,
-    placeholder: config.apiKey ? 'blank keeps the current key' : 'paste your key'
-  });
-  if (apiKey === null) { console.log('  Cancelled. Nothing was changed.\n'); return; }
-
-  // Only asked where it means something. Every provider used to be shown this,
-  // and for eight of the ten the right answer is always blank.
-  let baseUrl = config.baseUrl || '';
-  if (provider.id === 'openai-compatible' || provider.id === 'dashscope-byok' || provider.id === 'ollama') {
-    const answer = await askText({
-      title: 'base URL',
-      lines: ['Leave blank for the provider default.', 'Required for a custom DashScope workspace endpoint.'],
-      value: baseUrl,
-      placeholder: 'https://…'
-    });
-    if (answer === null) { console.log('  Cancelled. Nothing was changed.\n'); return; }
-    baseUrl = answer;
-  }
-
-  config.provider = provider.id;
-  config.model = (model || suggested || '').trim();
-  if (apiKey) config.apiKey = apiKey;
-  if (baseUrl && baseUrl.trim()) config.baseUrl = baseUrl.trim(); else delete config.baseUrl;
-
-  saveConfig(config);
-  console.log('\n' + paint('success', `  Saved. Using ${config.provider} / ${config.model}.`) + '\n');
+  console.log('\n' + paint('success', `  ✔ Saved configuration successfully!`) + '\n'
+    + `  Active Provider: ${bold(result.provider)}\n`
+    + `  Active Model:    ${bold(result.model)}\n`
+    + (creativeSummary ? `${creativeSummary}\n` : '')
+    + `  Launch agent:    ${bold('causyne')} or ${bold('causyne chat')}\n`
+    + `  Diagnostics:     ${bold('causyne doctor')}\n`);
 
   // Seamlessly transition to the home screen.
-  //
-  // Finishing configuration returns to the local home screen.
   await chatMode({ home: true });
 }
