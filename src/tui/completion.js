@@ -236,13 +236,13 @@ export class FileIndex {
         if (entry.isDirectory()) {
           if (SKIP_DIRECTORIES.has(entry.name) || depth >= MAX_INDEX_DEPTH) continue;
           queue.push({ dir: full, depth: depth + 1 });
-          const relDir = path.relative(this.root, full) + '/';
+          const relDir = path.relative(this.root, full).split(path.sep).join('/') + '/';
           if (isTerminalSafe(relDir)) found.push(relDir);
           continue;
         }
         if (!entry.isFile()) continue;
 
-        const relative = path.relative(this.root, full);
+        const relative = path.relative(this.root, full).split(path.sep).join('/');
         if (!isTerminalSafe(relative)) continue;
         found.push(relative);
         if (found.length >= MAX_INDEX_ENTRIES) {

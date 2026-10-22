@@ -114,7 +114,7 @@ export async function resolveMentionedContext(prompt, options = {}) {
                 }
             }
         }
-        const relPath = path.relative(cwd, targetPath);
+        const relPath = path.relative(cwd, targetPath).split(path.sep).join('/');
         if (!found) {
             sections.push(`📂 REFERENCED PATH: ${m.path} (Note: path was not found on disk at ${relPath})`);
             continue;
