@@ -105,7 +105,7 @@ contain adaptations from upstream open-source work:
 > SOFTWARE.
 
 The native creative engines operated via `src/tools/nativeEngine.ts` and `src/engines/`
-power **Causyne Native Engines** (including **Causyne Film Engine**, **Causyne Photo Engine**, **Causyne Sound Engine**, and **Causyne CAD Engine**).
+power **Causyne Native Engines** (including **Causyne Film Engine**, **Causyne Photo Engine**, **Causyne Sound Engine**, **Causyne CAD Engine**, **Causyne Deck Engine**, **Causyne Design Engine**, **Causyne Word Engine**, **Causyne Grid Engine**, **Causyne Light Engine**, **Causyne PDF Engine**, and **Causyne Effect Engine**).
 They execute as external headless engine binaries installed into the user's sovereign
 `~/.causyne/engines/` directory with explicit user consent and are not bundled into
 Causyne Agent's npm package.

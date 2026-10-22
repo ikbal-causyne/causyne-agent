@@ -1,6 +1,6 @@
 {
   "name": "@causyne/agent",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "description": "Agentic AI for software, tools, and computer workflows",
   "main": "bin/causyne.js",
   "type": "module",
@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "start": "node ./bin/causyne.js",
-    "test": "node --test --import ./tests/helpers/isolateState.js \"tests/**/*.test.js\"",
+    "test": "node --test --import ./tests/helpers/isolateState.js \"tests/**/*.test.{js,ts}\"",
     "build": "node scripts/compile_skills.js && tsc -p tsconfig.runtime.json",
     "benchmark:plan-cache": "node src/benchmarks/planCache.js",
     "check:release": "node scripts/check_release.js",
