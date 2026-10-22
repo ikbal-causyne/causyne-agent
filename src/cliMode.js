@@ -17,6 +17,7 @@ import { askSelect, askText, askConfirm, askDecision } from './tui/ask.js';
 import { renderReport } from './reporting.js';
 import { grantAlways } from './approvalGrants.js';
 import { auditLog } from './auditLog.js';
+import { isAcpProvider } from './providers/acp.js';
 
 // One themed source for the art.
 //
@@ -548,7 +549,8 @@ export async function chatMode({ home = false } = {}) {
     const startedAt = Date.now();
     if (prompt) prompt.setBusy(true);
     try {
-      if (!loop.config.provider || (!loop.config.apiKey && loop.config.provider !== 'ollama')) {
+      const isNoKey = loop.config.provider === 'ollama' || loop.config.provider === 'acp' || isAcpProvider(loop.config.provider);
+      if (!loop.config.provider || (!loop.config.apiKey && !isNoKey)) {
         conn.renderer.write('\n' + paint('warn', '  No API provider or key configured.') + '\n' +
           paint('muted', '  Run /setup or select setup from the home menu to configure your provider.\n'));
         continue;

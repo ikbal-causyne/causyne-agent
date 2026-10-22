@@ -98,7 +98,8 @@ export const MODEL_CATALOGUE = {
     'deepseek-v4-flash', 'deepseek-v4-pro'
   ],
   'Moonshot (Kimi)': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
-  'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest']
+  'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest'],
+  'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose']
 };
 
 /** Provider labels in picker order. */
@@ -117,6 +118,7 @@ export const DEFAULT_MODEL_BY_PROVIDER = {
   moonshot: 'kimi-k3',
   xai: 'grok-3',
   ollama: 'llama3.3',
+  acp: 'opencode',
   'openai-compatible': ''
 };
 

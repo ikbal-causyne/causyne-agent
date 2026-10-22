@@ -4,14 +4,16 @@ import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, dim, bold, badge, GLYPHS } from './theme.js';
 import { runSetup } from './setup.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
+import { isAcpProvider } from '../providers/acp.js';
 
 /** Local runtime and provider summary. */
-export function homeStatusLine({ config = {} } = {}) {
+export function homeStatusLine(arg = {}) {
+  const config = arg?.config || arg || {};
   const hasProvider = Boolean(config.provider && config.provider !== 'unconfigured');
   const model = hasProvider
     ? (config.model ? `${config.provider}/${config.model}` : config.provider)
     : 'no provider configured';
-  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama');
+  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama' || isAcpProvider(config.provider));
   return '  ' + [
     paint('success', `${GLYPHS.bullet} local desktop`),
     configured
@@ -142,7 +144,8 @@ export const PROVIDERS = [
   { id: 'moonshot', label: 'Moonshot', hint: 'Kimi' },
   { id: 'xai', label: 'xAI', hint: 'Grok' },
   { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL' },
-  { id: 'ollama', label: 'Ollama', hint: 'local / offline' }
+  { id: 'ollama', label: 'Ollama', hint: 'local / offline' },
+  { id: 'acp', label: 'ACP Peer Agent (OpenCode, Claude, Codex...)', hint: 'zero-token / external CLI' }
 ].map((entry) => ({ ...entry, model: DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
 
 /** Run the shared setup transaction inside the existing prompt. */

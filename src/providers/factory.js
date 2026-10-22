@@ -16,6 +16,7 @@ import { DashscopeByokProvider } from './dashscope-byok.js';
 import { XAIProvider } from './xai.js';
 import { MoonshotProvider } from './moonshot.js';
 import { MuseProvider } from './muse.js';
+import { AcpProvider, isAcpProvider } from './acp.js';
 
 export function createProvider(config) {
   const p = config.provider?.toLowerCase();
@@ -32,6 +33,7 @@ export function createProvider(config) {
   // Meta Model API. 'meta' and 'muse' both reach it: the vendor is Meta, the
   // model family is Muse, and users say either.
   if (p === 'muse' || p === 'meta') return new MuseProvider(config);
+  if (isAcpProvider(p)) return new AcpProvider(config);
 
   throw new Error("API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.");
 }
