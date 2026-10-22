@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build_stage/
+coverage/
+*.tgz
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example

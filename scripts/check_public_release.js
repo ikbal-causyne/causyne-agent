@@ -21,7 +21,6 @@ const files = output.split('\0').filter(Boolean)
   .sort();
 
 const forbiddenDocuments = new Set([
-  '.gitignore',
   'AGENTS.md',
   '.agents/AGENTS.md',
   '.agents/rules.json',
@@ -40,6 +39,15 @@ for (const file of files) {
   assert.ok(!forbiddenDocuments.has(file), `Private AI/owner document is a public Git candidate: ${file}`);
   assert.ok(!privateDocName.test(file), `Private operational document is a public Git candidate: ${file}`);
   assert.ok(!forbiddenPath.test(file), `Sensitive or private path is a public Git candidate: ${file}`);
+}
+
+if (fs.existsSync(path.join(root, '.gitignore'))) {
+  const gitignoreContent = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+  assert.doesNotMatch(
+    gitignoreContent,
+    /AGENTS|MASTERY|VISION|HANDOFF|REPUTATION|RELEASING|VALIDATION|mistake|HOLD|private|vanexa|causyne/i,
+    '.gitignore must not leak private document names, internal operations or owner context'
+  );
 }
 
 const secretPatterns = [
