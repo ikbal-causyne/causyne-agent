@@ -21,6 +21,7 @@ const files = output.split('\0').filter(Boolean)
   .sort();
 
 const forbiddenDocuments = new Set([
+  '.gitignore',
   'AGENTS.md',
   '.agents/AGENTS.md',
   '.agents/rules.json',
