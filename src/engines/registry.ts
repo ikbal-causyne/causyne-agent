@@ -60,8 +60,21 @@ export function engineBinaryCandidates(adapter: NativeEngineAdapter): string[] {
 function executable(file: string): boolean {
   try {
     if (!fs.statSync(file).isFile()) return false;
+    if (process.platform === 'win32') return true;
     fs.accessSync(file, fs.constants.X_OK);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function isShebangScript(file: string): boolean {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(2);
+    const read = fs.readSync(fd, buf, 0, 2, 0);
+    fs.closeSync(fd);
+    return read === 2 && buf[0] === 0x23 && buf[1] === 0x21;
   } catch {
     return false;
   }
@@ -104,8 +117,12 @@ export function runEngineBinary(
   options: { cwd: string; timeoutMs: number; stdin?: string; signal?: AbortSignal }
 ): Promise<NativeEngineRun> {
   options.signal?.throwIfAborted();
+  const isScript = process.platform === 'win32' && isShebangScript(binary);
+  const command = isScript ? process.execPath : binary;
+  const commandArgs = isScript ? [binary, ...args] : args;
+
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, {
+    const child = spawn(command, commandArgs, {
       cwd: options.cwd,
       env: childEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
