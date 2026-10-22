@@ -1,6 +1,14 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider, mimeTypeForAudioFormat } from './base.js';
+import {
+  scanAndAdaptToolsForProvider,
+  decodeFreeFormArguments,
+  adaptSchemaForGemini,
+  isEmptyObjectSchema
+} from '../tools/toolScanner.js';
+
+export { adaptSchemaForGemini, isEmptyObjectSchema };
 
 // Gemini's FunctionDeclaration schema is an OpenAPI subset, and it is strict in
 // two ways that matter here:
@@ -14,84 +22,7 @@ import { LLMProvider, mimeTypeForAudioFormat } from './base.js';
 // Rather than delete those parameters and lose the capability, free-form maps
 // travel as JSON strings and are decoded again on the way back, so the tool
 // still receives a real object. The paths that were rewritten are recorded per
-// tool so the decode knows exactly where to look.
-
-const FREE_FORM_NOTE = ' Pass this as a JSON object encoded in a string, for example {"key":"value"}.';
-
-function isEmptyObjectSchema(schema) {
-  return schema
-    && schema.type === 'object'
-    && (!schema.properties || Object.keys(schema.properties).length === 0);
-}
-
-/**
- * Rewrite one JSON Schema into Gemini's subset.
- *
- * @param {object} schema     The source schema.
- * @param {Array}  path       Segments walked so far; '[]' denotes array items.
- * @param {Array}  rewritten  Collects the paths converted to JSON strings.
- * @returns {object} A schema Gemini will accept.
- */
-function adaptSchemaForGemini(schema, path, rewritten) {
-  if (Array.isArray(schema)) {
-    return schema.map(entry => adaptSchemaForGemini(entry, path, rewritten));
-  }
-  if (schema === null || typeof schema !== 'object') {
-    return schema;
-  }
-
-  const adapted = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (key === 'additionalProperties') continue;
-
-    if (key === 'properties' && value && typeof value === 'object') {
-      const properties = {};
-      for (const [name, child] of Object.entries(value)) {
-        const childPath = [...path, name];
-        if (isEmptyObjectSchema(child)) {
-          rewritten.push(childPath);
-          properties[name] = {
-            type: 'string',
-            description: (child.description || 'Free-form object.') + FREE_FORM_NOTE
-          };
-        } else {
-          properties[name] = adaptSchemaForGemini(child, childPath, rewritten);
-        }
-      }
-      adapted.properties = properties;
-      continue;
-    }
-
-    if (key === 'items') {
-      adapted.items = adaptSchemaForGemini(value, [...path, '[]'], rewritten);
-      continue;
-    }
-
-    adapted[key] = adaptSchemaForGemini(value, path, rewritten);
-  }
-
-  return adapted;
-}
-
-/** Walk a decoded argument object and JSON.parse the fields that were stringified. */
-function decodeFreeFormArgs(args, paths) {
-  if (!args || paths.length === 0) return args;
-
-  for (const path of paths) {
-    applyAtPath(args, path, value => {
-      if (typeof value !== 'string') return value;
-      try {
-        return JSON.parse(value);
-      } catch (e) {
-        // The model sent something that is not JSON. Hand it through untouched
-        // rather than destroying the argument.
-        return value;
-      }
-    });
-  }
-
-  return args;
-}
+// tool so the decode knows exactly where to look. Handled universally via toolScanner.
 
 function applyAtPath(node, path, transform) {
   if (node === null || typeof node !== 'object') return;
@@ -270,31 +201,15 @@ export class GeminiProvider extends LLMProvider {
       payload.systemInstruction = { parts: systemParts };
     }
 
-    // Map tools. freeFormPaths remembers which arguments were stringified so the
-    // response handler can turn them back into objects.
-    const freeFormPaths = new Map();
+    // Map tools using the universal toolScanner
+    let freeFormPaths = new Map();
 
     if (options.tools && options.tools.length > 0) {
+      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'gemini');
       payload.tools = [{
-        functionDeclarations: options.tools.map(t => {
-          const toolObj = t.function ? t.function : t;
-          const declaration = {
-            name: toolObj.name,
-            description: toolObj.description || ''
-          };
-
-          const source = toolObj.parameters || toolObj.input_schema;
-          // A tool that takes no arguments must omit `parameters` entirely —
-          // an OBJECT with empty properties is rejected outright.
-          if (source && !isEmptyObjectSchema(source)) {
-            const rewritten = [];
-            declaration.parameters = adaptSchemaForGemini(source, [], rewritten);
-            if (rewritten.length > 0) freeFormPaths.set(toolObj.name, rewritten);
-          }
-
-          return declaration;
-        })
+        functionDeclarations: scanReport.adaptedTools
       }];
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const response = await fetch(this.baseUrl, {
@@ -322,9 +237,10 @@ export class GeminiProvider extends LLMProvider {
       if (part.text) {
         content += part.text;
       } else if (part.functionCall) {
-        const args = decodeFreeFormArgs(
+        const paths = freeFormPaths.get(part.functionCall.name) || [];
+        const args = decodeFreeFormArguments(
           part.functionCall.args || {},
-          freeFormPaths.get(part.functionCall.name) || []
+          paths
         );
         toolCalls.push({
           id: `call_${Math.random().toString(36).substr(2, 9)}`,

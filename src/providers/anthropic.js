@@ -1,6 +1,7 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
+import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 
 // Models that support server-side tool search (defer_loading + tool_reference
 // expansion). On these, Causyne hands Anthropic the complete 69-tool catalogue
@@ -306,20 +307,11 @@ export class AnthropicProvider extends LLMProvider {
       const useToolSearch = this.supportsToolSearch();
       const coreToolCount = Number.isInteger(options.coreToolCount) ? options.coreToolCount : options.tools.length;
 
-      const converted = options.tools.map((t, index) => {
-        const toolObj = t.function ? t.function : t;
-        const tool = {
-          name: toolObj.name,
-          description: toolObj.description || '',
-          input_schema: toolObj.parameters || toolObj.input_schema || { type: 'object', properties: {} }
-        };
-        // Beyond the core toolset, let the API hold schemas server-side and
-        // surface them only when Claude searches for them.
-        if (useToolSearch && index >= coreToolCount) {
-          tool.defer_loading = true;
-        }
-        return tool;
+      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'anthropic', {
+        useToolSearch,
+        coreToolCount
       });
+      const converted = scanReport.adaptedTools;
 
       if (useToolSearch) {
         payload.tools = [

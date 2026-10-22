@@ -5,6 +5,7 @@ import { WorkspacePerception } from './perception.js';
 import { audioFormatForMimeType } from './providers/base.js';
 import { TaskBuffer } from './taskBuffer.js';
 import { TOOL_DEFINITIONS, getDynamicTools, resolveTool, canonicalToolName } from './tools/registry.js';
+import { selfRepairToolCall, generateSelfRepairDiagnostic } from './tools/toolSelfRepair.js';
 import { Sandbox } from './sandbox.js';
 import { auditLog } from './auditLog.js';
 import { hasMatchingHook, runConfiguredHooks } from './hooks.js';
@@ -136,6 +137,11 @@ If asked to perform ANY harmful task, politely decline, state that Causyne exist
 # Direct API & Automation Policy
 - **Prefer REST APIs (curl)**: When interacting with external services (like web, email, chat), prioritize finding and using official REST APIs via \`curl\` or simple scripts.
 - **Avoid UI/Browser Automation**: Automating a browser (e.g., Puppeteer/Playwright) is noisy, expensive, and fragile. ONLY use browser automation if a site genuinely has no API. Reading JSON is always better than reading DOM.
+
+# Universal Tool Calling & Registry Discipline
+1. **Strict Registry Adherence**: Use ONLY the tools declared in the catalogue. Invoke tools using exact parameter names specified in the schema. Do not invent or rename parameters.
+2. **Valid JSON Formatting**: All tool call arguments must be valid JSON objects. Never include raw unescaped newlines or trailing commas inside argument strings.
+3. **Automated Buffer & Self-Correction**: Causyne runs a Universal Tool Buffer with self-repair capabilities. If a tool returns a \`selfRepairGuidance\` result indicating missing or invalid parameters, immediately read the \`expectedParameters\` and re-invoke the tool with the corrected arguments.
 
 # UNIVERSAL CRITICAL DIRECTIVE (APPLIES TO ALL TASKS)
 **DO NOT OUTPUT CONVERSATIONAL TEXT WITHOUT INVOKING A TOOL CALL SIMULTANEOUSLY.**
@@ -1789,19 +1795,32 @@ export class AgentLoop {
           // matches on this string, so if it is not the catalogue name those
           // checks silently never fire.
           const functionName = canonicalToolName(toolCall.function.name);
-          let args = {};
-          try {
-            args = typeof toolCall.function.arguments === 'string'
-              ? JSON.parse(toolCall.function.arguments || '{}')
-              : (toolCall.function.arguments || {});
-          } catch (parseErr) {
+          const tool = resolveTool(functionName);
+          const toolSchema = tool?.schema?.parameters || tool?.schema?.input_schema;
+          const repair = selfRepairToolCall(toolCall, toolSchema, {
+            cwd: this.workspaceRoot || process.cwd()
+          });
+
+          if (repair.error) {
             this.messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
               name: functionName,
-              content: JSON.stringify({ success: false, error: `Invalid JSON in arguments: ${parseErr.message}` })
+              content: JSON.stringify({
+                success: false,
+                error: `Invalid JSON in arguments: ${repair.error}`,
+                selfRepairGuidance: {
+                  tool: functionName,
+                  instruction: 'Ensure arguments are passed as a valid JSON object without unescaped control characters or trailing commas.'
+                }
+              })
             });
             continue;
+          }
+
+          let args = repair.args;
+          if (repair.repaired && repair.repairs.length > 0) {
+            this.debugLog(`[TOOL SELF-REPAIR] Healed tool call '${functionName}': ${repair.repairs.join(', ')}`);
           }
           
           this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });
@@ -1929,7 +1948,6 @@ export class AgentLoop {
 
           // Resolve and validate before asking the user for approval. Unknown or
           // malformed calls should self-correct without creating approval fatigue.
-          const tool = resolveTool(functionName);
           if (!tool || typeof tool.execute !== 'function') {
             this.messages.push({
               role: 'tool',
@@ -1953,14 +1971,17 @@ export class AgentLoop {
 
           const validationErrors = this.validateToolArgs(functionName, args);
           if (validationErrors) {
+            const diagnostic = generateSelfRepairDiagnostic(
+              functionName,
+              args,
+              validationErrors,
+              tool?.schema?.parameters || tool?.schema?.input_schema
+            );
             this.messages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
               name: functionName,
-              content: JSON.stringify({
-                success: false,
-                error: `Invalid arguments: ${validationErrors}. Please fix and retry.`
-              })
+              content: JSON.stringify(diagnostic)
             });
             continue;
           }
