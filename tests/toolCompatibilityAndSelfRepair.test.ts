@@ -294,4 +294,89 @@ describe('Universal Tool Self-Repair & Healing Buffer (toolsSelfRepair)', () => 
     assert.ok(diagnostic.selfRepairGuidance.expectedParameters.content);
     assert.ok(diagnostic.selfRepairGuidance.instruction);
   });
+
+  test('canonicalizeToolName & registry resolveTool: handles common hallucinations and casing', async () => {
+    const { resolveTool, canonicalToolName } = await import('../src/tools/registry.js');
+
+    assert.equal(canonicalToolName('read_file'), 'fs_read');
+    assert.equal(canonicalToolName('write_file'), 'fs_write');
+    assert.equal(canonicalToolName('edit_file'), 'fs_edit');
+    assert.equal(canonicalToolName('bash'), 'sysRun');
+    assert.equal(canonicalToolName('sys_run'), 'sysRun');
+    assert.equal(canonicalToolName('terminal'), 'sysRun');
+    assert.equal(canonicalToolName('nativeEngine'), 'native_engine');
+    assert.equal(canonicalToolName('creativeApps'), 'creative_apps');
+    assert.equal(canonicalToolName('multi_edit'), 'MultiEdit');
+    assert.equal(canonicalToolName('search_web'), 'web_search');
+    assert.equal(canonicalToolName('fetch_url'), 'web_fetch');
+
+    assert.ok(resolveTool('read_file'));
+    assert.ok(resolveTool('bash'));
+    assert.ok(resolveTool('nativeEngine'));
+    assert.ok(resolveTool('creativeApps'));
+    assert.ok(resolveTool('multi_edit'));
+  });
+
+  test('Structural healing: wraps top-level search/replace into edits array for fs_edit', () => {
+    const raw = {
+      path: '/workspace/app.js',
+      searchContent: 'const a = 1;',
+      replaceContent: 'const a = 2;'
+    };
+
+    const schema = {
+      properties: {
+        path: { type: 'string' },
+        edits: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              searchContent: { type: 'string' },
+              replaceContent: { type: 'string' }
+            }
+          }
+        }
+      }
+    };
+
+    const res = resolveParameterAliases('fs_edit', raw, schema);
+    assert.equal(res.repaired, true);
+    assert.ok(Array.isArray(res.args.edits));
+    assert.equal((res.args.edits as any[])[0].searchContent, 'const a = 1;');
+    assert.equal((res.args.edits as any[])[0].replaceContent, 'const a = 2;');
+    assert.equal(res.args.searchContent, undefined);
+    assert.equal(res.args.replaceContent, undefined);
+  });
+
+  test('Coercion: wraps single object into array and unwraps single item array into scalar', () => {
+    const schema = {
+      properties: {
+        steps: {
+          type: 'array',
+          items: { type: 'object' }
+        },
+        path: {
+          type: 'string'
+        },
+        port: {
+          type: 'integer'
+        }
+      }
+    };
+
+    const raw = {
+      steps: { id: 'build', params: { target: 'release' } },
+      path: ['/workspace/main.go'],
+      port: ['8080']
+    };
+
+    const res = coerceArgumentTypes('native_engine', raw, schema);
+    assert.equal(res.repaired, true);
+    assert.ok(Array.isArray(res.args.steps));
+    assert.equal((res.args.steps as any[])[0].id, 'build');
+    assert.equal(res.args.path, '/workspace/main.go');
+    assert.equal(res.args.port, 8080);
+  });
 });
+

@@ -1,6 +1,7 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
+import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 
 // Direct DashScope API connection for BYOK (unlike dashscope.js which is the proxy for Free Demo)
 export class DashscopeByokProvider extends LLMProvider {
@@ -44,10 +45,8 @@ export class DashscopeByokProvider extends LLMProvider {
     }
     
     if (options.tools) {
-      payload.tools = options.tools.map(tool => ({
-        type: 'function',
-        function: tool.function ? tool.function : tool
-      }));
+      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'dashscope');
+      payload.tools = scanReport.adaptedTools;
       payload.tool_choice = "auto";
     }
 

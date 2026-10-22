@@ -151,36 +151,164 @@ for (const module of TOOL_MODULES) {
 }
 
 // Names that older releases (and any chat history persisted under them) used for
-// a tool whose canonical schema name is different. Resolved only at execution
-// time — never advertised, so they cost no context.
+// a tool whose canonical schema name is different, plus universal aliases for
+// models that hallucinate common tool names from other environments.
 const TOOL_ALIASES = {
   TodoWrite: 'update_plan',
   manage_local_ai_dependencies: 'manage_local_dependencies',
   procTerm: 'proc_term',
   gitExec: 'gitOp',
-  // Renamed once a real MCP client existed: this tool searches Causyne's own
-  // registry and never spoke the protocol its old name advertised. The alias
-  // stays so a model that learned the old name still resolves.
-  tool_deferred_mcp_search: 'tool_search'
+  tool_deferred_mcp_search: 'tool_search',
+
+  // Core filesystem aliases
+  read_file: 'fs_read',
+  readFile: 'fs_read',
+  view_file: 'fs_read',
+  cat: 'fs_read',
+  write_file: 'fs_write',
+  writeFile: 'fs_write',
+  write_to_file: 'fs_write',
+  create_file: 'fs_write',
+  edit_file: 'fs_edit',
+  editFile: 'fs_edit',
+  replace_file_content: 'fs_edit',
+  modify_file: 'fs_edit',
+  delete_file: 'fs_delete',
+  deleteFile: 'fs_delete',
+  remove_file: 'fs_delete',
+  rm: 'fs_delete',
+  list_dir: 'fs_list',
+  listDir: 'fs_list',
+  list_files: 'fs_list',
+  listFiles: 'fs_list',
+  list_directory: 'fs_list',
+  ls: 'fs_list',
+  find_files: 'fs_find',
+  findFiles: 'fs_find',
+  find_file: 'fs_find',
+  glob: 'fs_find',
+  search_files: 'fs_search',
+  grep: 'fs_search',
+  grep_search: 'fs_search',
+  move_file: 'fs_move',
+  moveFile: 'fs_move',
+  rename_file: 'fs_move',
+  mv: 'fs_move',
+  patch: 'MultiEdit',
+  multi_edit: 'MultiEdit',
+  multiedit: 'MultiEdit',
+  diff_edit: 'MultiEdit',
+
+  // Execution & shell aliases
+  sys_run: 'sysRun',
+  sysrun: 'sysRun',
+  run_command: 'sysRun',
+  runCommand: 'sysRun',
+  bash: 'sysRun',
+  sh: 'sysRun',
+  terminal: 'sysRun',
+  exec_command: 'sysRun',
+  execute_command: 'sysRun',
+  shell: 'sysRun',
+  sys_run_bg: 'sysRunBg',
+  sysrunbg: 'sysRunBg',
+  sysRun_bg: 'sysRunBg',
+  run_bg: 'sysRunBg',
+  run_background: 'sysRunBg',
+  background_run: 'sysRunBg',
+  git_op: 'gitOp',
+  gitop: 'gitOp',
+  git: 'gitOp',
+  persistent_shell: 'terminal_persistent_shell',
+  terminal_shell: 'terminal_persistent_shell',
+
+  // Web & search aliases
+  search_web: 'web_search',
+  searchWeb: 'web_search',
+  google_search: 'web_search',
+  search_internet: 'web_search',
+  fetch_url: 'web_fetch',
+  fetchUrl: 'web_fetch',
+  read_url: 'web_fetch',
+  read_url_content: 'web_fetch',
+  http_get: 'web_fetch',
+
+  // Specialized engines & capabilities
+  nativeEngine: 'native_engine',
+  'native-engine': 'native_engine',
+  creativeApps: 'creative_apps',
+  'creative-apps': 'creative_apps',
+  astryxOracle: 'astryx_oracle',
+  pdfRead: 'pdf_read',
+  codeVerifySyntax: 'code_verify_syntax',
+  codeListSymbols: 'code_list_symbols',
+  codeSearchAst: 'code_search_ast',
+  codeSearcher: 'code_search_ripgrep',
+  blenderAutomator: 'blender_act',
+  resolveAutomator: 'resolve_act',
+  palmierAutomator: 'palmier_act',
+  godotAutomator: 'godot_act',
+  visionInspector: 'vision_inspect_ui',
+  vision_inspector: 'vision_inspect_ui',
+  vision_inspect: 'vision_inspect_ui',
+  computerUse: 'computer_use',
+  uiForge: 'ui_forge',
+  documentForge: 'document_forge',
+  documentForgeTool: 'document_forge',
+  peerAgent: 'peer_agent_delegate',
+  peer_agent: 'peer_agent_delegate',
+  openSourceToolProvisioner: 'open_source_tool_provisioner',
+  open_source_tool: 'open_source_tool_provisioner',
+  subagent: 'agent_subagent_orchestrate',
+  subagent_orchestrator: 'agent_subagent_orchestrate',
+  spawn_subagent: 'agent_subagent_orchestrate',
+  agent_orchestrator: 'agent_subagent_orchestrate',
+  printer_status: 'printer_get_status',
+  printer_list: 'printer_list_printers',
+  create_skill: 'skill_create',
+  read_skill: 'fs_read_skill',
+  readNativeSkill: 'fs_read_skill',
+  take_screenshot: 'screenshot',
+  capture_screenshot: 'screenshot',
+  open_file: 'desktop_open',
+  open_desktop: 'desktop_open'
 };
 
-/** Resolve a name the model produced to a runnable tool, following aliases. */
-export function resolveTool(name) {
-  const normalized = normalizeToolName(name);
-  const native = toolRegistry[normalized] || toolRegistry[TOOL_ALIASES[normalized]] || null;
-  if (native) return native;
-  // MCP tools are namespaced `mcp__server__tool`, so they can never shadow a
-  // native name — the native lookup always wins above.
-  if (isMcpToolName(name)) return resolveMcpTool(name);
-  if (normalized.startsWith('plugin__')) return resolvePluginTool(normalized);
-  return null;
+function stripDelimiters(str) {
+  return String(str || '').toLowerCase().replace(/[-_.]/g, '');
+}
+
+// Precompute delimiter-free lookup table for fuzzy casing/naming matches
+const DELIMITER_FREE_INDEX = {};
+for (const key of Object.keys(toolRegistry)) {
+  DELIMITER_FREE_INDEX[stripDelimiters(key)] = key;
+}
+for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
+  if (toolRegistry[target]) {
+    DELIMITER_FREE_INDEX[stripDelimiters(alias)] = target;
+  }
 }
 
 /** The canonical catalogue name for anything the model might call it. */
 export function canonicalToolName(name) {
   const normalized = normalizeToolName(name);
   if (toolRegistry[normalized]) return normalized;
-  return TOOL_ALIASES[normalized] || normalized;
+  if (TOOL_ALIASES[normalized]) return TOOL_ALIASES[normalized];
+  const fuzzy = DELIMITER_FREE_INDEX[stripDelimiters(name)];
+  if (fuzzy && toolRegistry[fuzzy]) return fuzzy;
+  return normalized;
+}
+
+/** Resolve a name the model produced to a runnable tool, following aliases. */
+export function resolveTool(name) {
+  const canonical = canonicalToolName(name);
+  const native = toolRegistry[canonical] || null;
+  if (native) return native;
+  // MCP tools are namespaced `mcp__server__tool`, so they can never shadow a
+  // native name — the native lookup always wins above.
+  if (isMcpToolName(name)) return resolveMcpTool(name);
+  if (canonical.startsWith('plugin__')) return resolvePluginTool(canonical);
+  return null;
 }
 
 // Phase 6 AGI Upgrade & V5 Cortex: Dynamic Tool Culling and Hot-Reloading Engine

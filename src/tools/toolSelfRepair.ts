@@ -34,6 +34,155 @@ export interface ParameterSchema {
 }
 
 /**
+ * Universal tool name alias dictionary. Maps hallucinations from OpenAI,
+ * Anthropic, DeepSeek, Qwen, Ollama, etc. to Causyne Agent canonical tool names.
+ */
+export const TOOL_NAME_ALIASES: Record<string, string> = {
+  // Core filesystem
+  read_file: 'fs_read',
+  readFile: 'fs_read',
+  view_file: 'fs_read',
+  cat: 'fs_read',
+  write_file: 'fs_write',
+  writeFile: 'fs_write',
+  write_to_file: 'fs_write',
+  create_file: 'fs_write',
+  edit_file: 'fs_edit',
+  editFile: 'fs_edit',
+  replace_file_content: 'fs_edit',
+  modify_file: 'fs_edit',
+  delete_file: 'fs_delete',
+  deleteFile: 'fs_delete',
+  remove_file: 'fs_delete',
+  rm: 'fs_delete',
+  list_dir: 'fs_list',
+  listDir: 'fs_list',
+  list_files: 'fs_list',
+  listFiles: 'fs_list',
+  list_directory: 'fs_list',
+  ls: 'fs_list',
+  find_files: 'fs_find',
+  findFiles: 'fs_find',
+  find_file: 'fs_find',
+  glob: 'fs_find',
+  search_files: 'fs_search',
+  grep: 'fs_search',
+  grep_search: 'fs_search',
+  move_file: 'fs_move',
+  moveFile: 'fs_move',
+  rename_file: 'fs_move',
+  mv: 'fs_move',
+  patch: 'MultiEdit',
+  multi_edit: 'MultiEdit',
+  multiedit: 'MultiEdit',
+  diff_edit: 'MultiEdit',
+
+  // Execution & shell
+  sys_run: 'sysRun',
+  sysrun: 'sysRun',
+  run_command: 'sysRun',
+  runCommand: 'sysRun',
+  bash: 'sysRun',
+  sh: 'sysRun',
+  terminal: 'sysRun',
+  exec_command: 'sysRun',
+  execute_command: 'sysRun',
+  shell: 'sysRun',
+  sys_run_bg: 'sysRunBg',
+  sysrunbg: 'sysRunBg',
+  sysRun_bg: 'sysRunBg',
+  run_bg: 'sysRunBg',
+  run_background: 'sysRunBg',
+  background_run: 'sysRunBg',
+  git_op: 'gitOp',
+  gitop: 'gitOp',
+  git: 'gitOp',
+  gitExec: 'gitOp',
+  procTerm: 'proc_term',
+  persistent_shell: 'terminal_persistent_shell',
+  terminal_shell: 'terminal_persistent_shell',
+
+  // Web & search
+  search_web: 'web_search',
+  searchWeb: 'web_search',
+  google_search: 'web_search',
+  search_internet: 'web_search',
+  fetch_url: 'web_fetch',
+  fetchUrl: 'web_fetch',
+  read_url: 'web_fetch',
+  read_url_content: 'web_fetch',
+  http_get: 'web_fetch',
+
+  // Specialized engines & capabilities
+  nativeEngine: 'native_engine',
+  'native-engine': 'native_engine',
+  creativeApps: 'creative_apps',
+  'creative-apps': 'creative_apps',
+  astryxOracle: 'astryx_oracle',
+  pdfRead: 'pdf_read',
+  codeVerifySyntax: 'code_verify_syntax',
+  codeListSymbols: 'code_list_symbols',
+  codeSearchAst: 'code_search_ast',
+  codeSearcher: 'code_search_ripgrep',
+  blenderAutomator: 'blender_act',
+  resolveAutomator: 'resolve_act',
+  palmierAutomator: 'palmier_act',
+  godotAutomator: 'godot_act',
+  visionInspector: 'vision_inspect_ui',
+  vision_inspector: 'vision_inspect_ui',
+  vision_inspect: 'vision_inspect_ui',
+  computerUse: 'computer_use',
+  uiForge: 'ui_forge',
+  documentForge: 'document_forge',
+  documentForgeTool: 'document_forge',
+  peerAgent: 'peer_agent_delegate',
+  peer_agent: 'peer_agent_delegate',
+  openSourceToolProvisioner: 'open_source_tool_provisioner',
+  open_source_tool: 'open_source_tool_provisioner',
+  subagent: 'agent_subagent_orchestrate',
+  subagent_orchestrator: 'agent_subagent_orchestrate',
+  spawn_subagent: 'agent_subagent_orchestrate',
+  agent_orchestrator: 'agent_subagent_orchestrate',
+  printer_status: 'printer_get_status',
+  printer_list: 'printer_list_printers',
+  create_skill: 'skill_create',
+  read_skill: 'fs_read_skill',
+  readNativeSkill: 'fs_read_skill',
+  take_screenshot: 'screenshot',
+  capture_screenshot: 'screenshot',
+  open_file: 'desktop_open',
+  open_desktop: 'desktop_open',
+  TodoWrite: 'update_plan',
+  manage_local_ai_dependencies: 'manage_local_dependencies',
+  tool_deferred_mcp_search: 'tool_search'
+};
+
+function stripDelimiters(str: string): string {
+  return String(str || '').toLowerCase().replace(/[-_.]/g, '');
+}
+
+const DELIMITER_FREE_TOOL_INDEX: Record<string, string> = {};
+for (const [alias, canonical] of Object.entries(TOOL_NAME_ALIASES)) {
+  DELIMITER_FREE_TOOL_INDEX[stripDelimiters(alias)] = canonical;
+  DELIMITER_FREE_TOOL_INDEX[stripDelimiters(canonical)] = canonical;
+}
+
+/**
+ * Resolve any raw tool name (including hallucinated or camelCased names) to its canonical tool name.
+ */
+export function canonicalizeToolName(rawName: string): string {
+  const normalized = String(rawName || '').replace(/\./g, '_');
+  if (TOOL_NAME_ALIASES[normalized]) {
+    return TOOL_NAME_ALIASES[normalized];
+  }
+  const stripped = stripDelimiters(rawName);
+  if (DELIMITER_FREE_TOOL_INDEX[stripped]) {
+    return DELIMITER_FREE_TOOL_INDEX[stripped];
+  }
+  return normalized;
+}
+
+/**
  * Universal parameter alias dictionary mapping common LLM hallucinated
  * parameter names to their canonical schema counterparts.
  */
@@ -43,6 +192,10 @@ const PARAMETER_ALIASES: Record<string, string[]> = {
     'fileName', 'file_name', 'file', 'target', 'dir', 'folder',
     'src_path', 'source_file', 'target_path'
   ],
+  file_path: [
+    'path', 'filepath', 'filePath', 'targetFile', 'target_file',
+    'fileName', 'file_name', 'file', 'target'
+  ],
   command: [
     'cmd', 'bash', 'sh', 'script', 'shell', 'exec',
     'terminalCommand', 'run', 'instruction'
@@ -50,6 +203,9 @@ const PARAMETER_ALIASES: Record<string, string[]> = {
   query: [
     'q', 'search', 'term', 'pattern', 'search_term',
     'searchQuery', 'find', 'prompt'
+  ],
+  pattern: [
+    'query', 'q', 'search', 'regex', 'term', 'filter'
   ],
   content: [
     'contents', 'data', 'text', 'body', 'code', 'payload', 'input'
@@ -77,6 +233,9 @@ const PARAMETER_ALIASES: Record<string, string[]> = {
   ],
   timeout: [
     'timeoutMs', 'timeout_ms', 'timeoutSec', 'duration'
+  ],
+  url: [
+    'link', 'href', 'endpoint', 'uri', 'target_url'
   ]
 };
 
@@ -255,7 +414,6 @@ function sanitizeUnescapedStringLiterals(input: string): string {
  */
 function convertSingleQuotesToJson(input: string): string {
   return input.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner) => {
-    // Escape internal unescaped double quotes inside the string
     const escaped = (inner as string).replace(/"/g, '\\"');
     return `"${escaped}"`;
   });
@@ -319,7 +477,8 @@ function balanceTruncatedJson(input: string, repairs: string[]): string {
 }
 
 /**
- * Map hallucinated parameter aliases to the canonical parameter names expected by the tool schema.
+ * Map hallucinated parameter aliases to the canonical parameter names expected by the tool schema,
+ * with deep structural healing for complex tools (fs_edit, MultiEdit, native_engine, creative_apps).
  */
 export function resolveParameterAliases(
   toolName: string,
@@ -328,8 +487,95 @@ export function resolveParameterAliases(
 ): RepairResult {
   const repairs: string[] = [];
   const modified = { ...args };
+  const canonicalName = canonicalizeToolName(toolName);
 
-  // Identify expected parameters from schema or default aliases
+  // 1. Specialized structural healing: fs_edit vs MultiEdit
+  if (canonicalName === 'fs_edit') {
+    // If edits is missing, synthesize from top-level fields
+    if (!modified.edits && (modified.searchContent || modified.old_string || modified.oldText || modified.find)) {
+      const search = (modified.searchContent || modified.old_string || modified.oldText || modified.find || '') as string;
+      const replace = (modified.replaceContent || modified.new_string || modified.newText || modified.replacement || '') as string;
+      modified.edits = [{ searchContent: search, replaceContent: replace }];
+      delete modified.searchContent;
+      delete modified.old_string;
+      delete modified.oldText;
+      delete modified.find;
+      delete modified.replaceContent;
+      delete modified.new_string;
+      delete modified.newText;
+      delete modified.replacement;
+      repairs.push("Synthesized 'edits' array from top-level edit parameters for 'fs_edit'");
+    } else if (Array.isArray(modified.edits)) {
+      modified.edits = (modified.edits as Record<string, unknown>[]).map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const normalizedItem = { ...item };
+        if (!normalizedItem.searchContent && (normalizedItem.old_string || normalizedItem.oldText || normalizedItem.find)) {
+          normalizedItem.searchContent = normalizedItem.old_string || normalizedItem.oldText || normalizedItem.find;
+        }
+        if (!normalizedItem.replaceContent && (normalizedItem.new_string || normalizedItem.newText || normalizedItem.replace)) {
+          normalizedItem.replaceContent = normalizedItem.new_string || normalizedItem.newText || normalizedItem.replace;
+        }
+        return normalizedItem;
+      });
+    }
+  } else if (canonicalName === 'MultiEdit') {
+    if (!modified.edits && (modified.old_string || modified.searchContent || modified.oldText || modified.find)) {
+      const search = (modified.old_string || modified.searchContent || modified.oldText || modified.find || '') as string;
+      const replace = (modified.new_string || modified.replaceContent || modified.newText || modified.replacement || '') as string;
+      modified.edits = [{ old_string: search, new_string: replace }];
+      delete modified.searchContent;
+      delete modified.old_string;
+      delete modified.oldText;
+      delete modified.find;
+      delete modified.replaceContent;
+      delete modified.new_string;
+      delete modified.newText;
+      delete modified.replacement;
+      repairs.push("Synthesized 'edits' array from top-level edit parameters for 'MultiEdit'");
+    } else if (Array.isArray(modified.edits)) {
+      modified.edits = (modified.edits as Record<string, unknown>[]).map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const normalizedItem = { ...item };
+        if (!normalizedItem.old_string && (normalizedItem.searchContent || normalizedItem.oldText || normalizedItem.find)) {
+          normalizedItem.old_string = normalizedItem.searchContent || normalizedItem.oldText || normalizedItem.find;
+        }
+        if (!normalizedItem.new_string && (normalizedItem.replaceContent || normalizedItem.newText || normalizedItem.replace)) {
+          normalizedItem.new_string = normalizedItem.replaceContent || normalizedItem.newText || normalizedItem.replace;
+        }
+        return normalizedItem;
+      });
+    }
+  } else if (canonicalName === 'native_engine') {
+    if (Array.isArray(modified.steps)) {
+      modified.steps = (modified.steps as Record<string, unknown>[]).map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const norm = { ...item };
+        if (!norm.id && (norm.name || norm.action || norm.command || norm.task)) {
+          norm.id = norm.name || norm.action || norm.command || norm.task;
+        }
+        if (!norm.params && (norm.args || norm.arguments || norm.options || norm.data)) {
+          norm.params = norm.args || norm.arguments || norm.options || norm.data;
+        }
+        return norm;
+      });
+    }
+  } else if (canonicalName === 'creative_apps') {
+    if (Array.isArray(modified.actions)) {
+      modified.actions = (modified.actions as Record<string, unknown>[]).map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        const norm = { ...item };
+        if (!norm.action && (norm.command || norm.name || norm.operation)) {
+          norm.action = norm.command || norm.name || norm.operation;
+        }
+        if (!norm.parameters && (norm.params || norm.args || norm.arguments)) {
+          norm.parameters = norm.params || norm.args || norm.arguments;
+        }
+        return norm;
+      });
+    }
+  }
+
+  // 2. Identify expected parameters from schema or default aliases
   const expectedKeys = new Set<string>();
   if (schema && schema.properties) {
     for (const key of Object.keys(schema.properties)) {
@@ -337,17 +583,16 @@ export function resolveParameterAliases(
     }
   }
 
+  // 3. Resolve top-level parameter aliases
   for (const [canonicalParam, aliases] of Object.entries(PARAMETER_ALIASES)) {
-    // If the schema specifies this tool takes canonicalParam (or no schema provided)
     const isExpected = expectedKeys.size === 0 || expectedKeys.has(canonicalParam);
     if (!isExpected) continue;
 
-    // If canonicalParam is missing or undefined/null/empty
     if (modified[canonicalParam] === undefined || modified[canonicalParam] === null || modified[canonicalParam] === '') {
       for (const alias of aliases) {
         if (modified[alias] !== undefined && modified[alias] !== null && modified[alias] !== '') {
           modified[canonicalParam] = modified[alias];
-          repairs.push(`Mapped hallucinated parameter alias '${alias}' -> '${canonicalParam}' for tool '${toolName}'`);
+          repairs.push(`Mapped hallucinated parameter alias '${alias}' -> '${canonicalParam}' for tool '${canonicalName}'`);
           break;
         }
       }
@@ -392,6 +637,15 @@ export function coerceArgumentTypes(
             repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${key}'`);
           }
         }
+      } else if (Array.isArray(val) && val.length === 1) {
+        const item = val[0];
+        if (typeof item === 'number') {
+          modified[key] = item;
+          repairs.push(`Unwrapped single-element array to number for parameter '${key}'`);
+        } else if (typeof item === 'string' && /^-?\d+(\.\d+)?$/.test(item.trim())) {
+          modified[key] = expectedType === 'integer' ? parseInt(item.trim(), 10) : parseFloat(item.trim());
+          repairs.push(`Unwrapped single-element array to number for parameter '${key}'`);
+        }
       }
     }
 
@@ -412,7 +666,7 @@ export function coerceArgumentTypes(
       }
     }
 
-    // 3. Array coercion
+    // 3. Array coercion (auto-wraps single objects and parses strings)
     if (expectedType === 'array') {
       if (typeof val === 'string') {
         const trimmed = val.trim();
@@ -429,7 +683,13 @@ export function coerceArgumentTypes(
         } else if (trimmed.includes(',')) {
           modified[key] = trimmed.split(',').map((s) => s.trim());
           repairs.push(`Split comma-separated string into array for parameter '${key}'`);
+        } else if (trimmed.length > 0) {
+          modified[key] = [trimmed];
+          repairs.push(`Wrapped single string into array for parameter '${key}'`);
         }
+      } else if (val && typeof val === 'object' && !Array.isArray(val)) {
+        modified[key] = [val];
+        repairs.push(`Wrapped single object into array for parameter '${key}'`);
       }
     }
 
@@ -450,6 +710,14 @@ export function coerceArgumentTypes(
         }
       }
     }
+
+    // 5. String coercion (unwrapping single-element arrays)
+    if (expectedType === 'string') {
+      if (Array.isArray(val) && val.length === 1 && typeof val[0] === 'string') {
+        modified[key] = val[0];
+        repairs.push(`Unwrapped single-element array to string for parameter '${key}'`);
+      }
+    }
   }
 
   return {
@@ -468,7 +736,7 @@ export function normalizePaths(
 ): RepairResult {
   const repairs: string[] = [];
   const modified = { ...args };
-  const pathKeys = ['path', 'source', 'destination', 'targetFile'];
+  const pathKeys = ['path', 'file_path', 'source', 'destination', 'targetFile'];
 
   for (const key of pathKeys) {
     const val = modified[key];
@@ -489,8 +757,8 @@ export function normalizePaths(
 }
 
 /**
- * Master self-repair entrypoint: heals raw tool call JSON, resolves aliases,
- * coerces argument types, and normalizes paths.
+ * Master self-repair entrypoint: heals raw tool call JSON, canonicalizes tool names,
+ * resolves aliases, coerces argument types, and normalizes paths.
  */
 export function selfRepairToolCall(
   toolCall: {
@@ -502,31 +770,35 @@ export function selfRepairToolCall(
   options: { cwd?: string } = {}
 ): SelfRepairToolCallResult {
   const rawName = toolCall.function?.name || toolCall.name || '';
+  const canonicalName = canonicalizeToolName(rawName);
   const rawArgs = toolCall.function?.arguments !== undefined
     ? toolCall.function.arguments
     : toolCall.arguments;
 
   const allRepairs: string[] = [];
+  if (canonicalName !== rawName) {
+    allRepairs.push(`Canonicalized tool name '${rawName}' -> '${canonicalName}'`);
+  }
 
   // 1. Repair JSON parsing
   const jsonResult = repairJsonArguments(rawArgs);
   if (jsonResult.error) {
     return {
-      name: rawName,
+      name: canonicalName,
       args: {},
       repaired: false,
-      repairs: jsonResult.repairs,
+      repairs: [...allRepairs, ...jsonResult.repairs],
       error: jsonResult.error
     };
   }
   allRepairs.push(...jsonResult.repairs);
 
-  // 2. Resolve parameter aliases
-  const aliasResult = resolveParameterAliases(rawName, jsonResult.args, toolSchema);
+  // 2. Resolve parameter aliases & structural transforms
+  const aliasResult = resolveParameterAliases(canonicalName, jsonResult.args, toolSchema);
   allRepairs.push(...aliasResult.repairs);
 
   // 3. Coerce argument types
-  const typeResult = coerceArgumentTypes(rawName, aliasResult.args, toolSchema);
+  const typeResult = coerceArgumentTypes(canonicalName, aliasResult.args, toolSchema);
   allRepairs.push(...typeResult.repairs);
 
   // 4. Normalize filesystem paths
@@ -534,7 +806,7 @@ export function selfRepairToolCall(
   allRepairs.push(...pathResult.repairs);
 
   return {
-    name: rawName,
+    name: canonicalName,
     args: pathResult.args,
     repaired: allRepairs.length > 0,
     repairs: allRepairs

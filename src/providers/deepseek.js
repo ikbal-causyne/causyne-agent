@@ -1,6 +1,7 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
+import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 
 export class DeepSeekProvider extends LLMProvider {
   constructor(config) {
@@ -38,10 +39,8 @@ export class DeepSeekProvider extends LLMProvider {
     }
 
     if (options.tools) {
-      payload.tools = options.tools.map(tool => ({
-        type: 'function',
-        function: tool.function ? tool.function : tool
-      }));
+      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'deepseek');
+      payload.tools = scanReport.adaptedTools;
       payload.tool_choice = "auto";
     }
 
