@@ -104,6 +104,18 @@ contain adaptations from upstream open-source work:
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
+The native creative engines operated via `src/tools/nativeEngine.ts` and `src/engines/`
+power **Causyne Native Engines** (including **Causyne Film Engine**, **Causyne Photo Engine**, **Causyne Sound Engine**, and **Causyne CAD Engine**).
+They execute as external headless engine binaries installed into the user's sovereign
+`~/.causyne/engines/` directory with explicit user consent and are not bundled into
+Causyne Agent's npm package.
+
+Upstream open-source engine components are dual-licensed under MIT and Apache-2.0. Upstream
+names are used solely for required legal copyright attribution and not as product trademarks:
+
+> Copyright (c) 2026 The open-source engine contributors.
+> Licensed under the Apache License, Version 2.0 or the MIT License.
+
 
 Repository scanning found no third-party copyright header or license marker in
 the project-authored source and skill files. That negative scan alone cannot

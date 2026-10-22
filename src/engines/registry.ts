@@ -3,13 +3,19 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
 import { filmEngine } from './film.js';
+import { photoEngine } from './photo.js';
+import { soundEngine } from './sound.js';
+import { cadEngine } from './cad.js';
 import type { NativeEngineAdapter, NativeEngineRun } from './types.js';
 
 const MAX_STDOUT = 8 * 1024 * 1024;
 const MAX_STDERR = 1024 * 1024;
 
 export const NATIVE_ENGINES: Record<string, NativeEngineAdapter> = {
-  [filmEngine.id]: filmEngine
+  [filmEngine.id]: filmEngine,
+  [photoEngine.id]: photoEngine,
+  [soundEngine.id]: soundEngine,
+  [cadEngine.id]: cadEngine
 };
 
 export function nativeEngine(id: string): NativeEngineAdapter | null {

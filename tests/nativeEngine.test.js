@@ -228,3 +228,277 @@ test('native engine install requires consent, verifies SHA-256, and becomes the 
     await fs.rm(workspace, { recursive: true, force: true });
   }
 });
+
+const FAKE_PHOTO = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const verb = args[0];
+fs.appendFileSync(path.join(__dirname, 'photo-engine.log'), JSON.stringify({ args }) + '\\n');
+if (args.includes('--version')) { console.log('causyne-engine-photo 0.8.2'); process.exit(0); }
+const value = key => { const i = args.indexOf(key); return i >= 0 ? args[i + 1] : undefined; };
+if (verb === 'commands') {
+  console.log(JSON.stringify([{ id: 'file.new', label: 'New…' }, { id: 'image.imageRotation.flipCanvasHorizontal', label: 'Flip Horizontal' }]));
+} else if (verb === 'info') {
+  console.log(JSON.stringify({ width: 1920, height: 1080, mode: 'Rgb', layers: [{ id: 1, name: 'Layer 1' }] }));
+} else if (verb === 'run') {
+  const out = value('--out');
+  if (out) {
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, 'photo-artifact');
+  }
+  console.log(JSON.stringify({ ok: true, out }));
+} else if (verb === 'convert') {
+  const out = args[2];
+  if (out) {
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, 'converted-photo');
+  }
+  console.log(JSON.stringify({ ok: true, out }));
+}
+`;
+
+test('native photo engine drives catalog, describe, inspect, execute, export and render without MCP', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-photo-test-'));
+  const binary = path.join(root, 'causyne-engine-photo');
+  const log = path.join(root, 'photo-engine.log');
+  await fs.writeFile(binary, FAKE_PHOTO, { mode: 0o755 });
+  process.env.CAUSYNE_ENGINE_PHOTO = binary;
+  try {
+    const context = { workspacePaths: [root] };
+    const status = await nativeEngineTool.execute({ engine: 'photo', action: 'status' }, context);
+    const photo = status.engines.find(e => e.id === 'photo');
+    assert.equal(photo.installed, true);
+    assert.equal(photo.version, '0.8.2');
+
+    const catalog = await nativeEngineTool.execute({ engine: 'photo', action: 'catalog' }, context);
+    assert.equal(catalog.success, true);
+    assert.equal(catalog.data[0].id, 'file.new');
+
+    const executed = await nativeEngineTool.execute({
+      engine: 'photo',
+      action: 'execute',
+      command: 'file.new',
+      params: { width: 800, height: 600 },
+      saveAs: 'canvas.png'
+    }, context);
+    assert.equal(executed.success, true);
+    assert.deepEqual(executed.artifacts, ['canvas.png']);
+    assert.equal(await fs.readFile(path.join(root, 'canvas.png'), 'utf8'), 'photo-artifact');
+
+    const inspected = await nativeEngineTool.execute({
+      engine: 'photo',
+      action: 'inspect',
+      project: 'canvas.png'
+    }, context);
+    assert.equal(inspected.success, true);
+    assert.equal(inspected.data.width, 1920);
+
+    const exported = await nativeEngineTool.execute({
+      engine: 'photo',
+      action: 'export',
+      project: 'canvas.png',
+      output: 'canvas.jpg',
+      format: 'jpg',
+      quality: 90
+    }, context);
+    assert.equal(exported.success, true);
+    assert.deepEqual(exported.artifacts, ['canvas.jpg']);
+
+    const calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.ok(calls.some(call => call.args.includes('commands') && call.args.includes('--json')));
+    assert.ok(calls.some(call => call.args.includes('run') && call.args.includes('--new')));
+    assert.ok(!calls.some(call => call.args.includes('mcp')));
+  } finally {
+    delete process.env.CAUSYNE_ENGINE_PHOTO;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+const FAKE_SOUND = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const verb = args[0];
+fs.appendFileSync(path.join(__dirname, 'sound-engine.log'), JSON.stringify({ args }) + '\\n');
+if (args.includes('--version')) { console.log('causyne-engine-sound 0.6.1'); process.exit(0); }
+const value = key => { const i = args.indexOf(key); return i >= 0 ? args[i + 1] : undefined; };
+if (verb === 'commands') {
+  console.log('edit.strip_silence                   Strip Silence                      Edit\\nedit.fades_create                    Create...                          Edit > Fades');
+} else if (verb === 'describe') {
+  console.log(JSON.stringify({ id: args[1], description: 'audio command' }));
+} else if (verb === 'info') {
+  console.log(JSON.stringify({ format: 'wav', sample_rate: 48000, channels: 2, seconds: 10.5 }));
+} else if (verb === 'run') {
+  const bounce = value('--bounce');
+  const save = value('--save');
+  if (bounce) {
+    fs.mkdirSync(path.dirname(bounce), { recursive: true });
+    fs.writeFileSync(bounce, 'sound-bounce');
+  }
+  if (save) {
+    fs.mkdirSync(path.dirname(save), { recursive: true });
+    fs.writeFileSync(save, 'sound-session');
+  }
+  console.log(JSON.stringify({ ok: true, bounce, save }));
+} else if (verb === 'convert') {
+  const out = args[2];
+  if (out) {
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, 'sound-converted');
+  }
+  console.log(JSON.stringify({ ok: true, out }));
+}
+`;
+
+test('native sound engine drives catalog, describe, inspect, execute, export and render without MCP', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-sound-test-'));
+  const binary = path.join(root, 'causyne-engine-sound');
+  const log = path.join(root, 'sound-engine.log');
+  await fs.writeFile(binary, FAKE_SOUND, { mode: 0o755 });
+  process.env.CAUSYNE_ENGINE_SOUND = binary;
+  try {
+    const context = { workspacePaths: [root] };
+    const status = await nativeEngineTool.execute({ engine: 'sound', action: 'status' }, context);
+    const sound = status.engines.find(e => e.id === 'sound');
+    assert.equal(sound.installed, true);
+    assert.equal(sound.version, '0.6.1');
+
+    const catalog = await nativeEngineTool.execute({ engine: 'sound', action: 'catalog' }, context);
+    assert.equal(catalog.success, true);
+    assert.match(catalog.output, /strip_silence/);
+
+    const executed = await nativeEngineTool.execute({
+      engine: 'sound',
+      action: 'execute',
+      command: 'edit.strip_silence',
+      demo: true,
+      saveAs: 'session.scraft',
+      output: 'mix.wav'
+    }, context);
+    assert.equal(executed.success, true);
+    assert.ok(executed.artifacts.includes('session.scraft'));
+    assert.ok(executed.artifacts.includes('mix.wav'));
+    assert.equal(await fs.readFile(path.join(root, 'mix.wav'), 'utf8'), 'sound-bounce');
+
+    const probed = await nativeEngineTool.execute({
+      engine: 'sound',
+      action: 'probe',
+      query: 'mix.wav'
+    }, context);
+    assert.equal(probed.success, true);
+    assert.equal(probed.data.sample_rate, 48000);
+
+    const exported = await nativeEngineTool.execute({
+      engine: 'sound',
+      action: 'export',
+      project: 'mix.wav',
+      output: 'mix.mp3'
+    }, context);
+    assert.equal(exported.success, true);
+    assert.deepEqual(exported.artifacts, ['mix.mp3']);
+
+    const calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.ok(calls.some(call => call.args.includes('commands')));
+    assert.ok(calls.some(call => call.args.includes('run') && call.args.includes('--demo')));
+    assert.ok(!calls.some(call => call.args.includes('mcp')));
+  } finally {
+    delete process.env.CAUSYNE_ENGINE_SOUND;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+const FAKE_CAD = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+fs.appendFileSync(path.join(__dirname, 'cad-engine.log'), JSON.stringify({ args }) + '\\n');
+if (args.includes('--version') || args.includes('-V')) {
+  console.log('causyne-engine-cad 0.6.2');
+  process.exit(0);
+}
+const sub = args[0];
+if (sub === 'commands') {
+  console.log(JSON.stringify([{ id: 'draw.line', label: 'Line' }, { id: 'draw.circle', label: 'Circle' }]));
+} else if (sub === 'info') {
+  console.log(JSON.stringify({ layers: 3, entities: 142, extents: [0, 0, 100, 100] }));
+} else if (sub === 'run') {
+  const saveIdx = args.indexOf('--save');
+  if (saveIdx >= 0) {
+    const savePath = args[saveIdx + 1];
+    fs.mkdirSync(path.dirname(savePath), { recursive: true });
+    fs.writeFileSync(savePath, 'dxf-saved');
+  }
+  const expIdx = args.indexOf('--export');
+  if (expIdx >= 0) {
+    const expPath = args[expIdx + 1];
+    fs.mkdirSync(path.dirname(expPath), { recursive: true });
+    fs.writeFileSync(expPath, 'cad-render');
+  }
+  console.log(JSON.stringify({ ok: true }));
+} else if (sub === 'convert') {
+  const out = args[2];
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, 'converted-cad');
+  console.log(JSON.stringify({ ok: true, out }));
+}
+`;
+
+test('native cad engine drives catalog, describe, inspect, execute, export and render without MCP', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-cad-test-'));
+  const binary = path.join(root, 'causyne-engine-cad');
+  const log = path.join(root, 'cad-engine.log');
+  await fs.writeFile(binary, FAKE_CAD, { mode: 0o755 });
+  process.env.CAUSYNE_ENGINE_CAD = binary;
+  try {
+    const context = { workspacePaths: [root] };
+    const status = await nativeEngineTool.execute({ engine: 'cad', action: 'status' }, context);
+    const cad = status.engines.find(e => e.id === 'cad');
+    assert.equal(cad.installed, true);
+    assert.equal(cad.version, '0.6.2');
+
+    const catalog = await nativeEngineTool.execute({ engine: 'cad', action: 'catalog' }, context);
+    assert.equal(catalog.success, true);
+    assert.equal(catalog.data[0].id, 'draw.line');
+
+    const executed = await nativeEngineTool.execute({
+      engine: 'cad',
+      action: 'execute',
+      command: 'draw.line',
+      params: { start: [0, 0], end: [10, 10] },
+      demo: true,
+      saveAs: 'model.dxf',
+      output: 'model.png'
+    }, context);
+    assert.equal(executed.success, true);
+    assert.ok(executed.artifacts.includes('model.dxf'));
+    assert.ok(executed.artifacts.includes('model.png'));
+    assert.equal(await fs.readFile(path.join(root, 'model.png'), 'utf8'), 'cad-render');
+
+    const probed = await nativeEngineTool.execute({
+      engine: 'cad',
+      action: 'probe',
+      query: 'model.dxf'
+    }, context);
+    assert.equal(probed.success, true);
+    assert.equal(probed.data.layers, 3);
+
+    const exported = await nativeEngineTool.execute({
+      engine: 'cad',
+      action: 'export',
+      project: 'model.dxf',
+      output: 'model.svg'
+    }, context);
+    assert.equal(exported.success, true);
+    assert.deepEqual(exported.artifacts, ['model.svg']);
+
+    const calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.ok(calls.some(call => call.args.includes('commands')));
+    assert.ok(calls.some(call => call.args.includes('run') && call.args.includes('--sample')));
+    assert.ok(!calls.some(call => call.args.includes('mcp')));
+  } finally {
+    delete process.env.CAUSYNE_ENGINE_CAD;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
