@@ -53,6 +53,11 @@
     "src/creative/apps.ts",
     "src/creative/blenderBatch.ts",
     "src/tools/creativeApps.ts",
+    "src/engines/types.ts",
+    "src/engines/installer.ts",
+    "src/engines/film.ts",
+    "src/engines/registry.ts",
+    "src/tools/nativeEngine.ts",
     "src/creative/studioScripts.ts",
     "src/creative/pipeline.ts",
     "src/dynamicCatalogue.ts",
@@ -80,7 +85,8 @@
     "src/acp/peerProfiles.ts",
     "src/acp/server.ts",
     "src/acp/client.ts",
-    "src/tools/peerAgent.ts"
+    "src/tools/peerAgent.ts",
+    "src/tools/openSourceToolProvisioner.ts"
   ],
   "exclude": [
     "node_modules",

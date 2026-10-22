@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import { AcpServer } from '../src/acp/server.js';
+import { getSession, saveSessionMessages } from '../src/sessionJournal.js';
 
 function makeHarness(loopFactory) {
   const messages = [];
@@ -14,7 +15,7 @@ function makeHarness(loopFactory) {
       return true;
     }
   };
-  const server = new AcpServer({ output, loopFactory });
+  const server = new AcpServer({ output, loopFactory, permissionTimeoutMs: 500 });
   const send = (message) => server.handleLine(JSON.stringify(message));
   const find = (predicate) => messages.filter(predicate);
   const waitFor = async (predicate, timeoutMs = 3000) => {
@@ -42,10 +43,10 @@ test('initialize advertises only implemented capabilities', async () => {
   const capabilities = response.result.agentCapabilities;
   assert.equal(response.result.protocolVersion, 1);
   assert.equal(response.result.agentInfo.name, 'Causyne Agent');
-  assert.equal(capabilities.loadSession, false);
+  assert.equal(capabilities.loadSession, true);
   assert.equal(capabilities.promptCapabilities.image, false);
   assert.equal(capabilities.mcpCapabilities.http, false);
-  assert.deepEqual(Object.keys(capabilities.sessionCapabilities).sort(), ['close', 'list']);
+  assert.deepEqual(Object.keys(capabilities.sessionCapabilities).sort(), ['close', 'fork', 'list']);
   assert.equal(capabilities.sessions, undefined);
   assert.equal(capabilities.fork, undefined);
 });
@@ -178,7 +179,7 @@ test('approval requests bridge to session/request_permission', async () => {
   const permissionRequest = await h.waitFor((message) => message.method === 'session/request_permission');
   assert.equal(permissionRequest.params.sessionId, sessionId);
   assert.equal(permissionRequest.params.toolCall.toolCallId, 'call-7');
-  assert.deepEqual(permissionRequest.params.options.map((option) => option.optionId), ['allow_once', 'reject_once']);
+  assert.deepEqual(permissionRequest.params.options.map((option) => option.optionId), ['allow_once', 'allow_always', 'reject_once']);
 
   await h.send({
     jsonrpc: '2.0',
@@ -244,10 +245,14 @@ test('session/set_mode validates mode and emits a mode update', async () => {
   assert.equal(invalid.error.code, -32602);
 });
 
-test('session/list, session/close, and unsupported session/load', async () => {
+test('session/list, session/close, and session/load replay a stored conversation', async () => {
   const h = makeHarness();
   const sessionResponse = await newSession(h);
   const sessionId = sessionResponse.result.sessionId;
+  saveSessionMessages(sessionId, [
+    { role: 'user', content: 'earlier question' },
+    { role: 'assistant', content: 'earlier answer' }
+  ]);
 
   await h.send({ jsonrpc: '2.0', id: 8, method: 'session/list', params: {} });
   const list = await h.waitFor((message) => message.id === 8);
@@ -261,7 +266,54 @@ test('session/list, session/close, and unsupported session/load', async () => {
 
   await h.send({ jsonrpc: '2.0', id: 10, method: 'session/load', params: { sessionId, cwd: process.cwd(), mcpServers: [] } });
   const load = await h.waitFor((message) => message.id === 10);
-  assert.equal(load.error.code, -32601);
+  assert.equal(load.result.modes.currentModeId, 'standard');
+  const replayed = h.find((message) => message.method === 'session/update').map((message) => message.params.update);
+  assert.ok(replayed.some((update) => update.sessionUpdate === 'user_message_chunk' && update.content.text === 'earlier question'));
+  assert.ok(replayed.some((update) => update.sessionUpdate === 'agent_message_chunk' && update.content.text === 'earlier answer'));
+
+  await h.send({ jsonrpc: '2.0', id: 11, method: 'session/load', params: { sessionId: 'missing', cwd: process.cwd() } });
+  const missing = await h.waitFor((message) => message.id === 11);
+  assert.equal(missing.error.code, -32002);
+});
+
+test('session/fork copies the transcript but never the approvals', async () => {
+  let captured = null;
+  const loopFactory = (params) => {
+    captured = params;
+    return {
+      setAutonomyMode() {},
+      waitForDecision: async () => null,
+      handleApprovalResponse() {},
+      abort() {},
+      async run() {}
+    };
+  };
+  const h = makeHarness(loopFactory);
+  const sessionResponse = await newSession(h);
+  const sessionId = sessionResponse.result.sessionId;
+  saveSessionMessages(sessionId, [
+    { role: 'user', content: 'keep this context' },
+    { role: 'assistant', content: 'kept' }
+  ]);
+
+  await h.send({ jsonrpc: '2.0', id: 12, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'hi' }] } });
+  await h.waitFor((message) => message.id === 12);
+  assert.ok(captured, 'the loop factory did not receive the session options');
+  assert.equal(captured.memorySessionId, sessionId);
+  captured.approvalScope.grantAlways('sysRun');
+  assert.equal(captured.approvalScope.isAlwaysAllowed('sysRun'), true);
+
+  await h.send({ jsonrpc: '2.0', id: 13, method: 'session/fork', params: { sessionId, cwd: process.cwd() } });
+  const fork = await h.waitFor((message) => message.id === 13);
+  const forkId = fork.result.sessionId;
+  assert.notEqual(forkId, sessionId);
+  assert.equal(fork.result.modes.currentModeId, 'standard');
+
+  const copied = getSession(forkId);
+  assert.deepEqual(copied.messages.map((message) => message.content), ['keep this context', 'kept']);
+  const forkScope = h.server.sessions.get(forkId).approvalScope;
+  assert.equal(forkScope.isAlwaysAllowed('sysRun'), false, 'a fork inherited a standing approval');
+  assert.equal(captured.approvalScope.isAlwaysAllowed('sysRun'), true, 'the source lost its own approval');
 });
 
 test('unknown methods and malformed lines produce JSON-RPC errors', async () => {

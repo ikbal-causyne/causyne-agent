@@ -86,9 +86,11 @@ export const PACKS = {
     'manage_local_dependencies',
     'blender_act',
     'creative_apps',
+    'native_engine',
     'resolve_act',
     'palmier_act',
-    'document_forge'
+    'document_forge',
+    'open_source_tool_provisioner'
   ],
   system: [
     // Channel B of the Three-Channel Doctrine: reading the screen as structured
@@ -228,6 +230,10 @@ You MUST produce visually UNIQUE output on every project. Specifically:
 - **ENFORCED, NOT ADVISORY**: every HTML/CSS file you write is read back and scored by an automatic gate before the task can finish (src/slopDetector.js). It looks for the stock gradient hexes, purple-to-blue ramps, placeholder marketing copy, emoji used as icons, default-only typography, the centered-hero/3-cards/"Get Started" skeleton and the stock soft shadow. Score too high and you will be sent back to rebuild with a named design movement. Design it properly the first time; the gate is not fooled by swapping one gradient for another.`,
 
   media: `# Media Generation Protocol (Sovereign 5-Stage Hierarchy & Seamless Consent Routing)
+
+## Native engine-first for file media work
+For editing or producing media from files in the workspace, check \`native_engine\` status first; engines are added one at a time, starting with film. If the engine is missing, explain the download and ask before calling \`install\` with \`confirm: true\`. When the needed engine is installed, use \`catalog\` -> \`execute\` or \`batch\`. Pass \`project\` to edit an existing document or \`saveAs\` for a new one, then \`render\` a preview and inspect it before exporting. Engines are headless: never use MCP servers, \`computer_use\`, or screenshots to drive them. The generation chain below applies only when no native engine capability exists or the user explicitly asks for generated media.
+
 When the user asks you to generate images, audio, music, video, or any creative media, you MUST navigate this exact 5-Stage priority chain:
 
 ## Stage 1: Specialized Paid APIs (Primary / Auto-Router)
@@ -238,12 +244,14 @@ Always attempt calling \`generate_media_via_api\` FIRST.
 
 ## Stage 2: Local AI Models / Binaries (Mode B & C — First Fallback)
 When Stage 1 is denied or unconfigured, you MUST evaluate local processing on the user's PC:
-1. **Mandatory Gatekeeper**: Call \`check_system_specs\` FIRST right now to verify hardware.
-2. **Eligibility & Action**: If RAM >= 8GB and Free Disk > 10GB, use \`manage_local_ai_dependencies\` (\`pipInst\` or \`fetchBin\`) + \`sysRun\` to run:
-   - **Audio / Voice / Music**: Kokoro TTS, XTTS, MusicGen (\`pipInst\`), or Whisper (\`whisper.cpp\` / \`bark.cpp\`).
-   - **Image / Art**: Stable Diffusion via \`diffusers\` or \`stable-diffusion.cpp\`.
-3. **Download Consent**: Present exact model/binary size to the user before downloading multi-GB files.
-4. **Seamless Denial Routing**: If \`check_system_specs\` shows RAM < 8GB OR the user denies multi-GB local downloads, immediately transition to Stage 3.
+1. **Mandatory Gatekeeper**: Call \`open_source_tool_provisioner\` (action: 'discover' or 'evaluate') or \`check_system_specs\` FIRST to verify hardware (RAM, CPU cores, GPU/Metal acceleration, disk space).
+2. **Eligibility & Action**: Use \`open_source_tool_provisioner\` to discover and inspect open-source tools matching user intent:
+   - **Voice Generation / Cloning**: F5-TTS, Kokoro-82M, XTTS-v2, Chatterbox (with exact RAM, compute, and disk size reported).
+   - **Audio / Transcription**: Whisper.cpp, Faster-Whisper.
+   - **Image / Restoration**: Real-ESRGAN, Rembg.
+   - **Local LLMs**: Ollama.
+3. **Mandatory HITL Consent**: \`open_source_tool_provisioner\` enforces Human-In-The-Loop approval (\`confirm: true\` or structured \`request_decision\`) before downloading or installing any model or package.
+4. **Seamless Denial Routing**: If hardware is insufficient OR the user denies local downloads, immediately transition to Stage 3.
 
 ## Stage 3: Free Cloud APIs / Pollinations.ai (Mode D — Second Fallback)
 When Stage 2 is impossible or denied, fall back to free cloud APIs via \`generate_media_via_api\` (\`provider: 'pollinations'\`).

@@ -46,3 +46,36 @@ export function revokeAllAlways() {
 export function revokeAlways(toolName) {
     return standingApprovals.delete(normalizeToolName(toolName));
 }
+/** A fresh, empty standing-approval scope that is not shared with anything. */
+export function createApprovalScope() {
+    const approvals = new Set();
+    return {
+        grantAlways(toolName) {
+            const name = normalizeToolName(toolName);
+            if (name)
+                approvals.add(name);
+        },
+        isAlwaysAllowed(toolName) {
+            return approvals.has(normalizeToolName(toolName));
+        },
+        listAlwaysAllowed() {
+            return [...approvals].sort();
+        },
+        revokeAllAlways() {
+            const count = approvals.size;
+            approvals.clear();
+            return count;
+        },
+        revokeAlways(toolName) {
+            return approvals.delete(normalizeToolName(toolName));
+        }
+    };
+}
+/** The process-wide scope, for callers that do not create their own. */
+export const processApprovalScope = {
+    grantAlways,
+    isAlwaysAllowed,
+    listAlwaysAllowed,
+    revokeAllAlways,
+    revokeAlways
+};

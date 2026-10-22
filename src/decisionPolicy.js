@@ -53,6 +53,8 @@ export function requiresImplementationPlan(prompt, archetype = '', confidence = 
 export function isMutatingToolCall(toolName, args = {}) {
     if (toolName === 'creative_apps')
         return args.action !== 'status';
+    if (toolName === 'native_engine')
+        return !['status', 'catalog', 'describe', 'inspect', 'probe'].includes(String(args.action ?? ''));
     if (MUTATING_TOOLS.has(toolName)) {
         if (toolName === 'sysRun' || toolName === 'sysRunBg') {
             const command = String(args.command ?? '');

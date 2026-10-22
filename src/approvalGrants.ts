@@ -18,6 +18,22 @@
 // should be an explicit, listed, revocable config entry — not a quiet
 // side-effect of a keypress in a modal.
 
+/**
+ * One set of standing approvals, isolated from every other scope.
+ *
+ * The process-wide scope below is what a terminal session uses. A server-owned
+ * conversation (ACP) gets its own scope instead, so "allow always" in one
+ * conversation can never leak into another one — and never into a fork, which
+ * starts with a scope that has never been granted anything.
+ */
+export interface ApprovalScope {
+  grantAlways(toolName: unknown): void;
+  isAlwaysAllowed(toolName: unknown): boolean;
+  listAlwaysAllowed(): string[];
+  revokeAllAlways(): number;
+  revokeAlways(toolName: unknown): boolean;
+}
+
 /** Tool names approved for the rest of this process. Deliberately in memory. */
 const standingApprovals = new Set<string>();
 
@@ -52,3 +68,37 @@ export function revokeAllAlways(): number {
 export function revokeAlways(toolName: unknown): boolean {
   return standingApprovals.delete(normalizeToolName(toolName));
 }
+
+/** A fresh, empty standing-approval scope that is not shared with anything. */
+export function createApprovalScope(): ApprovalScope {
+  const approvals = new Set<string>();
+  return {
+    grantAlways(toolName) {
+      const name = normalizeToolName(toolName);
+      if (name) approvals.add(name);
+    },
+    isAlwaysAllowed(toolName) {
+      return approvals.has(normalizeToolName(toolName));
+    },
+    listAlwaysAllowed() {
+      return [...approvals].sort();
+    },
+    revokeAllAlways() {
+      const count = approvals.size;
+      approvals.clear();
+      return count;
+    },
+    revokeAlways(toolName) {
+      return approvals.delete(normalizeToolName(toolName));
+    }
+  };
+}
+
+/** The process-wide scope, for callers that do not create their own. */
+export const processApprovalScope: ApprovalScope = {
+  grantAlways,
+  isAlwaysAllowed,
+  listAlwaysAllowed,
+  revokeAllAlways,
+  revokeAlways
+};

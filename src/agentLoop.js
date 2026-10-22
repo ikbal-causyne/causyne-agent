@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { isAlwaysAllowed } from './approvalGrants.js';
+import { processApprovalScope } from './approvalGrants.js';
 import { pruneSessions as pruneEmbodimentSessions, describeSession } from './embodimentSession.js';
 import { WorkspacePerception } from './perception.js';
 import { audioFormatForMimeType } from './providers/base.js';
@@ -319,12 +319,17 @@ export class AgentLoop {
    * endpoint is reported in seconds rather than after the whole step budget.
    */
   static MAX_CONSECUTIVE_FAILURES = 3;
-  constructor(eventSink, taskId, userPrompt) {
+  constructor(eventSink, taskId, userPrompt, options = {}) {
     this.eventSink = eventSink;
     this.taskId = taskId;
     this.userPrompt = userPrompt;
-    this.workspaceRoot = process.cwd();
+    this.workspaceRoot = typeof options.workspaceRoot === 'string' && options.workspaceRoot
+      ? options.workspaceRoot
+      : process.cwd();
     this.autonomyOverride = null;
+    this.approvalScope = options.approvalScope && typeof options.approvalScope.isAlwaysAllowed === 'function'
+      ? options.approvalScope
+      : processApprovalScope;
 
     this.config = loadConfig();
     this.sandbox = new Sandbox();
@@ -346,7 +351,7 @@ export class AgentLoop {
     this.tokenTracker = new TokenTracker();
     
     this.llm = this.initializeProvider();
-    this.memoryManager = new MemoryManager();
+    this.memoryManager = new MemoryManager(this.workspaceRoot, options.memorySessionId || null);
     this.messages = this.memoryManager.loadHistory(); // Persistent context window
     this.stepsCompleted = 0;
     this.consecutiveCommands = 0;
@@ -420,6 +425,11 @@ export class AgentLoop {
     this.taskTemperature = 0.1; // Default
     // Set only on a delegated subagent loop; null means "the full catalogue".
     this.toolScope = null;
+  }
+
+  /** True when this loop's own conversation scope has a standing approval. */
+  isAlwaysAllowed(toolName) {
+    return this.approvalScope.isAlwaysAllowed(toolName);
   }
 
   // V6: Adaptive Temperature based on task intent
@@ -2043,7 +2053,7 @@ export class AgentLoop {
           // Nothing else is bypassed: the sandbox has already run above, so a
           // FORBIDDEN command is still refused and a path outside the workspace
           // is still blocked. This waives the QUESTION, not the guard.
-          const standingApproval = isAlwaysAllowed(functionName);
+          const standingApproval = this.isAlwaysAllowed(functionName);
           if (standingApproval) {
             auditLog.log({
               event: 'approval_auto_granted', taskId: this.taskId,

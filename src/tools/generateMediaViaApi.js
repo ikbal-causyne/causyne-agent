@@ -119,7 +119,7 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
           return {
             success: true,
             mode: 'Fallback (Stage 2 / Stage 4 / Stage 5)',
-            message: `User denied Stage 1 paid API switch ($${estimatedCost.toFixed(2)}). Stage 2 Fallback: Please invoke 'check_system_specs' right now. If RAM >= 8GB and Disk > 10GB, propose local processing via 'manage_local_ai_dependencies' (e.g., Kokoro TTS/diffusers/whisper.cpp). If hardware is insufficient or user prefers no local downloads, transition to Stage 4 (web_search for existing royalty-free assets) or Stage 5 (execute_procedural_media Mode A).`
+            message: `User denied Stage 1 paid API switch ($${estimatedCost.toFixed(2)}). Stage 2 Fallback: Please invoke 'open_source_tool_provisioner' (or 'check_system_specs') right now. It checks local hardware (RAM, Apple Silicon Metal/CUDA, disk space), discovers top open-source tools matching the intent (e.g., F5-TTS/Kokoro for voice cloning, Whisper for transcription), and provides compute specs with mandatory Human-In-The-Loop approval before installation.`
           };
         }
       }

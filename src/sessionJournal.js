@@ -263,7 +263,7 @@ export function pruneSessions(max = MAX_SESSIONS) {
     }
     return removed;
 }
-export function createSession(workspace, title = 'Untitled') {
+export function createSession(workspace, title = 'Untitled', makeActive = true) {
     const now = Date.now();
     const workspaceText = String(workspace ?? '');
     const session = {
@@ -278,9 +278,19 @@ export function createSession(workspace, title = 'Untitled') {
     // Persistence is best-effort. An unavailable state directory must not stop a
     // user from starting an otherwise usable foreground session.
     writeNewTranscript(session);
-    setActiveSession(session.id);
+    if (makeActive)
+        setActiveSession(session.id);
     pruneSessions();
     return session;
+}
+/**
+ * Read one conversation without making it the active session.
+ *
+ * Server-owned conversations must never move the terminal's active pointer;
+ * they only need the transcript that belongs to their own id.
+ */
+export function getSession(id) {
+    return readSession(id);
 }
 export function getActiveSessionId() {
     try {

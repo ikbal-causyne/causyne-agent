@@ -1,0 +1,162 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { causyneHome, resolveUserPath } from '../utils/paths.js';
+import { filmEngine } from './film.js';
+import type { NativeEngineAdapter, NativeEngineRun } from './types.js';
+
+const MAX_STDOUT = 8 * 1024 * 1024;
+const MAX_STDERR = 1024 * 1024;
+
+export const NATIVE_ENGINES: Record<string, NativeEngineAdapter> = {
+  [filmEngine.id]: filmEngine
+};
+
+export function nativeEngine(id: string): NativeEngineAdapter | null {
+  return NATIVE_ENGINES[id] ?? null;
+}
+
+export function engineInstallDir(adapter: NativeEngineAdapter): string {
+  return path.join(causyneHome(), 'engines', adapter.id);
+}
+
+function inside(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function currentEngineBinary(adapter: NativeEngineAdapter): string | null {
+  const root = engineInstallDir(adapter);
+  const suffix = process.platform === 'win32' ? '.exe' : '';
+  try {
+    const value = JSON.parse(fs.readFileSync(path.join(root, 'current.json'), 'utf8')) as Record<string, unknown>;
+    if (typeof value.version !== 'string' || !/^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$/.test(value.version)) return null;
+    if (typeof value.platform !== 'string' || !/^[a-z0-9]+-[a-z0-9]+$/.test(value.platform)) return null;
+    const file = path.join(root, 'versions', value.version, value.platform, `${adapter.binaryName}${suffix}`);
+    return inside(root, file) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
+export function engineBinaryCandidates(adapter: NativeEngineAdapter): string[] {
+  const suffix = process.platform === 'win32' ? '.exe' : '';
+  const name = `${adapter.binaryName}${suffix}`;
+  const root = engineInstallDir(adapter);
+  return [
+    path.join(root, 'current', 'bin', name),
+    path.join(root, 'current', name),
+    path.join(root, 'bin', name),
+    path.join(root, name)
+  ];
+}
+
+function executable(file: string): boolean {
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function findEngineBinary(adapter: NativeEngineAdapter): string | null {
+  const override = process.env[adapter.envVar];
+  if (override && override.trim()) {
+    const candidate = resolveUserPath(override.trim());
+    const file = (() => {
+      try { return fs.statSync(candidate).isDirectory(); } catch { return false; }
+    })() ? path.join(candidate, adapter.binaryName + (process.platform === 'win32' ? '.exe' : '')) : candidate;
+    if (executable(file)) return fs.realpathSync(file);
+  }
+  const current = currentEngineBinary(adapter);
+  if (current && executable(current)) return fs.realpathSync(current);
+  for (const candidate of engineBinaryCandidates(adapter)) {
+    if (executable(candidate)) return fs.realpathSync(candidate);
+  }
+  return null;
+}
+
+function childEnv(): NodeJS.ProcessEnv {
+  const keys = [
+    'PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR',
+    'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'
+  ];
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.NO_COLOR = '1';
+  return env;
+}
+
+export function runEngineBinary(
+  binary: string,
+  args: string[],
+  options: { cwd: string; timeoutMs: number; stdin?: string; signal?: AbortSignal }
+): Promise<NativeEngineRun> {
+  options.signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args, {
+      cwd: options.cwd,
+      env: childEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      ...(options.signal ? { signal: options.signal } : {})
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (run: NativeEngineRun): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(run);
+    };
+    const fail = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      reject(error);
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (stdout.length + chunk.length > MAX_STDOUT) {
+        child.kill('SIGKILL');
+        stderr += '\nEngine output exceeded the 8 MB limit.';
+        return;
+      }
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < MAX_STDERR) stderr += chunk.toString('utf8');
+    });
+    child.on('error', fail);
+    if (options.stdin !== undefined) {
+      child.stdin.on('error', () => {});
+      child.stdin.end(options.stdin);
+    } else {
+      child.stdin.end();
+    }
+    child.on('close', (code, signal) => {
+      const exitCode = typeof code === 'number' ? code : signal ? 1 : 0;
+      if (stderr.length > MAX_STDERR) stderr = stderr.slice(0, MAX_STDERR) + '\n...(stderr truncated)';
+      finish({ exitCode, stdout, stderr });
+    });
+
+    timer = setTimeout(() => {
+      stderr += `\nEngine timed out after ${options.timeoutMs} ms.`;
+      child.kill('SIGKILL');
+    }, options.timeoutMs);
+  });
+}
+
+export async function engineVersion(binary: string, workspace: string, signal?: AbortSignal): Promise<string | null> {
+  const run = await runEngineBinary(binary, ['--version'], { cwd: workspace, timeoutMs: 10_000, ...(signal ? { signal } : {}) });
+  const match = run.stdout.match(/\b(\d+\.\d+(?:\.\d+)?)\b/);
+  return match?.[1] ?? null;
+}

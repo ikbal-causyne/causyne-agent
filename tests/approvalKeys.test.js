@@ -367,6 +367,17 @@ test('always: a grant lifts the gate, and is revocable', async () => {
   assert.equal(grants.isAlwaysAllowed('sysRun'), false, 'a grant survived revocation');
 });
 
+test('always: a conversation scope is isolated from every other scope', async () => {
+  const grants = await import('../src/approvalGrants.js');
+  const left = grants.createApprovalScope();
+  const right = grants.createApprovalScope();
+
+  left.grantAlways('sysRun');
+  assert.equal(left.isAlwaysAllowed('sysRun'), true);
+  assert.equal(right.isAlwaysAllowed('sysRun'), false);
+  assert.deepEqual(right.listAlwaysAllowed(), []);
+});
+
 test('always: grants are NEVER persisted to disk', async () => {
   // The whole safety model is that these die with the process. If they were
   // written to config, a permission granted in a hurry weeks ago would silently
@@ -380,7 +391,7 @@ test('always: the agent loop checks the grant BEFORE it asks', async () => {
   // is never pinged at all. Asking and then auto-answering still interrupts the
   // user, which is the entire thing they were trying to stop.
   const loop = fs.readFileSync(path.join(HERE, '..', 'src', 'agentLoop.js'), 'utf8');
-  const gate = loop.indexOf('const standingApproval = isAlwaysAllowed(functionName)');
+  const gate = loop.indexOf('const standingApproval = this.isAlwaysAllowed(functionName)');
   const ask = loop.indexOf("type: 'approval_request'", gate);
 
   assert.ok(gate > 0, 'the standing-approval check is gone');

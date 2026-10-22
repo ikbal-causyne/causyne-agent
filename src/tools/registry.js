@@ -2,7 +2,9 @@ import { creativeApps } from './creativeApps.js';
 import { computerUse } from './computerUse.js';
 import { uiForge } from './uiForge.js';
 import { documentForgeTool } from './documentForge.js';
+import { nativeEngineTool } from './nativeEngine.js';
 import { peerAgentTool } from './peerAgent.js';
+import { openSourceToolProvisioner } from './openSourceToolProvisioner.js';
 import { sysRun, sysRunBg } from './sysRun.js';
 import { fsRead } from './fsRead.js';
 import { fsWrite } from './fsWrite.js';
@@ -125,7 +127,8 @@ const TOOL_MODULES = [
   gameShaderForge, gameSceneBuilder, gameEntitySpawner,
   gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
   gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
-  computerUse, uiForge, documentForgeTool, peerAgentTool
+  computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
+  openSourceToolProvisioner
 ];
 
 // Base static definitions (backwards compatible). Order is preserved from the

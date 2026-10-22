@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { resolveSession, createSession, switchSession, saveSessionMessages } from './sessionStore.js';
+import { resolveSession, createSession, getSession, switchSession, saveSessionMessages } from './sessionStore.js';
 import os from 'os';
 import { causyneHome } from './utils/paths.js';
 
@@ -30,10 +30,16 @@ export class MemoryManager {
    * directory — so typing continue in a new project resumed a conversation
    * from a different one, months old. See src/sessionStore.js.
    */
-  constructor(workspace = process.cwd()) {
+  constructor(workspace = process.cwd(), sessionId = null) {
     this.ensureMemoryDir();
     this.workspace = workspace;
-    this.session = resolveSession(workspace);
+    if (sessionId) {
+      // A server-owned conversation is pinned by id. It must never fall back to
+      // resolveSession(), which could silently attach it to a different chat.
+      this.session = getSession(sessionId) || createSession(workspace, 'Untitled', false);
+    } else {
+      this.session = resolveSession(workspace);
+    }
   }
 
   /** The active session's id, for the status line and /sessions. */

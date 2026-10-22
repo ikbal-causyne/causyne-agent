@@ -302,6 +302,14 @@ export class Sandbox {
       return { allowed: true, risk: args.action === 'status' ? 'safe' : 'dangerous' };
     }
 
+    if (toolName === 'native_engine') {
+      if (args.action === 'install') {
+        return { allowed: true, risk: 'extreme', reason: 'Downloads and installs a native engine binary' };
+      }
+      const readOnly = ['status', 'catalog', 'describe', 'inspect', 'probe'];
+      return { allowed: true, risk: readOnly.includes(args.action) ? 'safe' : 'dangerous' };
+    }
+
     if (toolName === 'game_asset_fetch' && args.action === 'download_asset') {
       if (!args.url || this.isInternalUrl(args.url)) {
         return { allowed: false, reason: 'Cannot download from an internal or invalid URL', risk: 'forbidden' };

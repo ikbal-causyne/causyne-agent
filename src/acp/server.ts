@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AgentLoop } from '../agentLoop.js';
 import type { AgentLoopEvent } from '../agentLoop.js';
+import { createApprovalScope } from '../approvalGrants.js';
+import type { ApprovalScope } from '../approvalGrants.js';
+import { createSession, getSession, saveSessionMessages } from '../sessionJournal.js';
 import {
   ACP_ERROR_CODES,
   ACP_METHODS,
@@ -16,6 +19,8 @@ import type {
   CancelNotification,
   CloseSessionRequest,
   ContentBlock,
+  ForkSessionRequest,
+  ForkSessionResponse,
   InitializeRequest,
   InitializeResult,
   JsonRpcError,
@@ -24,6 +29,8 @@ import type {
   JsonRpcResponse,
   ListSessionsRequest,
   ListSessionsResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   NewSessionRequest,
   NewSessionResponse,
   PermissionOption,
@@ -48,10 +55,12 @@ export interface AcpEventSink {
 
 export interface AcpLoopFactoryParams {
   sessionId: string;
+  memorySessionId: string;
   taskId: string;
   userPrompt: string;
   cwd: string;
   sink: AcpEventSink;
+  approvalScope: ApprovalScope;
 }
 
 export type AcpLoopFactory = (params: AcpLoopFactoryParams) => AgentLoop;
@@ -73,6 +82,8 @@ interface PendingClientRequest {
 
 interface AcpSession {
   id: string;
+  memorySessionId: string;
+  title: string;
   cwd: string;
   modeId: string;
   loop: AgentLoop | null;
@@ -80,6 +91,8 @@ interface AcpSession {
   cancelled: boolean;
   updatedAt: number;
   queue: Promise<unknown>;
+  /** Session-local standing approvals. Forked/resumed sessions never inherit. */
+  approvalScope: ApprovalScope;
 }
 
 const MODE_TO_AUTONOMY: Record<string, 'A' | 'B' | 'C'> = {
@@ -107,6 +120,19 @@ function textFromPrompt(prompt: ContentBlock[]): string | null {
     parts.push(block.text);
   }
   return parts.join('\n').slice(0, MAX_PROMPT_CHARS);
+}
+
+function textFromContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block !== null && typeof block === 'object' && !Array.isArray(block)) {
+      const item = block as Record<string, unknown>;
+      if (item.type === 'text' && typeof item.text === 'string') parts.push(item.text);
+    }
+  }
+  return parts.join('\n');
 }
 
 function toolKind(name: string): ToolKind {
@@ -267,7 +293,10 @@ export class AcpServer {
           this.writeResult(request.id, this.closeSession(request.params as CloseSessionRequest | undefined));
           return;
         case ACP_METHODS.LOAD:
-          this.writeError(request.id, ACP_ERROR_CODES.METHOD_NOT_FOUND, 'session/load is not supported');
+          this.writeResult(request.id, this.loadSession(request.params as LoadSessionRequest | undefined));
+          return;
+        case ACP_METHODS.FORK:
+          this.writeResult(request.id, this.forkSession(request.params as ForkSessionRequest | undefined));
           return;
         default:
           this.writeError(request.id, ACP_ERROR_CODES.METHOD_NOT_FOUND, `Unknown method: ${request.method}`);
@@ -283,10 +312,10 @@ export class AcpServer {
       throw this.paramsError('initialize requires protocolVersion');
     }
     const capabilities: AgentCapabilities = {
-      loadSession: false,
+      loadSession: true,
       promptCapabilities: { image: false, audio: false, embeddedContext: false },
       mcpCapabilities: { http: false, sse: false },
-      sessionCapabilities: { list: {}, close: {} }
+      sessionCapabilities: { list: {}, close: {}, fork: {} }
     };
     return {
       protocolVersion: ACP_PROTOCOL_VERSION,
@@ -311,36 +340,62 @@ export class AcpServer {
     if (Array.isArray(params.additionalDirectories) && params.additionalDirectories.length > 0) {
       throw this.paramsError('additionalDirectories is not supported by this agent');
     }
-    let cwd: string;
+    const cwd = this.resolveWorkspace(params.cwd);
+    this.bindWorkspace(cwd);
+    const record = createSession(cwd, 'Untitled', false);
+    const session = this.addSession(record.id, cwd, record.title, MODES.currentModeId);
+    return this.sessionResponse(session);
+  }
+
+  private resolveWorkspace(cwd: unknown): string {
+    if (typeof cwd !== 'string' || !cwd.trim()) throw this.paramsError('cwd is required');
     try {
-      cwd = fs.realpathSync(path.resolve(params.cwd));
-      if (!fs.statSync(cwd).isDirectory()) throw new Error('not a directory');
+      const resolved = fs.realpathSync(path.resolve(cwd));
+      if (!fs.statSync(resolved).isDirectory()) throw new Error('not a directory');
+      return resolved;
     } catch {
-      throw this.paramsError(`cwd is not an accessible directory: ${params.cwd}`);
+      throw this.paramsError(`cwd is not an accessible directory: ${cwd}`);
     }
+  }
+
+  private bindWorkspace(cwd: string): void {
     if (this.workspaceRoot === null) {
       this.workspaceRoot = cwd;
       process.chdir(cwd);
     } else if (this.workspaceRoot !== cwd) {
       throw this.paramsError(`server is bound to ${this.workspaceRoot}; one workspace per server`);
     }
-    const sessionId = crypto.randomUUID();
-    this.sessions.set(sessionId, {
-      id: sessionId,
+  }
+
+  private addSession(id: string, cwd: string, title: string, modeId: string): AcpSession {
+    const session: AcpSession = {
+      id,
+      memorySessionId: id,
+      title,
       cwd,
-      modeId: MODES.currentModeId,
+      modeId,
       loop: null,
       busy: false,
       cancelled: false,
       updatedAt: Date.now(),
-      queue: Promise.resolve()
-    });
+      queue: Promise.resolve(),
+      approvalScope: createApprovalScope()
+    };
+    this.sessions.set(id, session);
+    return session;
+  }
+
+  private modesFor(session: AcpSession): SessionModeState {
     return {
-      sessionId,
-      modes: {
-        currentModeId: MODES.currentModeId,
-        availableModes: MODES.availableModes.map((mode) => ({ ...mode }))
-      }
+      currentModeId: session.modeId,
+      availableModes: MODES.availableModes.map((mode) => ({ ...mode }))
+    };
+  }
+
+  private sessionResponse(session: AcpSession): NewSessionResponse {
+    return {
+      sessionId: session.id,
+      modes: this.modesFor(session)
     };
   }
 
@@ -381,9 +436,22 @@ export class AcpServer {
       readyState: 1,
       send: (payload: string) => this.onLoopPayload(session, payload)
     };
+    const loopOptions = {
+      workspaceRoot: session.cwd,
+      memorySessionId: session.memorySessionId,
+      approvalScope: session.approvalScope
+    };
     const loop = this.loopFactory
-      ? this.loopFactory({ sessionId: session.id, taskId, userPrompt: text, cwd: session.cwd, sink })
-      : new AgentLoop(sink, taskId, text);
+      ? this.loopFactory({
+          sessionId: session.id,
+          memorySessionId: session.memorySessionId,
+          taskId,
+          userPrompt: text,
+          cwd: session.cwd,
+          sink,
+          approvalScope: session.approvalScope
+        })
+      : new AgentLoop(sink, taskId, text, loopOptions);
     const autonomy = MODE_TO_AUTONOMY[session.modeId];
     if (autonomy) {
       try {
@@ -402,6 +470,8 @@ export class AcpServer {
     } finally {
       session.loop = null;
       session.busy = false;
+      const record = getSession(session.memorySessionId);
+      if (record) session.title = record.title;
       if (session.cancelled) stopReason = 'cancelled';
     }
     return stopReason;
@@ -550,6 +620,7 @@ export class AcpServer {
         };
         const options: PermissionOption[] = [
           { optionId: 'allow_once', name: 'Allow this action', kind: 'allow_once' },
+          { optionId: 'allow_always', name: 'Always allow this tool in this conversation', kind: 'allow_always' },
           { optionId: 'reject_once', name: 'Reject this action', kind: 'reject_once' }
         ];
         void this.sendClientRequest<RequestPermissionResponse>(session, ACP_METHODS.REQUEST_PERMISSION, {
@@ -557,7 +628,9 @@ export class AcpServer {
           toolCall,
           options
         }).then((response) => {
-          const approved = response?.outcome.outcome === 'selected' && response.outcome.optionId === 'allow_once';
+          const selected = response?.outcome.outcome === 'selected' ? response.outcome.optionId : '';
+          if (selected === 'allow_always') session.approvalScope.grantAlways(tool);
+          const approved = selected === 'allow_once' || selected === 'allow_always';
           session.loop?.handleApprovalResponse(toolCallId, approved);
         }).catch(() => {
           session.loop?.handleApprovalResponse(toolCallId, false);
@@ -606,6 +679,7 @@ export class AcpServer {
       sessions.push({
         sessionId: session.id,
         cwd: session.cwd,
+        title: session.title,
         updatedAt: new Date(session.updatedAt).toISOString()
       });
     }
@@ -623,6 +697,78 @@ export class AcpServer {
     }
     this.sessions.delete(session.id);
     return {};
+  }
+
+  /** Resume a persisted conversation, replaying its transcript to the client. */
+  private loadSession(params: LoadSessionRequest | undefined): LoadSessionResponse {
+    if (!params || typeof params.sessionId !== 'string' || !params.sessionId) {
+      throw this.paramsError('session/load requires sessionId');
+    }
+    const live = this.sessions.get(params.sessionId);
+    if (live) {
+      this.bindWorkspace(live.cwd);
+      this.replayTranscript(live, getSession(live.memorySessionId)?.messages ?? []);
+      return { modes: this.modesFor(live) };
+    }
+    const record = getSession(params.sessionId);
+    if (!record) throw this.notFound(`Unknown session: ${params.sessionId}`);
+    const requested = params.cwd ?? record.workspace;
+    const cwd = this.resolveWorkspace(requested);
+    if (record.workspace && path.resolve(record.workspace) !== cwd) {
+      throw this.paramsError('session workspace does not match cwd');
+    }
+    this.bindWorkspace(cwd);
+    const session = this.addSession(record.id, cwd, record.title, MODES.currentModeId);
+    this.replayTranscript(session, record.messages);
+    return { modes: this.modesFor(session) };
+  }
+
+  /**
+   * Copy the conversation into a new session and deliberately start with a
+   * fresh approval scope. Permissions are granted to a conversation, never to
+   * the transcript, so a fork must ask again for anything dangerous.
+   */
+  private forkSession(params: ForkSessionRequest | undefined): ForkSessionResponse {
+    if (!params || typeof params.sessionId !== 'string' || !params.sessionId) {
+      throw this.paramsError('session/fork requires sessionId');
+    }
+    const source = this.sessions.get(params.sessionId);
+    const sourceRecord = getSession(params.sessionId);
+    if (!source && !sourceRecord) throw this.notFound(`Unknown session: ${params.sessionId}`);
+    if (source?.busy) throw this.paramsError('session is busy; cancel it before forking');
+    const requested = params.cwd ?? source?.cwd ?? sourceRecord?.workspace;
+    const cwd = this.resolveWorkspace(requested);
+    if (source && source.cwd !== cwd) throw this.paramsError('fork must stay in the source workspace');
+    if (sourceRecord?.workspace && path.resolve(sourceRecord.workspace) !== cwd) {
+      throw this.paramsError('fork must stay in the source workspace');
+    }
+    this.bindWorkspace(cwd);
+    const title = `Fork of ${source?.title || sourceRecord?.title || 'Untitled'}`;
+    const created = createSession(cwd, title, false);
+    if (sourceRecord && sourceRecord.messages.length > 0) {
+      saveSessionMessages(created.id, sourceRecord.messages);
+    }
+    const session = this.addSession(created.id, cwd, title, source?.modeId ?? MODES.currentModeId);
+    return this.sessionResponse(session) as ForkSessionResponse;
+  }
+
+  private replayTranscript(session: AcpSession, messages: Array<{ role?: unknown; content?: unknown }>): void {
+    for (const message of messages) {
+      const role = typeof message.role === 'string' ? message.role : '';
+      const text = textFromContent(message.content);
+      if (!text) continue;
+      if (role === 'user') {
+        this.notify(session.id, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
+      } else if (role === 'assistant') {
+        this.notify(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+      }
+    }
+  }
+
+  private notFound(message: string): Error & { acpCode: number } {
+    const error = new Error(message) as Error & { acpCode: number };
+    error.acpCode = ACP_ERROR_CODES.RESOURCE_NOT_FOUND;
+    return error;
   }
 
   private sendClientRequest<T>(session: AcpSession, method: string, params: Record<string, unknown>): Promise<T> {

@@ -13,6 +13,7 @@ export const ACP_METHODS = {
     CANCEL: 'session/cancel',
     UPDATE: 'session/update',
     LOAD: 'session/load',
+    FORK: 'session/fork',
     LIST: 'session/list',
     CLOSE: 'session/close',
     SET_MODE: 'session/set_mode',

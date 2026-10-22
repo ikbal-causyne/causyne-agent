@@ -15,6 +15,7 @@ export const ACP_METHODS = {
   CANCEL: 'session/cancel',
   UPDATE: 'session/update',
   LOAD: 'session/load',
+  FORK: 'session/fork',
   LIST: 'session/list',
   CLOSE: 'session/close',
   SET_MODE: 'session/set_mode',
@@ -150,6 +151,7 @@ export interface SessionCapabilities {
   delete?: Record<string, never>;
   additionalDirectories?: Record<string, never>;
   close?: Record<string, never>;
+  fork?: Record<string, never>;
 }
 
 export interface AgentCapabilities {
@@ -248,6 +250,26 @@ export interface CloseSessionRequest {
 }
 
 export type CloseSessionResponse = Record<string, never>;
+
+export interface LoadSessionRequest {
+  sessionId: string;
+  cwd?: string;
+  mcpServers?: McpServer[];
+}
+
+export interface LoadSessionResponse {
+  modes?: SessionModeState;
+}
+
+export interface ForkSessionRequest {
+  sessionId: string;
+  cwd?: string;
+}
+
+export interface ForkSessionResponse {
+  sessionId: string;
+  modes?: SessionModeState;
+}
 
 export type ToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 
