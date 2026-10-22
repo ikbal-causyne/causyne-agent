@@ -19,6 +19,8 @@ export const ACP_METHODS = {
   LIST: 'session/list',
   CLOSE: 'session/close',
   SET_MODE: 'session/set_mode',
+  SET_MODEL: 'session/set_model',
+  AUTHENTICATE: 'authenticate',
   REQUEST_PERMISSION: 'session/request_permission',
   READ_TEXT_FILE: 'fs/read_text_file',
   WRITE_TEXT_FILE: 'fs/write_text_file'
@@ -223,6 +225,23 @@ export interface SetSessionModeRequest {
 }
 
 export type SetSessionModeResponse = Record<string, never>;
+
+export interface SetSessionModelRequest {
+  sessionId: string;
+  modelId: string;
+}
+
+export type SetSessionModelResponse = Record<string, never>;
+
+export interface AuthenticateRequest {
+  methodId: string;
+  params?: Record<string, unknown>;
+}
+
+export interface AuthenticateResponse {
+  authenticated: boolean;
+  message?: string;
+}
 
 export interface CancelNotification {
   sessionId: string;

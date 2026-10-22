@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from '../utils/paths.js';
+import { getPresetProfile, BUILTIN_PEER_PRESETS } from './agentCatalog.js';
 const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const MAX_PEERS = 20;
@@ -66,7 +67,9 @@ function parseProfile(raw) {
             return null;
         }
     }
-    const policy = record.policy === 'workspace' ? 'workspace' : 'read-only';
+    const policy = record.policy === 'workspace'
+        ? 'workspace'
+        : (record.policy === 'ask' ? 'ask' : 'read-only');
     const timeoutSeconds = typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
         ? Math.max(5, Math.min(1800, Math.round(record.timeoutSeconds)))
         : 120;
@@ -106,12 +109,87 @@ export function loadPeerProfiles() {
     }
     return profiles;
 }
+export function savePeerProfiles(profiles) {
+    const file = peerProfilesPath();
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    const content = {
+        schemaVersion: 1,
+        peers: profiles
+    };
+    fs.writeFileSync(file, JSON.stringify(content, null, 2), 'utf8');
+}
+export function addPeerProfile(profile) {
+    const current = loadPeerProfiles();
+    const idx = current.findIndex((p) => p.id === profile.id);
+    if (idx >= 0) {
+        current[idx] = profile;
+    }
+    else {
+        if (current.length >= MAX_PEERS) {
+            return { ok: false, error: `Maximum of ${MAX_PEERS} peer profiles exceeded.` };
+        }
+        current.push(profile);
+    }
+    try {
+        savePeerProfiles(current);
+        return { ok: true };
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+    }
+}
+export function removePeerProfile(id) {
+    const current = loadPeerProfiles();
+    const filtered = current.filter((p) => p.id !== id);
+    if (filtered.length === current.length) {
+        return { ok: false, error: `Peer profile "${id}" is not configured.` };
+    }
+    try {
+        savePeerProfiles(filtered);
+        return { ok: true };
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+    }
+}
+/**
+ * Resolves a peer profile by ID. Checks user configuration first;
+ * if not found, falls back to built-in agent presets.
+ */
 export function getPeerProfile(id) {
-    return loadPeerProfiles().find((profile) => profile.id === id) ?? null;
+    const normalizedId = String(id || '').trim().toLowerCase();
+    const configured = loadPeerProfiles().find((profile) => profile.id.toLowerCase() === normalizedId);
+    if (configured)
+        return configured;
+    // Fallback to built-in presets (e.g. opencode, claude, codex, hermes, cursor, gemini)
+    return getPresetProfile(normalizedId);
+}
+/**
+ * Returns all available peers: user configured peers plus all built-in presets
+ * that are not already shadowed by a user profile.
+ */
+export function listAllPeers() {
+    const userPeers = loadPeerProfiles();
+    const userIds = new Set(userPeers.map((p) => p.id.toLowerCase()));
+    const all = [...userPeers];
+    for (const presetId of Object.keys(BUILTIN_PEER_PRESETS)) {
+        if (!userIds.has(presetId)) {
+            const presetProfile = getPresetProfile(presetId);
+            if (presetProfile) {
+                all.push(presetProfile);
+            }
+        }
+    }
+    return all;
 }
 export function peerEnvironment(profile) {
     const env = {};
-    for (const name of ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'SYSTEMROOT']) {
+    for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'SYSTEMROOT']) {
         const value = process.env[name];
         if (typeof value === 'string')
             env[name] = value;

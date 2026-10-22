@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import {
   ACP_ERROR_CODES,
   ACP_METHODS,
@@ -18,7 +20,13 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionNotification,
-  SessionUpdate
+  SessionUpdate,
+  AgentCapabilities,
+  AgentInfo,
+  ReadTextFileRequest,
+  ReadTextFileResponse,
+  WriteTextFileRequest,
+  WriteTextFileResponse
 } from './protocol.js';
 
 export interface AcpClientOptions {
@@ -29,6 +37,9 @@ export interface AcpClientOptions {
   clientVersion?: string;
   promptTimeoutMs?: number;
   permissionHandler?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse['outcome']>;
+  onUpdate?: (sessionId: string, update: SessionUpdate) => void;
+  fsReadHandler?: (filePath: string, options?: { line?: number; limit?: number }) => Promise<string>;
+  fsWriteHandler?: (filePath: string, content: string) => Promise<void>;
 }
 
 export interface AcpPromptResult {
@@ -55,6 +66,7 @@ export class AcpClient {
   private nextId = 1;
   private closed = false;
   private exitError: Error | null = null;
+  private initResult: InitializeResult | null = null;
 
   constructor(options: AcpClientOptions) {
     this.options = options;
@@ -62,6 +74,18 @@ export class AcpClient {
 
   get command(): string {
     return this.options.command;
+  }
+
+  get agentInfo(): AgentInfo | undefined {
+    return this.initResult?.agentInfo;
+  }
+
+  get agentCapabilities(): AgentCapabilities | undefined {
+    return this.initResult?.agentCapabilities;
+  }
+
+  get authMethods(): unknown[] | undefined {
+    return this.initResult?.authMethods;
   }
 
   async start(): Promise<InitializeResult> {
@@ -90,16 +114,22 @@ export class AcpClient {
       this.failAll(new Error(`agent process exited: ${detail}`));
     });
 
+    const hasFsRead = Boolean(this.options.fsReadHandler || this.options.cwd);
+    const hasFsWrite = Boolean(this.options.fsWriteHandler || this.options.cwd);
+
     const params: InitializeRequest = {
       protocolVersion: ACP_PROTOCOL_VERSION,
       clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
+        fs: { readTextFile: hasFsRead, writeTextFile: hasFsWrite },
         terminal: false,
-        session: { notices: false }
+        session: { notices: true }
       },
       clientInfo: { name: 'Causyne Agent', version: this.options.clientVersion ?? '0.0.0' }
     };
-    return await this.request<InitializeResult>(ACP_METHODS.INITIALIZE, params, 30_000);
+
+    const result = await this.request<InitializeResult>(ACP_METHODS.INITIALIZE, params, 30_000);
+    this.initResult = result;
+    return result;
   }
 
   async newSession(cwd: string, mcpServers: unknown[] = []): Promise<string> {
@@ -113,10 +143,39 @@ export class AcpClient {
     return result.sessionId;
   }
 
+  async authenticate(methodId: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    return await this.request<unknown>(ACP_METHODS.AUTHENTICATE, {
+      methodId,
+      params
+    }, 30_000);
+  }
+
+  async setSessionModel(sessionId: string, modelId: string): Promise<void> {
+    await this.request<void>(ACP_METHODS.SET_MODEL, {
+      sessionId,
+      modelId
+    }, 30_000);
+  }
+
+  async setSessionMode(sessionId: string, modeId: string): Promise<void> {
+    await this.request<void>(ACP_METHODS.SET_MODE, {
+      sessionId,
+      modeId
+    }, 30_000);
+  }
+
+  async loadSession(sessionId: string, cwd?: string): Promise<unknown> {
+    return await this.request<unknown>(ACP_METHODS.LOAD, {
+      sessionId,
+      cwd: cwd || this.options.cwd
+    }, 30_000);
+  }
+
   async prompt(sessionId: string, text: string): Promise<AcpPromptResult> {
     const blocks: ContentBlock[] = [{ type: 'text', text }];
     let collected = '';
     const collector = (update: SessionUpdate): void => {
+      this.options.onUpdate?.(sessionId, update);
       if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
         collected = `${collected}${update.content.text}`.slice(0, MAX_UPDATE_CHARS);
       }
@@ -209,6 +268,7 @@ export class AcpClient {
       const params = (parsed as { params?: SessionNotification }).params;
       if (params && typeof params.sessionId === 'string' && params.update) {
         this.updateListener?.(params.sessionId, params.update);
+        this.options.onUpdate?.(params.sessionId, params.update);
       }
     }
   }
@@ -232,6 +292,83 @@ export class AcpClient {
       }
       return;
     }
+
+    if (request.method === ACP_METHODS.READ_TEXT_FILE) {
+      const params = request.params as unknown as ReadTextFileRequest | undefined;
+      const targetPath = params?.path;
+      if (!targetPath || typeof targetPath !== 'string') {
+        this.write({
+          jsonrpc: '2.0',
+          id: request.id,
+          error: { code: ACP_ERROR_CODES.INVALID_PARAMS, message: 'Missing file path' }
+        });
+        return;
+      }
+
+      try {
+        let content: string;
+        if (this.options.fsReadHandler) {
+          const readOpts: { line?: number; limit?: number } = {};
+          if (params?.line !== undefined) readOpts.line = params.line;
+          if (params?.limit !== undefined) readOpts.limit = params.limit;
+          content = await this.options.fsReadHandler(targetPath, readOpts);
+        } else {
+          const resolved = path.resolve(this.options.cwd, targetPath);
+          content = await fs.readFile(resolved, 'utf8');
+        }
+        this.write({
+          jsonrpc: '2.0',
+          id: request.id,
+          result: { content } satisfies ReadTextFileResponse
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.write({
+          jsonrpc: '2.0',
+          id: request.id,
+          error: { code: ACP_ERROR_CODES.RESOURCE_NOT_FOUND, message: `Could not read file: ${msg}` }
+        });
+      }
+      return;
+    }
+
+    if (request.method === ACP_METHODS.WRITE_TEXT_FILE) {
+      const params = request.params as unknown as WriteTextFileRequest | undefined;
+      const targetPath = params?.path;
+      const content = params?.content;
+      if (!targetPath || typeof targetPath !== 'string' || typeof content !== 'string') {
+        this.write({
+          jsonrpc: '2.0',
+          id: request.id,
+          error: { code: ACP_ERROR_CODES.INVALID_PARAMS, message: 'Missing file path or content' }
+        });
+        return;
+      }
+
+      try {
+        if (this.options.fsWriteHandler) {
+          await this.options.fsWriteHandler(targetPath, content);
+        } else {
+          const resolved = path.resolve(this.options.cwd, targetPath);
+          await fs.mkdir(path.dirname(resolved), { recursive: true });
+          await fs.writeFile(resolved, content, 'utf8');
+        }
+        this.write({
+          jsonrpc: '2.0',
+          id: request.id,
+          result: {} satisfies WriteTextFileResponse
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.write({
+          jsonrpc: '2.0',
+          id: request.id,
+          error: { code: ACP_ERROR_CODES.INTERNAL_ERROR, message: `Could not write file: ${msg}` }
+        });
+      }
+      return;
+    }
+
     this.write({
       jsonrpc: '2.0',
       id: request.id,
@@ -246,7 +383,10 @@ export class AcpClient {
     clearTimeout(pending.timer);
     this.pending.delete(response.id);
     if (response.error) {
-      pending.reject(new Error(`${pending.method} failed: ${response.error.message}`));
+      const err = new Error(`${pending.method} failed: ${response.error.message}`);
+      (err as unknown as { code?: number }).code = response.error.code;
+      (err as unknown as { data?: unknown }).data = response.error.data;
+      pending.reject(err);
       return;
     }
     pending.resolve(response.result);

@@ -92,6 +92,7 @@
     "src/observer/advisory.ts",
     "src/observer/coldObserver.ts",
     "src/acp/protocol.ts",
+    "src/acp/agentCatalog.ts",
     "src/acp/peerProfiles.ts",
     "src/acp/server.ts",
     "src/acp/client.ts",

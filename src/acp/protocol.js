@@ -17,6 +17,8 @@ export const ACP_METHODS = {
     LIST: 'session/list',
     CLOSE: 'session/close',
     SET_MODE: 'session/set_mode',
+    SET_MODEL: 'session/set_model',
+    AUTHENTICATE: 'authenticate',
     REQUEST_PERMISSION: 'session/request_permission',
     READ_TEXT_FILE: 'fs/read_text_file',
     WRITE_TEXT_FILE: 'fs/write_text_file'

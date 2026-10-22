@@ -23,8 +23,26 @@ function handle(message) {
     return;
   }
 
+  if (message.method === 'authenticate') {
+    send({ jsonrpc: '2.0', id: message.id, result: { success: true } });
+    return;
+  }
+
   if (message.method === 'session/new') {
+    if (process.env.SIMULATE_AUTH_ERROR === '1') {
+      send({
+        jsonrpc: '2.0',
+        id: message.id,
+        error: { code: -32000, message: 'Authentication required: run fake-agent login' }
+      });
+      return;
+    }
     send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'fake-session' } });
+    return;
+  }
+
+  if (message.method === 'session/set_model' || message.method === 'session/set_mode') {
+    send({ jsonrpc: '2.0', id: message.id, result: { success: true } });
     return;
   }
 

@@ -188,6 +188,17 @@ program
   });
 
 program
+  .command('peers [action] [args...]')
+  .description('Manage external ACP peer agents: detect, list, test, add, remove')
+  .allowUnknownOption()
+  .action(async (action, args) => {
+    const argv = action ? [action, ...(args || [])] : [];
+    const result = await runCommand('peers', argv, { surface: 'terminal' });
+    console.log('\n' + result.output + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
   .command('exec <command>')
   .description('Quick execute a command using the agent terminal')
   .action(async (command) => {

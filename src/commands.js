@@ -27,6 +27,12 @@ import {
 } from './mcp/mcpRegistry.js';
 import { analyzeFiles, formatFindings } from './slopDetector.js';
 import { suggestMovements, formatMovementBrief, DESIGN_MOVEMENTS } from './designPalettes.js';
+import {
+  loadPeerProfiles, addPeerProfile, removePeerProfile, listAllPeers, getPeerProfile
+} from './acp/peerProfiles.js';
+import {
+  detectAllPeers, testPeerHandshake, BUILTIN_PEER_PRESETS
+} from './acp/agentCatalog.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -853,6 +859,108 @@ export const COMMANDS = [
       lines.push('');
       lines.push('  mcp grant <name> to enable, mcp test <name> to diagnose, mcp remove <name> to delete.');
       return ok(lines.join('\n'), { effect: 'pick-mcp' });
+    }
+  },
+
+  {
+    name: 'peers',
+    scope: 'local',
+    usage: '/peers [detect | test <id> | add <id> <command…> | remove <id>]',
+    description: 'Manage, discover, and test external ACP peer agents (Claude Code, OpenCode, Codex, Gemini, Hermes, etc.)',
+    dialogTitle: 'ACP peer agents',
+    run: async (argv) => {
+      const [action, peerId, ...rest] = argv;
+
+      if (action === 'detect') {
+        const detected = await detectAllPeers();
+        const lines = ['Discovered ACP Peer Agents', ''];
+        for (const item of detected) {
+          const statusIcon = item.status === 'ready' ? '✅' : (item.status === 'needs_auth' ? '⚠️ ' : '❌');
+          lines.push(`  ${statusIcon} ${item.id} (${item.label}) — ${item.status.toUpperCase()}`);
+          lines.push(`     Command: ${item.command} ${item.args.join(' ')}`);
+          if (item.details) lines.push(`     Details: ${item.details}`);
+          if (item.setupInstruction) lines.push(`     Setup: ${item.setupInstruction}`);
+        }
+        lines.push('');
+        lines.push('Use /peers test <id> to test zero-token handshake against a specific peer.');
+        return ok(lines.join('\n'));
+      }
+
+      if (action === 'test') {
+        if (!peerId) return fail('Usage: /peers test <id>');
+        const profile = getPeerProfile(peerId);
+        if (!profile) return fail(`No peer agent found for "${peerId}". Try /peers detect to see available agents.`);
+
+        const handshake = await testPeerHandshake({
+          command: profile.command,
+          args: profile.args,
+          cwd: profile.cwd || process.cwd(),
+          timeoutMs: 15000
+        });
+
+        if (handshake.ready) {
+          const name = handshake.agentInfo ? `${handshake.agentInfo.name} ${handshake.agentInfo.version}` : profile.label;
+          return ok(
+            `✅ ACP Peer Test Passed: "${peerId}"\n\n`
+            + `Agent: ${name}\n`
+            + `Command: ${profile.command} ${profile.args.join(' ')}\n`
+            + `Policy: ${profile.policy}\n`
+            + `Auth Methods: ${handshake.authMethods?.join(', ') || 'none'}\n\n`
+            + `Ready to receive delegated tasks via peer_agent_delegate.`
+          );
+        } else {
+          return fail(
+            `❌ ACP Peer Test Failed: "${peerId}"\n\n`
+            + `Error: ${handshake.error || 'Handshake failed'}\n`
+            + `Command: ${profile.command} ${profile.args.join(' ')}`
+          );
+        }
+      }
+
+      if (action === 'add') {
+        if (!peerId) return fail('Usage: /peers add <id> <command> [args…]');
+        if (rest.length === 0) return fail(`Give "${peerId}" a command to run (e.g. opencode acp).`);
+
+        const newProfile = {
+          id: peerId.trim().toLowerCase(),
+          label: peerId,
+          command: rest[0],
+          args: rest.slice(1),
+          cwd: null,
+          policy: 'read-only',
+          timeoutSeconds: 180,
+          env: {}
+        };
+
+        const res = addPeerProfile(newProfile);
+        if (!res.ok) return fail(`Could not save peer: ${res.error}`);
+        return ok(`Added peer "${peerId}" [policy: read-only]. Edit ~/.causyne/peers.json to customize policy, timeout, or environment.`);
+      }
+
+      if (action === 'remove') {
+        if (!peerId) return fail('Usage: /peers remove <id>');
+        const res = removePeerProfile(peerId);
+        if (!res.ok) return fail(res.error || `Could not remove peer "${peerId}".`);
+        return ok(`Removed peer profile "${peerId}".`);
+      }
+
+      if (action) {
+        return fail(`Unknown peers action "${action}". Try: detect, test, add, remove, or peers on its own to list.`);
+      }
+
+      // Default: list all configured and discovered peers
+      const peers = listAllPeers();
+      const lines = ['Configured & Preset ACP Peer Agents', ''];
+      for (const peer of peers) {
+        lines.push(`  • ${peer.id} (${peer.label}) [policy: ${peer.policy}, timeout: ${peer.timeoutSeconds}s]`);
+        lines.push(`    Command: ${peer.command} ${peer.args.join(' ')}`);
+      }
+      lines.push('');
+      lines.push('Commands:');
+      lines.push('  /peers detect     Scan local system for installed ACP agents');
+      lines.push('  /peers test <id>  Verify zero-token connection to an agent');
+      lines.push('  /peers add <id>   Add or override a peer command');
+      return ok(lines.join('\n'));
     }
   },
 
