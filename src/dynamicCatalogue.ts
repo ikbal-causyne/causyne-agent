@@ -15,12 +15,13 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { causyneHome } from './utils/paths.js';
-import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
+import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE, DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import {
   ANTIGRAVITY_MODELS,
   ANTIGRAVITY_LABEL_BY_ID,
   resolveAgyBinary
 } from './providers/antigravity.js';
+import { isBinaryOnPath, BUILTIN_PEER_PRESETS } from './acp/agentCatalog.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -101,6 +102,180 @@ export function getCuratedModels(provider: string): string[] {
     return [...MODEL_CATALOGUE[key]];
   }
   return [];
+}
+
+export interface ByokProviderInfo {
+  id: string;
+  label: string;
+  isConfigured: boolean;
+  isCurrent: boolean;
+  models: string[];
+  defaultModel: string;
+}
+
+export interface AcpPeerInfo {
+  id: string;
+  providerKey: string;
+  label: string;
+  installed: boolean;
+  status: 'ready' | 'not_installed';
+  isCurrent: boolean;
+  command: string;
+  models: string[];
+  setupInstruction: string;
+}
+
+export interface ProviderOverview {
+  activeProvider: string;
+  activeModel: string;
+  byok: ByokProviderInfo[];
+  acp: AcpPeerInfo[];
+}
+
+/**
+ * Categorize available providers into BYOK and ACP peer agents,
+ * checking configured state for BYOK and installation status for ACP agents.
+ */
+export function getAvailableProvidersOverview(
+  config: { provider?: string; apiKey?: string; model?: string } = {}
+): ProviderOverview {
+  const currentProvider = config.provider || '';
+  const currentModel = config.model || '';
+
+  const byokDefs: Array<{ id: string; label: string; envVar?: string; defaultModel: string; models: string[] }> = [
+    {
+      id: 'anthropic',
+      label: 'Anthropic',
+      envVar: 'ANTHROPIC_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['anthropic'] || 'claude-3-7-sonnet',
+      models: MODEL_CATALOGUE['Anthropic'] ? [...MODEL_CATALOGUE['Anthropic']] : []
+    },
+    {
+      id: 'openai',
+      label: 'OpenAI',
+      envVar: 'OPENAI_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['openai'] || 'gpt-4o',
+      models: MODEL_CATALOGUE['OpenAI'] ? [...MODEL_CATALOGUE['OpenAI']] : []
+    },
+    {
+      id: 'gemini',
+      label: 'Google Gemini',
+      envVar: 'GEMINI_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['gemini'] || 'gemini-2.5-pro',
+      models: MODEL_CATALOGUE['Gemini'] ? [...MODEL_CATALOGUE['Gemini']] : []
+    },
+    {
+      id: 'deepseek',
+      label: 'DeepSeek',
+      envVar: 'DEEPSEEK_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['deepseek'] || 'deepseek-chat',
+      models: MODEL_CATALOGUE['DeepSeek'] ? [...MODEL_CATALOGUE['DeepSeek']] : []
+    },
+    {
+      id: 'qwen',
+      label: 'Qwen / DashScope',
+      envVar: 'DASHSCOPE_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['qwen'] || 'qwen2.5-coder-32b-instruct',
+      models: MODEL_CATALOGUE['Qwen'] ? [...MODEL_CATALOGUE['Qwen']] : []
+    },
+    {
+      id: 'ollama',
+      label: 'Ollama (Local Server)',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['ollama'] || 'llama3.3',
+      models: MODEL_CATALOGUE['Ollama (Local)'] ? [...MODEL_CATALOGUE['Ollama (Local)']] : []
+    },
+    {
+      id: 'xai',
+      label: 'xAI (Grok)',
+      envVar: 'XAI_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['xai'] || 'grok-3',
+      models: MODEL_CATALOGUE['xAI (Grok)'] ? [...MODEL_CATALOGUE['xAI (Grok)']] : []
+    },
+    {
+      id: 'moonshot',
+      label: 'Moonshot (Kimi)',
+      envVar: 'MOONSHOT_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['moonshot'] || 'kimi-k3',
+      models: MODEL_CATALOGUE['Moonshot (Kimi)'] ? [...MODEL_CATALOGUE['Moonshot (Kimi)']] : []
+    }
+  ];
+
+  const byok: ByokProviderInfo[] = byokDefs.map((def) => {
+    const isCurrent = currentProvider === def.id || (def.id === 'qwen' && currentProvider === 'dashscope-byok');
+    const isConfigured = def.id === 'ollama'
+      || Boolean(isCurrent && config.apiKey)
+      || Boolean(def.envVar && process.env[def.envVar]);
+
+    return {
+      id: def.id,
+      label: def.label,
+      isConfigured,
+      isCurrent,
+      models: def.models,
+      defaultModel: def.defaultModel
+    };
+  });
+
+  const acpPeers: AcpPeerInfo[] = [];
+
+  // Antigravity (special native local provider)
+  const hasAgy = Boolean(resolveAgyBinary());
+  acpPeers.push({
+    id: 'antigravity',
+    providerKey: 'antigravity',
+    label: 'Google Antigravity (AGY)',
+    installed: hasAgy,
+    status: hasAgy ? 'ready' : 'not_installed',
+    isCurrent: currentProvider === 'antigravity',
+    command: 'agy --output-format json',
+    models: [...ANTIGRAVITY_MODELS],
+    setupInstruction: 'Install Antigravity IDE or agy CLI to enable Google AGY models.'
+  });
+
+  // Standard ACP presets
+  const presetOrder = ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'];
+  for (const presetId of presetOrder) {
+    const preset = BUILTIN_PEER_PRESETS[presetId];
+    if (!preset) continue;
+
+    let installed = false;
+    if (preset.id === 'cursor') {
+      installed = isBinaryOnPath('cursor-agent') || isBinaryOnPath('cursor');
+    } else {
+      installed = isBinaryOnPath(preset.binaryName);
+    }
+
+    const providerKey = `acp/${preset.id}`;
+    const isCurrent = currentProvider === providerKey;
+
+    let models: string[] = [];
+    if (PEER_MODEL_CATALOGUE[preset.id]) {
+      models = [...(PEER_MODEL_CATALOGUE[preset.id] || [])];
+    } else if (DEFAULT_MODEL_BY_PROVIDER[providerKey]) {
+      models = [DEFAULT_MODEL_BY_PROVIDER[providerKey]];
+    } else {
+      models = [preset.id];
+    }
+
+    acpPeers.push({
+      id: preset.id,
+      providerKey,
+      label: preset.label,
+      installed,
+      status: installed ? 'ready' : 'not_installed',
+      isCurrent,
+      command: `${preset.command} ${preset.args.join(' ')}`,
+      models,
+      setupInstruction: preset.setupInstruction || `Install ${preset.label} CLI on your system.`
+    });
+  }
+
+  return {
+    activeProvider: currentProvider,
+    activeModel: currentModel,
+    byok,
+    acp: acpPeers
+  };
 }
 
 const MODEL_LIST_TIMEOUT_MS = 8000;

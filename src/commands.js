@@ -20,7 +20,7 @@ import {
 } from './userSkills.js';
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
-import { resolveAvailableModels, getCuratedModels } from './dynamicCatalogue.js';
+import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview } from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
 import {
@@ -710,66 +710,212 @@ export const COMMANDS = [
     complete: () => {
       const config = loadConfig();
       const currentProvider = config.provider || '';
-      const curated = getCuratedModels(currentProvider);
+      const overview = getAvailableProvidersOverview(config);
       const items = [
-        { value: 'list', label: 'list', description: 'list models for active provider' },
+        { value: 'list', label: 'list', description: 'overview of all BYOK and ACP models' },
         { value: 'refresh', label: 'refresh', description: 'poll provider API for live models' }
       ];
+
+      // 1. Models for the active provider
+      const curated = getCuratedModels(currentProvider);
       for (const m of curated) {
-        items.push({ value: m, label: m, description: currentProvider || 'model' });
+        items.push({ value: m, label: m, description: `[active] ${currentProvider}` });
       }
+
+      // 2. ACP Peer Agents (with live auto-detected status)
+      for (const peer of overview.acp) {
+        const statusTag = peer.installed ? '(ready)' : '(not installed)';
+        items.push({
+          value: peer.providerKey,
+          label: peer.providerKey,
+          description: `[ACP: ${peer.label}] ${statusTag}`
+        });
+
+        if (peer.installed && Array.isArray(peer.models)) {
+          for (const m of peer.models.slice(0, 3)) {
+            if (peer.isCurrent && curated.includes(m)) continue;
+            const targetVal = m.includes('/') ? m : `${peer.providerKey}/${m}`;
+            items.push({
+              value: targetVal,
+              label: targetVal,
+              description: `[ACP: ${peer.label}]`
+            });
+          }
+        }
+      }
+
+      // 3. BYOK Providers (Cloud & Local)
+      for (const p of overview.byok) {
+        const configTag = p.isConfigured ? '(configured)' : '(needs key)';
+        items.push({
+          value: p.id,
+          label: p.id,
+          description: `[BYOK: ${p.label}] ${configTag}`
+        });
+
+        if (p.isConfigured && Array.isArray(p.models)) {
+          for (const m of p.models.slice(0, 2)) {
+            if (p.isCurrent && curated.includes(m)) continue;
+            items.push({
+              value: `${p.id}/${m}`,
+              label: `${p.id}/${m}`,
+              description: `[BYOK: ${p.label}]`
+            });
+          }
+        }
+      }
+
       return items;
     },
     run: async (argv) => {
       const config = loadConfig();
+      const overview = getAvailableProvidersOverview(config);
+
       if (argv.length === 0) {
-        return ok(`Provider : ${config.provider || 'no provider configured'}\nModel    : ${config.model || 'none'}\n\nUse /model list to see models, or /model refresh to poll provider API.`);
-      }
-      const first = argv[0].toLowerCase();
-      if (first === 'list' || first === 'ls') {
-        const targetProvider = argv[1] || config.provider;
-        if (!targetProvider) return fail('No provider specified or configured. Run /setup first.');
-        const result = await resolveAvailableModels(targetProvider, config);
-        const active = config.model;
         const lines = [
-          `Available models for ${targetProvider} (source: ${result.source}):`,
-          ''
+          `Active Provider : ${config.provider || 'no provider configured'}`,
+          `Active Model    : ${config.model || 'none'}`,
+          '',
+          '────────────────────────────────────────────────────────────',
+          'BYOK PROVIDERS (Cloud & Local API)',
+          '────────────────────────────────────────────────────────────'
         ];
-        for (const m of result.models) {
-          const isCurrent = m === active;
-          lines.push(`  ${isCurrent ? '• ' : '  '}${m}${isCurrent ? '  (active)' : ''}`);
-        }
-        if (result.models.length === 0) {
-          lines.push('  (this peer CLI publishes no model list; enter one with /model <name>)');
+        for (const p of overview.byok) {
+          const status = p.isConfigured ? (p.isCurrent ? '● Configured (Active)' : '○ Configured') : '─ Not configured (run /setup)';
+          lines.push(`  • ${p.label.padEnd(26)} [${status}]`);
         }
         lines.push('');
-        lines.push('Use /model <name> to select, or /model refresh to poll the provider API.');
+        lines.push('────────────────────────────────────────────────────────────');
+        lines.push('ACP PEER AGENTS (Local Coding Agents & CLI Engines)');
+        lines.push('────────────────────────────────────────────────────────────');
+        for (const peer of overview.acp) {
+          const icon = peer.installed ? '✅' : '❌';
+          const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
+          lines.push(`  ${icon} ${peer.label.padEnd(24)} — ${status}`);
+        }
+        lines.push('');
+        lines.push('Use /model list to see all models in each category.');
+        lines.push('Use /model <name> or /model acp/<peer> to switch model.');
+        lines.push('Use /setup to configure credentials and endpoints.');
         return ok(lines.join('\n'));
       }
+
+      const first = argv[0].toLowerCase();
+      if (first === 'list' || first === 'ls') {
+        const targetProvider = argv[1];
+
+        // Specific provider requested (e.g. /model list gemini)
+        if (targetProvider && targetProvider !== 'all') {
+          const result = await resolveAvailableModels(targetProvider, config);
+          const active = config.model;
+          const lines = [
+            `Available models for ${targetProvider} (source: ${result.source}):`,
+            ''
+          ];
+          for (const m of result.models) {
+            const isCurrent = m === active && config.provider === targetProvider;
+            lines.push(`  ${isCurrent ? '• ' : '  '}${m}${isCurrent ? '  (active)' : ''}`);
+          }
+          if (result.models.length === 0) {
+            lines.push('  (this peer CLI publishes no model list; enter one with /model <name>)');
+          }
+          lines.push('');
+          lines.push('Use /model <name> to select, or /model refresh to poll the provider API.');
+          return ok(lines.join('\n'));
+        }
+
+        // Comprehensive categorized listing
+        const lines = [
+          '============================================================',
+          'BYOK PROVIDERS (Cloud APIs & Local Endpoints)',
+          '============================================================'
+        ];
+        for (const p of overview.byok) {
+          const badge = p.isConfigured ? (p.isCurrent ? '● ACTIVE' : '○ CONFIGURED') : 'NEEDS KEY';
+          lines.push(`  • ${p.label} [${badge}]`);
+          const modelSample = p.models.slice(0, 5).join(', ');
+          lines.push(`    Models: ${modelSample}${p.models.length > 5 ? `, ... (${p.models.length} total)` : ''}`);
+          lines.push(`    Switch: /model ${p.id}/${p.defaultModel}`);
+          lines.push('');
+        }
+
+        lines.push('============================================================');
+        lines.push('ACP PEER AGENTS (Local Agents & CLI Engines)');
+        lines.push('============================================================');
+        for (const peer of overview.acp) {
+          const icon = peer.installed ? '✅' : '❌';
+          const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
+          lines.push(`  ${icon} ${peer.label} — ${status}`);
+          lines.push(`     Command: ${peer.command}`);
+          if (peer.installed) {
+            lines.push(`     Models:  ${peer.models.join(', ')}`);
+            lines.push(`     Switch:  /model ${peer.providerKey}`);
+          } else {
+            lines.push(`     Setup:   ${peer.setupInstruction}`);
+          }
+          lines.push('');
+        }
+
+        lines.push('------------------------------------------------------------');
+        lines.push('Use /model <name> or /model acp/<peer> to select.');
+        lines.push('Use /setup to configure credentials or endpoints.');
+        return ok(lines.join('\n'));
+      }
+
       if (first === 'refresh') {
         if (!config.provider) return fail('No provider configured. Run /setup first.');
         const result = await resolveAvailableModels(config.provider, config, true);
         return ok(`Refreshed ${config.provider} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
       }
+
       const requested = argv.join(' ').trim();
 
-      // `acp/<peer>` names a provider; `acp/<peer>/<model>` names both. A bare
-      // `<peer>/<model>` while an ACP provider is active is a model id, because
-      // peer models are namespaced too (opencode/beam-free).
+      // Check if user requested an ACP peer
       const acpTarget = requested.match(/^acp\/([a-z0-9_-]+)(?:\/(.+))?$/i);
       if (acpTarget) {
         const peer = acpTarget[1].toLowerCase();
         const nextProvider = `acp/${peer}`;
+        const peerInfo = overview.acp.find(p => p.id === peer);
+
         if (nextProvider !== config.provider) { config.apiKey = ''; delete config.baseUrl; }
         config.provider = nextProvider;
         config.model = acpTarget[2] || DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer;
         saveConfig(config);
+
+        if (peerInfo && !peerInfo.installed) {
+          return ok(
+            `⚠️ Notice: "${peerInfo.label}" CLI is not installed on this machine.\n` +
+            `Binary "${peerInfo.id}" was not found on PATH.\n` +
+            `Setup: ${peerInfo.setupInstruction}\n\n` +
+            `Now using ${config.provider} / ${config.model}.`
+          );
+        }
         return ok(`Now using ${config.provider} / ${config.model}.`);
       }
+
+      // If peer model is set while in ACP
       if (isAcpProvider(config.provider) && requested.includes('/')) {
         config.model = requested;
         saveConfig(config);
         return ok(`Now using ${config.provider} / ${config.model}.`);
+      }
+
+      // If user typed bare 'antigravity' or 'antigravity/model'
+      if (requested === 'antigravity' || requested.startsWith('antigravity/')) {
+        const agyModel = requested.includes('/') ? requested.split('/')[1] : (DEFAULT_MODEL_BY_PROVIDER['antigravity'] || 'Gemini 3.8 Flash (Low)');
+        if (config.provider !== 'antigravity') { config.apiKey = ''; delete config.baseUrl; }
+        config.provider = 'antigravity';
+        config.model = agyModel;
+        saveConfig(config);
+        const agyPeer = overview.acp.find(p => p.id === 'antigravity');
+        if (agyPeer && !agyPeer.installed) {
+          return ok(
+            `⚠️ Notice: Antigravity CLI (agy) is not installed on this machine.\n` +
+            `Setup: ${agyPeer.setupInstruction}\n\n` +
+            `Now using antigravity / ${config.model}.`
+          );
+        }
+        return ok(`Now using antigravity / ${config.model}.`);
       }
 
       const separator = requested.indexOf('/');

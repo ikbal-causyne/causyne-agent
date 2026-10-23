@@ -11,7 +11,8 @@ import {
   writeModelCache,
   getCachedModels,
   saveCachedModels,
-  resolveAvailableModels
+  resolveAvailableModels,
+  getAvailableProvidersOverview
 } from '../src/dynamicCatalogue.js';
 import { runCommand } from '../src/commands.js';
 
@@ -71,4 +72,50 @@ test('slash command: /model and /models list available models', async () => {
   assert.ok(aliasResult.ok);
   assert.ok(aliasResult.output.includes('Available models for openai'));
   assert.ok(aliasResult.output.includes('gpt-4o'));
+});
+
+test('dynamic catalogue: getAvailableProvidersOverview separates BYOK and ACP with live auto-detection', () => {
+  const overview = getAvailableProvidersOverview({ provider: 'antigravity', model: 'Gemini 3.8 Flash (Low)' });
+  assert.equal(overview.activeProvider, 'antigravity');
+  assert.ok(Array.isArray(overview.byok));
+  assert.ok(Array.isArray(overview.acp));
+
+  const byokIds = overview.byok.map(p => p.id);
+  assert.ok(byokIds.includes('anthropic'));
+  assert.ok(byokIds.includes('openai'));
+  assert.ok(byokIds.includes('gemini'));
+  assert.ok(byokIds.includes('deepseek'));
+
+  const acpIds = overview.acp.map(p => p.id);
+  assert.ok(acpIds.includes('antigravity'));
+  assert.ok(acpIds.includes('opencode'));
+  assert.ok(acpIds.includes('claude'));
+  assert.ok(acpIds.includes('codex'));
+
+  const codex = overview.acp.find(p => p.id === 'codex');
+  assert.ok(codex);
+  assert.equal(codex.installed, false);
+  assert.equal(codex.status, 'not_installed');
+});
+
+test('slash command: /model displays separated BYOK and ACP overview', async () => {
+  const result = await runCommand('model', [], { surface: 'terminal' });
+  assert.ok(result.ok);
+  assert.ok(result.output.includes('BYOK PROVIDERS'));
+  assert.ok(result.output.includes('ACP PEER AGENTS'));
+
+  const listAll = await runCommand('model', ['list'], { surface: 'terminal' });
+  assert.ok(listAll.ok);
+  assert.ok(listAll.output.includes('BYOK PROVIDERS (Cloud APIs & Local Endpoints)'));
+  assert.ok(listAll.output.includes('ACP PEER AGENTS (Local Agents & CLI Engines)'));
+  assert.ok(listAll.output.includes('Google Antigravity (AGY)'));
+  assert.ok(listAll.output.includes('OpenCode'));
+  assert.ok(listAll.output.includes('NOT INSTALLED'));
+});
+
+test('slash command: /model acp/<peer> warns when CLI is not installed', async () => {
+  const result = await runCommand('model', ['acp/codex'], { surface: 'terminal' });
+  assert.ok(result.ok);
+  assert.ok(result.output.includes('Notice: "Codex CLI" CLI is not installed on this machine'));
+  assert.ok(result.output.includes('Binary "codex" was not found on PATH'));
 });

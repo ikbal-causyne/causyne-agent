@@ -5,7 +5,8 @@ import { paint, dim, bold, badge, GLYPHS } from './theme.js';
 import { runSetup } from './setup.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { isAcpProvider } from '../providers/acp.js';
-import { isAntigravityProvider } from '../providers/antigravity.js';
+import { isAntigravityProvider, resolveAgyBinary } from '../providers/antigravity.js';
+import { isBinaryOnPath } from '../acp/agentCatalog.js';
 
 /** Local runtime and provider summary. */
 export function homeStatusLine(arg = {}) {
@@ -135,29 +136,29 @@ export { badge };
 
 // stale values again. Labels and hints stay local because they are terminal UI.
 export const PROVIDERS = [
-  { id: 'deepseek', label: 'DeepSeek', hint: 'recommended for STEM' },
-  { id: 'qwen', label: 'Qwen / Alibaba Cloud', hint: 'fastest' },
-  { id: 'dashscope-byok', label: 'Alibaba DashScope', hint: 'multi-model gateway' },
-  { id: 'muse', label: 'Meta Model API', hint: 'Muse Spark · 1M context' },
-  { id: 'anthropic', label: 'Anthropic', hint: 'Claude' },
-  { id: 'openai', label: 'OpenAI', hint: 'GPT' },
-  { id: 'gemini', label: 'Gemini', hint: 'Google' },
-  { id: 'moonshot', label: 'Moonshot', hint: 'Kimi' },
-  { id: 'xai', label: 'xAI', hint: 'Grok' },
-  { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL' },
-  { id: 'ollama', label: 'Ollama', hint: 'local / offline' },
-  { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: 'local AGY · Gemini & Claude models' },
-  { id: 'acp/opencode', label: 'OpenCode', hint: 'ACP · free models available' },
-  { id: 'acp/claude', label: 'Claude Code', hint: 'ACP · your Anthropic subscription' },
-  { id: 'acp/codex', label: 'Codex CLI', hint: 'ACP · your OpenAI login' },
-  { id: 'acp/gemini', label: 'Gemini CLI', hint: 'ACP · free tier / Google login' },
-  { id: 'acp/cursor', label: 'Cursor CLI', hint: 'ACP · your Cursor subscription' },
-  { id: 'acp/qwen', label: 'Qwen Code', hint: 'ACP · DashScope login' },
-  { id: 'acp/copilot', label: 'GitHub Copilot CLI', hint: 'ACP · your Copilot subscription' },
-  { id: 'acp/kimi', label: 'Kimi CLI', hint: 'ACP · Moonshot login' },
-  { id: 'acp/goose', label: 'Goose', hint: 'ACP · your configured providers' },
-  { id: 'acp/hermes', label: 'Hermes Agent', hint: 'ACP · Nous Research' },
-  { id: 'acp', label: 'ACP peer agent (custom)', hint: 'any ACP-compatible CLI' }
+  { id: 'deepseek', label: 'DeepSeek', hint: 'recommended for STEM', category: 'BYOK (Cloud API)' },
+  { id: 'qwen', label: 'Qwen / Alibaba Cloud', hint: 'fastest', category: 'BYOK (Cloud API)' },
+  { id: 'dashscope-byok', label: 'Alibaba DashScope', hint: 'multi-model gateway', category: 'BYOK (Cloud API)' },
+  { id: 'muse', label: 'Meta Model API', hint: 'Muse Spark · 1M context', category: 'BYOK (Cloud API)' },
+  { id: 'anthropic', label: 'Anthropic', hint: 'Claude', category: 'BYOK (Cloud API)' },
+  { id: 'openai', label: 'OpenAI', hint: 'GPT', category: 'BYOK (Cloud API)' },
+  { id: 'gemini', label: 'Gemini', hint: 'Google', category: 'BYOK (Cloud API)' },
+  { id: 'moonshot', label: 'Moonshot', hint: 'Kimi', category: 'BYOK (Cloud API)' },
+  { id: 'xai', label: 'xAI', hint: 'Grok', category: 'BYOK (Cloud API)' },
+  { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL', category: 'BYOK (Custom)' },
+  { id: 'ollama', label: 'Ollama', hint: 'local / offline', category: 'BYOK (Local Server)' },
+  { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: resolveAgyBinary() ? 'local AGY · Gemini & Claude (ready)' : 'local AGY · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/opencode', label: 'OpenCode', hint: isBinaryOnPath('opencode') ? 'ACP · free models (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/claude', label: 'Claude Code', hint: isBinaryOnPath('claude') ? 'ACP · Anthropic subscription (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/codex', label: 'Codex CLI', hint: isBinaryOnPath('codex') ? 'ACP · OpenAI login (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/gemini', label: 'Gemini CLI', hint: isBinaryOnPath('gemini') ? 'ACP · Google login (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/cursor', label: 'Cursor CLI', hint: (isBinaryOnPath('cursor-agent') || isBinaryOnPath('cursor')) ? 'ACP · Cursor subscription (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/qwen', label: 'Qwen Code', hint: isBinaryOnPath('qwen') ? 'ACP · DashScope login (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/copilot', label: 'GitHub Copilot CLI', hint: isBinaryOnPath('copilot') ? 'ACP · Copilot subscription (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/kimi', label: 'Kimi CLI', hint: isBinaryOnPath('kimi') ? 'ACP · Moonshot login (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/goose', label: 'Goose', hint: isBinaryOnPath('goose') ? 'ACP · configured providers (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp/hermes', label: 'Hermes Agent', hint: isBinaryOnPath('hermes') ? 'ACP · Nous Research (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'acp', label: 'ACP peer agent (custom)', hint: 'any ACP-compatible CLI', category: 'ACP (Custom)' }
 ].map((entry) => ({ ...entry, model: DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
 
 /** Run the shared setup transaction inside the existing prompt. */
