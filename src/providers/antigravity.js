@@ -65,16 +65,41 @@ export class AntigravityProvider extends LLMProvider {
   formatConversation(messages, tools = []) {
     const lines = [];
     if (tools && tools.length > 0) {
-      lines.push('[Available Tools]\nYou may invoke tools by outputting `<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>`.');
+      const toolSummaries = tools.map(t => {
+        const name = t.name || t.function?.name || 'unknown';
+        const desc = t.description || t.function?.description || '';
+        const params = t.parameters || t.input_schema || t.function?.parameters || {};
+        const paramKeys = Object.keys(params.properties || {}).join(', ');
+        return `- ${name}(${paramKeys}): ${desc}`;
+      }).join('\n');
+      lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
     }
     for (const msg of messages) {
-      const role = msg.role === 'user' ? 'User' : (msg.role === 'assistant' ? 'Assistant' : (msg.role === 'system' ? 'System Instructions' : 'Context'));
+      const role = msg.role === 'user'
+        ? 'User'
+        : (msg.role === 'assistant'
+          ? 'Assistant'
+          : (msg.role === 'system'
+            ? 'System Instructions'
+            : (msg.role === 'tool'
+              ? `Tool Result (${msg.name || 'tool'})`
+              : 'Context')));
+
       let text = '';
       if (typeof msg.content === 'string') {
         text = msg.content;
       } else if (Array.isArray(msg.content)) {
         text = msg.content.map(c => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
       }
+
+      if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          const fn = tc.function || {};
+          const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+          text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+        }
+      }
+
       if (text.trim()) {
         lines.push(`[${role}]\n${text.trim()}`);
       }
@@ -108,7 +133,22 @@ export class AntigravityProvider extends LLMProvider {
     return calls;
   }
 
-  async chat(messages, options = {}) {
+  _isTransientError(errMessage) {
+    if (!errMessage) return false;
+    const msg = String(errMessage).toLowerCase();
+    return msg.includes('connection reset') ||
+      msg.includes('econnreset') ||
+      msg.includes('etimedout') ||
+      msg.includes('streamgeneratecontent') ||
+      msg.includes('socket hang up') ||
+      msg.includes('network error') ||
+      msg.includes('temporarily unavailable') ||
+      msg.includes('status 503') ||
+      msg.includes('status 504') ||
+      msg.includes('status 429');
+  }
+
+  async _executeOnce(messages, options = {}) {
     const promptText = this.formatConversation(messages, options.tools);
 
     const args = [
@@ -189,5 +229,23 @@ export class AntigravityProvider extends LLMProvider {
         }
       });
     });
+  }
+
+  async chat(messages, options = {}) {
+    const maxRetries = options.maxRetries ?? 2;
+    let attempt = 0;
+    while (attempt <= maxRetries) {
+      try {
+        return await this._executeOnce(messages, options);
+      } catch (err) {
+        if (attempt < maxRetries && this._isTransientError(err.message)) {
+          attempt++;
+          const delay = attempt * 1200;
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 }

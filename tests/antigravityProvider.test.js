@@ -59,4 +59,17 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].function.name, 'screenshot');
   });
+
+  test('_isTransientError identifies connection resets and stream timeouts', () => {
+    const provider = new AntigravityProvider();
+    assert.strictEqual(provider._isTransientError('read tcp: connection reset by peer'), true);
+    assert.strictEqual(provider._isTransientError('ECONNRESET: socket closed'), true);
+    assert.strictEqual(provider._isTransientError('streamGenerateContent failed'), true);
+    assert.strictEqual(provider._isTransientError('status 503 Service Unavailable'), true);
+    assert.strictEqual(provider._isTransientError('status 429 Too Many Requests'), true);
+    assert.strictEqual(provider._isTransientError('Invalid API Key provided'), false);
+    assert.strictEqual(provider._isTransientError(''), false);
+    assert.strictEqual(provider._isTransientError(null), false);
+  });
 });
+
