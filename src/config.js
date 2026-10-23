@@ -229,22 +229,22 @@ export function detectLocalAgentProvider() {
   }
   if (checkBinarySync('opencode')) {
     return {
-      provider: 'acp',
-      model: 'opencode',
+      provider: 'acp/opencode',
+      model: DEFAULT_MODEL_BY_PROVIDER['acp/opencode'],
       apiKey: ''
     };
   }
   if (checkBinarySync('claude')) {
     return {
-      provider: 'acp',
-      model: 'claude',
+      provider: 'acp/claude',
+      model: DEFAULT_MODEL_BY_PROVIDER['acp/claude'],
       apiKey: ''
     };
   }
   if (checkBinarySync('codex')) {
     return {
-      provider: 'acp',
-      model: 'codex',
+      provider: 'acp/codex',
+      model: DEFAULT_MODEL_BY_PROVIDER['acp/codex'],
       apiKey: ''
     };
   }

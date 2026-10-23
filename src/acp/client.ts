@@ -171,8 +171,8 @@ export class AcpClient {
     }, 30_000);
   }
 
-  async prompt(sessionId: string, text: string): Promise<AcpPromptResult> {
-    const blocks: ContentBlock[] = [{ type: 'text', text }];
+  async prompt(sessionId: string, input: string | ContentBlock[]): Promise<AcpPromptResult> {
+    const blocks: ContentBlock[] = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
     let collected = '';
     const collector = (update: SessionUpdate): void => {
       this.options.onUpdate?.(sessionId, update);

@@ -16,10 +16,17 @@ local terminal -> entrypoint -> cliMode / local approval UI
                   observations, memory, sessions, checkpoints
 ```
 
-The LLM may be a configured remote API or a local model endpoint. Web tools
-and third-party MCP servers may use the network. Neither makes the program
-a phone-controlled daemon, nor makes every workflow offline. Provider keys
-are stored locally and sent to the chosen provider for authentication.
+The LLM may be a configured remote API, a local model endpoint, or an installed
+ACP peer agent. Web tools and third-party MCP servers may use the network.
+Neither makes the program a phone-controlled daemon, nor makes every workflow
+offline. Provider keys are stored locally and sent to the chosen provider for
+authentication.
+
+Peer agents (OpenCode, Claude Code, Codex, Gemini CLI, Cursor, Antigravity) are
+providers in the same sense as an HTTP API, addressed as `acp/<peer>`: the
+user's existing CLI login is the credential, the peer's own `models` command
+supplies the catalogue, and the session is billed by that subscription — Causyne
+reports it at zero cost because it never sees the invoice.
 
 `LocalCLIConnection` is a local rendering/event adapter, not an inbound network
 connection. `emitEvent` feeds the terminal. Tools can execute host commands;

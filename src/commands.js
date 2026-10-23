@@ -21,6 +21,8 @@ import {
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
 import { resolveAvailableModels, getCuratedModels } from './dynamicCatalogue.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
+import { isAcpProvider } from './providers/acp.js';
 import {
   serverStatus, grantServer, revokeServer, addServer, removeServer,
   connectServer, disconnectServer, refreshServer
@@ -737,6 +739,9 @@ export const COMMANDS = [
           const isCurrent = m === active;
           lines.push(`  ${isCurrent ? '• ' : '  '}${m}${isCurrent ? '  (active)' : ''}`);
         }
+        if (result.models.length === 0) {
+          lines.push('  (this peer CLI publishes no model list; enter one with /model <name>)');
+        }
         lines.push('');
         lines.push('Use /model <name> to select, or /model refresh to poll the provider API.');
         return ok(lines.join('\n'));
@@ -747,6 +752,26 @@ export const COMMANDS = [
         return ok(`Refreshed ${config.provider} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
       }
       const requested = argv.join(' ').trim();
+
+      // `acp/<peer>` names a provider; `acp/<peer>/<model>` names both. A bare
+      // `<peer>/<model>` while an ACP provider is active is a model id, because
+      // peer models are namespaced too (opencode/beam-free).
+      const acpTarget = requested.match(/^acp\/([a-z0-9_-]+)(?:\/(.+))?$/i);
+      if (acpTarget) {
+        const peer = acpTarget[1].toLowerCase();
+        const nextProvider = `acp/${peer}`;
+        if (nextProvider !== config.provider) { config.apiKey = ''; delete config.baseUrl; }
+        config.provider = nextProvider;
+        config.model = acpTarget[2] || DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer;
+        saveConfig(config);
+        return ok(`Now using ${config.provider} / ${config.model}.`);
+      }
+      if (isAcpProvider(config.provider) && requested.includes('/')) {
+        config.model = requested;
+        saveConfig(config);
+        return ok(`Now using ${config.provider} / ${config.model}.`);
+      }
+
       const separator = requested.indexOf('/');
       if (separator > 0) {
         const provider = requested.slice(0, separator);
@@ -883,6 +908,7 @@ export const COMMANDS = [
         }
         lines.push('');
         lines.push('Use /peers test <id> to test zero-token handshake against a specific peer.');
+        lines.push('Any ready peer can be your model provider: /model acp/<id>');
         return ok(lines.join('\n'));
       }
 

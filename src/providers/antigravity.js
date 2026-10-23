@@ -3,21 +3,39 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LLMProvider } from './base.js';
 
-export const ANTIGRAVITY_MODELS = [
-  'Gemini 3.8 Flash (Low)',
-  'Gemini 3.8 Flash (Medium)',
-  'Gemini 3.8 Flash (High)',
-  'Gemini 4 Argon (Low)',
-  'Gemini 4 Argon (Medium)',
-  'Gemini 4 Argon (High)',
-  'Claude Sonnet 5.5 (Low)',
-  'Claude Sonnet 5.5 (Medium)',
-  'Claude Sonnet 5.5 (High)',
-  'Claude Opus 5.5 (Low)',
-  'Claude Opus 5.5 (Medium)',
-  'Claude Opus 5.5 (High)',
-  'GPT-OSS 120B (Medium)'
-];
+/**
+ * Display label → the id `agy --model` actually accepts, exactly as reported
+ * by `agy models`. The CLI exposes slugs; the picker shows the readable label.
+ * Passing the label through unchanged is what a user would try, so both forms
+ * resolve here rather than failing at the provider.
+ */
+export const ANTIGRAVITY_MODEL_IDS = {
+  'Gemini 3.8 Flash (Low)': 'gemini-3.8-flash-low',
+  'Gemini 3.8 Flash (Medium)': 'gemini-3.8-flash-medium',
+  'Gemini 3.8 Flash (High)': 'gemini-3.8-flash-high',
+  'Gemini 4 Argon (Low)': 'gemini-4-argon-low',
+  'Gemini 4 Argon (Medium)': 'gemini-4-argon-medium',
+  'Gemini 4 Argon (High)': 'gemini-4-argon-high',
+  'Claude Sonnet 5.5 (Low)': 'claude-sonnet-5-5-low',
+  'Claude Sonnet 5.5 (Medium)': 'claude-sonnet-5-5-medium',
+  'Claude Sonnet 5.5 (High)': 'claude-sonnet-5-5-high',
+  'Claude Opus 5.5 (Low)': 'claude-opus-5-5-low',
+  'Claude Opus 5.5 (Medium)': 'claude-opus-5-5-medium',
+  'Claude Opus 5.5 (High)': 'claude-opus-5-5-high',
+  'GPT-OSS 120B (Medium)': 'gpt-oss-120b-medium'
+};
+
+export const ANTIGRAVITY_LABEL_BY_ID = Object.fromEntries(
+  Object.entries(ANTIGRAVITY_MODEL_IDS).map(([label, id]) => [id, label])
+);
+
+export const ANTIGRAVITY_MODELS = Object.keys(ANTIGRAVITY_MODEL_IDS);
+
+export function resolveAgyModelId(model) {
+  if (typeof model !== 'string') return '';
+  const trimmed = model.trim();
+  return ANTIGRAVITY_MODEL_IDS[trimmed] || trimmed;
+}
 
 export function isAntigravityProvider(provider) {
   if (!provider) return false;
@@ -58,7 +76,10 @@ export class AntigravityProvider extends LLMProvider {
     super(config);
     this.model = config.model || 'Gemini 3.8 Flash (Low)';
     this.command = config.command || resolveAgyBinary();
-    this.visionModels = ['*'];
+    // The agy print path takes text only — no image flag is documented, and the
+    // formatter below drops image blocks. Claiming vision here would let the
+    // agent believe a screenshot was seen when it never left the machine.
+    this.visionModels = [];
     this.audioModels = [];
   }
 
@@ -155,7 +176,7 @@ export class AntigravityProvider extends LLMProvider {
       '--output-format',
       'json',
       '--model',
-      this.model,
+      resolveAgyModelId(this.model),
       `-p=${promptText}`
     ];
 

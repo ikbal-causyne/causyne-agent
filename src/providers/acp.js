@@ -15,23 +15,31 @@ export function isAcpProvider(provider) {
 export class AcpProvider extends LLMProvider {
   constructor(config = {}) {
     super(config);
-    const rawModel = config.model || DEFAULT_MODEL_BY_PROVIDER['acp'] || 'opencode';
-    this.model = canonicalModelId(rawModel);
 
-    // Resolve peer identifier from provider or model (e.g. acp/opencode -> opencode)
-    const providerStr = String(config.provider || '').toLowerCase();
-    let resolvedPeer = 'opencode';
+    // Resolve the peer first: `acp/opencode` names it outright, a bare peer id
+    // (the legacy shape) names it too, and a generic `acp` falls back to the
+    // model field — which historically carried the peer id.
+    const providerStr = String(config.provider || '').toLowerCase().trim();
+    const configuredModel = typeof config.model === 'string' ? config.model.trim() : '';
+    let resolvedPeer = '';
     if (providerStr.startsWith('acp/') || providerStr.startsWith('acp:')) {
-      resolvedPeer = providerStr.slice(4);
-    } else if (providerStr !== 'acp' && providerStr !== '') {
+      resolvedPeer = providerStr.slice(4).split('/')[0];
+    } else if (providerStr && providerStr !== 'acp') {
       resolvedPeer = providerStr;
     } else if (config.peer) {
       resolvedPeer = String(config.peer).toLowerCase();
-    } else if (this.model && this.model !== 'acp') {
-      resolvedPeer = this.model.toLowerCase();
+    } else if (configuredModel && configuredModel !== 'acp' && BUILTIN_PEER_PRESETS[configuredModel.toLowerCase()]) {
+      resolvedPeer = configuredModel.toLowerCase();
     }
+    this.peerId = resolvedPeer || 'opencode';
 
-    this.peerId = resolvedPeer;
+    // Every peer gets its own default. Without this, selecting Claude Code or
+    // Codex inherited OpenCode's model and asked the wrong peer for it.
+    const peerDefault = DEFAULT_MODEL_BY_PROVIDER[`acp/${this.peerId}`]
+      || DEFAULT_MODEL_BY_PROVIDER['acp']
+      || this.peerId;
+    const modelIsPeerName = !configuredModel || configuredModel === 'acp' || configuredModel === this.peerId;
+    this.model = canonicalModelId(modelIsPeerName ? peerDefault : configuredModel);
 
     const profile = getPeerProfile(this.peerId);
     if (profile) {
@@ -97,6 +105,92 @@ export class AcpProvider extends LLMProvider {
     return lines.join('\n\n');
   }
 
+  /**
+   * The same transcript as formatConversation, split into ACP content blocks so
+   * images the agent loop attached reach a peer that can see them instead of
+   * being dropped by a text-only formatter. When the peer's initialize result
+   * does not advertise image input, the image is replaced with a plain note —
+   * the model must know it is blind, not guess at what it cannot see.
+   */
+  formatPromptBlocks(messages, tools = [], imageSupport = false) {
+    const blocks = [];
+    let pending = [];
+    const flush = () => {
+      if (pending.length === 0) return;
+      blocks.push({ type: 'text', text: pending.join('\n\n') });
+      pending = [];
+    };
+
+    if (tools && tools.length > 0) {
+      const toolSummaries = tools.map(t => {
+        const name = t.name || t.function?.name || 'unknown';
+        const desc = t.description || t.function?.description || '';
+        const params = t.parameters || t.input_schema || t.function?.parameters || {};
+        const paramKeys = Object.keys(params.properties || {}).join(', ');
+        return `- ${name}(${paramKeys}): ${desc}`;
+      }).join('\n');
+      pending.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
+    }
+
+    for (const msg of messages) {
+      const role = this._roleLabel(msg);
+      let text = '';
+      if (typeof msg.content === 'string') {
+        text = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        text = msg.content.map(c => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
+      }
+
+      if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          const fn = tc.function || {};
+          const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+          text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+        }
+      }
+
+      if (text.trim()) {
+        pending.push(`[${role}]\n${text.trim()}`);
+      }
+
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          const image = this._imageBlock(part);
+          if (!image) continue;
+          flush();
+          if (imageSupport) {
+            blocks.push(image);
+          } else {
+            pending.push(`[Image omitted — ${this.peerId} does not accept image input]`);
+          }
+        }
+      }
+    }
+
+    flush();
+    return blocks.length > 0 ? blocks : [{ type: 'text', text: 'Continue.' }];
+  }
+
+  _roleLabel(msg) {
+    if (msg.role === 'user') return 'User';
+    if (msg.role === 'assistant') return 'Assistant';
+    if (msg.role === 'system') return 'System Instructions';
+    if (msg.role === 'tool') return `Tool Result (${msg.name || 'tool'})`;
+    return 'Context';
+  }
+
+  _imageBlock(part) {
+    if (!part || typeof part !== 'object') return null;
+    if (part.type === 'image' && part.source?.type === 'base64') {
+      return { type: 'image', mimeType: part.source.media_type, data: part.source.data };
+    }
+    if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
+      const match = part.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) return { type: 'image', mimeType: match[1], data: match[2] };
+    }
+    return null;
+  }
+
   extractToolCalls(text) {
     const calls = [];
     if (!text || typeof text !== 'string') return calls;
@@ -141,34 +235,33 @@ export class AcpProvider extends LLMProvider {
       await client.start();
       const sessionId = await client.newSession(process.cwd());
 
+      // OpenCode ids are namespaced (`opencode/<model>`); every other peer
+      // takes the id its own CLI publishes. When the resolved model IS the peer
+      // name, the peer's configured default is meant and no override is sent.
       let targetModel = this.model;
-      if (this.peerId === 'opencode') {
-        targetModel = (this.model && this.model !== 'opencode' && this.model !== 'acp')
-          ? (this.model.startsWith('opencode/') ? this.model : `opencode/${this.model}`)
-          : 'opencode/beam-free';
+      if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.startsWith('opencode/')) {
+        targetModel = `opencode/${targetModel}`;
+      }
+      if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
         try {
           await client.setSessionModel(sessionId, targetModel);
         } catch {
           // peer does not support setSessionModel
         }
-      } else if (this.model && this.model !== 'acp' && this.model !== this.peerId) {
-        try {
-          await client.setSessionModel(sessionId, this.model);
-        } catch {
-          // peer does not support setSessionModel
-        }
       }
 
-      const promptText = this.formatConversation(messages, options.tools);
+      const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
+      const promptBlocks = this.formatPromptBlocks(messages, options.tools, supportsImages);
+      const promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
       let result;
       try {
-        result = await client.prompt(sessionId, promptText);
+        result = await client.prompt(sessionId, promptBlocks);
       } catch (promptErr) {
         // If opencode failed with beam-free, attempt fallback to flint-40b-free
         if (this.peerId === 'opencode' && targetModel !== 'opencode/flint-40b-free') {
           try {
             await client.setSessionModel(sessionId, 'opencode/flint-40b-free');
-            result = await client.prompt(sessionId, promptText);
+            result = await client.prompt(sessionId, promptBlocks);
           } catch {
             throw promptErr;
           }

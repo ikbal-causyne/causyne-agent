@@ -177,6 +177,39 @@ test('media playbook: a failed `which` is not proof a tool is missing', () => {
     'the mandate is still scoped to Blender alone');
 });
 
+test('the first tracked call is not counted twice in the lifetime total', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cumulative-'));
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
+    provider: 'muse', model: 'muse-spark-1.3-contributor', apiKey: '',
+    tokenBudget: { enabled: false }
+  }));
+
+  const script = `
+    import { TokenTracker } from '${new URL('../src/tokenTracker.js', import.meta.url).pathname}';
+    const t = new TokenTracker();
+    await t.trackUsage(10, 5);
+    await t.trackUsage(20, 5);
+  `;
+  try {
+    execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, CAUSYNE_HOME: home }, encoding: 'utf8'
+    });
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const today = new Date();
+    const dailyFile = path.join(home, 'usage', `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}.json`);
+    const daily = JSON.parse(fs.readFileSync(dailyFile, 'utf8'));
+    const cumulative = JSON.parse(fs.readFileSync(path.join(home, 'usage', 'byok_cumulative.json'), 'utf8'));
+
+    assert.equal(daily.totalTokens, 40, 'the daily total is not the sum of both calls');
+    assert.equal(cumulative.totalTokens, daily.totalTokens,
+      'the lifetime total counted the first call twice while backfilling from the daily file');
+    assert.equal(cumulative.totalCalls, daily.totalCalls);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 function require_playbooks() {
   // Kept as a function so the assertion above reads as one thought.
   return globalThis.__causynePlaybooks;

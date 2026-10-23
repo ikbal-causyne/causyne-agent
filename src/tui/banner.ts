@@ -313,7 +313,13 @@ export function providerLabel(provider: unknown): string {
     openai: 'OpenAI', anthropic: 'Anthropic', gemini: 'Gemini', ollama: 'Ollama',
     deepseek: 'DeepSeek', dashscope: 'DashScope', 'dashscope-byok': 'DashScope',
     qwen: 'Qwen', xai: 'xAI', grok: 'xAI', moonshot: 'Moonshot', kimi: 'Moonshot',
-    muse: 'Meta', meta: 'Meta', 'openai-compatible': 'OpenAI-compatible'
+    muse: 'Meta', meta: 'Meta', 'openai-compatible': 'OpenAI-compatible',
+    acp: 'ACP', antigravity: 'Antigravity', agy: 'Antigravity',
+    'acp/opencode': 'OpenCode (ACP)', 'acp/claude': 'Claude Code (ACP)',
+    'acp/codex': 'Codex (ACP)', 'acp/gemini': 'Gemini CLI (ACP)',
+    'acp/cursor': 'Cursor (ACP)', 'acp/qwen': 'Qwen Code (ACP)',
+    'acp/copilot': 'Copilot (ACP)', 'acp/kimi': 'Kimi (ACP)',
+    'acp/goose': 'Goose (ACP)', 'acp/hermes': 'Hermes (ACP)'
   };
   return known[raw.toLowerCase()] ?? raw;
 }

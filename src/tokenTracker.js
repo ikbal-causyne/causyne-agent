@@ -144,6 +144,14 @@ export class TokenTracker {
     if (provider === 'ollama') {
       return [0.00, 0.00]; 
     }
+
+    // Peer agents (ACP) and Antigravity bill through the user's own CLI login —
+    // a subscription or a free quota Causyne never sees an invoice for. Showing
+    // a BYOK rate here would invent a cost the user does not owe, and the cost
+    // counter is read as a bill.
+    if (provider === 'acp' || provider.startsWith('acp/') || provider === 'antigravity' || provider === 'agy') {
+      return [0.00, 0.00];
+    }
     
     return [5.00, 15.00]; // Unknown BYOK provider fallback
   }
@@ -242,6 +250,9 @@ export class TokenTracker {
     if (p === 'pollinations' || p === 'local') {
       return 0.00; // Free Mode D / Mode A
     }
+    if (p === 'acp' || p.startsWith('acp/') || p === 'antigravity' || p === 'agy') {
+      return 0.00; // billed by the peer's own subscription, not by Causyne
+    }
     return 0.03; // Default generic media cost
   }
 
@@ -258,15 +269,16 @@ export class TokenTracker {
     this.taskTokens += equivalentTokens;
     this.taskCostUsd += cost;
 
-
-
+    // Read the cumulative total before writing today's file. getCumulativeUsage()
+    // backfills from the daily files when its own file is missing, so loading it
+    // after the daily increment counted this same call twice.
+    const cumulative = await this.getCumulativeUsage();
     const daily = await this.getDailyUsage();
     daily.totalTokens += equivalentTokens;
     daily.totalCalls += 1;
     daily.totalCostUsd = (daily.totalCostUsd || 0) + cost;
     await this.saveDailyUsage(daily);
 
-    const cumulative = await this.getCumulativeUsage();
     cumulative.totalTokens += equivalentTokens;
     cumulative.totalCalls += 1;
     cumulative.totalCostUsd = (cumulative.totalCostUsd || 0) + cost;
@@ -500,13 +512,16 @@ export class TokenTracker {
     // pass firing concurrently with the loop silently subtracts its own tokens
     // from the day's total.
     const { daily, cumulative } = await withUsageLock(async () => {
+      // getCumulativeUsage() backfills from the daily files when its own file is
+      // missing, so it must be read before today's increment is written or the
+      // very first call of a fresh install is counted twice.
+      const cumulative = await this.getCumulativeUsage();
       const daily = await this.getDailyUsage();
       daily.totalTokens += total;
       daily.totalCalls += 1;
       daily.totalCostUsd = (daily.totalCostUsd || 0) + cost;
       await this.saveDailyUsage(daily);
 
-      const cumulative = await this.getCumulativeUsage();
       cumulative.totalTokens += total;
       cumulative.totalCalls += 1;
       cumulative.totalCostUsd = (cumulative.totalCostUsd || 0) + cost;

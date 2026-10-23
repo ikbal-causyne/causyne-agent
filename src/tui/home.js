@@ -147,7 +147,17 @@ export const PROVIDERS = [
   { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL' },
   { id: 'ollama', label: 'Ollama', hint: 'local / offline' },
   { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: 'local AGY · Gemini & Claude models' },
-  { id: 'acp', label: 'ACP Peer Agent (OpenCode, Claude, Codex...)', hint: 'zero-token / external CLI' }
+  { id: 'acp/opencode', label: 'OpenCode', hint: 'ACP · free models available' },
+  { id: 'acp/claude', label: 'Claude Code', hint: 'ACP · your Anthropic subscription' },
+  { id: 'acp/codex', label: 'Codex CLI', hint: 'ACP · your OpenAI login' },
+  { id: 'acp/gemini', label: 'Gemini CLI', hint: 'ACP · free tier / Google login' },
+  { id: 'acp/cursor', label: 'Cursor CLI', hint: 'ACP · your Cursor subscription' },
+  { id: 'acp/qwen', label: 'Qwen Code', hint: 'ACP · DashScope login' },
+  { id: 'acp/copilot', label: 'GitHub Copilot CLI', hint: 'ACP · your Copilot subscription' },
+  { id: 'acp/kimi', label: 'Kimi CLI', hint: 'ACP · Moonshot login' },
+  { id: 'acp/goose', label: 'Goose', hint: 'ACP · your configured providers' },
+  { id: 'acp/hermes', label: 'Hermes Agent', hint: 'ACP · Nous Research' },
+  { id: 'acp', label: 'ACP peer agent (custom)', hint: 'any ACP-compatible CLI' }
 ].map((entry) => ({ ...entry, model: DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
 
 /** Run the shared setup transaction inside the existing prompt. */

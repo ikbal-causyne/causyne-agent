@@ -11,8 +11,12 @@
 // ZERO-MALWARE: Pure TypeScript/ESM. Strictly respects timeouts, no secret leakage, no unprompted background calls.
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { causyneHome } from './utils/paths.js';
-import { MODEL_CATALOGUE, DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
+import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
+import { ANTIGRAVITY_MODELS, ANTIGRAVITY_LABEL_BY_ID, resolveAgyBinary } from './providers/antigravity.js';
+const execFileAsync = promisify(execFile);
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REQUEST_TIMEOUT_MS = 3500; // Fast timeout to never block user interaction
 export function cacheFilePath() {
@@ -40,11 +44,41 @@ export function normalizeProviderKey(provider) {
         return 'muse';
     if (p === 'openai-compatible' || p === 'custom')
         return 'openai-compatible';
+    if (p === 'antigravity' || p === 'agy')
+        return 'antigravity';
+    if (p === 'acp')
+        return 'acp';
+    if (p.startsWith('acp/')) {
+        const peer = p.slice(4).split('/')[0];
+        return peer ? `acp/${peer}` : 'acp';
+    }
     return p;
+}
+/**
+ * The peer id behind an `acp/<peer>` provider key, or null.
+ *
+ * Peer agents are providers in exactly the same sense as an HTTP API: the user
+ * already owns the credential (their CLI login), and the models available are
+ * whatever that account can reach. The provider key carries the peer so the
+ * catalogue, the cache and the picker cannot disagree about which one is meant.
+ */
+export function peerIdFromProviderKey(provider) {
+    const p = (provider || '').toLowerCase().trim();
+    if (!p.startsWith('acp/'))
+        return null;
+    const peer = p.slice(4).split('/')[0];
+    return peer || null;
 }
 /** Get the static curated models for a provider id. */
 export function getCuratedModels(provider) {
     const norm = normalizeProviderKey(provider);
+    if (norm === 'antigravity')
+        return [...ANTIGRAVITY_MODELS];
+    const peer = peerIdFromProviderKey(norm);
+    if (peer)
+        return [...(PEER_MODEL_CATALOGUE[peer] ?? [])];
+    if (norm === 'acp')
+        return [...(MODEL_CATALOGUE['ACP (Peer Agents)'] ?? [])];
     const mapping = {
         'deepseek': 'DeepSeek',
         'qwen': 'Qwen',
@@ -63,6 +97,64 @@ export function getCuratedModels(provider) {
         return [...MODEL_CATALOGUE[key]];
     }
     return [];
+}
+const MODEL_LIST_TIMEOUT_MS = 8000;
+const ANSI_ESCAPE = /\u001b\[[0-9;]*[A-Za-z]/g;
+const PEER_MODEL_COMMANDS = {
+    opencode: { command: 'opencode', args: ['models'] },
+    cursor: { command: 'cursor-agent', args: ['models'] }
+};
+async function runModelList(command, args) {
+    try {
+        const { stdout } = await execFileAsync(command, args, {
+            timeout: MODEL_LIST_TIMEOUT_MS,
+            maxBuffer: 4 * 1024 * 1024,
+            windowsHide: true
+        });
+        return stdout.replace(ANSI_ESCAPE, '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    }
+    catch {
+        return [];
+    }
+}
+function parseModelIds(lines) {
+    const models = [];
+    for (const line of lines) {
+        if (/^(fetching|loading|no models|error)/i.test(line))
+            continue;
+        if (line.endsWith('…') || line.endsWith('...'))
+            continue;
+        const firstColumn = (line.split('\t')[0] ?? '').trim();
+        if (!firstColumn || firstColumn.includes(' '))
+            continue;
+        models.push(firstColumn);
+    }
+    return [...new Set(models)];
+}
+/**
+ * Ask a peer CLI which models its account can reach. Zero tokens: this runs the
+ * peer's own listing command, never a model request.
+ */
+export async function discoverPeerModels(peerId) {
+    const peer = (peerId || '').toLowerCase().trim();
+    const listing = PEER_MODEL_COMMANDS[peer];
+    if (!listing)
+        return [];
+    return parseModelIds(await runModelList(listing.command, listing.args));
+}
+/** Ask Antigravity for its live model list and return the readable labels. */
+export async function discoverAntigravityModels() {
+    const lines = await runModelList(resolveAgyBinary(), ['models']);
+    const models = [];
+    for (const line of lines) {
+        if (/^(fetching|loading|no models|error)/i.test(line))
+            continue;
+        const [id, label] = line.split('\t').map((part) => part.trim());
+        if (!id || id.includes(' '))
+            continue;
+        models.push(label || ANTIGRAVITY_LABEL_BY_ID[id] || id);
+    }
+    return [...new Set(models)];
 }
 /** Read cache safely from ~/.causyne/models_cache.json */
 export function readModelCache() {
@@ -127,6 +219,11 @@ export function saveCachedModels(provider, models) {
 export async function fetchLiveModels(provider, config = {}) {
     const norm = normalizeProviderKey(provider);
     const { apiKey, baseUrl } = config;
+    if (norm === 'antigravity')
+        return discoverAntigravityModels();
+    const peer = peerIdFromProviderKey(norm);
+    if (peer)
+        return discoverPeerModels(peer);
     try {
         if (norm === 'ollama') {
             const host = (baseUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
@@ -257,8 +354,11 @@ export async function resolveAvailableModels(provider, config = {}, forceRefresh
         const combined = [...new Set([...cached, ...curated])];
         return { models: combined, source: 'cache' };
     }
-    // Attempt lazy background discovery if credentials exist
-    if (config.apiKey || norm === 'ollama') {
+    // Attempt lazy background discovery if credentials exist. Peer agents and
+    // Antigravity are credentialed by their own CLI login, so they qualify even
+    // with no apiKey in Causyne's vault.
+    const localAgent = norm === 'antigravity' || peerIdFromProviderKey(norm) !== null;
+    if (config.apiKey || norm === 'ollama' || localAgent) {
         const live = await fetchLiveModels(norm, config);
         if (live.length > 0) {
             const combined = [...new Set([...live, ...curated])];

@@ -29,6 +29,26 @@
 // will name every other file that must be updated to match.
 
 /**
+ * Models published by a peer CLI's own `models` command. Only ids verified
+ * against the installed binary live here; a peer with no published list is
+ * absent and uses its own default rather than an invented id.
+ */
+export const PEER_MODEL_CATALOGUE = {
+  opencode: [
+    'opencode/beam-free',
+    'opencode/big-pickle',
+    'opencode/deepseek-v4.1-flash-free',
+    'opencode/flint-40b-free',
+    'opencode/glm-5.3-flash-free',
+    'opencode/mimo-v2.6-flash-free',
+    'opencode/nemotron-3-ultra-free',
+    'opencode/nemotron-3.5-lightning-free',
+    'opencode/nemotron-3.5-super-vl-free'
+  ],
+  claude: ['sonnet', 'opus', 'haiku']
+};
+
+/**
  * Selectable models per provider, newest first.
  *
  * The label keys are a stable configuration format, not display sugar.
@@ -101,14 +121,22 @@ export const MODEL_CATALOGUE = {
   'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest'],
   'Google Antigravity': [
     'Gemini 3.8 Flash (Low)',
+    'Gemini 3.8 Flash (Medium)',
+    'Gemini 3.8 Flash (High)',
+    'Gemini 4 Argon (Low)',
     'Gemini 4 Argon (Medium)',
     'Gemini 4 Argon (High)',
-    'Gemini 3.8 Flash (Medium)',
+    'Claude Sonnet 5.5 (Low)',
     'Claude Sonnet 5.5 (Medium)',
+    'Claude Sonnet 5.5 (High)',
+    'Claude Opus 5.5 (Low)',
     'Claude Opus 5.5 (Medium)',
+    'Claude Opus 5.5 (High)',
     'GPT-OSS 120B (Medium)'
   ],
-  'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose']
+  'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'],
+  'OpenCode (ACP)': PEER_MODEL_CATALOGUE.opencode,
+  'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude
 };
 
 /** Provider labels in picker order. */
@@ -128,6 +156,16 @@ export const DEFAULT_MODEL_BY_PROVIDER = {
   xai: 'grok-3',
   ollama: 'llama3.3',
   acp: 'opencode',
+  'acp/opencode': 'opencode/beam-free',
+  'acp/claude': 'sonnet',
+  'acp/codex': 'codex',
+  'acp/gemini': 'gemini',
+  'acp/cursor': 'cursor',
+  'acp/qwen': 'qwen',
+  'acp/copilot': 'copilot',
+  'acp/kimi': 'kimi',
+  'acp/goose': 'goose',
+  'acp/hermes': 'hermes',
   antigravity: 'Gemini 3.8 Flash (Low)',
   'openai-compatible': ''
 };

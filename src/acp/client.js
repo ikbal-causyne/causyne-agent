@@ -103,8 +103,8 @@ export class AcpClient {
             cwd: cwd || this.options.cwd
         }, 30_000);
     }
-    async prompt(sessionId, text) {
-        const blocks = [{ type: 'text', text }];
+    async prompt(sessionId, input) {
+        const blocks = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
         let collected = '';
         const collector = (update) => {
             this.options.onUpdate?.(sessionId, update);

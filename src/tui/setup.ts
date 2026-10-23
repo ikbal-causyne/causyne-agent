@@ -1,4 +1,6 @@
 /** Shared setup transaction for the home panel and standalone CLI. */
+import { resolveAvailableModels } from '../dynamicCatalogue.js';
+
 export interface SetupChoice { id: string; label: string; description?: string }
 export interface SetupProvider { id: string; label: string; hint: string; model: string }
 export interface SetupUI {
@@ -8,6 +10,12 @@ export interface SetupUI {
 type Config = Record<string, unknown>;
 const string = (value: unknown): string => typeof value === 'string' ? value : '';
 const customProviders = new Set(['openai-compatible', 'dashscope-byok', 'ollama']);
+
+/** Peers and Antigravity authenticate through their own CLI, not a stored key. */
+function isLocalAgent(providerId: string): boolean {
+  return providerId === 'acp' || providerId.startsWith('acp/')
+    || providerId === 'antigravity' || providerId === 'agy';
+}
 const defaults: Record<string, string> = {
   ollama: 'http://localhost:11434/api/chat',
   'dashscope-byok': 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
@@ -56,14 +64,39 @@ export async function runSetup(ui: SetupUI, providers: SetupProvider[], store: {
       if (answer === null) return null;
       baseUrl = answer;
     }
-    const model = await text('Setup 3/5 · model', ['Enter the model ID supported by your provider.'],
-      (sameProvider ? string(draft.model) : '') || provider.model, false, value => value ? null : 'A model ID is required.');
+    const suggestedModel = (sameProvider ? string(draft.model) : '') || provider.model;
+    let model: string | null;
+    if (isLocalAgent(provider.id)) {
+      // The peer already knows which models its account can reach. Listing them
+      // is the whole point of treating it as a provider; a blank text box would
+      // make the user guess ids the CLI could have told us for free.
+      const known = (await resolveAvailableModels(provider.id, {}, false)).models;
+      if (known.length === 0) {
+        model = await text('Setup 3/5 · model',
+          ['Enter a model ID published by the installed CLI.',
+            'Leave the default to let the peer choose its own model.'],
+          suggestedModel, false, value => value ? null : 'A model ID is required.');
+      } else {
+        const picked = await ui.select({ title: 'Setup 3/5 · model', items: [
+          ...known.map((id) => ({ id, label: id, description: provider.label })),
+          { id: '__custom__', label: 'Other model ID…', description: 'enter one manually' }
+        ] });
+        if (!picked) return null;
+        model = picked.id === '__custom__'
+          ? await text('Setup 3/5 · model', ['Enter the model ID published by the installed CLI.'], suggestedModel, false,
+            value => value ? null : 'A model ID is required.')
+          : picked.id;
+      }
+    } else {
+      model = await text('Setup 3/5 · model', ['Enter the model ID supported by your provider.'],
+        suggestedModel, false, value => value ? null : 'A model ID is required.');
+    }
     if (model === null) return null;
     const unchangedEndpoint = sameProvider && (string(draft.baseUrl) || defaults[provider.id] || '') === baseUrl;
     // Fixed endpoints have no editable URL. A changed endpoint never inherits a key.
     const keepKey = sameProvider && (!customProviders.has(provider.id) || unchangedEndpoint);
     let apiKey = '';
-    if (provider.id !== 'ollama' && provider.id !== 'acp' && provider.id !== 'antigravity') {
+    if (provider.id !== 'ollama' && !isLocalAgent(provider.id)) {
       const oldKey = keepKey ? string(draft.apiKey) : '';
       const answer = await text('Setup 3/5 · credentials', ['Stored encrypted locally; used to authenticate with your selected provider.',
         oldKey ? 'Blank keeps the key for this same provider and endpoint.' : 'Enter a key for this provider.',
