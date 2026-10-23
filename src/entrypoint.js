@@ -199,6 +199,18 @@ program
   });
 
 program
+  .command('continuum [action] [args...]')
+  .alias('resume')
+  .description('Cross-agent session extraction & resumption (Antigravity, OpenCode, Codex, Claude Code)')
+  .allowUnknownOption()
+  .action(async (action, args) => {
+    const argv = action ? [action, ...(args || [])] : [];
+    const result = await runCommand('continuum', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
   .command('exec <command>')
   .description('Quick execute a command using the agent terminal')
   .action(async (command) => {

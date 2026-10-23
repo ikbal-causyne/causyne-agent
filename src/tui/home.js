@@ -62,8 +62,9 @@ export const PRIMARY_ACTIONS = [
  * stays readable while the complete command surface remains discoverable.
  */
 export const MORE_ACTIONS = [
+  { id: 'continuum', label: 'continuum', category: 'workspace', hint: 'resume past sessions across Antigravity, OpenCode, Codex, Claude Code', kind: 'command', command: '/continuum' },
   { id: 'sessions', label: 'sessions', category: 'workspace', hint: 'browse saved local sessions', kind: 'command', command: '/sessions' },
-  { id: 'model', label: 'model', category: 'workspace', hint: 'show the active provider and model', kind: 'command', command: '/model' },
+  { id: 'model', label: 'model', category: 'workspace', hint: 'choose or switch active provider and model', kind: 'command', command: '/model' },
   { id: 'approvals', label: 'approvals', category: 'workspace', hint: 'review standing session approvals', kind: 'command', command: '/approvals' },
   {
     id: 'context', label: 'context', category: 'reports', hint: 'what fills the context window', kind: 'stay',

@@ -28,6 +28,7 @@ import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
+import { readClipboardSync } from './clipboardSync.js';
 
 const CTRL_C_WINDOW_MS = 2000;
 
@@ -638,12 +639,6 @@ export class ChatPrompt {
       if (this.surface.captureMouse() && this.notice.startsWith('top of this view')) this.notice = '';
     }
 
-    if (key.name === 'paste') {
-      this.editor.insert(key.text);
-      this.refreshCompletion();
-      return;
-    }
-
     if (key.ctrl && key.name === 'c') {
       // A modal owns the screen, so ctrl+c must dismiss THAT before it touches
       // the turn behind it. closeLayer() answers false, which is what makes
@@ -662,6 +657,8 @@ export class ChatPrompt {
 
     // A dialog owns the keyboard while it is up — the editor must not also see
     // the keystroke, or typing a filter would edit the message behind it.
+    // This MUST route before any default key handling (like paste) so modal
+    // dialogs (e.g. InputLayer for API keys) receive bracketed paste events.
     if (this.layer) {
       const action = this.layer.key(key);
       if (action === 'close') { this.closeLayer(); return; }
@@ -674,6 +671,12 @@ export class ChatPrompt {
       // prevent, and only a layer that opts in by name can do it.
       if (action === 'dismiss') this.closeLayer();
       else if (action !== 'passthrough') return;
+    }
+
+    if (key.name === 'paste') {
+      this.editor.insert(key.text);
+      this.refreshCompletion();
+      return;
     }
 
     if (this.completion && this.handleCompletionKey(key)) return;
@@ -712,6 +715,14 @@ export class ChatPrompt {
         case 'p': return this.openPalette();
         case 'l': return this.clearScreen();
         case 'o': return this.expand();
+        case 'v': {
+          const text = readClipboardSync();
+          if (text) {
+            this.editor.insert(text);
+            this.refreshCompletion();
+          }
+          return;
+        }
         default: break;
       }
     }

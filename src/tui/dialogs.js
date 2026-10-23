@@ -23,6 +23,7 @@ import { paint, bold, dim, badge, GLYPHS } from './theme.js';
 import { truncate, wrap, visibleWidth, safeDisplay, shortenHome } from './text.js';
 import { approvalDiff } from './diff.js';
 import { isChar } from './keys.js';
+import { readClipboardSync } from './clipboardSync.js';
 
 /**
  * A picker. `items` are SelectList items; `onPick(item)` fires on enter.
@@ -121,7 +122,7 @@ export class InputLayer extends Layer {
 
     // Park the caret after what is displayed — which for a masked field is the
     // dot count, not the character count, or the caret drifts off the value.
-    this.cursor = { x: 2 + (this.mask ? raw.length : visibleWidth(raw.slice(0, this.editor.col))), y: rows.length - 1 };
+    this.cursor = { x: 2 + (this.mask ? this.editor.col : visibleWidth(raw.slice(0, this.editor.col))), y: rows.length - 1 };
     return rows;
   }
 
@@ -148,7 +149,11 @@ export class InputLayer extends Layer {
       case 'home':  this.editor.moveHome(); return 'handled';
       case 'end':   this.editor.moveEnd(); return 'handled';
       case 'char':  this.editor.insert(event.text); return 'handled';
-      case 'paste': this.editor.insert(event.text); return 'handled';
+      case 'paste': {
+        const clean = String(event.text || '').replace(/[\r\n]+/g, '').trim();
+        if (clean) this.editor.insert(clean);
+        return 'handled';
+      }
       default: break;
     }
 
@@ -159,6 +164,14 @@ export class InputLayer extends Layer {
         case 'k': this.editor.killToEnd(); return 'handled';
         case 'u': this.editor.killToStart(); return 'handled';
         case 'w': this.editor.killWordLeft(); return 'handled';
+        case 'v': {
+          const text = readClipboardSync();
+          if (text) {
+            const clean = String(text).replace(/[\r\n]+/g, '').trim();
+            if (clean) this.editor.insert(clean);
+          }
+          return 'handled';
+        }
         default: break;
       }
     }

@@ -78,6 +78,21 @@ export function loadConfig() {
         }
       }
 
+      // Decrypt provider-specific API keys if stored
+      if (parsed.providerKeys && typeof parsed.providerKeys === 'object') {
+        for (const [provider, keyVal] of Object.entries(parsed.providerKeys)) {
+          if (typeof keyVal === 'string' && keyVal) {
+            parsed.providerKeys[provider] = decryptString(keyVal);
+          }
+        }
+      }
+      if (parsed.apiKey && parsed.provider) {
+        parsed.providerKeys = parsed.providerKeys || {};
+        if (!parsed.providerKeys[parsed.provider]) {
+          parsed.providerKeys[parsed.provider] = parsed.apiKey;
+        }
+      }
+
       // Self-heal a model id written before src/modelIds.js existed.
       const canonicalModel = canonicalModelId(parsed.model);
       if (canonicalModel !== parsed.model) {
@@ -264,6 +279,13 @@ export function saveConfig(config) {
   const configToSave = JSON.parse(JSON.stringify(config));
   if (configToSave.apiKey) {
     configToSave.apiKey = encryptString(configToSave.apiKey);
+  }
+  if (configToSave.providerKeys && typeof configToSave.providerKeys === 'object') {
+    for (const [provider, keyVal] of Object.entries(configToSave.providerKeys)) {
+      if (typeof keyVal === 'string' && keyVal) {
+        configToSave.providerKeys[provider] = encryptString(keyVal);
+      }
+    }
   }
 
   // SECURITY: Config file contains encrypted keys, must be 0600 (owner read/write only)

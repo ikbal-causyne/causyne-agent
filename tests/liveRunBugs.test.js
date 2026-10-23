@@ -50,7 +50,7 @@ test('assembly: a request always carries a user or tool message', async () => {
 
   assert.match(
     loop,
-    /if \(!prunedMessages\.some\(m => m\.role === 'user' \|\| m\.role === 'tool'\)\)/,
+    /if \(!prunedMessages\.some\(\(?m\)? => m\.role === 'user' \|\| m\.role === 'tool'\)\)/,
     'the last-moment re-anchor is gone; a stripped window can 400 the provider again'
   );
   assert.ok(

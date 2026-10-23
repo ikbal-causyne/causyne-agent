@@ -162,7 +162,10 @@ describe('MCP: consent gates the connection', () => {
     const client = await mcp.connectServer('mock');
     assert.equal(client.tools.some(tool => tool.name === 'extra'), false);
     assert.equal((await client.callTool('enable_extra', {})).success, true);
-    await new Promise(resolve => setTimeout(resolve, 400));
+    for (let i = 0; i < 20; i++) {
+      if (client.tools.some(tool => tool.name === 'extra')) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     assert.equal(client.tools.some(tool => tool.name === 'extra'), true);
   });
 

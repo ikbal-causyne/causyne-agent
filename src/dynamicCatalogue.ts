@@ -111,6 +111,7 @@ export interface ByokProviderInfo {
   isCurrent: boolean;
   models: string[];
   defaultModel: string;
+  envVar?: string | undefined;
 }
 
 export interface AcpPeerInfo {
@@ -137,7 +138,7 @@ export interface ProviderOverview {
  * checking configured state for BYOK and installation status for ACP agents.
  */
 export function getAvailableProvidersOverview(
-  config: { provider?: string; apiKey?: string; model?: string } = {}
+  config: { provider?: string; apiKey?: string; model?: string; providerKeys?: Record<string, string> } = {}
 ): ProviderOverview {
   const currentProvider = config.provider || '';
   const currentModel = config.model || '';
@@ -202,9 +203,10 @@ export function getAvailableProvidersOverview(
 
   const byok: ByokProviderInfo[] = byokDefs.map((def) => {
     const isCurrent = currentProvider === def.id || (def.id === 'qwen' && currentProvider === 'dashscope-byok');
-    const isConfigured = def.id === 'ollama'
-      || Boolean(isCurrent && config.apiKey)
+    const hasStoredKey = Boolean(isCurrent && config.apiKey)
+      || Boolean(config.providerKeys && (config.providerKeys[def.id] || (def.id === 'qwen' && config.providerKeys['dashscope-byok'])))
       || Boolean(def.envVar && process.env[def.envVar]);
+    const isConfigured = def.id === 'ollama' || hasStoredKey;
 
     return {
       id: def.id,
@@ -212,7 +214,8 @@ export function getAvailableProvidersOverview(
       isConfigured,
       isCurrent,
       models: def.models,
-      defaultModel: def.defaultModel
+      defaultModel: def.defaultModel,
+      envVar: def.envVar
     };
   });
 

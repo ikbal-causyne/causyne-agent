@@ -16,6 +16,7 @@
 
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { truncate, visibleWidth, safeDisplay } from './text.js';
+import { readClipboardSync } from './clipboardSync.js';
 
 /**
  * Score `query` against `text` as a fuzzy subsequence.
@@ -223,6 +224,14 @@ export class SelectList {
           return 'handled';
         }
         return 'cancel';
+      case 'paste': {
+        const clean = String(key.text || '').replace(/[\r\n]+/g, ' ').trim();
+        if (clean) {
+          this.query += clean;
+          this.refilter();
+        }
+        return 'handled';
+      }
       default: break;
     }
 
@@ -231,6 +240,17 @@ export class SelectList {
       if (key.name === 'p') { this.move(-1, rows); return 'handled'; }
       if (key.name === 'n') { this.move(1, rows); return 'handled'; }
       if (key.name === 'u') { this.query = ''; this.refilter(); return 'handled'; }
+      if (key.name === 'v') {
+        const text = readClipboardSync();
+        if (text) {
+          const clean = String(text).replace(/[\r\n]+/g, ' ').trim();
+          if (clean) {
+            this.query += clean;
+            this.refilter();
+          }
+        }
+        return 'handled';
+      }
       return null;
     }
 

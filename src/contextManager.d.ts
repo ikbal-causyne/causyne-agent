@@ -1,0 +1,10 @@
+export function resolveCharPool(...args: any[]): any;
+export function measureMessages(...args: any[]): any;
+export function resultCapFor(...args: any[]): any;
+export function decayToolResults(...args: any[]): any;
+export function buildWindow(...args: any[]): any;
+export function compactInPlace(...args: any[]): any;
+export function describeDroppedMessages(...args: any[]): any;
+export function sanitizeSequences(...args: any[]): any;
+export function applyProgressiveCompaction(...args: any[]): any;
+export function snipOversizedToolOutputs(...args: any[]): any;

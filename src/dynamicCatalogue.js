@@ -165,16 +165,18 @@ export function getAvailableProvidersOverview(config = {}) {
     ];
     const byok = byokDefs.map((def) => {
         const isCurrent = currentProvider === def.id || (def.id === 'qwen' && currentProvider === 'dashscope-byok');
-        const isConfigured = def.id === 'ollama'
-            || Boolean(isCurrent && config.apiKey)
+        const hasStoredKey = Boolean(isCurrent && config.apiKey)
+            || Boolean(config.providerKeys && (config.providerKeys[def.id] || (def.id === 'qwen' && config.providerKeys['dashscope-byok'])))
             || Boolean(def.envVar && process.env[def.envVar]);
+        const isConfigured = def.id === 'ollama' || hasStoredKey;
         return {
             id: def.id,
             label: def.label,
             isConfigured,
             isCurrent,
             models: def.models,
-            defaultModel: def.defaultModel
+            defaultModel: def.defaultModel,
+            envVar: def.envVar
         };
     });
     const acpPeers = [];

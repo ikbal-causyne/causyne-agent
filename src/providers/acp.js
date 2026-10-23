@@ -4,325 +4,346 @@ import { LLMProvider } from './base.js';
 import { AcpClient } from '../acp/client.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
-
 export function isAcpProvider(provider) {
-  if (!provider) return false;
-  const p = String(provider).toLowerCase();
-  return p === 'acp' || p.startsWith('acp/') || p.startsWith('acp:') ||
-    ['opencode', 'claude', 'codex', 'cursor', 'hermes', 'goose', 'copilot'].includes(p);
+    if (!provider)
+        return false;
+    const p = String(provider).toLowerCase();
+    return p === 'acp' || p.startsWith('acp/') || p.startsWith('acp:') ||
+        ['opencode', 'claude', 'codex', 'cursor', 'hermes', 'goose', 'copilot'].includes(p);
 }
-
 export class AcpProvider extends LLMProvider {
-  constructor(config = {}) {
-    super(config);
-
-    // Resolve the peer first: `acp/opencode` names it outright, a bare peer id
-    // (the legacy shape) names it too, and a generic `acp` falls back to the
-    // model field — which historically carried the peer id.
-    const providerStr = String(config.provider || '').toLowerCase().trim();
-    const configuredModel = typeof config.model === 'string' ? config.model.trim() : '';
-    let resolvedPeer = '';
-    if (providerStr.startsWith('acp/') || providerStr.startsWith('acp:')) {
-      resolvedPeer = providerStr.slice(4).split('/')[0];
-    } else if (providerStr && providerStr !== 'acp') {
-      resolvedPeer = providerStr;
-    } else if (config.peer) {
-      resolvedPeer = String(config.peer).toLowerCase();
-    } else if (configuredModel && configuredModel !== 'acp' && BUILTIN_PEER_PRESETS[configuredModel.toLowerCase()]) {
-      resolvedPeer = configuredModel.toLowerCase();
-    }
-    this.peerId = resolvedPeer || 'opencode';
-
-    // Every peer gets its own default. Without this, selecting Claude Code or
-    // Codex inherited OpenCode's model and asked the wrong peer for it.
-    const peerDefault = DEFAULT_MODEL_BY_PROVIDER[`acp/${this.peerId}`]
-      || DEFAULT_MODEL_BY_PROVIDER['acp']
-      || this.peerId;
-    const modelIsPeerName = !configuredModel || configuredModel === 'acp' || configuredModel === this.peerId;
-    this.model = canonicalModelId(modelIsPeerName ? peerDefault : configuredModel);
-
-    const profile = getPeerProfile(this.peerId);
-    if (profile) {
-      this.command = profile.command;
-      this.args = profile.args || [];
-    } else {
-      const preset = BUILTIN_PEER_PRESETS[this.peerId];
-      if (preset) {
-        this.command = preset.command;
-        this.args = preset.args || [];
-      } else {
-        this.command = config.command || this.peerId;
-        this.args = config.args || ['acp'];
-      }
-    }
-
-    this.visionModels = ['*'];
-    this.audioModels = [];
-  }
-
-  formatConversation(messages, tools = []) {
-    const lines = [];
-    lines.push(`[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.`);
-
-    if (tools && tools.length > 0) {
-      const toolSummaries = tools.map(t => {
-        const name = t.name || t.function?.name || 'unknown';
-        const desc = t.description || t.function?.description || '';
-        const params = t.parameters || t.input_schema || t.function?.parameters || {};
-        const paramKeys = Object.keys(params.properties || {}).join(', ');
-        return `- ${name}(${paramKeys}): ${desc}`;
-      }).join('\n');
-      lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
-    }
-    for (const msg of messages) {
-      const role = msg.role === 'user'
-        ? 'User'
-        : (msg.role === 'assistant'
-          ? 'Assistant'
-          : (msg.role === 'system'
-            ? 'System Instructions'
-            : (msg.role === 'tool'
-              ? `Tool Result (${msg.name || 'tool'})`
-              : 'Context')));
-
-      let text = '';
-      if (typeof msg.content === 'string') {
-        text = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        text = msg.content.map(c => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
-      }
-
-      if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-        for (const tc of msg.tool_calls) {
-          const fn = tc.function || {};
-          const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
-          text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+    peerId;
+    command;
+    args;
+    activeClient = null;
+    activeSessionId = null;
+    currentTurnChunkHandler = null;
+    currentTurnReasoningHandler = null;
+    constructor(config = {}) {
+        super(config);
+        const providerStr = String(config.provider || '').toLowerCase().trim();
+        const configuredModel = typeof config.model === 'string' ? config.model.trim() : '';
+        let resolvedPeer = '';
+        if (providerStr.startsWith('acp/') || providerStr.startsWith('acp:')) {
+            resolvedPeer = providerStr.slice(4).split('/')[0] || '';
         }
-      }
-
-      if (text.trim()) {
-        lines.push(`[${role}]\n${text.trim()}`);
-      }
-    }
-    return lines.join('\n\n');
-  }
-
-  /**
-   * The same transcript as formatConversation, split into ACP content blocks so
-   * images the agent loop attached reach a peer that can see them instead of
-   * being dropped by a text-only formatter. When the peer's initialize result
-   * does not advertise image input, the image is replaced with a plain note —
-   * the model must know it is blind, not guess at what it cannot see.
-   */
-  formatPromptBlocks(messages, tools = [], imageSupport = false) {
-    const blocks = [];
-    let pending = [];
-    const flush = () => {
-      if (pending.length === 0) return;
-      blocks.push({ type: 'text', text: pending.join('\n\n') });
-      pending = [];
-    };
-
-    pending.push(`[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.`);
-
-    if (tools && tools.length > 0) {
-      const toolSummaries = tools.map(t => {
-        const name = t.name || t.function?.name || 'unknown';
-        const desc = t.description || t.function?.description || '';
-        const params = t.parameters || t.input_schema || t.function?.parameters || {};
-        const paramKeys = Object.keys(params.properties || {}).join(', ');
-        return `- ${name}(${paramKeys}): ${desc}`;
-      }).join('\n');
-      pending.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
-    }
-
-    for (const msg of messages) {
-      const role = this._roleLabel(msg);
-      let text = '';
-      if (typeof msg.content === 'string') {
-        text = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        text = msg.content.map(c => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
-      }
-
-      if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-        for (const tc of msg.tool_calls) {
-          const fn = tc.function || {};
-          const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
-          text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+        else if (providerStr && providerStr !== 'acp') {
+            resolvedPeer = providerStr;
         }
-      }
-
-      if (text.trim()) {
-        pending.push(`[${role}]\n${text.trim()}`);
-      }
-
-      if (Array.isArray(msg.content)) {
-        for (const part of msg.content) {
-          const image = this._imageBlock(part);
-          if (!image) continue;
-          flush();
-          if (imageSupport) {
-            blocks.push(image);
-          } else {
-            pending.push(`[Image omitted — ${this.peerId} does not accept image input]`);
-          }
+        else if (config.peer) {
+            resolvedPeer = String(config.peer).toLowerCase();
         }
-      }
-    }
-
-    flush();
-    return blocks.length > 0 ? blocks : [{ type: 'text', text: 'Continue.' }];
-  }
-
-  _roleLabel(msg) {
-    if (msg.role === 'user') return 'User';
-    if (msg.role === 'assistant') return 'Assistant';
-    if (msg.role === 'system') return 'System Instructions';
-    if (msg.role === 'tool') return `Tool Result (${msg.name || 'tool'})`;
-    return 'Context';
-  }
-
-  _imageBlock(part) {
-    if (!part || typeof part !== 'object') return null;
-    if (part.type === 'image' && part.source?.type === 'base64') {
-      return { type: 'image', mimeType: part.source.media_type, data: part.source.data };
-    }
-    if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
-      const match = part.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) return { type: 'image', mimeType: match[1], data: match[2] };
-    }
-    return null;
-  }
-
-  extractToolCalls(text) {
-    const calls = [];
-    if (!text || typeof text !== 'string') return calls;
-    const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
-    let match;
-    let index = 0;
-    while ((match = regex.exec(text)) !== null) {
-      try {
-        const parsed = JSON.parse(match[1].trim());
-        const name = parsed.name || parsed.tool || parsed.function?.name;
-        if (name) {
-          const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-          calls.push({
-            id: `acp_call_${Date.now()}_${index++}`,
-            type: 'function',
-            function: {
-              name,
-              arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+        else if (configuredModel && configuredModel !== 'acp' && BUILTIN_PEER_PRESETS[configuredModel.toLowerCase()]) {
+            resolvedPeer = configuredModel.toLowerCase();
+        }
+        this.peerId = resolvedPeer || 'opencode';
+        const peerDefault = DEFAULT_MODEL_BY_PROVIDER[`acp/${this.peerId}`]
+            || DEFAULT_MODEL_BY_PROVIDER[`acp`]
+            || this.peerId;
+        const modelIsPeerName = !configuredModel || configuredModel === 'acp' || configuredModel === this.peerId;
+        this.model = canonicalModelId(modelIsPeerName ? peerDefault : configuredModel);
+        const profile = getPeerProfile(this.peerId);
+        if (profile) {
+            this.command = profile.command;
+            this.args = profile.args || [];
+        }
+        else {
+            const preset = BUILTIN_PEER_PRESETS[this.peerId];
+            if (preset) {
+                this.command = preset.command;
+                this.args = preset.args || [];
             }
-          });
+            else {
+                this.command = config.command || this.peerId;
+                this.args = config.args || ['acp'];
+            }
         }
-      } catch {
-        // ignore malformed tool_call blocks
-      }
+        this.visionModels = ['*'];
+        this.audioModels = [];
     }
-
-    if (calls.length === 0) {
-      const fenceRegex = /```(?:tool_call|json)?\s*(\{[\s\S]*?"name"\s*:\s*[\s\S]*?\})\s*```/g;
-      while ((match = fenceRegex.exec(text)) !== null) {
+    formatConversation(messages, tools = []) {
+        const lines = [];
+        lines.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
+        if (tools && tools.length > 0) {
+            const toolSummaries = tools.map(t => {
+                const name = t.name || t.function?.name || 'unknown';
+                const desc = t.description || t.function?.description || '';
+                const params = t.parameters || t.input_schema || t.function?.parameters || {};
+                const paramKeys = Object.keys(params.properties || {}).join(', ');
+                return `- ${name}(${paramKeys}): ${desc}`;
+            }).join('\n');
+            lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
+        }
+        for (const msg of messages) {
+            const role = msg.role === 'user'
+                ? 'User'
+                : (msg.role === 'assistant'
+                    ? 'Assistant'
+                    : (msg.role === 'system'
+                        ? 'System Instructions'
+                        : (msg.role === 'tool'
+                            ? `Tool Result (${msg.name || 'tool'})`
+                            : 'Context')));
+            let text = '';
+            if (typeof msg.content === 'string') {
+                text = msg.content;
+            }
+            else if (Array.isArray(msg.content)) {
+                text = msg.content.map((c) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
+            }
+            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+                for (const tc of msg.tool_calls) {
+                    const fn = tc.function || {};
+                    const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+                    text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+                }
+            }
+            if (text.trim()) {
+                lines.push(`[${role}]\n${text.trim()}`);
+            }
+        }
+        return lines.join('\n\n');
+    }
+    formatPromptBlocks(messages, tools = [], imageSupport = false) {
+        const blocks = [];
+        let pending = [];
+        const flush = () => {
+            if (pending.length === 0)
+                return;
+            blocks.push({ type: 'text', text: pending.join('\n\n') });
+            pending = [];
+        };
+        pending.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
+        if (tools && tools.length > 0) {
+            const toolSummaries = tools.map(t => {
+                const name = t.name || t.function?.name || 'unknown';
+                const desc = t.description || t.function?.description || '';
+                const params = t.parameters || t.input_schema || t.function?.parameters || {};
+                const paramKeys = Object.keys(params.properties || {}).join(', ');
+                return `- ${name}(${paramKeys}): ${desc}`;
+            }).join('\n');
+            pending.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
+        }
+        for (const msg of messages) {
+            const role = this._roleLabel(msg);
+            let text = '';
+            if (typeof msg.content === 'string') {
+                text = msg.content;
+            }
+            else if (Array.isArray(msg.content)) {
+                text = msg.content.map((c) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
+            }
+            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+                for (const tc of msg.tool_calls) {
+                    const fn = tc.function || {};
+                    const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+                    text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+                }
+            }
+            if (text.trim()) {
+                pending.push(`[${role}]\n${text.trim()}`);
+            }
+            if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                    const image = this._imageBlock(part);
+                    if (!image)
+                        continue;
+                    flush();
+                    if (imageSupport) {
+                        blocks.push(image);
+                    }
+                    else {
+                        pending.push(`[Image omitted — ${this.peerId} does not accept image input]`);
+                    }
+                }
+            }
+        }
+        flush();
+        return blocks.length > 0 ? blocks : [{ type: 'text', text: 'Continue.' }];
+    }
+    _roleLabel(msg) {
+        if (msg.role === 'user')
+            return 'User';
+        if (msg.role === 'assistant')
+            return 'Assistant';
+        if (msg.role === 'system')
+            return 'System Instructions';
+        if (msg.role === 'tool')
+            return `Tool Result (${msg.name || 'tool'})`;
+        return 'Context';
+    }
+    _imageBlock(part) {
+        if (!part || typeof part !== 'object')
+            return null;
+        if (part.type === 'image' && part.source?.type === 'base64') {
+            return { type: 'image', mimeType: part.source.media_type, data: part.source.data };
+        }
+        if (part.type === 'image_url' && typeof part.image_url?.url === 'string') {
+            const match = part.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
+            if (match)
+                return { type: 'image', mimeType: match[1], data: match[2] };
+        }
+        return null;
+    }
+    extractToolCalls(text) {
+        const calls = [];
+        if (!text || typeof text !== 'string')
+            return calls;
+        const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
+        let match;
+        let index = 0;
+        while ((match = regex.exec(text)) !== null) {
+            try {
+                const raw = match[1]?.trim() || '';
+                const parsed = JSON.parse(raw);
+                const name = parsed.name || parsed.tool || parsed.function?.name;
+                if (name) {
+                    const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
+                    calls.push({
+                        id: `acp_call_${Date.now()}_${index++}`,
+                        type: 'function',
+                        function: {
+                            name,
+                            arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+                        }
+                    });
+                }
+            }
+            catch {
+                // ignore malformed tool_call blocks
+            }
+        }
+        if (calls.length === 0) {
+            const fenceRegex = /```(?:tool_call|json)?\s*(\{[\s\S]*?"name"\s*:\s*[\s\S]*?\})\s*```/g;
+            while ((match = fenceRegex.exec(text)) !== null) {
+                try {
+                    const raw = match[1]?.trim() || '';
+                    const parsed = JSON.parse(raw);
+                    const name = parsed.name || parsed.tool || parsed.function?.name;
+                    if (name) {
+                        const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
+                        calls.push({
+                            id: `acp_call_${Date.now()}_${index++}`,
+                            type: 'function',
+                            function: {
+                                name,
+                                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+                            }
+                        });
+                    }
+                }
+                catch {
+                    // ignore
+                }
+            }
+        }
+        return calls;
+    }
+    async getOrCreateClient() {
+        if (this.activeClient && this.activeSessionId) {
+            return { client: this.activeClient, sessionId: this.activeSessionId };
+        }
+        const client = new AcpClient({
+            command: this.command,
+            args: this.args,
+            cwd: process.cwd(),
+            promptTimeoutMs: 180_000,
+            permissionHandler: async (req) => {
+                const allowOpt = req.options?.find(o => o.kind === 'allow_once' || o.kind === 'allow_always' || o.optionId === 'allow');
+                if (allowOpt)
+                    return { outcome: 'selected', optionId: allowOpt.optionId };
+                return { outcome: 'cancelled' };
+            },
+            onUpdate: (_sessionId, update) => {
+                if (update && typeof update === 'object') {
+                    const updateObj = update;
+                    if (updateObj.sessionUpdate === 'agent_thought_chunk') {
+                        const thought = updateObj.content?.text || updateObj.thought || (typeof updateObj.content === 'string' ? updateObj.content : '');
+                        if (thought && this.currentTurnReasoningHandler) {
+                            this.currentTurnReasoningHandler(thought);
+                        }
+                    }
+                    else if ('textDelta' in updateObj) {
+                        const delta = updateObj.textDelta;
+                        if (delta && typeof delta === 'string' && this.currentTurnChunkHandler) {
+                            this.currentTurnChunkHandler(delta);
+                        }
+                    }
+                }
+            }
+        });
+        await client.start();
+        const sessionId = await client.newSession(process.cwd());
+        let targetModel = this.model;
+        if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.startsWith('opencode/')) {
+            targetModel = `opencode/${targetModel}`;
+        }
+        if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
+            try {
+                await client.setSessionModel(sessionId, targetModel);
+            }
+            catch {
+                // peer does not support setSessionModel
+            }
+        }
+        this.activeClient = client;
+        this.activeSessionId = sessionId;
+        return { client, sessionId };
+    }
+    async close() {
+        if (this.activeClient) {
+            try {
+                await this.activeClient.close();
+            }
+            catch {
+                // ignore close error
+            }
+            this.activeClient = null;
+            this.activeSessionId = null;
+        }
+    }
+    async chat(messages, options = {}) {
+        this.currentTurnChunkHandler = options.onChunk || null;
+        this.currentTurnReasoningHandler = options.onReasoningChunk || null;
         try {
-          const parsed = JSON.parse(match[1].trim());
-          const name = parsed.name || parsed.tool || parsed.function?.name;
-          if (name) {
-            const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-            calls.push({
-              id: `acp_call_${Date.now()}_${index++}`,
-              type: 'function',
-              function: {
-                name,
-                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-              }
-            });
-          }
-        } catch {
-          // ignore
+            const { client, sessionId } = await this.getOrCreateClient();
+            const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
+            const promptBlocks = this.formatPromptBlocks(messages, options.tools, supportsImages);
+            const promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
+            let result;
+            try {
+                result = await client.prompt(sessionId, promptBlocks);
+            }
+            catch (promptErr) {
+                // If peer failed, try recreating client once in case connection dropped
+                await this.close();
+                const fresh = await this.getOrCreateClient();
+                result = await fresh.client.prompt(fresh.sessionId, promptBlocks);
+            }
+            let rawContent = (result?.text || '').trim();
+            const toolCalls = this.extractToolCalls(rawContent);
+            // Strip tool call XML from chat content display
+            let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+            const response = {
+                content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`),
+                usage: {
+                    promptTokens: Math.ceil(promptText.length / 4),
+                    completionTokens: Math.ceil(rawContent.length / 4),
+                    cachedPromptTokens: 0
+                }
+            };
+            if (toolCalls.length > 0) {
+                response.toolCalls = toolCalls;
+            }
+            return response;
         }
-      }
+        catch (err) {
+            await this.close();
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
+        }
+        finally {
+            this.currentTurnChunkHandler = null;
+        }
     }
-
-    return calls;
-  }
-
-  async chat(messages, options = {}) {
-    const client = new AcpClient({
-      command: this.command,
-      args: this.args,
-      cwd: process.cwd(),
-      promptTimeoutMs: 180_000,
-      permissionHandler: async (req) => {
-        // Auto-approve peer permissions (allow once / allow always)
-        const allowOpt = req.options?.find(o => o.kind === 'allow_once' || o.kind === 'allow_always' || o.optionId === 'allow');
-        if (allowOpt) return { outcome: 'selected', optionId: allowOpt.optionId };
-        return { outcome: 'cancelled' };
-      }
-    });
-
-    try {
-      await client.start();
-      const sessionId = await client.newSession(process.cwd());
-
-      // OpenCode ids are namespaced (`opencode/<model>`); every other peer
-      // takes the id its own CLI publishes. When the resolved model IS the peer
-      // name, the peer's configured default is meant and no override is sent.
-      let targetModel = this.model;
-      if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.startsWith('opencode/')) {
-        targetModel = `opencode/${targetModel}`;
-      }
-      if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
-        try {
-          await client.setSessionModel(sessionId, targetModel);
-        } catch {
-          // peer does not support setSessionModel
-        }
-      }
-
-      const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
-      const promptBlocks = this.formatPromptBlocks(messages, options.tools, supportsImages);
-      const promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
-      let result;
-      try {
-        result = await client.prompt(sessionId, promptBlocks);
-      } catch (promptErr) {
-        // If opencode failed with beam-free, attempt fallback to flint-40b-free
-        if (this.peerId === 'opencode' && targetModel !== 'opencode/flint-40b-free') {
-          try {
-            await client.setSessionModel(sessionId, 'opencode/flint-40b-free');
-            result = await client.prompt(sessionId, promptBlocks);
-          } catch {
-            throw promptErr;
-          }
-        } else {
-          throw promptErr;
-        }
-      }
-
-      let rawContent = (result?.text || '').trim();
-      const toolCalls = this.extractToolCalls(rawContent);
-
-      // Strip tool call XML from chat content display
-      let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
-
-      const response = {
-        content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`),
-        usage: {
-          promptTokens: Math.ceil(promptText.length / 4),
-          completionTokens: Math.ceil(rawContent.length / 4),
-          cachedPromptTokens: 0
-        }
-      };
-      if (toolCalls.length > 0) {
-        response.toolCalls = toolCalls;
-      }
-      return response;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
-    } finally {
-      await client.close();
-    }
-  }
 }

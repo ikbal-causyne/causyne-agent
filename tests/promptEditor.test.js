@@ -972,4 +972,24 @@ describe('a completion that matches exactly submits instead of looping', () => {
     editor.completion = { kind: 'file', query: 'src', items: [{ value: 'src/' }] };
     assert.equal(editor.completionIsExact(), false);
   });
+
+  test('bracketed paste routes to active layer when a modal is open', () => {
+    const editor = prompt();
+    let layerReceivedPaste = null;
+    const mockLayer = {
+      key(event) {
+        if (event.name === 'paste') {
+          layerReceivedPaste = event.text;
+          return 'handled';
+        }
+        return 'handled';
+      }
+    };
+    editor.openLayer(mockLayer);
+    assert.equal(editor.layer, mockLayer);
+
+    editor.handleKey({ name: 'paste', text: 'causyne-modal-pasted-content' });
+    assert.equal(layerReceivedPaste, 'causyne-modal-pasted-content', 'modal layer must receive paste event');
+    assert.equal(editor.editor.getText(), '', 'prompt line editor must NOT receive pasted content while modal is active');
+  });
 });

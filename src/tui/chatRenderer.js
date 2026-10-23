@@ -289,6 +289,15 @@ export class ChatRenderer {
     });
   }
 
+  updateTailFrame(kind, produce, meta = null) {
+    if (!this.transcript) { produce(); return; }
+    this.transcript.replaceTail({
+      kind,
+      meta,
+      produce: (width) => this.capture(width, produce)
+    });
+  }
+
   /**
    * Run a producer with write() redirected and the width pinned.
    */
@@ -529,26 +538,70 @@ export class ChatRenderer {
    * Reasoning that shouts as loudly as the reply trains the user to read
    * neither, and the reply is the part they asked for.
    */
+  /**
+   * The chain of thought the user requested: streamed live directly into the
+   * chat transcript, with real-time updates and clear elapsed time.
+   */
   onAgentReasoning(msg) {
     const content = safeDisplay(msg.content || '');
-    if (!content.trim()) return;
-    this.frame('reasoning', () => this.renderReasoning(content), { reasoning: true });
+    const isStreaming = Boolean(msg.streaming);
+    const elapsedMs = Number(msg.elapsedMs) || 0;
+    const durationText = elapsedMs > 0 ? formatDuration(elapsedMs) : '';
+
+    if (isStreaming) {
+      if (!this._activeReasoning) {
+        this._activeReasoning = true;
+        this.frame('reasoning', () => this.renderReasoning(content, { streaming: true }), { reasoning: true });
+      } else {
+        this.updateTailFrame('reasoning', () => this.renderReasoning(content, { streaming: true }), { reasoning: true });
+      }
+      return;
+    }
+
+    if (this._activeReasoning) {
+      this._activeReasoning = false;
+      this.updateTailFrame('reasoning', () => this.renderReasoning(content, { streaming: false, durationText }), { reasoning: true, done: true });
+    } else if (content.trim()) {
+      this.frame('reasoning', () => this.renderReasoning(content, { streaming: false, durationText }), { reasoning: true, done: true });
+    }
   }
 
-  renderReasoning(content) {
+  renderReasoning(content, { streaming = false, durationText = '' } = {}) {
     const width = this.measure();
-    const rows = wrapBlock(content, Math.max(20, width - 4));
+    const rows = content.trim()
+      ? wrapBlock(content, Math.max(20, width - 4))
+      : ['Contemplating task and formulating approach…'];
 
     this.write();
-    this.write(`${paint('muted', GLYPHS.vLine)} ${dim('thinking')}`);
-    for (const row of rows.slice(0, REASONING_LINES)) {
-      this.write(`${paint('rule', GLYPHS.vLine)} ${dim(row)}`);
+    if (streaming) {
+      this.write(`${paint('warn', GLYPHS.vLine || '│')} ${bold(paint('warn', 'thinking…'))}`);
+    } else {
+      const timePart = durationText ? ` · ${durationText}` : '';
+      this.write(`${paint('muted', GLYPHS.vLine || '│')} ${dim(`thinking${timePart}`)}`);
     }
+
+    const displayRows = rows.slice(0, REASONING_LINES);
+    for (const row of displayRows) {
+      this.write(`${paint('rule', GLYPHS.vLine || '│')} ${dim(row)}`);
+    }
+
     if (rows.length > REASONING_LINES) {
       const hidden = rows.length - REASONING_LINES;
-      this.write(`${paint('rule', GLYPHS.corner)} ${dim(`${GLYPHS.ellipsis} ${hidden} more line${hidden === 1 ? '' : 's'} of reasoning`)}`);
+      this.write(`${paint('rule', GLYPHS.corner || '└')} ${dim(`${GLYPHS.ellipsis} ${hidden} more line${hidden === 1 ? '' : 's'} of reasoning`)}`);
+    } else if (streaming) {
+      this.write(`${paint('rule', GLYPHS.corner || '└')} ${dim('streaming thoughts…')}`);
+    } else {
+      this.write(`${paint('rule', GLYPHS.corner || '└')}`);
     }
     this.write();
+  }
+
+  onAgentActivity(msg) {
+    const text = safeDisplay(msg.activity || msg.message || '').trim();
+    if (!text) return;
+    this.frame('notice', () => {
+      this.write(`${paint('accent', GLYPHS.arrow || '▸')} ${dim(text)}`);
+    }, { activity: true });
   }
 
   onAgentPlan(msg) {
@@ -963,6 +1016,7 @@ export class ChatRenderer {
 
     switch (msg.type) {
       case 'status':           this.onStatus(msg); return true;
+      case 'agent_activity':   this.onAgentActivity(msg); return true;
       case 'agent_message':    this.onAgentMessage(msg); return true;
       case 'agent_reasoning':  this.onAgentReasoning(msg); return true;
       case 'agent_plan':       this.onAgentPlan(msg); return true;

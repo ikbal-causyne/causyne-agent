@@ -631,6 +631,80 @@ export const COMMANDS = [
   },
 
   {
+    name: 'continuum',
+    aliases: ['resume'],
+    scope: 'local',
+    usage: '/continuum [list | read <id> | adopt <id>]',
+    description: 'Cross-agent session extraction and resumption (Antigravity, OpenCode, Codex, Claude Code)',
+    dialogTitle: 'Continuum',
+    run: async (args = [], context = {}) => {
+      const {
+        ContinuumScanner,
+        adoptContinuumSession,
+        runInteractiveContinuum,
+        openContinuumPreview
+      } = await import('./continuum/index.js');
+
+      const verb = String(args[0] || '').toLowerCase();
+      const targetId = args[1];
+
+      // If interactive modal prompt is available and no subverb is passed
+      if (!verb && context.prompt && typeof context.prompt.openLayer === 'function') {
+        const resultText = await runInteractiveContinuum(context.prompt, {
+          loop: context.loop
+        });
+        return ok(resultText, { effect: 'inline' });
+      }
+
+      const scanner = context.scanner || new ContinuumScanner();
+
+      if (verb === 'read' && targetId) {
+        if (context.prompt && typeof context.prompt.openLayer === 'function') {
+          const opened = await openContinuumPreview(targetId, context.prompt, scanner);
+          if (opened) return ok(`Displaying preview for ${targetId}.`);
+        }
+        const detail = await scanner.fetchSession(targetId);
+        if (!detail) return fail(`No peer session found with ID "${targetId}".`);
+        const transcriptText = detail.messages.map(m => `[${m.role.toUpperCase()}] ${m.content}`).join('\n\n');
+        return ok(`=== ${detail.title} (${detail.sourceLabel}) ===\nWorkspace: ${detail.workspacePath}\n\n${transcriptText}`);
+      }
+
+      if (verb === 'adopt' && targetId) {
+        const adoptRes = await adoptContinuumSession(targetId, {
+          scanner,
+          currentLoopMessages: context.loop?.messages
+        });
+        if (!adoptRes.ok) return fail(adoptRes.error || `Failed to adopt session "${targetId}".`);
+        if (context.loop?.memoryManager) {
+          context.loop.memoryManager.useSession(adoptRes.sessionId);
+          if (typeof context.loop.memoryManager.loadHistory === 'function') {
+            context.loop.messages = context.loop.memoryManager.loadHistory();
+          }
+        }
+        return ok(`Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\nActive Causyne session: ${adoptRes.sessionId}.`);
+      }
+
+      // Default or 'list':
+      const sessions = await scanner.scanAllSessions({ limit: 40 });
+      if (sessions.length === 0) {
+        return ok('No peer agent sessions discovered across Antigravity, OpenCode, Codex, or Claude Code.');
+      }
+
+      const lines = sessions.map(s => {
+        const when = new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ');
+        const ws = s.workspacePath ? path.basename(s.workspacePath) : '(default)';
+        return `  [${s.sourceLabel.padEnd(12)}] ${s.id.padEnd(38)} ${when}  ${String(s.messageCount).padStart(3)} msgs  ${ws}\n      ${s.title}`;
+      });
+
+      return ok(
+        `Discovered ${sessions.length} cross-agent sessions:\n`
+        + lines.join('\n')
+        + '\n\nUsage:\n  /continuum                  — open interactive picker\n  /continuum adopt <id>       — adopt & resume session\n  /continuum read <id>        — preview full transcript'
+      );
+    }
+  },
+
+  {
     name: 'approvals',
     scope: 'local',
     usage: '/approvals [clear]',
@@ -767,11 +841,23 @@ export const COMMANDS = [
 
       return items;
     },
-    run: async (argv) => {
+    run: async (argv, ctx = {}) => {
       const config = loadConfig();
       const overview = getAvailableProvidersOverview(config);
 
       if (argv.length === 0) {
+        if (ctx.prompt) {
+          const { runInteractiveModelPicker } = await import('./tui/modelPicker.js');
+          const output = await runInteractiveModelPicker(ctx.prompt, { loadConfig, saveConfig }, { loop: ctx.loop });
+          if (ctx.loop) {
+            ctx.loop.config = loadConfig();
+            if (typeof ctx.loop.updateTierLimits === 'function') {
+              ctx.loop.updateTierLimits();
+            }
+          }
+          return ok(output, { effect: 'inline' });
+        }
+
         const lines = [
           `Active Provider : ${config.provider || 'no provider configured'}`,
           `Active Model    : ${config.model || 'none'}`,
@@ -881,6 +967,7 @@ export const COMMANDS = [
         config.provider = nextProvider;
         config.model = acpTarget[2] || DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer;
         saveConfig(config);
+        if (ctx.loop) ctx.loop.config = loadConfig();
 
         if (peerInfo && !peerInfo.installed) {
           return ok(
@@ -897,7 +984,11 @@ export const COMMANDS = [
       if (isAcpProvider(config.provider) && requested.includes('/')) {
         config.model = requested;
         saveConfig(config);
-        return ok(`Now using ${config.provider} / ${config.model}.`);
+        if (ctx.loop) {
+          ctx.loop.config = loadConfig();
+          if (typeof ctx.loop.updateTierLimits === 'function') ctx.loop.updateTierLimits();
+        }
+        return ok(`Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
       }
 
       // If user typed bare 'antigravity' or 'antigravity/model'
@@ -907,28 +998,40 @@ export const COMMANDS = [
         config.provider = 'antigravity';
         config.model = agyModel;
         saveConfig(config);
+        if (ctx.loop) {
+          ctx.loop.config = loadConfig();
+          if (typeof ctx.loop.updateTierLimits === 'function') ctx.loop.updateTierLimits();
+        }
         const agyPeer = overview.acp.find(p => p.id === 'antigravity');
         if (agyPeer && !agyPeer.installed) {
           return ok(
             `⚠️ Notice: Antigravity CLI (agy) is not installed on this machine.\n` +
             `Setup: ${agyPeer.setupInstruction}\n\n` +
-            `Now using antigravity / ${config.model}.`
+            `Now using antigravity / ${config.model}.`,
+            { effect: 'inline' }
           );
         }
-        return ok(`Now using antigravity / ${config.model}.`);
+        return ok(`Now using antigravity / ${config.model}.`, { effect: 'inline' });
       }
 
       const separator = requested.indexOf('/');
       if (separator > 0) {
         const provider = requested.slice(0, separator);
-        if (provider !== config.provider) { config.apiKey = ''; delete config.baseUrl; }
+        if (provider !== config.provider) {
+          config.apiKey = config.providerKeys?.[provider] || '';
+          delete config.baseUrl;
+        }
         config.provider = provider;
         config.model = requested.slice(separator + 1);
       } else {
         config.model = requested;
       }
       saveConfig(config);
-      return ok(`Now using ${config.provider} / ${config.model}.`);
+      if (ctx.loop) {
+        ctx.loop.config = loadConfig();
+        if (typeof ctx.loop.updateTierLimits === 'function') ctx.loop.updateTierLimits();
+      }
+      return ok(`Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
     }
   },
 

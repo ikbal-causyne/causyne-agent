@@ -192,7 +192,7 @@ function openHomeMenu(prompt, conn) {
  * terminal over after stopping the prompt. That is what keeps the menu from
  * becoming a second, subtly different CLI.
  */
-async function runHomeAction(action, { prompt, conn, finish }) {
+async function runHomeAction(action, { prompt, conn, finish, loop }) {
   const reopen = () => { if (prompt) openHomeMenu(prompt, conn); };
 
   switch (action.kind) {
@@ -217,10 +217,14 @@ async function runHomeAction(action, { prompt, conn, finish }) {
     }
 
     case 'command': {
-      const result = await handleInput(action.command, { surface: 'terminal', prompt });
+      const result = await handleInput(action.command, { surface: 'terminal', prompt, loop });
       if (result) {
         const wrapped = wrapBlock(result.output, conn.renderer.width()).join('\n');
         conn.renderer.write('\n' + (result.ok ? wrapped : paint('danger', wrapped)) + '\n');
+      }
+      if (action.id === 'model' || action.id === 'continuum' || action.id === 'sessions') {
+        conn.renderer.write(homeStatusLine({ config: loadConfig() }) + '\n');
+        return null;
       }
       reopen();
       return null;
@@ -428,7 +432,7 @@ export async function chatMode({ home = false } = {}) {
     // A menu pick arrives through the same read() a typed line does, so there
     // is one place the loop waits and one place it dispatches.
     if (task && typeof task === 'object' && task.homeAction) {
-      const outcome = await runHomeAction(task.homeAction, { prompt, conn, finish });
+      const outcome = await runHomeAction(task.homeAction, { prompt, conn, finish, loop });
       if (outcome === 'exit') break;
       continue;
     }
@@ -525,6 +529,9 @@ export async function chatMode({ home = false } = {}) {
         const wrapped = wrapBlock(commandResult.output, width).join('\n');
         const body = commandResult.ok ? wrapped : paint('danger', wrapped);
         conn.renderer.write('\n' + body + '\n');
+        if (commandResult.output && (commandResult.output.includes('Now using') || commandResult.output.includes('Active model switched') || commandResult.output.includes('Saved API key'))) {
+          conn.renderer.write(homeStatusLine({ config: loadConfig() }) + '\n');
+        }
         if (commandResult.effect === 'exit') { finish(); break; }
         continue;
       }
