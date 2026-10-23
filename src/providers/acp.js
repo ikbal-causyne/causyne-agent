@@ -62,6 +62,8 @@ export class AcpProvider extends LLMProvider {
 
   formatConversation(messages, tools = []) {
     const lines = [];
+    lines.push(`[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.`);
+
     if (tools && tools.length > 0) {
       const toolSummaries = tools.map(t => {
         const name = t.name || t.function?.name || 'unknown';
@@ -120,6 +122,8 @@ export class AcpProvider extends LLMProvider {
       blocks.push({ type: 'text', text: pending.join('\n\n') });
       pending = [];
     };
+
+    pending.push(`[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.`);
 
     if (tools && tools.length > 0) {
       const toolSummaries = tools.map(t => {
@@ -200,13 +204,15 @@ export class AcpProvider extends LLMProvider {
     while ((match = regex.exec(text)) !== null) {
       try {
         const parsed = JSON.parse(match[1].trim());
-        if (parsed.name) {
+        const name = parsed.name || parsed.tool || parsed.function?.name;
+        if (name) {
+          const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
           calls.push({
             id: `acp_call_${Date.now()}_${index++}`,
             type: 'function',
             function: {
-              name: parsed.name,
-              arguments: typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments || {})
+              name,
+              arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
             }
           });
         }
@@ -214,6 +220,30 @@ export class AcpProvider extends LLMProvider {
         // ignore malformed tool_call blocks
       }
     }
+
+    if (calls.length === 0) {
+      const fenceRegex = /```(?:tool_call|json)?\s*(\{[\s\S]*?"name"\s*:\s*[\s\S]*?\})\s*```/g;
+      while ((match = fenceRegex.exec(text)) !== null) {
+        try {
+          const parsed = JSON.parse(match[1].trim());
+          const name = parsed.name || parsed.tool || parsed.function?.name;
+          if (name) {
+            const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
+            calls.push({
+              id: `acp_call_${Date.now()}_${index++}`,
+              type: 'function',
+              function: {
+                name,
+                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+              }
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     return calls;
   }
 
@@ -270,14 +300,17 @@ export class AcpProvider extends LLMProvider {
         }
       }
 
-      const content = (result?.text || '').trim();
-      const toolCalls = this.extractToolCalls(content);
+      let rawContent = (result?.text || '').trim();
+      const toolCalls = this.extractToolCalls(rawContent);
+
+      // Strip tool call XML from chat content display
+      let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
 
       const response = {
-        content: content || `Turn completed by ${this.peerId} over ACP.`,
+        content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`),
         usage: {
           promptTokens: Math.ceil(promptText.length / 4),
-          completionTokens: Math.ceil((content || '').length / 4),
+          completionTokens: Math.ceil(rawContent.length / 4),
           cachedPromptTokens: 0
         }
       };

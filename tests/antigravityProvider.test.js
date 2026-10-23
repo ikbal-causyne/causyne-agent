@@ -58,6 +58,17 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     const calls = provider.extractToolCalls(sample);
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].function.name, 'screenshot');
+
+    const sampleParams = `<tool_call>{"name": "terminal_exec", "parameters": {"command": "ls -la"}}</tool_call>`;
+    const callsParams = provider.extractToolCalls(sampleParams);
+    assert.strictEqual(callsParams.length, 1);
+    assert.strictEqual(callsParams[0].function.name, 'terminal_exec');
+    assert.ok(callsParams[0].function.arguments.includes('ls -la'));
+
+    const sampleFenced = "```tool_call\n{\"name\": \"file_read\", \"arguments\": {\"path\": \"test.txt\"}}\n```";
+    const callsFenced = provider.extractToolCalls(sampleFenced);
+    assert.strictEqual(callsFenced.length, 1);
+    assert.strictEqual(callsFenced[0].function.name, 'file_read');
   });
 
   test('_isTransientError identifies connection resets and stream timeouts', () => {

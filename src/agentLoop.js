@@ -1581,6 +1581,19 @@ export class AgentLoop {
             continue;
           }
 
+          if (this.stepsCompleted === 0 && this.consecutiveThinkingSteps < 2) {
+            if (lower.includes('turn completed') || lower.includes('no output produced') || !contentText.trim()) {
+              this.consecutiveThinkingSteps++;
+              this.emitEvent({ type: 'status', message: 'Nudging agent to execute actionable steps...' });
+              this.messages.push({
+                role: 'system',
+                content: '[SYSTEM NOTICE: An action or task was requested, but no tools were called. Please invoke the appropriate tool by outputting: <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call> to execute the task.]'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              continue;
+            }
+          }
+
           // --- COMPLETION GUARDS ---
           // Two hard rules learned the expensive way:
           //   1. Match on word boundaries. Substring matching made 'ui' fire on

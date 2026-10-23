@@ -85,6 +85,8 @@ export class AntigravityProvider extends LLMProvider {
 
   formatConversation(messages, tools = []) {
     const lines = [];
+    lines.push(`[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.`);
+
     if (tools && tools.length > 0) {
       const toolSummaries = tools.map(t => {
         const name = t.name || t.function?.name || 'unknown';
@@ -137,13 +139,15 @@ export class AntigravityProvider extends LLMProvider {
     while ((match = regex.exec(text)) !== null) {
       try {
         const parsed = JSON.parse(match[1].trim());
-        if (parsed.name) {
+        const name = parsed.name || parsed.tool || parsed.function?.name;
+        if (name) {
+          const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
           calls.push({
             id: `agy_call_${Date.now()}_${index++}`,
             type: 'function',
             function: {
-              name: parsed.name,
-              arguments: typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments || {})
+              name,
+              arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
             }
           });
         }
@@ -151,6 +155,30 @@ export class AntigravityProvider extends LLMProvider {
         // ignore malformed tool_call blocks
       }
     }
+
+    if (calls.length === 0) {
+      const fenceRegex = /```(?:tool_call|json)?\s*(\{[\s\S]*?"name"\s*:\s*[\s\S]*?\})\s*```/g;
+      while ((match = fenceRegex.exec(text)) !== null) {
+        try {
+          const parsed = JSON.parse(match[1].trim());
+          const name = parsed.name || parsed.tool || parsed.function?.name;
+          if (name) {
+            const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
+            calls.push({
+              id: `agy_call_${Date.now()}_${index++}`,
+              type: 'function',
+              function: {
+                name,
+                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+              }
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
     return calls;
   }
 
@@ -175,6 +203,7 @@ export class AntigravityProvider extends LLMProvider {
     const args = [
       '--output-format',
       'json',
+      '--dangerously-skip-permissions',
       '--model',
       resolveAgyModelId(this.model),
       `-p=${promptText}`
@@ -215,15 +244,27 @@ export class AntigravityProvider extends LLMProvider {
             return;
           }
 
-          const content = (parsed.response || '').trim();
-          const toolCalls = this.extractToolCalls(content);
+          let rawContent = (parsed.response || '').trim();
+          const toolCalls = this.extractToolCalls(rawContent);
+
+          // Strip tool call tags from prose so raw XML does not leak into chat display
+          let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+
+          // If content is empty and denied_actions is present, describe it
+          if (!content && Array.isArray(parsed.denied_actions) && parsed.denied_actions.length > 0) {
+            content = `Antigravity attempted action: ${parsed.denied_actions.map(a => a.display_name || a.action).join(', ')}`;
+          }
+
+          if (!content && toolCalls.length === 0) {
+            content = 'Turn completed by Antigravity Agent.';
+          }
 
           const promptTokens = Number(parsed.usage?.input_tokens) || Math.ceil(promptText.length / 4);
-          const completionTokens = Number(parsed.usage?.output_tokens) || Math.ceil(content.length / 4);
+          const completionTokens = Number(parsed.usage?.output_tokens) || Math.ceil(rawContent.length / 4);
           const thinkingTokens = Number(parsed.usage?.thinking_tokens) || 0;
 
           const response = {
-            content: content || 'Turn completed by Antigravity Agent.',
+            content: content || (toolCalls.length > 0 ? '' : 'Turn completed by Antigravity Agent.'),
             usage: {
               promptTokens,
               completionTokens: completionTokens + thinkingTokens,

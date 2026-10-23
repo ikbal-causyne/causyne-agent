@@ -95,7 +95,9 @@ function renderMarkdown(text, width) {
       continue;
     }
 
-    if (line.trim() === '') { lines.push(''); continue; }
+    const trimmed = line.trim();
+    if (trimmed === '') { lines.push(''); continue; }
+    if (trimmed === '[' || trimmed === ']') continue;
     for (const part of wrap(inline(line), width)) lines.push(part);
   }
 
@@ -121,7 +123,7 @@ function renderMarkdown(text, width) {
 // A bare URL, allowing one level of balanced parentheses so a link to
 // `.../URL_(disambiguation)` is not cut at the first `)`.
 const BARE_URL = /https?:\/\/[^\s<>()\[\]"'`]+(?:\([^\s<>()"'`]*\)[^\s<>()\[\]"'`]*)*/g;
-const MD_LINK = /\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]+(?:\([^\s)]*\)[^\s)]*)*)\)/g;
+const MD_LINK = /\[([^\]\n]{1,80})\]\(((?:https?|file):\/\/[^\s)]+(?:\([^\s)]*\)[^\s)]*)*)\)/g;
 
 // The longest label a link may show. Anything longer would reach wrap()'s
 // hard-split branch, which cuts a long unbroken token by column — and cutting
@@ -144,7 +146,7 @@ function trimUrlPunctuation(url) {
 
 /** `https://docs.example.com/a/very/long/path?x=1` → `docs.example.com/a/…`. */
 function compactUrlLabel(url) {
-  let label = url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  let label = url.replace(/^(?:https?|file):\/\//, '').replace(/\/$/, '');
   if (label.length > MAX_LINK_LABEL) label = label.slice(0, MAX_LINK_LABEL - 1) + GLYPHS.ellipsis;
   return label;
 }
@@ -186,7 +188,10 @@ function inline(text) {
     });
   } else {
     // No OSC 8 here, so a markdown link must still show where it points.
-    out = out.replace(MD_LINK, (whole, label, url) => `${label} (${url})`);
+    out = out.replace(MD_LINK, (whole, label, url) => {
+      if (url.startsWith('file:')) return label;
+      return `${label} (${url})`;
+    });
   }
 
   out = HAS_COLOR

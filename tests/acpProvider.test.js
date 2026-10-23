@@ -86,5 +86,15 @@ Done!`;
     assert.strictEqual(calls[0].function.name, 'sysRun');
     const parsedArgs = JSON.parse(calls[0].function.arguments);
     assert.strictEqual(parsedArgs.command, 'echo sovereign');
+
+    const sampleParams = `<tool_call>{"name": "file_write", "parameters": {"path": "out.txt", "content": "ok"}}</tool_call>`;
+    const callsParams = provider.extractToolCalls(sampleParams);
+    assert.strictEqual(callsParams.length, 1);
+    assert.strictEqual(callsParams[0].function.name, 'file_write');
+
+    const sampleFenced = "```tool_call\n{\"name\": \"dir_list\", \"input\": {\"path\": \".\"}}\n```";
+    const callsFenced = provider.extractToolCalls(sampleFenced);
+    assert.strictEqual(callsFenced.length, 1);
+    assert.strictEqual(callsFenced[0].function.name, 'dir_list');
   });
 });
