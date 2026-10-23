@@ -10,6 +10,7 @@ import { listGroups, undoLast, undoTask, undoStep, getStoreStats } from './check
 import { panel } from './tui/block.js';
 import { terminalWidth, readableWidth } from './tui/theme.js';
 import { isAcpProvider } from './providers/acp.js';
+import { isAntigravityProvider } from './providers/antigravity.js';
 
 // The same divisor scripts/measure_context.js uses, so the CLI and the dev
 // harness never disagree about what a token costs.
@@ -328,7 +329,7 @@ export function buildStatusText({ loop = null } = {}) {
     lines.push(`  Workspace scope  : ${sandbox.grantAllAccess ? 'ALL ACCESS' : (sandbox.workspacePaths || []).join(', ')}`);
   }
 
-  if (!config.apiKey && config.provider !== 'ollama' && !isAcpProvider(config.provider)) {
+  if (!config.apiKey && config.provider !== 'ollama' && !isAcpProvider(config.provider) && !isAntigravityProvider(config.provider)) {
     lines.push('');
     lines.push('  No API key is set. Run `causyne config`.');
   }

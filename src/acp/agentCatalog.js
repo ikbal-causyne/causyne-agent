@@ -13,6 +13,17 @@ import { promisify } from 'node:util';
 import { AcpClient } from './client.js';
 const execFileAsync = promisify(execFile);
 export const BUILTIN_PEER_PRESETS = {
+    antigravity: {
+        id: 'antigravity',
+        label: 'Google Antigravity (AGY)',
+        description: 'Google Antigravity agent CLI with Gemini and Claude frontier models',
+        command: 'agy',
+        args: ['--output-format', 'json'],
+        binaryName: 'agy',
+        authType: 'none',
+        setupInstruction: 'Install Antigravity IDE or CLI to enable Google AGY models',
+        timeoutSeconds: 180
+    },
     opencode: {
         id: 'opencode',
         label: 'OpenCode',
@@ -154,7 +165,16 @@ export function isBinaryOnPath(binaryName) {
     }
     const envPath = process.env.PATH || '';
     const delimiter = process.platform === 'win32' ? ';' : ':';
-    const dirs = envPath.split(delimiter);
+    const home = process.env.HOME || '';
+    const fallbackDirs = [
+        path.join(home, '.local', 'bin'),
+        path.join(home, '.antigravity', 'antigravity', 'bin'),
+        path.join(home, '.gemini', 'antigravity-ide', 'bin'),
+        path.join(home, '.opencode', 'bin'),
+        '/Applications/Antigravity.app/Contents/Resources/app/bin',
+        '/Applications/Antigravity IDE.app/Contents/Resources/app/bin'
+    ];
+    const dirs = [...envPath.split(delimiter), ...fallbackDirs];
     const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
     for (const dir of dirs) {
         if (!dir)
@@ -320,6 +340,19 @@ export async function detectAllPeers(cwd = process.cwd()) {
                 args: activeArgs,
                 details: auth.reason || 'Authentication required.',
                 ...(preset.setupInstruction ? { setupInstruction: preset.setupInstruction } : {})
+            });
+            continue;
+        }
+        // Antigravity communicates natively via CLI JSON mode
+        if (preset.id === 'antigravity') {
+            results.push({
+                id: preset.id,
+                label: preset.label,
+                status: 'ready',
+                command: activeCommand,
+                args: activeArgs,
+                agentInfo: { name: 'Google Antigravity', version: '2.0' },
+                details: 'Operational via local AGY CLI with Gemini & Claude frontier models.'
             });
             continue;
         }

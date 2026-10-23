@@ -182,6 +182,79 @@ export function detectEnvironmentProvider() {
       model: DEFAULT_MODEL_BY_PROVIDER['dashscope-byok']
     };
   }
+
+  // If no environment API keys found, auto-detect installed local sovereign agents
+  return detectLocalAgentProvider();
+}
+
+function checkBinarySync(binaryName) {
+  if (path.isAbsolute(binaryName)) {
+    return fs.existsSync(binaryName);
+  }
+  const envPath = process.env.PATH || '';
+  const delimiter = process.platform === 'win32' ? ';' : ':';
+  const home = process.env.HOME || '';
+  const fallbackDirs = [
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.antigravity', 'antigravity', 'bin'),
+    path.join(home, '.gemini', 'antigravity-ide', 'bin'),
+    path.join(home, '.opencode', 'bin'),
+    '/Applications/Antigravity.app/Contents/Resources/app/bin',
+    '/Applications/Antigravity IDE.app/Contents/Resources/app/bin'
+  ];
+  const dirs = [...envPath.split(delimiter), ...fallbackDirs];
+  const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+
+  for (const dir of dirs) {
+    if (!dir) continue;
+    for (const ext of extensions) {
+      const full = path.join(dir, `${binaryName}${ext}`);
+      try {
+        if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+  return false;
+}
+
+export function detectLocalAgentProvider() {
+  if (checkBinarySync('agy') || checkBinarySync('antigravity')) {
+    return {
+      provider: 'antigravity',
+      model: DEFAULT_MODEL_BY_PROVIDER.antigravity || 'Gemini 3.8 Flash (Low)',
+      apiKey: ''
+    };
+  }
+  if (checkBinarySync('opencode')) {
+    return {
+      provider: 'acp',
+      model: 'opencode',
+      apiKey: ''
+    };
+  }
+  if (checkBinarySync('claude')) {
+    return {
+      provider: 'acp',
+      model: 'claude',
+      apiKey: ''
+    };
+  }
+  if (checkBinarySync('codex')) {
+    return {
+      provider: 'acp',
+      model: 'codex',
+      apiKey: ''
+    };
+  }
+  if (checkBinarySync('ollama')) {
+    return {
+      provider: 'ollama',
+      model: DEFAULT_MODEL_BY_PROVIDER.ollama || 'llama3.3',
+      apiKey: ''
+    };
+  }
   return null;
 }
 

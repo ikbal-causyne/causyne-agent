@@ -59,7 +59,7 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
         // Fixed endpoints have no editable URL. A changed endpoint never inherits a key.
         const keepKey = sameProvider && (!customProviders.has(provider.id) || unchangedEndpoint);
         let apiKey = '';
-        if (provider.id !== 'ollama' && provider.id !== 'acp') {
+        if (provider.id !== 'ollama' && provider.id !== 'acp' && provider.id !== 'antigravity') {
             const oldKey = keepKey ? string(draft.apiKey) : '';
             const answer = await text('Setup 3/5 · credentials', ['Stored encrypted locally; used to authenticate with your selected provider.',
                 oldKey ? 'Blank keeps the key for this same provider and endpoint.' : 'Enter a key for this provider.',

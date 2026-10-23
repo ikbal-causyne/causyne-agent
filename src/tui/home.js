@@ -5,6 +5,7 @@ import { paint, dim, bold, badge, GLYPHS } from './theme.js';
 import { runSetup } from './setup.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { isAcpProvider } from '../providers/acp.js';
+import { isAntigravityProvider } from '../providers/antigravity.js';
 
 /** Local runtime and provider summary. */
 export function homeStatusLine(arg = {}) {
@@ -13,7 +14,7 @@ export function homeStatusLine(arg = {}) {
   const model = hasProvider
     ? (config.model ? `${config.provider}/${config.model}` : config.provider)
     : 'no provider configured';
-  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama' || isAcpProvider(config.provider));
+  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama' || isAcpProvider(config.provider) || isAntigravityProvider(config.provider));
   return '  ' + [
     paint('success', `${GLYPHS.bullet} local desktop`),
     configured
@@ -145,6 +146,7 @@ export const PROVIDERS = [
   { id: 'xai', label: 'xAI', hint: 'Grok' },
   { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL' },
   { id: 'ollama', label: 'Ollama', hint: 'local / offline' },
+  { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: 'local AGY · Gemini & Claude models' },
   { id: 'acp', label: 'ACP Peer Agent (OpenCode, Claude, Codex...)', hint: 'zero-token / external CLI' }
 ].map((entry) => ({ ...entry, model: DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
 

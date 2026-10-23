@@ -99,6 +99,15 @@ export const MODEL_CATALOGUE = {
   ],
   'Moonshot (Kimi)': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
   'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest'],
+  'Google Antigravity': [
+    'Gemini 3.8 Flash (Low)',
+    'Gemini 4 Argon (Medium)',
+    'Gemini 4 Argon (High)',
+    'Gemini 3.8 Flash (Medium)',
+    'Claude Sonnet 5.5 (Medium)',
+    'Claude Opus 5.5 (Medium)',
+    'GPT-OSS 120B (Medium)'
+  ],
   'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose']
 };
 
@@ -119,6 +128,7 @@ export const DEFAULT_MODEL_BY_PROVIDER = {
   xai: 'grok-3',
   ollama: 'llama3.3',
   acp: 'opencode',
+  antigravity: 'Gemini 3.8 Flash (Low)',
   'openai-compatible': ''
 };
 

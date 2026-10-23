@@ -8,11 +8,15 @@
  */
 
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { AcpClient } from '../acp/client.js';
 import type { RequestPermissionRequest, RequestPermissionResponse } from '../acp/protocol.js';
 import { getPeerProfile, listAllPeers, peerEnvironment } from '../acp/peerProfiles.js';
 import type { PeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface PeerAgentArgs {
   action?: 'delegate' | 'list' | 'status';
@@ -161,6 +165,36 @@ export const peerAgentTool = {
     const timeoutSeconds = Math.max(5, Math.min(Math.min(profile.timeoutSeconds, requestedTimeout), 1800));
 
     const workspaceRoot = profile.cwd || process.cwd();
+
+    if (peerId.toLowerCase() === 'antigravity') {
+      try {
+        const agyModel = args.model || 'Gemini 3.8 Flash (Low)';
+        const { stdout } = await execFileAsync(profile.command, [
+          '--output-format',
+          'json',
+          `--model=${agyModel}`,
+          `-p=${prompt}`
+        ], {
+          cwd: workspaceRoot,
+          timeout: timeoutSeconds * 1000
+        });
+        let outputText = stdout.trim();
+        try {
+          const parsed = JSON.parse(outputText);
+          if (parsed.response) outputText = parsed.response.trim();
+        } catch {
+          // keep raw stdout
+        }
+        return {
+          success: true,
+          agent: 'Google Antigravity',
+          output: outputText
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, agent: 'Google Antigravity', error: msg };
+      }
+    }
 
     const client = new AcpClient({
       command: profile.command,

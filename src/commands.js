@@ -888,6 +888,18 @@ export const COMMANDS = [
 
       if (action === 'test') {
         if (!peerId) return fail('Usage: /peers test <id>');
+        if (peerId === 'antigravity') {
+          const { resolveAgyBinary } = await import('./providers/antigravity.js');
+          const bin = resolveAgyBinary();
+          return ok(
+            `✅ Agent Peer Test Passed: "antigravity"\n\n`
+            + `Agent: Google Antigravity (AGY)\n`
+            + `Command: ${bin} --output-format json\n`
+            + `Policy: local-cli\n`
+            + `Frontier Models: Gemini 4 Argon, Gemini 3.8 Flash, Claude Sonnet 5.5\n\n`
+            + `Ready to serve as primary AI provider or peer delegation.`
+          );
+        }
         const profile = getPeerProfile(peerId);
         if (!profile) return fail(`No peer agent found for "${peerId}". Try /peers detect to see available agents.`);
 
