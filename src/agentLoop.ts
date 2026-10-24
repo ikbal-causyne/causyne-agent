@@ -106,9 +106,17 @@ export function isActionableTaskPrompt(text: string): boolean {
   return actionKeywords.test(t);
 }
 
+export function isExecutionOrLaunchTaskPrompt(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  return /\b(open|launch|start|run|play|serve|preview)\b/i.test(t)
+    && !/\b(create|build|make|write|code|implement|generate|refactor)\b/i.test(t);
+}
+
 export function isCodeAuthoringTaskPrompt(text: string): boolean {
   const t = (text || '').trim();
   if (!t) return false;
+  if (isExecutionOrLaunchTaskPrompt(t)) return false;
   return /\b(create|build|make|write|code|implement|generate|game|3js|threejs|three\.js|app)\b/i.test(t);
 }
 
@@ -2054,6 +2062,8 @@ export class AgentLoop {
               actionSig = 'sysRun:probe:python';
             } else if (/node\s+(--version|-v)/i.test(rawCmd)) {
               actionSig = 'sysRun:probe:node';
+            } else if (/(?:ps\s+aux|pgrep|lsof|netstat|ss\s+-)/i.test(rawCmd)) {
+              actionSig = 'sysRun:probe:process_or_port';
             } else {
               actionSig = `${functionName}:${rawCmd.replace(/\s+/g, ' ')}`;
             }
@@ -2080,10 +2090,16 @@ export class AgentLoop {
 
             // 2. Block 3rd attempt of identical command and inject a non-negotiable recovery mandate
             if (duplicateCount === 3) {
-              const isAuthoring = isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
-              const blockMsg = isAuthoring
-                ? `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`
-                : `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. Proceed immediately to fulfilling the user's request: if starting a service or server, launch it (if a port is occupied, use an alternate open port); if launching an app, open it in the browser; if done, summarize and finish.`;
+              const isExec = isExecutionOrLaunchTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+              const isAuthoring = !isExec && isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+              let blockMsg: string;
+              if (actionSig === 'sysRun:probe:process_or_port' || isExec) {
+                blockMsg = `REPETITION BLOCKED: You have already checked processes/ports. The result is already in your context above. You are STRICTLY FORBIDDEN from running process/port checks again. Proceed immediately to fulfilling the user's request: start the server (if port 8080 is occupied, start on port 8081 or 8088 using sysRunBg) and open the URL in the browser.`;
+              } else if (isAuthoring) {
+                blockMsg = `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`;
+              } else {
+                blockMsg = `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. Proceed immediately to fulfilling the user's request: if starting a service or server, launch it (if a port is occupied, use an alternate open port); if launching an app, open it in the browser; if done, summarize and finish.`;
+              }
               this.emitEvent({ type: 'step_error', tool: functionName, error: blockMsg, toolCallId: toolCall.id });
               this.messages.push({
                 role: 'tool',
@@ -2109,7 +2125,8 @@ export class AgentLoop {
             this.consecutiveReadOnlySteps = (Number(this.consecutiveReadOnlySteps) || 0) + 1;
           }
 
-          const isAuthoringTask = isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+          const isExecTask = isExecutionOrLaunchTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+          const isAuthoringTask = !isExecTask && isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
           if (isAuthoringTask && this.consecutiveReadOnlySteps === 4) {
             this.messages.push({
               role: 'system',

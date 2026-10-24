@@ -195,8 +195,22 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
             cmd = String(params.parameters.CommandLine || params.parameters.command || params.parameters.cmd || '').trim();
         }
         if (cmd) {
-            const args = { command: cmd };
+            const isDaemon = Boolean(params.IsDaemon ?? params.isDaemon ?? params.daemon);
             const cwd = params.Cwd ?? params.cwd;
+            if (isDaemon) {
+                const bgArgs = { command: cmd, label: 'daemon' };
+                if (typeof cwd === 'string' && cwd.trim())
+                    bgArgs.cwd = cwd.trim();
+                return {
+                    id: `agy_native_${Date.now()}_${index}`,
+                    type: 'function',
+                    function: {
+                        name: 'sysRunBg',
+                        arguments: JSON.stringify(bgArgs)
+                    }
+                };
+            }
+            const args = { command: cmd };
             if (typeof cwd === 'string' && cwd.trim())
                 args.cwd = cwd.trim();
             return {
@@ -315,6 +329,69 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
                     arguments: JSON.stringify({ query: query.trim() })
                 }
             };
+        }
+    }
+    if (lowerName === 'multireplacefilecontent' || lowerName === 'multireplace') {
+        const filePath = params.TargetFile ?? params.path ?? params.file_path ?? '';
+        const rawChunks = Array.isArray(params.ReplacementChunks) ? params.ReplacementChunks : [];
+        const edits = rawChunks.map((chunk) => ({
+            old_string: String(chunk.TargetContent ?? chunk.old_string ?? ''),
+            new_string: String(chunk.ReplacementContent ?? chunk.new_string ?? '')
+        })).filter((e) => e.old_string);
+        if (typeof filePath === 'string' && filePath.trim() && edits.length > 0) {
+            return {
+                id: `agy_native_${Date.now()}_${index}`,
+                type: 'function',
+                function: {
+                    name: 'MultiEdit',
+                    arguments: JSON.stringify({ file_path: filePath.trim(), edits })
+                }
+            };
+        }
+    }
+    if (lowerName === 'browsersubagent' || lowerName === 'browseragent') {
+        const textToSearch = [
+            params.Url, params.url, params.Task, params.task, params.TaskName, params.taskName, params.TaskSummary
+        ].filter(Boolean).join(' ');
+        const urlMatch = textToSearch.match(/https?:\/\/[^\s'")]+/i) || textToSearch.match(/localhost:\d+[^\s'")]*/i);
+        if (urlMatch) {
+            let targetUrl = urlMatch[0];
+            if (!targetUrl.startsWith('http'))
+                targetUrl = `http://${targetUrl}`;
+            return {
+                id: `agy_native_${Date.now()}_${index}`,
+                type: 'function',
+                function: {
+                    name: 'desktop.open',
+                    arguments: JSON.stringify({ target: targetUrl })
+                }
+            };
+        }
+    }
+    if (lowerName === 'managetask') {
+        const action = String(params.Action ?? params.action ?? '').toLowerCase();
+        if (action === 'list') {
+            return {
+                id: `agy_native_${Date.now()}_${index}`,
+                type: 'function',
+                function: {
+                    name: 'process_list',
+                    arguments: JSON.stringify({})
+                }
+            };
+        }
+        if (action === 'kill') {
+            const pid = Number(params.TaskId ?? params.taskId ?? params.pid);
+            if (!Number.isNaN(pid) && pid > 0) {
+                return {
+                    id: `agy_native_${Date.now()}_${index}`,
+                    type: 'function',
+                    function: {
+                        name: 'proc_term',
+                        arguments: JSON.stringify({ pid })
+                    }
+                };
+            }
         }
     }
     return null;

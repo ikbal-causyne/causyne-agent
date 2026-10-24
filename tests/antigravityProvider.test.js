@@ -372,6 +372,74 @@ describe('isActionableTaskPrompt', () => {
     assert.strictEqual(isActionableTaskPrompt('selamat pagi'), false);
     assert.strictEqual(isActionableTaskPrompt(''), false);
   });
+
+  test('correctly distinguishes execution/launch tasks from code authoring tasks', async () => {
+    const { isExecutionOrLaunchTaskPrompt, isCodeAuthoringTaskPrompt } = await import('../src/agentLoop.js');
+
+    assert.strictEqual(isExecutionOrLaunchTaskPrompt('open it i want to play'), true);
+    assert.strictEqual(isExecutionOrLaunchTaskPrompt('open the 3js game i want to play'), true);
+    assert.strictEqual(isExecutionOrLaunchTaskPrompt('launch the game in browser'), true);
+    assert.strictEqual(isExecutionOrLaunchTaskPrompt('start the local dev server'), true);
+    assert.strictEqual(isExecutionOrLaunchTaskPrompt('play the savanna hunter game'), true);
+
+    assert.strictEqual(isCodeAuthoringTaskPrompt('open it i want to play'), false);
+    assert.strictEqual(isCodeAuthoringTaskPrompt('open the 3js game i want to play'), false);
+    assert.strictEqual(isCodeAuthoringTaskPrompt('launch the game in browser'), false);
+
+    assert.strictEqual(isCodeAuthoringTaskPrompt('create a 3js game shoting and optimized it with numpy'), true);
+    assert.strictEqual(isCodeAuthoringTaskPrompt('build a fullstack react dashboard with authentication'), true);
+    assert.strictEqual(isCodeAuthoringTaskPrompt('write the server.py implementation'), true);
+  });
 });
+
+describe('mapNativeToolToCausyne advanced mappings', () => {
+  test('maps run_command with IsDaemon: true to sysRunBg', async () => {
+    const { mapNativeToolToCausyne } = await import('../src/providers/antigravity.js');
+    const mapped = mapNativeToolToCausyne('run_command', { CommandLine: 'python3 server.py 8081', IsDaemon: true }, 0);
+    assert.ok(mapped);
+    assert.strictEqual(mapped.function.name, 'sysRunBg');
+    const args = JSON.parse(mapped.function.arguments);
+    assert.strictEqual(args.command, 'python3 server.py 8081');
+    assert.strictEqual(args.label, 'daemon');
+  });
+
+  test('maps multi_replace_file_content to MultiEdit', async () => {
+    const { mapNativeToolToCausyne } = await import('../src/providers/antigravity.js');
+    const mapped = mapNativeToolToCausyne('multi_replace_file_content', {
+      TargetFile: '/path/to/game.js',
+      ReplacementChunks: [
+        { TargetContent: 'const speed = 1;', ReplacementContent: 'const speed = 5;' }
+      ]
+    }, 0);
+    assert.ok(mapped);
+    assert.strictEqual(mapped.function.name, 'MultiEdit');
+    const args = JSON.parse(mapped.function.arguments);
+    assert.strictEqual(args.file_path, '/path/to/game.js');
+    assert.deepStrictEqual(args.edits, [{ old_string: 'const speed = 1;', new_string: 'const speed = 5;' }]);
+  });
+
+  test('maps browser_subagent with URL to desktop.open', async () => {
+    const { mapNativeToolToCausyne } = await import('../src/providers/antigravity.js');
+    const mapped = mapNativeToolToCausyne('browser_subagent', {
+      Task: 'Navigate to http://localhost:8081/ and verify the 3D scene'
+    }, 0);
+    assert.ok(mapped);
+    assert.strictEqual(mapped.function.name, 'desktop.open');
+    assert.deepStrictEqual(JSON.parse(mapped.function.arguments), { target: 'http://localhost:8081/' });
+  });
+
+  test('maps manage_task list and kill to process_list and proc_term', async () => {
+    const { mapNativeToolToCausyne } = await import('../src/providers/antigravity.js');
+    const listMapped = mapNativeToolToCausyne('manage_task', { Action: 'list' }, 0);
+    assert.ok(listMapped);
+    assert.strictEqual(listMapped.function.name, 'process_list');
+
+    const killMapped = mapNativeToolToCausyne('manage_task', { Action: 'kill', TaskId: 1234 }, 0);
+    assert.ok(killMapped);
+    assert.strictEqual(killMapped.function.name, 'proc_term');
+    assert.deepStrictEqual(JSON.parse(killMapped.function.arguments), { pid: 1234 });
+  });
+});
+
 
 
