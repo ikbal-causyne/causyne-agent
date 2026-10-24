@@ -8,6 +8,7 @@ import { pathToFileURL } from 'url';
 import { loadConfig, saveConfig } from '../config.js';
 import { isGroupGranted, isGroupDeclined } from './capabilityConsent.js';
 import { causyneHome } from '../utils/paths.js';
+import { currentToolAutonomyMode } from '../approvalPolicy.js';
 
 const CAPABILITY_DIR = path.join(causyneHome(), 'capabilities');
 
@@ -185,11 +186,27 @@ export async function provisionCapabilities(groups = []) {
  * unavailable, not that something crashed.
  */
 export async function ensureCapability(group) {
+  if (isGroupDeclined(group)) {
+    return { ok: false, group, reason: `The "${group}" capability was explicitly disabled by the user.` };
+  }
   const status = groupStatus(group);
   if (status.state === 'ready') return { ok: true, group };
   if (status.state === 'unknown') return { ok: false, group, reason: `Unknown capability group "${group}".` };
 
   if (status.state === 'needs-consent') {
+    // Mode C authorizes installation needed by the in-scope tool call. This
+    // does not persist a standing capability grant across sessions. A group
+    // explicitly revoked by the user stays disabled.
+    if (currentToolAutonomyMode() === 'C' && !isGroupDeclined(group)) {
+      try {
+        await provisionCapabilities([group]);
+      } catch (e) {
+        return { ok: false, group, reason: `The "${group}" capability could not be prepared: ${e.message}` };
+      }
+      return isGroupInstalled(group)
+        ? { ok: true, group }
+        : { ok: false, group, reason: `The "${group}" capability is unavailable in this environment.` };
+    }
     return {
       ok: false,
       group,

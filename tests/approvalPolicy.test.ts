@@ -1,11 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAutonomousToolContext, isWholeFileDeletion, requiresToolApproval } from '../src/approvalPolicy.js';
+import {
+  currentToolAutonomyMode, isAutonomousToolContext, isWholeFileDeletion,
+  requiresToolApproval, withToolAutonomyMode
+} from '../src/approvalPolicy.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AgentLoop } from '../src/agentLoop.js';
+import { AGENT_USER_POLICY } from '../src/agentPolicy.js';
 import { toolRegistry } from '../src/tools/registry.js';
+import { Sandbox } from '../src/sandbox.js';
 
 function needsApproval(mode: string, tool: string, args: Record<string, unknown>,
   risk = 'extreme', standingApproval = false, heavyDownload = false): boolean {
@@ -53,6 +58,30 @@ test('tool-local consent checks use only the live session mode', () => {
   assert.equal(isAutonomousToolContext({}), false);
 });
 
+test('legacy tool autonomy is scoped to each async invocation', async () => {
+  assert.equal(currentToolAutonomyMode(), undefined);
+  const modes = await Promise.all([
+    withToolAutonomyMode('C', async () => {
+      await Promise.resolve();
+      return currentToolAutonomyMode();
+    }),
+    withToolAutonomyMode('B', async () => {
+      await Promise.resolve();
+      return currentToolAutonomyMode();
+    })
+  ]);
+  assert.deepEqual(modes, ['C', 'B']);
+  assert.equal(currentToolAutonomyMode(), undefined);
+});
+
+test('git operations retain supervised risk classification', () => {
+  const sandbox = new Sandbox({ workspaceRoot: process.cwd() });
+  assert.equal(sandbox.validate('gitOp', { command: 'status' }).risk, 'safe');
+  assert.equal(sandbox.validate('gitOp', { command: 'push --force origin main' }).risk, 'dangerous');
+  assert.equal(sandbox.validate('gitOp', { command: 'branch -D old' }).risk, 'dangerous');
+  assert.equal(isWholeFileDeletion('gitOp', { command: 'rm old.ts' }), true);
+});
+
 test('AgentLoop Mode C executes an extreme ordinary tool without an approval request', async () => {
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-autonomy-'));
@@ -61,6 +90,7 @@ test('AgentLoop Mode C executes an extreme ordinary tool without an approval req
   const toolName = 'mode_c_probe';
   let executions = 0;
   let approvalWaits = 0;
+  let systemPolicySeen = false;
   const events: Array<{ type: string }> = [];
   toolRegistry[toolName] = {
     schema: { name: toolName, description: 'Test probe', parameters: { type: 'object', properties: {} } },
@@ -77,7 +107,9 @@ test('AgentLoop Mode C executes an extreme ordinary tool without an approval req
     const model = {
       supportsVision: false,
       supportsToolSearch: () => false,
-      chat: async () => {
+      chat: async (messages: Array<{ role: string; content: string }>) => {
+        systemPolicySeen ||= messages.some((message) => message.role === 'system'
+          && message.content.includes(AGENT_USER_POLICY));
         calls += 1;
         return calls === 1
           ? { content: '', toolCalls: [{ id: 'probe-1', type: 'function',
@@ -92,6 +124,7 @@ test('AgentLoop Mode C executes an extreme ordinary tool without an approval req
 
     assert.equal(executions, 1);
     assert.equal(approvalWaits, 0);
+    assert.equal(systemPolicySeen, true);
     assert.equal(events.some((event) => event.type === 'approval_request'), false);
   } finally {
     delete toolRegistry[toolName];

@@ -36,6 +36,7 @@
     "src/planCache.ts",
     "src/decisionPolicy.ts",
     "src/approvalPolicy.ts",
+    "src/agentPolicy.ts",
     "src/implementationPlan.ts",
     "src/mcp/mcpClient.ts",
     "src/mcp/mcpRegistry.ts",

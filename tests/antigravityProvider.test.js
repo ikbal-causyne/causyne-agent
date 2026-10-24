@@ -185,6 +185,40 @@ process.stdin.on('end', () => {
     }
   });
 
+  test('agy print-mode RunCommand denial routes through the Causyne tool gate', { skip: process.platform === 'win32' }, async () => {
+    const fake = fakeAgy(`#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+  const update = (state) => emit({ event: 'step_update', step_update: {
+    step_type: 'tool', state, tool_name: 'run_command',
+    tool_info: { name: 'run_command', parameters: { CommandLine: 'pwd' } }
+  } });
+  update('ACTIVE');
+  update('DONE');
+  emit({ event: 'result', result: { status: 'SUCCESS', response: '',
+    denied_actions: [{ action: 'run_command', display_name: 'RunCommand' }] } });
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command });
+      const seen = [];
+      const response = await provider.chat([{ role: 'user', content: 'run pwd' }], {
+        onNativeAction: (action) => seen.push(action.status)
+      });
+      assert.equal(response.content, '');
+      assert.equal(response.toolCalls?.length, 1);
+      assert.equal(response.toolCalls?.[0]?.function.name, 'sysRun');
+      assert.deepEqual(JSON.parse(response.toolCalls?.[0]?.function.arguments), { command: 'pwd' });
+      assert.deepEqual(response.externalActions, [
+        { name: 'run_command', status: 'failed', detail: 'pwd' }
+      ]);
+      assert.deepEqual(seen, ['running', 'failed']);
+    } finally {
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+    }
+  });
+
   test('a denied native action with no response is a failure, not a completed turn', { skip: process.platform === 'win32' }, async () => {
     const fake = fakeAgy(`#!/usr/bin/env node
 process.stdin.resume();
@@ -203,8 +237,31 @@ process.stdin.on('end', () => {
       const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
       await assert.rejects(
         provider.chat([{ role: 'user', content: 'build a cake' }]),
-        /Antigravity could not perform: WriteFile/
+        (error) => error.code === 'AGY_NATIVE_ACTION_DENIED'
+          && /Antigravity could not perform: WriteFile/.test(error.message)
       );
+    } finally {
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('blocked native run_command is converted into a Causyne sysRun toolCall', { skip: process.platform === 'win32' }, async () => {
+    const fake = fakeAgy(`#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+  emit({ event: 'step_update', step_update: { step_type: 'tool', state: 'ACTIVE', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'ls -la . | grep -i savanna' } } } });
+  emit({ event: 'step_update', step_update: { step_type: 'tool', state: 'ERROR', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'ls -la . | grep -i savanna' }, error: { message: 'permission check failed' } } } });
+  emit({ event: 'result', result: { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }] } });
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      const response = await provider.chat([{ role: 'user', content: 'buatkan game savanna' }]);
+      assert.ok(response.toolCalls && response.toolCalls.length === 1);
+      assert.equal(response.toolCalls[0].function.name, 'sysRun');
+      const args = JSON.parse(response.toolCalls[0].function.arguments);
+      assert.equal(args.command, 'ls -la . | grep -i savanna');
     } finally {
       fs.rmSync(fake.dir, { recursive: true, force: true });
     }

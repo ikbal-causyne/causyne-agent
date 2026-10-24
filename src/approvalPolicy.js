@@ -1,3 +1,12 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+const toolAutonomy = new AsyncLocalStorage();
+/** Session-scoped context for legacy tools whose execute signature has no context parameter. */
+export function withToolAutonomyMode(mode, run) {
+    return toolAutonomy.run(mode, run);
+}
+export function currentToolAutonomyMode() {
+    return toolAutonomy.getStore();
+}
 /** Read the live session mode from the tool context; never infer it from a tool argument. */
 export function isAutonomousToolContext(context) {
     if (!context || typeof context !== 'object')

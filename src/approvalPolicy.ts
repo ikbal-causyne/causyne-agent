@@ -1,4 +1,17 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 export type AutonomyMode = 'A' | 'B' | 'C' | string;
+
+const toolAutonomy = new AsyncLocalStorage<AutonomyMode>();
+
+/** Session-scoped context for legacy tools whose execute signature has no context parameter. */
+export function withToolAutonomyMode<T>(mode: AutonomyMode, run: () => Promise<T>): Promise<T> {
+  return toolAutonomy.run(mode, run);
+}
+
+export function currentToolAutonomyMode(): AutonomyMode | undefined {
+  return toolAutonomy.getStore();
+}
 
 export interface ToolApprovalInput {
   mode: AutonomyMode;

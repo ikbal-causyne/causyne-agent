@@ -97,6 +97,137 @@ function describeNativeAction(toolInfo: any): string | undefined {
   return undefined;
 }
 
+export function mapNativeToolToCausyne(
+  name: string,
+  rawParams: Record<string, any>,
+  index: number
+): ChatResponseToolCall | null {
+  if (!name || typeof name !== 'string') return null;
+  const lowerName = name.toLowerCase().replace(/[_-]/g, '');
+  const params = rawParams && typeof rawParams === 'object' ? rawParams : {};
+
+  if (lowerName === 'runcommand' || lowerName === 'command' || lowerName === 'sysrun' || lowerName === 'terminal' || lowerName === 'bash' || lowerName === 'shell') {
+    const cmd = params.CommandLine ?? params.command ?? params.cmd ?? params.input ?? '';
+    if (typeof cmd === 'string' && cmd.trim()) {
+      const args: Record<string, any> = { command: cmd.trim() };
+      const cwd = params.Cwd ?? params.cwd;
+      if (typeof cwd === 'string' && cwd.trim()) args.cwd = cwd.trim();
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'sysRun',
+          arguments: JSON.stringify(args)
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'viewfile' || lowerName === 'readfile' || lowerName === 'read' || lowerName === 'view' || lowerName === 'fsread') {
+    const filePath = params.AbsolutePath ?? params.path ?? params.file_path ?? params.TargetFile ?? '';
+    if (typeof filePath === 'string' && filePath.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'fs_read',
+          arguments: JSON.stringify({ path: filePath.trim() })
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'listdir' || lowerName === 'fslist' || lowerName === 'list') {
+    const dirPath = params.DirectoryPath ?? params.path ?? '.';
+    return {
+      id: `agy_native_${Date.now()}_${index}`,
+      type: 'function',
+      function: {
+        name: 'fs_list',
+        arguments: JSON.stringify({ path: String(dirPath).trim() || '.' })
+      }
+    };
+  }
+
+  if (lowerName === 'grepsearch' || lowerName === 'searchworkspace') {
+    const query = params.Query ?? params.query ?? '';
+    if (typeof query === 'string' && query.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'workspace_search',
+          arguments: JSON.stringify({
+            query: query.trim(),
+            path: params.SearchPath ?? params.path ?? '.'
+          })
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'writetofile' || lowerName === 'fswrite') {
+    const filePath = params.TargetFile ?? params.path ?? params.file_path ?? '';
+    const content = params.CodeContent ?? params.content ?? '';
+    if (typeof filePath === 'string' && filePath.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'fs_write',
+          arguments: JSON.stringify({ path: filePath.trim(), content: String(content) })
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'replacefilecontent' || lowerName === 'fsedit') {
+    const filePath = params.TargetFile ?? params.path ?? params.file_path ?? '';
+    const oldText = params.TargetContent ?? params.oldText ?? '';
+    const newText = params.ReplacementContent ?? params.newText ?? '';
+    if (typeof filePath === 'string' && filePath.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'fs_edit',
+          arguments: JSON.stringify({ path: filePath.trim(), oldText: String(oldText), newText: String(newText) })
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'openbrowserurl' || lowerName === 'readurlcontent') {
+    const url = params.Url ?? params.url ?? '';
+    if (typeof url === 'string' && url.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'web_fetch',
+          arguments: JSON.stringify({ url: url.trim() })
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'searchweb') {
+    const query = params.query ?? params.Query ?? '';
+    if (typeof query === 'string' && query.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'web_search',
+          arguments: JSON.stringify({ query: query.trim() })
+        }
+      };
+    }
+  }
+
+  return null;
+}
+
 export class AntigravityProvider extends LLMProvider {
   command: string;
 
@@ -319,6 +450,13 @@ export class AntigravityProvider extends LLMProvider {
       let streamedResponse = '';
       let finalResultObj: any = null;
       const nativeActions: ChatResponseAction[] = [];
+      const attemptedNativeTools: {
+        name: string;
+        parameters: Record<string, any>;
+        status: 'running' | 'completed' | 'failed';
+        error?: string | undefined;
+        detail?: string | undefined;
+      }[] = [];
       let childClosed = false;
 
       const cleanup = () => {
@@ -395,8 +533,32 @@ export class AntigravityProvider extends LLMProvider {
                 const status = state === 'DONE'
                   ? 'completed'
                   : (state === 'ERROR' ? 'failed' : 'running');
+                const rawParams = (toolInfo && typeof toolInfo === 'object' && toolInfo.parameters) ||
+                  (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
+                  (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
+                  {};
+
+                if (name) {
+                  const existingAttempt = attemptedNativeTools.find(a => a.name === name && a.status === 'running');
+                  if (existingAttempt) {
+                    existingAttempt.status = status;
+                    if (rawParams && Object.keys(rawParams).length > 0) {
+                      existingAttempt.parameters = { ...existingAttempt.parameters, ...rawParams };
+                    }
+                    if (toolInfo?.error?.message) existingAttempt.error = toolInfo.error.message;
+                  } else {
+                    attemptedNativeTools.push({
+                      name,
+                      parameters: { ...rawParams },
+                      status,
+                      error: toolInfo?.error?.message,
+                      detail: describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams })
+                    });
+                  }
+                }
+
                 if (name && (state === 'ACTIVE' || state === 'DONE' || state === 'ERROR')) {
-                  const detail = describeNativeAction(toolInfo);
+                  const detail = describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams });
                   const action: ChatResponseAction = {
                     name,
                     status,
@@ -407,7 +569,8 @@ export class AntigravityProvider extends LLMProvider {
                     if (existing) existing.status = status;
                     else nativeActions.push(action);
                   }
-                  if (typeof options.onNativeAction === 'function') {
+                  // A DONE event can still be denied in the final result.
+                  if (status === 'running' && typeof options.onNativeAction === 'function') {
                     options.onNativeAction(action);
                   }
                 }
@@ -483,16 +646,47 @@ export class AntigravityProvider extends LLMProvider {
         // Strip tool call tags from prose so raw XML does not leak into chat display
         let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
 
-        const completedNativeActions = nativeActions.filter((a: ChatResponseAction) => a.status === 'completed');
-
-        if (!content && Array.isArray(finalResultObj?.denied_actions) && finalResultObj.denied_actions.length > 0 && completedNativeActions.length === 0) {
-          const denied = finalResultObj.denied_actions
-            .map((a: any) => a.display_name || a.action)
-            .filter(Boolean)
-            .join(', ');
-          safeReject(new Error(`Antigravity could not perform: ${denied || 'the requested action'}`));
-          return;
+        const deniedActions: any[] = Array.isArray(finalResultObj?.denied_actions)
+          ? finalResultObj.denied_actions : [];
+        const normalizeAction = (value: unknown): string =>
+          String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const deniedNames = new Set(deniedActions.flatMap(action =>
+          [normalizeAction(action?.action), normalizeAction(action?.display_name)]).filter(Boolean));
+        for (const action of nativeActions) {
+          if (deniedNames.has(normalizeAction(action.name))) action.status = 'failed';
+          if (typeof options.onNativeAction === 'function') options.onNativeAction(action);
         }
+
+        if (deniedActions.length > 0) {
+          const unmapped: string[] = [];
+          for (const denied of deniedActions) {
+            const name = String(denied?.action || denied?.display_name || 'unknown');
+            const attempt = [...attemptedNativeTools].reverse().find(candidate =>
+              normalizeAction(candidate.name) === normalizeAction(name)
+              || normalizeAction(candidate.name) === normalizeAction(denied?.display_name));
+            const parameters = attempt?.parameters ?? denied?.parameters ?? {};
+            const mapped = mapNativeToolToCausyne(attempt?.name || String(denied?.display_name || name), parameters, toolCalls.length);
+            if (!mapped) {
+              unmapped.push(String(denied?.display_name || name));
+              continue;
+            }
+            if (!toolCalls.some(call => call.function.name === mapped.function.name
+              && call.function.arguments === mapped.function.arguments)) {
+              toolCalls.push(mapped);
+            }
+          }
+          if (unmapped.length > 0) {
+            const error = new Error(`Antigravity could not perform: ${unmapped.join(', ')}. The denied action had no safe Causyne tool mapping.`) as Error & { code: string };
+            error.code = 'AGY_NATIVE_ACTION_DENIED';
+            safeReject(error);
+            return;
+          }
+          // Any prose produced alongside a denied action may claim work that
+          // did not occur. Wait for the mapped Causyne tool result instead.
+          content = '';
+        }
+
+        const completedNativeActions = nativeActions.filter((a: ChatResponseAction) => a.status === 'completed');
 
         if (!content && completedNativeActions.length > 0) {
           content = `Antigravity completed: ${completedNativeActions

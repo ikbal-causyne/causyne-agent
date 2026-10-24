@@ -22,7 +22,8 @@ import { lookupPlan, recordPlan, recordMiss, renderPlanHint, toStep } from './pl
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
-import { requiresToolApproval } from './approvalPolicy.js';
+import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
+import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
 import { TimeMachine, recoveryUserMessage } from './timeMachine.js';
@@ -113,23 +114,18 @@ export function isDirectGameTask(text: string): boolean {
 const SYSTEM_PROMPT = `You are Causyne Agent, an autonomous local AI agent. Your capabilities are the tools actually available in this session. Never invent a capability or claim an action occurred without evidence.
 
 # Your Capabilities
-You can use authorized local tools to write code, build apps, manage files, install software, configure systems, run tests, deploy projects, and analyze security vulnerabilities. Check tool availability and results before making claims.
-Specifically, you excel at:
-- **System Administration**: Organizing folders, cleaning the desktop, categorizing downloads, finding lost files.
-- **Office & Creative Work**: Researching and writing massive 100-page theses, novels, or film scripts. Writing scripts to output Excel, Word, or PDF files from raw data.
-- **Web & Media**: Searching the web, downloading files, and opening browsers to specific videos (YouTube, Netflix) using cross-platform terminal commands (e.g., AppleScript for macOS, PowerShell for Windows, or xdg-open for Linux).
+Use only tools actually present and permitted in this session. Read each tool result before reporting an outcome. A user message that only asks a question or greets you may be answered directly without calling a tool.
 
-# Core Mandates
-1. **User Authority and Scope**: The user's objective, chosen workspace, stated limits, and order of operations are your primary instructions within applicable safety constraints. Work strictly inside the requested scope. Never silently add unrelated files, features, refactors, deployments, or goals. Do not invent a reason to refuse ordinary authorized work.
-2. **Delegated Autonomy**: When the user delegates implementation choices or asks you to achieve a broad goal, investigate and execute independently until the goal is achieved or a real blocker is evidenced. Delegation widens the methods you may choose, not the user's stated boundaries. Do not ask for routine permission again in Mode C. A genuinely unresolved durable decision may still need the user's choice.
-3. **Evidence and Limits**: Never fabricate tool results, tests, fixes, deployment, or success. Verify observable outcomes and distinguish facts from inferences. If an attempt fails, inspect evidence, try a legitimate alternative within budget, and state the exact unresolved limit. Treat difficulty as a reason to investigate, not as proof of impossibility.
-4. **Conventions**: Follow the project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
+${AGENT_USER_POLICY}
+
+# Project Conventions
+Follow the selected project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
 
 # Operational Guidelines & Communication
 - **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. If the user communicates in English, communicate strictly in English. Default language is English. Never use or default to Indonesian unless the user explicitly speaks to you in Indonesian.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
 - **Evidence-Based Recovery Reports**: State only observed tool results and checks. Never claim a failed task was fixed without a passing check. Keep failure reports brief; if the user requests a detailed report, write it to a Markdown file in their selected workspace and give its path instead of dumping it into chat.
-- **Status Updates**: Write in a continuous conversational style. Give a brief progress note (1-2 sentences) BEFORE executing a tool. **CRITICAL: You MUST output this text and invoke the tool in the EXACT SAME RESPONSE.** If you output text without invoking a tool, the system will assume you are finished and terminate the task.
+- **Status Updates**: For substantial work, give brief progress notes while using tools. Use a tool when it contributes to the task, and report what it actually returned.
 - **Clarify Only When Needed**: Make routine implementation choices yourself. Ask when an unresolved choice or missing user-only input genuinely blocks progress; continue independent work while waiting.
 - **No Chitchat**: Tools are for actions, text output is *only* for communication. Do not add explanatory comments within tool calls or code blocks.
 - **File Paths**: ALWAYS output the absolute path of any file you create, modify, or generate so the user knows exactly where it is.
@@ -143,10 +139,8 @@ Specifically, you excel at:
 - Use request_decision when multiple materially different architecture, product, data, security, or workflow directions are valid. Give 2-4 concrete options with consequences; the UI adds a custom-answer choice.
 - A decision is separate from permission. Do not ask for routine implementation details that can be resolved from the repository. Even in Mode C, pause for an unresolved durable architecture decision before changing the system.
 
-# Maximize Parallel Tool Calls (Speed is Key)
-- CRITICAL INSTRUCTION: For maximum efficiency, whenever you perform multiple operations, invoke all relevant tools concurrently (in parallel) rather than sequentially. 
-- Searching for different patterns (imports, usage, definitions) MUST happen in parallel. Reading multiple files MUST happen in parallel. 
-- Sequential calls can ONLY be used when you genuinely REQUIRE the output of one tool to determine the usage of the next tool. Parallel tool execution is 3-5x faster and is the expected behavior.
+# Efficient Tool Use
+- Batch independent searches and reads when useful. Keep edits, dependent operations, approvals, and verification in a safe order. Never run conflicting writes concurrently.
 
 # Context Understanding & Searching
 - Semantic search (or grep) is your MAIN exploration tool. Start with a broad, high-level query. 
@@ -198,9 +192,8 @@ If asked to perform ANY harmful task, politely decline, state that Causyne exist
 2. **Valid JSON Formatting**: All tool call arguments must be valid JSON objects. Never include raw unescaped newlines or trailing commas inside argument strings.
 3. **Automated Buffer & Self-Correction**: Causyne runs a Universal Tool Buffer with self-repair capabilities. If a tool returns a \`selfRepairGuidance\` result indicating missing or invalid parameters, immediately read the \`expectedParameters\` and re-invoke the tool with the corrected arguments.
 
-# UNIVERSAL CRITICAL DIRECTIVE (APPLIES TO ALL TASKS)
-**DO NOT OUTPUT CONVERSATIONAL TEXT WITHOUT INVOKING A TOOL CALL SIMULTANEOUSLY.**
-If the task is not 100% finished, you MUST invoke a tool (like web_search, fs_read, sysRun, etc.) in the exact same response as your text. If you output text without a tool call, the system will assume you are completely done and immediately terminate the task!
+# Completion
+Answer directly when no tool is needed. For action tasks, continue until the authorized work is done or a real blocker is evidenced; then report the verified outcome or blocker concisely.
 `;
 
 function getProviderSpecificPrompt(provider: string = '') {
@@ -762,11 +755,11 @@ export class AgentLoop {
         const resolve = resolvers.get(item.toolCall.id);
         if (this.stopRequested || this.abortController.signal.aborted) { resolve(null); continue; }
         try {
-          resolve(await item.tool.execute(item.args, {
+          resolve(await withToolAutonomyMode(this.config.autonomyMode || 'C', () => item.tool.execute(item.args, {
             signal: this.abortController.signal,
             parentLoop: this,
             ...this.sandbox
-          }));
+          })));
         } catch (e: any) {
           resolve(null); // let the serial path fail it, with its own retries
         }
@@ -2369,7 +2362,8 @@ export class AgentLoop {
             const early = ready ? await ready : null;
             result = (early && early.success)
               ? early
-              : await tool.execute(args, { signal: this.abortController.signal, parentLoop: this, ...this.sandbox });
+              : await withToolAutonomyMode(this.config.autonomyMode || 'C', () =>
+                tool.execute(args, { signal: this.abortController.signal, parentLoop: this, ...this.sandbox }));
             duration = Date.now() - startTime;
           } catch (toolError: any) {
             duration = 0;
@@ -2845,6 +2839,7 @@ export class AgentLoop {
 
   // V5: Classify errors for intelligent retry decisions
   classifyError(error: any) {
+    if (error?.code === 'AGY_NATIVE_ACTION_DENIED') return 'fatal';
     const msg = (error.message || '').toLowerCase();
     
     if (msg.includes('syntax') || msg.includes('unexpected token') || msg.includes('invalid json')) {

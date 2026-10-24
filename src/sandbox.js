@@ -266,6 +266,15 @@ export class Sandbox {
       return { allowed: true, risk: 'moderate' };
     }
 
+    if (toolName === 'gitOp') {
+      const command = String(args.command || '');
+      const risk = this.classifyCommandRisk(`git ${command}`);
+      if (risk === 'forbidden') {
+        return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
+      }
+      return { allowed: true, risk: /\bbranch\s+-D\b/.test(command) ? 'dangerous' : risk };
+    }
+
     // 4. SSRF protection (for web fetch)
     if (toolName === 'web_fetch' && args.url) {
       if (this.isInternalUrl(args.url)) {
