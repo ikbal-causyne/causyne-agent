@@ -479,20 +479,14 @@ export async function chatMode({ home = false } = {}) {
       }
 
       if (commandResult.effect === 'pick-session' && prompt) {
-        const active = commandResult.active;
-        prompt.openLayer(new SelectLayer({
-          title: 'Sessions',
-          emptyText: 'No sessions yet',
-          items: (commandResult.items || []).map((session) => ({
-            id: session.id,
-            label: `${session.id === active ? `${GLYPHS.bullet} ` : ''}${session.title}`,
-            description: `${session.messageCount} messages ${GLYPHS.dot} ${session.workspace || 'no workspace'}`,
-            value: session
-          })),
-          onPick: (item) => {
-            if (item) prompt.deliver(`/sessions switch ${item.value.id}`);
-          }
-        }));
+        const { runInteractiveSessionPicker } = await import('./tui/sessionPicker.js');
+        const outcome = await runInteractiveSessionPicker(prompt, {
+          loop,
+          workspace: loop?.workspaceRoot || process.cwd()
+        });
+        if (outcome) {
+          conn.renderer.write(`\n${outcome}\n`);
+        }
         continue;
       }
 

@@ -596,6 +596,23 @@ export class ChatPrompt {
     this.editor.clear();
     this.completion = null;
 
+    // Control commands take priority over busy turns so the user is never locked out.
+    // Commands like /stop, /new, /model, /session, /sessions, /continuum, /clear can interrupt
+    // a stalled/long-running turn and execute immediately.
+    const isControlCommand = this.isCommand(text) && (
+      text === '/stop' || text === '/interrupt' ||
+      text.startsWith('/new') ||
+      text.startsWith('/model') ||
+      text.startsWith('/session') ||
+      text.startsWith('/sessions') ||
+      text.startsWith('/continuum') ||
+      text === '/clear'
+    );
+
+    if (isControlCommand && this.busy) {
+      this.interrupt();
+    }
+
     if (this.busy) {
       // The turn is still running: hold the line rather than dropping it.
       this.queue.push(text);
@@ -1024,17 +1041,33 @@ export class ChatPrompt {
     if (key.name === 'down') { this.moveSelection(1); return true; }
     if (key.name === 'enter' && !key.alt) {
       const item = this.completion.items && this.completion.items[this.selected];
-      if (this.completion.kind === 'command' && item && item.value === '/model') {
-        this.editor.clear();
-        this.completion = null;
-        this.deliver('/model');
-        return true;
+      if (this.completion.kind === 'command' && item) {
+        if (item.value === '/model' || item.value === '/sessions' || item.value === '/session' || item.value === '/new' || item.value === '/continuum') {
+          this.editor.clear();
+          this.completion = null;
+          this.deliver(item.value);
+          return true;
+        }
       }
-      if (this.completion.kind === 'command-argument' && this.completion.command === 'model' && item) {
-        this.editor.clear();
-        this.completion = null;
-        this.deliver(`/model ${item.value}`);
-        return true;
+      if (this.completion.kind === 'command-argument' && item) {
+        if (this.completion.command === 'model') {
+          this.editor.clear();
+          this.completion = null;
+          this.deliver(`/model ${item.value}`);
+          return true;
+        }
+        if (this.completion.command === 'sessions' || this.completion.command === 'session') {
+          this.editor.clear();
+          this.completion = null;
+          this.deliver(`/sessions ${item.value}`);
+          return true;
+        }
+        if (this.completion.command === 'continuum') {
+          this.editor.clear();
+          this.completion = null;
+          this.deliver(`/continuum ${item.value}`);
+          return true;
+        }
       }
       if (this.completionIsExact()) {
         // Nothing left to complete. Close the picker and let the key through to

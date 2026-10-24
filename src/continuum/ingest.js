@@ -42,7 +42,7 @@ export async function adoptContinuumSession(target, options = {}) {
         originalWorkspace: detail.workspacePath
     });
     // 3. Create a new sovereign Causyne session
-    const targetWorkspace = options.workspace || detail.workspacePath || process.cwd();
+    const targetWorkspace = options.workspace || process.cwd();
     const title = `[Adopted] ${detail.title}`;
     const newSession = createSession(targetWorkspace, title, true);
     // 4. Ingest compacted messages into journal

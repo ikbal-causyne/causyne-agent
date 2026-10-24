@@ -23,6 +23,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview } from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
+import { listSessions, getActiveSessionId } from './sessionStore.js';
 import {
   serverStatus, grantServer, revokeServer, addServer, removeServer,
   connectServer, disconnectServer, refreshServer
@@ -582,29 +583,105 @@ export const COMMANDS = [
   },
 
   {
+    name: 'new',
+    aliases: ['new-session'],
+    scope: 'local',
+    usage: '/new',
+    description: 'Start a new clean chat session in this workspace',
+    dialogTitle: 'New Session',
+    run: async (_args = [], context = {}) => {
+      const store = await import('./sessionStore.js');
+      const memory = context.loop && context.loop.memoryManager;
+      const workspace = context.loop?.workspaceRoot || process.cwd();
+      const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
+      if (context.loop) {
+        context.loop.messages = [];
+        context.loop.taskId = `cli_chat_${Date.now()}`;
+        if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+          context.loop.tokenTracker.reset();
+        }
+      }
+      if (context.prompt?.editor?.clear) {
+        context.prompt.editor.clear();
+        if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
+      }
+      return ok(`✨ Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
+    }
+  },
+
+  {
     name: 'sessions',
     aliases: ['session'],
     scope: 'local',
-    usage: '/sessions [switch <id> | delete <id>]',
+    usage: '/sessions [new | switch <id> | delete <id>]',
     description: 'List chat sessions, or switch to one',
     dialogTitle: 'Sessions',
-    // Sessions replaced ONE global chat_history.json that every directory read.
-    // A session you cannot list or switch to is not a session, so this ships
-    // with the store rather than after it.
+    complete: () => {
+      try {
+        const rows = listSessions().slice(0, 15);
+        return [
+          { value: 'new', label: 'new', description: 'start a fresh conversation in this workspace' },
+          ...rows.map(r => ({
+            value: `switch ${r.id}`,
+            label: `switch ${r.id}`,
+            description: `${r.title} (${r.messageCount} msgs)`
+          }))
+        ];
+      } catch (e) {
+        return [{ value: 'new', label: 'new', description: 'start a fresh conversation' }];
+      }
+    },
     run: async (args = [], context = {}) => {
       const store = await import('./sessionStore.js');
       const verb = String(args[0] || '').toLowerCase();
       const memory = context.loop && context.loop.memoryManager;
+      const workspace = context.loop?.workspaceRoot || process.cwd();
+
+      // If interactive TUI prompt is available and no sub-arguments are given, open interactive picker modal
+      if ((!args || args.length === 0 || (args.length === 1 && args[0] === '')) && context.prompt) {
+        const { runInteractiveSessionPicker } = await import('./tui/sessionPicker.js');
+        const message = await runInteractiveSessionPicker(context.prompt, {
+          loop: context.loop,
+          workspace
+        });
+        return ok(message, { effect: 'inline' });
+      }
+
+      if (verb === 'new') {
+        const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
+        if (context.loop) {
+          context.loop.messages = [];
+          context.loop.taskId = `cli_chat_${Date.now()}`;
+          if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+            context.loop.tokenTracker.reset();
+          }
+        }
+        if (context.prompt?.editor?.clear) {
+          context.prompt.editor.clear();
+          if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
+        }
+        return ok(`✨ Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
+      }
 
       if (verb === 'switch' && args[1]) {
         const next = memory ? memory.useSession(args[1]) : store.switchSession(args[1]);
         if (!next) return fail(`No session "${args[1]}".`);
-        if (context.loop) context.loop.messages = next.messages.filter(m => m.role !== 'system');
-        return ok(`Switched to "${next.title}" (${next.messages.length} messages).`);
+        if (context.loop) {
+          context.loop.messages = memory ? memory.loadHistory() : next.messages.filter(m => m.role !== 'system');
+          context.loop.taskId = `cli_chat_${Date.now()}`;
+          if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+            context.loop.tokenTracker.reset();
+          }
+        }
+        if (context.prompt?.editor?.clear) {
+          context.prompt.editor.clear();
+          if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
+        }
+        return ok(`✓ Switched to "${next.title}" (${next.messages.length} messages, ${next.id}).`, { effect: 'inline' });
       }
 
       if (verb === 'delete' && args[1]) {
-        return store.deleteSession(args[1]) ? ok('Session deleted.') : fail(`No session "${args[1]}".`);
+        return store.deleteSession(args[1]) ? ok(`Deleted session "${args[1]}".`) : fail(`No session "${args[1]}".`);
       }
 
       const rows = store.listSessions();
@@ -624,7 +701,7 @@ export const COMMANDS = [
       return ok(
         `${rows.length} session${rows.length === 1 ? '' : 's'} (* = active):\n`
         + lines.join('\n')
-        + '\n\nSwitch with /sessions switch <id>. A new directory always starts a new session.',
+        + '\n\nSwitch with /sessions switch <id>, or run /sessions to open interactive modal picker.',
         { effect: 'pick-session', items: rows, active }
       );
     }
@@ -737,7 +814,7 @@ export const COMMANDS = [
 
   {
     name: 'clear',
-    aliases: ['reset', 'new'],
+    aliases: ['reset'],
     scope: 'local',
     usage: '/clear',
     description: 'Clear the conversation and start from a fresh context',

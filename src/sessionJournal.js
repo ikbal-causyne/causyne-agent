@@ -314,12 +314,25 @@ export function setActiveSession(id) {
         return false;
     }
 }
-export function resolveSession(workspace) {
+export function resolveSession(workspace, options = {}) {
     const workspaceText = String(workspace ?? '');
     ensureDir();
     migrateLegacyHistory(workspaceText);
+    if (options.forceNew) {
+        return createSession(workspaceText);
+    }
     const key = workspaceKey(workspaceText);
     const now = Date.now();
+    // 1. Check preferred session or active.json pointer for this workspace
+    const targetId = options.preferredId || getActiveSessionId();
+    if (targetId) {
+        const active = readSession(targetId);
+        if (active && (!active.workspace || active.workspaceKey === key) && now - active.updatedAt < RESUME_WINDOW_MS) {
+            setActiveSession(active.id);
+            return active;
+        }
+    }
+    // 2. Resume most recent workspace conversation within resume window
     const candidate = listSessions()
         .filter((row) => row.workspace && row.workspaceKey === key)
         .find((row) => now - row.updatedAt < RESUME_WINDOW_MS);

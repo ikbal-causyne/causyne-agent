@@ -51,6 +51,7 @@
     "src/tui/banner.ts",
     "src/tui/setup.ts",
     "src/tui/modelPicker.ts",
+    "src/tui/sessionPicker.ts",
     "src/tui/clipboardSync.ts",
     "src/providers/antigravity.ts",
     "src/providers/acp.ts",

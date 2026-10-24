@@ -30,7 +30,7 @@ export class MemoryManager {
    * directory — so typing continue in a new project resumed a conversation
    * from a different one, months old. See src/sessionStore.js.
    */
-  constructor(workspace = process.cwd(), sessionId = null) {
+  constructor(workspace = process.cwd(), sessionId = null, options = {}) {
     this.ensureMemoryDir();
     this.workspace = workspace;
     if (sessionId) {
@@ -38,7 +38,7 @@ export class MemoryManager {
       // resolveSession(), which could silently attach it to a different chat.
       this.session = getSession(sessionId) || createSession(workspace, 'Untitled', false);
     } else {
-      this.session = resolveSession(workspace);
+      this.session = resolveSession(workspace, options);
     }
   }
 
@@ -47,8 +47,8 @@ export class MemoryManager {
   get sessionTitle() { return this.session ? this.session.title : ''; }
 
   /** Abandon this conversation and open a clean one in the same workspace. */
-  startNewSession() {
-    this.session = createSession(this.workspace);
+  startNewSession(title = 'Untitled') {
+    this.session = createSession(this.workspace, title, true);
     return this.session;
   }
 
@@ -67,8 +67,12 @@ export class MemoryManager {
 
   loadHistory() {
     if (!this.session || !Array.isArray(this.session.messages)) return [];
-    // Only return non-system messages to prevent stale system prompts.
-    return this.session.messages.filter(m => m.role !== 'system');
+    // Return conversation messages. Preserve Continuum context blocks, drop stale default system prompts.
+    return this.session.messages.filter(m => {
+      if (m.role !== 'system') return true;
+      if (typeof m.content === 'string' && m.content.startsWith('[Continuum')) return true;
+      return false;
+    });
   }
 
   
