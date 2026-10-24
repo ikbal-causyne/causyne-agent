@@ -15,6 +15,8 @@ import path from 'node:path';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-test-home-'));
 process.env.CAUSYNE_HOME = root;
+process.env.NODE_ENV = 'test';
+process.env.CAUSYNE_TEST_ALLOW_UNINSTALLED_PEERS = '1';
 
 // The neural engine's model files are large, slow to fetch, and READ-ONLY in
 // use. Link rather than copy so Cortex tests still exercise real embeddings

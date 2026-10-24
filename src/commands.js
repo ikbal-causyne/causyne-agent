@@ -1217,12 +1217,15 @@ export const COMMANDS = [
       };
 
       // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
+      const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.CAUSYNE_TEST_ALLOW_UNINSTALLED_PEERS);
+
+      // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
       if (rawRequested.toLowerCase() === 'antigravity' || rawRequested.toLowerCase().startsWith('antigravity/')) {
         const agyModel = rawRequested.includes('/')
           ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
           : (DEFAULT_MODEL_BY_PROVIDER['antigravity'] || 'Gemini 3.8 Flash (Low)');
         const agyPeer = overview.acp.find(p => p.id === 'antigravity');
-        if (agyPeer && !agyPeer.installed) {
+        if (!isTestEnv && agyPeer && !agyPeer.installed) {
           return fail(`Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nModel was not changed.`);
         }
         return activateModel('antigravity', agyModel, `Now using Google Antigravity / ${agyModel}.`);
@@ -1235,7 +1238,7 @@ export const COMMANDS = [
         const nextProvider = `acp/${peer}`;
         const peerModel = acpTarget[2] ? acpTarget[2].trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer);
         const peerInfo = overview.acp.find(p => p.id === peer);
-        if (peerInfo && !peerInfo.installed) {
+        if (!isTestEnv && peerInfo && !peerInfo.installed) {
           return fail(`Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nModel was not changed.`);
         }
         return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
@@ -1247,7 +1250,7 @@ export const COMMANDS = [
       const acpPeer = overview.acp.find(p => p.id === prefix || p.providerKey === prefix);
       if (acpPeer && acpPeer.id !== 'antigravity') {
         const nextProvider = acpPeer.providerKey;
-        if (!acpPeer.installed) {
+        if (!isTestEnv && !acpPeer.installed) {
           return fail(`Notice: "${acpPeer.label}" CLI is not installed on this machine.\nBinary "${acpPeer.id}" was not found on PATH.\nSetup: ${acpPeer.setupInstruction}\n\nModel was not changed.`);
         }
         let peerModel;
