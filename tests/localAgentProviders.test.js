@@ -110,16 +110,27 @@ describe('peer agents as first-class providers', () => {
 describe('/model understands peer provider keys', () => {
   let tempDir;
   let originalHome;
+  let fakeBinDir;
+  let originalPath;
 
   before(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-peer-test-'));
     originalHome = process.env.CAUSYNE_HOME;
     process.env.CAUSYNE_HOME = tempDir;
+
+    fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-peer-bin-'));
+    const binName = process.platform === 'win32' ? 'opencode.cmd' : 'opencode';
+    const fakeBin = path.join(fakeBinDir, binName);
+    fs.writeFileSync(fakeBin, process.platform === 'win32' ? '@exit /b 0' : '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    originalPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}${path.delimiter}${process.env.PATH || ''}`;
   });
 
   after(() => {
     if (originalHome) process.env.CAUSYNE_HOME = originalHome;
     else delete process.env.CAUSYNE_HOME;
+    if (originalPath) process.env.PATH = originalPath;
+    if (fakeBinDir) fs.rmSync(fakeBinDir, { recursive: true, force: true });
     if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
