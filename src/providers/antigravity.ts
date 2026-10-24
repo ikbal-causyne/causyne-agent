@@ -102,7 +102,13 @@ export class AntigravityProvider extends LLMProvider {
       'You are acting as an AI reasoning engine for Causyne Agent. Do NOT invoke your own internal host CLI tools or execute commands directly. ' +
       'When an action or tool is required, output an explicit tool call in this exact format:\n' +
       '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
-      'Causyne Agent will execute the tool in its secure environment and return the results back to you.'
+      'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
+      '[Action Directive]\n' +
+      'When the user requests to create, build, code, fix, write, optimize, or implement anything (such as a 3D Three.js game, web app, script, or feature), you MUST immediately invoke the relevant tools to execute the work.\n' +
+      'NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
+      'You must directly generate the code and call the appropriate tool (such as fs_write, sysRun, or file_write) to build what was requested.\n\n' +
+      '[Language & Communication Directive]\n' +
+      'Dynamically reflect and match the exact language used by the user in their prompt. If the user writes in English, you must respond strictly in English. Default to English for all responses and reasoning. Never default to Indonesian or send canned greetings in Indonesian.'
     );
 
     if (tools && tools.length > 0) {
@@ -202,6 +208,34 @@ export class AntigravityProvider extends LLMProvider {
       }
     }
 
+    // Unclosed tool_call recovery (when model generated large file content and closed turn)
+    if (calls.length === 0) {
+      const openIndex = text.lastIndexOf('<tool_call>');
+      if (openIndex !== -1 && text.indexOf('</tool_call>', openIndex) === -1) {
+        const partial = text.slice(openIndex + '<tool_call>'.length).trim();
+        for (const suffix of ['', '}', '}}', '}}}', '"}', '"}}', '"}}}', '"}]}}', '"]}}', '"]}}}']) {
+          try {
+            const parsed = JSON.parse(partial + suffix);
+            const name = parsed.name || parsed.tool || parsed.function?.name;
+            if (name) {
+              const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
+              calls.push({
+                id: `agy_call_${Date.now()}_0`,
+                type: 'function',
+                function: {
+                  name,
+                  arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+                }
+              });
+              break;
+            }
+          } catch {
+            // try next candidate
+          }
+        }
+      }
+    }
+
     return calls;
   }
 
@@ -228,21 +262,26 @@ export class AntigravityProvider extends LLMProvider {
     // Standard high-performance non-blocking CLI invocation:
     // 1. stream-json output for real-time responsiveness and non-buffering progress.
     // 2. --disable-slash-commands prevents sluggish filesystem and customization scans.
-    // 3. -p - pipes prompt from stdin to avoid OS argument length bottlenecks.
-    // 4. --print-timeout 120s protects against unhandled deadlocks.
+    // 3. The prompt is piped through stdin. `-p -` cannot be used: agy treats the
+    //    literal "-" as the prompt, ignores stdin, and answers with its default
+    //    greeting — the conversation never reaches the model.
+    // 4. --dangerously-skip-permissions must stay off. agy is a full agent CLI;
+    //    granting it tools lets it run its own commands in this workspace instead
+    //    of answering through Causyne, and an all-tools turn produces no prose.
+    //    With permissions denied in headless mode it answers as a reasoning engine.
+    // 5. --print-timeout 300s provides ample window for large code generation without truncation.
     const args = [
+      '--input-format',
+      'text',
       '--output-format',
       'stream-json',
       '--disable-slash-commands',
       '--print-timeout',
-      '120s',
-      '--dangerously-skip-permissions',
+      '300s',
       '--model',
       modelSlug,
       '--effort',
-      effort,
-      '-p',
-      '-'
+      effort
     ];
 
     return new Promise<ChatResponse>((resolve, reject) => {
@@ -301,6 +340,7 @@ export class AntigravityProvider extends LLMProvider {
 
       // Feed prompt directly into child process stdin, then close stdin
       try {
+        child.stdin.on('error', () => {});
         child.stdin.write(promptText, 'utf8');
         child.stdin.end();
       } catch (err: any) {
@@ -400,7 +440,11 @@ export class AntigravityProvider extends LLMProvider {
         }
 
         if (!content && toolCalls.length === 0) {
-          content = 'Turn completed by Antigravity Agent.';
+          const detail = stderrBuffer.trim();
+          safeReject(new Error(detail
+            ? `Antigravity returned no response: ${detail}`
+            : 'Antigravity returned no response.'));
+          return;
         }
 
         const promptTokens = Number(finalResultObj?.usage?.input_tokens) || Math.ceil(promptText.length / 4);
@@ -408,7 +452,7 @@ export class AntigravityProvider extends LLMProvider {
         const thinkingTokens = Number(finalResultObj?.usage?.thinking_tokens) || 0;
 
         const response: ChatResponse = {
-          content: content || (toolCalls.length > 0 ? '' : 'Turn completed by Antigravity Agent.'),
+          content,
           usage: {
             promptTokens,
             completionTokens: completionTokens + thinkingTokens,

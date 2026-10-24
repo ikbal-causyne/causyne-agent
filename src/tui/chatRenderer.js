@@ -596,6 +596,12 @@ export class ChatRenderer {
         }
       }
     }
+
+    if (this.transcript?.surface?.viewport) {
+      this.transcript.surface.viewport.manual = false;
+      this.transcript.surface.viewport.unseen = 0;
+      this.transcript.surface.viewport.toBottom();
+    }
   }
 
   onAgentMessage(msg) {

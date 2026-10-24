@@ -651,7 +651,7 @@ export const COMMANDS = [
           loop: context.loop,
           workspace
         });
-        return ok(message, { effect: 'inline' });
+        return ok(message, { effect: 'silent' });
       }
 
       if (verb === 'new') {
@@ -749,7 +749,7 @@ export const COMMANDS = [
         const resultText = await runInteractiveContinuum(context.prompt, {
           loop: context.loop
         });
-        return ok(resultText, { effect: 'inline' });
+        return ok(resultText, { effect: 'silent' });
       }
 
       const scanner = context.scanner || new ContinuumScanner();
@@ -959,7 +959,7 @@ export const COMMANDS = [
               ctx.loop.updateTierLimits();
             }
           }
-          return ok(output, { effect: 'inline' });
+          return ok(output, { effect: 'silent' });
         }
 
         const lines = [

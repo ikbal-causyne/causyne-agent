@@ -44,6 +44,7 @@ export async function runInteractiveContinuum(
   options: {
     scanner?: ContinuumScanner;
     loop?: {
+      taskId?: string;
       messages: Array<{ role: string; content?: unknown }>;
       memoryManager?: {
         useSession: (id: string) => unknown;
@@ -92,15 +93,32 @@ export async function runInteractiveContinuum(
   }
 
   if (options.loop) {
+    options.loop.taskId = `cli_chat_${Date.now()}`;
     if (options.loop.memoryManager) {
       options.loop.memoryManager.useSession(adoptRes.sessionId);
       if (typeof options.loop.memoryManager.loadHistory === 'function') {
         options.loop.messages = options.loop.memoryManager.loadHistory();
       }
     }
+    const renderer = (prompt as any).renderer || (options.loop as any)?.connection?.renderer;
+    if (renderer && typeof renderer.renderSessionHistory === 'function') {
+      renderer.renderSessionHistory(options.loop.messages || [], {
+        id: adoptRes.sessionId,
+        title: adoptRes.title,
+        messagesCount: adoptRes.messageCount
+      });
+    }
+    if ((prompt as any).surface?.viewport && typeof (prompt as any).surface.viewport.toBottom === 'function') {
+      (prompt as any).surface.viewport.toBottom();
+    }
   }
 
-  return `✓ Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\n  New active Causyne session: ${adoptRes.sessionId}. Continue working seamlessly.`;
+  if ((prompt as any).editor && typeof (prompt as any).editor.clear === 'function') {
+    (prompt as any).editor.clear();
+    if (typeof (prompt as any).scheduleDraw === 'function') (prompt as any).scheduleDraw();
+  }
+
+  return `Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\nActive Causyne session: ${adoptRes.sessionId}.`;
 }
 
 /**

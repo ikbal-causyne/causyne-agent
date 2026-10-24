@@ -35,6 +35,16 @@ import { analyzeFiles, formatFindings, isScannableFile } from './slopDetector.js
 import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
 import { resolveMentionedContext } from './promptMentions.js';
+export function isActionableTaskPrompt(text) {
+    const t = (text || '').trim();
+    if (!t)
+        return false;
+    const pureGreeting = /^(hi|hello|hey|halo|hai|yo|good\s+(morning|afternoon|evening)|selamat\s+(pagi|siang|sore|malam))[.!?, ]*$/i.test(t);
+    if (pureGreeting)
+        return false;
+    const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|delete|remove|update|change|test|game|app|script|server|ui|page|feature|function|canvas|3js|three\.?js|numpy)\b/i;
+    return actionKeywords.test(t) || t.length > 25;
+}
 const SYSTEM_PROMPT = `You are Causyne Agent, a God-Tier Autonomous AI. You operate the user's computer through a local desktop harness. You are not just a coding assistant; you are a general-purpose superintelligence.
 
 # Your Capabilities
@@ -50,6 +60,7 @@ Specifically, you excel at:
 3. **Conventions**: Rigorously adhere to existing project conventions. Mimic the style, structure, framework choices, and architectural patterns of existing code. NEVER assume a library/framework is available; verify it first.
 
 # Operational Guidelines & Communication
+- **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. If the user communicates in English, communicate strictly in English. Default language is English. Never use or default to Indonesian unless the user explicitly speaks to you in Indonesian.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
 - **Status Updates**: Write in a continuous conversational style. Give a brief progress note (1-2 sentences) BEFORE executing a tool. **CRITICAL: You MUST output this text and invoke the tool in the EXACT SAME RESPONSE.** If you output text without invoking a tool, the system will assume you are finished and terminate the task.
 - **Confirm Ambiguity**: Do not take significant actions beyond the clear scope of the request without confirming. If asked *how* to do something, explain first, don't just do it.
@@ -948,12 +959,14 @@ export class AgentLoop {
                     this.notice(`Focused on subproject '${mentionResult.detectedSubproject}'`);
                 }
                 else if (subprojects.length > 0) {
-                    const lowerPrompt = this.userPrompt.toLowerCase();
                     for (const sp of subprojects) {
-                        if (lowerPrompt.includes(sp.toLowerCase())) {
-                            this.activeSubproject = sp;
-                            this.notice(`Focused on subproject '${sp}'`);
-                            break;
+                        if (sp.length >= 2) {
+                            const boundaryRegex = new RegExp(`(?:^|\\s|["'\`(@/\\\\])${sp.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}(?:$|\\s|["'\`):,/\\\\])`, 'i');
+                            if (boundaryRegex.test(this.userPrompt)) {
+                                this.activeSubproject = sp;
+                                this.notice(`Focused on subproject '${sp}'`);
+                                break;
+                            }
                         }
                     }
                 }
@@ -1494,8 +1507,32 @@ export class AgentLoop {
                 if (!response.toolCalls || response.toolCalls.length === 0) {
                     const contentText = response.content || '';
                     const lower = contentText.toLowerCase();
-                    const thinkingKeywords = ['let me ', "i'll ", 'i will ', 'now i ', 'next, i ', 'first, i ', 'checking ', 'trying to ', 'let us ', 'going to '];
-                    const isThinking = thinkingKeywords.some(kw => lower.includes(kw));
+                    const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
+                    const isActionable = isActionableTaskPrompt(taskPrompt);
+                    const isQuestionOrGreeting = lower.includes('?') ||
+                        lower.includes('let me know') ||
+                        lower.includes('how can i help') ||
+                        lower.includes('how may i help') ||
+                        lower.includes('how can i assist') ||
+                        lower.includes('what would you like') ||
+                        lower.includes('what can i help') ||
+                        lower.includes('feel free to');
+                    // Action Enforcement on Step 0:
+                    // If the user instructed an actionable task (e.g. "create a 3js game..."), but the model
+                    // replied with a greeting, polite pleasantry, question, or refusal without calling any tools:
+                    if (this.stepsCompleted === 0 && isActionable && (isQuestionOrGreeting || lower.includes('hello') || lower.includes('hi ') || lower.includes('halo')) && this.consecutiveThinkingSteps < 3) {
+                        this.consecutiveThinkingSteps++;
+                        this.emitEvent({ type: 'status', message: 'Enforcing task execution: rejecting greeting on actionable instruction...' });
+                        this.emitEvent({ type: 'agent_activity', activity: 'Enforcing tool execution…' });
+                        this.messages.push({
+                            role: 'system',
+                            content: `[CRITICAL ACTION MANDATE: The user explicitly instructed: "${taskPrompt}". You responded with a greeting or inquiry without performing any actions or writing any code. Do NOT reply with greetings, pleasantries, or ask how to help. You must immediately invoke the appropriate tools (e.g., fs_write, sysRun) to implement the user's request.]`
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
+                    const thinkingKeywords = ['let me ', "i'll ", 'i will ', 'now i ', 'next, i ', 'first, i ', 'checking ', 'trying to ', 'let us ', 'going to ', 'i shall', 'we will', 'i am going to'];
+                    const isThinking = !isQuestionOrGreeting && thinkingKeywords.some(kw => lower.includes(kw));
                     if (isThinking && this.consecutiveThinkingSteps < 3) {
                         this.consecutiveThinkingSteps++;
                         this.emitEvent({ type: 'status', message: 'Agent planning next steps...' });
@@ -1510,13 +1547,13 @@ export class AgentLoop {
                         continue;
                     }
                     if (this.stepsCompleted === 0 && this.consecutiveThinkingSteps < 2) {
-                        if (lower.includes('turn completed') || lower.includes('no output produced') || !contentText.trim()) {
+                        if (isActionable || lower.includes('turn completed') || lower.includes('no output produced') || !contentText.trim()) {
                             this.consecutiveThinkingSteps++;
                             this.emitEvent({ type: 'status', message: 'Nudging agent to execute actionable steps...' });
                             this.emitEvent({ type: 'agent_activity', activity: 'Nudging agent to invoke tools…' });
                             this.messages.push({
                                 role: 'system',
-                                content: '[SYSTEM NOTICE: An action or task was requested, but no tools were called. Please invoke the appropriate tool by outputting: <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call> to execute the task.]'
+                                content: `[SYSTEM NOTICE: An action or task was requested ("${taskPrompt}"), but no tools were called. Please invoke the appropriate tool by outputting: <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call> to execute the task.]`
                             });
                             this.memoryManager.saveHistory(this.messages);
                             continue;
@@ -1531,7 +1568,6 @@ export class AgentLoop {
                     //      consecutiveThinkingSteps, which resets on every tool call, so
                     //      a guard could block completion indefinitely and burn the whole
                     //      step budget on an already-finished task.
-                    const taskPrompt = this.currentTaskPrompt || this.userPrompt || '';
                     const isGameTask = isGameIntent(taskPrompt);
                     this.gameToolStats = this.gameToolStats || { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
                     if (isGameTask && !this.gameGuardFired) {

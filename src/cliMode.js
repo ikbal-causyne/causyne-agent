@@ -490,15 +490,18 @@ export async function chatMode({ home = false } = {}) {
         continue;
       }
 
+      if (commandResult.effect === 'silent') {
+        if (prompt && typeof prompt.draw === 'function') prompt.draw();
+        continue;
+      }
+
       if (commandResult.effect === 'pick-session' && prompt) {
         const { runInteractiveSessionPicker } = await import('./tui/sessionPicker.js');
-        const outcome = await runInteractiveSessionPicker(prompt, {
+        await runInteractiveSessionPicker(prompt, {
           loop,
           workspace: loop?.workspaceRoot || process.cwd()
         });
-        if (outcome) {
-          conn.renderer.write(`\n${outcome}\n`);
-        }
+        if (prompt && typeof prompt.draw === 'function') prompt.draw();
         continue;
       }
 

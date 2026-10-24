@@ -1,7 +1,17 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { AntigravityProvider, isAntigravityProvider, resolveAgyBinary, ANTIGRAVITY_MODELS } from '../src/providers/antigravity.js';
 import { createProvider } from '../src/providers/factory.js';
+
+function fakeAgy(script) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-'));
+  const command = path.join(dir, 'agy');
+  fs.writeFileSync(command, script, { mode: 0o755 });
+  return { dir, command };
+}
 
 describe('AntigravityProvider and isAntigravityProvider', () => {
   test('isAntigravityProvider recognizes antigravity and agy identifiers', () => {
@@ -71,6 +81,66 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     assert.strictEqual(callsFenced[0].function.name, 'file_read');
   });
 
+  test('chat reads the prompt from stdin and never grants agy its own tools', { skip: process.platform === 'win32' }, async () => {
+    const argsFile = path.join(os.tmpdir(), `causyne-agy-args-${process.pid}.json`);
+    const stdinFile = path.join(os.tmpdir(), `causyne-agy-stdin-${process.pid}.txt`);
+    process.env.AGY_ARGS_FILE = argsFile;
+    process.env.AGY_STDIN_FILE = stdinFile;
+    const fake = fakeAgy(`#!/usr/bin/env node
+const fs = require('node:fs');
+fs.writeFileSync(process.env.AGY_ARGS_FILE, JSON.stringify(process.argv.slice(2)));
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+  fs.writeFileSync(process.env.AGY_STDIN_FILE, input);
+  const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+  emit({ event: 'init' });
+  emit({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: 'pong' } });
+  emit({ event: 'result', result: { status: 'SUCCESS', response: 'pong', usage: { input_tokens: 1, output_tokens: 1 } } });
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      const response = await provider.chat([{ role: 'user', content: 'ping' }]);
+      assert.equal(response.content, 'pong');
+
+      const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
+      assert.equal(args[args.indexOf('--input-format') + 1], 'text');
+      assert.ok(args.includes('--output-format'));
+      assert.ok(!args.includes('--dangerously-skip-permissions'));
+      assert.ok(!args.includes('-p'));
+      assert.ok(!args.includes('-'));
+
+      const stdin = fs.readFileSync(stdinFile, 'utf8');
+      assert.match(stdin, /\[User\]\nping/);
+    } finally {
+      delete process.env.AGY_ARGS_FILE;
+      delete process.env.AGY_STDIN_FILE;
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+      fs.rmSync(argsFile, { force: true });
+      fs.rmSync(stdinFile, { force: true });
+    }
+  });
+
+  test('an empty agy result is reported as a failure, not as a completed turn', { skip: process.platform === 'win32' }, async () => {
+    const fake = fakeAgy(`#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '' } }) + '\\n');
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'ping' }]),
+        /Antigravity returned no response/
+      );
+    } finally {
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+    }
+  });
+
   test('_isTransientError identifies connection resets and stream timeouts', () => {
     const provider = new AntigravityProvider();
     assert.strictEqual(provider._isTransientError('read tcp: connection reset by peer'), true);
@@ -81,6 +151,40 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     assert.strictEqual(provider._isTransientError('Invalid API Key provided'), false);
     assert.strictEqual(provider._isTransientError(''), false);
     assert.strictEqual(provider._isTransientError(null), false);
+  });
+
+  test('formatConversation includes Action Directive and Language Directive', () => {
+    const provider = new AntigravityProvider();
+    const formatted = provider.formatConversation([{ role: 'user', content: 'test' }]);
+    assert.ok(formatted.includes('[Action Directive]'));
+    assert.ok(formatted.includes('NEVER reply with conversational pleasantries'));
+    assert.ok(formatted.includes('[Language & Communication Directive]'));
+  });
+
+  test('extractToolCalls recovers unclosed tool_call JSON from large/partial responses', () => {
+    const provider = new AntigravityProvider();
+    const partial = 'I will create the game now.\n<tool_call>{"name": "fs_write", "arguments": {"path": "game.js", "content": "console.log(123);"';
+    const calls = provider.extractToolCalls(partial);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].function.name, 'fs_write');
+    assert.ok(calls[0].function.arguments.includes('game.js'));
+  });
+});
+
+describe('isActionableTaskPrompt', () => {
+  test('correctly distinguishes actionable tasks from casual greetings', async () => {
+    const { isActionableTaskPrompt } = await import('../src/agentLoop.js');
+    assert.strictEqual(isActionableTaskPrompt('create a 3js game shoting and optimized it with numpy'), true);
+    assert.strictEqual(isActionableTaskPrompt('build a fullstack react dashboard with authentication'), true);
+    assert.strictEqual(isActionableTaskPrompt('fix the bug in login controller'), true);
+    assert.strictEqual(isActionableTaskPrompt('optimize sql query performance'), true);
+
+    assert.strictEqual(isActionableTaskPrompt('hi'), false);
+    assert.strictEqual(isActionableTaskPrompt('hello!'), false);
+    assert.strictEqual(isActionableTaskPrompt('halo'), false);
+    assert.strictEqual(isActionableTaskPrompt('good morning'), false);
+    assert.strictEqual(isActionableTaskPrompt('selamat pagi'), false);
+    assert.strictEqual(isActionableTaskPrompt(''), false);
   });
 });
 

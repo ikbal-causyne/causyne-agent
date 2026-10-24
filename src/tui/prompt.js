@@ -1039,35 +1039,56 @@ export class ChatPrompt {
   handleCompletionKey(key) {
     if (key.name === 'up') { this.moveSelection(-1); return true; }
     if (key.name === 'down') { this.moveSelection(1); return true; }
-    if (key.name === 'enter' && !key.alt) {
-      const item = this.completion.items && this.completion.items[this.selected];
-      if (this.completion.kind === 'command' && item) {
-        if (item.value === '/model' || item.value === '/sessions' || item.value === '/session' || item.value === '/new' || item.value === '/continuum') {
-          this.editor.clear();
-          this.completion = null;
-          this.deliver(item.value);
+    if (key.name === 'mouse') {
+      if (key.mouse && key.mouse.pressed && key.mouse.button === 0) {
+        let item = null;
+        if (this.pickerLayout && Number.isFinite(key.mouse.row)) {
+          const stageHeight = this.surface?.stage?.height || process.stdout.rows || 24;
+          const promptTop = Math.max(1, stageHeight - this.pickerLayout.totalPromptRows + 1);
+          const pickerTop = promptTop + this.pickerLayout.pickerStart;
+          const pickerBottom = pickerTop + this.pickerLayout.pickerCount - 1;
+
+          if (key.mouse.row >= pickerTop && key.mouse.row <= pickerBottom) {
+            const index = key.mouse.row - pickerTop;
+            item = this.completion.items && this.completion.items[index];
+          } else {
+            // Click outside picker closes it
+            this.completion = null;
+            this.scheduleDraw();
+            return true;
+          }
+        } else {
+          item = this.completion.items && this.completion.items[this.selected];
+        }
+
+        if (item) {
+          if (this.completion.kind === 'command') {
+            this.editor.clear();
+            this.completion = null;
+            this.deliver(item.value);
+            return true;
+          }
+          if (this.completion.kind === 'command-argument') {
+            const cmd = this.completion.command;
+            this.editor.clear();
+            this.completion = null;
+            this.deliver(`/${cmd} ${item.value}`);
+            return true;
+          }
+          this.acceptCompletion();
           return true;
         }
       }
-      if (this.completion.kind === 'command-argument' && item) {
-        if (this.completion.command === 'model') {
-          this.editor.clear();
-          this.completion = null;
-          this.deliver(`/model ${item.value}`);
-          return true;
-        }
-        if (this.completion.command === 'sessions' || this.completion.command === 'session') {
-          this.editor.clear();
-          this.completion = null;
-          this.deliver(`/sessions ${item.value}`);
-          return true;
-        }
-        if (this.completion.command === 'continuum') {
-          this.editor.clear();
-          this.completion = null;
-          this.deliver(`/continuum ${item.value}`);
-          return true;
-        }
+      return true;
+    }
+    if (key.name === 'enter' && !key.alt) {
+      const item = this.completion.items && this.completion.items[this.selected];
+      if (this.completion.kind === 'command' && item) {
+        // Instant execution on single Enter for any slash command
+        this.editor.clear();
+        this.completion = null;
+        this.deliver(item.value);
+        return true;
       }
       if (this.completionIsExact()) {
         // Nothing left to complete. Close the picker and let the key through to
@@ -1237,6 +1258,11 @@ export class ChatPrompt {
     });
 
     const pickerRows = this.completion ? this.pickerRows(width) : [];
+    this.pickerLayout = this.completion ? {
+      pickerStart: planRows.length + boxRows.length,
+      pickerCount: pickerRows.length,
+      totalPromptRows: 0
+    } : null;
     const noticeRows = this.notice ? [dim(`  ${this.notice}`)] : [];
 
     // And a row of air between the box and the footer. The picker and a notice
@@ -1250,6 +1276,7 @@ export class ChatPrompt {
     const all = this.clampRows(
       planRows.concat(boxRows, pickerRows, noticeRows, gap, status), width
     );
+    if (this.pickerLayout) this.pickerLayout.totalPromptRows = all.length;
 
     // Park the cursor where the user is typing, not at the end of the picker.
     this.present(all, planRows.length + caretRow + padTop, layout.cursorCol + inset);

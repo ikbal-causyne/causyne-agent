@@ -159,6 +159,7 @@ export class StageSurface {
       onEvict: (rows) => this.absorbEvicted(rows),
       onChange: () => this.handleChange()
     });
+    this.transcript.surface = this;
     const tuning = scrollSettings(env, config);
     this.viewport = new Viewport({
       transcript: this.transcript,
@@ -475,7 +476,11 @@ export class StageSurface {
     this.transcript.clear();
     this.lastHeight = 0;
     this.stage.invalidate();
-    this.viewport.toBottom();
+    if (this.viewport) {
+      this.viewport.manual = false;
+      this.viewport.unseen = 0;
+      this.viewport.toBottom();
+    }
   }
 
   /**

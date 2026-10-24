@@ -63,7 +63,7 @@ export class AcpProvider extends LLMProvider {
     }
     formatConversation(messages, tools = []) {
         const lines = [];
-        lines.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
+        lines.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. If the user writes in English, you must respond strictly in English. Default to English for all responses and reasoning. Never default to Indonesian.');
         if (tools && tools.length > 0) {
             const toolSummaries = tools.map(t => {
                 const name = t.name || t.function?.name || 'unknown';

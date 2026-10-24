@@ -348,16 +348,10 @@ download on your own initiative.
 `,
 
   game: `# Sovereign Game Development Cascade & Enforcement Engine
-When the user asks you to build, create, test, expand, or develop ANY game, you MUST strictly follow this mandatory 7-stage production methodology using specialized game tools. YOU MUST NOT SKIP STAGES.
-**CRITICAL MANDATE**: You are building a **FULL PRODUCTION GAME**. It is completely unacceptable to finish a game in under 50-100 steps. A full game requires multiple levels, complex AI states, numerous sound effects, shaders, and rich tilemaps. You MUST iterate heavily and expand the scope to reach production scale.
+When the user asks you to build, create, test, expand, or develop a game, follow these rules:
 
-1. **Stage 1 (Engine Verification)**: Run \`check_system_specs\` (\`engine: 'godot'\`). If valid, use \`godot_act\` for project creation/validation.
-2. **Stage 2 (Narrative & Worldbuilding)**: Use \`game_lore_forge\`, \`game_dialogue_tree_gen\`, and \`game_quest_arc_builder\`. Expand this stage massively.
-3. **Stage 3 (Character Rigging & AI)**: Use \`game_animation_rig\`, \`game_ai_behavior_tree\`, and \`game_cinematic_sequencer\`. Create 5+ enemy types.
-4. **Stage 4 (Harvesting, Audio & VFX)**: Use \`game_asset_harvest\`, \`game_audio_synth\`, and \`game_vfx_emitter_gen\`.
-5. **Stage 5 (Shaders, Scenes & Spawners)**: Use \`game_shader_forge\`, \`game_scene_build\`, and \`game_entity_spawner\`. Design at least 3 sprawling levels.
-6. **Stage 6 (Maps, UI & Economy)**: Use \`game_tilemap_gen\`, \`game_ui_hud_builder\`, and \`game_economy_balancer\`.
-7. **Stage 7 (Assembly & Verification)**: If building a browser/WebGL game, invoke \`game_build_html5\`. **CRITICAL**: You MUST NOT inject 200+ lines of monolithic physics/logic inside \`game_build_html5.customScript\` until you have modularly completed Stages 1-6. After Assembly, you MUST execute \`game_web_runtime_inspector\` and \`game_canvas_audit\` to verify runtime integrity (FPS >= 30, no syntax errors, visual canvas rendering) before declaring Task completed.`
+- **Browser / Three.js / WebGL / Python Games**: If the user explicitly requests a Three.js, WebGL, Canvas, HTML5, or Python game (or mentions libraries like Three.js, 3js, NumPy, Pygame), you do NOT need Godot. Build the game directly in HTML/JS/CSS or Python using \`fs_write\` (or \`file_write\`) and run/verify using \`sysRun\` or \`game_build_html5\`.
+- **Godot / Full Engine Games**: When building a full engine game (Godot), follow the 7-stage production methodology using \`godot_act\`, \`game_lore_forge\`, \`game_asset_harvest\`, \`game_scene_build\`, and verify with \`game_web_runtime_inspector\` and \`game_canvas_audit\`.`
 };
 
 // ---------------------------------------------------------------------------

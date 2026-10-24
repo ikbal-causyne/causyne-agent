@@ -117,24 +117,56 @@ const ARGUMENT_LIMIT = 500;
 // ---------------------------------------------------------------------------
 
 function commandItems() {
-  const commands = listCommands('terminal')
-    .filter((command) => isTerminalSafe(command.name))
-    .map((command) => ({
-      value: '/' + command.name,
-      match: command.name,
-      label: '/' + command.name,
-      description: sanitize(command.description || '')
-    }));
+  // Suggested/high-frequency commands prioritized at the top on a bare '/' (OpenCode architecture)
+  const SUGGESTED_ORDER = ['model', 'sessions', 'new', 'clear', 'continuum', 'help', 'status', 'setup', 'mcp'];
+  const allCommands = listCommands('terminal');
+
+  const sorted = allCommands.slice().sort((a, b) => {
+    const idxA = SUGGESTED_ORDER.indexOf(a.name);
+    const idxB = SUGGESTED_ORDER.indexOf(b.name);
+    const scoreA = idxA === -1 ? 999 : idxA;
+    const scoreB = idxB === -1 ? 999 : idxB;
+    return scoreA - scoreB;
+  });
+
+  const commands = [];
+  const seenLabels = new Set();
+
+  for (const command of sorted) {
+    if (!isTerminalSafe(command.name)) continue;
+    const primaryLabel = '/' + command.name;
+    if (!seenLabels.has(primaryLabel)) {
+      seenLabels.add(primaryLabel);
+      commands.push({
+        value: primaryLabel,
+        match: command.name,
+        label: primaryLabel,
+        description: sanitize(command.description || '')
+      });
+    }
+
+    // Include aliases (e.g. /models, /session, /reset) so they match cleanly and resolve to canonical command
+    if (Array.isArray(command.aliases)) {
+      for (const alias of command.aliases) {
+        if (!isTerminalSafe(alias)) continue;
+        const aliasLabel = '/' + alias;
+        if (!seenLabels.has(aliasLabel)) {
+          seenLabels.add(aliasLabel);
+          commands.push({
+            value: primaryLabel,
+            match: alias,
+            label: aliasLabel,
+            description: sanitize(command.description || '')
+          });
+        }
+      }
+    }
+  }
 
   // Skills answer to the slash menu directly, the way claude-code surfaces a
   // skill as a command you simply type. `/docker` finds the Docker skill
   // without the user knowing it lives under `devops`, or that `/skills` exists
   // at all — which is the whole difficulty with a hundred-entry library.
-  //
-  // Ranked against the skill NAME first so the name is what matches, and
-  // resolved to the canonical `/skills <domain>/<id>` on accept, so there is
-  // still exactly one execution path and no second command namespace to collide
-  // with the real commands.
   const skills = listSkillsForCompletion().map((skill) => ({
     value: `/skills ${skill.domain}/${skill.id}`,
     match: `${skill.id} ${skill.domain}`,

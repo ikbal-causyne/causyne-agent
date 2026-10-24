@@ -69,14 +69,31 @@ export async function runInteractiveContinuum(prompt, options = {}) {
         return `Failed to adopt session: ${adoptRes.error}`;
     }
     if (options.loop) {
+        options.loop.taskId = `cli_chat_${Date.now()}`;
         if (options.loop.memoryManager) {
             options.loop.memoryManager.useSession(adoptRes.sessionId);
             if (typeof options.loop.memoryManager.loadHistory === 'function') {
                 options.loop.messages = options.loop.memoryManager.loadHistory();
             }
         }
+        const renderer = prompt.renderer || options.loop?.connection?.renderer;
+        if (renderer && typeof renderer.renderSessionHistory === 'function') {
+            renderer.renderSessionHistory(options.loop.messages || [], {
+                id: adoptRes.sessionId,
+                title: adoptRes.title,
+                messagesCount: adoptRes.messageCount
+            });
+        }
+        if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
+            prompt.surface.viewport.toBottom();
+        }
     }
-    return `✓ Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\n  New active Causyne session: ${adoptRes.sessionId}. Continue working seamlessly.`;
+    if (prompt.editor && typeof prompt.editor.clear === 'function') {
+        prompt.editor.clear();
+        if (typeof prompt.scheduleDraw === 'function')
+            prompt.scheduleDraw();
+    }
+    return `Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\nActive Causyne session: ${adoptRes.sessionId}.`;
 }
 /**
  * Open a preview text modal showing the full conversation transcript for a session.

@@ -77,7 +77,11 @@ export class MemoryManager {
 
   
   boundHistory(messages) {
-    const persistable = messages.filter(m => m.role !== 'system');
+    const persistable = messages.filter(m => {
+      if (m.role !== 'system') return true;
+      if (typeof m.content === 'string' && m.content.startsWith('[Continuum')) return true;
+      return false;
+    });
     const bounded = [];
     let totalChars = 0;
 
