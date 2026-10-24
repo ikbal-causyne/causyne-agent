@@ -57,7 +57,7 @@ test('rounded corners appear when Unicode terminal mode is enabled', () => {
   const script = `import {renderCodeProgress} from './src/tui/codeProgress.js';\n` +
     `console.log(renderCodeProgress({type:'code_progress',id:'a',phase:'working',operation:'Editing',description:'Editing file',source:'tool'},40)[0]);`;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
-    cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '1', NO_COLOR: '', CAUSYNE_NO_COLOR: '0', CAUSYNE_ASCII: '0', TERM: 'xterm-256color' }
+    cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, WT_SESSION: '1', FORCE_COLOR: '1', NO_COLOR: '', CAUSYNE_NO_COLOR: '0', CAUSYNE_ASCII: '0', TERM: 'xterm-256color' }
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(stripAnsi(result.stdout), /╭/);

@@ -18,7 +18,7 @@ export function resolveOpenTarget(rawTarget, workspaceRoot = process.cwd()) {
     }
     // Tilde expansion: ~/path -> /Users/username/path
     if (target === '~' || target.startsWith('~/') || target.startsWith('~\\')) {
-        target = target.replace(/^~(?=$|[\\/])/, os.homedir());
+        target = path.normalize(target.replace(/^~(?=$|[\\/])/, os.homedir()));
     }
     // If not absolute path, check if it exists relative to workspaceRoot or process.cwd()
     if (!path.isAbsolute(target)) {
