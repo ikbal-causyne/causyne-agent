@@ -20,6 +20,7 @@ import { sessionBanner } from './banner.js';
 import { describeTool } from './toolDisplay.js';
 import { approvalDiff } from './diff.js';
 import { StatusLine } from './statusLine.js';
+import { barBlock } from './block.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -511,6 +512,91 @@ export class ChatRenderer {
   // -------------------------------------------------------------------------
   // Frames
   // -------------------------------------------------------------------------
+
+  renderUserMessage(content) {
+    const text = typeof content === 'string'
+      ? content
+      : (Array.isArray(content)
+          ? content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+          : String(content || ''));
+    if (!text.trim()) return;
+
+    this.frame('user', () => {
+      const width = this.measure();
+      const blockWidth = Math.max(8, width - 1);
+      const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.bar) - 1);
+      const rows = barBlock(
+        wrapBlock(safeDisplay(text), innerWidth),
+        { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
+      );
+      this.write();
+      for (const row of rows) {
+        this.write(row);
+      }
+      this.write();
+    });
+  }
+
+  renderAssistantMessage(content) {
+    const text = typeof content === 'string'
+      ? content
+      : (Array.isArray(content)
+          ? content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+          : String(content || ''));
+    if (!text.trim()) return;
+
+    this.onAgentMessage({ content: text });
+  }
+
+  renderSessionDivider(info = {}) {
+    this.frame('session', () => {
+      const width = this.measure();
+      const title = safeDisplay(info.title || 'Session');
+      const count = info.messagesCount ?? 0;
+      const countText = count > 0 ? ` (${count} message${count === 1 ? '' : 's'})` : '';
+      const badgeText = `${title}${countText}`;
+      const ruleWidth = Math.max(2, Math.floor((width - visibleWidth(badgeText) - 4) / 2));
+      this.write();
+      this.write(`${paint('rule', GLYPHS.hLine.repeat(ruleWidth))} ${bold(paint('accent', title))}${dim(countText)} ${paint('rule', GLYPHS.hLine.repeat(ruleWidth))}`);
+      this.write();
+    });
+  }
+
+  clearTranscript() {
+    if (this.transcript && typeof this.transcript.clear === 'function') {
+      this.transcript.clear();
+    }
+  }
+
+  /**
+   * Render conversation history frames from a selected or resumed session.
+   * Mirrors OpenCode's session conversation loader so prior turns are visible in viewport.
+   */
+  renderSessionHistory(messages = [], sessionInfo = null) {
+    this.clearTranscript();
+
+    if (sessionInfo && (sessionInfo.title || sessionInfo.id)) {
+      this.renderSessionDivider(sessionInfo);
+    }
+
+    for (const msg of messages) {
+      if (!msg) continue;
+      const role = String(msg.role || '').toLowerCase();
+      if (role === 'user') {
+        this.renderUserMessage(msg.content);
+      } else if (role === 'assistant') {
+        this.renderAssistantMessage(msg.content);
+      } else if (role === 'system') {
+        const text = typeof msg.content === 'string' ? msg.content : '';
+        if (text.startsWith('[Continuum Context')) {
+          this.frame('notice', () => {
+            const firstLine = text.split('\n')[0] || '[Continuum Context]';
+            this.write(`${paint('accent', GLYPHS.bullet)} ${dim(firstLine)}`);
+          });
+        }
+      }
+    }
+  }
 
   onAgentMessage(msg) {
     const content = safeDisplay(msg.content || '');

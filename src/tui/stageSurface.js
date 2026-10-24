@@ -469,6 +469,15 @@ export class StageSurface {
     return rows.length;
   }
 
+  /** Clear the transcript without printing through to scrollback (for session switching). */
+  clearTranscript() {
+    this.evicted = [];
+    this.transcript.clear();
+    this.lastHeight = 0;
+    this.stage.invalidate();
+    this.viewport.toBottom();
+  }
+
   /**
    * The terminal changed size. Callers must debounce — ChatPrompt already
    * settles resize at RESIZE_SETTLE_MS.

@@ -382,6 +382,18 @@ export async function chatMode({ home = false } = {}) {
       if (surface) prompt.attachSurface(surface);
       prompt.attach(conn.renderer);
       prompt.start();
+
+      // If active session has prior conversation history, render it into the viewport (OpenCode architecture)
+      const initialHistory = loop.memoryManager ? loop.memoryManager.loadHistory() : [];
+      if (initialHistory.length > 0) {
+        conn.renderer.renderSessionHistory(initialHistory, {
+          id: loop.memoryManager?.sessionId,
+          title: loop.memoryManager?.sessionTitle,
+          messagesCount: initialHistory.length
+        });
+        if (surface?.viewport) surface.viewport.toBottom();
+      }
+
       // The band is blank until something paints it, so the Stage needs a first
       // frame here. The scrollback path deliberately does NOT get one: there it
       // has always waited for the first keystroke, and changing that as a side

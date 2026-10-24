@@ -128,6 +128,17 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
                 options.loop.tokenTracker.reset();
             }
         }
+        const renderer = prompt.renderer || options.loop?.connection?.renderer;
+        if (renderer && typeof renderer.renderSessionHistory === 'function') {
+            renderer.renderSessionHistory([], {
+                id: newSession.id,
+                title: newSession.title,
+                messagesCount: 0
+            });
+        }
+        if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
+            prompt.surface.viewport.toBottom();
+        }
         cleanPrompt();
         return `Started new session: "${newSession.title}" (${newSession.id}) in ${shortenPath(workspace)}.`;
     }
@@ -135,10 +146,6 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
     const targetId = picked.value.id;
     if (!targetId) {
         return 'Cancelled. No session selected.';
-    }
-    if (targetId === activeId) {
-        cleanPrompt();
-        return `Already active in session "${picked.value.title || targetId}".`;
     }
     let switched = null;
     if (options.loop?.memoryManager && typeof options.loop.memoryManager.useSession === 'function') {
@@ -151,18 +158,28 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
         cleanPrompt();
         return `⚠️ Could not switch to session "${targetId}". File may have been removed.`;
     }
+    const historyMessages = options.loop?.memoryManager && typeof options.loop.memoryManager.loadHistory === 'function'
+        ? options.loop.memoryManager.loadHistory()
+        : switched.messages.filter(m => m.role !== 'system');
     if (options.loop) {
-        if (options.loop.memoryManager && typeof options.loop.memoryManager.loadHistory === 'function') {
-            options.loop.messages = options.loop.memoryManager.loadHistory();
-        }
-        else {
-            options.loop.messages = switched.messages.filter(m => m.role !== 'system');
-        }
+        options.loop.messages = historyMessages;
         options.loop.taskId = `cli_chat_${Date.now()}`;
         if (options.loop.tokenTracker && typeof options.loop.tokenTracker.reset === 'function') {
             options.loop.tokenTracker.reset();
         }
     }
+    // Render the conversation history to the transcript & viewport
+    const renderer = prompt.renderer || options.loop?.connection?.renderer;
+    if (renderer && typeof renderer.renderSessionHistory === 'function') {
+        renderer.renderSessionHistory(historyMessages, {
+            id: switched.id,
+            title: switched.title,
+            messagesCount: switched.messages.length
+        });
+    }
+    if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
+        prompt.surface.viewport.toBottom();
+    }
     cleanPrompt();
-    return `✓ Switched to "${switched.title}" (${switched.messages.length} messages, ${switched.id}).`;
+    return `Switched to "${switched.title}" (${switched.messages.length} messages, ${switched.id}).`;
 }

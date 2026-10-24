@@ -198,3 +198,34 @@ test('resolveSession: honors forceNew and active.json pointer', () => {
   deleteSession(fresh.id);
   try { fs.rmSync(ws, { recursive: true, force: true }); } catch (e) {}
 });
+
+test('ChatRenderer: renderSessionHistory populates frames and clears prior session in transcript', async () => {
+  const { ChatRenderer } = await import('../src/tui/chatRenderer.js');
+  const { Transcript } = await import('../src/tui/transcript.js');
+
+  const transcript = new Transcript();
+  const renderer = new ChatRenderer({ transcript });
+
+  const messages = [
+    { role: 'user', content: 'What is the architecture of this engine?' },
+    { role: 'assistant', content: 'It is built on sovereign ACP and local model loops.' }
+  ];
+
+  renderer.renderSessionHistory(messages, {
+    id: 'sess_arch_123',
+    title: 'Architecture Discussion',
+    messagesCount: 2
+  });
+
+  // Verify frames were appended to transcript
+  assert.equal(transcript.isEmpty(), false);
+  const kinds = transcript.frames.map(f => f.kind);
+  assert.ok(kinds.includes('session'), 'Should include session divider frame');
+  assert.ok(kinds.includes('user'), 'Should include user frame');
+  assert.ok(kinds.includes('assistant'), 'Should include assistant frame');
+
+  // Verify clearing/switching to new session clears and repopulates
+  renderer.renderSessionHistory([], { id: 'sess_new_456', title: 'Fresh Session', messagesCount: 0 });
+  assert.equal(transcript.frames.filter(f => f.kind === 'user').length, 0);
+  assert.equal(transcript.frames.filter(f => f.kind === 'assistant').length, 0);
+});

@@ -194,6 +194,18 @@ export async function runInteractiveSessionPicker(
       }
     }
 
+    const renderer = (prompt as any).renderer || (options.loop as any)?.connection?.renderer;
+    if (renderer && typeof renderer.renderSessionHistory === 'function') {
+      renderer.renderSessionHistory([], {
+        id: newSession.id,
+        title: newSession.title,
+        messagesCount: 0
+      });
+    }
+    if ((prompt as any).surface?.viewport && typeof (prompt as any).surface.viewport.toBottom === 'function') {
+      (prompt as any).surface.viewport.toBottom();
+    }
+
     cleanPrompt();
     return `Started new session: "${newSession.title}" (${newSession.id}) in ${shortenPath(workspace)}.`;
   }
@@ -202,11 +214,6 @@ export async function runInteractiveSessionPicker(
   const targetId = picked.value.id;
   if (!targetId) {
     return 'Cancelled. No session selected.';
-  }
-
-  if (targetId === activeId) {
-    cleanPrompt();
-    return `Already active in session "${picked.value.title || targetId}".`;
   }
 
   let switched: SessionRecord | null = null;
@@ -221,18 +228,32 @@ export async function runInteractiveSessionPicker(
     return `⚠️ Could not switch to session "${targetId}". File may have been removed.`;
   }
 
+  const historyMessages = options.loop?.memoryManager && typeof options.loop.memoryManager.loadHistory === 'function'
+    ? options.loop.memoryManager.loadHistory()
+    : switched.messages.filter(m => m.role !== 'system');
+
   if (options.loop) {
-    if (options.loop.memoryManager && typeof options.loop.memoryManager.loadHistory === 'function') {
-      options.loop.messages = options.loop.memoryManager.loadHistory();
-    } else {
-      options.loop.messages = switched.messages.filter(m => m.role !== 'system');
-    }
+    options.loop.messages = historyMessages;
     options.loop.taskId = `cli_chat_${Date.now()}`;
     if (options.loop.tokenTracker && typeof options.loop.tokenTracker.reset === 'function') {
       options.loop.tokenTracker.reset();
     }
   }
 
+  // Render the conversation history to the transcript & viewport
+  const renderer = (prompt as any).renderer || (options.loop as any)?.connection?.renderer;
+  if (renderer && typeof renderer.renderSessionHistory === 'function') {
+    renderer.renderSessionHistory(historyMessages, {
+      id: switched.id,
+      title: switched.title,
+      messagesCount: switched.messages.length
+    });
+  }
+
+  if ((prompt as any).surface?.viewport && typeof (prompt as any).surface.viewport.toBottom === 'function') {
+    (prompt as any).surface.viewport.toBottom();
+  }
+
   cleanPrompt();
-  return `✓ Switched to "${switched.title}" (${switched.messages.length} messages, ${switched.id}).`;
+  return `Switched to "${switched.title}" (${switched.messages.length} messages, ${switched.id}).`;
 }

@@ -601,6 +601,13 @@ export const COMMANDS = [
           context.loop.tokenTracker.reset();
         }
       }
+      const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+      if (renderer && typeof renderer.renderSessionHistory === 'function') {
+        renderer.renderSessionHistory([], { id: next.id, title: next.title, messagesCount: 0 });
+      }
+      if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+        context.prompt.surface.viewport.toBottom();
+      }
       if (context.prompt?.editor?.clear) {
         context.prompt.editor.clear();
         if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
@@ -666,18 +673,30 @@ export const COMMANDS = [
       if (verb === 'switch' && args[1]) {
         const next = memory ? memory.useSession(args[1]) : store.switchSession(args[1]);
         if (!next) return fail(`No session "${args[1]}".`);
+        const historyMessages = memory ? memory.loadHistory() : next.messages.filter(m => m.role !== 'system');
         if (context.loop) {
-          context.loop.messages = memory ? memory.loadHistory() : next.messages.filter(m => m.role !== 'system');
+          context.loop.messages = historyMessages;
           context.loop.taskId = `cli_chat_${Date.now()}`;
           if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
             context.loop.tokenTracker.reset();
           }
         }
+        const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+        if (renderer && typeof renderer.renderSessionHistory === 'function') {
+          renderer.renderSessionHistory(historyMessages, {
+            id: next.id,
+            title: next.title,
+            messagesCount: next.messages.length
+          });
+        }
+        if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+          context.prompt.surface.viewport.toBottom();
+        }
         if (context.prompt?.editor?.clear) {
           context.prompt.editor.clear();
           if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
         }
-        return ok(`✓ Switched to "${next.title}" (${next.messages.length} messages, ${next.id}).`, { effect: 'inline' });
+        return ok(`Switched to "${next.title}" (${next.messages.length} messages, ${next.id}).`, { effect: 'inline' });
       }
 
       if (verb === 'delete' && args[1]) {
@@ -829,6 +848,14 @@ export const COMMANDS = [
         loop.isInitialized = false;
         if (typeof loop.rearmAbortController === 'function') loop.rearmAbortController();
         if (loop.memoryManager) loop.memoryManager.clearHistory();
+        const renderer = ctx.prompt?.renderer || loop.connection?.renderer;
+        if (renderer && typeof renderer.clearTranscript === 'function') {
+          renderer.clearTranscript();
+        }
+        if (ctx.prompt?.surface?.viewport && typeof ctx.prompt.surface.viewport.toBottom === 'function') {
+          ctx.prompt.surface.viewport.toBottom();
+        }
+        if (ctx.prompt?.scheduleDraw) ctx.prompt.scheduleDraw();
         return ok('Conversation cleared. The next task starts from a clean context.');
       }
       return fail('No active session to clear.');
