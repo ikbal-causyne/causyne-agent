@@ -291,7 +291,21 @@ export function mapNativeToolToCausyne(
     }
   }
 
-  if (lowerName === 'openbrowserurl' || lowerName === 'readurlcontent') {
+  if (lowerName === 'openbrowserurl') {
+    const url = params.Url ?? params.url ?? '';
+    if (typeof url === 'string' && url.trim()) {
+      return {
+        id: `agy_native_${Date.now()}_${index}`,
+        type: 'function',
+        function: {
+          name: 'desktop.open',
+          arguments: JSON.stringify({ target: url.trim() })
+        }
+      };
+    }
+  }
+
+  if (lowerName === 'readurlcontent') {
     const url = params.Url ?? params.url ?? '';
     if (typeof url === 'string' && url.trim()) {
       return {
@@ -324,6 +338,8 @@ export function mapNativeToolToCausyne(
 
 export class AntigravityProvider extends LLMProvider {
   command: string;
+  currentConversationId: string | null = null;
+  lastTaskId: string | null = null;
 
   constructor(config: ProviderConfig = {}) {
     super(config);
@@ -331,6 +347,41 @@ export class AntigravityProvider extends LLMProvider {
     this.command = config.command || resolveAgyBinary();
     this.visionModels = [];
     this.audioModels = [];
+  }
+
+  formatDelta(messages: any[]): string {
+    const lines: string[] = [];
+    for (const msg of messages) {
+      const role = msg.role === 'user'
+        ? 'User'
+        : (msg.role === 'assistant'
+          ? 'Assistant'
+          : (msg.role === 'system'
+            ? 'System Instructions'
+            : (msg.role === 'tool'
+              ? `Tool Result (${msg.name || 'tool'})`
+              : 'Context')));
+
+      let text = '';
+      if (typeof msg.content === 'string') {
+        text = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        text = msg.content.map((c: any) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
+      }
+
+      if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          const fn = tc.function || {};
+          const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+          text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
+        }
+      }
+
+      if (text.trim()) {
+        lines.push(`[${role}]\n${text.trim()}`);
+      }
+    }
+    return lines.join('\n\n');
   }
 
   formatConversation(messages: any[], tools: any[] = []): string {
@@ -352,9 +403,14 @@ export class AntigravityProvider extends LLMProvider {
       '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
       'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
       '[Action Directive]\n' +
-      'When the user requests to create, build, code, fix, write, optimize, or implement anything (such as a 3D Three.js game, web app, script, or feature), you MUST immediately invoke the relevant tools to execute the work.\n' +
-      'NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
-      'You must directly generate the code and call the appropriate tool (such as fs_write, sysRun, or file_write) to build what was requested.\n\n' +
+      '1. When the user requests to create, build, code, fix, write, optimize, or implement anything, invoke the relevant file or command tools immediately.\n' +
+      '2. When the user requests to OPEN, LAUNCH, RUN, SERVE, or PLAY an application, project, or game:\n' +
+      '   - If a background server is required (e.g. server.py, python -m http.server, npm run dev), start it using sysRunBg or a background command.\n' +
+      '   - If the default port (e.g. 8080 or 3000) is already occupied or in use by another process, immediately use the next available port (e.g. 8081, 8082, 3001) rather than getting stuck in process-checking loops.\n' +
+      '   - Immediately open the URL or project in the user\'s browser using desktop.open with {"target": "http://localhost:<port>"} or run the native open command.\n' +
+      '   - Complete the turn by confirming that the application is running and accessible.\n' +
+      '3. NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
+      '4. You must directly generate the code and call the appropriate tool (such as fs_write, sysRun, or file_write) to build what was requested.\n\n' +
       '[Environment State & Idempotency Directive]\n' +
       'The host environment state has already been checked. Do NOT repeatedly re-verify dependencies (e.g. NumPy, Python packages, Node modules, directory listings) if the result is already present in the conversation history above.\n' +
       'When dependency checks have returned, immediately proceed to creating, writing, and editing the required code files (e.g. using fs_write or file editing).\n\n' +
@@ -377,7 +433,9 @@ export class AntigravityProvider extends LLMProvider {
 
     const seenToolOutputs = new Set<string>();
     const seenAssistantCalls = new Set<string>();
-    for (const msg of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const isRecent = messages.length - i <= 4;
       const role = msg.role === 'user'
         ? 'User'
         : (msg.role === 'assistant'
@@ -522,7 +580,32 @@ export class AntigravityProvider extends LLMProvider {
   }
 
   async _executeOnce(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
-    const promptText = this.formatConversation(messages, options.tools);
+    const currentTaskId = (options as any).taskId || (options as any).conversationId || null;
+    if (currentTaskId && currentTaskId !== this.lastTaskId) {
+      this.currentConversationId = null;
+      this.lastTaskId = currentTaskId;
+    }
+    if (messages.length <= 1) {
+      this.currentConversationId = null;
+    }
+
+    const useConversation = Boolean(this.currentConversationId);
+    let promptText: string;
+
+    if (useConversation) {
+      let lastAssistantIndex = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant') {
+          lastAssistantIndex = i;
+          break;
+        }
+      }
+      const deltaMessages = lastAssistantIndex >= 0 ? messages.slice(lastAssistantIndex + 1) : messages;
+      promptText = this.formatDelta(deltaMessages.length > 0 ? deltaMessages : [messages[messages.length - 1]]);
+    } else {
+      promptText = this.formatConversation(messages, options.tools);
+    }
+
     const modelSlug = resolveAgyModelId(this.model);
     const effort = resolveAgyEffort(this.model);
 
@@ -539,6 +622,7 @@ export class AntigravityProvider extends LLMProvider {
     //    bypassing Causyne. Native terminal/browser tools remain denied; those
     //    must go through Causyne XML tool calls.
     // 5. --print-timeout 300s provides ample window for large code generation without truncation.
+    // 6. --conversation links multi-turn steps to agy's local session memory to prevent re-reading files.
     const args = [
       '--mode',
       'accept-edits',
@@ -554,6 +638,10 @@ export class AntigravityProvider extends LLMProvider {
       '--effort',
       effort
     ];
+
+    if (useConversation && this.currentConversationId) {
+      args.push('--conversation', this.currentConversationId);
+    }
 
     return new Promise<ChatResponse>((resolve, reject) => {
       let isSettled = false;
@@ -641,7 +729,11 @@ export class AntigravityProvider extends LLMProvider {
           if (!trimmed) continue;
           try {
             const event = JSON.parse(trimmed);
-            if (event.event === 'step_update') {
+            if (event.event === 'init') {
+              if (event.conversation_id) {
+                this.currentConversationId = event.conversation_id;
+              }
+            } else if (event.event === 'step_update') {
               const stepUpdate = event.step_update;
               const delta = stepUpdate?.text_delta;
               const stepType = stepUpdate?.step_type;
@@ -708,7 +800,11 @@ export class AntigravityProvider extends LLMProvider {
               }
             } else if (event.event === 'result') {
               finalResultObj = event.result;
+              if (event.result?.conversation_id) {
+                this.currentConversationId = event.result.conversation_id;
+              }
             } else if (event.status === 'ERROR') {
+              if (useConversation) this.currentConversationId = null;
               safeReject(new Error(`Antigravity Agent returned error: ${event.error || 'Unknown error'}`));
               return;
             }
@@ -724,6 +820,7 @@ export class AntigravityProvider extends LLMProvider {
       });
 
       child.on('error', (err: Error) => {
+        if (useConversation) this.currentConversationId = null;
         safeReject(new Error(`Antigravity Agent (agy) spawn error: ${err.message}. Make sure Antigravity CLI is installed.`));
       });
 
@@ -735,7 +832,11 @@ export class AntigravityProvider extends LLMProvider {
             const event = JSON.parse(stdoutBuffer.trim());
             if (event.event === 'result') {
               finalResultObj = event.result;
+              if (event.result?.conversation_id) {
+                this.currentConversationId = event.result.conversation_id;
+              }
             } else if (event.status === 'ERROR') {
+              if (useConversation) this.currentConversationId = null;
               safeReject(new Error(`Antigravity Agent returned error: ${event.error || 'Unknown error'}`));
               return;
             }
@@ -745,6 +846,7 @@ export class AntigravityProvider extends LLMProvider {
         }
 
         if (code !== 0 || finalResultObj?.status === 'ERROR') {
+          if (useConversation) this.currentConversationId = null;
           const errDetail = finalResultObj?.error || stderrBuffer.trim() || `exit code ${code}`;
           safeReject(new Error(`Antigravity Agent (agy) failed: ${errDetail}`));
           return;

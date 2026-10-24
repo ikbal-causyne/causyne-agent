@@ -102,7 +102,7 @@ export function isActionableTaskPrompt(text: string): boolean {
   if (!t) return false;
   const pureGreeting = /^(hi|hello|hey|yo|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
   if (pureGreeting) return false;
-  const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|delete|remove|update|change|test|review|inspect|search|find)\b/i;
+  const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find)\b/i;
   return actionKeywords.test(t);
 }
 
@@ -1553,6 +1553,8 @@ export class AgentLoop {
         this.emitEvent({ type: 'agent_activity', activity: 'Thinking…' });
 
         const response = await this.llm.chat(prunedMessages, {
+          taskId: this.taskId,
+          conversationId: this.taskId,
           tools: dynamicTools,
           // IARS couples escalation to a wider search. Bounded so a stuck task
           // cannot climb into randomness across repeated escalations.
@@ -2078,7 +2080,10 @@ export class AgentLoop {
 
             // 2. Block 3rd attempt of identical command and inject a non-negotiable recovery mandate
             if (duplicateCount === 3) {
-              const blockMsg = `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`;
+              const isAuthoring = isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+              const blockMsg = isAuthoring
+                ? `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`
+                : `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. Proceed immediately to fulfilling the user's request: if starting a service or server, launch it (if a port is occupied, use an alternate open port); if launching an app, open it in the browser; if done, summarize and finish.`;
               this.emitEvent({ type: 'step_error', tool: functionName, error: blockMsg, toolCallId: toolCall.id });
               this.messages.push({
                 role: 'tool',

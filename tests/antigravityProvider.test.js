@@ -295,6 +295,63 @@ process.stdin.on('end', () => {
     assert.strictEqual(calls[0].function.name, 'fs_write');
     assert.ok(calls[0].function.arguments.includes('game.js'));
   });
+
+  test('mapNativeToolToCausyne maps openbrowserurl to desktop.open', async () => {
+    const { mapNativeToolToCausyne } = await import('../src/providers/antigravity.js');
+    const mapped = mapNativeToolToCausyne('openbrowserurl', { Url: 'http://localhost:8080' }, 0);
+    assert.ok(mapped);
+    assert.strictEqual(mapped.function.name, 'desktop.open');
+    assert.deepStrictEqual(JSON.parse(mapped.function.arguments), { target: 'http://localhost:8080' });
+  });
+
+  test('multi-turn calls reuse conversation_id with --conversation', { skip: process.platform === 'win32' }, async () => {
+    const argsLogFile = path.join(os.tmpdir(), `causyne-agy-multiturn-${process.pid}.json`);
+    process.env.AGY_MULTITURN_LOG = argsLogFile;
+    const fake = fakeAgy(`#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+let currentLogs = [];
+if (fs.existsSync(process.env.AGY_MULTITURN_LOG)) {
+  try { currentLogs = JSON.parse(fs.readFileSync(process.env.AGY_MULTITURN_LOG, 'utf8')); } catch {}
+}
+currentLogs.push(args);
+fs.writeFileSync(process.env.AGY_MULTITURN_LOG, JSON.stringify(currentLogs));
+
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => input += chunk);
+process.stdin.on('end', () => {
+  const emit = ev => process.stdout.write(JSON.stringify(ev) + '\\n');
+  emit({ event: 'init', conversation_id: 'conv-mock-123' });
+  emit({ event: 'result', result: { status: 'SUCCESS', conversation_id: 'conv-mock-123', response: 'ok', usage: { input_tokens: 1, output_tokens: 1 } } });
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      // Turn 1
+      await provider.chat([{ role: 'user', content: 'Turn 1' }], { taskId: 'task-abc' });
+      assert.strictEqual(provider.currentConversationId, 'conv-mock-123');
+
+      // Turn 2
+      await provider.chat([
+        { role: 'user', content: 'Turn 1' },
+        { role: 'assistant', content: 'ok' },
+        { role: 'tool', name: 'sysRun', content: 'output' }
+      ], { taskId: 'task-abc' });
+
+      const logs = JSON.parse(fs.readFileSync(argsLogFile, 'utf8'));
+      assert.strictEqual(logs.length, 2);
+      // Turn 1 should NOT have --conversation
+      assert.strictEqual(logs[0].includes('--conversation'), false);
+      // Turn 2 MUST have --conversation conv-mock-123
+      assert.strictEqual(logs[1].includes('--conversation'), true);
+      assert.strictEqual(logs[1][logs[1].indexOf('--conversation') + 1], 'conv-mock-123');
+    } finally {
+      delete process.env.AGY_MULTITURN_LOG;
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+      fs.rmSync(argsLogFile, { force: true });
+    }
+  });
 });
 
 describe('isActionableTaskPrompt', () => {
@@ -304,6 +361,9 @@ describe('isActionableTaskPrompt', () => {
     assert.strictEqual(isActionableTaskPrompt('build a fullstack react dashboard with authentication'), true);
     assert.strictEqual(isActionableTaskPrompt('fix the bug in login controller'), true);
     assert.strictEqual(isActionableTaskPrompt('optimize sql query performance'), true);
+    assert.strictEqual(isActionableTaskPrompt('open it i want to play'), true);
+    assert.strictEqual(isActionableTaskPrompt('launch the game in browser'), true);
+    assert.strictEqual(isActionableTaskPrompt('start the local dev server'), true);
 
     assert.strictEqual(isActionableTaskPrompt('hi'), false);
     assert.strictEqual(isActionableTaskPrompt('hello!'), false);
@@ -313,4 +373,5 @@ describe('isActionableTaskPrompt', () => {
     assert.strictEqual(isActionableTaskPrompt(''), false);
   });
 });
+
 
