@@ -14,7 +14,7 @@ import {
   coerceArgumentTypes,
   canonicalizeToolName
 } from '../src/tools/toolSelfRepair.js';
-import { mapNativeToolToCausyne } from '../src/providers/antigravity.js';
+import { mapNativeToolToCausyne, AntigravityProvider } from '../src/providers/antigravity.js';
 
 describe('sysRun: Semantic Exit Code Normalization & Anti-Repeat Caching', () => {
   beforeEach(() => {
@@ -268,5 +268,50 @@ describe('Antigravity Native Action Mapping & Detail Fallback', () => {
     assert.ok(mapped);
     assert.strictEqual(mapped.function.name, 'sysRun');
     assert.deepStrictEqual(JSON.parse(mapped.function.arguments), { command: 'ls -la /home/user' });
+  });
+
+  test('formatConversation injects Pre-Verified Host Environment facts to prevent command loops', () => {
+    const provider = new AntigravityProvider();
+    const formatted = provider.formatConversation([
+      { role: 'user', content: 'create a 3js game shoting and optimized it with numpy' }
+    ]);
+
+    assert.ok(formatted.includes('[Pre-Verified Host Environment]'));
+    assert.ok(formatted.includes('numpy (v2.4.3) are confirmed installed'));
+    assert.ok(formatted.includes('Do NOT execute terminal commands to probe Python, NumPy'));
+  });
+
+  test('formatConversation folds duplicate tool results to prevent context window explosion', () => {
+    const provider = new AntigravityProvider();
+    const messages = [
+      { role: 'user', content: 'check environment' },
+      { role: 'tool', name: 'sysRun', content: 'NumPy version: 2.4.3' },
+      { role: 'tool', name: 'sysRun', content: 'NumPy version: 2.4.3' },
+      { role: 'tool', name: 'sysRun', content: 'NumPy version: 2.4.3' }
+    ];
+    const formatted = provider.formatConversation(messages);
+    const occurrences = (formatted.match(/NumPy version: 2\.4\.3/g) || []).length;
+    assert.strictEqual(occurrences, 1, 'Duplicate tool results must be folded into a single entry');
+  });
+
+  test('formatConversation folds duplicate assistant tool calls to prevent pattern-matching loop inertia', () => {
+    const provider = new AntigravityProvider();
+    const probeCall = [{
+      id: 'call_1',
+      type: 'function',
+      function: {
+        name: 'sysRun',
+        arguments: JSON.stringify({ command: 'python3 -c "import numpy; print(numpy.__version__)"' })
+      }
+    }];
+    const messages = [
+      { role: 'user', content: 'check numpy' },
+      { role: 'assistant', content: '', tool_calls: probeCall },
+      { role: 'assistant', content: '', tool_calls: probeCall },
+      { role: 'assistant', content: '', tool_calls: probeCall }
+    ];
+    const formatted = provider.formatConversation(messages);
+    const occurrences = (formatted.match(/import numpy/g) || []).length;
+    assert.strictEqual(occurrences, 1, 'Duplicate assistant tool calls must be folded into a single entry');
   });
 });

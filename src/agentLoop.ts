@@ -434,6 +434,8 @@ export class AgentLoop {
     
     this.consecutiveThinkingSteps = 0;
     this.consecutiveBlockedActions = 0; // V8 Transcendence: Circuit Breaker
+    this.recentActionSignatures = [];
+    this.consecutiveReadOnlySteps = 0;
 
     // Sovereign Progressive Disclosure: which capability packs have entered the
     // context window for this task. Nothing is disabled — see src/toolPacks.js.
@@ -1205,6 +1207,8 @@ export class AgentLoop {
     this._observationDigests = new Map();
     this.consecutiveCommands = 0;
     this.circuitBreakerUnlocked = false;
+    this.recentActionSignatures = [];
+    this.consecutiveReadOnlySteps = 0;
     this.tokenTracker.resetTask();
 
     // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
@@ -2026,6 +2030,84 @@ export class AgentLoop {
           let args: any = repair.args;
           if (repair.repaired && repair.repairs.length > 0) {
             this.debugLog(`[TOOL SELF-REPAIR] Healed tool call '${functionName}': ${repair.repairs.join(', ')}`);
+          }
+
+          // Universal Repetition & Infinite Loop Circuit Breakers (Token Hemorrhage Guard)
+          if (!Array.isArray(this.recentActionSignatures)) {
+            this.recentActionSignatures = [];
+          }
+
+          let actionSig = `${functionName}:${JSON.stringify(args || {})}`;
+          if (functionName === 'sysRun' || functionName === 'sysRunBg') {
+            const rawCmd = String(args?.command || '').trim();
+            if (/python[0-9.]*\s+.*import\s+numpy/i.test(rawCmd)) {
+              actionSig = 'sysRun:probe:numpy';
+            } else if (/python[0-9.]*\s+(--version|-V|-c\s+['"]print)/i.test(rawCmd)) {
+              actionSig = 'sysRun:probe:python';
+            } else if (/node\s+(--version|-v)/i.test(rawCmd)) {
+              actionSig = 'sysRun:probe:node';
+            } else {
+              actionSig = `${functionName}:${rawCmd.replace(/\s+/g, ' ')}`;
+            }
+          }
+
+          const duplicateCount = this.recentActionSignatures.filter((sig: string) => sig === actionSig).length;
+
+          // 1. Hard Circuit Breaker on Duplicate Action Thrashing (same command attempted 4 times total)
+          if (duplicateCount >= 3) {
+            const fatalMsg = `FATAL ERROR: Infinite Token Drain Detected. Agent repeatedly attempted identical action '${functionName}' (${actionSig}) 4 times without making progress. Forcibly aborting task to save tokens.`;
+            this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
+            auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
+            this.abort();
+            break;
+          }
+
+          // 2. Block 3rd attempt of identical action and inject a non-negotiable recovery mandate
+          if (duplicateCount === 2) {
+            const blockMsg = `REPETITION BLOCKED: You have already executed this identical action '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`;
+            this.emitEvent({ type: 'step_error', tool: functionName, error: blockMsg, toolCallId: toolCall.id });
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify({
+                success: false,
+                error: 'DUPLICATE_ACTION_BLOCKED',
+                CRITICAL_INSTRUCTION: blockMsg
+              })
+            });
+            continue;
+          }
+
+          // 3. Track Read-Only Inspection Chains on Actionable Coding Tasks (Max 4 inspection steps)
+          const isMutatingAction = ['fs_write', 'fs_edit', 'MultiEdit', 'game_build_html5'].includes(functionName)
+            || (functionName === 'sysRun' && /(npm\s+(i|install|add)|pnpm\s+add|yarn\s+add|pip\s+install|git\s+commit)\b/.test(args?.command || ''));
+
+          if (isMutatingAction) {
+            this.consecutiveReadOnlySteps = 0;
+          } else {
+            this.consecutiveReadOnlySteps = (Number(this.consecutiveReadOnlySteps) || 0) + 1;
+          }
+
+          const isActionableTask = isActionableTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+          if (isActionableTask && this.consecutiveReadOnlySteps === 3) {
+            this.messages.push({
+              role: 'system',
+              content: `[CRITICAL ACTION MANDATE: You have performed 3 consecutive inspection steps without writing code. You MUST write the required implementation files using fs_write on your next step. Any further read-only commands will be rejected.]`
+            });
+          }
+
+          if (isActionableTask && this.consecutiveReadOnlySteps >= 4) {
+            const fatalMsg = `FATAL ERROR: Read-Only Verification Loop Detected. Agent performed 4 consecutive inspection steps without writing any implementation code. Forcibly aborting task to save your token budget.`;
+            this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
+            auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
+            this.abort();
+            break;
+          }
+
+          this.recentActionSignatures.push(actionSig);
+          if (this.recentActionSignatures.length > 20) {
+            this.recentActionSignatures.shift();
           }
           
           this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });

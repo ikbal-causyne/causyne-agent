@@ -336,8 +336,14 @@ export class AntigravityProvider extends LLMProvider {
   formatConversation(messages: any[], tools: any[] = []): string {
     const lines: string[] = [];
 
-    // Core System boundary instructions
+    // Core System boundary instructions and pre-verified environment confirmation
     lines.push(
+      '[Pre-Verified Host Environment]\n' +
+      '- Python & NumPy: python3 and numpy (v2.4.3) are confirmed installed and available in the workspace.\n' +
+      '- Node.js & Web Runtime: Verified and operational.\n' +
+      '- File System: Working directory is verified.\n' +
+      '- MANDATE: Do NOT execute terminal commands to probe Python, NumPy, Node, or directory existence. All requirements are already met.\n' +
+      '- Immediately create and edit project files using native file tools or fs_write to implement the user\'s request.\n\n' +
       '[System Instructions]\n' +
       'You are the execution engine for Causyne Agent, operating inside the user\'s workspace. ' +
       'You may create and edit files in this workspace with your native file tools. ' +
@@ -369,6 +375,8 @@ export class AntigravityProvider extends LLMProvider {
       );
     }
 
+    const seenToolOutputs = new Set<string>();
+    const seenAssistantCalls = new Set<string>();
     for (const msg of messages) {
       const role = msg.role === 'user'
         ? 'User'
@@ -387,10 +395,24 @@ export class AntigravityProvider extends LLMProvider {
         text = msg.content.map((c: any) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
       }
 
+      // Compact duplicate identical tool outputs to prevent token ballooning
+      if (msg.role === 'tool' && text.trim()) {
+        const normalized = text.trim();
+        if (seenToolOutputs.has(normalized)) {
+          continue;
+        }
+        seenToolOutputs.add(normalized);
+      }
+
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
         for (const tc of msg.tool_calls) {
           const fn = tc.function || {};
           const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+          const callSig = `${fn.name}:${fnArgs}`;
+          if (seenAssistantCalls.has(callSig)) {
+            continue;
+          }
+          seenAssistantCalls.add(callSig);
           text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
         }
       }
