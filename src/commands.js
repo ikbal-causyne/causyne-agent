@@ -605,7 +605,7 @@ export const COMMANDS = [
         context.prompt.editor.clear();
         if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
       }
-      return ok(`✨ Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
+      return ok(`Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
     }
   },
 
@@ -660,7 +660,7 @@ export const COMMANDS = [
           context.prompt.editor.clear();
           if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
         }
-        return ok(`✨ Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
+        return ok(`Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
       }
 
       if (verb === 'switch' && args[1]) {

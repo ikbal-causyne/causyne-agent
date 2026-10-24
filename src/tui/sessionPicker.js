@@ -37,7 +37,7 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
     // Pinned item 0: Create new clean conversation
     items.push({
         id: '__NEW_SESSION__',
-        label: '✨ + New Session (Start fresh conversation)',
+        label: '+ New Session (Start fresh conversation)',
         category: 'Actions',
         description: 'Begin a clean session in this workspace without previous context',
         searchText: 'new session fresh clear reset start',
@@ -129,7 +129,7 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
             }
         }
         cleanPrompt();
-        return `✨ Started new session: "${newSession.title}" (${newSession.id}) in ${shortenPath(workspace)}.`;
+        return `Started new session: "${newSession.title}" (${newSession.id}) in ${shortenPath(workspace)}.`;
     }
     // Case 2: Switch to selected session
     const targetId = picked.value.id;
