@@ -3,12 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LLMProvider } from './base.js';
 /**
- * Display label → the id `agy --model` actually accepts, exactly as reported
- * by `agy models`. The CLI exposes slugs; the picker shows the readable label.
- * Passing the label through unchanged is what a user would try, so both forms
- * resolve here rather than failing at the provider.
+ * Baseline fallback models for instant offline availability.
+ * Live models are autodetected dynamically from `agy models`
+ * and cached in ~/.causyne/models_cache.json.
  */
-export const ANTIGRAVITY_MODEL_IDS = {
+export const BASELINE_ANTIGRAVITY_MODELS = {
     'Gemini 3.8 Flash (Low)': 'gemini-3.8-flash-low',
     'Gemini 3.8 Flash (Medium)': 'gemini-3.8-flash-medium',
     'Gemini 3.8 Flash (High)': 'gemini-3.8-flash-high',
@@ -23,13 +22,100 @@ export const ANTIGRAVITY_MODEL_IDS = {
     'Claude Opus 5.5 (High)': 'claude-opus-5-5-high',
     'GPT-OSS 120B (Medium)': 'gpt-oss-120b-medium'
 };
+export const ANTIGRAVITY_MODEL_IDS = {
+    ...BASELINE_ANTIGRAVITY_MODELS
+};
 export const ANTIGRAVITY_LABEL_BY_ID = Object.fromEntries(Object.entries(ANTIGRAVITY_MODEL_IDS).map(([label, id]) => [id, label]));
 export const ANTIGRAVITY_MODELS = Object.keys(ANTIGRAVITY_MODEL_IDS);
+export function registerAntigravityModel(slug, label) {
+    if (!slug || typeof slug !== 'string')
+        return;
+    const cleanSlug = slug.trim();
+    const cleanLabel = (label && typeof label === 'string' && label.trim()) || cleanSlug;
+    ANTIGRAVITY_MODEL_IDS[cleanLabel] = cleanSlug;
+    ANTIGRAVITY_MODEL_IDS[cleanSlug] = cleanSlug;
+    ANTIGRAVITY_LABEL_BY_ID[cleanSlug] = cleanLabel;
+    if (!ANTIGRAVITY_MODELS.includes(cleanLabel)) {
+        ANTIGRAVITY_MODELS.push(cleanLabel);
+    }
+}
+export function parseAgyModelsOutput(stdout) {
+    const result = [];
+    if (!stdout || typeof stdout !== 'string')
+        return result;
+    const lines = stdout.replace(/\r/g, '\n').split(/\n+/);
+    for (const rawLine of lines) {
+        const line = rawLine.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').trim();
+        if (!line)
+            continue;
+        if (/^(fetching|loading|no models|error)/i.test(line))
+            continue;
+        if (line.endsWith('…') || line.endsWith('...'))
+            continue;
+        const cleanLine = line.replace(/^[^a-zA-Z0-9_-]+/, '');
+        const match = cleanLine.match(/^([a-z0-9_.-]+)(?:\s+(.+))?$/i);
+        if (!match)
+            continue;
+        const id = match[1].trim();
+        const label = (match[2] && match[2].trim()) || id;
+        result.push({ id, label });
+        registerAntigravityModel(id, label);
+    }
+    return result;
+}
+function hydrateModelsFromDiskCache() {
+    try {
+        const home = process.env.HOME || process.env.USERPROFILE || '';
+        const cacheFile = path.join(home, '.causyne', 'models_cache.json');
+        if (!fs.existsSync(cacheFile))
+            return;
+        const content = fs.readFileSync(cacheFile, 'utf8');
+        const parsed = JSON.parse(content);
+        const agyModels = parsed?.providers?.antigravity?.models;
+        if (Array.isArray(agyModels)) {
+            for (const item of agyModels) {
+                if (typeof item === 'string' && item.trim()) {
+                    const trimmed = item.trim();
+                    if (!ANTIGRAVITY_MODEL_IDS[trimmed]) {
+                        registerAntigravityModel(trimmed, trimmed);
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        // Ignore cache read errors
+    }
+}
+hydrateModelsFromDiskCache();
 export function resolveAgyModelId(model) {
     if (typeof model !== 'string')
         return '';
     const trimmed = model.trim();
-    return ANTIGRAVITY_MODEL_IDS[trimmed] || trimmed;
+    if (!trimmed)
+        return '';
+    if (ANTIGRAVITY_MODEL_IDS[trimmed]) {
+        return ANTIGRAVITY_MODEL_IDS[trimmed];
+    }
+    const lower = trimmed.toLowerCase();
+    for (const [key, slug] of Object.entries(ANTIGRAVITY_MODEL_IDS)) {
+        if (key.toLowerCase() === lower || slug.toLowerCase() === lower) {
+            return slug;
+        }
+    }
+    const effort = resolveAgyEffort(trimmed);
+    const candidateWithEffort = `${lower}-${effort}`;
+    for (const [key, slug] of Object.entries(ANTIGRAVITY_MODEL_IDS)) {
+        if (slug.toLowerCase() === candidateWithEffort || key.toLowerCase() === candidateWithEffort) {
+            return slug;
+        }
+    }
+    for (const [key, slug] of Object.entries(ANTIGRAVITY_MODEL_IDS)) {
+        if (slug.toLowerCase().startsWith(lower) || key.toLowerCase().startsWith(lower)) {
+            return slug;
+        }
+    }
+    return trimmed;
 }
 export function resolveAgyEffort(model) {
     if (typeof model !== 'string')

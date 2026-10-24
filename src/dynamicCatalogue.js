@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { causyneHome } from './utils/paths.js';
 import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE, DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
-import { ANTIGRAVITY_MODELS, ANTIGRAVITY_LABEL_BY_ID, resolveAgyBinary } from './providers/antigravity.js';
+import { ANTIGRAVITY_MODELS, ANTIGRAVITY_LABEL_BY_ID, registerAntigravityModel, parseAgyModelsOutput, resolveAgyBinary } from './providers/antigravity.js';
 import { isBinaryOnPath, BUILTIN_PEER_PRESETS } from './acp/agentCatalog.js';
 const execFileAsync = promisify(execFile);
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -208,8 +208,15 @@ export function getAvailableProvidersOverview(config = {}) {
         }
         const providerKey = `acp/${preset.id}`;
         const isCurrent = currentProvider === providerKey;
+        const cachedPeerModels = getCachedModels(providerKey) || getCachedModels(preset.id);
         let models = [];
-        if (PEER_MODEL_CATALOGUE[preset.id]) {
+        if (cachedPeerModels && cachedPeerModels.length > 0) {
+            models = [...cachedPeerModels];
+        }
+        else if (preset.id === 'claude') {
+            models = detectClaudeModels();
+        }
+        else if (PEER_MODEL_CATALOGUE[preset.id]) {
             models = [...(PEER_MODEL_CATALOGUE[preset.id] || [])];
         }
         else if (DEFAULT_MODEL_BY_PROVIDER[providerKey]) {
@@ -258,15 +265,52 @@ async function runModelList(command, args) {
 }
 function parseModelIds(lines) {
     const models = [];
-    for (const line of lines) {
+    for (const rawLine of lines) {
+        const line = rawLine.replace(ANSI_ESCAPE, '').trim();
+        if (!line)
+            continue;
         if (/^(fetching|loading|no models|error)/i.test(line))
             continue;
         if (line.endsWith('…') || line.endsWith('...'))
             continue;
-        const firstColumn = (line.split('\t')[0] ?? '').trim();
-        if (!firstColumn || firstColumn.includes(' '))
-            continue;
-        models.push(firstColumn);
+        const match = line.match(/^([a-z0-9_./-]+)/i);
+        if (match && match[1]) {
+            models.push(match[1]);
+        }
+    }
+    return [...new Set(models)];
+}
+function detectClaudeModels() {
+    const models = [];
+    try {
+        const home = process.env.HOME || process.env.USERPROFILE || '';
+        if (home) {
+            const settingsFile = path.join(home, '.claude', 'settings.json');
+            if (fs.existsSync(settingsFile)) {
+                const content = fs.readFileSync(settingsFile, 'utf8');
+                const parsed = JSON.parse(content);
+                if (typeof parsed?.model === 'string' && parsed.model.trim()) {
+                    models.push(parsed.model.trim());
+                }
+                if (Array.isArray(parsed?.availableModels)) {
+                    for (const m of parsed.availableModels) {
+                        if (typeof m === 'string' && m.trim())
+                            models.push(m.trim());
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        // Ignore settings read errors
+    }
+    const envModel = process.env.ANTHROPIC_MODEL || process.env.CLAUDE_MODEL;
+    if (envModel && typeof envModel === 'string' && envModel.trim()) {
+        models.push(envModel.trim());
+    }
+    const curated = PEER_MODEL_CATALOGUE['claude'] ?? ['sonnet', 'opus', 'haiku'];
+    for (const m of curated) {
+        models.push(m);
     }
     return [...new Set(models)];
 }
@@ -276,24 +320,37 @@ function parseModelIds(lines) {
  */
 export async function discoverPeerModels(peerId) {
     const peer = (peerId || '').toLowerCase().trim();
+    if (peer === 'claude') {
+        return detectClaudeModels();
+    }
     const listing = PEER_MODEL_COMMANDS[peer];
-    if (!listing)
-        return [];
-    return parseModelIds(await runModelList(listing.command, listing.args));
+    if (listing) {
+        const discovered = parseModelIds(await runModelList(listing.command, listing.args));
+        if (discovered.length > 0)
+            return discovered;
+    }
+    return PEER_MODEL_CATALOGUE[peer] ? [...PEER_MODEL_CATALOGUE[peer]] : [];
 }
 /** Ask Antigravity for its live model list and return the readable labels. */
 export async function discoverAntigravityModels() {
-    const lines = await runModelList(resolveAgyBinary(), ['models']);
-    const models = [];
-    for (const line of lines) {
-        if (/^(fetching|loading|no models|error)/i.test(line))
-            continue;
-        const [id, label] = line.split('\t').map((part) => part.trim());
-        if (!id || id.includes(' '))
-            continue;
-        models.push(label || ANTIGRAVITY_LABEL_BY_ID[id] || id);
+    try {
+        const { stdout } = await execFileAsync(resolveAgyBinary(), ['models'], {
+            timeout: MODEL_LIST_TIMEOUT_MS,
+            maxBuffer: 4 * 1024 * 1024,
+            windowsHide: true
+        });
+        const parsed = parseAgyModelsOutput(stdout);
+        if (parsed.length > 0) {
+            for (const item of parsed) {
+                registerAntigravityModel(item.id, item.label);
+            }
+            return [...new Set(parsed.map((item) => item.label || item.id))];
+        }
     }
-    return [...new Set(models)];
+    catch {
+        // Fall back to current registered or baseline models
+    }
+    return [...ANTIGRAVITY_MODELS];
 }
 /** Read cache safely from ~/.causyne/models_cache.json */
 export function readModelCache() {

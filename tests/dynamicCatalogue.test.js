@@ -12,8 +12,16 @@ import {
   getCachedModels,
   saveCachedModels,
   resolveAvailableModels,
-  getAvailableProvidersOverview
+  getAvailableProvidersOverview,
+  discoverAntigravityModels,
+  discoverPeerModels
 } from '../src/dynamicCatalogue.js';
+import {
+  parseAgyModelsOutput,
+  resolveAgyModelId,
+  registerAntigravityModel,
+  ANTIGRAVITY_MODEL_IDS
+} from '../src/providers/antigravity.js';
 import { runCommand } from '../src/commands.js';
 
 test('dynamic catalogue: provider normalization maps common aliases', () => {
@@ -119,3 +127,58 @@ test('slash command: /model acp/<peer> warns when CLI is not installed', async (
   assert.ok(result.output.includes('Notice: "Codex CLI" CLI is not installed on this machine'));
   assert.ok(result.output.includes('Binary "codex" was not found on PATH'));
 });
+
+test('antigravity: parseAgyModelsOutput parses tabs, spaces, and handles spinners', () => {
+  const stdout = [
+    '⠋ Fetching available models...',
+    '⠙ Fetching available models...',
+    'gemini-4-argon-medium\tGemini 4 Argon (Medium)',
+    'gemini-3.8-flash-high   Gemini 3.8 Flash (High)',
+    'claude-opus-5-5-high\tClaude Opus 5.5 (High)',
+    'new-frontier-model      New Frontier Model (Max)'
+  ].join('\n');
+
+  const parsed = parseAgyModelsOutput(stdout);
+  assert.equal(parsed.length, 4);
+  assert.equal(parsed[0].id, 'gemini-4-argon-medium');
+  assert.equal(parsed[0].label, 'Gemini 4 Argon (Medium)');
+  assert.equal(parsed[1].id, 'gemini-3.8-flash-high');
+  assert.equal(parsed[1].label, 'Gemini 3.8 Flash (High)');
+  assert.equal(parsed[2].id, 'claude-opus-5-5-high');
+  assert.equal(parsed[2].label, 'Claude Opus 5.5 (High)');
+  assert.equal(parsed[3].id, 'new-frontier-model');
+  assert.equal(parsed[3].label, 'New Frontier Model (Max)');
+
+  assert.equal(resolveAgyModelId('New Frontier Model (Max)'), 'new-frontier-model');
+  assert.equal(resolveAgyModelId('new-frontier-model'), 'new-frontier-model');
+});
+
+test('antigravity: resolveAgyModelId allows unlisted slug pass-through and fuzzy effort', () => {
+  assert.equal(resolveAgyModelId('unlisted-future-model-1'), 'unlisted-future-model-1');
+  assert.equal(resolveAgyModelId('Gemini 4 Argon (High)'), 'gemini-4-argon-high');
+  assert.equal(resolveAgyModelId('gemini-4-argon-high'), 'gemini-4-argon-high');
+  assert.equal(resolveAgyModelId(''), '');
+});
+
+test('dynamic catalogue: discoverAntigravityModels returns live or fallback models', async () => {
+  const models = await discoverAntigravityModels();
+  assert.ok(Array.isArray(models));
+  assert.ok(models.length > 0);
+  assert.ok(models.some(m => m.includes('Gemini') || m.includes('Claude') || m.includes('Argon')));
+});
+
+test('dynamic catalogue: discoverPeerModels autodetects opencode and claude', async () => {
+  const opencode = await discoverPeerModels('opencode');
+  assert.ok(Array.isArray(opencode));
+  assert.ok(opencode.length > 0);
+
+  const claude = await discoverPeerModels('claude');
+  assert.ok(Array.isArray(claude));
+  assert.ok(claude.includes('sonnet'));
+  assert.ok(claude.includes('opus'));
+  assert.ok(claude.includes('haiku'));
+
+  const unknown = await discoverPeerModels('non-existent-peer');
+  assert.deepEqual(unknown, []);
+});
+
