@@ -81,7 +81,7 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     assert.strictEqual(callsFenced[0].function.name, 'file_read');
   });
 
-  test('chat reads the prompt from stdin and never grants agy its own tools', { skip: process.platform === 'win32' }, async () => {
+  test('chat reads the prompt from stdin and limits agy to workspace edits', { skip: process.platform === 'win32' }, async () => {
     const argsFile = path.join(os.tmpdir(), `causyne-agy-args-${process.pid}.json`);
     const stdinFile = path.join(os.tmpdir(), `causyne-agy-stdin-${process.pid}.txt`);
     process.env.AGY_ARGS_FILE = argsFile;
@@ -107,6 +107,7 @@ process.stdin.on('end', () => {
 
       const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
       assert.equal(args[args.indexOf('--input-format') + 1], 'text');
+      assert.equal(args[args.indexOf('--mode') + 1], 'accept-edits');
       assert.ok(args.includes('--output-format'));
       assert.ok(!args.includes('--dangerously-skip-permissions'));
       assert.ok(!args.includes('-p'));
@@ -135,6 +136,57 @@ process.stdin.on('end', () => {
       await assert.rejects(
         provider.chat([{ role: 'user', content: 'ping' }]),
         /Antigravity returned no response/
+      );
+    } finally {
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('native agy file actions are surfaced in the response', { skip: process.platform === 'win32' }, async () => {
+    const fake = fakeAgy(`#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+  emit({ event: 'step_update', step_update: { step_type: 'tool', state: 'ACTIVE', tool_name: 'write_file', tool_info: { name: 'write_file', parameters: { Path: 'cake.html' } } } });
+  emit({ event: 'step_update', step_update: { step_type: 'tool', state: 'DONE', tool_name: 'write_file', tool_info: { name: 'write_file', parameters: { Path: 'cake.html' } } } });
+  emit({ event: 'result', result: { status: 'SUCCESS', response: 'created cake.html', usage: { input_tokens: 10, output_tokens: 3 } } });
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      const seen = [];
+      const response = await provider.chat([{ role: 'user', content: 'build a cake' }], {
+        onNativeAction: (action) => seen.push(action)
+      });
+      assert.equal(response.content, 'created cake.html');
+      assert.deepEqual(response.externalActions, [
+        { name: 'write_file', status: 'completed', detail: 'cake.html' }
+      ]);
+      assert.deepEqual(seen.map((action) => action.status), ['running', 'completed']);
+    } finally {
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a denied native action with no response is a failure, not a completed turn', { skip: process.platform === 'win32' }, async () => {
+    const fake = fakeAgy(`#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({
+    event: 'result',
+    result: {
+      status: 'SUCCESS',
+      response: '',
+      denied_actions: [{ action: 'write_file', display_name: 'WriteFile' }]
+    }
+  }) + '\\n');
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      await assert.rejects(
+        provider.chat([{ role: 'user', content: 'build a cake' }]),
+        /Antigravity could not perform: WriteFile/
       );
     } finally {
       fs.rmSync(fake.dir, { recursive: true, force: true });

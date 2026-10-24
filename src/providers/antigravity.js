@@ -81,6 +81,22 @@ export function resolveAgyBinary() {
     }
     return 'agy';
 }
+function describeNativeAction(toolInfo) {
+    const parameters = toolInfo && typeof toolInfo === 'object' ? toolInfo.parameters : null;
+    if (parameters && typeof parameters === 'object') {
+        for (const key of ['Path', 'path', 'file_path', 'TargetFile', 'target_file', 'CommandLine', 'command', 'url']) {
+            const value = parameters[key];
+            if (typeof value === 'string' && value.trim())
+                return value.trim();
+        }
+    }
+    for (const key of ['toolAction', 'tool_action', 'toolSummary', 'tool_summary']) {
+        const value = toolInfo && toolInfo[key];
+        if (typeof value === 'string' && value.trim())
+            return value.trim();
+    }
+    return undefined;
+}
 export class AntigravityProvider extends LLMProvider {
     command;
     constructor(config = {}) {
@@ -94,8 +110,10 @@ export class AntigravityProvider extends LLMProvider {
         const lines = [];
         // Core System boundary instructions
         lines.push('[System Instructions]\n' +
-            'You are acting as an AI reasoning engine for Causyne Agent. Do NOT invoke your own internal host CLI tools or execute commands directly. ' +
-            'When an action or tool is required, output an explicit tool call in this exact format:\n' +
+            'You are the execution engine for Causyne Agent, operating inside the user\'s workspace. ' +
+            'You may create and edit files in this workspace with your native file tools. ' +
+            'Do NOT run terminal commands, use the browser, or call any other host tool directly. ' +
+            'When a command, browser action, or other external action is required, output an explicit tool call in this exact format:\n' +
             '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
             'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
             '[Action Directive]\n' +
@@ -251,12 +269,16 @@ export class AntigravityProvider extends LLMProvider {
         // 3. The prompt is piped through stdin. `-p -` cannot be used: agy treats the
         //    literal "-" as the prompt, ignores stdin, and answers with its default
         //    greeting — the conversation never reaches the model.
-        // 4. --dangerously-skip-permissions must stay off. agy is a full agent CLI;
-        //    granting it tools lets it run its own commands in this workspace instead
-        //    of answering through Causyne, and an all-tools turn produces no prose.
-        //    With permissions denied in headless mode it answers as a reasoning engine.
+        // 4. --mode accept-edits lets agy create and edit workspace files in
+        //    headless mode, where the default request-review policy cannot prompt
+        //    and would auto-deny every write. --dangerously-skip-permissions must
+        //    stay off: it would also grant shell commands and other host tools,
+        //    bypassing Causyne. Native terminal/browser tools remain denied; those
+        //    must go through Causyne XML tool calls.
         // 5. --print-timeout 300s provides ample window for large code generation without truncation.
         const args = [
+            '--mode',
+            'accept-edits',
             '--input-format',
             'text',
             '--output-format',
@@ -281,6 +303,7 @@ export class AntigravityProvider extends LLMProvider {
             let stderrBuffer = '';
             let streamedResponse = '';
             let finalResultObj = null;
+            const nativeActions = [];
             const cleanup = () => {
                 if (options.signal) {
                     options.signal.removeEventListener('abort', onAbort);
@@ -346,6 +369,32 @@ export class AntigravityProvider extends LLMProvider {
                             const stepUpdate = event.step_update;
                             const delta = stepUpdate?.text_delta;
                             const stepType = stepUpdate?.step_type;
+                            if (stepType === 'tool') {
+                                const state = stepUpdate?.state;
+                                const toolInfo = stepUpdate?.tool_info || {};
+                                const name = stepUpdate?.tool_name || toolInfo?.name;
+                                const status = state === 'DONE'
+                                    ? 'completed'
+                                    : (state === 'ERROR' ? 'failed' : 'running');
+                                if (name && (state === 'ACTIVE' || state === 'DONE' || state === 'ERROR')) {
+                                    const detail = describeNativeAction(toolInfo);
+                                    const action = {
+                                        name,
+                                        status,
+                                        ...(detail ? { detail } : {})
+                                    };
+                                    if (status !== 'running') {
+                                        const existing = nativeActions.find(a => a.name === action.name && a.detail === action.detail);
+                                        if (existing)
+                                            existing.status = status;
+                                        else
+                                            nativeActions.push(action);
+                                    }
+                                    if (typeof options.onNativeAction === 'function') {
+                                        options.onNativeAction(action);
+                                    }
+                                }
+                            }
                             if (delta && typeof delta === 'string') {
                                 if (stepType === 'thought' || stepType === 'agent_thought') {
                                     if (typeof options.onReasoningChunk === 'function') {
@@ -413,8 +462,19 @@ export class AntigravityProvider extends LLMProvider {
                 const toolCalls = this.extractToolCalls(rawContent);
                 // Strip tool call tags from prose so raw XML does not leak into chat display
                 let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
-                if (!content && Array.isArray(finalResultObj?.denied_actions) && finalResultObj.denied_actions.length > 0) {
-                    content = `Antigravity attempted action: ${finalResultObj.denied_actions.map((a) => a.display_name || a.action).join(', ')}`;
+                const completedNativeActions = nativeActions.filter((a) => a.status === 'completed');
+                if (!content && Array.isArray(finalResultObj?.denied_actions) && finalResultObj.denied_actions.length > 0 && completedNativeActions.length === 0) {
+                    const denied = finalResultObj.denied_actions
+                        .map((a) => a.display_name || a.action)
+                        .filter(Boolean)
+                        .join(', ');
+                    safeReject(new Error(`Antigravity could not perform: ${denied || 'the requested action'}`));
+                    return;
+                }
+                if (!content && completedNativeActions.length > 0) {
+                    content = `Antigravity completed: ${completedNativeActions
+                        .map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
+                        .join(', ')}`;
                 }
                 if (!content && toolCalls.length === 0) {
                     const detail = stderrBuffer.trim();
@@ -439,6 +499,9 @@ export class AntigravityProvider extends LLMProvider {
                 }
                 if (toolCalls.length > 0) {
                     response.toolCalls = toolCalls;
+                }
+                if (nativeActions.length > 0) {
+                    response.externalActions = nativeActions.filter((a) => a.status !== 'running');
                 }
                 safeResolve(response);
             });

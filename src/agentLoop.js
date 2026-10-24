@@ -1419,6 +1419,21 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: 'Responding…' });
                             this.emitEvent({ type: 'agent_activity', activity: 'Responding…' });
                         }
+                    },
+                    onNativeAction: (action) => {
+                        if (!action || typeof action.name !== 'string')
+                            return;
+                        const detail = action.detail ? ` ${action.detail}` : '';
+                        if (action.status === 'running') {
+                            this.emitEvent({ type: 'status', message: `Acting: ${action.name}${detail}` });
+                            this.emitEvent({ type: 'agent_activity', activity: `Acting: ${action.name}${detail}` });
+                        }
+                        else if (action.status === 'completed') {
+                            this.emitEvent({ type: 'notice', tone: 'muted', message: `Antigravity ${action.name}${detail}` });
+                        }
+                        else if (action.status === 'failed') {
+                            this.emitEvent({ type: 'warning', message: `Antigravity could not ${action.name}${detail}` });
+                        }
                     }
                 });
                 // The call came back. Whatever went wrong before is no longer
@@ -1503,12 +1518,35 @@ export class AgentLoop {
                 if (response.content) {
                     this.emitEvent({ type: 'agent_message', content: response.content });
                 }
+                const externalActions = Array.isArray(response.externalActions)
+                    ? response.externalActions
+                    : [];
+                const completedExternalActions = externalActions.filter((a) => a && a.status === 'completed');
+                const failedExternalActions = externalActions.filter((a) => a && a.status === 'failed');
+                const hasExternalActions = completedExternalActions.length > 0;
                 // If no tool calls, check if the agent is just thinking/planning or actually done
                 if (!response.toolCalls || response.toolCalls.length === 0) {
                     const contentText = response.content || '';
                     const lower = contentText.toLowerCase();
                     const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
                     const isActionable = isActionableTaskPrompt(taskPrompt);
+                    // A native workspace action already changed the workspace. Do not
+                    // demand a Causyne tool call for the same work, and do not treat the
+                    // turn as a no-op.
+                    if (!hasExternalActions && failedExternalActions.length > 0 && this.consecutiveThinkingSteps < 2) {
+                        this.consecutiveThinkingSteps++;
+                        const blocked = failedExternalActions
+                            .map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
+                            .join(', ');
+                        this.emitEvent({ type: 'status', message: 'Native action blocked; switching to Causyne tools...' });
+                        this.emitEvent({ type: 'agent_activity', activity: 'Retrying blocked action through Causyne…' });
+                        this.messages.push({
+                            role: 'system',
+                            content: `[SYSTEM NOTICE: Your native action(s) were blocked: ${blocked}. Do not retry native terminal or browser tools. Instead use Causyne's XML tool call format, for example <tool_call>{"name": "sysRun", "arguments": {"command": "..."}}</tool_call>.]`
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
                     const isQuestionOrGreeting = lower.includes('?') ||
                         lower.includes('let me know') ||
                         lower.includes('how can i help') ||
@@ -1520,7 +1558,7 @@ export class AgentLoop {
                     // Action Enforcement on Step 0:
                     // If the user instructed an actionable task (e.g. "create a 3js game..."), but the model
                     // replied with a greeting, polite pleasantry, question, or refusal without calling any tools:
-                    if (this.stepsCompleted === 0 && isActionable && (isQuestionOrGreeting || lower.includes('hello') || lower.includes('hi ') || lower.includes('halo')) && this.consecutiveThinkingSteps < 3) {
+                    if (!hasExternalActions && this.stepsCompleted === 0 && isActionable && (isQuestionOrGreeting || lower.includes('hello') || lower.includes('hi ') || lower.includes('halo')) && this.consecutiveThinkingSteps < 3) {
                         this.consecutiveThinkingSteps++;
                         this.emitEvent({ type: 'status', message: 'Enforcing task execution: rejecting greeting on actionable instruction...' });
                         this.emitEvent({ type: 'agent_activity', activity: 'Enforcing tool execution…' });
@@ -1533,7 +1571,7 @@ export class AgentLoop {
                     }
                     const thinkingKeywords = ['let me ', "i'll ", 'i will ', 'now i ', 'next, i ', 'first, i ', 'checking ', 'trying to ', 'let us ', 'going to ', 'i shall', 'we will', 'i am going to'];
                     const isThinking = !isQuestionOrGreeting && thinkingKeywords.some(kw => lower.includes(kw));
-                    if (isThinking && this.consecutiveThinkingSteps < 3) {
+                    if (!hasExternalActions && isThinking && this.consecutiveThinkingSteps < 3) {
                         this.consecutiveThinkingSteps++;
                         this.emitEvent({ type: 'status', message: 'Agent planning next steps...' });
                         this.emitEvent({ type: 'agent_activity', activity: 'Planning next actionable steps…' });
@@ -1546,7 +1584,7 @@ export class AgentLoop {
                         this.memoryManager.saveHistory(this.messages);
                         continue;
                     }
-                    if (this.stepsCompleted === 0 && this.consecutiveThinkingSteps < 2) {
+                    if (!hasExternalActions && this.stepsCompleted === 0 && this.consecutiveThinkingSteps < 2) {
                         if (isActionable || lower.includes('turn completed') || lower.includes('no output produced') || !contentText.trim()) {
                             this.consecutiveThinkingSteps++;
                             this.emitEvent({ type: 'status', message: 'Nudging agent to execute actionable steps...' });

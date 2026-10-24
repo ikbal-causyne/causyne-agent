@@ -27,12 +27,19 @@ export interface ChatResponseToolCall {
   };
 }
 
+export interface ChatResponseAction {
+  name: string;
+  status: 'running' | 'completed' | 'failed';
+  detail?: string | undefined;
+}
+
 export interface ChatResponse {
   content: string;
   usage: ChatResponseUsage;
   toolCalls?: ChatResponseToolCall[] | undefined;
   reasoningContent?: string | undefined;
   thinkingBlocks?: any[] | undefined;
+  externalActions?: ChatResponseAction[] | undefined;
 }
 
 export interface ChatOptions {
@@ -42,6 +49,7 @@ export interface ChatOptions {
   signal?: AbortSignal | undefined;
   onChunk?: ((chunk: string) => void) | undefined;
   onReasoningChunk?: ((chunk: string) => void) | undefined;
+  onNativeAction?: ((action: ChatResponseAction) => void) | undefined;
   coreToolCount?: number | undefined;
   [key: string]: any;
 }
