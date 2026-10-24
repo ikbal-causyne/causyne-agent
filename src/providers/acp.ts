@@ -78,6 +78,8 @@ export class AcpProvider extends LLMProvider {
       }).join('\n');
       lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
     }
+    const seenToolOutputs = new Set<string>();
+    const seenAssistantCalls = new Set<string>();
     for (const msg of messages) {
       const role = msg.role === 'user'
         ? 'User'
@@ -96,10 +98,23 @@ export class AcpProvider extends LLMProvider {
         text = msg.content.map((c: any) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
       }
 
+      if (msg.role === 'tool' && text.trim()) {
+        const normalized = text.trim();
+        if (seenToolOutputs.has(normalized)) {
+          continue;
+        }
+        seenToolOutputs.add(normalized);
+      }
+
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
         for (const tc of msg.tool_calls) {
           const fn = tc.function || {};
           const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+          const callSig = `${fn.name}:${fnArgs}`;
+          if (seenAssistantCalls.has(callSig)) {
+            continue;
+          }
+          seenAssistantCalls.add(callSig);
           text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
         }
       }
@@ -133,6 +148,8 @@ export class AcpProvider extends LLMProvider {
       pending.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
     }
 
+    const seenToolOutputs = new Set<string>();
+    const seenAssistantCalls = new Set<string>();
     for (const msg of messages) {
       const role = this._roleLabel(msg);
       let text = '';
@@ -142,10 +159,23 @@ export class AcpProvider extends LLMProvider {
         text = msg.content.map((c: any) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
       }
 
+      if (msg.role === 'tool' && text.trim()) {
+        const normalized = text.trim();
+        if (seenToolOutputs.has(normalized)) {
+          continue;
+        }
+        seenToolOutputs.add(normalized);
+      }
+
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
         for (const tc of msg.tool_calls) {
           const fn = tc.function || {};
           const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
+          const callSig = `${fn.name}:${fnArgs}`;
+          if (seenAssistantCalls.has(callSig)) {
+            continue;
+          }
+          seenAssistantCalls.add(callSig);
           text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
         }
       }

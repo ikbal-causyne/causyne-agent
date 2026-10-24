@@ -106,6 +106,12 @@ export function isActionableTaskPrompt(text: string): boolean {
   return actionKeywords.test(t);
 }
 
+export function isCodeAuthoringTaskPrompt(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  return /\b(create|build|make|write|code|implement|generate|game|3js|threejs|three\.js|app)\b/i.test(t);
+}
+
 export function isDirectGameTask(text: string): boolean {
   return /\b(three\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
     && !/\b(godot|unity|unreal|full engine)\b/i.test(text);
@@ -2051,63 +2057,67 @@ export class AgentLoop {
             }
           }
 
-          const duplicateCount = this.recentActionSignatures.filter((sig: string) => sig === actionSig).length;
-
-          // 1. Hard Circuit Breaker on Duplicate Action Thrashing (same command attempted 4 times total)
-          if (duplicateCount >= 3) {
-            const fatalMsg = `FATAL ERROR: Infinite Token Drain Detected. Agent repeatedly attempted identical action '${functionName}' (${actionSig}) 4 times without making progress. Forcibly aborting task to save tokens.`;
-            this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
-            auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
-            this.abort();
-            break;
+          // Always record action signature into recent history FIRST
+          this.recentActionSignatures.push(actionSig);
+          if (this.recentActionSignatures.length > 20) {
+            this.recentActionSignatures.shift();
           }
 
-          // 2. Block 3rd attempt of identical action and inject a non-negotiable recovery mandate
-          if (duplicateCount === 2) {
-            const blockMsg = `REPETITION BLOCKED: You have already executed this identical action '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`;
-            this.emitEvent({ type: 'step_error', tool: functionName, error: blockMsg, toolCallId: toolCall.id });
-            this.messages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              name: functionName,
-              content: JSON.stringify({
-                success: false,
-                error: 'DUPLICATE_ACTION_BLOCKED',
-                CRITICAL_INSTRUCTION: blockMsg
-              })
-            });
-            continue;
+          const isCommandTool = ['sysRun', 'sysRunBg', 'terminal_persistent_shell'].includes(functionName);
+          if (isCommandTool) {
+            const duplicateCount = this.recentActionSignatures.filter((sig: string) => sig === actionSig).length;
+
+            // 1. Hard Circuit Breaker on Duplicate Command Thrashing (same command attempted 4 times total)
+            if (duplicateCount >= 4) {
+              const fatalMsg = `FATAL ERROR: Infinite Token Drain Detected. Agent repeatedly attempted identical command '${functionName}' (${actionSig}) 4 times without making progress. Forcibly aborting task to save tokens.`;
+              this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
+              auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
+              this.abort();
+              break;
+            }
+
+            // 2. Block 3rd attempt of identical command and inject a non-negotiable recovery mandate
+            if (duplicateCount === 3) {
+              const blockMsg = `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`;
+              this.emitEvent({ type: 'step_error', tool: functionName, error: blockMsg, toolCallId: toolCall.id });
+              this.messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: functionName,
+                content: JSON.stringify({
+                  success: false,
+                  error: 'DUPLICATE_ACTION_BLOCKED',
+                  CRITICAL_INSTRUCTION: blockMsg
+                })
+              });
+              continue;
+            }
           }
 
-          // 3. Track Read-Only Inspection Chains on Actionable Coding Tasks (Max 4 inspection steps)
+          // 3. Track Read-Only Inspection Chains on Code Authoring Tasks (Max 6 inspection steps)
           const isMutatingAction = ['fs_write', 'fs_edit', 'MultiEdit', 'game_build_html5'].includes(functionName)
             || (functionName === 'sysRun' && /(npm\s+(i|install|add)|pnpm\s+add|yarn\s+add|pip\s+install|git\s+commit)\b/.test(args?.command || ''));
 
           if (isMutatingAction) {
             this.consecutiveReadOnlySteps = 0;
-          } else {
+          } else if (['sysRun', 'sysRunBg', 'fs_read', 'fs_list', 'dir_list', 'grep_search'].includes(functionName)) {
             this.consecutiveReadOnlySteps = (Number(this.consecutiveReadOnlySteps) || 0) + 1;
           }
 
-          const isActionableTask = isActionableTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
-          if (isActionableTask && this.consecutiveReadOnlySteps === 3) {
+          const isAuthoringTask = isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+          if (isAuthoringTask && this.consecutiveReadOnlySteps === 4) {
             this.messages.push({
               role: 'system',
-              content: `[CRITICAL ACTION MANDATE: You have performed 3 consecutive inspection steps without writing code. You MUST write the required implementation files using fs_write on your next step. Any further read-only commands will be rejected.]`
+              content: `[CRITICAL ACTION MANDATE: You have performed 4 consecutive inspection steps without writing code. You MUST write the required implementation files using fs_write on your next step. Any further read-only commands will be rejected.]`
             });
           }
 
-          if (isActionableTask && this.consecutiveReadOnlySteps >= 4) {
-            const fatalMsg = `FATAL ERROR: Read-Only Verification Loop Detected. Agent performed 4 consecutive inspection steps without writing any implementation code. Forcibly aborting task to save your token budget.`;
+          if (isAuthoringTask && this.consecutiveReadOnlySteps >= 6) {
+            const fatalMsg = `FATAL ERROR: Read-Only Verification Loop Detected. Agent performed 6 consecutive inspection steps without writing any implementation code. Forcibly aborting task to save your token budget.`;
             this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
             auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
             this.abort();
             break;
-          }
-
-          this.recentActionSignatures.push(actionSig);
-          if (this.recentActionSignatures.length > 20) {
-            this.recentActionSignatures.shift();
           }
           
           this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });
