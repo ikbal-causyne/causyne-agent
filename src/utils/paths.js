@@ -26,9 +26,10 @@ export function resolveUserPath(input) {
     }
     return path.resolve(raw);
 }
-const STATE_ROOT = process.env['CAUSYNE_HOME'] && String(process.env['CAUSYNE_HOME']).trim()
-    ? path.resolve(String(process.env['CAUSYNE_HOME']).trim())
-    : path.join(os.homedir(), '.causyne');
 export function causyneHome() {
-    return STATE_ROOT;
+    const envHome = process.env['CAUSYNE_HOME'];
+    if (envHome && String(envHome).trim()) {
+        return path.resolve(String(envHome).trim());
+    }
+    return path.join(os.homedir(), '.causyne');
 }

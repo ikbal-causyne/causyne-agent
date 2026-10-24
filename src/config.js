@@ -6,25 +6,33 @@ import { canonicalModelId } from './modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import { causyneHome } from './utils/paths.js';
 
-const CONFIG_DIR = causyneHome();
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const KEY_FILE = path.join(CONFIG_DIR, '.vault_key');
+function configDir() {
+  return causyneHome();
+}
+function configFile() {
+  return path.join(causyneHome(), 'config.json');
+}
+function keyFile() {
+  return path.join(causyneHome(), '.vault_key');
+}
 
 function ensureConfigDir() {
-  if (!fs.existsSync(CONFIG_DIR)) {
+  const dir = configDir();
+  if (!fs.existsSync(dir)) {
     // SECURITY: Directory must only be accessible by the owner
-    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 }
 
 function getVaultKey() {
   ensureConfigDir();
-  if (!fs.existsSync(KEY_FILE)) {
+  const kf = keyFile();
+  if (!fs.existsSync(kf)) {
     const key = crypto.randomBytes(32);
-    fs.writeFileSync(KEY_FILE, key, { mode: 0o600 });
+    fs.writeFileSync(kf, key, { mode: 0o600 });
     return key;
   }
-  return fs.readFileSync(KEY_FILE);
+  return fs.readFileSync(kf);
 }
 
 function encryptString(text) {
@@ -61,9 +69,10 @@ function decryptString(encryptedText) {
 
 export function loadConfig() {
   ensureConfigDir();
-  if (fs.existsSync(CONFIG_FILE)) {
+  const file = configFile();
+  if (fs.existsSync(file)) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
       
       // Decrypt API key into memory
       if (parsed.apiKey) {
@@ -289,6 +298,7 @@ export function saveConfig(config) {
   }
 
   // SECURITY: Config file contains encrypted keys, must be 0600 (owner read/write only)
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(configToSave, null, 2), { encoding: 'utf8', mode: 0o600 });
-  fs.chmodSync(CONFIG_FILE, 0o600); // Enforce on existing files
+  const file = configFile();
+  fs.writeFileSync(file, JSON.stringify(configToSave, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(file, 0o600); // Enforce on existing files
 }

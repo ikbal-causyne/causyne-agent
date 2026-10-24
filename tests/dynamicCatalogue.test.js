@@ -23,6 +23,7 @@ import {
   ANTIGRAVITY_MODEL_IDS
 } from '../src/providers/antigravity.js';
 import { runCommand } from '../src/commands.js';
+import { loadConfig, saveConfig } from '../src/config.js';
 
 test('dynamic catalogue: provider normalization maps common aliases', () => {
   assert.equal(normalizeProviderKey('Alibaba'), 'dashscope-byok');
@@ -121,11 +122,27 @@ test('slash command: /model displays separated BYOK and ACP overview', async () 
   assert.ok(listAll.output.includes('NOT INSTALLED'));
 });
 
-test('slash command: /model acp/<peer> warns when CLI is not installed', async () => {
-  const result = await runCommand('model', ['acp/codex'], { surface: 'terminal' });
-  assert.ok(result.ok);
-  assert.ok(result.output.includes('Notice: "Codex CLI" CLI is not installed on this machine'));
-  assert.ok(result.output.includes('Binary "codex" was not found on PATH'));
+test('slash command: /model acp/<peer> warns when CLI is not installed and preserves config', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cmd-test-'));
+  const originalHome = process.env.CAUSYNE_HOME;
+  try {
+    process.env.CAUSYNE_HOME = tempDir;
+    const initialConfig = { provider: 'antigravity', model: 'Gemini 3.8 Flash (High)' };
+    saveConfig(initialConfig);
+
+    const result = await runCommand('model', ['acp/codex'], { surface: 'terminal' });
+    assert.ok(result.output.includes('Notice: "Codex CLI" CLI is not installed on this machine'));
+    assert.ok(result.output.includes('Binary "codex" was not found on PATH'));
+    assert.ok(result.output.includes('Model was not changed'));
+
+    const currentConfig = loadConfig();
+    assert.equal(currentConfig.provider, 'antigravity');
+    assert.equal(currentConfig.model, 'Gemini 3.8 Flash (High)');
+  } finally {
+    if (originalHome) process.env.CAUSYNE_HOME = originalHome;
+    else delete process.env.CAUSYNE_HOME;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('antigravity: parseAgyModelsOutput parses tabs, spaces, and handles spinners', () => {

@@ -5,8 +5,11 @@
 // provider — selectable by name, with its own model list, its own default, and
 // a cost of zero because the user already pays for it elsewhere.
 
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 import {
   normalizeProviderKey, peerIdFromProviderKey, getCuratedModels
@@ -105,6 +108,21 @@ describe('peer agents as first-class providers', () => {
 });
 
 describe('/model understands peer provider keys', () => {
+  let tempDir;
+  let originalHome;
+
+  before(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-peer-test-'));
+    originalHome = process.env.CAUSYNE_HOME;
+    process.env.CAUSYNE_HOME = tempDir;
+  });
+
+  after(() => {
+    if (originalHome) process.env.CAUSYNE_HOME = originalHome;
+    else delete process.env.CAUSYNE_HOME;
+    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
   const reset = (provider = '', model = '') => {
     const config = loadConfig();
     config.provider = provider;

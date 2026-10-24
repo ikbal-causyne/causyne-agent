@@ -1222,10 +1222,10 @@ export const COMMANDS = [
           ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
           : (DEFAULT_MODEL_BY_PROVIDER['antigravity'] || 'Gemini 3.8 Flash (Low)');
         const agyPeer = overview.acp.find(p => p.id === 'antigravity');
-        const notice = agyPeer && !agyPeer.installed
-          ? `⚠️ Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nNow using Google Antigravity / ${agyModel}.`
-          : `Now using Google Antigravity / ${agyModel}.`;
-        return activateModel('antigravity', agyModel, notice);
+        if (agyPeer && !agyPeer.installed) {
+          return fail(`Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nModel was not changed.`);
+        }
+        return activateModel('antigravity', agyModel, `Now using Google Antigravity / ${agyModel}.`);
       }
 
       // 2. acp/<peer> or acp/<peer>/<model>
@@ -1235,10 +1235,10 @@ export const COMMANDS = [
         const nextProvider = `acp/${peer}`;
         const peerModel = acpTarget[2] ? acpTarget[2].trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer);
         const peerInfo = overview.acp.find(p => p.id === peer);
-        const notice = peerInfo && !peerInfo.installed
-          ? `⚠️ Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nNow using ${nextProvider} / ${peerModel}.`
-          : `Now using ${nextProvider} / ${peerModel}.`;
-        return activateModel(nextProvider, peerModel, notice);
+        if (peerInfo && !peerInfo.installed) {
+          return fail(`Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nModel was not changed.`);
+        }
+        return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
       }
 
       // 3. Known ACP peer directly (e.g. opencode, opencode/deepseek-v4.1-flash-free, claude)
@@ -1247,6 +1247,9 @@ export const COMMANDS = [
       const acpPeer = overview.acp.find(p => p.id === prefix || p.providerKey === prefix);
       if (acpPeer && acpPeer.id !== 'antigravity') {
         const nextProvider = acpPeer.providerKey;
+        if (!acpPeer.installed) {
+          return fail(`Notice: "${acpPeer.label}" CLI is not installed on this machine.\nBinary "${acpPeer.id}" was not found on PATH.\nSetup: ${acpPeer.setupInstruction}\n\nModel was not changed.`);
+        }
         let peerModel;
         if (slashIndex > 0) {
           const rest = rawRequested.slice(slashIndex + 1).trim();
@@ -1261,10 +1264,7 @@ export const COMMANDS = [
         } else {
           peerModel = DEFAULT_MODEL_BY_PROVIDER[nextProvider] || acpPeer.id;
         }
-        const notice = !acpPeer.installed
-          ? `⚠️ Notice: "${acpPeer.label}" CLI is not installed on this machine.\nBinary "${acpPeer.id}" was not found on PATH.\nSetup: ${acpPeer.setupInstruction}\n\nNow using ${nextProvider} / ${peerModel}.`
-          : `Now using ${nextProvider} / ${peerModel}.`;
-        return activateModel(nextProvider, peerModel, notice);
+        return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
       }
 
       // 4. Known BYOK provider prefix (e.g. gemini/gemini-2.5-flash, anthropic/claude-3-7-sonnet)
