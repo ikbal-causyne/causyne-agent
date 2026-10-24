@@ -80,14 +80,14 @@ export class StatusLine {
 
   /** Session-lifetime facts, set once from the same info as the header. */
   setSession(info = {}) {
-    this.model = shortModel(info.model);
-    this.provider = info.provider ? String(info.provider) : '';
-    this.tier = info.tier ? String(info.tier) : '';
+    if (info.model !== undefined) this.model = shortModel(info.model);
+    if (info.provider !== undefined) this.provider = info.provider ? String(info.provider) : '';
+    if (info.tier !== undefined) this.tier = info.tier ? String(info.tier) : '';
     // The idle footer answers "where am I and how much room is left", which is
     // what opencode's permanent footer shows (cwd left, context right). Neither
     // fact was reachable once the session header had scrolled away.
-    this.cwd = info.cwd ? String(info.cwd) : '';
-    this.contextLimit = Number(info.contextLimit) || 0;
+    if (info.cwd !== undefined) this.cwd = info.cwd ? String(info.cwd) : '';
+    if (info.contextLimit !== undefined) this.contextLimit = Number(info.contextLimit) || 0;
     return this;
   }
 

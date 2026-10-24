@@ -131,13 +131,38 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         });
         prompt.openLayer(layer);
     });
+    const notifyPromptAndClean = (providerId, modelId) => {
+        if (typeof prompt.updateModel === 'function') {
+            prompt.updateModel(providerId, modelId);
+        }
+        else if (prompt.renderer?.status) {
+            prompt.renderer.status.setSession({ provider: providerId, model: modelId });
+            if (typeof prompt.scheduleDraw === 'function')
+                prompt.scheduleDraw();
+        }
+        if (prompt.editor && typeof prompt.editor.clear === 'function') {
+            prompt.editor.clear();
+            if (typeof prompt.scheduleDraw === 'function')
+                prompt.scheduleDraw();
+        }
+    };
     if (!picked || !picked.value) {
+        if (prompt.editor && typeof prompt.editor.clear === 'function') {
+            prompt.editor.clear();
+            if (typeof prompt.scheduleDraw === 'function')
+                prompt.scheduleDraw();
+        }
         return 'Cancelled. Model was not changed.';
     }
     const target = picked.value;
     // Case 1: ACP Peer Agent or Antigravity
     if (target.type === 'acp') {
         if (!target.installed) {
+            if (prompt.editor && typeof prompt.editor.clear === 'function') {
+                prompt.editor.clear();
+                if (typeof prompt.scheduleDraw === 'function')
+                    prompt.scheduleDraw();
+            }
             return (`⚠️ Notice: "${target.providerLabel}" is not installed on this machine.\n` +
                 `Setup: ${target.setupInstruction || 'Install the CLI binary.'}\n\n` +
                 `Model was not changed.`);
@@ -153,6 +178,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                 options.loop.updateTierLimits();
             }
         }
+        notifyPromptAndClean(target.providerId, target.modelId);
         return `Now using ${target.providerLabel} / ${target.modelId}.`;
     }
     // Case 2: BYOK Provider (Cloud or Local API)
@@ -183,6 +209,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                 options.loop.updateTierLimits();
             }
         }
+        notifyPromptAndClean(target.providerId, target.modelId);
         return `Now using ${target.providerLabel} / ${target.modelId}.`;
     }
     // Key is required: open modal input dialog (InputLayer)
@@ -201,6 +228,11 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         prompt.openLayer(layer);
     });
     if (!enteredKey || !enteredKey.trim()) {
+        if (prompt.editor && typeof prompt.editor.clear === 'function') {
+            prompt.editor.clear();
+            if (typeof prompt.scheduleDraw === 'function')
+                prompt.scheduleDraw();
+        }
         return `Cancelled. An API key is required to use ${target.providerLabel} / ${target.modelId}. Model was not changed.`;
     }
     const cleanKey = enteredKey.trim();
@@ -217,5 +249,6 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             options.loop.updateTierLimits();
         }
     }
+    notifyPromptAndClean(target.providerId, target.modelId);
     return `Saved API key. Now using ${target.providerLabel} / ${target.modelId}.`;
 }

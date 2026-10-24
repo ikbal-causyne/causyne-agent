@@ -422,6 +422,17 @@ export class ChatPrompt {
     this.scheduleDraw();
   }
 
+  /** Update active model and provider displayed in agentRow and status footer. */
+  updateModel(provider, model) {
+    if (this.renderer && this.renderer.status) {
+      this.renderer.status.setSession({
+        provider: provider ? String(provider) : '',
+        model: model ? String(model) : ''
+      });
+    }
+    this.scheduleDraw();
+  }
+
   /**
    * Browse the compiled skill library.
    *
@@ -880,7 +891,14 @@ export class ChatPrompt {
   }
 
   handleEscape() {
-    if (this.completion) { this.completion = null; return; }
+    if (this.completion) {
+      this.completion = null;
+      if (this.editor.getText().startsWith('/')) {
+        this.editor.clear();
+      }
+      this.scheduleDraw();
+      return;
+    }
     if (this.busy) return this.interrupt();
     this.editor.clear();
   }
@@ -1005,6 +1023,19 @@ export class ChatPrompt {
     if (key.name === 'up') { this.moveSelection(-1); return true; }
     if (key.name === 'down') { this.moveSelection(1); return true; }
     if (key.name === 'enter' && !key.alt) {
+      const item = this.completion.items && this.completion.items[this.selected];
+      if (this.completion.kind === 'command' && item && item.value === '/model') {
+        this.editor.clear();
+        this.completion = null;
+        this.deliver('/model');
+        return true;
+      }
+      if (this.completion.kind === 'command-argument' && this.completion.command === 'model' && item) {
+        this.editor.clear();
+        this.completion = null;
+        this.deliver(`/model ${item.value}`);
+        return true;
+      }
       if (this.completionIsExact()) {
         // Nothing left to complete. Close the picker and let the key through to
         // submit, rather than re-offering what is already on the line.
@@ -1015,7 +1046,14 @@ export class ChatPrompt {
       return true;
     }
     if (key.name === 'tab') { this.acceptCompletion(); return true; }
-    if (key.name === 'escape') { this.completion = null; return true; }
+    if (key.name === 'escape') {
+      this.completion = null;
+      if (this.editor.getText().startsWith('/')) {
+        this.editor.clear();
+      }
+      this.scheduleDraw();
+      return true;
+    }
     return false;
   }
 

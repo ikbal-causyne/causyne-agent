@@ -187,7 +187,24 @@ export async function runInteractiveModelPicker(
     prompt.openLayer(layer);
   });
 
+  const notifyPromptAndClean = (providerId: string, modelId: string) => {
+    if (typeof (prompt as any).updateModel === 'function') {
+      (prompt as any).updateModel(providerId, modelId);
+    } else if ((prompt as any).renderer?.status) {
+      (prompt as any).renderer.status.setSession({ provider: providerId, model: modelId });
+      if (typeof (prompt as any).scheduleDraw === 'function') (prompt as any).scheduleDraw();
+    }
+    if ((prompt as any).editor && typeof (prompt as any).editor.clear === 'function') {
+      (prompt as any).editor.clear();
+      if (typeof (prompt as any).scheduleDraw === 'function') (prompt as any).scheduleDraw();
+    }
+  };
+
   if (!picked || !picked.value) {
+    if ((prompt as any).editor && typeof (prompt as any).editor.clear === 'function') {
+      (prompt as any).editor.clear();
+      if (typeof (prompt as any).scheduleDraw === 'function') (prompt as any).scheduleDraw();
+    }
     return 'Cancelled. Model was not changed.';
   }
 
@@ -196,6 +213,10 @@ export async function runInteractiveModelPicker(
   // Case 1: ACP Peer Agent or Antigravity
   if (target.type === 'acp') {
     if (!target.installed) {
+      if ((prompt as any).editor && typeof (prompt as any).editor.clear === 'function') {
+        (prompt as any).editor.clear();
+        if (typeof (prompt as any).scheduleDraw === 'function') (prompt as any).scheduleDraw();
+      }
       return (
         `⚠️ Notice: "${target.providerLabel}" is not installed on this machine.\n` +
         `Setup: ${target.setupInstruction || 'Install the CLI binary.'}\n\n` +
@@ -215,6 +236,7 @@ export async function runInteractiveModelPicker(
         options.loop.updateTierLimits();
       }
     }
+    notifyPromptAndClean(target.providerId, target.modelId);
     return `Now using ${target.providerLabel} / ${target.modelId}.`;
   }
 
@@ -246,6 +268,7 @@ export async function runInteractiveModelPicker(
         options.loop.updateTierLimits();
       }
     }
+    notifyPromptAndClean(target.providerId, target.modelId);
     return `Now using ${target.providerLabel} / ${target.modelId}.`;
   }
 
@@ -266,6 +289,10 @@ export async function runInteractiveModelPicker(
   });
 
   if (!enteredKey || !enteredKey.trim()) {
+    if ((prompt as any).editor && typeof (prompt as any).editor.clear === 'function') {
+      (prompt as any).editor.clear();
+      if (typeof (prompt as any).scheduleDraw === 'function') (prompt as any).scheduleDraw();
+    }
     return `Cancelled. An API key is required to use ${target.providerLabel} / ${target.modelId}. Model was not changed.`;
   }
 
@@ -286,5 +313,6 @@ export async function runInteractiveModelPicker(
     }
   }
 
+  notifyPromptAndClean(target.providerId, target.modelId);
   return `Saved API key. Now using ${target.providerLabel} / ${target.modelId}.`;
 }

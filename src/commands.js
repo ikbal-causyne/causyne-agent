@@ -21,7 +21,7 @@ import {
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
 import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview } from './dynamicCatalogue.js';
-import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
+import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
 import {
   serverStatus, grantServer, revokeServer, addServer, removeServer,
@@ -954,84 +954,127 @@ export const COMMANDS = [
         return ok(`Refreshed ${config.provider} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
       }
 
-      const requested = argv.join(' ').trim();
+      const rawRequested = argv.join(' ').trim().replace(/^\/model\s+/i, '');
 
-      // Check if user requested an ACP peer
-      const acpTarget = requested.match(/^acp\/([a-z0-9_-]+)(?:\/(.+))?$/i);
+      // Helper to cleanly activate a provider + model, persist config, update live loop & prompt
+      const activateModel = (nextProvider, nextModel, feedbackMessage) => {
+        const isProviderChange = nextProvider !== config.provider;
+        if (isProviderChange) {
+          if (nextProvider === 'antigravity' || nextProvider.startsWith('acp/')) {
+            config.apiKey = '';
+            delete config.baseUrl;
+          } else {
+            config.apiKey = (config.providerKeys && config.providerKeys[nextProvider]) || '';
+            delete config.baseUrl;
+          }
+        }
+        config.provider = nextProvider;
+        config.model = nextModel;
+        saveConfig(config);
+
+        if (ctx.loop) {
+          ctx.loop.config = loadConfig();
+          if (typeof ctx.loop.updateTierLimits === 'function') {
+            ctx.loop.updateTierLimits();
+          }
+        }
+        if (ctx.prompt) {
+          if (typeof ctx.prompt.updateModel === 'function') {
+            ctx.prompt.updateModel(config.provider, config.model);
+          } else if (ctx.prompt.renderer?.status) {
+            ctx.prompt.renderer.status.setSession({ provider: config.provider, model: config.model });
+            if (typeof ctx.prompt.scheduleDraw === 'function') ctx.prompt.scheduleDraw();
+          }
+        }
+        return ok(feedbackMessage || `Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
+      };
+
+      // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
+      if (rawRequested.toLowerCase() === 'antigravity' || rawRequested.toLowerCase().startsWith('antigravity/')) {
+        const agyModel = rawRequested.includes('/')
+          ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
+          : (DEFAULT_MODEL_BY_PROVIDER['antigravity'] || 'Gemini 3.8 Flash (Low)');
+        const agyPeer = overview.acp.find(p => p.id === 'antigravity');
+        const notice = agyPeer && !agyPeer.installed
+          ? `⚠️ Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nNow using Google Antigravity / ${agyModel}.`
+          : `Now using Google Antigravity / ${agyModel}.`;
+        return activateModel('antigravity', agyModel, notice);
+      }
+
+      // 2. acp/<peer> or acp/<peer>/<model>
+      const acpTarget = rawRequested.match(/^acp\/([a-z0-9_-]+)(?:\/(.+))?$/i);
       if (acpTarget) {
         const peer = acpTarget[1].toLowerCase();
         const nextProvider = `acp/${peer}`;
+        const peerModel = acpTarget[2] ? acpTarget[2].trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer);
         const peerInfo = overview.acp.find(p => p.id === peer);
-
-        if (nextProvider !== config.provider) { config.apiKey = ''; delete config.baseUrl; }
-        config.provider = nextProvider;
-        config.model = acpTarget[2] || DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer;
-        saveConfig(config);
-        if (ctx.loop) ctx.loop.config = loadConfig();
-
-        if (peerInfo && !peerInfo.installed) {
-          return ok(
-            `⚠️ Notice: "${peerInfo.label}" CLI is not installed on this machine.\n` +
-            `Binary "${peerInfo.id}" was not found on PATH.\n` +
-            `Setup: ${peerInfo.setupInstruction}\n\n` +
-            `Now using ${config.provider} / ${config.model}.`
-          );
-        }
-        return ok(`Now using ${config.provider} / ${config.model}.`);
+        const notice = peerInfo && !peerInfo.installed
+          ? `⚠️ Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nNow using ${nextProvider} / ${peerModel}.`
+          : `Now using ${nextProvider} / ${peerModel}.`;
+        return activateModel(nextProvider, peerModel, notice);
       }
 
-      // If peer model is set while in ACP
-      if (isAcpProvider(config.provider) && requested.includes('/')) {
-        config.model = requested;
-        saveConfig(config);
-        if (ctx.loop) {
-          ctx.loop.config = loadConfig();
-          if (typeof ctx.loop.updateTierLimits === 'function') ctx.loop.updateTierLimits();
+      // 3. Known ACP peer directly (e.g. opencode, opencode/deepseek-v4.1-flash-free, claude)
+      const slashIndex = rawRequested.indexOf('/');
+      const prefix = (slashIndex > 0 ? rawRequested.slice(0, slashIndex) : rawRequested).toLowerCase();
+      const acpPeer = overview.acp.find(p => p.id === prefix || p.providerKey === prefix);
+      if (acpPeer && acpPeer.id !== 'antigravity') {
+        const nextProvider = acpPeer.providerKey;
+        let peerModel;
+        if (slashIndex > 0) {
+          const rest = rawRequested.slice(slashIndex + 1).trim();
+          if (
+            (PEER_MODEL_CATALOGUE[acpPeer.id] && PEER_MODEL_CATALOGUE[acpPeer.id].includes(rawRequested)) ||
+            (acpPeer.id === 'opencode' && rawRequested.startsWith('opencode/'))
+          ) {
+            peerModel = rawRequested;
+          } else {
+            peerModel = rest;
+          }
+        } else {
+          peerModel = DEFAULT_MODEL_BY_PROVIDER[nextProvider] || acpPeer.id;
         }
-        return ok(`Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
+        const notice = !acpPeer.installed
+          ? `⚠️ Notice: "${acpPeer.label}" CLI is not installed on this machine.\nBinary "${acpPeer.id}" was not found on PATH.\nSetup: ${acpPeer.setupInstruction}\n\nNow using ${nextProvider} / ${peerModel}.`
+          : `Now using ${nextProvider} / ${peerModel}.`;
+        return activateModel(nextProvider, peerModel, notice);
       }
 
-      // If user typed bare 'antigravity' or 'antigravity/model'
-      if (requested === 'antigravity' || requested.startsWith('antigravity/')) {
-        const agyModel = requested.includes('/') ? requested.split('/')[1] : (DEFAULT_MODEL_BY_PROVIDER['antigravity'] || 'Gemini 3.8 Flash (Low)');
-        if (config.provider !== 'antigravity') { config.apiKey = ''; delete config.baseUrl; }
-        config.provider = 'antigravity';
-        config.model = agyModel;
-        saveConfig(config);
-        if (ctx.loop) {
-          ctx.loop.config = loadConfig();
-          if (typeof ctx.loop.updateTierLimits === 'function') ctx.loop.updateTierLimits();
-        }
-        const agyPeer = overview.acp.find(p => p.id === 'antigravity');
-        if (agyPeer && !agyPeer.installed) {
-          return ok(
-            `⚠️ Notice: Antigravity CLI (agy) is not installed on this machine.\n` +
-            `Setup: ${agyPeer.setupInstruction}\n\n` +
-            `Now using antigravity / ${config.model}.`,
-            { effect: 'inline' }
-          );
-        }
-        return ok(`Now using antigravity / ${config.model}.`, { effect: 'inline' });
+      // 4. Known BYOK provider prefix (e.g. gemini/gemini-2.5-flash, anthropic/claude-3-7-sonnet)
+      const byokProvider = overview.byok.find(p => p.id === prefix || (p.id === 'qwen' && prefix === 'dashscope-byok'));
+      if (byokProvider) {
+        const nextProvider = byokProvider.id;
+        const byokModel = slashIndex > 0 ? rawRequested.slice(slashIndex + 1).trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || byokProvider.defaultModel);
+        return activateModel(nextProvider, byokModel, `Now using ${nextProvider} / ${byokModel}.`);
       }
 
-      const separator = requested.indexOf('/');
-      if (separator > 0) {
-        const provider = requested.slice(0, separator);
-        if (provider !== config.provider) {
-          config.apiKey = config.providerKeys?.[provider] || '';
-          delete config.baseUrl;
+      // 5. Look up by model name across BYOK and ACP catalogues
+      for (const p of overview.byok) {
+        if (p.models && p.models.some(m => m.toLowerCase() === rawRequested.toLowerCase())) {
+          const exactModel = p.models.find(m => m.toLowerCase() === rawRequested.toLowerCase()) || rawRequested;
+          return activateModel(p.id, exactModel, `Now using ${p.id} / ${exactModel}.`);
         }
-        config.provider = provider;
-        config.model = requested.slice(separator + 1);
+      }
+      for (const peer of overview.acp) {
+        if (peer.models && peer.models.some(m => m.toLowerCase() === rawRequested.toLowerCase())) {
+          const exactModel = peer.models.find(m => m.toLowerCase() === rawRequested.toLowerCase()) || rawRequested;
+          return activateModel(peer.providerKey, exactModel, `Now using ${peer.providerKey} / ${exactModel}.`);
+        }
+      }
+
+      // 6. If currently in ACP and model is custom for that peer
+      if (isAcpProvider(config.provider)) {
+        return activateModel(config.provider, rawRequested, `Now using ${config.provider} / ${rawRequested}.`);
+      }
+
+      // 7. Generic provider/model separator or bare model
+      if (slashIndex > 0) {
+        const prov = rawRequested.slice(0, slashIndex).trim();
+        const mod = rawRequested.slice(slashIndex + 1).trim();
+        return activateModel(prov, mod, `Now using ${prov} / ${mod}.`);
       } else {
-        config.model = requested;
+        return activateModel(config.provider || 'antigravity', rawRequested, `Now using ${config.provider || 'antigravity'} / ${rawRequested}.`);
       }
-      saveConfig(config);
-      if (ctx.loop) {
-        ctx.loop.config = loadConfig();
-        if (typeof ctx.loop.updateTierLimits === 'function') ctx.loop.updateTierLimits();
-      }
-      return ok(`Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
     }
   },
 
