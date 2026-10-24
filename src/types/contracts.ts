@@ -187,6 +187,60 @@ export interface PlanMatch {
   };
 }
 
+/** APC pipeline wall-clock latency breakdown matching Table 3 (Page 9) */
+export interface APCPipelineLatency {
+  planMs: number;
+  actMs: number;
+  keywordExtractionMs: number;
+  cacheLookupMs: number;
+  cacheGenerationMs: number;
+  totalMs: number;
+}
+
+/** APC model and cache overhead cost breakdown matching Table 2 (Page 9) */
+export interface APCCostBreakdown {
+  largePlannerCost: number;
+  smallPlannerCost: number;
+  actorCost: number;
+  cacheOverhead: {
+    keywordExtractionCost: number;
+    cacheGenerationCost: number;
+    totalOverheadCost: number;
+    overheadPercentage: number;
+  };
+  totalCost: number;
+}
+
+/** APC cache lookup scalability benchmark entry matching Table 5 (Page 10) */
+export interface APCLookupScalabilityPoint {
+  cacheSize: number;
+  exactHitLatencyUs: number;
+  exactMissLatencyUs: number;
+  fuzzyHitLatencyUs: number;
+  fuzzyMissLatencyUs: number;
+}
+
+/** APC fuzzy keyword matching similarity threshold profile matching Table 6 (Page 10) */
+export interface APCFuzzyThresholdProfile {
+  threshold: number;
+  hitRate: number;
+  cost: number;
+  accuracy: number;
+  planningLatencySec: number;
+  totalLatencySec: number;
+}
+
+/** APC cold-start progression entry matching Table 7 (Page 10) */
+export interface APCColdStartPoint {
+  queryPercentile: number;
+  cacheEntries: number;
+  hitRate: number;
+  cost: number;
+  planningLatencySec: number;
+  cacheGenLatencySec: number;
+  totalLatencySec: number;
+}
+
 export type PluginCapability = 'workspace:read' | 'workspace:write' | 'network' | 'subprocess';
 
 export interface PluginToolManifest {

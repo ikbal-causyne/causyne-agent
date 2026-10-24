@@ -17,7 +17,7 @@ import { MemoryManager } from './memoryManager.js';
 import { cortexDb } from './cortex/vectorDb.js';
 import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
 import { analyzeTask, buildTaskBrief, packsFromShape } from './taskShape.js';
-import { lookupPlan, recordPlan, recordMiss, renderPlanHint, toStep } from './planCache.js';
+import { lookupPlan, recordPlan, recordPlanAsync, recordMiss, renderPlanHint, toStep, recordAPCPipelineLatency, lookupAlternativeStep, failureClass } from './planCache.js';
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
@@ -915,7 +915,9 @@ export class AgentLoop {
         this._decisionAnswers = new Map();
         this._decisionRequirement = assessDecisionRequirement(this.userPrompt || '');
         this._decisionResolved = !this._decisionRequirement.required;
-        this._implementationPlanRequired = false;
+        this._taskStartedAt = performance.now();
+        this._totalPlanMs = 0;
+        this._totalActMs = 0;
         if (this.vfeTracker)
             this.vfeTracker.reset();
         if (this.userPrompt) {
@@ -1435,6 +1437,7 @@ export class AgentLoop {
                 let thoughtStartedAt = 0;
                 this.emitEvent({ type: 'status', message: 'Thinking…' });
                 this.emitEvent({ type: 'agent_activity', activity: 'Thinking…' });
+                const planStepStart = performance.now();
                 const response = await this.llm.chat(prunedMessages, {
                     taskId: this.taskId,
                     conversationId: this.taskId,
@@ -1490,6 +1493,7 @@ export class AgentLoop {
                         }
                     }
                 }).finally(() => nativeCodeObserver.dispose());
+                this._totalPlanMs = (this._totalPlanMs || 0) + (performance.now() - planStepStart);
                 const finalCodePreview = streamingCode.flush();
                 if (finalCodePreview)
                     this.emitEvent(finalCodePreview);
@@ -1828,13 +1832,21 @@ export class AgentLoop {
                     // run, so asking a model to summarise it would be paying for a worse
                     // copy of a fact we hold.
                     try {
-                        const stored = recordPlan({
+                        const planPayload = {
                             prompt: this.currentTaskPrompt || this.userPrompt,
                             archetype: this.taskShape ? this.taskShape.archetype : '',
                             steps: this._planSteps || []
+                        };
+                        recordPlanAsync(planPayload).then((stored) => {
+                            if (stored)
+                                this.debugLog(`plan cached asynchronously: ${stored.steps.length} steps, ${stored.wins}/${stored.uses} wins`);
+                        }).catch(() => { });
+                        recordAPCPipelineLatency({
+                            planMs: this._totalPlanMs || 0,
+                            actMs: this._totalActMs || 0,
+                            cacheLookupMs: this._planMatch?.telemetry?.lookupMs || 0,
+                            totalMs: performance.now() - (this._taskStartedAt || performance.now())
                         });
-                        if (stored)
-                            this.debugLog(`plan cached: ${stored.steps.length} steps, ${stored.wins}/${stored.uses} wins`);
                     }
                     catch (e) {
                         this.debugLog(`plan cache write skipped: ${e.message}`);
@@ -2300,6 +2312,7 @@ export class AgentLoop {
                     let duration;
                     try {
                         const startTime = Date.now();
+                        const actStart = performance.now();
                         // A concurrent read from the prefetch pass above, if it succeeded.
                         const ready = prefetched.get(toolCall.id);
                         const early = ready ? await ready : null;
@@ -2307,11 +2320,20 @@ export class AgentLoop {
                             ? early
                             : await withToolAutonomyMode(this.config.autonomyMode || 'C', () => tool.execute(args, { signal: this.abortController.signal, parentLoop: this, ...this.sandbox }));
                         duration = Date.now() - startTime;
+                        this._totalActMs = (this._totalActMs || 0) + (performance.now() - actStart);
                     }
                     catch (toolError) {
                         duration = 0;
                         const errorType = this.classifyError(toolError);
                         const failure = { success: false, error: String(toolError?.message || toolError) };
+                        const alternativeRoute = lookupAlternativeStep({
+                            failedTool: functionName,
+                            why: failureClass(failure),
+                            archetype: this.taskShape?.archetype
+                        });
+                        if (alternativeRoute) {
+                            this.debugLog(`[APC RE-PLANNING] Learned alternative: ${alternativeRoute.suggestedTool} (${alternativeRoute.reason})`);
+                        }
                         coldObserver.recordToolOutcome(this.taskId, functionName, args, failure);
                         const recovery = this.timeMachine.observe(functionName, args, failure, coldObserver.getToolOutcomes(this.taskId));
                         auditLog.log({ event: 'tool_failure', taskId: this.taskId,
@@ -2323,7 +2345,8 @@ export class AgentLoop {
                             toolCallId: toolCall.id });
                         this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
                             name: functionName, content: JSON.stringify({ ...failure,
-                                errorType, timeMachine: recovery.guidance }) });
+                                errorType, timeMachine: recovery.guidance,
+                                ...(alternativeRoute ? { apcReplanAlternative: alternativeRoute.suggestedTool, apcReplanReason: alternativeRoute.reason } : {}) }) });
                         this.memoryManager.saveHistory(this.messages);
                         if (errorType === 'fatal' || recovery.kind === 'stop' || recovery.kind === 'human') {
                             this.stopRequested = true;
