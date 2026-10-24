@@ -50,6 +50,7 @@
     "src/tools/browserAutomator.ts",
     "src/tools/webSearch.ts",
     "src/tools/webFetch.ts",
+    "src/tools/sysRun.ts",
     "src/tui/banner.ts",
     "src/tui/setup.ts",
     "src/tui/modelPicker.ts",

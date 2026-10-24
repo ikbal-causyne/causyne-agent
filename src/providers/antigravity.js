@@ -189,9 +189,13 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
     const lowerName = name.toLowerCase().replace(/[_-]/g, '');
     const params = rawParams && typeof rawParams === 'object' ? rawParams : {};
     if (lowerName === 'runcommand' || lowerName === 'command' || lowerName === 'sysrun' || lowerName === 'terminal' || lowerName === 'bash' || lowerName === 'shell') {
-        const cmd = params.CommandLine ?? params.command ?? params.cmd ?? params.input ?? '';
-        if (typeof cmd === 'string' && cmd.trim()) {
-            const args = { command: cmd.trim() };
+        const rawCmd = params.CommandLine ?? params.command ?? params.cmd ?? params.input ?? params.detail ?? '';
+        let cmd = typeof rawCmd === 'string' ? rawCmd.trim() : '';
+        if (!cmd && typeof params.parameters === 'object' && params.parameters) {
+            cmd = String(params.parameters.CommandLine || params.parameters.command || params.parameters.cmd || '').trim();
+        }
+        if (cmd) {
+            const args = { command: cmd };
             const cwd = params.Cwd ?? params.cwd;
             if (typeof cwd === 'string' && cwd.trim())
                 args.cwd = cwd.trim();
@@ -325,6 +329,9 @@ export class AntigravityProvider extends LLMProvider {
             'When the user requests to create, build, code, fix, write, optimize, or implement anything (such as a 3D Three.js game, web app, script, or feature), you MUST immediately invoke the relevant tools to execute the work.\n' +
             'NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
             'You must directly generate the code and call the appropriate tool (such as fs_write, sysRun, or file_write) to build what was requested.\n\n' +
+            '[Environment State & Idempotency Directive]\n' +
+            'The host environment state has already been checked. Do NOT repeatedly re-verify dependencies (e.g. NumPy, Python packages, Node modules, directory listings) if the result is already present in the conversation history above.\n' +
+            'When dependency checks have returned, immediately proceed to creating, writing, and editing the required code files (e.g. using fs_write or file editing).\n\n' +
             '[Language & Communication Directive]\n' +
             'Dynamically reflect and match the exact language used by the user in their prompt. If the user writes in English, you must respond strictly in English. Default to English for all responses and reasoning. Never default to Indonesian or send canned greetings in Indonesian.');
         if (tools && tools.length > 0) {
@@ -711,7 +718,11 @@ export class AntigravityProvider extends LLMProvider {
                         const name = String(denied?.action || denied?.display_name || 'unknown');
                         const attempt = [...attemptedNativeTools].reverse().find(candidate => normalizeAction(candidate.name) === normalizeAction(name)
                             || normalizeAction(candidate.name) === normalizeAction(denied?.display_name));
-                        const parameters = attempt?.parameters ?? denied?.parameters ?? {};
+                        const parameters = {
+                            ...(attempt?.parameters || {}),
+                            ...(denied?.parameters || {}),
+                            ...(attempt?.detail ? { detail: attempt.detail } : {})
+                        };
                         const mapped = mapNativeToolToCausyne(attempt?.name || String(denied?.display_name || name), parameters, toolCalls.length);
                         if (!mapped) {
                             unmapped.push(String(denied?.display_name || name));
