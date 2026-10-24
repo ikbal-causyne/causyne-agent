@@ -266,9 +266,9 @@ export class AntigravityProvider extends LLMProvider {
         // Standard high-performance non-blocking CLI invocation:
         // 1. stream-json output for real-time responsiveness and non-buffering progress.
         // 2. --disable-slash-commands prevents sluggish filesystem and customization scans.
-        // 3. The prompt is piped through stdin. `-p -` cannot be used: agy treats the
-        //    literal "-" as the prompt, ignores stdin, and answers with its default
-        //    greeting — the conversation never reaches the model.
+        // 3. agy only treats stdin as a prompt in stream-json input mode. Plain text
+        //    stdin without --print starts an interactive session and loses the task.
+        //    Keep the prompt off the process command line by sending one user event.
         // 4. --mode accept-edits lets agy create and edit workspace files in
         //    headless mode, where the default request-review policy cannot prompt
         //    and would auto-deny every write. --dangerously-skip-permissions must
@@ -280,7 +280,7 @@ export class AntigravityProvider extends LLMProvider {
             '--mode',
             'accept-edits',
             '--input-format',
-            'text',
+            'stream-json',
             '--output-format',
             'stream-json',
             '--disable-slash-commands',
@@ -304,6 +304,7 @@ export class AntigravityProvider extends LLMProvider {
             let streamedResponse = '';
             let finalResultObj = null;
             const nativeActions = [];
+            let childClosed = false;
             const cleanup = () => {
                 if (options.signal) {
                     options.signal.removeEventListener('abort', onAbort);
@@ -327,7 +328,7 @@ export class AntigravityProvider extends LLMProvider {
                 try {
                     child.kill('SIGTERM');
                     setTimeout(() => {
-                        if (!child.killed)
+                        if (!childClosed)
                             child.kill('SIGKILL');
                     }, 1000).unref();
                 }
@@ -346,7 +347,7 @@ export class AntigravityProvider extends LLMProvider {
             // Feed prompt directly into child process stdin, then close stdin
             try {
                 child.stdin.on('error', () => { });
-                child.stdin.write(promptText, 'utf8');
+                child.stdin.write(JSON.stringify({ event: 'user', message: { content: promptText } }) + '\n', 'utf8');
                 child.stdin.end();
             }
             catch (err) {
@@ -430,6 +431,7 @@ export class AntigravityProvider extends LLMProvider {
                 safeReject(new Error(`Antigravity Agent (agy) spawn error: ${err.message}. Make sure Antigravity CLI is installed.`));
             });
             child.on('close', (code) => {
+                childClosed = true;
                 // Process any remaining bytes in stdoutBuffer
                 if (stdoutBuffer.trim()) {
                     try {
@@ -446,8 +448,8 @@ export class AntigravityProvider extends LLMProvider {
                         // ignore
                     }
                 }
-                if (code !== 0 && !streamedResponse && !finalResultObj) {
-                    const errDetail = stderrBuffer.trim() || `exit code ${code}`;
+                if (code !== 0 || finalResultObj?.status === 'ERROR') {
+                    const errDetail = finalResultObj?.error || stderrBuffer.trim() || `exit code ${code}`;
                     safeReject(new Error(`Antigravity Agent (agy) failed: ${errDetail}`));
                     return;
                 }

@@ -81,7 +81,7 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     assert.strictEqual(callsFenced[0].function.name, 'file_read');
   });
 
-  test('chat reads the prompt from stdin and limits agy to workspace edits', { skip: process.platform === 'win32' }, async () => {
+  test('chat sends a stream-json user event and limits agy to workspace edits', { skip: process.platform === 'win32' }, async () => {
     const argsFile = path.join(os.tmpdir(), `causyne-agy-args-${process.pid}.json`);
     const stdinFile = path.join(os.tmpdir(), `causyne-agy-stdin-${process.pid}.txt`);
     process.env.AGY_ARGS_FILE = argsFile;
@@ -95,9 +95,10 @@ process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   fs.writeFileSync(process.env.AGY_STDIN_FILE, input);
   const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+  const message = JSON.parse(input.trim());
   emit({ event: 'init' });
-  emit({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: 'pong' } });
-  emit({ event: 'result', result: { status: 'SUCCESS', response: 'pong', usage: { input_tokens: 1, output_tokens: 1 } } });
+  emit({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: message.event === 'user' && message.message.content.includes('[User]\\nping') ? 'pong' : 'Hello! How can I help?' } });
+  emit({ event: 'result', result: { status: 'SUCCESS', response: message.event === 'user' && message.message.content.includes('[User]\\nping') ? 'pong' : 'Hello! How can I help?', usage: { input_tokens: 1, output_tokens: 1 } } });
 });
 `);
     try {
@@ -106,15 +107,16 @@ process.stdin.on('end', () => {
       assert.equal(response.content, 'pong');
 
       const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
-      assert.equal(args[args.indexOf('--input-format') + 1], 'text');
+      assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
       assert.equal(args[args.indexOf('--mode') + 1], 'accept-edits');
       assert.ok(args.includes('--output-format'));
       assert.ok(!args.includes('--dangerously-skip-permissions'));
       assert.ok(!args.includes('-p'));
       assert.ok(!args.includes('-'));
 
-      const stdin = fs.readFileSync(stdinFile, 'utf8');
-      assert.match(stdin, /\[User\]\nping/);
+      const stdin = JSON.parse(fs.readFileSync(stdinFile, 'utf8'));
+      assert.equal(stdin.event, 'user');
+      assert.match(stdin.message.content, /\[User\]\nping/);
     } finally {
       delete process.env.AGY_ARGS_FILE;
       delete process.env.AGY_STDIN_FILE;
@@ -137,6 +139,21 @@ process.stdin.on('end', () => {
         provider.chat([{ role: 'user', content: 'ping' }]),
         /Antigravity returned no response/
       );
+    } finally {
+      fs.rmSync(fake.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('agy error result is rejected even when the process exits successfully', { skip: process.platform === 'win32' }, async () => {
+    const fake = fakeAgy(`#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  process.stdout.write(JSON.stringify({ event: 'result', result: { status: 'ERROR', response: 'Hello!', error: 'invalid prompt input' } }) + '\\n');
+});
+`);
+    try {
+      const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
+      await assert.rejects(provider.chat([{ role: 'user', content: 'build a game' }]), /invalid prompt input/);
     } finally {
       fs.rmSync(fake.dir, { recursive: true, force: true });
     }

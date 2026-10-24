@@ -39,11 +39,15 @@ export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
         return false;
-    const pureGreeting = /^(hi|hello|hey|halo|hai|yo|good\s+(morning|afternoon|evening)|selamat\s+(pagi|siang|sore|malam))[.!?, ]*$/i.test(t);
+    const pureGreeting = /^(hi|hello|hey|yo|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
     if (pureGreeting)
         return false;
-    const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|delete|remove|update|change|test|game|app|script|server|ui|page|feature|function|canvas|3js|three\.?js|numpy)\b/i;
-    return actionKeywords.test(t) || t.length > 25;
+    const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|delete|remove|update|change|test|review|inspect|search|find)\b/i;
+    return actionKeywords.test(t);
+}
+export function isDirectGameTask(text) {
+    return /\b(three\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
+        && !/\b(godot|unity|unreal|full engine)\b/i.test(text);
 }
 const SYSTEM_PROMPT = `You are Causyne Agent, a God-Tier Autonomous AI. You operate the user's computer through a local desktop harness. You are not just a coding assistant; you are a general-purpose superintelligence.
 
@@ -898,6 +902,8 @@ export class AgentLoop {
             const scored = packsFromShape(this.taskShape);
             const fallback = routePacks(this.userPrompt, this.workspaceContext);
             for (const pack of [...scored, ...fallback]) {
+                if (pack === 'game' && isDirectGameTask(this.userPrompt))
+                    continue;
                 this.unlockPack(pack);
             }
             // Reuse a known route before the first model call. Exact keyword-set
@@ -1515,7 +1521,7 @@ export class AgentLoop {
                     assistantMsg.thinking_blocks = response.thinkingBlocks;
                 }
                 this.messages.push(assistantMsg);
-                if (response.content) {
+                if (response.content && hasToolCalls) {
                     this.emitEvent({ type: 'agent_message', content: response.content });
                 }
                 const externalActions = Array.isArray(response.externalActions)
@@ -1558,7 +1564,13 @@ export class AgentLoop {
                     // Action Enforcement on Step 0:
                     // If the user instructed an actionable task (e.g. "create a 3js game..."), but the model
                     // replied with a greeting, polite pleasantry, question, or refusal without calling any tools:
-                    if (!hasExternalActions && this.stepsCompleted === 0 && isActionable && (isQuestionOrGreeting || lower.includes('hello') || lower.includes('hi ') || lower.includes('halo')) && this.consecutiveThinkingSteps < 3) {
+                    if (!hasExternalActions && this.stepsCompleted === 0 && isActionable && (isQuestionOrGreeting || lower.includes('hello') || lower.includes('hi '))) {
+                        this.messages.pop();
+                        if (this.consecutiveThinkingSteps >= 2) {
+                            this.emitEvent({ type: 'error', message: 'The selected model did not follow the task after three attempts. No work was completed.' });
+                            this.memoryManager.saveHistory(this.messages);
+                            break;
+                        }
                         this.consecutiveThinkingSteps++;
                         this.emitEvent({ type: 'status', message: 'Enforcing task execution: rejecting greeting on actionable instruction...' });
                         this.emitEvent({ type: 'agent_activity', activity: 'Enforcing tool execution…' });
@@ -1597,6 +1609,12 @@ export class AgentLoop {
                             continue;
                         }
                     }
+                    if (!hasExternalActions && this.stepsCompleted === 0 && isActionable) {
+                        this.messages.pop();
+                        this.emitEvent({ type: 'error', message: 'The selected model returned text without taking any action. No work was completed.' });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
                     // --- COMPLETION GUARDS ---
                     // Two hard rules learned the expensive way:
                     //   1. Match on word boundaries. Substring matching made 'ui' fire on
@@ -1606,6 +1624,9 @@ export class AgentLoop {
                     //      consecutiveThinkingSteps, which resets on every tool call, so
                     //      a guard could block completion indefinitely and burn the whole
                     //      step budget on an already-finished task.
+                    if (response.content) {
+                        this.emitEvent({ type: 'agent_message', content: response.content });
+                    }
                     const isGameTask = isGameIntent(taskPrompt);
                     this.gameToolStats = this.gameToolStats || { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
                     if (isGameTask && !this.gameGuardFired) {
@@ -1858,7 +1879,8 @@ export class AgentLoop {
                             this.gameCascadeState.verificationPassed = true;
                         }
                     }
-                    if (isGameTaskExec && ['fs_write', 'sysRun', 'terminal_persistent_shell', 'game_build_html5'].includes(functionName) && this.gameCascadeState.currentStage < 7) {
+                    const requiresEngineCascade = isGameTaskExec && /\b(godot|unity|unreal|full engine|full rpg)\b/i.test(this.currentTaskPrompt || this.userPrompt || '');
+                    if (requiresEngineCascade && ['fs_write', 'sysRun', 'terminal_persistent_shell', 'game_build_html5'].includes(functionName) && this.gameCascadeState.currentStage < 7) {
                         const isGameBuildHtml5 = functionName === 'game_build_html5';
                         const isCustomScriptBlock = isGameBuildHtml5 && args.template === 'custom' && args.customScript && args.customScript.length > 2000;
                         const targetPath = (args.path || args.filepath || args.targetFile || args.command || '').toLowerCase();

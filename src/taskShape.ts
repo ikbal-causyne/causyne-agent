@@ -52,7 +52,7 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   integrate: {
     label: 'Build an application that integrates live external data',
     match: {
-      strong: ['realtime', 'real-time', 'real time', 'api', 'rest', 'webhook', 'integration', 'integrasi', 'sync', 'sinkron', 'automation', 'automasi', 'otomasi', 'automate', 'otomatis', 'booking', 'tiket', 'ticket', 'calendar', 'kalender', 'jadwal', 'schedule', 'payment', 'pembayaran'],
+      strong: ['realtime', 'real-time', 'real time', 'api', 'rest', 'webhook', 'integration', 'sync', 'automation', 'automate', 'booking', 'ticket', 'calendar', 'schedule', 'payment'],
       weak: ['live', 'stream', 'fetch', 'data', 'third party', 'oauth', 'token']
     },
     phases: [
@@ -66,8 +66,8 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   build_app: {
     label: 'Build a new application from scratch',
     match: {
-      strong: ['build me', 'buatkan', 'buat aku', 'create a', 'make me', 'bikin', 'develop a', 'new app', 'from scratch'],
-      weak: ['app', 'aplikasi', 'project', 'proyek', 'tool', 'system', 'sistem']
+      strong: ['build me', 'create a', 'make me', 'develop a', 'new app', 'from scratch'],
+      weak: ['app', 'project', 'tool', 'system']
     },
     phases: [
       { name: 'Plan', tools: ['update_plan'], note: 'Create a visible atomic implementation plan before touching the filesystem.' },
@@ -79,8 +79,8 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   debug: {
     label: 'Diagnose and fix a defect in existing code',
     match: {
-      strong: ['bug', 'error', 'crash', 'fix', 'perbaiki', 'benerin', 'broken', 'rusak', 'not working', 'gagal', 'failing', 'exception', 'stack trace', 'regression'],
-      weak: ['issue', 'masalah', 'problem', 'wrong', 'salah', 'debug']
+      strong: ['bug', 'error', 'crash', 'fix', 'broken', 'not working', 'failing', 'exception', 'stack trace', 'regression'],
+      weak: ['issue', 'problem', 'wrong', 'debug']
     },
     phases: [
       { name: 'Reproduce', tools: ['sysRun', 'fs_read'], note: 'Reproduce the failure and capture the exact error before changing anything.' },
@@ -92,8 +92,8 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   research: {
     label: 'Investigate and report, without changing the system',
     match: {
-      strong: ['explain', 'jelaskan', 'analyse', 'analyze', 'analisa', 'research', 'riset', 'compare', 'bandingkan', 'what is', 'apa itu', 'how does', 'bagaimana', 'review', 'audit'],
-      weak: ['understand', 'pahami', 'find out', 'cari tahu', 'summarize', 'ringkas']
+      strong: ['explain', 'analyse', 'analyze', 'research', 'compare', 'what is', 'how does', 'review', 'audit'],
+      weak: ['understand', 'find out', 'summarize']
     },
     phases: [
       { name: 'Gather', tools: ['code_search_ripgrep', 'fs_read', 'web_search', 'web_fetch'], note: 'Search broadly with several phrasings in parallel before concluding.' },
@@ -103,8 +103,8 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   maintain: {
     label: 'Operate on files, processes or the machine itself',
     match: {
-      strong: ['organize', 'rapikan', 'clean up', 'bersihkan', 'rename', 'ganti nama', 'move', 'pindahkan', 'backup', 'cadangkan', 'delete', 'hapus', 'install', 'deploy', 'commit', 'merge'],
-      weak: ['folder', 'directory', 'file', 'berkas', 'desktop', 'downloads']
+      strong: ['organize', 'clean up', 'rename', 'move', 'backup', 'delete', 'install', 'deploy', 'commit', 'merge'],
+      weak: ['folder', 'directory', 'file', 'desktop', 'downloads']
     },
     phases: [
       { name: 'Survey', tools: ['fs_list', 'fs_find'], note: 'List and count what you are about to touch, and report it, before acting.' },
