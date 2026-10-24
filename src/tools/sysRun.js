@@ -71,9 +71,13 @@ export const sysRun = {
             }
             commandCache.delete(cacheKey);
         }
+        let executedCommand = rawCommand;
+        if (os.platform() !== 'win32' && /(?:^|\s)&\s*$/.test(rawCommand) && !/[><]/.test(rawCommand)) {
+            executedCommand = rawCommand.replace(/\s*&\s*$/, ' >/dev/null 2>&1 &');
+        }
         return new Promise((resolve) => {
             const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
-            const shellArgs = os.platform() === 'win32' ? ['/c', rawCommand] : ['-c', rawCommand];
+            const shellArgs = os.platform() === 'win32' ? ['/c', executedCommand] : ['-c', executedCommand];
             let child;
             try {
                 child = spawn(shell, shellArgs, { cwd, signal });
