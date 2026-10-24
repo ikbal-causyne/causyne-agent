@@ -83,6 +83,7 @@ export function peerIdFromProviderKey(provider: string): string | null {
 export function getCuratedModels(provider: string): string[] {
   const norm = normalizeProviderKey(provider);
   if (norm === 'antigravity') return [...ANTIGRAVITY_MODELS];
+  if (norm === 'pi') return [...(MODEL_CATALOGUE['Pi (Local Peer)'] || [])];
   const peer = peerIdFromProviderKey(norm);
   if (peer) return [...(PEER_MODEL_CATALOGUE[peer] ?? [])];
   if (norm === 'acp') return [...(MODEL_CATALOGUE['ACP (Peer Agents)'] ?? [])];
@@ -235,6 +236,15 @@ export function getAvailableProvidersOverview(
     command: 'agy --output-format json',
     models: [...ANTIGRAVITY_MODELS],
     setupInstruction: 'Install Antigravity IDE or agy CLI to enable Google AGY models.'
+  });
+
+  const hasPi = isBinaryOnPath('pi');
+  acpPeers.push({
+    id: 'pi', providerKey: 'pi', label: 'Pi coding agent',
+    installed: hasPi, status: hasPi ? 'ready' : 'not_installed',
+    isCurrent: currentProvider === 'pi', command: 'pi --mode rpc --no-tools',
+    models: ['default'],
+    setupInstruction: 'Install Pi CLI and configure its model login before selecting it in Causyne.'
   });
 
   // Standard ACP presets

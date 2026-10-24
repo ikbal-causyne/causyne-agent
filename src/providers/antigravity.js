@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider } from './base.js';
 /**
  * Baseline fallback models for instant offline availability.
@@ -441,17 +442,10 @@ export class AntigravityProvider extends LLMProvider {
     }
     formatConversation(messages, tools = []) {
         const lines = [];
-        // Core System boundary instructions and pre-verified environment confirmation
-        lines.push('[Pre-Verified Host Environment]\n' +
-            '- Python & NumPy: python3 and numpy (v2.4.3) are confirmed installed and available in the workspace.\n' +
-            '- Node.js & Web Runtime: Verified and operational.\n' +
-            '- File System: Working directory is verified.\n' +
-            '- MANDATE: Do NOT execute terminal commands to probe Python, NumPy, Node, or directory existence. All requirements are already met.\n' +
-            '- Immediately create and edit project files using native file tools or fs_write to implement the user\'s request.\n\n' +
-            '[System Instructions]\n' +
+        // Host capabilities must be learned from real tool results in this session.
+        lines.push('[System Instructions]\n' +
             'You are the execution engine for Causyne Agent, operating inside the user\'s workspace. ' +
-            'You may create and edit files in this workspace with your native file tools. ' +
-            'Do NOT run terminal commands, use the browser, or call any other host tool directly. ' +
+            'Do not claim a tool action succeeded without evidence. Use Causyne tools for file changes, terminal commands, and browser actions. ' +
             'When a command, browser action, or other external action is required, output an explicit tool call in this exact format:\n' +
             '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
             'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
@@ -461,12 +455,11 @@ export class AntigravityProvider extends LLMProvider {
             '   - If a background server is required (e.g. server.py, python -m http.server, npm run dev), start it using sysRunBg or a background command.\n' +
             '   - If the default port (e.g. 8080 or 3000) is already occupied or in use by another process, immediately use the next available port (e.g. 8081, 8082, 3001) rather than getting stuck in process-checking loops.\n' +
             '   - Immediately open the URL or project in the user\'s browser using desktop.open with {"target": "http://localhost:<port>"} or run the native open command.\n' +
-            '   - Complete the turn by confirming that the application is running and accessible.\n' +
+            '   - Confirm the application is accessible only after a readiness check succeeds.\n' +
             '3. NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
-            '4. You must directly generate the code and call the appropriate tool (such as fs_write, sysRun, or file_write) to build what was requested.\n\n' +
+            '4. Create or edit files only when the current user request authorizes it.\n\n' +
             '[Environment State & Idempotency Directive]\n' +
-            'The host environment state has already been checked. Do NOT repeatedly re-verify dependencies (e.g. NumPy, Python packages, Node modules, directory listings) if the result is already present in the conversation history above.\n' +
-            'When dependency checks have returned, immediately proceed to creating, writing, and editing the required code files (e.g. using fs_write or file editing).\n\n' +
+            'Reuse relevant verified tool results from this session, and check uncertain prerequisites before relying on them.\n\n' +
             '[Language & Communication Directive]\n' +
             'Dynamically reflect and match the exact language used by the user in their prompt. If the user writes in English, you must respond strictly in English. Default to English for all responses and reasoning. Never default to Indonesian or send canned greetings in Indonesian.');
         if (tools && tools.length > 0) {
@@ -633,6 +626,9 @@ export class AntigravityProvider extends LLMProvider {
             this.currentConversationId = null;
         }
         const useConversation = Boolean(this.currentConversationId);
+        const latestUserMessage = [...messages].reverse().find(message => message.role === 'user');
+        const latestPrompt = typeof latestUserMessage?.content === 'string' ? latestUserMessage.content : '';
+        const launchOnly = options.taskIntent === 'launch' || isLaunchOnlyPrompt(latestPrompt);
         let promptText;
         if (useConversation) {
             let lastAssistantIndex = -1;
@@ -648,6 +644,14 @@ export class AntigravityProvider extends LLMProvider {
         else {
             promptText = this.formatConversation(messages, options.tools);
         }
+        // A resumed agy conversation retains its old instructions. Reassert the
+        // current turn's narrower scope on every call, including formatDelta turns.
+        if (launchOnly) {
+            promptText = '[Current request: open existing project only]\n' +
+                'Inspect the selected project, start an existing server in the background if needed, verify readiness, and open it. ' +
+                'Do not create, edit, delete, install, or regenerate files. Do not claim the app opened unless a tool confirmed it. ' +
+                'Use Causyne tool calls for commands and desktop opening.\n\n' + promptText;
+        }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
         // Standard high-performance non-blocking CLI invocation:
@@ -662,18 +666,19 @@ export class AntigravityProvider extends LLMProvider {
         //    stay off: it would also grant shell commands and other host tools,
         //    bypassing Causyne. Native terminal/browser tools remain denied; those
         //    must go through Causyne XML tool calls.
-        // 5. --print-timeout 300s provides ample window for large code generation without truncation.
+        // 5. Launch-only turns use a shorter limit because they should not spend
+        //    several minutes generating code or holding a foreground server open.
         // 6. --conversation links multi-turn steps to agy's local session memory to prevent re-reading files.
         const args = [
             '--mode',
-            'accept-edits',
+            launchOnly ? 'plan' : 'accept-edits',
             '--input-format',
             'stream-json',
             '--output-format',
             'stream-json',
             '--disable-slash-commands',
             '--print-timeout',
-            '300s',
+            launchOnly ? '90s' : '300s',
             '--model',
             modelSlug,
             '--effort',
@@ -685,7 +690,7 @@ export class AntigravityProvider extends LLMProvider {
         return new Promise((resolve, reject) => {
             let isSettled = false;
             const child = spawn(this.command, args, {
-                cwd: process.cwd(),
+                cwd: typeof options.workspaceRoot === 'string' ? options.workspaceRoot : process.cwd(),
                 env: process.env,
                 stdio: ['pipe', 'pipe', 'pipe'],
                 windowsHide: true
@@ -812,9 +817,13 @@ export class AntigravityProvider extends LLMProvider {
                                         else
                                             nativeActions.push(action);
                                     }
-                                    // A DONE event can still be denied in the final result.
+                                    // Stream the start; completion is reported only after the
+                                    // final result has checked for denied actions.
                                     if (status === 'running' && typeof options.onNativeAction === 'function') {
-                                        options.onNativeAction(action);
+                                        const parameters = rawParams && typeof rawParams === 'object'
+                                            ? rawParams
+                                            : {};
+                                        options.onNativeAction({ ...action, parameters });
                                     }
                                 }
                             }
@@ -907,8 +916,10 @@ export class AntigravityProvider extends LLMProvider {
                 for (const action of nativeActions) {
                     if (deniedNames.has(normalizeAction(action.name)))
                         action.status = 'failed';
-                    if (typeof options.onNativeAction === 'function')
-                        options.onNativeAction(action);
+                    if (typeof options.onNativeAction === 'function') {
+                        const attempt = [...attemptedNativeTools].reverse().find(candidate => normalizeAction(candidate.name) === normalizeAction(action.name));
+                        options.onNativeAction({ ...action, parameters: attempt?.parameters || {} });
+                    }
                 }
                 if (deniedActions.length > 0) {
                     const unmapped = [];
@@ -979,7 +990,7 @@ export class AntigravityProvider extends LLMProvider {
         });
     }
     async chat(messages, options = {}) {
-        const maxRetries = options.maxRetries ?? 2;
+        const maxRetries = options.maxRetries ?? (options.taskIntent === 'launch' ? 1 : 2);
         let attempt = 0;
         while (attempt <= maxRetries) {
             try {

@@ -270,15 +270,14 @@ describe('Antigravity Native Action Mapping & Detail Fallback', () => {
     assert.deepStrictEqual(JSON.parse(mapped.function.arguments), { command: 'ls -la /home/user' });
   });
 
-  test('formatConversation injects Pre-Verified Host Environment facts to prevent command loops', () => {
+  test('formatConversation does not invent pre-verified host environment facts', () => {
     const provider = new AntigravityProvider();
     const formatted = provider.formatConversation([
       { role: 'user', content: 'create a 3js game shoting and optimized it with numpy' }
     ]);
 
-    assert.ok(formatted.includes('[Pre-Verified Host Environment]'));
-    assert.ok(formatted.includes('numpy (v2.4.3) are confirmed installed'));
-    assert.ok(formatted.includes('Do NOT execute terminal commands to probe Python, NumPy'));
+    assert.ok(!formatted.includes('[Pre-Verified Host Environment]'));
+    assert.ok(!formatted.includes('numpy (v2.4.3) are confirmed installed'));
   });
 
   test('formatConversation folds duplicate tool results to prevent context window explosion', () => {

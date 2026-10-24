@@ -19,6 +19,8 @@ export class AcpProvider extends LLMProvider {
     activeSessionId = null;
     currentTurnChunkHandler = null;
     currentTurnReasoningHandler = null;
+    currentTurnNativeActionHandler = null;
+    liveFileActions = new Map();
     constructor(config = {}) {
         super(config);
         const providerStr = String(config.provider || '').toLowerCase().trim();
@@ -291,6 +293,37 @@ export class AcpProvider extends LLMProvider {
                             this.currentTurnReasoningHandler(thought);
                         }
                     }
+                    else if (updateObj.sessionUpdate === 'agent_message_chunk') {
+                        const text = updateObj.content?.type === 'text' ? updateObj.content.text : '';
+                        if (text && this.currentTurnChunkHandler)
+                            this.currentTurnChunkHandler(text);
+                    }
+                    else if (updateObj.sessionUpdate === 'tool_call' || updateObj.sessionUpdate === 'tool_call_update') {
+                        const id = String(updateObj.toolCallId || '');
+                        const earlier = this.liveFileActions.get(id);
+                        const kind = updateObj.kind || (earlier?.name === 'fs_edit' ? 'edit' : earlier?.name === 'fs_delete' ? 'delete' : earlier?.name === 'fs_move' ? 'move' : '');
+                        const name = kind === 'edit' ? 'fs_edit' : kind === 'delete' ? 'fs_delete' : kind === 'move' ? 'fs_move' : '';
+                        if (name && id) {
+                            const diff = Array.isArray(updateObj.content)
+                                ? updateObj.content.find((item) => item?.type === 'diff')
+                                : null;
+                            const input = updateObj.rawInput && typeof updateObj.rawInput === 'object' ? updateObj.rawInput : {};
+                            const parameters = {
+                                ...(earlier?.parameters || {}), ...input,
+                                ...(diff?.path ? { path: diff.path } : {}),
+                                ...(diff?.newText ? { content: diff.newText } : {}),
+                                ...(updateObj.locations?.[0]?.path ? { path: updateObj.locations[0].path } : {})
+                            };
+                            const status = updateObj.status === 'completed' ? 'completed' : updateObj.status === 'failed' ? 'failed' : 'running';
+                            const action = { name, status, parameters,
+                                detail: String(parameters.path || updateObj.title || '') };
+                            if (status === 'running')
+                                this.liveFileActions.set(id, action);
+                            else
+                                this.liveFileActions.delete(id);
+                            this.currentTurnNativeActionHandler?.(action);
+                        }
+                    }
                     else if ('textDelta' in updateObj) {
                         const delta = updateObj.textDelta;
                         if (delta && typeof delta === 'string' && this.currentTurnChunkHandler) {
@@ -333,6 +366,8 @@ export class AcpProvider extends LLMProvider {
     async chat(messages, options = {}) {
         this.currentTurnChunkHandler = options.onChunk || null;
         this.currentTurnReasoningHandler = options.onReasoningChunk || null;
+        this.currentTurnNativeActionHandler = options.onNativeAction || null;
+        this.liveFileActions.clear();
         try {
             const { client, sessionId } = await this.getOrCreateClient();
             const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
@@ -372,6 +407,9 @@ export class AcpProvider extends LLMProvider {
         }
         finally {
             this.currentTurnChunkHandler = null;
+            this.currentTurnReasoningHandler = null;
+            this.currentTurnNativeActionHandler = null;
+            this.liveFileActions.clear();
         }
     }
 }

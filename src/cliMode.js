@@ -4,7 +4,7 @@ import { loadConfig, saveConfig } from './config.js';
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './tui/prompt.js';
 import { handleInput, listCommands, isCommandInput } from './commands.js';
-import { ChatRenderer } from './tui/chatRenderer.js';
+import { CodeStreamRenderer as ChatRenderer } from './tui/codeStreamRenderer.js';
 import { paint, bold, dim, badge, GLYPHS, terminalWidth } from './tui/theme.js';
 import { wordmark } from './tui/banner.js';
 import { createStageSurface } from './tui/stageSurface.js';
@@ -18,6 +18,7 @@ import { renderReport } from './reporting.js';
 import { grantAlways } from './approvalGrants.js';
 import { auditLog } from './auditLog.js';
 import { isAcpProvider } from './providers/acp.js';
+import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
 
 // One themed source for the art.
@@ -566,7 +567,7 @@ export async function chatMode({ home = false } = {}) {
     const startedAt = Date.now();
     if (prompt) prompt.setBusy(true);
     try {
-      const isNoKey = loop.config.provider === 'ollama' || loop.config.provider === 'acp' || isAcpProvider(loop.config.provider) || isAntigravityProvider(loop.config.provider);
+      const isNoKey = loop.config.provider === 'ollama' || loop.config.provider === 'acp' || isAcpProvider(loop.config.provider) || isAntigravityProvider(loop.config.provider) || isPiProvider(loop.config.provider);
       if (!loop.config.provider || (!loop.config.apiKey && !isNoKey)) {
         conn.renderer.write('\n' + paint('warn', '  No API provider or key configured.') + '\n' +
           paint('muted', '  Run /setup or select setup from the home menu to configure your provider.\n'));

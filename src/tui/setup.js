@@ -5,7 +5,7 @@ const customProviders = new Set(['openai-compatible', 'dashscope-byok', 'ollama'
 /** Peers and Antigravity authenticate through their own CLI, not a stored key. */
 function isLocalAgent(providerId) {
     return providerId === 'acp' || providerId.startsWith('acp/')
-        || providerId === 'antigravity' || providerId === 'agy';
+        || providerId === 'antigravity' || providerId === 'agy' || providerId === 'pi';
 }
 const defaults = {
     ollama: 'http://localhost:11434/api/chat',

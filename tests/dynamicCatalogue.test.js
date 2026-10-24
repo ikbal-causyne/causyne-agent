@@ -23,6 +23,7 @@ import {
   ANTIGRAVITY_MODEL_IDS
 } from '../src/providers/antigravity.js';
 import { runCommand } from '../src/commands.js';
+import { isBinaryOnPath } from '../src/acp/agentCatalog.js';
 import { loadConfig, saveConfig } from '../src/config.js';
 
 test('dynamic catalogue: provider normalization maps common aliases', () => {
@@ -103,8 +104,8 @@ test('dynamic catalogue: getAvailableProvidersOverview separates BYOK and ACP wi
 
   const codex = overview.acp.find(p => p.id === 'codex');
   assert.ok(codex);
-  assert.equal(codex.installed, false);
-  assert.equal(codex.status, 'not_installed');
+  assert.equal(codex.installed, isBinaryOnPath('codex'));
+  assert.equal(codex.status, codex.installed ? 'ready' : 'not_installed');
 });
 
 test('slash command: /model displays separated BYOK and ACP overview', async () => {
@@ -125,8 +126,12 @@ test('slash command: /model displays separated BYOK and ACP overview', async () 
 test('slash command: /model acp/<peer> warns when CLI is not installed and preserves config', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cmd-test-'));
   const originalHome = process.env.CAUSYNE_HOME;
+  const originalPath = process.env.PATH;
+  const originalUserHome = process.env.HOME;
   try {
     process.env.CAUSYNE_HOME = tempDir;
+    process.env.PATH = tempDir;
+    process.env.HOME = tempDir;
     const initialConfig = { provider: 'antigravity', model: 'Gemini 3.8 Flash (High)' };
     saveConfig(initialConfig);
 
@@ -139,6 +144,10 @@ test('slash command: /model acp/<peer> warns when CLI is not installed and prese
     assert.equal(currentConfig.provider, 'antigravity');
     assert.equal(currentConfig.model, 'Gemini 3.8 Flash (High)');
   } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalUserHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalUserHome;
     if (originalHome) process.env.CAUSYNE_HOME = originalHome;
     else delete process.env.CAUSYNE_HOME;
     fs.rmSync(tempDir, { recursive: true, force: true });

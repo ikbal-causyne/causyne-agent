@@ -7,6 +7,7 @@
  * without degrading tool functionality or throwing unhandled errors.
  */
 import path from 'node:path';
+import os from 'node:os';
 /**
  * Universal tool name alias dictionary. Maps hallucinations from OpenAI,
  * Anthropic, DeepSeek, Qwen, Ollama, etc. to Causyne Agent canonical tool names.
@@ -522,6 +523,48 @@ export function resolveParameterAliases(toolName, args, schema) {
             });
         }
     }
+    else if (canonicalName === 'update_plan') {
+        if (!modified.plan && (modified.steps || modified.items || modified.tasks)) {
+            modified.plan = modified.steps || modified.items || modified.tasks;
+            delete modified.steps;
+            delete modified.items;
+            delete modified.tasks;
+            repairs.push("Mapped 'steps' to 'plan' parameter for 'update_plan'");
+        }
+        if (Array.isArray(modified.plan)) {
+            let activeCount = 0;
+            modified.plan = modified.plan.map((raw, idx) => {
+                if (!raw || typeof raw !== 'object')
+                    return raw;
+                const item = { ...raw };
+                if (!item.id)
+                    item.id = `step-${idx + 1}`;
+                if (!item.step && (item.content || item.title || item.name || item.description)) {
+                    item.step = item.content || item.title || item.name || item.description;
+                }
+                let status = String(item.status || item.state || 'pending').toLowerCase().trim();
+                if (status === 'in-progress' || status === 'in progress' || status === 'running' || status === 'working') {
+                    status = 'in_progress';
+                }
+                else if (status === 'done' || status === 'finished' || status === 'complete') {
+                    status = 'completed';
+                }
+                else if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') {
+                    status = 'pending';
+                }
+                if (status === 'in_progress') {
+                    activeCount++;
+                    if (activeCount > 1) {
+                        status = 'pending';
+                        repairs.push(`Normalized extra in_progress step '${item.id}' to pending`);
+                    }
+                }
+                item.status = status;
+                return item;
+            });
+            repairs.push("Auto-healed and normalized plan steps for 'update_plan'");
+        }
+    }
     // 2. Identify expected parameters from schema or default aliases
     const expectedKeys = new Set();
     if (schema && schema.properties) {
@@ -674,12 +717,20 @@ export function coerceArgumentTypes(toolName, args, schema) {
 export function normalizePaths(args, cwd = process.cwd()) {
     const repairs = [];
     const modified = { ...args };
-    const pathKeys = ['path', 'file_path', 'source', 'destination', 'targetFile'];
+    const pathKeys = ['path', 'file_path', 'source', 'destination', 'targetFile', 'target'];
     for (const key of pathKeys) {
         const val = modified[key];
         if (typeof val === 'string' && val.trim() !== '') {
             const trimmed = val.trim();
-            if (!path.isAbsolute(trimmed) && !trimmed.startsWith('~')) {
+            // Skip URLs
+            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+                continue;
+            }
+            if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+                modified[key] = trimmed.replace(/^~(?=$|[\\/])/, os.homedir());
+                repairs.push(`Expanded home directory path '${trimmed}' -> '${modified[key]}' for parameter '${key}'`);
+            }
+            else if (!path.isAbsolute(trimmed)) {
                 modified[key] = path.resolve(cwd, trimmed);
                 repairs.push(`Normalized relative path '${trimmed}' -> '${modified[key]}' for parameter '${key}'`);
             }

@@ -17,6 +17,7 @@ import { XAIProvider } from './xai.js';
 import { MoonshotProvider } from './moonshot.js';
 import { MuseProvider } from './muse.js';
 import { AcpProvider, isAcpProvider } from './acp.js';
+import { PiProvider, isPiProvider } from './pi.js';
 import { AntigravityProvider, isAntigravityProvider } from './antigravity.js';
 
 export function createProvider(config) {
@@ -35,6 +36,7 @@ export function createProvider(config) {
   // model family is Muse, and users say either.
   if (p === 'muse' || p === 'meta') return new MuseProvider(config);
   if (isAcpProvider(p)) return new AcpProvider(config);
+  if (isPiProvider(p)) return new PiProvider(config);
   if (isAntigravityProvider(p)) return new AntigravityProvider(config);
 
   throw new Error("API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.");

@@ -107,7 +107,8 @@ export class AcpClient {
         const blocks = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
         let collected = '';
         const collector = (update) => {
-            this.options.onUpdate?.(sessionId, update);
+            // handleLine already notifies options.onUpdate for this session. Calling
+            // it again here duplicated every live chunk and file-action frame.
             if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
                 collected = `${collected}${update.content.text}`.slice(0, MAX_UPDATE_CHARS);
             }

@@ -134,6 +134,7 @@ export const MODEL_CATALOGUE = {
     'Claude Opus 5.5 (High)',
     'GPT-OSS 120B (Medium)'
   ],
+  'Pi (Local Peer)': ['default'],
   'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'],
   'OpenCode (ACP)': PEER_MODEL_CATALOGUE.opencode,
   'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude
@@ -167,6 +168,7 @@ export const DEFAULT_MODEL_BY_PROVIDER = {
   'acp/goose': 'goose',
   'acp/hermes': 'hermes',
   antigravity: 'Gemini 3.8 Flash (Low)',
+  pi: 'default',
   'openai-compatible': ''
 };
 

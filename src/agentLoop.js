@@ -38,6 +38,8 @@ import { analyzeFiles, formatFindings, isScannableFile } from './slopDetector.js
 import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
 import { resolveMentionedContext } from './promptMentions.js';
+import { isLaunchOnlyPrompt, launchScopeError } from './launchIntent.js';
+import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from './tui/codeProgress.js';
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -497,7 +499,7 @@ export class AgentLoop {
         // Anti-Slop: Design Context Awareness (what design system is already installed)
         let designContext = '';
         try {
-            const detectedDesign = await this.perception.detectDesignContext(process.cwd());
+            const detectedDesign = await this.perception.detectDesignContext(this.workspaceRoot);
             if (detectedDesign && detectedDesign.length > 0) {
                 designContext = `\nDETECTED DESIGN SYSTEM IN WORKSPACE: ${detectedDesign.join(', ')} — USE THIS. Do NOT install a conflicting system.`;
             }
@@ -519,7 +521,7 @@ export class AgentLoop {
         // Universal skills awareness
         let universalSkillsContext = '';
         try {
-            const detectedDomains = detectWorkspaceDomains(process.cwd());
+            const detectedDomains = detectWorkspaceDomains(this.workspaceRoot);
             if (detectedDomains.length > 0) {
                 this.debugLog(`detected workspace domains: ${detectedDomains.join(', ')}`);
                 for (const domain of detectedDomains) {
@@ -842,7 +844,8 @@ export class AgentLoop {
         // awareness instead of burning steps rediscovering it. The result used to be
         // assigned to a local variable and thrown away.
         auditLog.log({ event: 'task_start', taskId: this.taskId, request: this.userPrompt });
-        this.workspaceRoot = process.cwd();
+        // Preserve an explicit workspace selected by the caller (for example ACP).
+        // The constructor already defaults to process.cwd() when none was supplied.
         coldObserver.beginTask(this.taskId);
         this.timeMachine.reset();
         this.emitEvent({ type: 'status', message: 'Analyzing workspace...' });
@@ -876,13 +879,13 @@ export class AgentLoop {
             // return $HOME or a system root, so the checkpoint covers the code being
             // worked on or honestly covers nothing at all.
             workspaceRoots: [
-                resolveProjectRoot(process.cwd()),
-                process.cwd(),
+                resolveProjectRoot(this.workspaceRoot),
+                this.workspaceRoot,
                 ...(this.sandbox.grantAllAccess ? [] : (this.sandbox.workspacePaths || []))
             ].filter(Boolean)
         });
         try {
-            this.workspaceContext = await this.perception.buildContext(process.cwd());
+            this.workspaceContext = await this.perception.buildContext(this.workspaceRoot);
         }
         catch (perceptionError) {
             this.debugLog(`workspace scan failed: ${perceptionError.message}`);
@@ -985,7 +988,7 @@ export class AgentLoop {
             try {
                 const subprojects = this.workspaceContext?.subprojects || [];
                 const mentionResult = await resolveMentionedContext(this.userPrompt, {
-                    cwd: process.cwd(),
+                    cwd: this.workspaceRoot,
                     subprojects
                 });
                 if (mentionResult.detectedSubproject) {
@@ -1093,7 +1096,7 @@ export class AgentLoop {
                         const path = await import('path');
                         // Ensure unique name to prevent overwriting
                         const safeName = att.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-                        const writePath = path.join(process.cwd(), safeName);
+                        const writePath = path.join(this.workspaceRoot, safeName);
                         fs.writeFileSync(writePath, Buffer.from(att.base64, 'base64'));
                         contentArray[0].text += `\n\n[SYSTEM NOTIFICATION: The user attached a document named '${safeName}'. It has been saved to your workspace at ./${safeName}. Please use your file reading tools to examine its contents.]`;
                         this.notice(`saved attached document to ${writePath}`);
@@ -1223,7 +1226,7 @@ export class AgentLoop {
                 const autonomyMode = this.config.autonomyMode || 'C';
                 const allowedPaths = this.sandbox.grantAllAccess
                     ? "/ (ALL ACCESS GRANTED - You can read/write anywhere EXCEPT system protected folders like /etc or /System)"
-                    : (this.sandbox.workspacePaths ? this.sandbox.workspacePaths.join(', ') : process.cwd());
+                    : (this.sandbox.workspacePaths ? this.sandbox.workspacePaths.join(', ') : this.workspaceRoot);
                 const providerPrompt = getProviderSpecificPrompt(this.config.provider);
                 const memoryContext = getMemoryContextString();
                 // --- PER-TASK STATIC CONTEXT (computed once, not once per step) ---
@@ -1426,6 +1429,8 @@ export class AgentLoop {
                 // 2. PLAN (Call LLM). dynamicTools was resolved above so the task brief
                 // could reference the tools actually in context.
                 let hasStreamedChunk = false;
+                const streamingCode = new StreamingCodePreview();
+                const nativeCodeObserver = new NativeCodeObserver(this.workspaceRoot, event => this.emitEvent(event));
                 let reasoningAccumulated = '';
                 let thoughtStartedAt = 0;
                 this.emitEvent({ type: 'status', message: 'Thinking…' });
@@ -1433,6 +1438,8 @@ export class AgentLoop {
                 const response = await this.llm.chat(prunedMessages, {
                     taskId: this.taskId,
                     conversationId: this.taskId,
+                    taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
+                    workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
                     // IARS couples escalation to a wider search. Bounded so a stuck task
                     // cannot climb into randomness across repeated escalations.
@@ -1457,10 +1464,19 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: 'Responding…' });
                             this.emitEvent({ type: 'agent_activity', activity: 'Responding…' });
                         }
+                        const preview = streamingCode.accept(_chunk);
+                        if (preview)
+                            this.emitEvent(preview);
                     },
                     onNativeAction: (action) => {
                         if (!action || typeof action.name !== 'string')
                             return;
+                        const nativeCode = codeProgressFromAction(action.name, { ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
+                            path: action.parameters?.path || action.parameters?.Path || action.detail || '' }, `provider:${action.name}:${action.detail || ''}`, action.status === 'completed' ? 'done' : action.status === 'failed' ? 'failed' : 'working', 'provider');
+                        if (nativeCode) {
+                            this.emitEvent(nativeCode);
+                            nativeCodeObserver.handle(nativeCode);
+                        }
                         const detail = action.detail ? ` ${action.detail}` : '';
                         if (action.status === 'running') {
                             this.emitEvent({ type: 'status', message: `Acting: ${action.name}${detail}` });
@@ -1473,7 +1489,10 @@ export class AgentLoop {
                             this.emitEvent({ type: 'warning', message: `Antigravity could not ${action.name}${detail}` });
                         }
                     }
-                });
+                }).finally(() => nativeCodeObserver.dispose());
+                const finalCodePreview = streamingCode.flush();
+                if (finalCodePreview)
+                    this.emitEvent(finalCodePreview);
                 // The call came back. Whatever went wrong before is no longer
                 // consecutive — without this reset, one failure at step 2 and another
                 // at step 200 would count toward the same ceiling and stop a task that
@@ -1608,7 +1627,9 @@ export class AgentLoop {
                         this.emitEvent({ type: 'agent_activity', activity: 'Enforcing tool execution…' });
                         this.messages.push({
                             role: 'system',
-                            content: `[CRITICAL ACTION MANDATE: The user explicitly instructed: "${taskPrompt}". You responded with a greeting or inquiry without performing any actions or writing any code. Do NOT reply with greetings, pleasantries, or ask how to help. You must immediately invoke the appropriate tools (e.g., fs_write, sysRun) to implement the user's request.]`
+                            content: isLaunchOnlyPrompt(taskPrompt)
+                                ? `[CURRENT TASK: "${taskPrompt}". The user asked to open the existing project. Inspect it, start its existing server in the background if needed, verify readiness, and open it. Do not write or edit files. Use the appropriate Causyne tools now.]`
+                                : `[CRITICAL ACTION MANDATE: The user explicitly instructed: "${taskPrompt}". You responded with a greeting or inquiry without performing any actions or writing any code. Do NOT reply with greetings, pleasantries, or ask how to help. You must immediately invoke the appropriate tools (e.g., fs_write, sysRun) to implement the user's request.]`
                         });
                         this.memoryManager.saveHistory(this.messages);
                         continue;
@@ -1659,7 +1680,7 @@ export class AgentLoop {
                     if (response.content) {
                         this.emitEvent({ type: 'agent_message', content: response.content });
                     }
-                    const isGameTask = isGameIntent(taskPrompt);
+                    const isGameTask = !isLaunchOnlyPrompt(taskPrompt) && isGameIntent(taskPrompt);
                     this.gameToolStats = this.gameToolStats || { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
                     if (isGameTask && !this.gameGuardFired) {
                         const buildingRealGame = this.gameCascadeState.currentStage > 1 || this.stepsCompleted > 0;
@@ -1723,7 +1744,7 @@ export class AgentLoop {
                         }
                     }
                     // Web Visual Validation Guard (Anti-Slop / Transcendence)
-                    const isWebTask = isWebIntent(taskPrompt);
+                    const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && isWebIntent(taskPrompt);
                     if (isWebTask && !this.webGuardFired && this.stepsCompleted > 0) {
                         const hasVision = this.llm.supportsVision !== false;
                         // Finding D-6: this guard used to demand `screenshot` /
@@ -1879,6 +1900,18 @@ export class AgentLoop {
                     if (repair.repaired && repair.repairs.length > 0) {
                         this.debugLog(`[TOOL SELF-REPAIR] Healed tool call '${functionName}': ${repair.repairs.join(', ')}`);
                     }
+                    if (isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '')) {
+                        const scopeError = launchScopeError(functionName, args || {});
+                        if (scopeError) {
+                            this.emitEvent({ type: 'step_error', tool: functionName, error: scopeError, toolCallId: toolCall.id });
+                            this.messages.push({ role: 'tool', tool_call_id: toolCall.id, name: functionName,
+                                content: JSON.stringify({ success: false, error: scopeError }) });
+                            continue;
+                        }
+                        if (args && ['sysRun', 'sysRunBg', 'terminal_persistent_shell'].includes(functionName) && !args.cwd) {
+                            args.cwd = this.workspaceRoot;
+                        }
+                    }
                     // Universal Repetition & Infinite Loop Circuit Breakers (Token Hemorrhage Guard)
                     if (!Array.isArray(this.recentActionSignatures)) {
                         this.recentActionSignatures = [];
@@ -1971,6 +2004,9 @@ export class AgentLoop {
                         break;
                     }
                     this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });
+                    const codeAction = codeProgressFromAction(functionName, args || {}, toolCall.id);
+                    if (codeAction)
+                        this.emitEvent(codeAction);
                     this.consecutiveCommands++;
                     if (functionName === 'screenshot' || functionName === 'vision_inspect_ui') {
                         this.webVerificationState.screenshotTaken = true;
@@ -1979,7 +2015,7 @@ export class AgentLoop {
                         this.webVerificationState.browserActUsed = true;
                     }
                     // Sovereign Game Pre-Flight Interceptor (v1.3.13)
-                    const isGameTaskExec = isGameIntent(this.currentTaskPrompt || this.userPrompt || '');
+                    const isGameTaskExec = !isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') && isGameIntent(this.currentTaskPrompt || this.userPrompt || '');
                     const ALL_GAME_TOOLS_LIST = [
                         'godot_act', 'game_asset_fetch', 'game_build_html5',
                         'game_lore_forge', 'game_dialogue_tree_gen', 'game_quest_arc_builder',
@@ -2280,6 +2316,8 @@ export class AgentLoop {
                         const recovery = this.timeMachine.observe(functionName, args, failure, coldObserver.getToolOutcomes(this.taskId));
                         auditLog.log({ event: 'tool_failure', taskId: this.taskId,
                             tool: functionName, attempt: recovery.attempt, errorType });
+                        if (codeAction)
+                            this.emitEvent({ ...codeAction, phase: 'failed' });
                         this.emitEvent({ type: 'step_error', tool: functionName,
                             error: `${errorType}: ${failure.error} (${recovery.attempt}/${recovery.maxAttempts})`,
                             toolCallId: toolCall.id });
@@ -2349,6 +2387,9 @@ export class AgentLoop {
                     }
                     // Buffer output for disconnect resilience
                     await this.taskBuffer.appendOutput(this.taskId, { tool: functionName, result });
+                    if (codeAction)
+                        this.emitEvent({ ...codeAction,
+                            phase: result?.success === false || typeof result?.error === 'string' ? 'failed' : 'done' });
                     this.emitEvent({ type: result?.success === false || typeof result?.error === 'string' ? 'step_error' : 'step_complete',
                         tool: functionName, result: result._is_image_marker ? '[IMAGE DATA]' : result, toolCallId: toolCall.id });
                     this.stepsCompleted++;
@@ -2780,12 +2821,18 @@ export class AgentLoop {
     validateToolArgs(toolName, args) {
         // Check for common LLM mistakes
         // 1. File operations must have absolute paths
-        const pathFields = ['path', 'source', 'destination'];
+        const pathFields = ['path', 'source', 'destination', 'target'];
         for (const field of pathFields) {
             if (args[field] && typeof args[field] === 'string') {
-                // Auto-fix relative paths by prepending cwd
-                if (!args[field].startsWith('/') && !args[field].startsWith('~')) {
-                    args[field] = `${process.cwd()}/${args[field]}`;
+                const val = args[field].trim();
+                if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(val)) {
+                    continue;
+                }
+                if (val.startsWith('~')) {
+                    args[field] = val.replace(/^~(?=$|[\\/])/, os.homedir());
+                }
+                else if (!val.startsWith('/')) {
+                    args[field] = `${this.workspaceRoot || process.cwd()}/${val}`;
                 }
             }
         }

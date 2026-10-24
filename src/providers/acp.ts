@@ -1,6 +1,6 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
-import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseToolCall } from './base.js';
+import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseToolCall, type ChatResponseAction } from './base.js';
 import { AcpClient } from '../acp/client.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
@@ -21,6 +21,8 @@ export class AcpProvider extends LLMProvider {
   private activeSessionId: string | null = null;
   private currentTurnChunkHandler: ((chunk: string) => void) | null = null;
   private currentTurnReasoningHandler: ((chunk: string) => void) | null = null;
+  private currentTurnNativeActionHandler: ((action: ChatResponseAction) => void) | null = null;
+  private readonly liveFileActions = new Map<string, ChatResponseAction>();
 
   constructor(config: ProviderConfig = {}) {
     super(config);
@@ -299,6 +301,32 @@ export class AcpProvider extends LLMProvider {
             if (thought && this.currentTurnReasoningHandler) {
               this.currentTurnReasoningHandler(thought);
             }
+          } else if (updateObj.sessionUpdate === 'agent_message_chunk') {
+            const text = updateObj.content?.type === 'text' ? updateObj.content.text : '';
+            if (text && this.currentTurnChunkHandler) this.currentTurnChunkHandler(text);
+          } else if (updateObj.sessionUpdate === 'tool_call' || updateObj.sessionUpdate === 'tool_call_update') {
+            const id = String(updateObj.toolCallId || '');
+            const earlier = this.liveFileActions.get(id);
+            const kind = updateObj.kind || (earlier?.name === 'fs_edit' ? 'edit' : earlier?.name === 'fs_delete' ? 'delete' : earlier?.name === 'fs_move' ? 'move' : '');
+            const name = kind === 'edit' ? 'fs_edit' : kind === 'delete' ? 'fs_delete' : kind === 'move' ? 'fs_move' : '';
+            if (name && id) {
+              const diff = Array.isArray(updateObj.content)
+                ? updateObj.content.find((item: any) => item?.type === 'diff')
+                : null;
+              const input = updateObj.rawInput && typeof updateObj.rawInput === 'object' ? updateObj.rawInput : {};
+              const parameters: Record<string, unknown> = {
+                ...(earlier?.parameters || {}), ...input,
+                ...(diff?.path ? { path: diff.path } : {}),
+                ...(diff?.newText ? { content: diff.newText } : {}),
+                ...(updateObj.locations?.[0]?.path ? { path: updateObj.locations[0].path } : {})
+              };
+              const status = updateObj.status === 'completed' ? 'completed' : updateObj.status === 'failed' ? 'failed' : 'running';
+              const action: ChatResponseAction = { name, status, parameters,
+                detail: String(parameters.path || updateObj.title || '') };
+              if (status === 'running') this.liveFileActions.set(id, action);
+              else this.liveFileActions.delete(id);
+              this.currentTurnNativeActionHandler?.(action);
+            }
           } else if ('textDelta' in updateObj) {
             const delta = updateObj.textDelta;
             if (delta && typeof delta === 'string' && this.currentTurnChunkHandler) {
@@ -344,6 +372,8 @@ export class AcpProvider extends LLMProvider {
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
     this.currentTurnChunkHandler = options.onChunk || null;
     this.currentTurnReasoningHandler = options.onReasoningChunk || null;
+    this.currentTurnNativeActionHandler = options.onNativeAction || null;
+    this.liveFileActions.clear();
     try {
       const { client, sessionId } = await this.getOrCreateClient();
 
@@ -385,6 +415,9 @@ export class AcpProvider extends LLMProvider {
       throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
     } finally {
       this.currentTurnChunkHandler = null;
+      this.currentTurnReasoningHandler = null;
+      this.currentTurnNativeActionHandler = null;
+      this.liveFileActions.clear();
     }
   }
 }

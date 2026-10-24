@@ -1187,7 +1187,7 @@ export const COMMANDS = [
       const activateModel = (nextProvider, nextModel, feedbackMessage) => {
         const isProviderChange = nextProvider !== config.provider;
         if (isProviderChange) {
-          if (nextProvider === 'antigravity' || nextProvider.startsWith('acp/')) {
+          if (nextProvider === 'antigravity' || nextProvider === 'pi' || nextProvider.startsWith('acp/')) {
             config.apiKey = '';
             delete config.baseUrl;
           } else {

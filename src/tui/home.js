@@ -6,6 +6,7 @@ import { runSetup } from './setup.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { isAcpProvider } from '../providers/acp.js';
 import { isAntigravityProvider, resolveAgyBinary } from '../providers/antigravity.js';
+import { isPiProvider, PI_SETUP_PROVIDER } from '../providers/pi.js';
 import { isBinaryOnPath } from '../acp/agentCatalog.js';
 
 /** Local runtime and provider summary. */
@@ -15,7 +16,7 @@ export function homeStatusLine(arg = {}) {
   const model = hasProvider
     ? (config.model ? `${config.provider}/${config.model}` : config.provider)
     : 'no provider configured';
-  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama' || isAcpProvider(config.provider) || isAntigravityProvider(config.provider));
+  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama' || isAcpProvider(config.provider) || isAntigravityProvider(config.provider) || isPiProvider(config.provider));
   return '  ' + [
     paint('success', `${GLYPHS.bullet} local desktop`),
     configured
@@ -149,6 +150,7 @@ export const PROVIDERS = [
   { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL', category: 'BYOK (Custom)' },
   { id: 'ollama', label: 'Ollama', hint: 'local / offline', category: 'BYOK (Local Server)' },
   { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: resolveAgyBinary() ? 'local AGY · Gemini & Claude (ready)' : 'local AGY · (not installed)', category: 'ACP (Peer Agent)' },
+  PI_SETUP_PROVIDER,
   { id: 'acp/opencode', label: 'OpenCode', hint: isBinaryOnPath('opencode') ? 'ACP · free models (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
   { id: 'acp/claude', label: 'Claude Code', hint: isBinaryOnPath('claude') ? 'ACP · Anthropic subscription (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
   { id: 'acp/codex', label: 'Codex CLI', hint: isBinaryOnPath('codex') ? 'ACP · OpenAI login (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
@@ -160,7 +162,7 @@ export const PROVIDERS = [
   { id: 'acp/goose', label: 'Goose', hint: isBinaryOnPath('goose') ? 'ACP · configured providers (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
   { id: 'acp/hermes', label: 'Hermes Agent', hint: isBinaryOnPath('hermes') ? 'ACP · Nous Research (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
   { id: 'acp', label: 'ACP peer agent (custom)', hint: 'any ACP-compatible CLI', category: 'ACP (Custom)' }
-].map((entry) => ({ ...entry, model: DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
+].map((entry) => ({ ...entry, model: entry.model ?? DEFAULT_MODEL_BY_PROVIDER[entry.id] ?? '' }));
 
 /** Run the shared setup transaction inside the existing prompt. */
 export function configureInPrompt(prompt, store) {

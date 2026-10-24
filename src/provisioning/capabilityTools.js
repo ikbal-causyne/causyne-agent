@@ -15,7 +15,7 @@ export const TOOLS_BY_GROUP = {
   vision: ['screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector'],
   ocr: [],
   system: ['process_list'],
-  desktop: ['clipboard', 'desktop_open'],
+  desktop: ['clipboard'],
   archive: ['archive']
 };
 

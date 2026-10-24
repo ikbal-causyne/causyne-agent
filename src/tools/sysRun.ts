@@ -12,6 +12,7 @@
 
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import { isLaunchOnlyPrompt, isServerLaunchCommand } from '../launchIntent.js';
 
 export interface SysRunArgs {
   command: string;
@@ -31,6 +32,7 @@ export interface SysRunResult {
 export interface SysRunContext {
   signal?: AbortSignal | undefined;
   skipCache?: boolean | undefined;
+  parentLoop?: { currentTaskPrompt?: string; userPrompt?: string } | undefined;
 }
 
 export interface SysRunBgArgs {
@@ -71,6 +73,29 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
 export const IDEMPOTENT_COMMAND_PATTERN =
   /^(python3?|node|bun|pnpm|npm)\s+(-v|--version|(-c|-e)\s+["'].*?["'])$|^ls\b|^cat\b|^head\b|^tail\b|^grep\b|^find\b|^which\b|^where\b|^pwd$|^git\s+(status|log|diff|branch|tag|show\b)|^echo\b/;
 
+/**
+ * Detect long-running dev servers and web application listeners that must not block foreground loops.
+ */
+export function isPersistentServerCommand(cmd: string): boolean {
+  if (!cmd || typeof cmd !== 'string') return false;
+  const trimmed = cmd.trim();
+  if (/^(?:cat|head|tail|grep|lsof|ps|kill|pkill|pgrep|curl|wget|echo|test)\b/i.test(trimmed)) {
+    return false;
+  }
+  const patterns = [
+    /(?:^|[;&|\s])(?:python[0-9.]*|node|deno|bun)\s+.*(?:server|app|main)\.(?:py|js|ts|mjs|cjs)\b/i,
+    /(?:^|[;&|\s])python[0-9.]*\s+-m\s+http\.server\b/i,
+    /(?:^|[;&|\s])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b/i,
+    /(?:^|[;&|\s])(?:npx\s+)?(?:serve|vite|live-server|http-server)\b/i,
+    /(?:^|[;&|\s])(?:flask\s+run|uvicorn|gunicorn)\b/i,
+    /(?:^|[;&|\s])(?:\.\/start\.sh|bash\s+start\.sh|sh\s+start\.sh)\b/i
+  ];
+  return patterns.some(pattern => pattern.test(trimmed));
+}
+
+export const SERVER_READY_PATTERN =
+  /(?:https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):[0-9]+|serving\s+http\s+on|server\s+(?:running|started)|ready\s+in\s+[0-9]+|terra_server_running)/i;
+
 interface CachedCommandResult {
   output: string;
   exitCode: number;
@@ -107,6 +132,16 @@ export const sysRun = {
     const cwd = args?.cwd ? args.cwd.replace(/^~\//, os.homedir() + '/') : process.cwd();
     const timeoutMs = args?.timeout || 60000;
     const signal = context.signal;
+
+    // A foreground server waits forever for requests. Keep launch-only turns
+    // responsive and make it explicit that starting is not a readiness check.
+    const taskPrompt = context.parentLoop?.currentTaskPrompt || context.parentLoop?.userPrompt || '';
+    if (isLaunchOnlyPrompt(taskPrompt) && isServerLaunchCommand(rawCommand)) {
+      const started = await sysRunBg.execute({ command: rawCommand, cwd, label: 'local-server' });
+      return started.success
+        ? { success: true, output: `Started server process ${started.pid} in background. Readiness and browser opening have not been verified.`, exitCode: 0, note: 'Check the server URL before reporting it accessible.' }
+        : { success: false, output: '', error: started.error || 'Unable to start server process.', exitCode: 1 };
+    }
 
     // Fast-path: Return cached output for identical read-only idempotent commands
     const isIdempotent = IDEMPOTENT_COMMAND_PATTERN.test(rawCommand);
@@ -152,20 +187,59 @@ export const sysRun = {
       // Phase 1 AGI Upgrade: 50KB Ring Buffer (FIFO)
       const MAX_LENGTH = 50000;
       let outputBuffer = '';
+      let isDetached = false;
+
+      const checkServerDetach = (): void => {
+        if (isDetached) return;
+        if (isPersistentServerCommand(rawCommand) || isServerLaunchCommand(rawCommand)) {
+          if (SERVER_READY_PATTERN.test(outputBuffer)) {
+            isDetached = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            if (serverGraceTimer) clearTimeout(serverGraceTimer);
+            child.unref();
+            resolve({
+              success: true,
+              output: stripAnsi(outputBuffer),
+              exitCode: 0,
+              note: 'Server readiness verified. Running in background.'
+            });
+          }
+        }
+      };
 
       const appendToBuffer = (data: Buffer | string): void => {
         outputBuffer += data.toString();
         if (outputBuffer.length > MAX_LENGTH) {
           outputBuffer = '...[OUTPUT TRUNCATED]...\n' + outputBuffer.slice(outputBuffer.length - MAX_LENGTH);
         }
+        checkServerDetach();
       };
 
       child.stdout?.on('data', appendToBuffer);
       child.stderr?.on('data', appendToBuffer);
 
+      let serverGraceTimer: NodeJS.Timeout | undefined;
+      if (isPersistentServerCommand(rawCommand) || isServerLaunchCommand(rawCommand)) {
+        serverGraceTimer = setTimeout(() => {
+          if (!isDetached && child.exitCode === null) {
+            isDetached = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            child.unref();
+            resolve({
+              success: true,
+              output: stripAnsi(outputBuffer) || 'Server process started and running in background.',
+              exitCode: 0,
+              note: 'Server detached after clean execution.'
+            });
+          }
+        }, 2500);
+      }
+
       let timeoutId: NodeJS.Timeout | undefined;
       if (timeoutMs > 0) {
         timeoutId = setTimeout(() => {
+          if (isDetached) return;
+          if (serverGraceTimer) clearTimeout(serverGraceTimer);
           child.kill('SIGKILL');
           resolve({
             success: false,
@@ -177,7 +251,9 @@ export const sysRun = {
       }
 
       child.on('error', (err: Error) => {
+        if (isDetached) return;
         if (timeoutId) clearTimeout(timeoutId);
+        if (serverGraceTimer) clearTimeout(serverGraceTimer);
         resolve({
           success: false,
           output: stripAnsi(outputBuffer),
@@ -187,7 +263,9 @@ export const sysRun = {
       });
 
       child.on('close', (code: number | null) => {
+        if (isDetached) return;
         if (timeoutId) clearTimeout(timeoutId);
+        if (serverGraceTimer) clearTimeout(serverGraceTimer);
         const cleanOutput = stripAnsi(outputBuffer);
         const exitCode = typeof code === 'number' ? code : 1;
 
@@ -253,20 +331,14 @@ export const sysRunBg = {
       const cwd = args.cwd ? args.cwd.replace(/^~\//, os.homedir() + '/') : process.cwd();
       const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
       const shellArgs = os.platform() === 'win32' ? ['/c', args.command] : ['-c', args.command];
-
-      const child = spawn(shell, shellArgs, {
-        cwd,
-        detached: true,
-        stdio: 'ignore'
+      return await new Promise<SysRunBgResult>(resolve => {
+        const child = spawn(shell, shellArgs, { cwd, detached: true, stdio: 'ignore' });
+        child.once('error', error => resolve({ success: false, error: error.message }));
+        child.once('spawn', () => {
+          child.unref();
+          resolve({ success: true, output: `Background process launched [${args.label}]; readiness not verified.`, pid: child.pid });
+        });
       });
-
-      child.unref();
-
-      return {
-        success: true,
-        output: `Successfully started background task [${args.label}]: ${args.command}`,
-        pid: child.pid
-      };
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e);
       return { success: false, error: errorMsg };

@@ -31,6 +31,7 @@ export interface ChatResponseAction {
   name: string;
   status: 'running' | 'completed' | 'failed';
   detail?: string | undefined;
+  parameters?: Record<string, unknown> | undefined;
 }
 
 export interface ChatResponse {

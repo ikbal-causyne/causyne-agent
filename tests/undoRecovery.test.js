@@ -121,12 +121,12 @@ describe('the snapshot covers where the work happens', () => {
     // directory hits MAX_TREE_FILES and is recorded as `too_many_files`, so
     // every checkpoint held nothing worth restoring and undo did nothing
     // anywhere. The PROJECT now leads, with cwd kept as the fallback.
-    assert.match(args, /workspaceRoots:\s*\[\s*resolveProjectRoot\(process\.cwd\(\)\)/,
+    assert.match(args, /workspaceRoots:\s*\[\s*resolveProjectRoot\(this\.workspaceRoot\)/,
       'the project root must lead — cwd may be a home directory');
-    assert.match(args, /process\.cwd\(\)/,
-      'cwd stays as the fallback when no project can be resolved');
+    assert.match(args, /this\.workspaceRoot/,
+      'the selected workspace stays as the fallback when no project can be resolved');
     const scopeAt = args.indexOf('workspacePaths');
-    const cwdAt = args.indexOf('process.cwd()');
+    const cwdAt = args.indexOf('this.workspaceRoot');
     assert.ok(scopeAt === -1 || scopeAt > cwdAt,
       'the permission scope must never outrank the place work happens');
   });
