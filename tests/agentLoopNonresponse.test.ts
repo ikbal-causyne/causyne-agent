@@ -30,6 +30,7 @@ test('an actionable request fails visibly after repeated greetings without showi
     assert.equal(calls, 3);
     assert.equal(events.some((event) => event.type === 'agent_message'), false);
     assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('No work was completed')), true);
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
     assert.equal(loop.unlockedPacks.has('game'), false);
   } finally {
     process.chdir(previousDirectory);
@@ -58,6 +59,7 @@ test('planning-only responses cannot report an unstarted task as complete', asyn
     assert.equal(events.some((event) => event.type === 'agent_message'), false);
     assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('No work was completed')), true);
     assert.equal(events.some((event) => event.type === 'status' && event.message === 'Task completed.'), false);
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
   } finally {
     process.chdir(previousDirectory);
     fs.rmSync(workspace, { recursive: true, force: true });

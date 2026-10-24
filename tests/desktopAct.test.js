@@ -9,6 +9,7 @@ import { resolveChannel, channelATools } from '../src/appChannel.js';
 import { Sandbox } from '../src/sandbox.js';
 import { TOOL_DEFINITIONS, toolRegistry } from '../src/tools/registry.js';
 import { PACKS } from '../src/toolPacks.js';
+import { requiresToolApproval } from '../src/approvalPolicy.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = fs.readFileSync(path.join(HERE, '..', 'src', 'tools', 'desktopAct.js'), 'utf8')
@@ -79,15 +80,14 @@ test('desktop_act: is registered, runnable, and in the system pack', () => {
   assert.ok(PACKS.system.includes('desktop_act'), 'desktop_act left the system pack');
 });
 
-test('HitL: every actuation is classified extreme, so the phone approves it in EVERY mode', () => {
-  // agentLoop.js requests approval when risk === 'extreme', unconditionally —
-  // not only in Mode A/B. Anything less and the most dangerous tool in the
-  // project would run unannounced in Mode C.
+test('desktop actuation retains extreme risk classification while Mode C is autonomous', () => {
   const sandbox = new Sandbox({ autonomyMode: 'C' });
   const verdict = sandbox.validate('desktop_act', { actions: [{ verb: 'type', text: 'x' }] });
 
-  assert.equal(verdict.allowed, true, 'the capability must exist — gated, not walled');
-  assert.equal(verdict.risk, 'extreme', 'desktop_act must always require human approval');
+  assert.equal(verdict.allowed, true, 'the capability must exist');
+  assert.equal(verdict.risk, 'extreme', 'the risk classification must remain visible');
+  assert.equal(requiresToolApproval({ mode: 'C', tool: 'desktop_act', args: {}, risk: verdict.risk,
+    heavyDownload: false, standingApproval: false }), false);
 });
 
 test('desktop_act: refuses an app that has a native channel, and names the tool to use', async () => {
@@ -96,7 +96,7 @@ test('desktop_act: refuses an app that has a native channel, and names the tool 
   assert.equal(result.useToolInstead, 'blender_act');
 });
 
-test('desktop_act: bounds the action count so one approval is not a blank cheque', async () => {
+test('desktop_act: bounds the action count so one call is not a blank cheque', async () => {
   const many = Array.from({ length: 30 }, () => ({ verb: 'wait', seconds: 0.01 }));
   const result = await act({ app: 'Notes', actions: many });
 

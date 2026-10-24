@@ -699,6 +699,48 @@ export const COMMANDS = [
         return ok(`Switched to "${next.title}" (${next.messages.length} messages, ${next.id}).`, { effect: 'inline' });
       }
 
+      if (verb === 'fork') {
+        const sourceId = args[1] || (memory ? memory.sessionId : store.getActiveSessionId());
+        if (!sourceId) return fail('No session specified to fork.');
+        const forked = memory && memory.sessionId === sourceId
+          ? memory.forkSession()
+          : store.forkSession(sourceId, { makeActive: true });
+        if (!forked) return fail(`Could not fork session "${sourceId}".`);
+
+        // CRITICAL TRUST INVARIANT (Claude Code Architecture, p. 24):
+        // Permissions and allowlists NEVER carry across forks.
+        const { revokeAllAlways } = await import('./approvalGrants.js');
+        revokeAllAlways();
+        if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
+          context.loop.resetApprovalScope();
+        }
+
+        const historyMessages = memory ? memory.loadHistory() : forked.messages.filter(m => m.role !== 'system');
+        if (context.loop) {
+          context.loop.messages = historyMessages;
+          context.loop.taskId = `cli_chat_${Date.now()}`;
+          if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+            context.loop.tokenTracker.reset();
+          }
+        }
+        const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+        if (renderer && typeof renderer.renderSessionHistory === 'function') {
+          renderer.renderSessionHistory(historyMessages, {
+            id: forked.id,
+            title: forked.title,
+            messagesCount: forked.messages.length
+          });
+        }
+        if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+          context.prompt.surface.viewport.toBottom();
+        }
+        if (context.prompt?.editor?.clear) {
+          context.prompt.editor.clear();
+          if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
+        }
+        return ok(`Forked session into "${forked.title}" (${forked.messages.length} messages, ${forked.id}).\nPermissions and standing approvals were reset; any gated actions will request authorization anew.`, { effect: 'inline' });
+      }
+
       if (verb === 'delete' && args[1]) {
         return store.deleteSession(args[1]) ? ok(`Deleted session "${args[1]}".`) : fail(`No session "${args[1]}".`);
       }
@@ -720,9 +762,90 @@ export const COMMANDS = [
       return ok(
         `${rows.length} session${rows.length === 1 ? '' : 's'} (* = active):\n`
         + lines.join('\n')
-        + '\n\nSwitch with /sessions switch <id>, or run /sessions to open interactive modal picker.',
+        + '\n\nSwitch with /sessions switch <id>, fork with /fork [id], or run /sessions to open interactive modal picker.',
         { effect: 'pick-session', items: rows, active }
       );
+    }
+  },
+
+  {
+    name: 'fork',
+    aliases: ['branch', 'fork-session'],
+    scope: 'local',
+    usage: '/fork [sessionId]',
+    description: 'Fork the conversation into a new session without copying permissions',
+    dialogTitle: 'Fork Session',
+    complete: () => {
+      try {
+        const rows = listSessions().slice(0, 15);
+        return rows.map(r => ({
+          value: r.id,
+          label: r.id,
+          description: `${r.title} (${r.messageCount} msgs)`
+        }));
+      } catch (e) {
+        return [];
+      }
+    },
+    run: async (args = [], context = {}) => {
+      const store = await import('./sessionStore.js');
+      const { revokeAllAlways } = await import('./approvalGrants.js');
+      const memory = context.loop && context.loop.memoryManager;
+
+      const sourceId = args[0] || (memory ? memory.sessionId : store.getActiveSessionId());
+      if (!sourceId) {
+        return fail('No active or specified session to fork.');
+      }
+
+      const sourceSession = store.getSession(sourceId);
+      if (!sourceSession) {
+        return fail(`Session "${sourceId}" not found.`);
+      }
+
+      const forked = memory && memory.sessionId === sourceId
+        ? memory.forkSession()
+        : store.forkSession(sourceId, { makeActive: true });
+
+      if (!forked) {
+        return fail(`Could not fork session "${sourceId}".`);
+      }
+
+      // CRITICAL SECURITY INVARIANT (Claude Code Architecture, p. 24):
+      // Permissions and allowlists MUST NOT be copied across the fork.
+      revokeAllAlways();
+      if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
+        context.loop.resetApprovalScope();
+      }
+
+      if (memory) {
+        memory.session = forked;
+      }
+      const historyMessages = memory ? memory.loadHistory() : forked.messages.filter(m => m.role !== 'system');
+      if (context.loop) {
+        context.loop.messages = historyMessages;
+        context.loop.taskId = `cli_chat_${Date.now()}`;
+        if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+          context.loop.tokenTracker.reset();
+        }
+      }
+
+      const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+      if (renderer && typeof renderer.renderSessionHistory === 'function') {
+        renderer.renderSessionHistory(historyMessages, {
+          id: forked.id,
+          title: forked.title,
+          messagesCount: forked.messages.length
+        });
+      }
+      if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+        context.prompt.surface.viewport.toBottom();
+      }
+      if (context.prompt?.editor?.clear) {
+        context.prompt.editor.clear();
+        if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
+      }
+
+      return ok(`Forked session "${sourceSession.title}" into "${forked.title}" (${forked.id}) with ${forked.messages.length} messages.\nPermissions and allowlists reset: tools will request approval anew.`, { effect: 'inline' });
     }
   },
 

@@ -56,6 +56,7 @@ export class AgentLoop {
   rearmAbortController(): void;
   setAutonomyMode(mode: 'A' | 'B' | 'C' | string): void;
   isAlwaysAllowed(toolName: unknown): boolean;
+  resetApprovalScope(): void;
   emitEvent(event: AgentLoopEvent): void;
   waitForApproval(toolCallId: string): Promise<boolean>;
   handleApprovalResponse(toolCallId: string, decision: ApprovalDecision | boolean): void;

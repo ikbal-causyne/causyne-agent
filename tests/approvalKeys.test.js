@@ -396,7 +396,8 @@ test('always: the agent loop checks the grant BEFORE it asks', async () => {
 
   assert.ok(gate > 0, 'the standing-approval check is gone');
   assert.ok(ask > gate, 'the grant is checked after the request is already sent');
-  assert.match(loop.slice(gate, ask), /!standingApproval &&/, 'the gate no longer honours the grant');
+  assert.match(loop.slice(gate, ask), /standingApproval\s*\}/, 'the policy does not receive the standing grant');
+  assert.match(loop.slice(gate, ask), /if \(needsToolApproval\)/, 'the result of the approval policy is ignored');
 });
 
 test('always: /approvals lists and clears them', async () => {

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { resolveSession, createSession, getSession, switchSession, saveSessionMessages } from './sessionStore.js';
+import { resolveSession, createSession, getSession, switchSession, saveSessionMessages, forkSession } from './sessionStore.js';
 import os from 'os';
 import { causyneHome } from './utils/paths.js';
 
@@ -57,6 +57,26 @@ export class MemoryManager {
     const next = switchSession(id);
     if (next) this.session = next;
     return next;
+  }
+
+  /**
+   * Fork current session into a new conversation without copying permissions.
+   *
+   * @param {string} [title]
+   * @param {number} [upToMessageIndex]
+   * @returns {import('./sessionStore.js').SessionRecord | null}
+   */
+  forkSession(title = null, upToMessageIndex = null) {
+    if (!this.session) return null;
+    const forked = forkSession(this.session.id, {
+      title: title || undefined,
+      upToMessageIndex: typeof upToMessageIndex === 'number' ? upToMessageIndex : undefined,
+      makeActive: true
+    });
+    if (forked) {
+      this.session = forked;
+    }
+    return forked;
   }
 
   ensureMemoryDir() {

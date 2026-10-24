@@ -10,6 +10,7 @@ import {
   runEngineBinary
 } from '../engines/registry.js';
 import { defaultEngineManifestUrl, installNativeEngine } from '../engines/installer.js';
+import { isAutonomousToolContext } from '../approvalPolicy.js';
 import type {
   NativeEngineAction,
   NativeEngineAdapter,
@@ -30,6 +31,7 @@ const OUTPUT_KEYS = new Set(['output', 'outputPath', 'out', 'outputFile']);
 type ToolContext = {
   signal?: AbortSignal;
   workspacePaths?: string[];
+  parentLoop?: unknown;
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -304,7 +306,7 @@ async function engineStatus(workspace: string, signal?: AbortSignal): Promise<Re
 export const nativeEngineTool = {
   schema: {
     name: 'native_engine',
-    description: 'Run an installed headless native engine directly. No MCP, no GUI automation, no screenshots. Start with status, then catalog. Use execute or batch with command ids from catalog; project/saveAs scope the document. export and render return artifact paths for immediate GUI/TUI preview. probe inspects media. If the engine is missing, install only after explicit user consent; install never downloads silently. Set open=true only when the user wants the artifact revealed in the OS.',
+    description: 'Run an installed headless native engine directly. No MCP, no GUI automation, no screenshots. Start with status, then catalog. Use execute or batch with command ids from catalog; project/saveAs scope the document. export and render return artifact paths for immediate GUI/TUI preview. probe inspects media. An in-scope install is authorized by Mode C; supervised modes require explicit confirmation. Set open=true only when the user wants the artifact revealed in the OS.',
     parameters: {
       type: 'object',
       properties: {
@@ -344,7 +346,7 @@ export const nativeEngineTool = {
         keepGoing: { type: 'boolean', description: 'Batch continues after a failed command.' },
         query: { type: 'string', description: 'Catalog filter, inspect target, or media path for probe.' },
         open: { type: 'boolean', description: 'Reveal the resulting artifact in the OS after success.' },
-        confirm: { type: 'boolean', description: 'Explicit consent to download and install a missing engine. install without confirm only describes the download.' }
+        confirm: { type: 'boolean', description: 'Explicit confirmation in supervised modes. Mode C authorizes in-scope installs without this flag.' }
       },
       required: ['action'],
       additionalProperties: false
@@ -361,7 +363,7 @@ export const nativeEngineTool = {
       if (!adapter) return { success: false, error: `Unknown engine: ${request.engine}`, available: Object.keys(NATIVE_ENGINES) };
       if (request.action === 'install') {
         return await installNativeEngine(adapter, {
-          confirm: request.confirm === true,
+          confirm: request.confirm === true || isAutonomousToolContext(context),
           ...(context.signal ? { signal: context.signal } : {})
         });
       }

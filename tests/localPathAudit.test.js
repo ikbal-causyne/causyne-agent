@@ -122,7 +122,7 @@ describe('L3 — a redirection target is classified, not just the verb', () => {
   });
 });
 
-describe('L4 — credential stores need a human, in every autonomy mode', () => {
+describe('L4 — credential stores retain a high-risk classification', () => {
   test('key material is recognised', () => {
     for (const p of [
       '~/.ssh/id_rsa', '~/.aws/credentials', '~/.gnupg/secring.gpg',
@@ -139,9 +139,9 @@ describe('L4 — credential stores need a human, in every autonomy mode', () => 
     }
   });
 
-  test('touching credential material is allowed but always approved', () => {
-    // Vision section 4: freedom WITH a human in the loop, not a wall. 'extreme'
-    // is the one level Mode C cannot auto-approve.
+  test('touching credential material retains an extreme risk signal', () => {
+    // Classification remains visible to audit and supervised modes even when
+    // Mode C proceeds within the selected workspace.
     const sandbox = new Sandbox();
     // isPathAllowed is pure path arithmetic and never touches the disk, so use a
     // synthetic workspace. The real temp dir lives under /private/var, which
@@ -152,7 +152,7 @@ describe('L4 — credential stores need a human, in every autonomy mode', () => 
 
     const verdict = sandbox.validate('fs_read', { path: `${workspace}/.ssh/id_rsa` });
     assert.equal(verdict.allowed, true, 'the agent keeps the capability');
-    assert.equal(verdict.risk, 'extreme', 'but it cannot use it unattended');
+    assert.equal(verdict.risk, 'extreme', 'credential access must retain its risk classification');
   });
 
   test('the default scope is only the user-selected workspace', () => {

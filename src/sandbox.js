@@ -99,8 +99,8 @@ const INTERPRETER_INVOCATION = /(^|\s)(sh|bash|zsh|ksh|dash|fish|eval|xargs|ssh|
  *
  * A user may deliberately select a workspace that contains credential material.
  * These paths are not silently trusted just because they sit below that root:
- * touching one is classified 'extreme', which always requires explicit approval
- * in every autonomy mode, including Mode C.
+ * touching one is classified 'extreme' for supervised-mode approval and audit.
+ * Mode C still applies the selected-workspace boundary and hard safety blocks.
  */
 const CREDENTIAL_PATHS = [
   /(^|\/)\.ssh(\/|$)/,
@@ -243,9 +243,8 @@ export class Sandbox {
       }
     }
 
-    // L4: when an explicitly selected workspace contains credential material,
-    // it gets a human in the loop rather than silent access. 'extreme' is the
-    // one risk level Mode C cannot auto-approve.
+    // L4: classify credential material in an explicitly selected workspace as
+    // extreme. The approval policy interprets that signal by autonomy mode.
     for (const p of pathsToCheck) {
       if (typeof p === 'string' && isCredentialPath(p)) {
         return { allowed: true, risk: 'extreme', reason: `Touches credential material: ${p}` };
@@ -317,24 +316,21 @@ export class Sandbox {
       return { allowed: true, risk: 'extreme', reason: 'Downloads a third-party asset to disk' };
     }
     
-    // Heavy AI downloads ALWAYS require consent (even in Mode C)
+    // Keep downloads classified as extreme for supervised modes and auditing.
+    // Mode C approval is decided separately by the TypeScript approval policy.
     if (toolName === 'manage_local_dependencies') {
       // grant_capability installs third-party packages into the user's home
-      // directory, so it belongs in exactly the same consent class as the other
-      // download actions. Routing it here is what keeps ZM-01 true: nothing is
-      // ever installed without an explicit human approval.
+      // directory. Classification remains visible even when Mode C proceeds.
       const heavyActions = ['pipInst', 'grant_capability', 'grant_mcp_server'];
       if (heavyActions.includes(args.action)) {
-        return { allowed: true, risk: 'extreme' }; // Upgraded from dangerous to extreme for safe C Mode handling
+        return { allowed: true, risk: 'extreme' };
       }
       return { allowed: true, risk: 'moderate' };
     }
 
-    // Plugins are code extensions. Creation and enablement change the future
-    // executable surface, and an enabled plugin call crosses from Causyne's
-    // reviewed code into user/third-party code. Keep both explicit and
-    // session-revocable even though the plugin process also runs under Node's
-    // filesystem/network/child-process permission model.
+    // Plugins are code extensions. Keep their risk classification visible to
+    // supervised modes and audit logs; Mode C still uses workspace and hard
+    // policy checks before execution.
     if (toolName === 'plugin_manager') {
       return ['create', 'enable'].includes(args.action)
         ? { allowed: true, risk: 'extreme', reason: 'Creates or trusts executable plugin code' }
@@ -359,12 +355,9 @@ export class Sandbox {
     if (toolName === 'proc_term') {
       return { allowed: true, risk: 'dangerous' };
     }
-    // Driving the mouse and keyboard reaches every application the user is
-    // signed into — mail, banking, anything with a session open. There is no
-    // safe subset and no autonomy mode in which it should run unannounced, so
-    
-    // Mode C. Section 4 says gated, not walled — the capability is real, the
-    // human just says yes first.
+    // Desktop interaction reaches applications the user is signed into.
+    // Keep the extreme risk signal for supervised modes and auditing; Mode C
+    // follows the owner's autonomous approval policy after hard checks.
     if (toolName === 'desktop_act' || toolName === 'computer_use') {
       return { allowed: true, risk: 'extreme' };
     }

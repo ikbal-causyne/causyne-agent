@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { processApprovalScope } from './approvalGrants.js';
+import { processApprovalScope, createApprovalScope } from './approvalGrants.js';
 import { pruneSessions as pruneEmbodimentSessions, describeSession } from './embodimentSession.js';
 import { WorkspacePerception } from './perception.js';
 import { audioFormatForMimeType } from './providers/base.js';
@@ -21,8 +21,10 @@ import { lookupPlan, recordPlan, recordMiss, renderPlanHint, toStep } from './pl
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
+import { requiresToolApproval } from './approvalPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
+import { TimeMachine, recoveryUserMessage } from './timeMachine.js';
 import { routePacks, packForTool, isCoreTool, isGameIntent, isWebIntent, getPackCatalogue, PACK_PLAYBOOKS, PACKS } from './toolPacks.js';
 import { resolveCharPool, measureMessages, resultCapFor, decayToolResults, buildWindow, compactInPlace, describeDroppedMessages, sanitizeSequences, applyProgressiveCompaction, snipOversizedToolOutputs } from './contextManager.js';
 // Provider imports
@@ -49,25 +51,27 @@ export function isDirectGameTask(text) {
     return /\b(three\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
         && !/\b(godot|unity|unreal|full engine)\b/i.test(text);
 }
-const SYSTEM_PROMPT = `You are Causyne Agent, a God-Tier Autonomous AI. You operate the user's computer through a local desktop harness. You are not just a coding assistant; you are a general-purpose superintelligence.
+const SYSTEM_PROMPT = `You are Causyne Agent, an autonomous local AI agent. Your capabilities are the tools actually available in this session. Never invent a capability or claim an action occurred without evidence.
 
 # Your Capabilities
-You can do anything a human can do from a terminal: write code, build apps, manage files, install software, configure systems, run tests, deploy projects, analyze security vulnerabilities, and more. If a human can do it, you can do it. 
+You can use authorized local tools to write code, build apps, manage files, install software, configure systems, run tests, deploy projects, and analyze security vulnerabilities. Check tool availability and results before making claims.
 Specifically, you excel at:
 - **System Administration**: Organizing folders, cleaning the desktop, categorizing downloads, finding lost files.
 - **Office & Creative Work**: Researching and writing massive 100-page theses, novels, or film scripts. Writing scripts to output Excel, Word, or PDF files from raw data.
 - **Web & Media**: Searching the web, downloading files, and opening browsers to specific videos (YouTube, Netflix) using cross-platform terminal commands (e.g., AppleScript for macOS, PowerShell for Windows, or xdg-open for Linux).
 
 # Core Mandates
-1. **Autonomy & Completion**: You are an agent. Keep going until the user's query is completely resolved before yielding back. Do not stop until the problem is solved. Autonomously resolve the query to the best of your ability using tools. 
-2. **Ambition vs. Precision**: Be highly ambitious and creative on new tasks. Be surgically precise on existing codebases. Treat existing code with respect, never touching unrelated files or fixing unrelated bugs.
-3. **Conventions**: Rigorously adhere to existing project conventions. Mimic the style, structure, framework choices, and architectural patterns of existing code. NEVER assume a library/framework is available; verify it first.
+1. **User Authority and Scope**: The user's objective, chosen workspace, stated limits, and order of operations are your primary instructions within applicable safety constraints. Work strictly inside the requested scope. Never silently add unrelated files, features, refactors, deployments, or goals. Do not invent a reason to refuse ordinary authorized work.
+2. **Delegated Autonomy**: When the user delegates implementation choices or asks you to achieve a broad goal, investigate and execute independently until the goal is achieved or a real blocker is evidenced. Delegation widens the methods you may choose, not the user's stated boundaries. Do not ask for routine permission again in Mode C. A genuinely unresolved durable decision may still need the user's choice.
+3. **Evidence and Limits**: Never fabricate tool results, tests, fixes, deployment, or success. Verify observable outcomes and distinguish facts from inferences. If an attempt fails, inspect evidence, try a legitimate alternative within budget, and state the exact unresolved limit. Treat difficulty as a reason to investigate, not as proof of impossibility.
+4. **Conventions**: Follow the project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
 
 # Operational Guidelines & Communication
 - **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. If the user communicates in English, communicate strictly in English. Default language is English. Never use or default to Indonesian unless the user explicitly speaks to you in Indonesian.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
+- **Evidence-Based Recovery Reports**: State only observed tool results and checks. Never claim a failed task was fixed without a passing check. Keep failure reports brief; if the user requests a detailed report, write it to a Markdown file in their selected workspace and give its path instead of dumping it into chat.
 - **Status Updates**: Write in a continuous conversational style. Give a brief progress note (1-2 sentences) BEFORE executing a tool. **CRITICAL: You MUST output this text and invoke the tool in the EXACT SAME RESPONSE.** If you output text without invoking a tool, the system will assume you are finished and terminate the task.
-- **Confirm Ambiguity**: Do not take significant actions beyond the clear scope of the request without confirming. If asked *how* to do something, explain first, don't just do it.
+- **Clarify Only When Needed**: Make routine implementation choices yourself. Ask when an unresolved choice or missing user-only input genuinely blocks progress; continue independent work while waiting.
 - **No Chitchat**: Tools are for actions, text output is *only* for communication. Do not add explanatory comments within tool calls or code blocks.
 - **File Paths**: ALWAYS output the absolute path of any file you create, modify, or generate so the user knows exactly where it is.
 
@@ -105,7 +109,7 @@ Specifically, you excel at:
 - **Token Budgeting**: You must respect the user's BYOK (Bring Your Own Key) limits. Be highly token-efficient.
 - **Explain Critical Commands**: Before executing destructive shell commands, provide a brief explanation of the impact.
 - **Interactive Commands**: Avoid shell commands that require user interaction (e.g., \`git rebase -i\`). Use non-interactive flags (e.g., \`-y\`).
-- **Sandboxing**: You operate within a strict 4-layer sandbox. Flag destructive commands (rm, overwrite) as "dangerous" for user approval.
+- **Sandboxing**: Keep workspace checks and hard safety blocks active. In Mode C, ordinary in-scope edits and tool calls do not need approval; deleting an entire file or directory does. Removing or replacing lines while editing a file is not whole-file deletion.
 - **SSRF Protection**: Do not fetch internal IPs (127.0.0.1, 169.254.x.x, 10.x.x.x).
 
 # ABSOLUTE ETHICAL SAFETY NET (NON-NEGOTIABLE)
@@ -124,7 +128,7 @@ If asked to perform ANY harmful task, politely decline, state that Causyne exist
 # Dependency Management & Autonomy Modes
 - **Mode A (Passive)**: You MUST explicitly ask the user for permission (by ending your turn and asking a question) before installing any dependencies.
 - **Mode B (Supervised)**: You may install standard development dependencies automatically, but you MUST ask for permission before modifying OS-level settings or running \`sudo\`.
-- **Mode C (Autonomous)**: You have full freedom. Silently execute installation commands if a dependency is missing.
+- **Mode C (Autonomous)**: Work independently within the user's task and selected workspace. Ordinary in-scope actions do not require an approval dialog. Whole-file or directory deletion requires approval. Hard policy blocks, workspace boundaries, and explicit user limits still apply.
 
 # Direct API & Automation Policy
 - **Prefer REST APIs (curl)**: When interacting with external services (like web, email, chat), prioritize finding and using official REST APIs via \`curl\` or simple scripts.
@@ -393,16 +397,13 @@ export class AgentLoop {
         // P6: rendered surfaces this task wrote, for the anti-slop gate to read back.
         this.webArtifacts = new Set();
         this.slopGateFired = false;
-        this.coldObserverGuardFired = false;
         this.gameCascadeState = { active: true, currentStage: 1, stageHistory: [], verificationPassed: false };
         this.gameToolStats = { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
         this.webVerificationState = { screenshotTaken: false, browserActUsed: false }; // V8 Transcendence: Anti-Slop Guard
         this.abortController = new AbortController();
         // V5: Context compaction tracking
         this._lastCompactionIndex = null;
-        // V5: Error recovery tracking (per tool call)
-        // V5: Error recovery tracking (per tool call)
-        this._toolRetryCount = new Map();
+        this.timeMachine = new TimeMachine();
         this.isInitialized = false;
         this.taskTemperature = 0.1; // Default
         // Set only on a delegated subagent loop; null means "the full catalogue".
@@ -411,6 +412,23 @@ export class AgentLoop {
     /** True when this loop's own conversation scope has a standing approval. */
     isAlwaysAllowed(toolName) {
         return this.approvalScope.isAlwaysAllowed(toolName);
+    }
+    /**
+     * Reset all standing tool approvals, allowlists, and autonomy overrides.
+     *
+     * Critical security invariant (Claude Code Architecture, p. 24):
+     * When a session is forked or reset, permissions and standing approvals
+     * must NEVER carry over into the new branch. A forked session starts with
+     * fresh, ungranted permissions so that user authorization must be re-verified.
+     */
+    resetApprovalScope() {
+        if (this.approvalScope && typeof this.approvalScope.revokeAllAlways === 'function') {
+            this.approvalScope.revokeAllAlways();
+        }
+        this.approvalScope = createApprovalScope();
+        this.autonomyOverride = null;
+        this.circuitBreakerUnlocked = false;
+        this.pendingApprovals.clear();
     }
     // V6: Adaptive Temperature based on task intent
     determineTemperature(prompt) {
@@ -816,6 +834,7 @@ export class AgentLoop {
         auditLog.log({ event: 'task_start', taskId: this.taskId, request: this.userPrompt });
         this.workspaceRoot = process.cwd();
         coldObserver.beginTask(this.taskId);
+        this.timeMachine.reset();
         this.emitEvent({ type: 'status', message: 'Analyzing workspace...' });
         // P2: open the undo group for this task. This snapshots the CONVERSATION as
         // well as the workspace tree, because restoring files while chat_history
@@ -868,7 +887,6 @@ export class AgentLoop {
         this.webGuardFired = false;
         this.webArtifacts = new Set();
         this.slopGateFired = false;
-        this.coldObserverGuardFired = false;
         this.staticContext = null;
         // Plan cache: the procedure THIS task follows, and the template (if any)
         // that was offered to it. Both reset per task — a plan is a property of one
@@ -1737,7 +1755,7 @@ export class AgentLoop {
                         }
                     }
                     // Cold Observer: Overconfidence & Loop Verification Check
-                    if (!this.coldObserverGuardFired) {
+                    {
                         try {
                             const coldAudit = await coldObserver.auditTurnVerification({
                                 taskId: this.taskId,
@@ -1747,11 +1765,18 @@ export class AgentLoop {
                                 stepsCompleted: this.stepsCompleted
                             });
                             if (coldAudit.overconfident) {
-                                this.coldObserverGuardFired = true;
+                                const recovery = this.timeMachine.observe('observer_verification', {}, {
+                                    success: false, error: coldAudit.discrepancy
+                                }, coldObserver.getToolOutcomes(this.taskId));
                                 this.emitEvent({ type: 'status', message: `Cold Observer: ${coldAudit.discrepancy}` });
+                                if (recovery.kind === 'stop') {
+                                    this.stopRequested = true;
+                                    this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, 'Verification') });
+                                    break;
+                                }
                                 this.messages.push({
                                     role: 'system',
-                                    content: coldAudit.coldDirective
+                                    content: `${coldAudit.coldDirective} ${recovery.guidance}`
                                 });
                                 this.memoryManager.saveHistory(this.messages);
                                 continue;
@@ -1791,9 +1816,8 @@ export class AgentLoop {
                 // them strictly one after another, so six `fs_read`s cost six full
                 // round trips of tool latency.
                 //
-                // The serial loop below is deliberately left EXACTLY as it was. Nothing
-                // about ordering, approval gates, step counting, streaming, retries or
-                // error classification changes — the only difference is that a
+                // The serial loop below preserves ordering and approval gates. The
+                // only difference from prefetching is that a
                 // read-only result may already be sitting in this map by the time the
                 // loop reaches it. Restructuring the 400-line body into a batch would
                 // have been the obvious approach and a far worse one: it is dense with
@@ -1807,8 +1831,7 @@ export class AgentLoop {
                 //   * The sandbox is consulted FIRST, with the same call the serial path
                 //     makes, so a denied path is never read behind the guard's back.
                 //   * Only a SUCCESSFUL prefetch is consumed. A failure is discarded and
-                //     the serial path executes normally, so the retry-with-backoff and
-                //     error-classification logic keeps its exact behaviour.
+                //     the serial path executes normally, so TimeMachine sees its outcome.
                 const prefetched = this.prefetchReadOnlyCalls(response.toolCalls);
                 // 3. ACT (Execute tool calls)
                 for (const toolCall of response.toolCalls) {
@@ -2059,25 +2082,27 @@ export class AgentLoop {
                     catch (_err) {
                         // Cold observer mutation assessment fail-open
                     }
-                    // A standing approval from "Allow always" lifts the gate for this
-                    // tool until the process restarts. It is checked HERE rather than
-                    // asking and then auto-answering would still interrupt the user,
-                    // which is the entire thing they were trying to stop.
-                    //
-                    // Nothing else is bypassed: the sandbox has already run above, so a
-                    // FORBIDDEN command is still refused and a path outside the workspace
-                    // is still blocked. This waives the QUESTION, not the guard.
+                    // A standing grant can avoid repeat prompts in supervised modes.
+                    // Mode C is autonomous for in-scope work. Whole-file deletion asks
+                    // unless this session explicitly granted the fs_delete tool; a broad
+                    // shell grant cannot authorize deletion. Sandbox denials and observer
+                    // vetoes have already run and are never lifted by prompt policy.
                     const standingApproval = this.isAlwaysAllowed(functionName);
-                    if (standingApproval) {
+                    const needsToolApproval = requiresToolApproval({
+                        mode: this.config.autonomyMode || 'C',
+                        tool: functionName,
+                        args,
+                        risk: validation.risk,
+                        heavyDownload: isHeavyAiDownload,
+                        standingApproval
+                    });
+                    if (standingApproval && !needsToolApproval && this.config.autonomyMode !== 'C') {
                         auditLog.log({
                             event: 'approval_auto_granted', taskId: this.taskId,
                             tool: functionName, risk: validation.risk, reason: 'allow_always'
                         });
                     }
-                    if (!standingApproval && (validation.risk === 'extreme' ||
-                        isHeavyAiDownload ||
-                        (this.config.autonomyMode !== 'C' && validation.risk === 'dangerous') ||
-                        this.config.autonomyMode === 'A')) {
+                    if (needsToolApproval) {
                         // Wait for local approval
                         this.emitEvent({ type: 'approval_request', toolCallId: toolCall.id, tool: functionName, args, risk: validation.risk });
                         const approved = await this.waitForApproval(toolCall.id);
@@ -2128,14 +2153,11 @@ export class AgentLoop {
                             this.webArtifacts.add(written.replace(/^~\//, os.homedir() + '/'));
                         }
                     }
-                    // V5: Execute with Error Recovery Loop (3-attempt retry with exponential backoff)
-                    const retryKey = `${functionName}:${JSON.stringify(args).substring(0, 100)}`;
+                    // TimeMachine tracks actual failures across tool results and thrown
+                    // errors. It only rewinds reasoning; it never replays side effects.
                     let result;
                     let duration;
-                    const MAX_RETRIES = 3;
-                    const currentRetries = this._toolRetryCount.get(retryKey) || 0;
                     try {
-                        const wasRetried = currentRetries > 0;
                         const startTime = Date.now();
                         // A concurrent read from the prefetch pass above, if it succeeded.
                         const ready = prefetched.get(toolCall.id);
@@ -2144,75 +2166,28 @@ export class AgentLoop {
                             ? early
                             : await tool.execute(args, { signal: this.abortController.signal, parentLoop: this, ...this.sandbox });
                         duration = Date.now() - startTime;
-                        // Success: reset retry count for this operation
-                        this._toolRetryCount.delete(retryKey);
-                        // V5 Cortex RLTF: Save the successful recovery as a permanent neural memory
-                        if (wasRetried) {
-                            cortexDb.saveMemory(this.currentTaskPrompt || `Task using ${functionName}`, `Failed ${currentRetries} times previously.`, `Successfully recovered and executed ${functionName} with arguments: ${JSON.stringify(args).substring(0, 200)}`).catch((e) => this.debugLog(`cortex save failed: ${e.message}`));
-                        }
                     }
                     catch (toolError) {
                         duration = 0;
                         const errorType = this.classifyError(toolError);
-                        if (currentRetries < MAX_RETRIES && errorType !== 'fatal') {
-                            this._toolRetryCount.set(retryKey, currentRetries + 1);
-                            const backoffMs = Math.pow(2, currentRetries) * 1000; // 1s, 2s, 4s
-                            this.emitEvent({
-                                type: 'step_error',
-                                tool: functionName,
-                                error: `${errorType}: ${toolError.message} (retry ${currentRetries + 1}/${MAX_RETRIES} in ${backoffMs / 1000}s)`,
-                                toolCallId: toolCall.id
-                            });
-                            auditLog.log({
-                                event: 'tool_retry',
-                                taskId: this.taskId,
-                                tool: functionName,
-                                attempt: currentRetries + 1,
-                                errorType,
-                                error: toolError.message
-                            });
-                            // Wait before retry (the LLM will see the error and can adjust)
-                            await new Promise(resolve => setTimeout(resolve, backoffMs));
-                            // Feed the classified error back so LLM can adjust its approach
-                            this.messages.push({
-                                role: 'tool',
-                                tool_call_id: toolCall.id,
-                                name: functionName,
-                                content: JSON.stringify({
-                                    success: false,
-                                    error: toolError.message,
-                                    errorType: errorType,
-                                    retryHint: this.getRetryHint(errorType),
-                                    retriesLeft: MAX_RETRIES - currentRetries - 1
-                                })
-                            });
-                            continue;
+                        const failure = { success: false, error: String(toolError?.message || toolError) };
+                        coldObserver.recordToolOutcome(this.taskId, functionName, args, failure);
+                        const recovery = this.timeMachine.observe(functionName, args, failure, coldObserver.getToolOutcomes(this.taskId));
+                        auditLog.log({ event: 'tool_failure', taskId: this.taskId,
+                            tool: functionName, attempt: recovery.attempt, errorType });
+                        this.emitEvent({ type: 'step_error', tool: functionName,
+                            error: `${errorType}: ${failure.error} (${recovery.attempt}/${recovery.maxAttempts})`,
+                            toolCallId: toolCall.id });
+                        this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
+                            name: functionName, content: JSON.stringify({ ...failure,
+                                errorType, timeMachine: recovery.guidance }) });
+                        this.memoryManager.saveHistory(this.messages);
+                        if (errorType === 'fatal' || recovery.kind === 'stop' || recovery.kind === 'human') {
+                            this.stopRequested = true;
+                            this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, functionName) });
+                            break;
                         }
-                        else {
-                            // Max retries exceeded or fatal error: give up on this tool call
-                            this._toolRetryCount.delete(retryKey);
-                            this.emitEvent({
-                                type: 'step_error',
-                                tool: functionName,
-                                error: `Failed after ${MAX_RETRIES} attempts: ${toolError.message}`,
-                                toolCallId: toolCall.id
-                            });
-                            coldObserver.recordToolOutcome(this.taskId, functionName, args, {
-                                success: false,
-                                error: `PERMANENT FAILURE after ${MAX_RETRIES} retries: ${toolError.message}`
-                            });
-                            this.messages.push({
-                                role: 'tool',
-                                tool_call_id: toolCall.id,
-                                name: functionName,
-                                content: JSON.stringify({
-                                    success: false,
-                                    error: `PERMANENT FAILURE after ${MAX_RETRIES} retries: ${toolError.message}. Do NOT retry this exact operation. Try a completely different approach or ask the user for help.`,
-                                    errorType: errorType
-                                })
-                            });
-                            continue;
-                        }
+                        continue;
                     }
                     auditLog.log({
                         event: 'tool_exec',
@@ -2237,6 +2212,23 @@ export class AgentLoop {
                     // is written only after post-hook review, so a formatter that rejects
                     // a write is remembered as a failure rather than a success.
                     coldObserver.recordToolOutcome(this.taskId, functionName, args, result);
+                    const recovery = this.timeMachine.observe(functionName, args, result, coldObserver.getToolOutcomes(this.taskId));
+                    if (recovery.kind === 'replan') {
+                        this.emitEvent({ type: 'status', message: `TimeMachine: approach change after ${recovery.attempt} failed attempts.` });
+                    }
+                    if (recovery.kind === 'stop' || recovery.kind === 'human') {
+                        this.stopRequested = true;
+                        this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, functionName) });
+                    }
+                    if (result && (result.success === false || typeof result.error === 'string')) {
+                        result = { ...result, timeMachine: recovery.guidance };
+                    }
+                    if (this.stopRequested) {
+                        this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
+                            name: functionName, content: JSON.stringify(result) });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
                     // PROGRESSIVE DISCLOSURE: honour unlock signals from tool_search.
                     // The control fields are stripped before the result reaches the LLM.
                     if (result && (result._unlock_tools || result._unlock_packs)) {
@@ -2252,7 +2244,8 @@ export class AgentLoop {
                     }
                     // Buffer output for disconnect resilience
                     await this.taskBuffer.appendOutput(this.taskId, { tool: functionName, result });
-                    this.emitEvent({ type: 'step_complete', tool: functionName, result: result._is_image_marker ? '[IMAGE DATA]' : result, toolCallId: toolCall.id });
+                    this.emitEvent({ type: result?.success === false || typeof result?.error === 'string' ? 'step_error' : 'step_complete',
+                        tool: functionName, result: result._is_image_marker ? '[IMAGE DATA]' : result, toolCallId: toolCall.id });
                     this.stepsCompleted++;
                     // The procedure, as it actually ran. Tool name plus a whitelisted
                     // action token only — planCache.toStep() reads no paths, arguments or
@@ -2299,52 +2292,64 @@ export class AgentLoop {
                     }
                     // Sovereign 100-Step Circuit Breaker Checkpoint Gate
                     if (this.consecutiveCommands === 100 && !this.circuitBreakerUnlocked) {
-                        this.emitEvent({
-                            type: 'approval_request',
-                            toolCallId: 'circuit_breaker_100_' + this.stepsCompleted,
-                            tool: 'circuit_breaker_checkpoint',
-                            args: {
-                                consecutiveCommands: this.consecutiveCommands,
-                                stepsCompleted: this.stepsCompleted,
-                                activeTier: this.activeTier,
-                                maxTierSteps: this.maxSteps,
-                                message: `⚡ Circuit Breaker Checkpoint (100 steps reached). Approve to unlock and continue using your remaining ${this.activeTier.toUpperCase()} tier budget (up to ${this.maxSteps} steps total)?`
-                            },
-                            risk: 'info'
-                        });
-                        const approved = await this.waitForApproval('circuit_breaker_100_' + this.stepsCompleted);
-                        if (!approved) {
-                            this.stopRequested = true;
-                            this.emitEvent({ type: 'status', message: 'Task stopped at 100-step circuit breaker checkpoint by user.' });
-                            break;
+                        if (this.config.autonomyMode === 'C') {
+                            this.circuitBreakerUnlocked = true;
+                            this.emitEvent({ type: 'status', message: `Continuing within the configured ${this.maxSteps}-step task limit.` });
                         }
-                        this.circuitBreakerUnlocked = true;
-                        this.emitEvent({ type: 'status', message: `⚡ Circuit breaker unlocked! Resuming execution up to ${this.maxSteps} tier budget...` });
+                        else {
+                            this.emitEvent({
+                                type: 'approval_request',
+                                toolCallId: 'circuit_breaker_100_' + this.stepsCompleted,
+                                tool: 'circuit_breaker_checkpoint',
+                                args: {
+                                    consecutiveCommands: this.consecutiveCommands,
+                                    stepsCompleted: this.stepsCompleted,
+                                    activeTier: this.activeTier,
+                                    maxTierSteps: this.maxSteps,
+                                    message: `⚡ Circuit Breaker Checkpoint (100 steps reached). Approve to unlock and continue using your remaining ${this.activeTier.toUpperCase()} tier budget (up to ${this.maxSteps} steps total)?`
+                                },
+                                risk: 'info'
+                            });
+                            const approved = await this.waitForApproval('circuit_breaker_100_' + this.stepsCompleted);
+                            if (!approved) {
+                                this.stopRequested = true;
+                                this.emitEvent({ type: 'status', message: 'Task stopped at 100-step circuit breaker checkpoint by user.' });
+                                break;
+                            }
+                            this.circuitBreakerUnlocked = true;
+                            this.emitEvent({ type: 'status', message: `⚡ Circuit breaker unlocked! Resuming execution up to ${this.maxSteps} tier budget...` });
+                        }
                     }
                     // Sovereign Tier Budget Extension Checkpoint Gate
                     if (this.stepsCompleted >= this.maxSteps) {
-                        const extensionBatch = (this.activeTier === 'super_max') ? 600 : ((this.activeTier === 'max') ? 400 : 300);
-                        this.emitEvent({
-                            type: 'approval_request',
-                            toolCallId: 'tier_extension_' + this.stepsCompleted,
-                            tool: 'tier_budget_extension',
-                            args: {
-                                stepsCompleted: this.stepsCompleted,
-                                activeTier: this.activeTier,
-                                currentMaxSteps: this.maxSteps,
-                                message: `⚡ Tier Limit Reached (${this.stepsCompleted} / ${this.maxSteps} steps). The agent needs more steps to fulfill your intent. Approve to unlock another +${extensionBatch} steps for your ${this.activeTier.toUpperCase()} tier?`
-                            },
-                            risk: 'info'
-                        });
-                        const approved = await this.waitForApproval('tier_extension_' + this.stepsCompleted);
-                        if (!approved) {
+                        if (this.config.autonomyMode === 'C') {
                             this.stopRequested = true;
-                            this.emitEvent({ type: 'status', message: `Task stopped at ${this.maxSteps}-step tier limit by user.` });
-                            break;
+                            this.emitEvent({ type: 'error', message: `Task reached the configured ${this.maxSteps}-step limit without verified completion.` });
                         }
-                        this.maxSteps += extensionBatch;
-                        this.maxCircuitBreaker = this.maxSteps;
-                        this.emitEvent({ type: 'status', message: `⚡ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
+                        else {
+                            const extensionBatch = (this.activeTier === 'super_max') ? 600 : ((this.activeTier === 'max') ? 400 : 300);
+                            this.emitEvent({
+                                type: 'approval_request',
+                                toolCallId: 'tier_extension_' + this.stepsCompleted,
+                                tool: 'tier_budget_extension',
+                                args: {
+                                    stepsCompleted: this.stepsCompleted,
+                                    activeTier: this.activeTier,
+                                    currentMaxSteps: this.maxSteps,
+                                    message: `⚡ Tier Limit Reached (${this.stepsCompleted} / ${this.maxSteps} steps). The agent needs more steps to fulfill your intent. Approve to unlock another +${extensionBatch} steps for your ${this.activeTier.toUpperCase()} tier?`
+                                },
+                                risk: 'info'
+                            });
+                            const approved = await this.waitForApproval('tier_extension_' + this.stepsCompleted);
+                            if (!approved) {
+                                this.stopRequested = true;
+                                this.emitEvent({ type: 'status', message: `Task stopped at ${this.maxSteps}-step tier limit by user.` });
+                                break;
+                            }
+                            this.maxSteps += extensionBatch;
+                            this.maxCircuitBreaker = this.maxSteps;
+                            this.emitEvent({ type: 'status', message: `⚡ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
+                        }
                     }
                     // Feed result back to LLM (4. OBSERVE)
                     if (result && result._is_image_marker) {
@@ -2497,6 +2502,8 @@ export class AgentLoop {
                     }
                     // Save state continuously after each tool loop
                     this.memoryManager.saveHistory(this.messages);
+                    if (this.stopRequested)
+                        break;
                 }
             }
             catch (e) {
@@ -2564,7 +2571,9 @@ export class AgentLoop {
                 }
             }
         }
-        this.emitEvent({ type: 'task_complete', taskId: this.taskId });
+        // Successful completion is emitted only at the verified completion path
+        // above. A provider error, rejected check, or exhausted recovery budget
+        // must not generate a second (and misleading) success event here.
     }
     async waitForApproval(toolCallId) {
         return new Promise((resolve) => {

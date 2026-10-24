@@ -5,7 +5,8 @@
 import { SelectLayer } from './dialogs.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from './theme.js';
-import { listSessions, getActiveSessionId, switchSession, createSession } from '../sessionJournal.js';
+import { listSessions, getActiveSessionId, switchSession, createSession, forkSession } from '../sessionJournal.js';
+import { revokeAllAlways } from '../approvalGrants.js';
 function formatTimeAgo(timestamp) {
     const diffMs = Date.now() - timestamp;
     const minutes = Math.floor(diffMs / (60 * 1000));
@@ -45,6 +46,24 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
             type: 'new'
         }
     });
+    // Pinned item 1: Fork active conversation if available
+    if (activeId) {
+        const active = sessions.find(s => s.id === activeId);
+        if (active) {
+            items.push({
+                id: '__FORK_SESSION__',
+                label: `Branch / Fork Current Session ("${active.title}")`,
+                category: 'Actions',
+                description: 'Copy conversation history into a new branch without copying permissions',
+                searchText: 'fork branch clone copy session fresh permissions',
+                value: {
+                    type: 'fork',
+                    id: activeId,
+                    title: active.title
+                }
+            });
+        }
+    }
     for (const s of sessions) {
         const isCurrent = s.id === activeId;
         const timeAgo = formatTimeAgo(s.updatedAt);
@@ -142,7 +161,54 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
         cleanPrompt();
         return `Started new session: "${newSession.title}" (${newSession.id}) in ${shortenPath(workspace)}.`;
     }
-    // Case 2: Switch to selected session
+    // Case 2: Fork session into a new branch without copying permissions
+    if (picked.value.type === 'fork') {
+        const sourceId = picked.value.id || activeId;
+        if (!sourceId) {
+            return 'Cancelled. No session to fork.';
+        }
+        let forked = null;
+        if (options.loop?.memoryManager && typeof options.loop.memoryManager.forkSession === 'function') {
+            forked = options.loop.memoryManager.forkSession();
+        }
+        else {
+            forked = forkSession(sourceId, { makeActive: true });
+        }
+        if (!forked) {
+            cleanPrompt();
+            return `Could not fork session "${sourceId}".`;
+        }
+        // CRITICAL SECURITY INVARIANT (Claude Code Architecture, p. 24):
+        // Permissions and allowlists MUST NOT be copied across the fork.
+        revokeAllAlways();
+        if (options.loop && typeof options.loop.resetApprovalScope === 'function') {
+            options.loop.resetApprovalScope();
+        }
+        const historyMessages = options.loop?.memoryManager && typeof options.loop.memoryManager.loadHistory === 'function'
+            ? options.loop.memoryManager.loadHistory()
+            : forked.messages.filter(m => m.role !== 'system');
+        if (options.loop) {
+            options.loop.messages = historyMessages;
+            options.loop.taskId = `cli_chat_${Date.now()}`;
+            if (options.loop.tokenTracker && typeof options.loop.tokenTracker.reset === 'function') {
+                options.loop.tokenTracker.reset();
+            }
+        }
+        const renderer = prompt.renderer || options.loop?.connection?.renderer;
+        if (renderer && typeof renderer.renderSessionHistory === 'function') {
+            renderer.renderSessionHistory(historyMessages, {
+                id: forked.id,
+                title: forked.title,
+                messagesCount: forked.messages.length
+            });
+        }
+        if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
+            prompt.surface.viewport.toBottom();
+        }
+        cleanPrompt();
+        return `Forked into "${forked.title}" (${forked.messages.length} messages, ${forked.id}). Permissions and standing approvals were reset; any gated actions will request authorization anew.`;
+    }
+    // Case 3: Switch to selected session
     const targetId = picked.value.id;
     if (!targetId) {
         return 'Cancelled. No session selected.';

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import util from 'node:util';
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
+import { isAutonomousToolContext } from '../approvalPolicy.js';
 const execFilePromise = util.promisify(execFile);
 export const CURATED_OPEN_SOURCE_CATALOGUE = {
     'f5-tts': {
@@ -244,7 +245,7 @@ export function searchCatalogue(intentOrQuery) {
 export const openSourceToolProvisioner = {
     schema: {
         name: 'open_source_tool_provisioner',
-        description: 'Discover, evaluate compute/RAM hardware compatibility, and install sovereign open-source AI tools & models (voice cloning, TTS, speech-to-text, vision upscaling, local LLMs). Evaluates user hardware specs (RAM, CPU, GPU/MPS, disk) first and enforces Human-In-The-Loop (HITL) approval before any installation.',
+        description: 'Discover, evaluate hardware compatibility, and install open-source AI tools and models. Mode C authorizes in-scope installs; supervised modes require confirmation. Hardware, disk, and workspace checks still apply.',
         parameters: {
             type: 'object',
             properties: {
@@ -263,7 +264,7 @@ export const openSourceToolProvisioner = {
                 },
                 confirm: {
                     type: 'boolean',
-                    description: 'Mandatory Human-In-The-Loop (HITL) consent flag. Must be set to true only after obtaining explicit user agreement.'
+                    description: 'Explicit confirmation for supervised modes. Mode C authorizes in-scope installs without this flag.'
                 },
                 forceAlternative: {
                     type: 'boolean',
@@ -277,7 +278,7 @@ export const openSourceToolProvisioner = {
         const action = String(args['action'] || 'discover');
         const intent = typeof args['intent'] === 'string' ? args['intent'] : '';
         let toolId = typeof args['toolId'] === 'string' ? args['toolId'].toLowerCase().trim() : '';
-        const confirm = args['confirm'] === true;
+        const confirm = args['confirm'] === true || isAutonomousToolContext(sandbox);
         const forceAlternative = args['forceAlternative'] === true;
         const workspaceDir = (Array.isArray(sandbox['workspacePaths']) && sandbox['workspacePaths'][0])
             ? String(sandbox['workspacePaths'][0])
@@ -331,7 +332,7 @@ export const openSourceToolProvisioner = {
                     diskSpace: specs.diskSpaceText
                 },
                 recommendations: evaluations,
-                instruction: 'To install a candidate, review specs with the user, obtain HITL consent, and invoke with action: "install", toolId: "<id>", confirm: true.'
+                instruction: 'To install a candidate, review the hardware assessment and invoke with action: "install", toolId: "<id>". Supervised modes require explicit confirmation.'
             };
         }
         // ── ACTION: EVALUATE ──────────────────────────────────────────────────

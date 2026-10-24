@@ -51,24 +51,28 @@ test('buildSessionPickerItems: has + New Session at index 0 and classifies sessi
   ];
 
   const items = buildSessionPickerItems(sessions, 's_active', ws);
-  assert.equal(items.length, 4);
+  assert.equal(items.length, 5);
 
   // Pinned item 0
   assert.equal(items[0].id, '__NEW_SESSION__');
   assert.equal(items[0].value.type, 'new');
 
+  // Pinned item 1: Fork active conversation
+  assert.equal(items[1].id, '__FORK_SESSION__');
+  assert.equal(items[1].value.type, 'fork');
+
   // Active session
-  assert.equal(items[1].id, 's_active');
-  assert.ok(items[1].label.includes('[active]'));
-  assert.equal(items[1].category, 'Current Workspace');
+  assert.equal(items[2].id, 's_active');
+  assert.ok(items[2].label.includes('[active]'));
+  assert.equal(items[2].category, 'Current Workspace');
 
   // Other workspace session
-  assert.equal(items[2].id, 's_other');
-  assert.equal(items[2].category, 'Other Workspaces');
+  assert.equal(items[3].id, 's_other');
+  assert.equal(items[3].category, 'Other Workspaces');
 
   // Continuum session
-  assert.equal(items[3].id, 's_cont');
-  assert.equal(items[3].category, 'Continuum (Peer Agent)');
+  assert.equal(items[4].id, 's_cont');
+  assert.equal(items[4].category, 'Continuum (Peer Agent)');
 });
 
 test('runInteractiveSessionPicker: selecting + New Session creates fresh conversation', async () => {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AgentLoop } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
-import { createSession, getSession, saveSessionMessages } from '../sessionJournal.js';
+import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
 import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, isJsonRpcNotification, isJsonRpcRequest, isJsonRpcResponse } from './protocol.js';
 const MODE_TO_AUTONOMY = {
     autonomous: 'A',
@@ -670,11 +670,10 @@ export class AcpServer {
         }
         this.bindWorkspace(cwd);
         const title = `Fork of ${source?.title || sourceRecord?.title || 'Untitled'}`;
-        const created = createSession(cwd, title, false);
-        if (sourceRecord && sourceRecord.messages.length > 0) {
-            saveSessionMessages(created.id, sourceRecord.messages);
-        }
-        const session = this.addSession(created.id, cwd, title, source?.modeId ?? MODES.currentModeId);
+        const forked = forkSession(params.sessionId, { title, makeActive: false, workspace: cwd });
+        if (!forked)
+            throw this.paramsError('Failed to fork session journal');
+        const session = this.addSession(forked.id, cwd, title, source?.modeId ?? MODES.currentModeId);
         return this.sessionResponse(session);
     }
     replayTranscript(session, messages) {

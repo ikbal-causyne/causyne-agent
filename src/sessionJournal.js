@@ -352,6 +352,34 @@ export function switchSession(id) {
     setActiveSession(session.id);
     return session;
 }
+/**
+ * Fork an existing session into a new conversation in the same workspace.
+ *
+ * CRITICAL TRUST & PERMISSION INVARIANT (Claude Code Architecture, p. 24):
+ * Forking copies conversation history up to the designated turn, creating a
+ * distinct trajectory. Permissions, standing approvals, and tool allowlists
+ * are strictly bound to the originating session lifecycle and must NEVER be
+ * inherited into a fork. The forked session starts with fresh, ungranted
+ * permissions so that user authorization and trust are freshly established.
+ */
+export function forkSession(sourceId, options = {}) {
+    const source = readSession(sourceId);
+    if (!source)
+        return null;
+    const targetWorkspace = options.workspace || source.workspace || process.cwd();
+    const sourceTitle = source.title && source.title !== 'Untitled' ? source.title : 'Conversation';
+    const newTitle = options.title || `Fork of ${sourceTitle}`;
+    const newSession = createSession(targetWorkspace, newTitle, options.makeActive ?? true);
+    let messagesToCopy = Array.isArray(source.messages) ? source.messages : [];
+    if (typeof options.upToMessageIndex === 'number' && options.upToMessageIndex >= 0) {
+        messagesToCopy = messagesToCopy.slice(0, options.upToMessageIndex + 1);
+    }
+    if (messagesToCopy.length > 0) {
+        const clonedMessages = JSON.parse(JSON.stringify(messagesToCopy));
+        saveSessionMessages(newSession.id, clonedMessages);
+    }
+    return readSession(newSession.id);
+}
 function messageEqual(left, right) {
     return JSON.stringify(left) === JSON.stringify(right);
 }

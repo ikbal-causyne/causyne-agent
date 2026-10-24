@@ -77,10 +77,10 @@ test('sessions: switching changes what is active', () => {
 
 test('sessions: a title comes from the first thing the user asked', () => {
   const s = track(createSession(workspace('title')));
-  saveSessionMessages(s.id, [{ role: 'user', content: 'buat pena 3d di blender jadi klip 8 detik' }]);
+  saveSessionMessages(s.id, [{ role: 'user', content: 'create a 3d pen in blender for an 8 second clip' }]);
 
   const listed = listSessions().find((row) => row.id === s.id);
-  assert.match(listed.title, /pena 3d/, 'a session you cannot name is a session you cannot leave');
+  assert.match(listed.title, /3d pen/i, 'a session you cannot name is a session you cannot leave');
 
   assert.equal(titleFrom(''), 'Untitled');
   assert.ok(titleFrom('x'.repeat(200)).length <= 60, 'a title must stay listable');
