@@ -69,7 +69,7 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
  * Repeated identical executions within a short TTL window return cached output.
  */
 export const IDEMPOTENT_COMMAND_PATTERN =
-  /^(python3?|node|bun|pnpm|npm)\s+(-v|--version|-c\s+["'].*?["'])$|^ls\b|^cat\b|^head\b|^tail\b|^grep\b|^find\b|^which\b|^where\b|^pwd$|^git\s+(status|log|diff|branch|tag|show\b)|^echo\b/;
+  /^(python3?|node|bun|pnpm|npm)\s+(-v|--version|(-c|-e)\s+["'].*?["'])$|^ls\b|^cat\b|^head\b|^tail\b|^grep\b|^find\b|^which\b|^where\b|^pwd$|^git\s+(status|log|diff|branch|tag|show\b)|^echo\b/;
 
 interface CachedCommandResult {
   output: string;

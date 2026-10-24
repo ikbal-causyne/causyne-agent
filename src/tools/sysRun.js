@@ -30,7 +30,7 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
  * Commands that are strictly read-only and idempotent.
  * Repeated identical executions within a short TTL window return cached output.
  */
-export const IDEMPOTENT_COMMAND_PATTERN = /^(python3?|node|bun|pnpm|npm)\s+(-v|--version|-c\s+["'].*?["'])$|^ls\b|^cat\b|^head\b|^tail\b|^grep\b|^find\b|^which\b|^where\b|^pwd$|^git\s+(status|log|diff|branch|tag|show\b)|^echo\b/;
+export const IDEMPOTENT_COMMAND_PATTERN = /^(python3?|node|bun|pnpm|npm)\s+(-v|--version|(-c|-e)\s+["'].*?["'])$|^ls\b|^cat\b|^head\b|^tail\b|^grep\b|^find\b|^which\b|^where\b|^pwd$|^git\s+(status|log|diff|branch|tag|show\b)|^echo\b/;
 const COMMAND_CACHE_TTL_MS = 60_000;
 const commandCache = new Map();
 export function clearSysRunCache() {

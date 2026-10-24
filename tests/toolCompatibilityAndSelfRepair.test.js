@@ -40,7 +40,7 @@ describe('sysRun: Semantic Exit Code Normalization & Anti-Repeat Caching', () =>
     assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('rm -f test.txt'));
   });
 
-  test('sysRun treats grep with 0 matches (exit code 1) as success: true with (no matches found)', async () => {
+  test('sysRun treats grep with 0 matches (exit code 1) as success: true with (no matches found)', { skip: process.platform === 'win32' }, async () => {
     // Run grep for a non-existent random token in this test file
     const res = await sysRun.execute({
       command: 'echo "hello world" | grep -i "nonexistent_token_xyz_123"'
@@ -52,7 +52,7 @@ describe('sysRun: Semantic Exit Code Normalization & Anti-Repeat Caching', () =>
     assert.ok(res.note && res.note.includes('0 search matches'));
   });
 
-  test('sysRun treats grep with matching lines as success: true with exit code 0', async () => {
+  test('sysRun treats grep with matching lines as success: true with exit code 0', { skip: process.platform === 'win32' }, async () => {
     const res = await sysRun.execute({
       command: 'echo "hello sovereign causyne" | grep -i "sovereign"'
     });
@@ -63,7 +63,7 @@ describe('sysRun: Semantic Exit Code Normalization & Anti-Repeat Caching', () =>
   });
 
   test('sysRun returns cached output for repeated read-only idempotent commands', async () => {
-    const cmd = 'python3 -c "import sys; print(sys.version_info[0])"';
+    const cmd = 'node -v';
     const first = await sysRun.execute({ command: cmd });
     assert.strictEqual(first.success, true);
     assert.strictEqual(first.cached, undefined);
