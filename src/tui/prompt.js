@@ -30,6 +30,8 @@ import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer
 import { describeTool } from './toolDisplay.js';
 import { readClipboardSync } from './clipboardSync.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
+import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
+import { settleStageResize } from './resizeRecovery.js';
 
 const CTRL_C_WINDOW_MS = 2000;
 
@@ -127,9 +129,8 @@ export class ChatPrompt {
 
     // Commands for the palette, and the dialog that currently owns the keyboard.
     //
-    // A dialog is not a floating window here — it is rows of the live region, the
-    // way openclaw draws its pickers. There is no cell grid to overlay onto and
-    // no way to dim what is already in the user's scrollback.
+    // Dialogs use the live stage as a centered temporary view and restore the
+    // transcript when dismissed. Terminal scrollback is not repainted.
     this.commands = options.commands || [];
 
     // Is this line a COMMAND rather than a message?
@@ -148,6 +149,7 @@ export class ChatPrompt {
     this.notice = '';
     this.redrawScheduled = false;
     this.resizeTimer = null;
+    this.suspendedSurface = null;
   }
 
   // -------------------------------------------------------------------------
@@ -203,7 +205,7 @@ export class ChatPrompt {
    * instead of once per pixel.
    */
   handleResize = () => {
-    this.erase();
+    if (!this.resizeTimer) this.erase();
     // The Stage owns its own geometry and cannot repaint a band whose height it
     // no longer knows. Resizing it here, before the settle timer, would do it
     // once per pixel of a drag; it is done in the settled callback below.
@@ -220,7 +222,10 @@ export class ChatPrompt {
       // A stage that can no longer fit gives the band back and hands the
       // session to the scrollback renderer rather than painting into a region
       // too short to hold a viewport.
-      if (this.surface && !this.surface.resize()) this.surface = null;
+      const settled = settleStageResize(this.surface, this.suspendedSurface);
+      this.surface = settled.current;
+      this.suspendedSurface = settled.suspended;
+      if (settled.restored) this.attachSurface(settled.current);
       this.draw();
     }, RESIZE_SETTLE_MS);
     if (this.resizeTimer.unref) this.resizeTimer.unref();
@@ -456,7 +461,7 @@ export class ChatPrompt {
 
   /** Show local command output inside the live region, never in chat scrollback. */
   showText(title, text, options = {}) {
-    const panelWidth = Math.max(28, Math.min(this.width() - 2, options.width || 76));
+    const panelWidth = dialogWidth(this.width(), options.width || 76);
     const contentWidth = Math.max(12, panelWidth - 4);
     const lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth);
     return this.openLayer(new TextLayer({
@@ -522,10 +527,7 @@ export class ChatPrompt {
    * count and starts eating the conversation above.
    */
   width() {
-    // The Stage may ask for a narrower measure — it does so only for the opening
-    // composition, while there is no transcript yet, so the input box lines up
-    // with the banner above it instead of stretching past it. Once the session
-    // starts it hands back the full width and nothing below here changes.
+    // The Stage keeps the composer at one readable measure through the session.
     if (this.surface && typeof this.surface.composeWidth === 'function') {
       const asked = this.surface.composeWidth();
       if (Number.isFinite(asked) && asked > 0) return Math.max(20, asked);
@@ -632,22 +634,13 @@ export class ChatPrompt {
       return;
     }
 
-    // Echo what was sent as a BLOCK, so the transcript reads as a conversation.
-    //
-    // A `▸ ` prefix made the user's own words indistinguishable from a tool row
-    // at a glance. The reference shows the user's message as its own left-barred,
-    // filled block (screenshot 15.02.21), which is the seam that lets the eye
-    // find where each exchange begins when scrolling back through a long turn.
-    // width - 1, not width. A block built to the FULL terminal width fills the
-    // final column, the terminal wraps it, and one drawn row becomes two real
-    // ones — so erase() walks back half as far as it should and leaves the
-    // remainder on screen. That is why a six-line message came back as six
-    // stray fragments of its own tail. barBlock honours whatever width it is
-    // given; reserving the column is the caller's job.
-    this.commit('user', (width) => {
+    // Render live submissions through the same path used when history reflows.
+    if (this.surface?.homeInfo) this.surface.leaveHome();
+    if (this.renderer?.renderUserMessage) this.renderer.renderUserMessage(text);
+    else this.commit('user', (width) => {
       const blockWidth = Math.max(8, width - 1);
       return barBlock(
-        wrapBlock(text, Math.max(8, blockWidth - visibleWidth(GLYPHS.bar) - GUTTER)),
+        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.bar) - GUTTER)),
         { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
       );
     });
@@ -1186,6 +1179,7 @@ export class ChatPrompt {
   }
 
   draw() {
+    if (this.resizeTimer) return;
     if (!this.active) return;
     this.erase();
 
@@ -1249,6 +1243,7 @@ export class ChatPrompt {
       punctuate: true
     });
 
+    const planRows = this.planRows(width);
     const pickerRows = this.completion ? this.pickerRows(width) : [];
     this.pickerLayout = this.completion ? {
       pickerStart: planRows.length + boxRows.length,
@@ -1264,14 +1259,16 @@ export class ChatPrompt {
     const status = this.statusRow(width);
     const gap = status.length > 0 ? new Array(FOOTER_GAP).fill('') : [];
 
-    const planRows = this.planRows(width);
     const all = this.clampRows(
       planRows.concat(boxRows, pickerRows, noticeRows, gap, status), width
     );
     if (this.pickerLayout) this.pickerLayout.totalPromptRows = all.length;
 
     // Park the cursor where the user is typing, not at the end of the picker.
-    this.present(all, planRows.length + caretRow + padTop, layout.cursorCol + inset);
+    const positioned = this.surface
+      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, this.surface.width))
+      : { rows: all, inset: 0 };
+    this.present(positioned.rows, planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
   }
 
   /**
@@ -1288,7 +1285,7 @@ export class ChatPrompt {
     if (this.surface) {
       this.drawnRows = 0;
       this.cursorRow = 0;
-      this.surface.present(all, { row: caretRow, col: caretCol });
+      this.surface.present(all, { row: caretRow, col: caretCol, modal: Boolean(this.layer) });
       return;
     }
 
@@ -1331,14 +1328,16 @@ export class ChatPrompt {
 
   /** The live region while a dialog is up: the panel, then the status row. */
   drawLayer(width) {
-    const panelWidth = Math.max(24, Math.min(width - 1, this.layer.width || 64));
-    const maxHeight = Math.max(6, Math.min(this.layer.preferredHeight(), 20));
+    const panelWidth = dialogWidth(width, this.layer.width || 64);
+    const maxHeight = dialogHeight(this.surface?.stage?.maxHeight || this.out?.rows, this.layer.preferredHeight());
     const panel = panelRows(this.layer, panelWidth, maxHeight);
     const all = this.clampRows(panel.concat(this.statusRow(width)), width);
 
     // panelRows() called body(), which is where a layer publishes its cursor.
     const cursor = this.layer.cursor;
-    this.present(all, cursor ? 1 + cursor.y : 0, cursor ? 2 + cursor.x : 0);
+    const centered = this.surface ? centerRows(all, this.surface.width) : { rows: all, inset: 0 };
+    this.present(centered.rows, cursor ? 1 + cursor.y : 0,
+      (cursor ? 2 + cursor.x : 0) + centered.inset);
   }
 
   pickerRows(width) {

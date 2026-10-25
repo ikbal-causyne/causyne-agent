@@ -27,6 +27,8 @@ import { Viewport, ScrollAcceleration, DEFAULT_SCROLL_SPEED } from './viewport.j
 import { paint, GLYPHS } from './theme.js';
 import { mouseTracking } from './keys.js';
 import { truncate, padEnd, visibleWidth } from './text.js';
+import { composerWidth } from './layout.js';
+import { placeHome, placeDialog } from './homeView.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -35,24 +37,6 @@ const MAX_EVICTED_ROWS = 40000;
 // Below this the prompt block gets the whole band and the transcript is not
 // shown at all — which is a broken screen, so the prompt is trimmed instead.
 const MIN_VIEWPORT_ROWS = 2;
-
-// Fallback measure for the opening composition, used only when the caller does
-// not hand over the banner's real width.
-//
-// The session banner comes out ~82 columns wide (the wordmark beside its facts
-// column, and the workspace path under it). While the input box stretched the
-// full width of a large terminal, the two read as unrelated objects — a thin line
-// pulled across a wide emptiness under a block that stops two-thirds of the way.
-// Ninety sits just above the banner and just below the 100-column prose measure
-// theme.js already uses, so the opening reads as ONE panel.
-//
-// It applies ONLY while the transcript is empty. The session input box keeps
-// filling the window, which is an established layout invariant — tuiWidth
-// asserts "the input box fills a stretched terminal" after a hardcoded 120-column
-// ceiling was torn out of three modules for leaving a wide terminal two-thirds
-// covered. This does not reopen that: it is a different rule for a different
-// moment, and it lifts the instant a session begins.
-const OPENING_FALLBACK_WIDTH = 100;
 
 // The rail costs a column plus a column of air. On a narrow terminal those two
 // are worth more as text, so it turns itself off rather than crowding the
@@ -186,43 +170,38 @@ export class StageSurface {
     this.mouseCaptured = false;
     this.detached = false;
 
-    // The width the banner above the band actually used, handed over by the
-    // caller that printed it. Zero means "nobody measured", and the fallback
-    // applies.
+    // Retained for callers that pass a measured header width. The composer now
+    // uses a stable readable width even after the first transcript entry.
     this.openingWidth = Number.isFinite(openingWidth) && openingWidth > 0
       ? Math.floor(openingWidth)
       : 0;
 
-    // Has anything ever landed in this session?
-    //
-    // NOT the same question as "is the transcript empty", and the difference is
-    // a real defect: /print and ctrl+L empty the transcript, so keying on
-    // emptiness narrowed the input box back to the banner's measure long after
-    // the banner had scrolled out of view — the box visibly shrinking for a
-    // reason the user cannot see. The opening measure belongs to THE opening,
-    // once, not to every empty moment after it.
+    // Tracks whether this session has ever received transcript content.
     this.opened = false;
+    this.homeInfo = null;
+    this.homeSessionSelected = false;
   }
 
   get width() {
     return this.stage.width();
   }
 
-  /**
-   * The width the prompt block should be composed to.
-   *
-   * Deliberately NOT centred, which is where Causyne parts company with the
-   * reference on purpose. opencode centres its logo and prompt because its logo
-   * is centred in a screen it owns (routes/home.tsx:72-90). Causyne's banner is
-   * left-aligned in the user's real scrollback, so a centred input box below it
-   * would be misaligned with the very thing it is supposed to belong to. Same
-   * origin, same measure: the opening reads as a document block, not a splash.
-   */
+  /** The composer keeps a stable readable width through the whole session. */
   composeWidth() {
-    const width = this.width;
-    if (this.opened || !this.transcript.isEmpty()) return width;
-    const measure = this.openingWidth > 0 ? this.openingWidth : OPENING_FALLBACK_WIDTH;
-    return Math.min(width, measure);
+    return composerWidth(this.width);
+  }
+
+  /** Keep Home distinct from a selected or newly started conversation. */
+  enterHome(info) {
+    this.homeInfo = info;
+    this.homeSessionSelected = false;
+    this.stage.invalidate();
+  }
+
+  leaveHome(sessionSelected = false) {
+    if (this.homeInfo) this.stage.invalidate();
+    this.homeInfo = null;
+    if (sessionSelected) this.homeSessionSelected = true;
   }
 
   /**
@@ -367,6 +346,16 @@ export class StageSurface {
    */
   present(promptRows, caret = null) {
     if (!this.stage.reserved) return 0;
+
+    if (this.homeInfo || caret?.modal) {
+      if (this.stage.height < this.stage.maxHeight) {
+        this.stage.grow(this.stage.maxHeight - this.stage.height);
+      }
+      const view = caret?.modal
+        ? placeDialog(promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0)
+        : placeHome(this.homeInfo, promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0);
+      return this.stage.paint(view.rows, { row: view.caretRow, col: view.caretCol });
+    }
 
     const width = this.width;
     const rail = this.railEnabled(width);

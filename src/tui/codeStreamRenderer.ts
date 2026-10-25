@@ -1,5 +1,5 @@
 import { ChatRenderer } from './chatRenderer.js';
-import { CODE_PANEL_LINES, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
+import { CODE_PANEL_LINES, codePreviewLineCount, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
 
 type RendererEvent = { type: string; [key: string]: unknown };
 type CodePanelState = { event: CodeProgressEvent; modelNote: string; start: number; followTail: boolean };
@@ -19,7 +19,7 @@ type CodeSurface = {
 type CodeWheel = { name: string; wheel?: { direction: string; x: number; y: number } };
 
 function lastStart(event: CodeProgressEvent): number {
-  return Math.max(0, String(event.code || '').split(/\r?\n/).length - CODE_PANEL_LINES);
+  return Math.max(0, codePreviewLineCount(event) - CODE_PANEL_LINES);
 }
 
 /** Adds a live code panel to the existing transcript without changing its other frames. */

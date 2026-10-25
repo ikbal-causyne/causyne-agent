@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction, renderCodeProgress } from '../src/tui/codeProgress.js';
+import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction, codePreviewLineCount, renderCodeProgress } from '../src/tui/codeProgress.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
 import { ChatPrompt } from '../src/tui/prompt.js';
 import { Transcript } from '../src/tui/transcript.js';
@@ -22,9 +22,57 @@ test('model code chunks update a bounded draft and tool edits show replacement c
   }, 'edit-1');
   assert.equal(edit?.description, 'Editing app.ts');
   assert.equal(edit?.code, 'const n = 2;');
+  assert.equal(edit?.before, 'old');
   const xml = new StreamingCodePreview();
   const toolDraft = xml.accept('<tool_call>{"name":"fs_write","arguments":{"path":"app.ts","content":"const x = 1;\\n', 1000);
   assert.equal(toolDraft?.code, 'const x = 1;\n');
+});
+
+test('code preview marks new, removed, and unchanged lines from an evidenced edit', () => {
+  const edit = codeProgressFromAction('fs_edit', {
+    path: 'app.ts', oldText: 'keep\nremove', newText: 'keep\nadd'
+  }, 'diff-1');
+  assert.ok(edit);
+  const visible = stripAnsi(renderCodeProgress(edit, 50).join('\n'));
+  assert.match(visible, /  keep/);
+  assert.match(visible, /- remove/);
+  assert.match(visible, /\+ add/);
+  assert.equal(codePreviewLineCount(edit), 3);
+  const longBefore = Array.from({ length: 750 }, (_, index) => `line ${index + 1}`);
+  const longAfter = [...longBefore];
+  longAfter[700] = 'replaced line';
+  const longEdit = { ...edit, before: longBefore.join('\n'), code: longAfter.join('\n') };
+  assert.equal(codePreviewLineCount(longEdit), 751);
+  const longPanel = stripAnsi(renderCodeProgress(longEdit, 50, '', 695).join('\n'));
+  assert.match(longPanel, /- line 701/);
+  assert.match(longPanel, /\+ replaced line/);
+  const removal = codeProgressFromAction('fs_edit', {
+    path: 'app.ts', oldText: 'obsolete()', newText: ''
+  }, 'remove-line');
+  assert.ok(removal);
+  assert.match(stripAnsi(renderCodeProgress(removal, 50).join('\n')), /- obsolete\(\)/);
+  const unknownBefore = { ...edit, before: undefined };
+  assert.doesNotMatch(stripAnsi(renderCodeProgress(unknownBefore, 50).join('\n')), /\+ add/);
+  assert.doesNotMatch(stripAnsi(renderCodeProgress(unknownBefore, 50).join('\n')), /- remove/);
+});
+
+test('truecolor code preview uses soft distinct backgrounds, with clean plain-text markers', () => {
+  const script = `import {renderCodeProgress} from './src/tui/codeProgress.js';\n` +
+    `const event={type:'code_progress',id:'edit',phase:'working',operation:'Editing',description:'Editing file',before:'old',code:'new',source:'tool'};\n` +
+    `console.log(renderCodeProgress(event,40).join('\\n'));`;
+  const colored = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '3', NO_COLOR: '', CAUSYNE_NO_COLOR: '0' }
+  });
+  assert.equal(colored.status, 0, colored.stderr);
+  assert.match(colored.stdout, /\x1b\[48;2;47;32;34m/);
+  assert.match(colored.stdout, /\x1b\[48;2;32;42;32m/);
+  const plain = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' }
+  });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.doesNotMatch(plain.stdout, /\x1b/);
+  assert.match(plain.stdout, /- old/);
+  assert.match(plain.stdout, /\+ new/);
 });
 
 test('code panel replaces its live frame and preserves user-visible thinking as a model note', () => {

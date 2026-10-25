@@ -21,6 +21,7 @@ import { describeTool } from './toolDisplay.js';
 import { approvalDiff } from './diff.js';
 import { StatusLine } from './statusLine.js';
 import { barBlock } from './block.js';
+import { composerWidth, openingRows, sessionRows } from './layout.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -314,7 +315,7 @@ export class ChatRenderer {
       this.rowSink = previousSink;
       this.forcedWidth = previousWidth;
     }
-    return sink;
+    return sessionRows(sink, width).rows;
   }
 
   /**
@@ -358,36 +359,15 @@ export class ChatRenderer {
    * The context the CLI never showed. Which model is about to spend the user's
    * money, in which autonomy mode, over which paths.
    */
-  /**
-   * Returns the width of the widest row it wrote.
-   *
-   * The Stage lays its opening composition out to this, so the input box below
-   * the banner ends where the banner's text ends instead of stretching past it.
-   * MEASURED rather than guessed, because the banner is adaptive: it drops hints
-   * and truncates the workspace list to fit whatever width it is given, so its
-   * natural width depends on the user's own paths and cannot be a constant. At
-   * 156 columns it comes out at 122 — and composing it AT 117 already hides
-   * ~/Causyne, which is why the banner is never the thing that gets narrowed.
-   */
+  /** Write the opening composition and report its companion composer width. */
   sessionHeader(info = {}) {
     // The status line shows the same facts during the turn, where the header
     // has already scrolled away. Mutation first: the closure below runs again
     // on every reflow and must not re-apply it.
     this.status.setSession(info);
 
-    // Tap the rows on their way past, without disturbing either sink.
-    const seen = [];
-    const write = this.write.bind(this);
-    this.write = (line = '') => { seen.push(line); return write(line); };
-    try {
-      this.frame('session', () => this.renderSessionHeader(info));
-    } finally {
-      this.write = write;
-    }
-
-    let widest = 0;
-    for (const line of seen) widest = Math.max(widest, visibleWidth(String(line)));
-    return widest;
+    this.frame('session', () => this.renderSessionHeader(info));
+    return composerWidth(this.width());
   }
 
   renderSessionHeader(info = {}) {
@@ -398,9 +378,7 @@ export class ChatRenderer {
     // label/value rows, a command count, a blank and a separate key-hint row —
     // nineteen rows of chrome before the user could type. Both references open
     // in eight or fewer, with the identity and the facts as a single object.
-    this.write();
-    for (const row of sessionBanner(info, width, { height: this.out?.rows })) this.write(row);
-    this.write();
+    const rows = ['', ...sessionBanner(info, width, { height: this.out?.rows }), ''];
 
     const hints = [
       `${info.commandCount || 0} commands`, '/help', 'enter send',
@@ -409,8 +387,8 @@ export class ChatRenderer {
     const separator = `  ${GLYPHS.dot}  `;
     const kept = hints.slice();
     while (kept.length > 1 && visibleWidth(kept.join(separator)) > width - 1) kept.pop();
-    this.write(dim(kept.join(separator)));
-    this.write();
+    rows.push(dim(kept.join(separator)), '');
+    for (const row of openingRows(rows, width, Number(this.out?.rows))) this.write(row);
   }
 
   /**
@@ -522,7 +500,7 @@ export class ChatRenderer {
     if (!text.trim()) return;
 
     this.frame('user', () => {
-      const width = this.measure();
+      const width = composerWidth(this.measure());
       const blockWidth = Math.max(8, width - 1);
       const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.bar) - 1);
       const rows = barBlock(
@@ -573,6 +551,7 @@ export class ChatRenderer {
    * Mirrors OpenCode's session conversation loader so prior turns are visible in viewport.
    */
   renderSessionHistory(messages = [], sessionInfo = null) {
+    this.transcript?.surface?.leaveHome?.(true);
     this.clearTranscript();
 
     if (sessionInfo && (sessionInfo.title || sessionInfo.id)) {

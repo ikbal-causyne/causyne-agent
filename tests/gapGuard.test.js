@@ -218,40 +218,31 @@ describe('UX-03 — the band still fills when there is something to fill it with
 describe('the opening composition — one panel, not a bar across a void', () => {
   const widthOf = (rows) => Math.max(0, ...rows.map((row) => visibleWidth(row)));
 
-  test('the input box is laid out to the banner, not to the terminal', () => {
-    // What made the first screen read as unfinished even after the void was
-    // gone: the banner's text stops around 122 columns and the filled input
-    // surface stretched all 156, so the two read as unrelated objects.
+  test('the session input box is a left-aligned, readable column', () => {
     const m = measureStartup(REFERENCE_TERMINAL);
-    assert.ok(m.bannerWidth > 0, 'sessionHeader must report the width it used');
-    assert.ok(widthOf(m.surface.stage.prev) <= m.bannerWidth,
-      `the box came out ${widthOf(m.surface.stage.prev)} wide beside a ${m.bannerWidth}-wide banner`);
-    assert.ok(widthOf(m.surface.stage.prev) >= m.bannerWidth - 4,
-      'and not so much narrower that it reads as a different object');
+    assert.equal(m.surface.composeWidth(), 82);
+    const first = m.surface.stage.prev.find((row) => row.trim());
+    assert.ok(first.startsWith('  '), 'composer should have a modest left inset');
+    assert.ok(widthOf(m.surface.stage.prev) < REFERENCE_TERMINAL.columns,
+      'composer must leave room on the right');
   });
 
-  test('the cap lifts the moment there is a session', () => {
+  test('the composer stays the same width when a session starts', () => {
     const m = measureStartup(REFERENCE_TERMINAL);
     assert.equal(m.surface.composeWidth(), m.bannerWidth);
 
     m.renderer.handle({ type: 'agent_message', content: 'the session has started' });
     m.prompt.draw();
 
-    assert.equal(m.surface.composeWidth(), REFERENCE_TERMINAL.columns,
-      'the session input box keeps filling the window — the established layout invariant');
-    assert.ok(widthOf(m.surface.stage.prev) > m.bannerWidth,
-      'and it visibly widens rather than staying in the opening measure');
+    assert.equal(m.surface.composeWidth(), m.bannerWidth,
+      'starting the session must not make the composer jump sideways or grow');
   });
 
-  test('the banner itself is never the thing that gets narrowed', () => {
-    // Measured: composing the banner at 117 columns already truncates the
-    // workspace list past ~/Causyne — the directory the user is working in. The
-    // banner is adaptive text that shows more when given more; the box is a
-    // filled surface whose edge-to-edge bar is what looked wrong.
+  test('the banner and composer share a stable layout measure', () => {
     const wide = new ChatRenderer({ out: { columns: 156, write: () => true } });
     const narrow = new ChatRenderer({ out: { columns: 100, write: () => true } });
-    assert.ok(wide.sessionHeader({ ...SESSION }) > narrow.sessionHeader({ ...SESSION }),
-      'the banner uses the room it is given, so it must be given the whole terminal');
+    assert.equal(wide.sessionHeader({ ...SESSION }), 82);
+    assert.equal(narrow.sessionHeader({ ...SESSION }), 82);
   });
 
   test('the opening measure never exceeds the terminal', () => {
@@ -264,22 +255,16 @@ describe('the opening composition — one panel, not a bar across a void', () =>
     }
   });
 
-  test('the opening measure belongs to THE opening, not to every empty moment', () => {
-    // /print and ctrl+L empty the transcript. Keying the measure on emptiness
-    // narrowed the input box back to the banner's width long after the banner
-    // had scrolled out of view — the box visibly shrinking for a reason the user
-    // cannot see. Found by asking what happens after /print, not by a failing
-    // test; the guard exists so nobody has to ask again.
+  test('clearing the transcript does not resize the composer', () => {
     const m = measureStartup(REFERENCE_TERMINAL);
-    assert.equal(m.surface.composeWidth(), m.bannerWidth);
+    const width = m.surface.composeWidth();
 
     m.renderer.handle({ type: 'agent_message', content: 'a session happens' });
-    assert.equal(m.surface.composeWidth(), REFERENCE_TERMINAL.columns);
+    assert.equal(m.surface.composeWidth(), width);
 
     m.surface.flushAndClear();
     assert.equal(m.surface.transcript.length, 0, 'the transcript really is empty again');
-    assert.equal(m.surface.composeWidth(), REFERENCE_TERMINAL.columns,
-      'and the box stays where it is — there is no banner up there to line up with any more');
+    assert.equal(m.surface.composeWidth(), width);
   });
 
   test('with nobody measuring the banner it still behaves', () => {
@@ -290,6 +275,6 @@ describe('the opening composition — one panel, not a bar across a void', () =>
     assert.ok(fallback > 20 && fallback <= 156, `fallback measure was ${fallback}`);
 
     surface.transcript.append({ kind: 'notice', produce: () => ['x'] });
-    assert.equal(surface.composeWidth(), 156, 'and it still lifts once there is a session');
+    assert.equal(surface.composeWidth(), fallback, 'a session does not resize the composer');
   });
 });

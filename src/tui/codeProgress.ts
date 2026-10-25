@@ -1,5 +1,9 @@
 import { panel } from './block.js';
-import { safeDisplay, truncate } from './text.js';
+import { safeDisplay, truncate, padEnd } from './text.js';
+// The terminal theme is still a standalone JavaScript module in the TS migration.
+// @ts-expect-error theme.js has no TypeScript declaration yet.
+import { COLOR_DEPTH, IS_LIGHT, paint } from './theme.js';
+import { diffLines } from './diff.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -14,6 +18,7 @@ export interface CodeProgressEvent {
   path?: string;
   description: string;
   code?: string;
+  before?: string;
   codeTruncated?: boolean;
   source: 'model' | 'tool' | 'provider';
 }
@@ -44,9 +49,23 @@ function codeFromArgs(args: Record<string, unknown>): string {
       if (!item || typeof item !== 'object') return '';
       const entry = item as Record<string, unknown>;
       return stringField(entry.new_string ?? entry.newText ?? entry.replaceContent ?? entry.ReplacementContent ?? entry.content);
-    }).filter(Boolean).join('\n');
+    }).join('\n');
   }
   return '';
+}
+
+function previousCodeFromArgs(args: Record<string, unknown>): string | undefined {
+  const direct = args.old_string ?? args.oldText ?? args.searchContent ?? args.SearchContent;
+  if (typeof direct === 'string') return direct;
+  const edits = args.edits ?? args.ReplacementChunks;
+  if (!Array.isArray(edits)) return undefined;
+  const previous = edits.map((item: unknown) => {
+    if (!item || typeof item !== 'object') return undefined;
+    const entry = item as Record<string, unknown>;
+    const value = entry.old_string ?? entry.oldText ?? entry.searchContent ?? entry.SearchContent;
+    return typeof value === 'string' ? value : undefined;
+  });
+  return previous.length && previous.every(value => value !== undefined) ? previous.join('\n') : undefined;
 }
 
 export function codeProgressFromAction(
@@ -64,11 +83,12 @@ export function codeProgressFromAction(
   const description = operation === 'Moving' && destination
     ? `Moving ${label} to ${destination}`
     : `${operation} ${label}`;
+  const before = previousCodeFromArgs(args);
   const code = codeFromArgs(args);
   return {
     type: 'code_progress', id, phase, operation,
     ...(path ? { path } : {}), description,
-    ...(code ? { code } : {}), source
+    ...(code || before !== undefined ? { code } : {}), ...(before !== undefined ? { before } : {}), source
   };
 }
 
@@ -147,7 +167,7 @@ export class NativeCodeObserver {
 
   handle(event: CodeProgressEvent): void {
     if (!event.path || !['Creating', 'Editing'].includes(event.operation)) return;
-    if (event.code || event.phase === 'failed') {
+    if (event.code !== undefined || event.phase === 'failed') {
       this.stop(event.id);
       return;
     }
@@ -165,7 +185,7 @@ export class NativeCodeObserver {
       const entry = this.active.get(event.id);
       const current = this.read(target);
       if (current !== null && (current !== entry?.previous || event.operation === 'Creating')) {
-        this.emit({ ...event, code: current });
+        this.emit({ ...event, code: current, ...(entry?.previous !== null && entry?.previous !== undefined ? { before: entry.previous } : {}) });
       }
     }
     this.stop(event.id);
@@ -177,7 +197,7 @@ export class NativeCodeObserver {
     const current = this.read(entry.path);
     if (current === null || current === entry.previous || current === entry.lastShown) return;
     entry.lastShown = current;
-    this.emit({ ...entry.event, code: current });
+    this.emit({ ...entry.event, code: current, ...(entry.previous !== null ? { before: entry.previous } : {}) });
   }
 
   dispose(): void {
@@ -205,6 +225,61 @@ export class NativeCodeObserver {
   }
 }
 
+type PreviewLine = { kind: 'add' | 'del' | 'ctx'; text: string };
+
+function splitCodeLines(code: string): string[] {
+  if (!code) return [];
+  const lines = code.replace(/\r\n?/g, '\n').split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  return lines;
+}
+
+function previewLines(event: CodeProgressEvent): PreviewLine[] {
+  if (event.code === undefined) return [];
+  if (event.before !== undefined) {
+    const oldLines = splitCodeLines(event.before);
+    const newLines = splitCodeLines(event.code);
+    let prefix = 0;
+    while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix
+      && oldLines[oldLines.length - suffix - 1] === newLines[newLines.length - suffix - 1]) suffix++;
+    const changedOld = oldLines.slice(prefix, oldLines.length - suffix);
+    const changedNew = newLines.slice(prefix, newLines.length - suffix);
+    const result = diffLines(changedOld.join('\n'), changedNew.join('\n'));
+    // Diff only the changed middle so a small edit in a long file stays fast.
+    // A partial middle diff could mislabel lines, so leave that case neutral.
+    if (result.truncated) return newLines.map(text => ({ kind: 'ctx', text }));
+    return [
+      ...oldLines.slice(0, prefix).map(text => ({ kind: 'ctx' as const, text })),
+      ...result.ops,
+      ...oldLines.slice(oldLines.length - suffix).map(text => ({ kind: 'ctx' as const, text }))
+    ];
+  }
+  const kind = event.operation === 'Removing' ? 'del'
+    : event.operation === 'Creating' || event.operation === 'Drafting' ? 'add' : 'ctx';
+  return splitCodeLines(event.code).map(text => ({ kind, text }));
+}
+
+export function codePreviewLineCount(event: CodeProgressEvent): number {
+  return previewLines(event).length;
+}
+
+function highlightCode(kind: PreviewLine['kind'], text: string, width: number): string {
+  const marker = kind === 'add' ? '+' : kind === 'del' ? '-' : ' ';
+  const role = kind === 'add' ? 'success' : kind === 'del' ? 'danger' : 'muted';
+  const body = padEnd(truncate(safeDisplay(text), Math.max(1, width - 2)), Math.max(1, width - 2));
+  if (kind === 'ctx' || COLOR_DEPTH < 256) return paint(role, marker) + ' ' + body;
+  // A low-contrast tint one step above the panel surface. The colored marker
+  // remains readable even when a terminal can only approximate the tint.
+  const background = COLOR_DEPTH >= 16777216
+    ? kind === 'add' ? (IS_LIGHT ? '48;2;231;239;220' : '48;2;32;42;32')
+      : (IS_LIGHT ? '48;2;245;230;230' : '48;2;47;32;34')
+    : kind === 'add' ? (IS_LIGHT ? '48;5;194' : '48;5;22')
+      : (IS_LIGHT ? '48;5;224' : '48;5;52');
+  return paint(role, marker) + `\x1b[${background}m ${body}\x1b[49m`;
+}
+
 /** Render a bounded, resize-safe panel. The terminal theme supplies rounded corners. */
 export function renderCodeProgress(event: CodeProgressEvent, width: number, modelNote = '', startLine?: number): string[] {
   const safeWidth = Math.max(12, Math.floor(width) || 80);
@@ -213,13 +288,13 @@ export function renderCodeProgress(event: CodeProgressEvent, width: number, mode
   const rows = [truncate(safeDisplay(event.description), inner)];
   if (event.path) rows.push(truncate(safeDisplay(event.path), inner));
   if (modelNote) rows.push(truncate(`model note: ${safeDisplay(modelNote)}`, inner));
-  const codeLines = String(event.code || '').split(/\r?\n/);
+  const codeLines = previewLines(event);
   const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
   const start = startLine === undefined ? maxStart : Math.max(0, Math.min(Math.floor(startLine), maxStart));
-  const visible = event.code ? codeLines.slice(start, start + CODE_PANEL_LINES) : [];
+  const visible = codeLines.slice(start, start + CODE_PANEL_LINES);
   if (visible.length) {
     rows.push('');
-    for (const line of visible) rows.push(truncate(safeDisplay(line), inner));
+    for (const line of visible) rows.push(highlightCode(line.kind, line.text, inner));
     if (codeLines.length > CODE_PANEL_LINES) {
       rows.push(truncate(`lines ${start + 1}-${start + visible.length} of ${codeLines.length} · scroll over code`, inner));
     }

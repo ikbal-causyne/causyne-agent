@@ -12,6 +12,8 @@ import { wrapBlock } from './tui/text.js';
 import { getPackageVersion } from './version.js';
 import { resolveCharPool } from './contextManager.js';
 import { PRIMARY_ACTIONS, homeStatusLine, homeHint, moreLayer, configureInPrompt, mcpPicker, PROVIDERS } from './tui/home.js';
+import { commandDialog } from './tui/commandPresentation.js';
+import { HomeTransition } from './tui/homeTransition.js';
 import { SelectLayer } from './tui/dialogs.js';
 import { askSelect, askText, askConfirm, askDecision } from './tui/ask.js';
 import { renderReport } from './reporting.js';
@@ -299,7 +301,8 @@ export async function runTask(task) {
  */
 export async function chatMode({ home = false } = {}) {
 
-  // One chat surface, and it renders in the NORMAL buffer.
+  // One chat surface in the normal buffer. Home fills the available stage;
+  // selecting or starting a session reuses it for transcript and input.
   //
   // There used to be a full-screen alternate-buffer shell here, chosen by
   // canRunShell(). It clears the terminal on entry (\x1b[?1049h + \x1b[2J) and
@@ -312,9 +315,9 @@ export async function chatMode({ home = false } = {}) {
   //
   // Neither reference does this. openclaw emits \x1b[?1049h nowhere at all and
   // repaints the normal buffer in place; opencode's --mini runs split-footer on
-  // the main screen with clearOnShutdown false. So does this now: everything
-  // printed is permanent terminal history, and only the prompt and its status
-  // row are repainted. See UX-01 in .agents/rules.json.
+  // the main screen with clearOnShutdown false. The live stage also repaints
+  // in place and is flushed into terminal history on exit. See UX-01 in
+  // .agents/rules.json.
   const conn = new LocalCLIConnection();
   const taskId = `cli_chat_${Date.now()}`;
   const loop = new AgentLoop(conn, taskId, null);
@@ -323,7 +326,7 @@ export async function chatMode({ home = false } = {}) {
   // money, in which autonomy mode, over which paths. All of it was already
   // loaded — none of it was ever displayed.
   const config = loadConfig();
-  const bannerWidth = conn.renderer.sessionHeader({
+  const headerInfo = {
     version: `v${getPackageVersion()}`,
     provider: config.provider,
     model: config.model,
@@ -337,7 +340,15 @@ export async function chatMode({ home = false } = {}) {
     // displayed once the header had scrolled away.
     cwd: process.cwd(),
     contextLimit: resolveCharPool(config.tier, config.maxCharPool)
-  });
+  };
+  let surface = home && isInteractive() ? createStageSurface({ config }) : null;
+  const openedHome = Boolean(surface);
+  const bannerWidth = openedHome ? 0 : conn.renderer.sessionHeader(headerInfo);
+  if (openedHome) {
+    conn.renderer.status.setSession(headerInfo);
+    surface.enterHome(headerInfo);
+  }
+  const homeTransition = new HomeTransition(openedHome, surface);
   
   loop.waitForApproval = makeApprovalHandler(conn);
   loop.waitForDecision = makeDecisionHandler(conn);
@@ -352,20 +363,15 @@ export async function chatMode({ home = false } = {}) {
     try {
       // The Stage, if this terminal can hold one.
       //
-      // It is opened AFTER the session header, deliberately: the wordmark stays
-      // the first thing written to stdout and lands in the user's real history,
-      // and the band opens below it. That keeps the UX-01 check literally true
-      // and gives a seam the user can see — their shell prompt above, Causyne's
-      // region below — instead of a screen that has silently become ours.
+      // Home creates its stage before drawing the first frame. Other chat
+      // invocations retain their printed header above the live region.
       //
       // Every null from here is a terminal that should keep the scrollback
       // renderer: not a TTY, TERM=dumb, CAUSYNE_STAGE=off, or too short to hold a
       // viewport. There is no degraded stage.
-      // The banner reports the width it actually used. The opening composition
-      // is laid out to it, so the input box ends where the banner's text ends
-      // instead of stretching past it — and the banner itself is never narrowed,
-      // because at 117 columns it already starts hiding the workspace paths.
-      const surface = createStageSurface({ config, openingWidth: bannerWidth });
+      // The header reports the companion composer width. The Stage keeps that
+      // readable width throughout the session, including after history clears.
+      if (!surface) surface = createStageSurface({ config, openingWidth: bannerWidth });
       if (surface) conn.renderer.transcript = surface.transcript;
 
       prompt = new ChatPrompt({
@@ -384,9 +390,9 @@ export async function chatMode({ home = false } = {}) {
       prompt.attach(conn.renderer);
       prompt.start();
 
-      // If active session has prior conversation history, render it into the viewport (OpenCode architecture)
+      // Home is a clean route. History appears only after a session is chosen.
       const initialHistory = loop.memoryManager ? loop.memoryManager.loadHistory() : [];
-      if (initialHistory.length > 0) {
+      if (!openedHome && initialHistory.length > 0) {
         conn.renderer.renderSessionHistory(initialHistory, {
           id: loop.memoryManager?.sessionId,
           title: loop.memoryManager?.sessionTitle,
@@ -417,12 +423,11 @@ export async function chatMode({ home = false } = {}) {
       // The key hints are part of the session header now — one hint row, not
       // three stacked lines of chrome above the first prompt.
 
-      // Home is chat with the menu already open. Doing it here rather than in a
-      // separate module is deliberate: a parallel home implementation would be a
-      // second place for the live region, the completion picker and the approval
-      // stack to be got wrong, and the two would drift on the first change.
-      if (home) openHomeMenu(prompt, conn);
+      // On a Stage, bare `causyne` opens the centered composer directly;
+      // ctrl+p remains the command palette. Small terminals keep the home menu.
+      if (home && !surface) openHomeMenu(prompt, conn);
     } catch (e) {
+      if (surface) surface.close();
       process.stderr.write(`[tui] falling back to simple input: ${e.message}\n`);
       prompt = null;
     }
@@ -520,6 +525,12 @@ export async function chatMode({ home = false } = {}) {
         continue;
       }
 
+      const localDialog = prompt && commandDialog(task, commandResult);
+      if (localDialog) {
+        prompt.showText(localDialog.title, localDialog.text, { danger: localDialog.danger });
+        continue;
+      }
+
       // A skill was invoked: it becomes part of the REQUEST, not terminal output.
       //
       // This is the whole point. `/skills <id>` used to print the file and call
@@ -547,6 +558,7 @@ export async function chatMode({ home = false } = {}) {
       }
     }
 
+    homeTransition.beginTurn(loop);
     loop.userPrompt = task;
     // ONE USER REQUEST IS ONE TASK.
     //
