@@ -2,6 +2,8 @@ import { panel } from './block.js';
 import { safeDisplay, truncate } from './text.js';
 import fs from 'node:fs';
 import path from 'node:path';
+export const CODE_PANEL_LINES = 10;
+const MAX_STREAM_PREVIEW_CHARS = 256_000;
 const FILE_TOOLS = {
     fs_write: 'Creating', fs_edit: 'Editing', MultiEdit: 'Editing',
     'fs.write': 'Creating', 'fs.edit': 'Editing',
@@ -17,7 +19,7 @@ function stringField(value) {
 function codeFromArgs(args) {
     const direct = args.content ?? args.Content ?? args.CodeContent ?? args.code ?? args.new_string ?? args.newText ?? args.replaceContent ?? args.ReplacementContent;
     if (typeof direct === 'string')
-        return direct.slice(-12_000);
+        return direct;
     const edits = args.edits ?? args.ReplacementChunks;
     if (Array.isArray(edits)) {
         return edits.map((item) => {
@@ -25,7 +27,7 @@ function codeFromArgs(args) {
                 return '';
             const entry = item;
             return stringField(entry.new_string ?? entry.newText ?? entry.replaceContent ?? entry.ReplacementContent ?? entry.content);
-        }).filter(Boolean).join('\n').slice(-12_000);
+        }).filter(Boolean).join('\n');
     }
     return '';
 }
@@ -50,19 +52,25 @@ export class StreamingCodePreview {
     buffer = '';
     lastCode = '';
     lastSentAt = 0;
+    truncated = false;
     accept(chunk, now = Date.now()) {
         if (!chunk)
             return null;
-        this.buffer = (this.buffer + chunk).slice(-24_000);
+        this.buffer += chunk;
+        if (this.buffer.length > MAX_STREAM_PREVIEW_CHARS) {
+            this.buffer = this.buffer.slice(-MAX_STREAM_PREVIEW_CHARS);
+            this.truncated = true;
+        }
+        if (now - this.lastSentAt < 100 && !chunk.includes('\n'))
+            return null;
         const code = this.draftCode();
         if (!code.trim() || code === this.lastCode)
-            return null;
-        if (now - this.lastSentAt < 100 && !chunk.includes('\n'))
             return null;
         this.lastCode = code;
         this.lastSentAt = now;
         return { type: 'code_progress', id: 'model-draft', phase: 'draft',
-            operation: 'Drafting', description: 'Writing code from the model stream', code, source: 'model' };
+            operation: 'Drafting', description: 'Writing code from the model stream', code,
+            ...(this.truncated ? { codeTruncated: true } : {}), source: 'model' };
     }
     flush() {
         const code = this.draftCode();
@@ -70,11 +78,12 @@ export class StreamingCodePreview {
             return null;
         this.lastCode = code;
         return { type: 'code_progress', id: 'model-draft', phase: 'draft',
-            operation: 'Drafting', description: 'Writing code from the model stream', code, source: 'model' };
+            operation: 'Drafting', description: 'Writing code from the model stream', code,
+            ...(this.truncated ? { codeTruncated: true } : {}), source: 'model' };
     }
     draftCode() {
         const fences = [...this.buffer.matchAll(/(?:^|\n)```[^\n]*\n([\s\S]*?)(?=\n```|$)/g)];
-        const fenced = fences.at(-1)?.[1]?.slice(-12_000) || '';
+        const fenced = fences.at(-1)?.[1] || '';
         if (fenced.trim())
             return fenced;
         const start = this.buffer.lastIndexOf('<tool_call>');
@@ -105,10 +114,10 @@ export class StreamingCodePreview {
         }
         const partial = raw.slice(0, end).replace(/\\$/u, '');
         try {
-            return JSON.parse(`"${partial}"`).slice(-12_000);
+            return JSON.parse(`"${partial}"`);
         }
         catch {
-            return partial.replace(/\\n/g, '\n').slice(-12_000);
+            return partial.replace(/\\n/g, '\n');
         }
     }
 }
@@ -142,7 +151,7 @@ export class NativeCodeObserver {
             const entry = this.active.get(event.id);
             const current = this.read(target);
             if (current !== null && (current !== entry?.previous || event.operation === 'Creating')) {
-                this.emit({ ...event, code: current.slice(-12_000) });
+                this.emit({ ...event, code: current });
             }
         }
         this.stop(event.id);
@@ -155,7 +164,7 @@ export class NativeCodeObserver {
         if (current === null || current === entry.previous || current === entry.lastShown)
             return;
         entry.lastShown = current;
-        this.emit({ ...entry.event, code: current.slice(-12_000) });
+        this.emit({ ...entry.event, code: current });
     }
     dispose() {
         for (const id of this.active.keys())
@@ -186,7 +195,7 @@ export class NativeCodeObserver {
     }
 }
 /** Render a bounded, resize-safe panel. The terminal theme supplies rounded corners. */
-export function renderCodeProgress(event, width, modelNote = '') {
+export function renderCodeProgress(event, width, modelNote = '', startLine) {
     const safeWidth = Math.max(12, Math.floor(width) || 80);
     const inner = safeWidth - 4;
     const title = `${event.phase === 'done' ? '✓ ' : event.phase === 'failed' ? '× ' : ''}code · ${event.operation.toLowerCase()}`;
@@ -196,13 +205,18 @@ export function renderCodeProgress(event, width, modelNote = '') {
     if (modelNote)
         rows.push(truncate(`model note: ${safeDisplay(modelNote)}`, inner));
     const codeLines = String(event.code || '').split(/\r?\n/);
-    const visible = event.code ? codeLines.slice(-10) : [];
-    if (event.code && codeLines.length > visible.length)
-        rows.push(`… ${codeLines.length - visible.length} earlier lines`);
+    const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
+    const start = startLine === undefined ? maxStart : Math.max(0, Math.min(Math.floor(startLine), maxStart));
+    const visible = event.code ? codeLines.slice(start, start + CODE_PANEL_LINES) : [];
     if (visible.length) {
         rows.push('');
         for (const line of visible)
             rows.push(truncate(safeDisplay(line), inner));
+        if (codeLines.length > CODE_PANEL_LINES) {
+            rows.push(truncate(`lines ${start + 1}-${start + visible.length} of ${codeLines.length} · scroll over code`, inner));
+        }
+        if (event.codeTruncated)
+            rows.push(truncate('Earlier draft content exceeded the preview limit', inner));
     }
     return panel(rows, { width: safeWidth, title, role: event.phase === 'failed' ? 'danger' : 'rule' });
 }

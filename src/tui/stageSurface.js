@@ -183,6 +183,8 @@ export class StageSurface {
     // in the way of.
     this.mouseWanted = String(env.CAUSYNE_MOUSE ?? '1') !== '0';
     this.mouseOn = false;
+    this.mouseCaptured = false;
+    this.detached = false;
 
     // The width the banner above the band actually used, handed over by the
     // caller that printed it. Zero means "nobody measured", and the fallback

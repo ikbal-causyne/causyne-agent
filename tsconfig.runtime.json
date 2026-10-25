@@ -127,7 +127,9 @@
     "src/tools/openSourceToolProvisioner.ts",
     "src/tools/toolScanner.ts",
     "src/tools/toolSelfRepair.ts",
-    "src/agentLoop.ts"
+    "src/agentLoop.ts",
+    "src/tui/viewport.ts",
+    "src/tui/scrollInteraction.ts"
   ],
   "exclude": [
     "node_modules",

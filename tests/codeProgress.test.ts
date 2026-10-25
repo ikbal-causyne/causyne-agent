@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction, renderCodeProgress } from '../src/tui/codeProgress.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
+import { ChatPrompt } from '../src/tui/prompt.js';
 import { Transcript } from '../src/tui/transcript.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 import { AcpProvider } from '../src/providers/acp.js';
@@ -46,6 +47,49 @@ test('code panel replaces its live frame and preserves user-visible thinking as 
   for (const width of [40, 42]) {
     for (const row of transcript.rows(width)) assert.ok(visibleWidth(row) <= width);
   }
+});
+
+test('wheel over a long code panel reveals earlier lines and does not scroll the chat', () => {
+  const transcript = new Transcript();
+  const renderer = new CodeStreamRenderer({ transcript });
+  const code = Array.from({ length: 40 }, (_, index) => `line-${index + 1}`).join('\n');
+  const start = codeProgressFromAction('write_file', { path: 'app.ts', content: code }, 'long-file');
+  assert.ok(start);
+  renderer.handle(start);
+  const viewport = { viewWidth: 80, viewHeight: 20, scrollTop: 0, wheelCalls: 0,
+    wheel() { this.wheelCalls++; } };
+  const surface = { out: { rows: 40 }, stage: { height: 30 }, viewport };
+  const prompt = { surface, renderer, notice: '', draw() {} };
+  const overPanel = { name: 'wheel', wheel: { direction: 'up', x: 5, y: 15 } };
+  assert.match(stripAnsi(transcript.rows(80).join('\n')), /line-40/);
+  assert.equal(ChatPrompt.prototype.handleScrollKey.call(prompt, overPanel), true);
+  assert.equal(viewport.wheelCalls, 0);
+  let visible = stripAnsi(transcript.rows(80).join('\n'));
+  assert.match(visible, /line-28/);
+  assert.doesNotMatch(visible, /line-40/);
+
+  renderer.handle({ ...start, code: `${code}\nline-41` });
+  visible = stripAnsi(transcript.rows(80).join('\n'));
+  assert.match(visible, /line-28/);
+  assert.doesNotMatch(visible, /line-41/);
+
+  const down = { name: 'wheel', wheel: { direction: 'down', x: 5, y: 15 } };
+  for (let i = 0; i < 10; i++) ChatPrompt.prototype.handleScrollKey.call(prompt, down);
+  assert.match(stripAnsi(transcript.rows(80).join('\n')), /line-41/);
+  const priorScrolls = viewport.wheelCalls;
+  ChatPrompt.prototype.handleScrollKey.call(prompt, { name: 'wheel', wheel: { direction: 'up', x: 100, y: 15 } });
+  assert.equal(viewport.wheelCalls, priorScrolls + 1);
+});
+
+test('code panel can reach the beginning of code beyond the former preview limit', () => {
+  const content = Array.from({ length: 500 }, (_, index) => `line-${index + 1} ${'x'.repeat(30)}`).join('\n');
+  const event = codeProgressFromAction('write_file', { path: 'large.ts', content }, 'large-file');
+  assert.equal(event?.code, content);
+  assert.ok(event);
+  assert.match(stripAnsi(renderCodeProgress(event, 80, '', 0).join('\n')), /line-1 /);
+  assert.match(stripAnsi(renderCodeProgress(event, 80).join('\n')), /line-500 /);
+  const draft = new StreamingCodePreview();
+  assert.equal(draft.accept(`\x60\x60\x60ts\n${content}`, 1000)?.code, content);
 });
 
 test('the CLI uses the streaming renderer by default', () => {

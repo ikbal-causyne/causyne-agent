@@ -29,6 +29,7 @@ import { panelRows } from './overlay.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 import { readClipboardSync } from './clipboardSync.js';
+import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 
 const CTRL_C_WINDOW_MS = 2000;
 
@@ -786,24 +787,15 @@ export class ChatPrompt {
     // fall through would put `mouse` or `wheel` into the switch below, where a
     // future case could act on it by accident — and, worse, a terminal that
     // kept reporting after a failed teardown would type into the user's line.
-    if (key.name === 'mouse') return true;
+    if (key.name === 'mouse') {
+      if (handleScrollbarMouse(key, viewport, this.surface, this)) return true;
+      return true;
+    }
     if (key.name === 'wheel') {
       if (!viewport || !key.wheel) return true;
+      if (this.renderer?.scrollCodePanel?.(key, this.surface)) return true;
 
-      viewport.wheel(key.wheel.direction);
-
-      // At the top of the band, an upward wheel belongs to the TERMINAL — the
-      // conversation continues above us in its own scrollback. Releasing mouse
-      // reporting is the only way to give it back; the bytes for this event are
-      // already consumed, so the release takes effect from the next notch.
-      if (!viewport.lastWheelMoved && key.wheel.direction === 'up'
-          && this.surface && typeof this.surface.releaseMouse === 'function') {
-        if (this.surface.releaseMouse()) {
-          this.notice = 'top of this view — scrolling with the terminal now; press any key to come back';
-          this.draw();
-        }
-      }
-      return true;
+      return handleViewportWheel(key, viewport, this.surface, this);
     }
 
     if (!viewport) return false;
