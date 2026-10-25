@@ -29,6 +29,7 @@ import { StageSurface } from '../src/tui/stageSurface.js';
 import { stageHeight } from '../src/tui/stage.js';
 import { visibleWidth } from '../src/tui/text.js';
 import { sessionBanner } from '../src/tui/banner.js';
+import { sessionMainWidth, sessionComposerWidth } from '../src/tui/sessionSidebar.js';
 
 // Reference geometry from the original regression. It stays in the suite so
 // this terminal size cannot regress unnoticed.
@@ -220,7 +221,7 @@ describe('the opening composition — one panel, not a bar across a void', () =>
 
   test('the session input box is a left-aligned, readable column', () => {
     const m = measureStartup(REFERENCE_TERMINAL);
-    assert.equal(m.surface.composeWidth(), 82);
+    assert.equal(m.surface.composeWidth(), sessionComposerWidth(sessionMainWidth(REFERENCE_TERMINAL.columns)));
     const first = m.surface.stage.prev.find((row) => row.trim());
     assert.ok(first.startsWith('  '), 'composer should have a modest left inset');
     assert.ok(widthOf(m.surface.stage.prev) < REFERENCE_TERMINAL.columns,
@@ -229,12 +230,12 @@ describe('the opening composition — one panel, not a bar across a void', () =>
 
   test('the composer stays the same width when a session starts', () => {
     const m = measureStartup(REFERENCE_TERMINAL);
-    assert.equal(m.surface.composeWidth(), m.bannerWidth);
+    const width = m.surface.composeWidth();
 
     m.renderer.handle({ type: 'agent_message', content: 'the session has started' });
     m.prompt.draw();
 
-    assert.equal(m.surface.composeWidth(), m.bannerWidth,
+    assert.equal(m.surface.composeWidth(), width,
       'starting the session must not make the composer jump sideways or grow');
   });
 

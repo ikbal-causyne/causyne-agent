@@ -29,6 +29,7 @@ import { mouseTracking } from './keys.js';
 import { truncate, padEnd, visibleWidth } from './text.js';
 import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
+import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -180,28 +181,45 @@ export class StageSurface {
     this.opened = false;
     this.homeInfo = null;
     this.homeSessionSelected = false;
+    this.sessionInfo = null;
+    this.sidebarStatus = null;
+    this.compactAfterHome = false;
+    this.fullSession = false;
   }
 
   get width() {
     return this.stage.width();
   }
 
-  /** The composer keeps a stable readable width through the whole session. */
+  /** Home is compact; a session uses its full conversation column. */
   composeWidth() {
-    return composerWidth(this.width);
+    return this.homeInfo
+      ? composerWidth(this.width)
+      : sessionComposerWidth(sessionMainWidth(this.width));
   }
 
   /** Keep Home distinct from a selected or newly started conversation. */
   enterHome(info) {
     this.homeInfo = info;
     this.homeSessionSelected = false;
+    this.sessionInfo = { title: 'Untitled', cwd: info?.cwd, provider: info?.provider, model: info?.model };
+    this.compactAfterHome = false;
+    this.fullSession = true;
     this.stage.invalidate();
   }
 
   leaveHome(sessionSelected = false) {
-    if (this.homeInfo) this.stage.invalidate();
+    if (this.homeInfo) {
+      this.stage.invalidate();
+      this.compactAfterHome = true;
+    }
     this.homeInfo = null;
     if (sessionSelected) this.homeSessionSelected = true;
+  }
+
+  setSessionInfo(info) {
+    this.sessionInfo = { ...this.sessionInfo, ...info };
+    this.stage.invalidate();
   }
 
   /**
@@ -320,7 +338,9 @@ export class StageSurface {
   handleChange() {
     if (!this.transcript.isEmpty()) this.opened = true;
     const before = this.lastHeight;
-    const after = this.transcript.height(this.width);
+    const mainWidth = sessionMainWidth(this.width);
+    const contentWidth = this.railEnabled(mainWidth) ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
+    const after = this.transcript.height(contentWidth);
     this.lastHeight = after;
     // Growth is what drives auto-scroll. Handing the delta over is also what
     // lets the "N new below" affordance count only what arrived while the user
@@ -358,8 +378,10 @@ export class StageSurface {
     }
 
     const width = this.width;
-    const rail = this.railEnabled(width);
-    const contentWidth = rail ? Math.max(20, width - RAIL_BUDGET) : width;
+    const sidebar = sidebarVisible(width);
+    const mainWidth = sessionMainWidth(width);
+    const rail = this.railEnabled(mainWidth);
+    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
 
     let block = promptRows;
     let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
@@ -372,7 +394,13 @@ export class StageSurface {
     // never shrinks, because shrinking would mean erasing rows the diff believes
     // it owns and fighting the resize path for them.
     const contentRows = this.transcript.height(contentWidth);
-    const desired = Math.min(this.stage.maxHeight, block.length + contentRows);
+    const desired = sidebar && this.fullSession
+      ? this.stage.maxHeight
+      : Math.min(this.stage.maxHeight, block.length + contentRows);
+    if (this.compactAfterHome && !sidebar && this.stage.height > desired) {
+      this.stage.resize(this.stage.maxHeight, Math.max(1, desired));
+    }
+    this.compactAfterHome = false;
     if (desired > this.stage.height) this.stage.grow(desired - this.stage.height);
 
     const height = this.stage.height;
@@ -414,7 +442,17 @@ export class StageSurface {
     // left it, so every write would land somewhere wrong.
     if (this.detached) return false;
 
-    return this.stage.paint(rows.concat(block), {
+    const mainRows = rows.concat(block);
+    const panelRows = sidebar ? sessionSidebarRows({
+      ...this.sessionInfo,
+      cwd: this.sidebarStatus?.cwd || this.sessionInfo?.cwd,
+      provider: this.sidebarStatus?.provider || this.sessionInfo?.provider,
+      model: this.sidebarStatus?.model || this.sessionInfo?.model,
+      contextChars: this.sidebarStatus?.contextChars,
+      contextLimit: this.sidebarStatus?.contextLimit
+    }, mainRows.length) : [];
+    const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
+    return this.stage.paint(painted, {
       row: rows.length + caretRow,
       col: caret ? caret.col : 0
     });
@@ -492,8 +530,10 @@ export class StageSurface {
     this.stage.invalidate();
     // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
     // and leaving scrollTop above it would read as "the user scrolled away".
-    this.viewport.resize({ height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2), width: this.width });
-    this.lastHeight = this.transcript.height(this.width);
+    const mainWidth = sessionMainWidth(this.width);
+    const contentWidth = this.railEnabled(mainWidth) ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
+    this.viewport.resize({ height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2), width: contentWidth });
+    this.lastHeight = this.transcript.height(contentWidth);
     return this.stage.reserved;
   }
 

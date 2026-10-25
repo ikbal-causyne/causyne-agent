@@ -40,6 +40,7 @@
     "src/launchIntent.ts",
     "src/tui/codeProgress.ts",
     "src/tui/layout.ts",
+    "src/tui/sessionSidebar.ts",
     "src/tui/homeView.ts",
     "src/tui/homeTransition.ts",
     "src/tui/resizeRecovery.ts",

@@ -251,12 +251,15 @@ describe('the band breathes — UX-03', () => {
   test('growth appends at the bottom, so the diff keeps what it already knew', () => {
     const { surface } = breathingHost();
     surface.present(['a', 'b'], { row: 0, col: 0 });
-    assert.deepEqual(surface.stage.prev, ['a', 'b']);
+    const initial = surface.stage.prev.slice();
+    assert.equal(initial.length, 2);
+    assert.ok(stripAnsi(initial[0]).startsWith('a'));
+    assert.ok(stripAnsi(initial[1]).startsWith('b'));
 
     surface.transcript.append({ kind: 'notice', produce: () => ['fresh'] });
     surface.stage.grow(3);
     assert.equal(surface.stage.prev.length, 5);
-    assert.deepEqual(surface.stage.prev.slice(0, 2), ['a', 'b'], 'the known rows survive');
+    assert.deepEqual(surface.stage.prev.slice(0, 2), initial, 'the known rows survive');
     assert.deepEqual(surface.stage.prev.slice(2), [null, null, null], 'the new ones arrive unknown');
   });
 

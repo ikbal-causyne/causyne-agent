@@ -32,6 +32,7 @@ import { readClipboardSync } from './clipboardSync.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
 import { settleStageResize } from './resizeRecovery.js';
+import { sessionMainWidth } from './sessionSidebar.js';
 
 const CTRL_C_WINDOW_MS = 2000;
 
@@ -267,6 +268,7 @@ export class ChatPrompt {
     // uses in full-screen mode, which reports status instead of animating it.
     // Reuse that and make the status a row of the live region.
     this.renderer = renderer;
+    if (this.surface) this.surface.sidebarStatus = renderer.status;
     renderer.quietStatus = true;
     renderer.onStatusChange = (message) => {
       this.statusMessage = message;
@@ -1266,7 +1268,7 @@ export class ChatPrompt {
 
     // Park the cursor where the user is typing, not at the end of the picker.
     const positioned = this.surface
-      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, this.surface.width))
+      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, sessionMainWidth(this.surface.width)))
       : { rows: all, inset: 0 };
     this.present(positioned.rows, planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
   }

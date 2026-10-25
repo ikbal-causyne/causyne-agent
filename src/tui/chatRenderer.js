@@ -22,6 +22,7 @@ import { approvalDiff } from './diff.js';
 import { StatusLine } from './statusLine.js';
 import { barBlock } from './block.js';
 import { composerWidth, openingRows, sessionRows } from './layout.js';
+import { sessionComposerWidth } from './sessionSidebar.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -500,7 +501,9 @@ export class ChatRenderer {
     if (!text.trim()) return;
 
     this.frame('user', () => {
-      const width = composerWidth(this.measure());
+      const width = this.transcript
+        ? sessionComposerWidth(this.width())
+        : composerWidth(this.measure());
       const blockWidth = Math.max(8, width - 1);
       const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.bar) - 1);
       const rows = barBlock(
@@ -527,6 +530,7 @@ export class ChatRenderer {
   }
 
   renderSessionDivider(info = {}) {
+    this.transcript?.surface?.setSessionInfo?.(info);
     this.frame('session', () => {
       const width = this.measure();
       const title = safeDisplay(info.title || 'Session');
