@@ -284,12 +284,12 @@ describe('Enterprise Causyne Browser capabilities', () => {
   test('external bundle directory resolves executable and creates launch shim', () => {
     const tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-bundle-')));
     workspaces.push(tempDir);
-    const appDir = path.join(tempDir, 'Camoufox.app');
-    const macOsDir = path.join(appDir, 'Contents', 'MacOS');
-    const resourcesDir = path.join(appDir, 'Contents', 'Resources');
-    fs.mkdirSync(macOsDir, { recursive: true });
+    const appDir = process.platform === 'darwin' ? path.join(tempDir, 'Camoufox.app') : tempDir;
+    const executableDir = process.platform === 'darwin' ? path.join(appDir, 'Contents', 'MacOS') : appDir;
+    const resourcesDir = process.platform === 'darwin' ? path.join(appDir, 'Contents', 'Resources') : appDir;
+    fs.mkdirSync(executableDir, { recursive: true });
     fs.mkdirSync(path.join(resourcesDir, 'fontconfig'), { recursive: true });
-    const binPath = path.join(macOsDir, 'camoufox');
+    const binPath = path.join(executableDir, process.platform === 'win32' ? 'camoufox.exe' : process.platform === 'darwin' ? 'camoufox' : 'camoufox-bin');
     fs.writeFileSync(binPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(resourcesDir, 'properties.json'), JSON.stringify([{ property: 'navigator.userAgent' }]));
     fs.writeFileSync(path.join(resourcesDir, 'fontconfig', 'fonts.conf'), '<fontconfig></fontconfig>');
