@@ -25,11 +25,15 @@ import { Stage, stageHeight } from './stage.js';
 import { Transcript } from './transcript.js';
 import { Viewport, ScrollAcceleration, DEFAULT_SCROLL_SPEED } from './viewport.js';
 import { paint, GLYPHS } from './theme.js';
+import { markHoveredMessage } from './messageInteraction.js';
+import { placeMessageActionPanel } from './messageActionPlacement.js';
 import { mouseTracking } from './keys.js';
+import { mouseHoverTracking } from './mouseHover.js';
 import { truncate, padEnd, visibleWidth } from './text.js';
 import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
+import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -183,8 +187,11 @@ export class StageSurface {
     this.homeSessionSelected = false;
     this.sessionInfo = null;
     this.sidebarStatus = null;
-    this.compactAfterHome = false;
+    this.sidebarPlan = [];
     this.fullSession = false;
+    this.lastPromptRows = [];
+    this.lastPromptCaret = null;
+    this.messageActionOverlay = null;
   }
 
   get width() {
@@ -203,16 +210,12 @@ export class StageSurface {
     this.homeInfo = info;
     this.homeSessionSelected = false;
     this.sessionInfo = { title: 'Untitled', cwd: info?.cwd, provider: info?.provider, model: info?.model };
-    this.compactAfterHome = false;
     this.fullSession = true;
     this.stage.invalidate();
   }
 
   leaveHome(sessionSelected = false) {
-    if (this.homeInfo) {
-      this.stage.invalidate();
-      this.compactAfterHome = true;
-    }
+    if (this.homeInfo) this.stage.invalidate();
     this.homeInfo = null;
     if (sessionSelected) this.homeSessionSelected = true;
   }
@@ -247,6 +250,7 @@ export class StageSurface {
   enableMouse() {
     if (!this.mouseWanted || this.mouseOn) return false;
     this.out.write(mouseTracking(true));
+    this.out.write(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.mouseOn = true;
     return true;
@@ -254,6 +258,7 @@ export class StageSurface {
 
   disableMouse() {
     if (!this.mouseOn) return false;
+    this.out.write(mouseHoverTracking(false, this.env));
     this.out.write(mouseTracking(false));
     this.mouseCaptured = false;
     this.mouseOn = false;
@@ -367,7 +372,12 @@ export class StageSurface {
   present(promptRows, caret = null) {
     if (!this.stage.reserved) return 0;
 
-    if (this.homeInfo || caret?.modal) {
+    if (!this.messageActionOverlay) {
+      this.lastPromptRows = promptRows;
+      this.lastPromptCaret = caret;
+    }
+
+    if (this.homeInfo || (caret?.modal && !caret?.inline)) {
       if (this.stage.height < this.stage.maxHeight) {
         this.stage.grow(this.stage.maxHeight - this.stage.height);
       }
@@ -388,19 +398,11 @@ export class StageSurface {
 
     // Grow the band to what there is to show, before deciding anything else.
     //
-    // An empty session wants exactly the prompt and no more — no viewport, no
-    // void, and no rows taken from the user's terminal that nothing is going to
-    // fill. As the transcript grows the band follows it, up to the ceiling; it
-    // never shrinks, because shrinking would mean erasing rows the diff believes
-    // it owns and fighting the resize path for them.
+    // Direct chat keeps its printed header and grows with content. A session
+    // entered from Home occupies the available height at every terminal width.
+    // Its short transcript is placed next to the input below.
     const contentRows = this.transcript.height(contentWidth);
-    const desired = sidebar && this.fullSession
-      ? this.stage.maxHeight
-      : Math.min(this.stage.maxHeight, block.length + contentRows);
-    if (this.compactAfterHome && !sidebar && this.stage.height > desired) {
-      this.stage.resize(this.stage.maxHeight, Math.max(1, desired));
-    }
-    this.compactAfterHome = false;
+    const desired = sessionStageHeight(this.stage.maxHeight, block.length, contentRows, this.fullSession || caret?.inline);
     if (desired > this.stage.height) this.stage.grow(desired - this.stage.height);
 
     const height = this.stage.height;
@@ -410,7 +412,9 @@ export class StageSurface {
     // footer and the caret row are the last rows and the ones worth keeping,
     // and an input box that has scrolled its own oldest row off is a smaller lie
     // than a transcript that has vanished.
-    const floor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
+    const floor = contentRows > 0
+      ? Math.max(MIN_VIEWPORT_ROWS, this.messageActionOverlay?.panel.length || 0)
+      : 0;
     const maxBlock = Math.max(1, height - floor);
     if (block.length > maxBlock) {
       const cut = block.length - maxBlock;
@@ -422,9 +426,18 @@ export class StageSurface {
     let rows = [];
     if (budget > 0) {
       this.viewport.resize({ height: budget, width: contentWidth });
-      rows = this.viewport.rows();
+      rows = alignTranscriptRows(this.viewport.rows(), contentRows);
       this.decorate(rows, contentWidth);
+      markHoveredMessage(rows, this, contentWidth);
       if (rail) this.attachRail(rows, contentWidth);
+      if (this.messageActionOverlay) {
+        const overlay = this.messageActionOverlay;
+        const placed = placeMessageActionPanel(rows, overlay.panel, contentWidth,
+          (this.out.rows || height) - height, overlay.layer.anchorY,
+          overlay.layer.items.length);
+        rows = placed.rows;
+        overlay.layer.actionLayout = placed.layout;
+      }
     }
 
     // DO NOT PAINT WHILE THE TERMINAL OWNS THE SCROLL.
@@ -449,13 +462,24 @@ export class StageSurface {
       provider: this.sidebarStatus?.provider || this.sessionInfo?.provider,
       model: this.sidebarStatus?.model || this.sessionInfo?.model,
       contextChars: this.sidebarStatus?.contextChars,
-      contextLimit: this.sidebarStatus?.contextLimit
+      contextLimit: this.sidebarStatus?.contextLimit,
+      plan: this.sidebarPlan
     }, mainRows.length) : [];
     const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
     return this.stage.paint(painted, {
       row: rows.length + caretRow,
       col: caret ? caret.col : 0
     });
+  }
+
+  /** Draw message actions over the transcript while retaining the live composer. */
+  presentMessageActions(panel, layer) {
+    this.messageActionOverlay = { panel, layer };
+    try {
+      return this.present(this.lastPromptRows, this.lastPromptCaret);
+    } finally {
+      this.messageActionOverlay = null;
+    }
   }
 
   /**
@@ -617,6 +641,7 @@ export class StageSurface {
    */
   releaseMouse() {
     if (!this.mouseCaptured) return false;
+    this.out.write(mouseHoverTracking(false, this.env));
     this.out.write(mouseTracking(false));
     this.mouseCaptured = false;
     this.detached = true;
@@ -627,6 +652,7 @@ export class StageSurface {
   captureMouse() {
     if (this.mouseCaptured) return false;
     this.out.write(mouseTracking(true));
+    this.out.write(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.detached = false;
     // Every row the diff remembers is stale — the terminal has scrolled under

@@ -93,9 +93,12 @@ async function readBoundedBody(response: Response): Promise<Buffer> {
   return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), size);
 }
 
-async function browserFallback(url: string): Promise<{ success: boolean; output?: string; error?: string; requiresConsent?: boolean }> {
+async function browserFallback(url: string, workspace?: string): Promise<{ success: boolean; output?: string; error?: string; requiresConsent?: boolean }> {
   try {
-    const results = await causyneBrowser().run([{ type: 'goto', url }, { type: 'extract', selector: 'body' }]);
+    const results = await causyneBrowser(workspace ? { workspace } : undefined).run(
+      [{ type: 'goto', url }, { type: 'extract', selector: 'body' }],
+      workspace ? { workspace } : undefined
+    );
     const output = results.find(result => result.action === 'extract')?.output;
     return output ? { success: true, output } : { success: false, error: 'Browser loaded the page but extracted no readable content' };
   } catch (error) {
@@ -124,11 +127,15 @@ export const webFetch = {
     }
   },
 
-  async execute(args: { url?: string; method?: string; headers?: unknown; body?: string; outputFile?: string }) {
+  async execute(
+    args: { url?: string; method?: string; headers?: unknown; body?: string; outputFile?: string },
+    sandbox?: { workspacePaths?: string[]; workspaceRoot?: string }
+  ) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       if (!args.url) return { success: false, error: 'url is required' };
+      const workspace = path.resolve(sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd());
       const method = (args.method ?? 'GET').toUpperCase();
       const headers = {
         'User-Agent': 'Causyne-Agent/1.10 (+https://causyne.com)',
@@ -141,9 +148,23 @@ export const webFetch = {
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
 
       if (!response.ok && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
-        const fallback = await browserFallback(finalUrl.href);
+        const fallback = await browserFallback(finalUrl.href, workspace);
         if (fallback.success) return { ...fallback, status: response.status, finalUrl: finalUrl.href, via: 'causyne-browser' };
-        return { success: false, error: `HTTP ${response.status}; browser fallback failed: ${fallback.error}`, requiresConsent: fallback.requiresConsent };
+        const nextStep = response.status === 403
+          ? 'Try another public source or a supported browser capability.'
+          : response.status === 401
+            ? 'This resource requires authentication.'
+            : response.status === 429
+              ? 'Respect the site retry window before requesting it again.'
+              : 'The site may be temporarily unavailable; verify its status before retrying.';
+        return {
+          success: false,
+          status: response.status,
+          finalUrl: finalUrl.href,
+          failureKind: response.status === 403 ? 'site_refusal' : response.status === 429 ? 'rate_limited' : 'http_error',
+          error: `HTTP ${response.status} from ${finalUrl.hostname}; browser fallback unavailable: ${fallback.error}. ${nextStep}`,
+          requiresConsent: fallback.requiresConsent
+        };
       }
       if (!response.ok) return { success: false, error: `HTTP ${response.status} ${response.statusText}`.trim(), status: response.status, finalUrl: finalUrl.href };
 
@@ -154,7 +175,6 @@ export const webFetch = {
       const bytes = await readBoundedBody(response);
 
       if (args.outputFile) {
-        const workspace = path.resolve(process.cwd());
         const target = path.resolve(workspace, args.outputFile);
         if (!isWithin(workspace, target)) return { success: false, error: 'Download target must stay inside the selected workspace' };
         const temporary = `${target}.part-${crypto.randomUUID()}`;

@@ -41,6 +41,9 @@
     "src/tui/codeProgress.ts",
     "src/tui/layout.ts",
     "src/tui/sessionSidebar.ts",
+    "src/tui/composerControls.ts",
+    "src/tui/sessionLayout.ts",
+    "src/tui/textLayout.ts",
     "src/tui/homeView.ts",
     "src/tui/homeTransition.ts",
     "src/tui/resizeRecovery.ts",
@@ -59,6 +62,7 @@
     "src/tools/browserAutomator.ts",
     "src/tools/webSearch.ts",
     "src/tools/webFetch.ts",
+    "src/tools/screenshot.ts",
     "src/tools/sysRun.ts",
     "src/tools/desktopOpen.ts",
     "src/tui/banner.ts",
@@ -66,6 +70,9 @@
     "src/tui/modelPicker.ts",
     "src/tui/sessionPicker.ts",
     "src/tui/clipboardSync.ts",
+    "src/tui/messageInteraction.ts",
+    "src/tui/messageActionPlacement.ts",
+    "src/tui/mouseHover.ts",
     "src/providers/antigravity.ts",
     "src/providers/acp.ts",
     "src/providers/pi.ts",
@@ -135,7 +142,9 @@
     "src/tools/toolSelfRepair.ts",
     "src/agentLoop.ts",
     "src/tui/viewport.ts",
-    "src/tui/scrollInteraction.ts"
+    "src/tui/scrollInteraction.ts",
+    "src/tools/archive.ts",
+    "src/tools/viewImage.ts"
   ],
   "exclude": [
     "node_modules",

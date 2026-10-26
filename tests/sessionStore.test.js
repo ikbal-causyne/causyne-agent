@@ -86,6 +86,25 @@ test('sessions: a title comes from the first thing the user asked', () => {
   assert.ok(titleFrom('x'.repeat(200)).length <= 60, 'a title must stay listable');
 });
 
+test('sessions: a greeting title upgrades when the first real task arrives', () => {
+  const s = track(createSession(workspace('greeting-title')));
+  saveSessionMessages(s.id, [{ role: 'user', content: 'hi' }]);
+  saveSessionMessages(s.id, [
+    { role: 'user', content: 'hi' },
+    { role: 'user', content: 'Build a Tesla Roadster landing page using real images' }
+  ]);
+  const events = fs.readFileSync(sessionTranscriptFile(s.id), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.match(events.at(-1).title, /Tesla Roadster landing page/);
+  assert.match(switchSession(s.id).title, /Tesla Roadster landing page/);
+});
+
+test('sessions: creating a new conversation does not silently prune old history', () => {
+  const oldest = track(createSession(workspace('retention-oldest'), 'Keep this conversation'));
+  saveSessionMessages(oldest.id, [{ role: 'user', content: 'Keep this conversation' }]);
+  for (let i = 0; i < 51; i++) track(createSession(workspace(`retention-${i}`), `Session ${i}`));
+  assert.ok(listSessions().some(row => row.id === oldest.id));
+});
+
 test('sessions: the count is capped, oldest first', () => {
   const before = listSessions().length;
   for (let i = 0; i < 3; i++) track(createSession(workspace(`cap${i}`), `cap ${i}`));

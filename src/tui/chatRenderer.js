@@ -10,7 +10,7 @@
 
 import readline from 'readline';
 import {
-  paint, bold, dim, badge, GLYPHS, terminalWidth, readableWidth, HAS_COLOR, fileLink,
+  paint, bold, dim, badge, GLYPHS, terminalWidth, HAS_COLOR, fileLink,
   safeLink, HAS_HYPERLINKS
 } from './theme.js';
 import {
@@ -23,6 +23,7 @@ import { StatusLine } from './statusLine.js';
 import { barBlock } from './block.js';
 import { composerWidth, openingRows, sessionRows } from './layout.js';
 import { sessionComposerWidth } from './sessionSidebar.js';
+import { chatProseWidth, wrappedChatRows } from './textLayout.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -340,16 +341,9 @@ export class ChatRenderer {
     return Number.isFinite(columns) && columns > 0 ? Math.max(40, columns) : terminalWidth();
   }
 
-  /**
-   * The width PROSE is wrapped to — narrower than the terminal on a wide one.
-   *
-   * Chrome fills the window; paragraphs must not. See readableWidth() in
-   * theme.js for why, and note the two are deliberately different so that
-   * stretching the window widens the box without turning the agent's replies
-   * into 200-character lines.
-   */
+  /** Prose follows the current conversation column with a small text inset. */
   measure() {
-    return readableWidth(this.width());
+    return chatProseWidth(this.width());
   }
 
   // -------------------------------------------------------------------------
@@ -515,7 +509,7 @@ export class ChatRenderer {
         this.write(row);
       }
       this.write();
-    });
+    }, { messageText: text });
   }
 
   renderAssistantMessage(content) {
@@ -557,6 +551,8 @@ export class ChatRenderer {
   renderSessionHistory(messages = [], sessionInfo = null) {
     this.transcript?.surface?.leaveHome?.(true);
     this.clearTranscript();
+    this.latestPlan = [];
+    this.onPlanChange?.([]);
 
     if (sessionInfo && (sessionInfo.title || sessionInfo.id)) {
       this.renderSessionDivider(sessionInfo);
@@ -598,7 +594,7 @@ export class ChatRenderer {
         this.write(line ? '  ' + line : '');
       }
       this.write();
-    });
+    }, { messageText: String(msg.content || '') });
   }
 
   /**
@@ -683,7 +679,8 @@ export class ChatRenderer {
     if (!Array.isArray(msg.plan) || msg.plan.length === 0) return;
     const plan = msg.plan.slice();
     this.latestPlan = plan;
-    if (this.onPlanChange) this.onPlanChange(plan);
+    const placement = this.onPlanChange?.(plan);
+    if (placement === 'sidebar') return;
     this.frame('plan', () => this.renderPlan(plan), { items: plan.length });
   }
 
@@ -760,7 +757,8 @@ export class ChatRenderer {
         this.renderOutputPreview(result);
         return;
       }
-      this.write(`     ${paint('danger', GLYPHS.cross)} ${paint('danger', truncate(safeDisplay(result.error || 'failed'), this.width() - 12, GLYPHS.ellipsis))} ${dim(elapsed)}`);
+      const detail = `${safeDisplay(result.error || 'failed')}${elapsed ? ` · ${elapsed}` : ''}`;
+      for (const row of wrappedChatRows(detail, this.width(), `     ${paint('danger', GLYPHS.cross)} `, 'danger')) this.write(row);
     }, { success: Boolean(result.success) });
   }
 
@@ -1014,7 +1012,7 @@ export class ChatRenderer {
     const message = safeDisplay(msg.message || '');
     this.frame('error', () => {
       this.write();
-      this.write(`${badge('danger', 'ERROR')} ${paint('danger', message)}`);
+      for (const row of wrappedChatRows(message, this.width(), `${badge('danger', 'ERROR')} `, 'danger')) this.write(row);
       this.write();
     });
   }
@@ -1022,7 +1020,7 @@ export class ChatRenderer {
   onBudgetWarning(msg) {
     const message = safeDisplay(msg.message || '');
     this.frame('notice', () => {
-      this.write(`${badge('warn', 'BUDGET')} ${paint('warn', message)}`);
+      for (const row of wrappedChatRows(message, this.width(), `${badge('warn', 'BUDGET')} `, 'warn')) this.write(row);
     }, { tone: 'warn' });
   }
 

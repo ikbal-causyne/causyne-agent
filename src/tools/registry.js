@@ -77,6 +77,7 @@ import { createSkill } from './createSkill.js';
 import { resolveActiveTools } from '../toolPacks.js';
 import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
 import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
+import { canonicalizeToolName } from './toolSelfRepair.js';
 
 // Phase 6 AGI Upgrade: Schema Validation Hook
 function validateSchema(schema) {
@@ -294,6 +295,8 @@ export function canonicalToolName(name) {
   const normalized = normalizeToolName(name);
   if (toolRegistry[normalized]) return normalized;
   if (TOOL_ALIASES[normalized]) return TOOL_ALIASES[normalized];
+  const fromSelfRepair = canonicalizeToolName(name);
+  if (toolRegistry[fromSelfRepair]) return fromSelfRepair;
   const fuzzy = DELIMITER_FREE_INDEX[stripDelimiters(name)];
   if (fuzzy && toolRegistry[fuzzy]) return fuzzy;
   return normalized;

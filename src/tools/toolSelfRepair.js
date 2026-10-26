@@ -85,6 +85,12 @@ export const TOOL_NAME_ALIASES = {
     read_url: 'web_fetch',
     read_url_content: 'web_fetch',
     http_get: 'web_fetch',
+    browserAutomator: 'browser_act',
+    browser_automator: 'browser_act',
+    browser: 'browser_act',
+    causyne_browser: 'browser_act',
+    camofox: 'browser_act',
+    camoufox: 'browser_act',
     // Specialized engines & capabilities
     nativeEngine: 'native_engine',
     'native-engine': 'native_engine',
@@ -518,6 +524,56 @@ export function resolveParameterAliases(toolName, args, schema) {
                 }
                 if (!norm.parameters && (norm.params || norm.args || norm.arguments)) {
                     norm.parameters = norm.params || norm.args || norm.arguments;
+                }
+                return norm;
+            });
+        }
+    }
+    else if (canonicalName === 'browser_act') {
+        if (!modified.actions) {
+            if (Array.isArray(modified.steps) || Array.isArray(modified.items)) {
+                modified.actions = modified.steps || modified.items;
+                delete modified.steps;
+                delete modified.items;
+                repairs.push("Mapped 'steps'/'items' to 'actions' parameter for 'browser_act'");
+            }
+            else if (typeof modified.type === 'string' || typeof modified.action === 'string') {
+                const singleAction = { ...modified };
+                if (!singleAction.type && typeof singleAction.action === 'string') {
+                    singleAction.type = singleAction.action;
+                    delete singleAction.action;
+                }
+                for (const key of Object.keys(modified)) {
+                    delete modified[key];
+                }
+                modified.actions = [singleAction];
+                repairs.push("Wrapped single top-level browser action into 'actions' array for 'browser_act'");
+            }
+        }
+        if (Array.isArray(modified.actions)) {
+            modified.actions = modified.actions.map((item) => {
+                if (!item || typeof item !== 'object')
+                    return item;
+                const norm = { ...item };
+                if (!norm.type && typeof norm.action === 'string') {
+                    norm.type = norm.action;
+                    delete norm.action;
+                }
+                if (!norm.ref && typeof (norm.elementRef || norm.element) === 'string') {
+                    norm.ref = norm.elementRef || norm.element;
+                    delete norm.elementRef;
+                    delete norm.element;
+                }
+                if ((norm.type === 'download' || norm.type === 'screenshot') && !norm.outputFile && typeof (norm.path || norm.file) === 'string') {
+                    norm.outputFile = norm.path || norm.file;
+                    delete norm.path;
+                    delete norm.file;
+                }
+                if (norm.type === 'upload' && !norm.filePath && (norm.path || norm.file || norm.files)) {
+                    norm.filePath = norm.path || norm.file || norm.files;
+                    delete norm.path;
+                    delete norm.file;
+                    delete norm.files;
                 }
                 return norm;
             });

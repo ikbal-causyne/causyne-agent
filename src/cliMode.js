@@ -15,6 +15,8 @@ import { PRIMARY_ACTIONS, homeStatusLine, homeHint, moreLayer, configureInPrompt
 import { commandDialog } from './tui/commandPresentation.js';
 import { HomeTransition } from './tui/homeTransition.js';
 import { SelectLayer } from './tui/dialogs.js';
+import { openModeControl, openVariantControl } from './tui/composerControls.js';
+import { runInteractiveModelPicker } from './tui/modelPicker.js';
 import { askSelect, askText, askConfirm, askDecision } from './tui/ask.js';
 import { renderReport } from './reporting.js';
 import { grantAlways } from './approvalGrants.js';
@@ -382,7 +384,12 @@ export async function chatMode({ home = false } = {}) {
         // the conversation instead of drawing it as something the user said.
         isCommand: isCommandInput,
         surface,
+        messageActionLoop: loop,
         onInterrupt: () => loop.abort(),
+        getMode: () => loop.config?.autonomyMode || config.autonomyMode || 'B',
+        onOpenMode: () => openModeControl(prompt, loop),
+        onOpenModel: () => runInteractiveModelPicker(prompt, { loadConfig, saveConfig }, { loop }),
+        onOpenVariant: () => openVariantControl(prompt),
         onExit: () => { if (prompt) prompt.stop(); process.exit(0); },
         onExpand: () => conn.renderer.expandLastOutput()
       });

@@ -49,6 +49,15 @@ export function sessionSidebarRows(facts, height) {
     line();
     styled(bold('Workspace'));
     line(facts.cwd || 'Unknown');
+    if (facts.plan?.length) {
+        const completed = facts.plan.filter(item => item.status === 'completed').length;
+        line();
+        styled(bold(`Plan  ${completed}/${facts.plan.length}`));
+        for (const item of facts.plan) {
+            const mark = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▸' : '·';
+            line(`${mark} ${item.text || item.step || ''}`);
+        }
+    }
     const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
     const visible = rows.slice(0, count);
     while (visible.length < count - 1)

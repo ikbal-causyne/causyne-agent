@@ -37,6 +37,20 @@ test('only a successful matching check resolves its failure', () => {
   assert.equal(machine.observe('exec', check, { success: true }).kind, 'none');
 });
 
+test('a site refusal immediately redirects the agent away from the blocked URL', () => {
+  const machine = new TimeMachine();
+  const decision = machine.observe('web_fetch', { url: 'https://example.com/blocked' }, {
+    success: false, status: 403, failureKind: 'site_refusal', error: 'HTTP 403'
+  });
+  assert.equal(decision.kind, 'replan');
+  assert.equal(decision.attempt, 1);
+  assert.match(decision.guidance, /another public source/);
+  const alternative = machine.observe('web_fetch', { url: 'https://other.example.org/article' }, {
+    success: false, status: 403, failureKind: 'site_refusal', error: 'HTTP 403'
+  });
+  assert.equal(alternative.attempt, 1);
+});
+
 test('permission failures ask for human action immediately and task reset clears attempts', () => {
   const machine = new TimeMachine();
   const args = { command: 'npm publish' };

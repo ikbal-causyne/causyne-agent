@@ -220,16 +220,16 @@ describe('UX-02 — mouse reporting cannot be armed without a way back', () => {
       'mouse reporting is armed through mouseTracking(); a second spelling is a second teardown to forget');
   });
 
-  test('drag and motion reporting appear nowhere', () => {
-    // ?1002 and ?1003 report every drag and every move. A terminal reporting
-    // those cannot be dragged over at all, which takes the user's selection away
-    // without telling them. Causyne offers no in-app selection, so it has no
-    // reason to ask.
+  test('motion reporting has one paired owner and no drag-only reporting', () => {
+    const motionOwners = [];
     for (const file of sourceFiles()) {
       const code = stripComments(fs.readFileSync(file, 'utf8'));
-      assert.ok(!/\\x1b\[\?100[23][hl]/.test(code),
-        `${path.relative(path.join(here, '..'), file)} asks for drag or motion reporting`);
+      assert.ok(!/\\x1b\[\?1002[hl]/.test(code));
+      if (/\\x1b\[\?1003h/.test(code)) motionOwners.push(repoRelative(file));
     }
+    assert.deepEqual(motionOwners, ['src/tui/mouseHover.js']);
+    assert.match(source('tui/mouseHover.js'), /\\x1b\[\?1003l/);
+    assert.match(source('tui/stageSurface.js'), /mouseHoverTracking\(false, this\.env\)/);
   });
 
   test('whoever arms it also registers the way back', () => {
@@ -310,6 +310,34 @@ describe('UX-01 rev 2 — a stage session is still permanent history', () => {
     assert.ok(plain.includes('answer for turn 0') && plain.includes('answer for turn 1'),
       'clause (d): leaving the band must leave the session in the terminal');
   });
+});
+
+test('message actions overlay shows both choices without replacing the composer', async () => {
+  const { StageSurface } = await import('../src/tui/stageSurface.js');
+  const { MessageActionsLayer } = await import('../src/tui/messageInteraction.js');
+  const { panelRows } = await import('../src/tui/overlay.js');
+  const out = { columns: 100, rows: 30, isTTY: true, write: () => true, on() {}, removeListener() {} };
+  const surface = new StageSurface({ out, env: {} });
+  surface.open();
+  try {
+    surface.fullSession = true;
+    surface.transcript.append('user', () => ['User message']);
+    surface.present(['Compose here', 'Build  ·  model'], { row: 0, col: 0 });
+    const layer = new MessageActionsLayer([
+      { label: 'Copy message', description: 'to clipboard', value: 'copy' },
+      { label: 'Fork from here', description: 'fresh permissions', value: 'fork' }
+    ], () => {}, 20);
+    const panel = panelRows(layer, 60, layer.preferredHeight());
+    surface.presentMessageActions(panel, layer);
+    const screen = surface.stage.prev.join('\n');
+    assert.match(screen, /Copy message/);
+    assert.match(screen, /Fork from here/);
+    assert.match(screen, /Compose here/);
+    assert.equal(layer.actionLayout?.count, 2);
+    assert.ok(layer.actionLayout.y >= 0 && layer.actionLayout.y < out.rows);
+  } finally {
+    surface.close();
+  }
 });
 
 describe('dialogs live in the region, not in a floating window', () => {

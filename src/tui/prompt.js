@@ -32,7 +32,9 @@ import { readClipboardSync } from './clipboardSync.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
 import { settleStageResize } from './resizeRecovery.js';
-import { sessionMainWidth } from './sessionSidebar.js';
+import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
+import { isStartupDialog, startupDialogView } from './homeView.js';
+import { handleMessageMouse, handleMessageActionMenuMouse, isMouseMotion } from './messageInteraction.js';
 
 const CTRL_C_WINDOW_MS = 2000;
 
@@ -97,6 +99,11 @@ export class ChatPrompt {
     this.surface = options.surface || null;
     this.onExit = options.onExit || (() => process.exit(0));
     this.onExpand = options.onExpand || (() => {});
+    this.onOpenMode = options.onOpenMode || null;
+    this.onOpenModel = options.onOpenModel || null;
+    this.onOpenVariant = options.onOpenVariant || null;
+    this.messageActionLoop = options.messageActionLoop || null;
+    this.getMode = options.getMode || (() => 'B');
 
     this.editor = new LineEditor();
     this.history = options.history || new PromptHistory();
@@ -233,7 +240,9 @@ export class ChatPrompt {
   };
 
   handleData = (chunk) => {
+    let motionOnly = true;
     for (const key of this.decoder.decode(chunk)) {
+      if (key.name !== 'mouse' || !isMouseMotion(key.sequence)) motionOnly = false;
       try {
         this.handleKey(key);
       } catch (e) {
@@ -242,7 +251,8 @@ export class ChatPrompt {
         process.stderr.write(`\n[tui] key "${key.name}" failed: ${e.message}\n`);
       }
     }
-    this.draw();
+    // All-motion chunks repaint only when the hovered message actually changes.
+    if (!motionOnly) this.draw();
   };
 
   /**
@@ -274,7 +284,11 @@ export class ChatPrompt {
       this.statusMessage = message;
       this.scheduleDraw();
     };
-    renderer.onPlanChange = () => this.scheduleDraw();
+    renderer.onPlanChange = (plan) => {
+      if (this.surface) this.surface.sidebarPlan = plan;
+      this.scheduleDraw();
+      return this.surface && sidebarVisible(this.surface.width) ? 'sidebar' : undefined;
+    };
   }
 
   /**
@@ -323,17 +337,20 @@ export class ChatPrompt {
     const status = this.renderer && this.renderer.status;
     if (!status) return null;
 
-    const mode = this.busy ? 'Working' : 'Build';
+    const mode = `${this.busy ? 'Working' : 'Build'} ${this.getMode()}`;
     const parts = [bold(paint('accent', mode))];
     if (status.model) parts.push(bold(paint('ink', status.model)));
     const line = parts.join(dim(`  ${GLYPHS.dot}  `));
     const trailing = [status.provider, status.tier].filter(Boolean).join(' ');
-    const full = trailing ? `${line}  ${dim(trailing)}` : line;
+    const base = trailing ? `${line}  ${dim(trailing)}` : line;
+    const hints = dim('  Ctrl+G mode · Alt+M model · Ctrl+T variant');
+    const full = visibleWidth(base) + visibleWidth(hints) <= width ? base + hints : base;
     return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
   }
 
   /** Persistent checklist shown outside the chat transcript. */
   planRows(width) {
+    if (this.surface && sidebarVisible(this.surface.width)) return [];
     const plan = this.renderer && Array.isArray(this.renderer.latestPlan) ? this.renderer.latestPlan : [];
     if (plan.length === 0) return [];
     const completed = plan.filter(item => item.status === 'completed').length;
@@ -684,7 +701,12 @@ export class ChatPrompt {
     // This MUST route before any default key handling (like paste) so modal
     // dialogs (e.g. InputLayer for API keys) receive bracketed paste events.
     if (this.layer) {
-      const action = this.layer.key(key);
+      const previousSelection = this.layer.messageActions ? this.layer.list?.selected : null;
+      const action = key.name === 'mouse' && this.layer.messageActions
+        ? handleMessageActionMenuMouse(this.layer, key)
+        : this.layer.key(key);
+      if (this.layer?.messageActions && isMouseMotion(key.sequence)
+          && previousSelection !== this.layer.list?.selected) this.scheduleDraw();
       if (action === 'close') { this.closeLayer(); return; }
       // A layer may hand a key BACK rather than swallow it. The home menu does
       // this for every printable character, so `↑↓` picks an action while typing
@@ -705,6 +727,22 @@ export class ChatPrompt {
 
     if (this.completion && this.handleCompletionKey(key)) return;
     if (this.handleScrollKey(key)) return;
+
+    const control = key.ctrl && key.name === 'g' ? this.onOpenMode
+      : key.alt && key.name === 'm' ? this.onOpenModel
+      : key.ctrl && key.name === 't' ? this.onOpenVariant : null;
+    if (control) {
+      if (this.busy) {
+        this.notice = 'Finish or interrupt the current turn before switching controls';
+        this.scheduleDraw();
+      } else {
+        Promise.resolve(control()).catch(error => {
+          this.notice = error instanceof Error ? error.message : String(error);
+          this.scheduleDraw();
+        });
+      }
+      return;
+    }
 
     switch (key.name) {
       case 'escape': return this.handleEscape();
@@ -783,7 +821,11 @@ export class ChatPrompt {
     // future case could act on it by accident — and, worse, a terminal that
     // kept reporting after a failed teardown would type into the user's line.
     if (key.name === 'mouse') {
+      if (this.messageActionLoop && isMouseMotion(key.sequence)) {
+        return handleMessageMouse(this, this.messageActionLoop, key);
+      }
       if (handleScrollbarMouse(key, viewport, this.surface, this)) return true;
+      if (!this.layer && this.messageActionLoop) return handleMessageMouse(this, this.messageActionLoop, key);
       return true;
     }
     if (key.name === 'wheel') {
@@ -1287,7 +1329,8 @@ export class ChatPrompt {
     if (this.surface) {
       this.drawnRows = 0;
       this.cursorRow = 0;
-      this.surface.present(all, { row: caretRow, col: caretCol, modal: Boolean(this.layer) });
+      this.surface.present(all, { row: caretRow, col: caretCol,
+        modal: Boolean(this.layer), inline: Boolean(this.layer && !isStartupDialog(this.surface)) });
       return;
     }
 
@@ -1330,14 +1373,27 @@ export class ChatPrompt {
 
   /** The live region while a dialog is up: the panel, then the status row. */
   drawLayer(width) {
-    const panelWidth = dialogWidth(width, this.layer.width || 64);
+    if (this.layer.messageActions && this.surface?.presentMessageActions) {
+      const availableWidth = sessionMainWidth(this.surface.width);
+      const panelWidth = dialogWidth(Math.max(8, availableWidth - 3), this.layer.width || 68);
+      const panel = panelRows(this.layer, panelWidth, this.layer.preferredHeight());
+      this.surface.presentMessageActions(panel, this.layer);
+      return;
+    }
+    if (isStartupDialog(this.surface)) {
+      const view = startupDialogView(this.layer, this.surface.width, this.surface.stage.maxHeight);
+      return this.present(view.rows, view.caretRow, view.caretCol);
+    }
+    const inline = this.surface && !this.surface.homeInfo;
+    const availableWidth = inline ? sessionMainWidth(this.surface.width) : width;
+    const panelWidth = dialogWidth(availableWidth, this.layer.width || 64);
     const maxHeight = dialogHeight(this.surface?.stage?.maxHeight || this.out?.rows, this.layer.preferredHeight());
     const panel = panelRows(this.layer, panelWidth, maxHeight);
     const all = this.clampRows(panel.concat(this.statusRow(width)), width);
 
     // panelRows() called body(), which is where a layer publishes its cursor.
     const cursor = this.layer.cursor;
-    const centered = this.surface ? centerRows(all, this.surface.width) : { rows: all, inset: 0 };
+    const centered = this.surface ? centerRows(all, availableWidth) : { rows: all, inset: 0 };
     this.present(centered.rows, cursor ? 1 + cursor.y : 0,
       (cursor ? 2 + cursor.x : 0) + centered.inset);
   }

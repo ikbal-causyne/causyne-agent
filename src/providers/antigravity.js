@@ -405,7 +405,7 @@ export class AntigravityProvider extends LLMProvider {
         super(config);
         this.model = config.model || 'Gemini 3.8 Flash (Low)';
         this.command = config.command || resolveAgyBinary();
-        this.visionModels = [];
+        this.visionModels = ['*'];
         this.audioModels = [];
     }
     formatDelta(messages) {
@@ -425,7 +425,18 @@ export class AntigravityProvider extends LLMProvider {
                 text = msg.content;
             }
             else if (Array.isArray(msg.content)) {
-                text = msg.content.map((c) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
+                text = msg.content.map((c) => {
+                    if (typeof c === 'string')
+                        return c;
+                    if (c?.text)
+                        return c.text;
+                    if (c?.type === 'image_url' || c?.type === 'image') {
+                        const url = c?.image_url?.url || '';
+                        const mime = c?.source?.media_type || (url.startsWith('data:') ? url.slice(5, url.indexOf(';')) : 'image');
+                        return `[Visual Content: ${mime}]`;
+                    }
+                    return '';
+                }).filter(Boolean).join('\n');
             }
             if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
                 for (const tc of msg.tool_calls) {
@@ -491,7 +502,18 @@ export class AntigravityProvider extends LLMProvider {
                 text = msg.content;
             }
             else if (Array.isArray(msg.content)) {
-                text = msg.content.map((c) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
+                text = msg.content.map((c) => {
+                    if (typeof c === 'string')
+                        return c;
+                    if (c?.text)
+                        return c.text;
+                    if (c?.type === 'image_url' || c?.type === 'image') {
+                        const url = c?.image_url?.url || '';
+                        const mime = c?.source?.media_type || (url.startsWith('data:') ? url.slice(5, url.indexOf(';')) : 'image');
+                        return `[Visual Content: ${mime}]`;
+                    }
+                    return '';
+                }).filter(Boolean).join('\n');
             }
             // Compact duplicate identical tool outputs to prevent token ballooning
             if (msg.role === 'tool' && text.trim()) {

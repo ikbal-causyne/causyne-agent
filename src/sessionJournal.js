@@ -224,6 +224,20 @@ export function titleFrom(text) {
         return 'Untitled';
     return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
 }
+const PLACEHOLDER_TITLE = /^(?:untitled|hi|hello|hey|halo|hai|continue|lanjut|open it(?: for me)?|new session\b.*)$/i;
+const NON_TASK_MESSAGE = /^(?:hi|hello|hey|halo|hai|continue|lanjut|open it|open it for me|thanks|thank you)[.!?\s]*$/i;
+/** Recover a useful title when a session began with a greeting or placeholder. */
+function sessionTitle(title, messages, createdAt) {
+    if (title.trim() && !PLACEHOLDER_TITLE.test(title.trim()))
+        return title;
+    const prompt = messages.find((message) => {
+        if (message.role !== 'user' || typeof message.content !== 'string')
+            return false;
+        const text = message.content.trim();
+        return text.length > 12 && !NON_TASK_MESSAGE.test(text) && !text.startsWith('[decayed]');
+    });
+    return prompt ? titleFrom(prompt.content) : `New session - ${new Date(createdAt).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+}
 export function listSessions() {
     try {
         ensureDir();
@@ -239,7 +253,7 @@ export function listSessions() {
             if (!session)
                 continue;
             const { messages, ...metadata } = session;
-            rows.push({ ...metadata, messageCount: messages.length });
+            rows.push({ ...metadata, title: sessionTitle(metadata.title, messages, metadata.createdAt), messageCount: messages.length });
         }
         return rows.sort((left, right) => right.updatedAt - left.updatedAt);
     }
@@ -280,8 +294,9 @@ export function createSession(workspace, title = 'Untitled', makeActive = true) 
     writeNewTranscript(session);
     if (makeActive)
         setActiveSession(session.id);
-    pruneSessions();
-    return session;
+    // Session creation must never silently delete older conversations. Retention
+    // is an explicit maintenance operation, separate from starting a chat.
+    return { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) };
 }
 /**
  * Read one conversation without making it the active session.
@@ -290,7 +305,8 @@ export function createSession(workspace, title = 'Untitled', makeActive = true) 
  * they only need the transcript that belongs to their own id.
  */
 export function getSession(id) {
-    return readSession(id);
+    const session = readSession(id);
+    return session ? { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) } : null;
 }
 export function getActiveSessionId() {
     try {
@@ -329,7 +345,7 @@ export function resolveSession(workspace, options = {}) {
         const active = readSession(targetId);
         if (active && (!active.workspace || active.workspaceKey === key) && now - active.updatedAt < RESUME_WINDOW_MS) {
             setActiveSession(active.id);
-            return active;
+            return { ...active, title: sessionTitle(active.title, active.messages, active.createdAt) };
         }
     }
     // 2. Resume most recent workspace conversation within resume window
@@ -340,7 +356,7 @@ export function resolveSession(workspace, options = {}) {
         const session = readSession(candidate.id);
         if (session) {
             setActiveSession(session.id);
-            return session;
+            return { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) };
         }
     }
     return createSession(workspaceText);
@@ -350,7 +366,7 @@ export function switchSession(id) {
     if (!session)
         return null;
     setActiveSession(session.id);
-    return session;
+    return { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) };
 }
 /**
  * Fork an existing session into a new conversation in the same workspace.
@@ -363,7 +379,7 @@ export function switchSession(id) {
  * permissions so that user authorization and trust are freshly established.
  */
 export function forkSession(sourceId, options = {}) {
-    const source = readSession(sourceId);
+    const source = getSession(sourceId);
     if (!source)
         return null;
     const targetWorkspace = options.workspace || source.workspace || process.cwd();
@@ -407,9 +423,8 @@ export function saveSessionMessages(id, messages) {
         return false;
     const nextMessages = messages.slice();
     const firstUser = nextMessages.find((message) => message.role === 'user' && typeof message.content === 'string');
-    const nextTitle = (!session.title || session.title === 'Untitled') && firstUser
-        ? titleFrom(firstUser.content)
-        : session.title;
+    const nextTitle = sessionTitle(session.title, nextMessages, session.createdAt)
+        || (firstUser ? titleFrom(firstUser.content) : session.title);
     const prefix = session.messages.length <= nextMessages.length
         && session.messages.every((message, index) => {
             const next = nextMessages[index];

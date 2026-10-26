@@ -29,7 +29,12 @@ function record(value: unknown): Record<string, unknown> {
 function operationFamily(args: Record<string, unknown>): string {
   const command = typeof args.command === 'string' ? args.command
     : typeof args.cmd === 'string' ? args.cmd : '';
-  if (!command) return '';
+  if (!command) {
+    if (typeof args.url === 'string') {
+      try { return new URL(args.url).hostname.toLowerCase(); } catch { return ''; }
+    }
+    return '';
+  }
   const words = command.trim().split(/\s+/).slice(0, 3);
   // Keep common verification commands distinct without retaining paths,
   // source text, environment variables, or credentials in the journal.
@@ -107,6 +112,12 @@ export class TimeMachine {
     const attempt = (this.failures.get(key) || 0) + 1;
     this.failures.set(key, attempt);
     const checkpoint = good ? ` Last successful tool: ${good}.` : '';
+
+    if (value.failureKind === 'site_refusal' && attempt < TIME_MACHINE_MAX_ATTEMPTS) {
+      return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,
+        failureClass: classification, lastGoodTool: good,
+        guidance: `The site refused this fetch. Do not repeat the same URL or bypass the site's restriction. Search for another public source or use an already available browser capability.${checkpoint}` };
+    }
 
     if (needsHuman) {
       return { kind: 'human', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,

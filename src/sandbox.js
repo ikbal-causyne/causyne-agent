@@ -3,6 +3,7 @@ import os from 'os';
 import { isIP } from 'node:net';
 import { loadConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
+import { validateBrowserActSandbox } from './browser/causyneBrowser.js';
 
 
 function maskQuotedSpans(text) {
@@ -286,24 +287,12 @@ export class Sandbox {
     }
 
     if (toolName === 'browser_act') {
-      const actions = Array.isArray(args.actions) ? args.actions : [];
-      let hasDownload = false;
-      for (const action of actions) {
-        if (action && action.url && this.isInternalUrl(action.url)) {
-          return { allowed: false, reason: 'Cannot navigate the agent browser to an internal or invalid URL', risk: 'forbidden' };
-        }
-        if (action && ['download', 'screenshot'].includes(action.type)) {
-          if (!action.outputFile || !this.isPathAllowed(path.resolve(this.workspacePaths[0], action.outputFile))) {
-            return { allowed: false, reason: 'Browser downloads must stay inside the selected workspace', risk: 'forbidden' };
-          }
-          hasDownload = true;
-        }
-      }
-      if (hasDownload) return { allowed: true, risk: 'extreme', reason: 'Writes browser content to the selected workspace' };
-      if (actions.some(action => ['click', 'clickIndex', 'type', 'typeIndex', 'selectOption', 'keyPress'].includes(action?.type))) {
-        return { allowed: true, risk: 'dangerous', reason: 'Interacts with a website through the dedicated agent browser' };
-      }
-      return { allowed: true, risk: 'safe' };
+      return validateBrowserActSandbox(
+        args,
+        this.workspacePaths[0],
+        url => this.isInternalUrl(url),
+        targetPath => this.isPathAllowed(targetPath)
+      );
     }
 
     if (toolName === 'creative_apps') {

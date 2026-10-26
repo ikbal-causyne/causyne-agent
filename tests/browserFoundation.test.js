@@ -7,13 +7,24 @@ import path from 'node:path';
 import {
   CausyneBrowser,
   annotateAriaSnapshot,
-  parseAriaRefs
+  attachStructureRefs,
+  expandSearchMacro,
+  extractDeterministic,
+  getSupportedSearchMacros,
+  isDeadContextError,
+  isPageCrashedError,
+  normalizeBrowserKey,
+  parseAriaRefs,
+  selectorValidationError,
+  validateExtractSchema,
+  visibleSelectorCandidate
 } from '../src/browser/causyneBrowser.js';
 import { isPrivateAddress, assertPublicWebUrl } from '../src/browser/urlPolicy.js';
 import { MAX_SNAPSHOT_CHARS, windowSnapshot } from '../src/browser/snapshotWindow.js';
 import { parseBingRss, parseDuckDuckGoHtml, searchPublicWeb } from '../src/browser/searchProviders.js';
 import { resolveBrowserRuntime } from '../src/browser/browserRuntime.js';
 import { htmlToReadableText } from '../src/tools/webFetch.js';
+import { canonicalizeToolName, resolveParameterAliases } from '../src/tools/toolSelfRepair.js';
 import { TOOLS_BY_GROUP } from '../src/provisioning/capabilityTools.js';
 import { Sandbox } from '../src/sandbox.js';
 
@@ -31,6 +42,7 @@ class FakeLocator {
   async fill(value) { this.page.calls.push(['fill', this.selector, value, this.position]); }
   async press(key) { this.page.calls.push(['press', this.selector, key]); }
   async selectOption(value) { this.page.calls.push(['select', this.selector, value]); }
+  async setInputFiles(files) { this.page.calls.push(['upload', this.selector, files]); }
   async innerText() { return 'Readable page content'; }
   async ariaSnapshot() {
     return '- heading "Test page"\n- textbox "Search"\n- link "First result"\n- button "Continue"';
@@ -265,5 +277,247 @@ describe('lightweight web search', () => {
     const results = parseDuckDuckGoHtml(`<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fpaper">Paper &amp; notes</a>`);
     assert.equal(results[0].title, 'Paper & notes');
     assert.equal(results[0].url, 'https://example.org/paper');
+  });
+});
+
+describe('Enterprise Causyne Browser capabilities', () => {
+  test('external bundle directory resolves executable and creates launch shim', () => {
+    const tempDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-bundle-')));
+    workspaces.push(tempDir);
+    const appDir = path.join(tempDir, 'Camoufox.app');
+    const macOsDir = path.join(appDir, 'Contents', 'MacOS');
+    const resourcesDir = path.join(appDir, 'Contents', 'Resources');
+    fs.mkdirSync(macOsDir, { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'fontconfig'), { recursive: true });
+    const binPath = path.join(macOsDir, 'camoufox');
+    fs.writeFileSync(binPath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(resourcesDir, 'properties.json'), JSON.stringify([{ property: 'navigator.userAgent' }]));
+    fs.writeFileSync(path.join(resourcesDir, 'fontconfig', 'fonts.conf'), '<fontconfig></fontconfig>');
+
+    const previous = process.env.CAUSYNE_BROWSER_EXECUTABLE;
+    process.env.CAUSYNE_BROWSER_EXECUTABLE = appDir;
+    try {
+      const runtime = resolveBrowserRuntime();
+      assert.equal(runtime.source, 'environment');
+      assert.ok(runtime.executablePath);
+      assert.equal(fs.existsSync(runtime.executablePath), true);
+      assert.equal(fs.existsSync(path.join(runtime.installDirectory, 'version.json')), true);
+      assert.equal(fs.existsSync(path.join(runtime.resourceDirectory, 'properties.json')), true);
+    } finally {
+      if (previous === undefined) delete process.env.CAUSYNE_BROWSER_EXECUTABLE;
+      else process.env.CAUSYNE_BROWSER_EXECUTABLE = previous;
+    }
+  });
+
+  test('search macros expand across all 17 supported search providers', () => {
+    const macros = getSupportedSearchMacros();
+    assert.ok(macros.length >= 17);
+    assert.equal(expandSearchMacro('@google_search', 'causyne ai'), 'https://www.google.com/search?q=causyne%20ai');
+    assert.equal(expandSearchMacro('@youtube_search', 'demo video'), 'https://www.youtube.com/results?search_query=demo%20video');
+    assert.equal(expandSearchMacro('@wikipedia_search', 'Alan Turing'), 'https://en.wikipedia.org/wiki/Special:Search?search=Alan%20Turing');
+    assert.equal(expandSearchMacro('@reddit_subreddit', 'rust'), 'https://www.reddit.com/r/rust.json?limit=25');
+    assert.equal(expandSearchMacro('@unknown_macro', 'test'), null);
+  });
+
+  test('deterministic schema extraction coerces types and enforces required fields', () => {
+    const refs = new Map([
+      ['e1', { role: 'heading', name: 'Enterprise Plan', nth: 0 }],
+      ['e2', { role: 'button', name: '$49.99', nth: 0 }],
+      ['e3', { role: 'option', name: '42 items', nth: 0 }],
+      ['e4', { role: 'checkbox', name: 'true', nth: 0 }]
+    ]);
+    const schema = {
+      type: 'object',
+      properties: {
+        planName: { type: 'string', 'x-ref': 'e1' },
+        price: { type: 'number', 'x-ref': 'e2' },
+        quantity: { type: 'integer', 'x-ref': 'e3' },
+        active: { type: 'boolean', 'x-ref': 'e4' },
+        optionalMissing: { type: 'string', 'x-ref': 'e99' }
+      },
+      required: ['planName', 'price', 'quantity', 'active']
+    };
+    assert.deepEqual(validateExtractSchema(schema), { ok: true });
+    const extracted = extractDeterministic({ schema, refs });
+    assert.deepEqual(extracted, {
+      planName: 'Enterprise Plan',
+      price: 49.99,
+      quantity: 42,
+      active: true,
+      optionalMissing: null
+    });
+
+    assert.throws(
+      () => extractDeterministic({
+        schema: {
+          type: 'object',
+          properties: { missingField: { type: 'string', 'x-ref': 'e99' } },
+          required: ['missingField']
+        },
+        refs
+      }),
+      /required property "missingField" could not be extracted/
+    );
+  });
+
+  test('attachStructureRefs binds accessibility refs to structured form fields and submit controls', () => {
+    const refs = new Map([
+      ['e1', { role: 'textbox', name: 'Email Address', nth: 0 }],
+      ['e2', { role: 'button', name: 'Sign In', nth: 0 }]
+    ]);
+    const structure = {
+      forms: [{
+        method: 'POST',
+        fieldsTruncated: false,
+        fields: [
+          { label: 'Email Address', role: 'textbox', tag: 'input', type: 'email', disabled: false },
+          { label: 'Password', role: 'textbox', tag: 'input', type: 'password', disabled: false, value: '[REDACTED]' }
+        ],
+        submitControls: [
+          { label: 'Sign In', disabled: false }
+        ]
+      }],
+      formsTruncated: false,
+      tables: [],
+      tablesTruncated: false
+    };
+    const attached = attachStructureRefs(structure, refs);
+    assert.equal(attached.forms[0].fields[0].ref, 'e1');
+    assert.equal(attached.forms[0].submitControls[0].ref, 'e2');
+  });
+
+  test('key normalization, selector validation, and visible selector candidate', () => {
+    assert.equal(normalizeBrowserKey('ctrl+a'), 'Control+a');
+    assert.equal(normalizeBrowserKey('cmd+shift+p'), 'Meta+shift+p');
+    assert.equal(normalizeBrowserKey('esc'), 'Escape');
+    assert.equal(normalizeBrowserKey('return'), 'Enter');
+    assert.equal(visibleSelectorCandidate('#submit-btn'), '#submit-btn:visible');
+    assert.equal(visibleSelectorCandidate('a, button'), null);
+    assert.equal(selectorValidationError('#valid-id .child[data-x="1"]'), null);
+    assert.match(selectorValidationError('div[unclosed'), /Invalid selector syntax/);
+    assert.match(selectorValidationError('text(Submit)'), /Invalid text selector syntax/);
+  });
+
+  test('dead session error detection and automatic session self-healing', async () => {
+    assert.equal(isDeadContextError(new Error('Target page, context or browser has been closed')), true);
+    assert.equal(isPageCrashedError(new Error('Page crashed')), true);
+
+    const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-heal-')));
+    workspaces.push(workspace);
+    let launchCount = 0;
+    let firstSession = true;
+    const browser = new CausyneBrowser({
+      workspace,
+      profileDirectory: path.join(workspace, '.profile'),
+      ensureBrowserCapability: async () => ({ ok: true }),
+      resolveRuntime: () => ({
+        installDirectory: '/fake/causyne-browser',
+        resourceDirectory: '/fake/resources',
+        executablePath: '/fake/causyne-browser/camoufox',
+        source: 'environment'
+      }),
+      loadBrowserEngine: async () => ({
+        Camoufox: async () => {
+          launchCount++;
+          const session = new FakeSession();
+          if (firstSession) {
+            firstSession = false;
+            const origNewPage = session.newPage.bind(session);
+            session.newPage = async () => {
+              const p = await origNewPage();
+              let failedOnce = false;
+              const origGoto = p.goto.bind(p);
+              p.goto = async url => {
+                if (!failedOnce) {
+                  failedOnce = true;
+                  throw new Error('Target page, context or browser has been closed');
+                }
+                return origGoto(url);
+              };
+              return p;
+            };
+          }
+          return session;
+        }
+      }),
+      validateUrl: async value => new URL(value)
+    });
+
+    const results = await browser.run([{ type: 'goto', url: 'https://example.com/recovered' }]);
+    assert.equal(launchCount, 2);
+    assert.equal(results[0].url, 'https://example.com/recovered');
+    await browser.close();
+  });
+
+  test('iframe snapshot refs, macro navigation, schema extract, and workspace upload', async () => {
+    const { browser, session, workspace } = fakeRuntime();
+    fs.writeFileSync(path.join(workspace, 'upload.txt'), 'sample upload payload');
+    const page = await session.newPage();
+    page.frames = () => [
+      page,
+      {
+        url: () => 'https://checkout.example.com/embed',
+        name: () => 'checkout-frame',
+        locator: () => ({
+          ariaSnapshot: async () => '- button "Pay Now"\n- textbox "Cardholder Name"'
+        }),
+        getByRole: (role, opts = {}) => new FakeLocator(page, `iframe:${role}:${opts.name ?? ''}`)
+      }
+    ];
+    page.mainFrame = () => page;
+
+    const results = await browser.run([
+      { type: 'goto', macro: '@wikipedia_search', query: 'Causyne' },
+      { type: 'snapshot' },
+      { type: 'click', ref: 'e4' },
+      {
+        type: 'extract',
+        schema: {
+          type: 'object',
+          properties: { payButton: { type: 'string', 'x-ref': 'e4' } },
+          required: ['payButton']
+        }
+      },
+      { type: 'upload', selector: 'input[type="file"]', filePath: 'upload.txt' }
+    ]);
+
+    assert.equal(results[0].url, 'https://en.wikipedia.org/wiki/Special:Search?search=Causyne');
+    assert.match(results[1].output, /--- iframe: checkout-frame ---/);
+    assert.match(results[1].output, /button "Pay Now" \[e4\]/);
+    assert.deepEqual(results[3].data, { payButton: 'Pay Now' });
+    assert.match(results[4].output, /Uploaded 1 file/);
+    await browser.close();
+  });
+
+  test('sandbox and toolSelfRepair handle macros, uploads, and browser aliases', () => {
+    const workspace = process.cwd();
+    const sandbox = new Sandbox({ workspaceRoot: workspace });
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'goto', macro: '@google_search', query: 'causyne' }]
+    }).risk, 'safe');
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'goto', url: '@youtube_search causyne agent' }]
+    }).risk, 'safe');
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'upload', selector: '#file', filePath: '../outside.txt' }]
+    }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'upload', selector: '#file', filePath: 'inside.txt' }]
+    }).risk, 'dangerous');
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'fill', ref: 'e1', text: 'hello' }]
+    }).risk, 'dangerous');
+
+    assert.equal(canonicalizeToolName('camofox'), 'browser_act');
+    assert.equal(canonicalizeToolName('camoufox'), 'browser_act');
+    assert.equal(canonicalizeToolName('causyne_browser'), 'browser_act');
+
+    const repaired = resolveParameterAliases('browser_act', {
+      action: 'goto',
+      url: 'https://example.com'
+    });
+    assert.deepEqual(repaired.args, {
+      actions: [{ type: 'goto', url: 'https://example.com' }]
+    });
   });
 });

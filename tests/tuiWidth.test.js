@@ -339,10 +339,8 @@ describe('the interface follows the terminal, not a hardcoded ceiling', () => {
   // clamps to 120 columns — in theme.js, prompt.js and chatRenderer.js — meant
   // a 220-column terminal wasted 101 columns.
   //
-  // The two halves want opposite things and now get them: chrome fills the
-  // window; prose does not, because 200 characters per line is genuinely hard
-  // to read. That is the same rule the design skills hand to the agent for
-  // anyone else's interface.
+  // Chrome fills the window; prose grows with it but at a slower rate so an
+  // unusually wide terminal does not turn answers into unreadable lines.
 
   test('the input box fills a stretched terminal', () => {
     for (const columns of [100, 160, 220, 400]) {
@@ -357,12 +355,12 @@ describe('the interface follows the terminal, not a hardcoded ceiling', () => {
     }
   });
 
-  test('prose does NOT fill a stretched terminal', () => {
+  test('prose grows with a stretched terminal without filling it', () => {
     const out = { columns: 400, write() { return true; }, isTTY: true, on() {}, removeListener() {} };
     const renderer = new ChatRenderer({ out });
     assert.equal(renderer.width(), 400, 'chrome follows the window');
-    assert.ok(renderer.measure() <= 100,
-      `prose wrapped at ${renderer.measure()} characters; past roughly 100 the eye loses the return sweep`);
+    assert.ok(renderer.measure() > 100 && renderer.measure() < 160,
+      `prose should grow gradually on a wide screen; got ${renderer.measure()} columns`);
     assert.ok(renderer.measure() < renderer.width(), 'the two must differ on a wide terminal');
   });
 

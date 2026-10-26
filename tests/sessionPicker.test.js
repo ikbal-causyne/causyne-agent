@@ -11,6 +11,7 @@ import {
   saveSessionMessages,
   deleteSession,
   resolveSession,
+  listSessions,
   setActiveSession,
   getActiveSessionId
 } from '../src/sessionStore.js';
@@ -18,7 +19,7 @@ import { MemoryManager } from '../src/memoryManager.js';
 
 const tempWorkspace = () => fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sess-test-'));
 
-test('buildSessionPickerItems: has + New Session at index 0 and classifies sessions', () => {
+test('buildSessionPickerItems: orders conversations by date and hides abandoned empty starts', () => {
   const ws = '/tmp/my-proj';
   const sessions = [
     {
@@ -47,10 +48,20 @@ test('buildSessionPickerItems: has + New Session at index 0 and classifies sessi
       createdAt: Date.now() - 180000,
       updatedAt: Date.now() - 150000,
       messageCount: 20
+    },
+    {
+      id: 's_empty',
+      workspace: ws,
+      workspaceKey: 'abc',
+      title: 'Untitled',
+      createdAt: Date.now() - 10000,
+      updatedAt: Date.now() - 10000,
+      messageCount: 0
     }
   ];
 
-  const items = buildSessionPickerItems(sessions, 's_active', ws);
+  // Storage iteration order is not guaranteed; the picker must order by time.
+  const items = buildSessionPickerItems(sessions.reverse(), 's_active', ws);
   assert.equal(items.length, 5);
 
   // Pinned item 0
@@ -64,15 +75,39 @@ test('buildSessionPickerItems: has + New Session at index 0 and classifies sessi
   // Active session
   assert.equal(items[2].id, 's_active');
   assert.ok(items[2].label.includes('[active]'));
-  assert.equal(items[2].category, 'Current Workspace');
+  assert.equal(items[2].category, 'Today');
 
   // Other workspace session
   assert.equal(items[3].id, 's_other');
-  assert.equal(items[3].category, 'Other Workspaces');
+  assert.equal(items[3].category, 'Today');
+  assert.match(items[3].description, /other-proj/);
 
   // Continuum session
   assert.equal(items[4].id, 's_cont');
-  assert.equal(items[4].category, 'Continuum (Peer Agent)');
+  assert.equal(items[4].category, 'Today');
+  assert.equal(items.some(item => item.id === 's_empty'), false);
+});
+
+test('session titles recover a later substantive prompt after a greeting', () => {
+  const ws = tempWorkspace();
+  const session = createSession(ws, 'Untitled', true);
+  try {
+    saveSessionMessages(session.id, [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'Hello' },
+      { role: 'user', content: 'Build a Tesla Roadster landing page with real media' }
+    ]);
+    const rows = buildSessionPickerItems(
+      listSessions().filter(row => row.id === session.id),
+      session.id,
+      ws
+    );
+    assert.match(rows.at(-1).label, /Tesla Roadster landing page/);
+    assert.match(rows.at(-1).description, /(?:just now|\dm ago)/);
+  } finally {
+    deleteSession(session.id);
+    fs.rmSync(ws, { recursive: true, force: true });
+  }
 });
 
 test('runInteractiveSessionPicker: selecting + New Session creates fresh conversation', async () => {
@@ -118,7 +153,8 @@ test('runInteractiveSessionPicker: selecting existing session switches and resto
   const session1 = createSession(ws, 'Session Alpha', true);
   saveSessionMessages(session1.id, [
     { role: 'user', content: 'hello from alpha' },
-    { role: 'assistant', content: 'greetings' }
+    { role: 'assistant', content: 'greetings' },
+    { role: 'tool', content: 'internal tool result' }
   ]);
 
   const session2 = createSession(ws, 'Session Beta', true);
@@ -134,6 +170,7 @@ test('runInteractiveSessionPicker: selecting existing session switches and resto
     memoryManager: memory
   };
 
+  let renderedHistory = null;
   const prompt = {
     openLayer(layer) {
       // Find session Alpha in items and pick it
@@ -142,13 +179,16 @@ test('runInteractiveSessionPicker: selecting existing session switches and resto
       setTimeout(() => layer.onPick(target), 1);
     },
     editor: { clear() {} },
-    scheduleDraw() {}
+    scheduleDraw() {},
+    renderer: { renderSessionHistory(messages, meta) { renderedHistory = { messages, meta }; } }
   };
 
   const result = await runInteractiveSessionPicker(prompt, { loop, workspace: ws });
   assert.ok(result.includes('Switched to "Session Alpha"'), `Result message: ${result}`);
-  assert.equal(loop.messages.length, 2, 'Should restore messages from session Alpha');
+  assert.equal(loop.messages.length, 3, 'Should restore messages from session Alpha');
   assert.equal(memory.sessionId, session1.id);
+  assert.equal(renderedHistory.messages.length, 3, 'History is not truncated for rendering');
+  assert.equal(renderedHistory.meta.messagesCount, 2, 'Divider counts visible turns, not tool results');
 
   // Cleanup
   deleteSession(session1.id);

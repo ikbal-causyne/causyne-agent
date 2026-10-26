@@ -259,6 +259,20 @@ export function titleFrom(text: unknown): string {
   return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
 }
 
+const PLACEHOLDER_TITLE = /^(?:untitled|hi|hello|hey|halo|hai|continue|lanjut|open it(?: for me)?|new session\b.*)$/i;
+const NON_TASK_MESSAGE = /^(?:hi|hello|hey|halo|hai|continue|lanjut|open it|open it for me|thanks|thank you)[.!?\s]*$/i;
+
+/** Recover a useful title when a session began with a greeting or placeholder. */
+function sessionTitle(title: string, messages: SessionMessage[], createdAt: number): string {
+  if (title.trim() && !PLACEHOLDER_TITLE.test(title.trim())) return title;
+  const prompt = messages.find((message) => {
+    if (message.role !== 'user' || typeof message.content !== 'string') return false;
+    const text = message.content.trim();
+    return text.length > 12 && !NON_TASK_MESSAGE.test(text) && !text.startsWith('[decayed]');
+  });
+  return prompt ? titleFrom(prompt.content) : `New session - ${new Date(createdAt).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+}
+
 export function listSessions(): Array<Omit<SessionRecord, 'messages'> & { messageCount: number }> {
   try {
     ensureDir();
@@ -272,7 +286,7 @@ export function listSessions(): Array<Omit<SessionRecord, 'messages'> & { messag
       const session = readSession(id);
       if (!session) continue;
       const { messages, ...metadata } = session;
-      rows.push({ ...metadata, messageCount: messages.length });
+      rows.push({ ...metadata, title: sessionTitle(metadata.title, messages, metadata.createdAt), messageCount: messages.length });
     }
     return rows.sort((left, right) => right.updatedAt - left.updatedAt);
   } catch {
@@ -311,8 +325,9 @@ export function createSession(workspace: unknown, title = 'Untitled', makeActive
   // user from starting an otherwise usable foreground session.
   writeNewTranscript(session);
   if (makeActive) setActiveSession(session.id);
-  pruneSessions();
-  return session;
+  // Session creation must never silently delete older conversations. Retention
+  // is an explicit maintenance operation, separate from starting a chat.
+  return { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) };
 }
 
 /**
@@ -322,7 +337,8 @@ export function createSession(workspace: unknown, title = 'Untitled', makeActive
  * they only need the transcript that belongs to their own id.
  */
 export function getSession(id: unknown): SessionRecord | null {
-  return readSession(id);
+  const session = readSession(id);
+  return session ? { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) } : null;
 }
 
 export function getActiveSessionId(): string | null {
@@ -367,7 +383,7 @@ export function resolveSession(workspace: unknown, options: ResolveSessionOption
     const active = readSession(targetId);
     if (active && (!active.workspace || active.workspaceKey === key) && now - active.updatedAt < RESUME_WINDOW_MS) {
       setActiveSession(active.id);
-      return active;
+      return { ...active, title: sessionTitle(active.title, active.messages, active.createdAt) };
     }
   }
 
@@ -379,7 +395,7 @@ export function resolveSession(workspace: unknown, options: ResolveSessionOption
     const session = readSession(candidate.id);
     if (session) {
       setActiveSession(session.id);
-      return session;
+      return { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) };
     }
   }
   return createSession(workspaceText);
@@ -389,7 +405,7 @@ export function switchSession(id: unknown): SessionRecord | null {
   const session = readSession(id);
   if (!session) return null;
   setActiveSession(session.id);
-  return session;
+  return { ...session, title: sessionTitle(session.title, session.messages, session.createdAt) };
 }
 
 export interface ForkSessionOptions {
@@ -410,7 +426,7 @@ export interface ForkSessionOptions {
  * permissions so that user authorization and trust are freshly established.
  */
 export function forkSession(sourceId: unknown, options: ForkSessionOptions = {}): SessionRecord | null {
-  const source = readSession(sourceId);
+  const source = getSession(sourceId);
   if (!source) return null;
 
   const targetWorkspace = options.workspace || source.workspace || process.cwd();
@@ -458,9 +474,8 @@ export function saveSessionMessages(id: unknown, messages: unknown): boolean {
   if (!session || !validMessages(messages)) return false;
   const nextMessages = messages.slice();
   const firstUser = nextMessages.find((message) => message.role === 'user' && typeof message.content === 'string');
-  const nextTitle = (!session.title || session.title === 'Untitled') && firstUser
-    ? titleFrom(firstUser.content)
-    : session.title;
+  const nextTitle = sessionTitle(session.title, nextMessages, session.createdAt)
+    || (firstUser ? titleFrom(firstUser.content) : session.title);
   const prefix = session.messages.length <= nextMessages.length
     && session.messages.every((message, index) => {
       const next = nextMessages[index];
