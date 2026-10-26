@@ -33,11 +33,12 @@ Alternatively, you can install the global package via npm:
 ```sh
 npm install -g @causyne/agent
 ```
-Please treat this release as an experimental preview built for debugging and hands-on testing rather than day-to-day production workloads. As the developer behind Causyne, I would be genuinely grateful for your feedback, edge-case findings, and diagnostic reports. If you run into unexpected behavior or have thoughts on how the runtime behaves, please open an issue on GitHub or send a message directly to help@causyne.com.
+
+Please treat this release as an experimental preview built for debugging and hands-on testing rather than day-to-day production workloads. As the developer behind Causyne, I would be genuinely grateful for your feedback, edge-case findings, and diagnostic reports. If you run into unexpected behavior or have thoughts on how the runtime behaves, please open an issue on GitHub or reach out directly to help@causyne.com.
 
 ## Contact
 
-For general inquiries and business communication, reach out to contact@causyne.com. For technical questions, bug reports, and diagnostic feedback, email help@causyne.com. For partnerships and direct collaboration, write to ikbal@causyne.com.
+For general inquiries and business communication, reach out to contact@causyne.com. For technical questions, bug reports, and diagnostic feedback, email help@causyne.com. For security disclosures and vulnerability reports, email security@causyne.com. For partnerships and direct collaboration, write to ikbal@causyne.com.
 
 ## Development
 

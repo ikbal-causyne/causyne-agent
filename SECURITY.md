@@ -18,7 +18,4 @@ cannot prove that a repository contains no secrets.
 
 ## Reporting a vulnerability
 
-Please avoid publishing exploit details in a public issue. Use the repository's
-private security-reporting channel when it becomes available. Until that channel
-is published, retain the report privately rather than exposing user data or a
-working exploit.
+Please avoid publishing exploit details in a public issue. Report any security concern or vulnerability directly to security@causyne.com so it can be investigated and resolved promptly.

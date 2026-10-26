@@ -417,6 +417,7 @@ export function mapNativeToolToCausyne(
 
 export class AntigravityProvider extends LLMProvider {
   command: string;
+  printTimeout: string;
   currentConversationId: string | null = null;
   lastTaskId: string | null = null;
 
@@ -424,6 +425,9 @@ export class AntigravityProvider extends LLMProvider {
     super(config);
     this.model = config.model || 'Gemini 3.8 Flash (Low)';
     this.command = config.command || resolveAgyBinary();
+    this.printTimeout = typeof config.printTimeout === 'string' && config.printTimeout.trim()
+      ? config.printTimeout.trim()
+      : '1800s';
     this.visionModels = ['*'];
     this.audioModels = [];
   }

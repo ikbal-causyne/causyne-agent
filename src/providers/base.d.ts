@@ -41,6 +41,7 @@ export interface ChatResponse {
   reasoningContent?: string | undefined;
   thinkingBlocks?: any[] | undefined;
   externalActions?: ChatResponseAction[] | undefined;
+  incompleteTurn?: boolean | undefined;
 }
 
 export interface ChatOptions {
