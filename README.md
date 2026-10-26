@@ -12,11 +12,32 @@ documentation is intentionally concise while the project is evolving.
 
 Learn more at [causyne.com](https://causyne.com/).
 
+## Installation
+
+This build is provided specifically for debugging, testing, and architectural evaluation. If you are exploring or debugging the harness, you can install it using the automated script or directly through npm.
+
+For macOS, Linux, or WSL:
+
+```sh
+curl -fsSL https://causyne.com/install.sh | bash
+```
+
+For Windows PowerShell:
+
+```powershell
+irm https://causyne.com/install.ps1 | iex
+```
+
+Alternatively, you can install the global package via npm:
+
+```sh
+npm install -g @causyne/agent
+```
+Please treat this release as an experimental preview built for debugging and hands-on testing rather than day-to-day production workloads. As the developer behind Causyne, I would be genuinely grateful for your feedback, edge-case findings, and diagnostic reports. If you run into unexpected behavior or have thoughts on how the runtime behaves, please open an issue on GitHub or send a message directly to help@causyne.com.
+
 ## Contact
 
-- General inquiries and business communication: [contact@causyne.com](mailto:contact@causyne.com)
-- Product support and troubleshooting: [help@causyne.com](mailto:help@causyne.com)
-- Partnerships and direct communication: [ikbal@causyne.com](mailto:ikbal@causyne.com)
+For general inquiries and business communication, reach out to contact@causyne.com. For technical questions, bug reports, and diagnostic feedback, email help@causyne.com. For partnerships and direct collaboration, write to ikbal@causyne.com.
 
 ## Development
 

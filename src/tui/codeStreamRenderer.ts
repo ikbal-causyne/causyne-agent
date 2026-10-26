@@ -62,6 +62,14 @@ export class CodeStreamRenderer extends ChatRenderer {
     return true;
   }
 
+  override resetTurn(): void {
+    this._activeReasoning = false;
+    this.activeCode = null;
+    this.modelNote = '';
+    this.lastReasoning = '';
+    super.resetTurn();
+  }
+
   override handle(message: RendererEvent): boolean {
     if (message?.type === 'code_progress') {
       this.onCodeProgress(message as unknown as CodeProgressEvent);
@@ -70,6 +78,11 @@ export class CodeStreamRenderer extends ChatRenderer {
     if (message?.type === 'agent_reasoning') {
       const content = typeof message.content === 'string' ? message.content : '';
       if (content) this.lastReasoning = content;
+      const transcript = this.transcript as unknown as CodeTranscript | null;
+      const tailIsReasoning = transcript?.frames.at(-1)?.meta?.reasoning === true;
+      if (this._activeReasoning && transcript && !tailIsReasoning) {
+        this._activeReasoning = false;
+      }
       if (this.activeCode && this.transcript) {
         const note = content.trim().split('\n').at(-1) || '';
         this.modelNote = note.slice(-140);
@@ -78,6 +91,7 @@ export class CodeStreamRenderer extends ChatRenderer {
       }
     }
     if (['agent_message', 'step_start', 'task_complete', 'error'].includes(message?.type || '')) {
+      this._activeReasoning = false;
       this.activeCode = null;
       this.modelNote = '';
       if (message.type === 'task_complete' || message.type === 'error') this.lastReasoning = '';

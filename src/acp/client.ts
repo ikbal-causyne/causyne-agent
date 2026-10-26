@@ -52,6 +52,13 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
   method: string;
+  cleanup?: () => void;
+}
+
+function createAbortError(message = 'ACP operation aborted by user'): Error {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }
 
 const MAX_STDERR_CHARS = 4000;
@@ -88,7 +95,8 @@ export class AcpClient {
     return this.initResult?.authMethods;
   }
 
-  async start(): Promise<InitializeResult> {
+  async start(signal?: AbortSignal): Promise<InitializeResult> {
+    if (signal?.aborted) throw createAbortError();
     if (this.child) throw new Error('client already started');
     const args = this.options.args ?? [];
     const child = spawn(this.options.command, args, {
@@ -101,6 +109,7 @@ export class AcpClient {
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
+      if (this.closed) return;
       this.buffer += chunk;
       void this.drain();
     });
@@ -109,8 +118,8 @@ export class AcpClient {
       this.stderrTail = `${this.stderrTail}${chunk}`.slice(-MAX_STDERR_CHARS);
     });
     child.on('error', (error) => this.failAll(new Error(`agent process failed: ${error.message}`)));
-    child.on('exit', (code, signal) => {
-      const detail = this.stderrTail.trim() || `exit code ${code ?? 'null'}${signal ? ` signal ${signal}` : ''}`;
+    child.on('exit', (code, exitSignal) => {
+      const detail = this.stderrTail.trim() || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
       this.failAll(new Error(`agent process exited: ${detail}`));
     });
 
@@ -127,16 +136,16 @@ export class AcpClient {
       clientInfo: { name: 'Causyne Agent', version: this.options.clientVersion ?? '0.0.0' }
     };
 
-    const result = await this.request<InitializeResult>(ACP_METHODS.INITIALIZE, params, 30_000);
+    const result = await this.request<InitializeResult>(ACP_METHODS.INITIALIZE, params, 30_000, signal);
     this.initResult = result;
     return result;
   }
 
-  async newSession(cwd: string, mcpServers: unknown[] = []): Promise<string> {
+  async newSession(cwd: string, mcpServers: unknown[] = [], signal?: AbortSignal): Promise<string> {
     const result = await this.request<{ sessionId?: unknown }>(ACP_METHODS.NEW_SESSION, {
       cwd,
       mcpServers
-    }, 30_000);
+    }, 30_000, signal);
     if (!result || typeof result.sessionId !== 'string' || !result.sessionId) {
       throw new Error('agent did not return a session id');
     }
@@ -150,11 +159,11 @@ export class AcpClient {
     }, 30_000);
   }
 
-  async setSessionModel(sessionId: string, modelId: string): Promise<void> {
+  async setSessionModel(sessionId: string, modelId: string, signal?: AbortSignal): Promise<void> {
     await this.request<void>(ACP_METHODS.SET_MODEL, {
       sessionId,
       modelId
-    }, 30_000);
+    }, 5_000, signal);
   }
 
   async setSessionMode(sessionId: string, modeId: string): Promise<void> {
@@ -171,10 +180,12 @@ export class AcpClient {
     }, 30_000);
   }
 
-  async prompt(sessionId: string, input: string | ContentBlock[]): Promise<AcpPromptResult> {
+  async prompt(sessionId: string, input: string | ContentBlock[], signal?: AbortSignal): Promise<AcpPromptResult> {
+    if (signal?.aborted) throw createAbortError();
     const blocks: ContentBlock[] = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
     let collected = '';
     const collector = (update: SessionUpdate): void => {
+      if (signal?.aborted) return;
       // handleLine already notifies options.onUpdate for this session. Calling
       // it again here duplicated every live chunk and file-action frame.
       if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
@@ -183,19 +194,29 @@ export class AcpClient {
     };
     const previous = this.updateListener;
     this.updateListener = (sessionIdFromEvent, update) => {
+      if (signal?.aborted) return;
       previous?.(sessionIdFromEvent, update);
       if (sessionIdFromEvent === sessionId) collector(update);
     };
+    const onAbort = (): void => {
+      try {
+        this.notifyCancel(sessionId);
+      } catch {
+        // ignore cancel write failure
+      }
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
       const response = await this.request<PromptResponse>(ACP_METHODS.PROMPT, {
         sessionId,
         prompt: blocks
-      }, this.options.promptTimeoutMs ?? 15 * 60 * 1000);
+      }, this.options.promptTimeoutMs ?? 15 * 60 * 1000, signal);
       return {
         stopReason: response?.stopReason ?? 'end_turn',
         text: collected
       };
     } finally {
+      signal?.removeEventListener('abort', onAbort);
       this.updateListener = previous;
     }
   }
@@ -212,20 +233,37 @@ export class AcpClient {
     if (this.closed) return;
     this.closed = true;
     const child = this.child;
+    this.child = null;
     this.failAll(new Error('client closed'));
     if (!child) return;
+    if (child.exitCode !== null || child.signalCode !== null) return;
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        child.kill('SIGKILL');
-        resolve();
-      }, 1500);
-      child.once('exit', () => {
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         resolve();
-      });
-      child.kill('SIGTERM');
+      };
+      const timer = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        done();
+      }, 250);
+      if (typeof timer.unref === 'function') timer.unref();
+      child.once('exit', done);
+      try {
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      } catch {
+        // ignore stream destroy errors
+      }
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        done();
+      }
     });
-    this.child = null;
   }
 
   private updateListener: ((sessionId: string, update: SessionUpdate) => void) | null = null;
@@ -382,6 +420,7 @@ export class AcpClient {
     const pending = this.pending.get(response.id);
     if (!pending) return;
     clearTimeout(pending.timer);
+    pending.cleanup?.();
     this.pending.delete(response.id);
     if (response.error) {
       const err = new Error(`${pending.method} failed: ${response.error.message}`);
@@ -393,20 +432,34 @@ export class AcpClient {
     pending.resolve(response.result);
   }
 
-  private request<T>(method: string, params: unknown, timeoutMs: number): Promise<T> {
+  private request<T>(method: string, params: unknown, timeoutMs: number, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) return Promise.reject(createAbortError());
     if (!this.child || this.closed) return Promise.reject(new Error('agent process is not running'));
     if (this.exitError) return Promise.reject(this.exitError);
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
+      const cleanup = (): void => {
+        signal?.removeEventListener('abort', onAbort);
+      };
+      const onAbort = (): void => {
+        clearTimeout(timer);
+        cleanup();
+        this.pending.delete(id);
+        reject(createAbortError());
+      };
       const timer = setTimeout(() => {
+        cleanup();
         this.pending.delete(id);
         reject(new Error(`${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      signal?.addEventListener('abort', onAbort, { once: true });
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,
         timer,
-        method
+        method,
+        cleanup
       });
       this.write({ jsonrpc: '2.0', id, method, params });
     });
@@ -416,6 +469,7 @@ export class AcpClient {
     this.exitError = error;
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
+      pending.cleanup?.();
       pending.reject(error);
       this.pending.delete(id);
     }

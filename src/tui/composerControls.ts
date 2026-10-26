@@ -76,3 +76,109 @@ export function openVariantControl(prompt: ControlPrompt): void {
     }
   }));
 }
+
+export interface InterruptiblePrompt {
+  busy: boolean;
+  interruptedTurn?: boolean;
+  lastCtrlC: number;
+  notice: string;
+  statusMessage: string;
+  queue?: unknown[];
+  completion: unknown;
+  editor: {
+    isEmpty: boolean;
+    getText(): string;
+    clear(): void;
+  };
+  erase(): void;
+  commit(kind: string, produce: (width: number) => string[]): void;
+  onInterrupt(): void;
+  onExit(): void;
+  scheduleDraw(): void;
+}
+
+export function resetTurnInterruptState(
+  prompt: { interruptedTurn?: boolean; statusMessage?: string; notice?: string },
+  busy: boolean
+): void {
+  prompt.interruptedTurn = false;
+  if (!busy) {
+    prompt.statusMessage = '';
+    prompt.notice = '';
+  }
+}
+
+export function shouldAcceptStatusUpdate(
+  prompt: { busy?: boolean; interruptedTurn?: boolean }
+): boolean {
+  return !(prompt.busy && prompt.interruptedTurn);
+}
+
+export function triggerTurnInterrupt(
+  prompt: InterruptiblePrompt,
+  formatInterruptedRow: () => string[],
+  options: { viaCtrlC?: boolean } = {}
+): void {
+  if (Array.isArray(prompt.queue)) {
+    prompt.queue.length = 0;
+  }
+  prompt.statusMessage = 'interrupting…';
+  if (!prompt.interruptedTurn) {
+    prompt.interruptedTurn = true;
+    prompt.erase();
+    prompt.commit('notice', () => formatInterruptedRow());
+    prompt.notice = options.viaCtrlC ? 'interrupting… press Ctrl+C again to exit' : '';
+  } else {
+    prompt.notice = 'interrupting… press Ctrl+C again to exit';
+  }
+  prompt.onInterrupt();
+  prompt.scheduleDraw();
+}
+
+export function handlePromptCtrlC(
+  prompt: InterruptiblePrompt,
+  formatInterruptedRow: () => string[],
+  windowMs = 2000,
+  now = Date.now()
+): void {
+  if (!prompt.editor.isEmpty) {
+    prompt.editor.clear();
+    prompt.completion = null;
+    return;
+  }
+  if (prompt.busy) {
+    if (prompt.interruptedTurn && now - prompt.lastCtrlC < windowMs) {
+      prompt.onInterrupt();
+      prompt.onExit();
+      return;
+    }
+    prompt.lastCtrlC = now;
+    triggerTurnInterrupt(prompt, formatInterruptedRow, { viaCtrlC: true });
+    return;
+  }
+  if (now - prompt.lastCtrlC < windowMs) {
+    prompt.onExit();
+    return;
+  }
+  prompt.lastCtrlC = now;
+  prompt.notice = 'press Ctrl+C again to exit';
+}
+
+export function handlePromptEscape(
+  prompt: InterruptiblePrompt,
+  formatInterruptedRow: () => string[]
+): void {
+  if (prompt.completion) {
+    prompt.completion = null;
+    if (prompt.editor.getText().startsWith('/')) {
+      prompt.editor.clear();
+    }
+    prompt.scheduleDraw();
+    return;
+  }
+  if (prompt.busy) {
+    triggerTurnInterrupt(prompt, formatInterruptedRow, { viaCtrlC: false });
+    return;
+  }
+  prompt.editor.clear();
+}

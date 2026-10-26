@@ -70,7 +70,11 @@ export class PiProvider extends LLMProvider {
                     toolCalls: this.formatter.extractToolCalls(raw)
                 });
             };
-            const abort = () => fail(new Error('Pi request aborted'));
+            const abort = () => {
+                const err = new Error('Pi request aborted');
+                err.name = 'AbortError';
+                fail(err);
+            };
             if (options.signal?.aborted) {
                 abort();
                 return;

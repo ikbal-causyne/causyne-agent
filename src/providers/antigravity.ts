@@ -797,7 +797,9 @@ export class AntigravityProvider extends LLMProvider {
         } catch {
           // ignore kill errors
         }
-        safeReject(new Error('Turn aborted by user or timeout.'));
+        const abortErr = new Error('Turn aborted by user or timeout.');
+        abortErr.name = 'AbortError';
+        safeReject(abortErr);
       };
 
       if (options.signal) {
@@ -1074,6 +1076,9 @@ export class AntigravityProvider extends LLMProvider {
       try {
         return await this._executeOnce(messages, options);
       } catch (err: any) {
+        if (options.signal?.aborted || err?.name === 'AbortError') {
+          throw err;
+        }
         if (attempt < maxRetries && this._isTransientError(err.message)) {
           attempt++;
           const delay = attempt * 1200;

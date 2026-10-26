@@ -554,6 +554,27 @@ export class AgentLoop {
         if (this.abortController) {
             this.abortController.abort();
         }
+        if (this.llm && typeof this.llm.abort === 'function') {
+            try {
+                this.llm.abort();
+            }
+            catch {
+                // ignore provider abort errors
+            }
+        }
+        else if (this.llm && typeof this.llm.close === 'function') {
+            try {
+                void this.llm.close();
+            }
+            catch {
+                // ignore provider close errors
+            }
+        }
+        if (this.pendingApprovals && this.pendingApprovals.size > 0) {
+            for (const toolCallId of [...this.pendingApprovals.keys()]) {
+                this.handleApprovalResponse(toolCallId, false);
+            }
+        }
     }
     setAutonomyMode(mode) {
         const normalized = String(mode || '').trim().toUpperCase();
@@ -890,6 +911,10 @@ export class AgentLoop {
         catch (perceptionError) {
             this.debugLog(`workspace scan failed: ${perceptionError.message}`);
             this.workspaceContext = null;
+        }
+        if (this.stopRequested || this.abortController?.signal?.aborted) {
+            auditLog.log({ event: 'task_interrupted', taskId: this.taskId });
+            return;
         }
         // 2. ANALYSE TASK SHAPE & PRE-WARM CAPABILITY PACKS.
         // A game request gets the full game toolset from step one with no discovery
@@ -1450,6 +1475,8 @@ export class AgentLoop {
                     coreToolCount: dynamicTools.filter((t) => isCoreTool(t.name)).length,
                     signal: this.abortController?.signal,
                     onReasoningChunk: (chunk) => {
+                        if (this.stopRequested || this.abortController?.signal?.aborted)
+                            return;
                         if (!thoughtStartedAt)
                             thoughtStartedAt = Date.now();
                         reasoningAccumulated += chunk;
@@ -1462,6 +1489,8 @@ export class AgentLoop {
                         });
                     },
                     onChunk: (_chunk) => {
+                        if (this.stopRequested || this.abortController?.signal?.aborted)
+                            return;
                         if (!hasStreamedChunk) {
                             hasStreamedChunk = true;
                             this.emitEvent({ type: 'status', message: 'Responding…' });
@@ -1472,6 +1501,8 @@ export class AgentLoop {
                             this.emitEvent(preview);
                     },
                     onNativeAction: (action) => {
+                        if (this.stopRequested || this.abortController?.signal?.aborted)
+                            return;
                         if (!action || typeof action.name !== 'string')
                             return;
                         const nativeCode = codeProgressFromAction(action.name, { ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
@@ -1494,6 +1525,10 @@ export class AgentLoop {
                     }
                 }).finally(() => nativeCodeObserver.dispose());
                 this._totalPlanMs = (this._totalPlanMs || 0) + (performance.now() - planStepStart);
+                if (this.stopRequested || this.abortController?.signal?.aborted) {
+                    auditLog.log({ event: 'task_interrupted', taskId: this.taskId });
+                    break;
+                }
                 const finalCodePreview = streamingCode.flush();
                 if (finalCodePreview)
                     this.emitEvent(finalCodePreview);
@@ -1877,6 +1912,8 @@ export class AgentLoop {
                 const prefetched = this.prefetchReadOnlyCalls(response.toolCalls);
                 // 3. ACT (Execute tool calls)
                 for (const toolCall of response.toolCalls) {
+                    if (this.stopRequested || this.abortController?.signal?.aborted)
+                        break;
                     // Canonicalise once, here. Every downstream comparison — the sandbox's
                     // risk classification, the approval gates, the game cascade lists —
                     // matches on this string, so if it is not the catalogue name those
@@ -2230,6 +2267,8 @@ export class AgentLoop {
                         this.emitEvent({ type: 'approval_request', toolCallId: toolCall.id, tool: functionName, args, risk: validation.risk });
                         const approved = await this.waitForApproval(toolCall.id);
                         if (!approved) {
+                            if (this.stopRequested || this.abortController?.signal?.aborted)
+                                break;
                             coldObserver.recordToolOutcome(this.taskId, functionName, args, {
                                 success: false,
                                 error: 'User denied this action'
@@ -2293,6 +2332,10 @@ export class AgentLoop {
                         this._totalActMs = (this._totalActMs || 0) + (performance.now() - actStart);
                     }
                     catch (toolError) {
+                        if (this.stopRequested || this.abortController?.signal?.aborted || toolError?.name === 'AbortError') {
+                            auditLog.log({ event: 'task_interrupted', taskId: this.taskId, tool: functionName });
+                            break;
+                        }
                         duration = 0;
                         const errorType = this.classifyError(toolError);
                         const failure = { success: false, error: String(toolError?.message || toolError) };
@@ -2658,6 +2701,11 @@ export class AgentLoop {
                 }
             }
             catch (e) {
+                if (this.stopRequested || this.abortController?.signal?.aborted || e?.name === 'AbortError') {
+                    this.debugLog(`agent loop interrupted: ${e?.message || 'aborted'}`);
+                    auditLog.log({ event: 'task_interrupted', taskId: this.taskId });
+                    break;
+                }
                 // A real failure. It reaches the user as an `error` frame further down
                 // this same catch; the stack is a diagnostic and stays behind the flag.
                 this.debugLog(`agent loop error: ${e && e.stack ? e.stack : e}`);

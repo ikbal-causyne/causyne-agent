@@ -19,6 +19,7 @@ export class AcpProvider extends LLMProvider {
   args: string[];
   private activeClient: AcpClient | null = null;
   private activeSessionId: string | null = null;
+  private currentTurnAborted = false;
   private currentTurnChunkHandler: ((chunk: string) => void) | null = null;
   private currentTurnReasoningHandler: ((chunk: string) => void) | null = null;
   private currentTurnNativeActionHandler: ((action: ChatResponseAction) => void) | null = null;
@@ -48,7 +49,10 @@ export class AcpProvider extends LLMProvider {
     this.model = canonicalModelId(modelIsPeerName ? peerDefault : configuredModel);
 
     const profile = getPeerProfile(this.peerId);
-    if (profile) {
+    if (config.command) {
+      this.command = config.command;
+      this.args = config.args || ['acp'];
+    } else if (profile) {
       this.command = profile.command;
       this.args = profile.args || [];
     } else {
@@ -57,7 +61,7 @@ export class AcpProvider extends LLMProvider {
         this.command = preset.command;
         this.args = preset.args || [];
       } else {
-        this.command = config.command || this.peerId;
+        this.command = this.peerId;
         this.args = config.args || ['acp'];
       }
     }
@@ -278,7 +282,12 @@ export class AcpProvider extends LLMProvider {
     return calls;
   }
 
-  private async getOrCreateClient(): Promise<{ client: AcpClient; sessionId: string }> {
+  private async getOrCreateClient(signal?: AbortSignal): Promise<{ client: AcpClient; sessionId: string }> {
+    if (signal?.aborted) {
+      const abortErr = new Error('ACP request aborted by user');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     if (this.activeClient && this.activeSessionId) {
       return { client: this.activeClient, sessionId: this.activeSessionId };
     }
@@ -289,11 +298,13 @@ export class AcpProvider extends LLMProvider {
       cwd: process.cwd(),
       promptTimeoutMs: 180_000,
       permissionHandler: async (req: RequestPermissionRequest) => {
+        if (this.currentTurnAborted || signal?.aborted) return { outcome: 'cancelled' };
         const allowOpt = req.options?.find(o => o.kind === 'allow_once' || o.kind === 'allow_always' || o.optionId === 'allow');
         if (allowOpt) return { outcome: 'selected', optionId: allowOpt.optionId };
         return { outcome: 'cancelled' };
       },
       onUpdate: (_sessionId: string, update: SessionUpdate) => {
+        if (this.currentTurnAborted) return;
         if (update && typeof update === 'object') {
           const updateObj = update as any;
           if (updateObj.sessionUpdate === 'agent_thought_chunk') {
@@ -337,8 +348,8 @@ export class AcpProvider extends LLMProvider {
       }
     });
 
-    await client.start();
-    const sessionId = await client.newSession(process.cwd());
+    await client.start(signal);
+    const sessionId = await client.newSession(process.cwd(), [], signal);
 
     let targetModel = this.model;
     if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.startsWith('opencode/')) {
@@ -346,8 +357,12 @@ export class AcpProvider extends LLMProvider {
     }
     if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
       try {
-        await client.setSessionModel(sessionId, targetModel);
-      } catch {
+        await client.setSessionModel(sessionId, targetModel, signal);
+      } catch (err: any) {
+        if (this.currentTurnAborted || signal?.aborted || err?.name === 'AbortError') {
+          await client.close();
+          throw err;
+        }
         // peer does not support setSessionModel
       }
     }
@@ -357,25 +372,52 @@ export class AcpProvider extends LLMProvider {
     return { client, sessionId };
   }
 
-  async close(): Promise<void> {
-    if (this.activeClient) {
+  abort(): void {
+    this.currentTurnAborted = true;
+    this.currentTurnChunkHandler = null;
+    this.currentTurnReasoningHandler = null;
+    this.currentTurnNativeActionHandler = null;
+    this.liveFileActions.clear();
+    if (this.activeClient && this.activeSessionId) {
       try {
-        await this.activeClient.close();
+        this.activeClient.notifyCancel(this.activeSessionId);
+      } catch {
+        // ignore cancel write error
+      }
+    }
+    void this.close();
+  }
+
+  async close(): Promise<void> {
+    const client = this.activeClient;
+    this.activeClient = null;
+    this.activeSessionId = null;
+    if (client) {
+      try {
+        await client.close();
       } catch {
         // ignore close error
       }
-      this.activeClient = null;
-      this.activeSessionId = null;
     }
   }
 
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
+    this.currentTurnAborted = Boolean(options.signal?.aborted);
+    if (this.currentTurnAborted) {
+      const abortErr = new Error('ACP request aborted by user');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     this.currentTurnChunkHandler = options.onChunk || null;
     this.currentTurnReasoningHandler = options.onReasoningChunk || null;
     this.currentTurnNativeActionHandler = options.onNativeAction || null;
     this.liveFileActions.clear();
+    const onAbort = (): void => {
+      this.abort();
+    };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      const { client, sessionId } = await this.getOrCreateClient();
+      const { client, sessionId } = await this.getOrCreateClient(options.signal);
 
       const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
       const promptBlocks = this.formatPromptBlocks(messages, options.tools, supportsImages);
@@ -383,12 +425,21 @@ export class AcpProvider extends LLMProvider {
 
       let result;
       try {
-        result = await client.prompt(sessionId, promptBlocks);
+        result = await client.prompt(sessionId, promptBlocks, options.signal);
       } catch (promptErr: any) {
-        // If peer failed, try recreating client once in case connection dropped
+        if (this.currentTurnAborted || options.signal?.aborted || promptErr?.name === 'AbortError') {
+          throw promptErr;
+        }
+        // If peer failed before any user abort, try recreating client once in case connection dropped
         await this.close();
-        const fresh = await this.getOrCreateClient();
-        result = await fresh.client.prompt(fresh.sessionId, promptBlocks);
+        const fresh = await this.getOrCreateClient(options.signal);
+        result = await fresh.client.prompt(fresh.sessionId, promptBlocks, options.signal);
+      }
+
+      if (this.currentTurnAborted || options.signal?.aborted) {
+        const abortErr = new Error('ACP request aborted by user');
+        abortErr.name = 'AbortError';
+        throw abortErr;
       }
 
       let rawContent = (result?.text || '').trim();
@@ -411,9 +462,15 @@ export class AcpProvider extends LLMProvider {
       return response;
     } catch (err: any) {
       await this.close();
+      if (this.currentTurnAborted || options.signal?.aborted || err?.name === 'AbortError') {
+        const abortErr = new Error('ACP request aborted by user');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
     } finally {
+      options.signal?.removeEventListener('abort', onAbort);
       this.currentTurnChunkHandler = null;
       this.currentTurnReasoningHandler = null;
       this.currentTurnNativeActionHandler = null;

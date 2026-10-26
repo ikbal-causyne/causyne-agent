@@ -12,6 +12,7 @@ export class ChatRenderer {
   transcript: ChatTranscript | null;
   _activeReasoning?: boolean;
   handle(message: { type: string; [key: string]: unknown }): boolean;
+  resetTurn(): void;
   onAgentReasoning(message: { content?: string; streaming?: boolean; elapsedMs?: number }): void;
   stopSpinner(): void;
   frame(kind: string, produce: () => void, meta?: Record<string, unknown> | null): void;

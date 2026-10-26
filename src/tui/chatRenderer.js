@@ -420,6 +420,7 @@ export class ChatRenderer {
     this.stepCount = 0;
     this.stepStartedAt = null;
     this.turnStartedAt = Date.now();
+    this._activeReasoning = false;
     this.status.reset();
   }
 
@@ -618,6 +619,12 @@ export class ChatRenderer {
     const isStreaming = Boolean(msg.streaming);
     const elapsedMs = Number(msg.elapsedMs) || 0;
     const durationText = elapsedMs > 0 ? formatDuration(elapsedMs) : '';
+
+    const tailIsReasoning = !this.transcript
+      || this.transcript.frames?.at(-1)?.meta?.reasoning === true;
+    if (this._activeReasoning && !tailIsReasoning) {
+      this._activeReasoning = false;
+    }
 
     if (isStreaming) {
       if (!this._activeReasoning) {

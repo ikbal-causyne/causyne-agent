@@ -64,3 +64,68 @@ export function openVariantControl(prompt) {
         }
     }));
 }
+export function resetTurnInterruptState(prompt, busy) {
+    prompt.interruptedTurn = false;
+    if (!busy) {
+        prompt.statusMessage = '';
+        prompt.notice = '';
+    }
+}
+export function shouldAcceptStatusUpdate(prompt) {
+    return !(prompt.busy && prompt.interruptedTurn);
+}
+export function triggerTurnInterrupt(prompt, formatInterruptedRow, options = {}) {
+    if (Array.isArray(prompt.queue)) {
+        prompt.queue.length = 0;
+    }
+    prompt.statusMessage = 'interrupting…';
+    if (!prompt.interruptedTurn) {
+        prompt.interruptedTurn = true;
+        prompt.erase();
+        prompt.commit('notice', () => formatInterruptedRow());
+        prompt.notice = options.viaCtrlC ? 'interrupting… press Ctrl+C again to exit' : '';
+    }
+    else {
+        prompt.notice = 'interrupting… press Ctrl+C again to exit';
+    }
+    prompt.onInterrupt();
+    prompt.scheduleDraw();
+}
+export function handlePromptCtrlC(prompt, formatInterruptedRow, windowMs = 2000, now = Date.now()) {
+    if (!prompt.editor.isEmpty) {
+        prompt.editor.clear();
+        prompt.completion = null;
+        return;
+    }
+    if (prompt.busy) {
+        if (prompt.interruptedTurn && now - prompt.lastCtrlC < windowMs) {
+            prompt.onInterrupt();
+            prompt.onExit();
+            return;
+        }
+        prompt.lastCtrlC = now;
+        triggerTurnInterrupt(prompt, formatInterruptedRow, { viaCtrlC: true });
+        return;
+    }
+    if (now - prompt.lastCtrlC < windowMs) {
+        prompt.onExit();
+        return;
+    }
+    prompt.lastCtrlC = now;
+    prompt.notice = 'press Ctrl+C again to exit';
+}
+export function handlePromptEscape(prompt, formatInterruptedRow) {
+    if (prompt.completion) {
+        prompt.completion = null;
+        if (prompt.editor.getText().startsWith('/')) {
+            prompt.editor.clear();
+        }
+        prompt.scheduleDraw();
+        return;
+    }
+    if (prompt.busy) {
+        triggerTurnInterrupt(prompt, formatInterruptedRow, { viaCtrlC: false });
+        return;
+    }
+    prompt.editor.clear();
+}

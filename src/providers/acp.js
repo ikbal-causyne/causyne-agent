@@ -17,6 +17,7 @@ export class AcpProvider extends LLMProvider {
     args;
     activeClient = null;
     activeSessionId = null;
+    currentTurnAborted = false;
     currentTurnChunkHandler = null;
     currentTurnReasoningHandler = null;
     currentTurnNativeActionHandler = null;
@@ -45,7 +46,11 @@ export class AcpProvider extends LLMProvider {
         const modelIsPeerName = !configuredModel || configuredModel === 'acp' || configuredModel === this.peerId;
         this.model = canonicalModelId(modelIsPeerName ? peerDefault : configuredModel);
         const profile = getPeerProfile(this.peerId);
-        if (profile) {
+        if (config.command) {
+            this.command = config.command;
+            this.args = config.args || ['acp'];
+        }
+        else if (profile) {
             this.command = profile.command;
             this.args = profile.args || [];
         }
@@ -56,7 +61,7 @@ export class AcpProvider extends LLMProvider {
                 this.args = preset.args || [];
             }
             else {
-                this.command = config.command || this.peerId;
+                this.command = this.peerId;
                 this.args = config.args || ['acp'];
             }
         }
@@ -269,7 +274,12 @@ export class AcpProvider extends LLMProvider {
         }
         return calls;
     }
-    async getOrCreateClient() {
+    async getOrCreateClient(signal) {
+        if (signal?.aborted) {
+            const abortErr = new Error('ACP request aborted by user');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+        }
         if (this.activeClient && this.activeSessionId) {
             return { client: this.activeClient, sessionId: this.activeSessionId };
         }
@@ -279,12 +289,16 @@ export class AcpProvider extends LLMProvider {
             cwd: process.cwd(),
             promptTimeoutMs: 180_000,
             permissionHandler: async (req) => {
+                if (this.currentTurnAborted || signal?.aborted)
+                    return { outcome: 'cancelled' };
                 const allowOpt = req.options?.find(o => o.kind === 'allow_once' || o.kind === 'allow_always' || o.optionId === 'allow');
                 if (allowOpt)
                     return { outcome: 'selected', optionId: allowOpt.optionId };
                 return { outcome: 'cancelled' };
             },
             onUpdate: (_sessionId, update) => {
+                if (this.currentTurnAborted)
+                    return;
                 if (update && typeof update === 'object') {
                     const updateObj = update;
                     if (updateObj.sessionUpdate === 'agent_thought_chunk') {
@@ -333,17 +347,21 @@ export class AcpProvider extends LLMProvider {
                 }
             }
         });
-        await client.start();
-        const sessionId = await client.newSession(process.cwd());
+        await client.start(signal);
+        const sessionId = await client.newSession(process.cwd(), [], signal);
         let targetModel = this.model;
         if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.startsWith('opencode/')) {
             targetModel = `opencode/${targetModel}`;
         }
         if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
             try {
-                await client.setSessionModel(sessionId, targetModel);
+                await client.setSessionModel(sessionId, targetModel, signal);
             }
-            catch {
+            catch (err) {
+                if (this.currentTurnAborted || signal?.aborted || err?.name === 'AbortError') {
+                    await client.close();
+                    throw err;
+                }
                 // peer does not support setSessionModel
             }
         }
@@ -351,37 +369,72 @@ export class AcpProvider extends LLMProvider {
         this.activeSessionId = sessionId;
         return { client, sessionId };
     }
-    async close() {
-        if (this.activeClient) {
+    abort() {
+        this.currentTurnAborted = true;
+        this.currentTurnChunkHandler = null;
+        this.currentTurnReasoningHandler = null;
+        this.currentTurnNativeActionHandler = null;
+        this.liveFileActions.clear();
+        if (this.activeClient && this.activeSessionId) {
             try {
-                await this.activeClient.close();
+                this.activeClient.notifyCancel(this.activeSessionId);
+            }
+            catch {
+                // ignore cancel write error
+            }
+        }
+        void this.close();
+    }
+    async close() {
+        const client = this.activeClient;
+        this.activeClient = null;
+        this.activeSessionId = null;
+        if (client) {
+            try {
+                await client.close();
             }
             catch {
                 // ignore close error
             }
-            this.activeClient = null;
-            this.activeSessionId = null;
         }
     }
     async chat(messages, options = {}) {
+        this.currentTurnAborted = Boolean(options.signal?.aborted);
+        if (this.currentTurnAborted) {
+            const abortErr = new Error('ACP request aborted by user');
+            abortErr.name = 'AbortError';
+            throw abortErr;
+        }
         this.currentTurnChunkHandler = options.onChunk || null;
         this.currentTurnReasoningHandler = options.onReasoningChunk || null;
         this.currentTurnNativeActionHandler = options.onNativeAction || null;
         this.liveFileActions.clear();
+        const onAbort = () => {
+            this.abort();
+        };
+        options.signal?.addEventListener('abort', onAbort, { once: true });
         try {
-            const { client, sessionId } = await this.getOrCreateClient();
+            const { client, sessionId } = await this.getOrCreateClient(options.signal);
             const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
             const promptBlocks = this.formatPromptBlocks(messages, options.tools, supportsImages);
             const promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
             let result;
             try {
-                result = await client.prompt(sessionId, promptBlocks);
+                result = await client.prompt(sessionId, promptBlocks, options.signal);
             }
             catch (promptErr) {
-                // If peer failed, try recreating client once in case connection dropped
+                if (this.currentTurnAborted || options.signal?.aborted || promptErr?.name === 'AbortError') {
+                    throw promptErr;
+                }
+                // If peer failed before any user abort, try recreating client once in case connection dropped
                 await this.close();
-                const fresh = await this.getOrCreateClient();
-                result = await fresh.client.prompt(fresh.sessionId, promptBlocks);
+                const fresh = await this.getOrCreateClient(options.signal);
+                result = await fresh.client.prompt(fresh.sessionId, promptBlocks, options.signal);
+            }
+            if (this.currentTurnAborted || options.signal?.aborted) {
+                const abortErr = new Error('ACP request aborted by user');
+                abortErr.name = 'AbortError';
+                throw abortErr;
             }
             let rawContent = (result?.text || '').trim();
             const toolCalls = this.extractToolCalls(rawContent);
@@ -402,10 +455,16 @@ export class AcpProvider extends LLMProvider {
         }
         catch (err) {
             await this.close();
+            if (this.currentTurnAborted || options.signal?.aborted || err?.name === 'AbortError') {
+                const abortErr = new Error('ACP request aborted by user');
+                abortErr.name = 'AbortError';
+                throw abortErr;
+            }
             const msg = err instanceof Error ? err.message : String(err);
             throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
         }
         finally {
+            options.signal?.removeEventListener('abort', onAbort);
             this.currentTurnChunkHandler = null;
             this.currentTurnReasoningHandler = null;
             this.currentTurnNativeActionHandler = null;

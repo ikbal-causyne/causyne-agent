@@ -35,6 +35,13 @@ import { settleStageResize } from './resizeRecovery.js';
 import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { isStartupDialog, startupDialogView } from './homeView.js';
 import { handleMessageMouse, handleMessageActionMenuMouse, isMouseMotion } from './messageInteraction.js';
+import {
+  resetTurnInterruptState,
+  shouldAcceptStatusUpdate,
+  triggerTurnInterrupt,
+  handlePromptCtrlC,
+  handlePromptEscape
+} from './composerControls.js';
 
 const CTRL_C_WINDOW_MS = 2000;
 
@@ -154,6 +161,7 @@ export class ChatPrompt {
     this.completion = null;
     this.selected = 0;
     this.lastCtrlC = 0;
+    this.interruptedTurn = false;
     this.notice = '';
     this.redrawScheduled = false;
     this.resizeTimer = null;
@@ -281,6 +289,7 @@ export class ChatPrompt {
     if (this.surface) this.surface.sidebarStatus = renderer.status;
     renderer.quietStatus = true;
     renderer.onStatusChange = (message) => {
+      if (!shouldAcceptStatusUpdate(this)) return;
       this.statusMessage = message;
       this.scheduleDraw();
     };
@@ -604,7 +613,7 @@ export class ChatPrompt {
 
   setBusy(busy) {
     this.busy = busy;
-    if (!busy) this.notice = '';
+    resetTurnInterruptState(this, busy);
     if (busy) this.startTick(); else this.stopTick();
     this.draw();
   }
@@ -924,36 +933,25 @@ export class ChatPrompt {
   }
 
   handleCtrlC() {
-    const now = Date.now();
-    if (!this.editor.isEmpty) {
-      this.editor.clear();
-      this.completion = null;
-      return;
-    }
-    if (this.busy) { this.interrupt(); return; }
-    if (now - this.lastCtrlC < CTRL_C_WINDOW_MS) return this.onExit();
-    this.lastCtrlC = now;
-    this.notice = 'press Ctrl+C again to exit';
+    handlePromptCtrlC(
+      this,
+      () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`],
+      CTRL_C_WINDOW_MS
+    );
   }
 
   handleEscape() {
-    if (this.completion) {
-      this.completion = null;
-      if (this.editor.getText().startsWith('/')) {
-        this.editor.clear();
-      }
-      this.scheduleDraw();
-      return;
-    }
-    if (this.busy) return this.interrupt();
-    this.editor.clear();
+    handlePromptEscape(
+      this,
+      () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]
+    );
   }
 
   interrupt() {
-    this.erase();
-    this.commit('notice', () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]);
-    this.notice = '';
-    this.onInterrupt();
+    triggerTurnInterrupt(
+      this,
+      () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]
+    );
   }
 
   /** Show the last tool output in full, above the prompt. */
