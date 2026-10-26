@@ -24,6 +24,7 @@ import { barBlock } from './block.js';
 import { composerWidth, openingRows, sessionRows } from './layout.js';
 import { sessionComposerWidth } from './sessionSidebar.js';
 import { chatProseWidth, wrappedChatRows } from './textLayout.js';
+import { activityRows } from './activityLayout.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -675,10 +676,15 @@ export class ChatRenderer {
   }
 
   onAgentActivity(msg) {
-    const text = safeDisplay(msg.activity || msg.message || '').trim();
+    const text = String(msg.activity || msg.message || '').trim();
     if (!text) return;
     this.frame('notice', () => {
-      this.write(`${paint('accent', GLYPHS.arrow || '▸')} ${dim(text)}`);
+      const prefix = `${GLYPHS.arrow || '▸'} `;
+      for (const [index, row] of activityRows(text, this.width(), prefix).entries()) {
+        this.write(index === 0
+          ? `${paint('accent', GLYPHS.arrow || '▸')} ${dim(row.slice(prefix.length))}`
+          : dim(row));
+      }
     }, { activity: true });
   }
 

@@ -240,6 +240,7 @@ test('AgentLoop exits cleanly without error frames or retries when aborted durin
       });
     }
   };
+  loop.initializeProvider = () => loop.llm as never;
 
   await loop.run();
 

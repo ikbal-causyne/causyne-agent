@@ -71,6 +71,9 @@ export class CodeStreamRenderer extends ChatRenderer {
   }
 
   override handle(message: RendererEvent): boolean {
+    if (message?.type === 'notice' && message.nativeStep === true) {
+      this.stepCount = (this.stepCount || 0) + 1;
+    }
     if (message?.type === 'code_progress') {
       this.onCodeProgress(message as unknown as CodeProgressEvent);
       return true;

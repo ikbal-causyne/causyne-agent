@@ -56,6 +56,9 @@ export class CodeStreamRenderer extends ChatRenderer {
         super.resetTurn();
     }
     handle(message) {
+        if (message?.type === 'notice' && message.nativeStep === true) {
+            this.stepCount = (this.stepCount || 0) + 1;
+        }
         if (message?.type === 'code_progress') {
             this.onCodeProgress(message);
             return true;

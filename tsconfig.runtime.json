@@ -44,6 +44,7 @@
     "src/tui/composerControls.ts",
     "src/tui/sessionLayout.ts",
     "src/tui/textLayout.ts",
+    "src/tui/activityLayout.ts",
     "src/tui/homeView.ts",
     "src/tui/homeTransition.ts",
     "src/tui/resizeRecovery.ts",

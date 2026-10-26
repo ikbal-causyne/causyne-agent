@@ -10,6 +10,7 @@ export interface ChatTranscript {
 export class ChatRenderer {
   constructor(options?: Record<string, unknown>);
   transcript: ChatTranscript | null;
+  stepCount: number;
   _activeReasoning?: boolean;
   handle(message: { type: string; [key: string]: unknown }): boolean;
   resetTurn(): void;

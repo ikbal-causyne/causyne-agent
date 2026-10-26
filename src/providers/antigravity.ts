@@ -673,10 +673,10 @@ export class AntigravityProvider extends LLMProvider {
   }
 
   async _executeOnce(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
-    const currentTaskId = (options as any).taskId || (options as any).conversationId || null;
-    if (currentTaskId && currentTaskId !== this.lastTaskId) {
+    const currentSessionKey = (options as any).conversationId || (options as any).taskId || null;
+    if (currentSessionKey && currentSessionKey !== this.lastTaskId) {
       this.currentConversationId = null;
-      this.lastTaskId = currentTaskId;
+      this.lastTaskId = currentSessionKey;
     }
     if (messages.length <= 1) {
       this.currentConversationId = null;
@@ -738,7 +738,7 @@ export class AntigravityProvider extends LLMProvider {
       'stream-json',
       '--disable-slash-commands',
       '--print-timeout',
-      launchOnly ? '90s' : '300s',
+      launchOnly ? '90s' : this.printTimeout,
       '--model',
       modelSlug,
       '--effort',
@@ -762,6 +762,7 @@ export class AntigravityProvider extends LLMProvider {
       let stderrBuffer = '';
       let streamedResponse = '';
       let finalResultObj: any = null;
+      let sawToolAfterLastText = false;
       const nativeActions: ChatResponseAction[] = [];
       const attemptedNativeTools: {
         name: string;
@@ -877,6 +878,7 @@ export class AntigravityProvider extends LLMProvider {
                 }
 
                 if (name && (state === 'ACTIVE' || state === 'DONE' || state === 'ERROR')) {
+                  sawToolAfterLastText = true;
                   const detail = describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams });
                   const action: ChatResponseAction = {
                     name,
@@ -904,6 +906,15 @@ export class AntigravityProvider extends LLMProvider {
                     options.onReasoningChunk(delta);
                   }
                 } else {
+                  if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(delta)) {
+                    streamedResponse += '\n';
+                    if (typeof options.onChunk === 'function') {
+                      options.onChunk('\n');
+                    }
+                  }
+                  if (delta.trim().length > 0) {
+                    sawToolAfterLastText = false;
+                  }
                   streamedResponse += delta;
                   if (typeof options.onChunk === 'function') {
                     options.onChunk(delta);
@@ -1043,6 +1054,13 @@ export class AntigravityProvider extends LLMProvider {
           return;
         }
 
+        const timedOutMidTurn = /print timeout after .* with turn in progress|returning partial output/i.test(stderrBuffer);
+        const finalResponseText = typeof finalResultObj?.response === 'string' ? finalResultObj.response.trim() : '';
+        const endedAfterToolWithoutFinalResponse =
+          sawToolAfterLastText && !finalResponseText && deniedActions.length === 0 && toolCalls.length === 0;
+        const missingResultEvent =
+          finalResultObj === null && deniedActions.length === 0 && toolCalls.length === 0;
+
         const promptTokens = Number(finalResultObj?.usage?.input_tokens) || Math.ceil(promptText.length / 4);
         const completionTokens = Number(finalResultObj?.usage?.output_tokens) || Math.ceil(rawContent.length / 4);
         const thinkingTokens = Number(finalResultObj?.usage?.thinking_tokens) || 0;
@@ -1068,6 +1086,10 @@ export class AntigravityProvider extends LLMProvider {
           response.externalActions = nativeActions.filter((a: ChatResponseAction) => a.status !== 'running');
         }
 
+        if (timedOutMidTurn || endedAfterToolWithoutFinalResponse || missingResultEvent) {
+          response.incompleteTurn = true;
+        }
+
         safeResolve(response);
       });
     });
@@ -1077,13 +1099,16 @@ export class AntigravityProvider extends LLMProvider {
     const maxRetries = options.maxRetries ?? ((options as any).taskIntent === 'launch' ? 1 : 2);
     let attempt = 0;
     while (attempt <= maxRetries) {
+      const hadConversation = Boolean(this.currentConversationId);
       try {
         return await this._executeOnce(messages, options);
       } catch (err: any) {
         if (options.signal?.aborted || err?.name === 'AbortError') {
           throw err;
         }
-        if (attempt < maxRetries && this._isTransientError(err.message)) {
+        const canRetryResetConversation =
+          hadConversation && !this.currentConversationId && (err as any)?.code !== 'AGY_NATIVE_ACTION_DENIED';
+        if (attempt < maxRetries && (this._isTransientError(err.message) || canRetryResetConversation)) {
           attempt++;
           const delay = attempt * 1200;
           await new Promise(r => setTimeout(r, delay));

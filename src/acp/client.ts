@@ -6,10 +6,12 @@ import {
   ACP_ERROR_CODES,
   ACP_METHODS,
   ACP_PROTOCOL_VERSION,
+  extractAcpSessionModels,
   isJsonRpcRequest,
   isJsonRpcResponse
 } from './protocol.js';
 import type {
+  AcpDiscoveredSessionModels,
   ContentBlock,
   InitializeRequest,
   InitializeResult,
@@ -74,6 +76,12 @@ export class AcpClient {
   private closed = false;
   private exitError: Error | null = null;
   private initResult: InitializeResult | null = null;
+  private readonly sessionModels = new Map<string, AcpDiscoveredSessionModels>();
+  private latestSessionModels: AcpDiscoveredSessionModels = {
+    availableModels: [],
+    modelLabels: {},
+    usesConfigOption: false
+  };
 
   constructor(options: AcpClientOptions) {
     this.options = options;
@@ -93,6 +101,57 @@ export class AcpClient {
 
   get authMethods(): unknown[] | undefined {
     return this.initResult?.authMethods;
+  }
+
+  get discoveredModels(): string[] {
+    return [...this.latestSessionModels.availableModels];
+  }
+
+  get currentModelId(): string | undefined {
+    return this.latestSessionModels.currentModelId;
+  }
+
+  get modelLabels(): Record<string, string> {
+    return { ...this.latestSessionModels.modelLabels };
+  }
+
+  getSessionModels(sessionId?: string): AcpDiscoveredSessionModels {
+    if (sessionId && this.sessionModels.has(sessionId)) {
+      const state = this.sessionModels.get(sessionId)!;
+      return {
+        currentModelId: state.currentModelId,
+        availableModels: [...state.availableModels],
+        modelLabels: { ...state.modelLabels },
+        usesConfigOption: state.usesConfigOption,
+        configOptionId: state.configOptionId
+      };
+    }
+    return {
+      currentModelId: this.latestSessionModels.currentModelId,
+      availableModels: [...this.latestSessionModels.availableModels],
+      modelLabels: { ...this.latestSessionModels.modelLabels },
+      usesConfigOption: this.latestSessionModels.usesConfigOption,
+      configOptionId: this.latestSessionModels.configOptionId
+    };
+  }
+
+  private recordSessionModels(sessionId: string, payload: unknown): void {
+    const extracted = extractAcpSessionModels(payload);
+    if (extracted.availableModels.length === 0 && !extracted.currentModelId) {
+      return;
+    }
+    const existing = this.sessionModels.get(sessionId);
+    const merged: AcpDiscoveredSessionModels = {
+      currentModelId: extracted.currentModelId ?? existing?.currentModelId,
+      availableModels: extracted.availableModels.length > 0
+        ? extracted.availableModels
+        : (existing?.availableModels ?? []),
+      modelLabels: { ...(existing?.modelLabels ?? {}), ...extracted.modelLabels },
+      usesConfigOption: extracted.usesConfigOption || Boolean(existing?.usesConfigOption),
+      configOptionId: extracted.configOptionId ?? existing?.configOptionId
+    };
+    this.sessionModels.set(sessionId, merged);
+    this.latestSessionModels = merged;
   }
 
   async start(signal?: AbortSignal): Promise<InitializeResult> {
@@ -149,6 +208,7 @@ export class AcpClient {
     if (!result || typeof result.sessionId !== 'string' || !result.sessionId) {
       throw new Error('agent did not return a session id');
     }
+    this.recordSessionModels(result.sessionId, result);
     return result.sessionId;
   }
 
@@ -160,10 +220,34 @@ export class AcpClient {
   }
 
   async setSessionModel(sessionId: string, modelId: string, signal?: AbortSignal): Promise<void> {
-    await this.request<void>(ACP_METHODS.SET_MODEL, {
-      sessionId,
-      modelId
-    }, 5_000, signal);
+    const state = this.sessionModels.get(sessionId) ?? this.latestSessionModels;
+    try {
+      const res = await this.request<unknown>(ACP_METHODS.SET_MODEL, {
+        sessionId,
+        modelId
+      }, 5_000, signal);
+      this.recordSessionModels(sessionId, res);
+      const updated = this.sessionModels.get(sessionId);
+      if (updated) {
+        updated.currentModelId = modelId;
+        this.latestSessionModels = updated;
+      }
+      return;
+    } catch (err: unknown) {
+      if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        throw err;
+      }
+      if (state.usesConfigOption) {
+        const res = await this.request<unknown>(ACP_METHODS.SET_CONFIG_OPTION, {
+          sessionId,
+          configId: state.configOptionId || 'model',
+          value: modelId
+        }, 5_000, signal);
+        this.recordSessionModels(sessionId, res);
+        return;
+      }
+      throw err;
+    }
   }
 
   async setSessionMode(sessionId: string, modeId: string): Promise<void> {
@@ -174,10 +258,12 @@ export class AcpClient {
   }
 
   async loadSession(sessionId: string, cwd?: string): Promise<unknown> {
-    return await this.request<unknown>(ACP_METHODS.LOAD, {
+    const res = await this.request<unknown>(ACP_METHODS.LOAD, {
       sessionId,
       cwd: cwd || this.options.cwd
     }, 30_000);
+    this.recordSessionModels(sessionId, res);
+    return res;
   }
 
   async prompt(sessionId: string, input: string | ContentBlock[], signal?: AbortSignal): Promise<AcpPromptResult> {
@@ -306,6 +392,7 @@ export class AcpClient {
     if (method === ACP_METHODS.UPDATE) {
       const params = (parsed as { params?: SessionNotification }).params;
       if (params && typeof params.sessionId === 'string' && params.update) {
+        this.recordSessionModels(params.sessionId, params.update);
         this.updateListener?.(params.sessionId, params.update);
         this.options.onUpdate?.(params.sessionId, params.update);
       }

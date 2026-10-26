@@ -34,6 +34,7 @@ import { spillToolResult, buildSpillNotice, buildDecayPointer, pruneOutputStore 
 import { beginTask as beginCheckpointTask, captureBeforeMutation, pruneStore as pruneCheckpointStore, resolveProjectRoot } from './checkpoints.js';
 import fsSync from 'fs';
 import os from 'os';
+import path from 'path';
 import { analyzeFiles, formatFindings, isScannableFile } from './slopDetector.js';
 import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
@@ -68,6 +69,78 @@ export function isCodeAuthoringTaskPrompt(text) {
 export function isDirectGameTask(text) {
     return /\b(three\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
         && !/\b(godot|unity|unreal|full engine)\b/i.test(text);
+}
+/**
+ * Detects when an agent response is an intermediate mid-task progress note or
+ * transition announcement (e.g. "Real assets verified. Writing the Tesla-style
+ * redesign now." or "Let me look at the newer assets... Pulling their real
+ * stills and confirming embeddability.") rather than a finished answer.
+ */
+export function isMidTaskProgressText(text) {
+    if (!text || typeof text !== 'string')
+        return false;
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 480)
+        return false;
+    const lower = trimmed.toLowerCase();
+    if (lower.includes('?') ||
+        lower.includes('let me know') ||
+        lower.includes('how can i help') ||
+        lower.includes('how may i help') ||
+        lower.includes('how can i assist') ||
+        lower.includes('what would you like') ||
+        lower.includes('what can i help') ||
+        lower.includes('feel free to')) {
+        return false;
+    }
+    if (trimmed.includes('```'))
+        return false;
+    const sentences = trimmed
+        .split(/(?:(?<=[.!])\s+|\n+)/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    const lastSentence = (sentences[sentences.length - 1] || trimmed).trim();
+    const lastLower = lastSentence.toLowerCase();
+    if (trimmed.length <= 280 && (trimmed.endsWith(':') || trimmed.endsWith('...') || trimmed.endsWith('…'))) {
+        return true;
+    }
+    const intentPrefixes = [
+        'let me ',
+        "i'll ",
+        'i will ',
+        'now i ',
+        'now let me ',
+        "now i'll ",
+        'now i will ',
+        'next, i ',
+        'next i ',
+        "next, i'll ",
+        "next i'll ",
+        'first, i ',
+        'first i ',
+        'let us ',
+        "let's ",
+        'i shall ',
+        'we will ',
+        "we'll ",
+        'i am going to ',
+        "i'm going to ",
+        'going to '
+    ];
+    if (intentPrefixes.some(prefix => lastLower.startsWith(prefix) || lower.startsWith(prefix))) {
+        if (!/\b(?:task completed|all done|everything is ready|finished|complete\.)\b/i.test(lastSentence)) {
+            return true;
+        }
+    }
+    const gerundStart = /^(?:now\s+|next,?\s+|currently\s+|still\s+)?(?:writing|pulling|checking|inspecting|building|creating|updating|applying|implementing|generating|fetching|downloading|testing|running|fixing|setting up|configuring|refactoring|adding|modifying|replacing|launching|starting|verifying|confirming|reading|searching|analyzing|preparing|compiling|rendering|extracting|installing|opening|switching|retrying|continuing)\b/i;
+    if (gerundStart.test(lastSentence) && lastSentence.length <= 220) {
+        return true;
+    }
+    const actionNowSuffix = /\b(?:writing|pulling|checking|inspecting|building|creating|updating|applying|implementing|generating|fetching|downloading|testing|running|fixing|configuring|refactoring|adding|modifying|replacing|launching|starting|verifying|confirming|reading|searching|analyzing|preparing|compiling|rendering|extracting)\b[^.!?\n]{1,120}\b(?:now|next)\.?$/i;
+    if (actionNowSuffix.test(lastSentence)) {
+        return true;
+    }
+    return false;
 }
 const SYSTEM_PROMPT = `You are Causyne Agent, an autonomous local AI agent. Your capabilities are the tools actually available in this session. Never invent a capability or claim an action occurred without evidence.
 
@@ -815,8 +888,11 @@ export class AgentLoop {
         if (this.autonomyOverride)
             this.config.autonomyMode = this.autonomyOverride;
         if (typeof this.initializeProvider === 'function') {
-            this.llm = this.initializeProvider();
-            this._utilityLlm = null; // the route is derived from the model; re-derive it
+            const nextProvider = this.initializeProvider();
+            if (nextProvider) {
+                this.llm = nextProvider;
+                this._utilityLlm = null; // the route is derived from the model; re-derive it
+            }
         }
         if (this.tokenTracker) {
             this.tokenTracker.config = this.config;
@@ -1132,7 +1208,13 @@ export class AgentLoop {
                 this.messages.push({ role: 'user', content: contentArray });
             }
             else {
-                this.messages.push({ role: 'user', content: this.userPrompt });
+                const lastMsg = this.messages[this.messages.length - 1];
+                if (lastMsg && lastMsg.role === 'user' && typeof lastMsg.content === 'string' && lastMsg.content.trim() === this.userPrompt.trim()) {
+                    lastMsg.content = this.userPrompt;
+                }
+                else {
+                    this.messages.push({ role: 'user', content: this.userPrompt });
+                }
             }
             this.userPrompt = null; // Clear so we don't push it again
             this.attachments = null; // Clear attachments
@@ -1465,7 +1547,7 @@ export class AgentLoop {
                 const planStepStart = performance.now();
                 const response = await this.llm.chat(prunedMessages, {
                     taskId: this.taskId,
-                    conversationId: this.taskId,
+                    conversationId: this.memoryManager?.sessionId || this.taskId,
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
@@ -1517,7 +1599,7 @@ export class AgentLoop {
                             this.emitEvent({ type: 'agent_activity', activity: `Acting: ${action.name}${detail}` });
                         }
                         else if (action.status === 'completed') {
-                            this.emitEvent({ type: 'notice', tone: 'muted', message: `Antigravity ${action.name}${detail}` });
+                            this.emitEvent({ type: 'notice', tone: 'muted', nativeStep: true, message: `Antigravity ${action.name}${detail}` });
                         }
                         else if (action.status === 'failed') {
                             this.emitEvent({ type: 'warning', message: `Antigravity could not ${action.name}${detail}` });
@@ -1620,6 +1702,26 @@ export class AgentLoop {
                 const completedExternalActions = externalActions.filter((a) => a && a.status === 'completed');
                 const failedExternalActions = externalActions.filter((a) => a && a.status === 'failed');
                 const hasExternalActions = completedExternalActions.length > 0;
+                const isIncompleteTurn = Boolean(response.incompleteTurn);
+                if (hasExternalActions) {
+                    this.stepsCompleted += completedExternalActions.length;
+                    for (const extAction of completedExternalActions) {
+                        const actionName = String(extAction.name || '').toLowerCase();
+                        const detailPath = typeof extAction.detail === 'string' ? extAction.detail.trim() : '';
+                        if (['write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content', 'fs_write', 'fs_edit', 'multiedit'].includes(actionName) && detailPath) {
+                            const resolvedPath = path.isAbsolute(detailPath)
+                                ? detailPath
+                                : path.resolve(this.workspaceRoot, detailPath.replace(/^~\//, os.homedir() + '/'));
+                            if (isScannableFile(resolvedPath)) {
+                                this.webArtifacts.add(resolvedPath);
+                            }
+                        }
+                        if (['capture_browser_screenshot', 'browser_subagent', 'open_browser_url', 'browser_get_dom', 'read_browser_page'].includes(actionName) ||
+                            ((actionName === 'read_file' || actionName === 'view_file') && /\.(png|jpe?g|webp|gif|svg)$/i.test(detailPath))) {
+                            this.webVerificationState.screenshotTaken = true;
+                        }
+                    }
+                }
                 // If no tool calls, check if the agent is just thinking/planning or actually done
                 if (!response.toolCalls || response.toolCalls.length === 0) {
                     const contentText = response.content || '';
@@ -1674,8 +1776,9 @@ export class AgentLoop {
                         continue;
                     }
                     const thinkingKeywords = ['let me ', "i'll ", 'i will ', 'now i ', 'next, i ', 'first, i ', 'checking ', 'trying to ', 'let us ', 'going to ', 'i shall', 'we will', 'i am going to'];
-                    const isThinking = !isQuestionOrGreeting && thinkingKeywords.some(kw => lower.includes(kw));
-                    if (!hasExternalActions && isThinking && this.consecutiveThinkingSteps < 3) {
+                    const isMidTaskProgress = !isQuestionOrGreeting && isMidTaskProgressText(contentText);
+                    const isThinking = !isQuestionOrGreeting && (isMidTaskProgress || thinkingKeywords.some(kw => lower.includes(kw)));
+                    if (!hasExternalActions && (isThinking || isIncompleteTurn) && this.consecutiveThinkingSteps < 3) {
                         this.consecutiveThinkingSteps++;
                         this.emitEvent({ type: 'status', message: 'Agent planning next steps...' });
                         this.emitEvent({ type: 'agent_activity', activity: 'Planning next actionable steps…' });
@@ -1683,10 +1786,31 @@ export class AgentLoop {
                         // duplicated the whole turn in history on every nudge.
                         this.messages.push({
                             role: 'system',
-                            content: '[SYSTEM NOTICE: You provided reasoning/planning without calling any tools. Please invoke the next appropriate tool now to continue progressing on the task.]'
+                            content: isIncompleteTurn
+                                ? '[SYSTEM NOTICE: Your previous turn ended before completion. Continue immediately from where you left off and invoke the next appropriate tool to complete the task.]'
+                                : '[SYSTEM NOTICE: You provided reasoning/planning without calling any tools. Please invoke the next appropriate tool now to continue progressing on the task.]'
                         });
                         this.memoryManager.saveHistory(this.messages);
                         continue;
+                    }
+                    if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress) && this.consecutiveThinkingSteps < 3) {
+                        this.consecutiveThinkingSteps++;
+                        if (response.content) {
+                            this.emitEvent({ type: 'agent_message', content: response.content });
+                        }
+                        this.emitEvent({ type: 'status', message: 'Continuing task execution...' });
+                        this.emitEvent({ type: 'agent_activity', activity: 'Continuing mid-task execution…' });
+                        this.messages.push({
+                            role: 'system',
+                            content: isIncompleteTurn
+                                ? '[SYSTEM NOTICE: Your previous turn ended while the task was still in progress. Continue immediately from where you left off and execute the remaining steps to complete the task.]'
+                                : '[SYSTEM NOTICE: You announced the next step without executing it. Continue immediately from where you left off and execute the remaining file edits or tool calls to complete the task.]'
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
+                    if (hasExternalActions) {
+                        this.consecutiveThinkingSteps = 0;
                     }
                     if (!hasExternalActions && this.stepsCompleted === 0 && this.consecutiveThinkingSteps < 2) {
                         if (isActionable || lower.includes('turn completed') || lower.includes('no output produced') || !contentText.trim()) {

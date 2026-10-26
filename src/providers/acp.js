@@ -272,6 +272,33 @@ export class AcpProvider extends LLMProvider {
                 }
             }
         }
+        if (calls.length === 0) {
+            const openIndex = text.lastIndexOf('<tool_call>');
+            if (openIndex !== -1 && text.indexOf('</tool_call>', openIndex) === -1) {
+                const partial = text.slice(openIndex + '<tool_call>'.length).trim();
+                for (const suffix of ['', '}', '}}', '}}}', '"}', '"}}', '"}}}', '"}]}}', '"]}}', '"]}}}']) {
+                    try {
+                        const parsed = JSON.parse(partial + suffix);
+                        const name = parsed.name || parsed.tool || parsed.function?.name;
+                        if (name) {
+                            const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
+                            calls.push({
+                                id: `acp_call_${Date.now()}_0`,
+                                type: 'function',
+                                function: {
+                                    name,
+                                    arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+                                }
+                            });
+                            break;
+                        }
+                    }
+                    catch {
+                        // try next candidate
+                    }
+                }
+            }
+        }
         return calls;
     }
     async getOrCreateClient(signal) {
@@ -287,7 +314,7 @@ export class AcpProvider extends LLMProvider {
             command: this.command,
             args: this.args,
             cwd: process.cwd(),
-            promptTimeoutMs: 180_000,
+            promptTimeoutMs: 900_000,
             permissionHandler: async (req) => {
                 if (this.currentTurnAborted || signal?.aborted)
                     return { outcome: 'cancelled' };
@@ -450,6 +477,9 @@ export class AcpProvider extends LLMProvider {
             };
             if (toolCalls.length > 0) {
                 response.toolCalls = toolCalls;
+            }
+            if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests') {
+                response.incompleteTurn = true;
             }
             return response;
         }
