@@ -20,7 +20,13 @@ import {
 } from './userSkills.js';
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
-import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview } from './dynamicCatalogue.js';
+import {
+  resolveAvailableModels,
+  getCuratedModels,
+  getAvailableProvidersOverview,
+  resolveAvailableProvidersOverview,
+  pickDefaultPeerModel
+} from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
 import { listSessions, getActiveSessionId } from './sessionStore.js';
@@ -1176,9 +1182,16 @@ export const COMMANDS = [
       }
 
       if (first === 'refresh') {
-        if (!config.provider) return fail('No provider configured. Run /setup first.');
-        const result = await resolveAvailableModels(config.provider, config, true);
-        return ok(`Refreshed ${config.provider} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
+        const targetRefresh = argv[1];
+        if (targetRefresh && targetRefresh.toLowerCase() === 'all') {
+          const refreshed = await resolveAvailableProvidersOverview(config, { forceRefresh: true });
+          const readyCount = refreshed.acp.filter(p => p.installed).length + refreshed.byok.filter(p => p.isConfigured).length;
+          return ok(`Refreshed live models across ${readyCount} installed/configured providers. Run /model list to view.`);
+        }
+        const providerToRefresh = targetRefresh || config.provider;
+        if (!providerToRefresh) return fail('No provider configured. Run /setup first.');
+        const result = await resolveAvailableModels(providerToRefresh, config, true);
+        return ok(`Refreshed ${providerToRefresh} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
       }
 
       const rawRequested = argv.join(' ').trim().replace(/^\/model\s+/i, '');
@@ -1217,15 +1230,14 @@ export const COMMANDS = [
       };
 
       // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
-      // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
       if (rawRequested.toLowerCase() === 'antigravity' || rawRequested.toLowerCase().startsWith('antigravity/')) {
-        const agyModel = rawRequested.includes('/')
-          ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
-          : (DEFAULT_MODEL_BY_PROVIDER['antigravity'] || 'Gemini 3.8 Flash (Low)');
         const agyPeer = overview.acp.find(p => p.id === 'antigravity');
         if (agyPeer && !agyPeer.installed) {
           return fail(`Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nModel was not changed.`);
         }
+        const agyModel = rawRequested.includes('/')
+          ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
+          : pickDefaultPeerModel('antigravity', agyPeer?.models);
         return activateModel('antigravity', agyModel, `Now using Google Antigravity / ${agyModel}.`);
       }
 
@@ -1234,11 +1246,13 @@ export const COMMANDS = [
       if (acpTarget) {
         const peer = acpTarget[1].toLowerCase();
         const nextProvider = `acp/${peer}`;
-        const peerModel = acpTarget[2] ? acpTarget[2].trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || peer);
         const peerInfo = overview.acp.find(p => p.id === peer);
         if (peerInfo && !peerInfo.installed) {
           return fail(`Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nModel was not changed.`);
         }
+        const peerModel = acpTarget[2]
+          ? acpTarget[2].trim()
+          : pickDefaultPeerModel(nextProvider, peerInfo?.models);
         return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
       }
 
@@ -1255,6 +1269,7 @@ export const COMMANDS = [
         if (slashIndex > 0) {
           const rest = rawRequested.slice(slashIndex + 1).trim();
           if (
+            (Array.isArray(acpPeer.models) && acpPeer.models.includes(rawRequested)) ||
             (PEER_MODEL_CATALOGUE[acpPeer.id] && PEER_MODEL_CATALOGUE[acpPeer.id].includes(rawRequested)) ||
             (acpPeer.id === 'opencode' && rawRequested.startsWith('opencode/'))
           ) {
@@ -1263,7 +1278,7 @@ export const COMMANDS = [
             peerModel = rest;
           }
         } else {
-          peerModel = DEFAULT_MODEL_BY_PROVIDER[nextProvider] || acpPeer.id;
+          peerModel = pickDefaultPeerModel(nextProvider, acpPeer.models);
         }
         return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
       }

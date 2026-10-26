@@ -28,11 +28,32 @@ export const ANTIGRAVITY_MODEL_IDS = {
 };
 export const ANTIGRAVITY_LABEL_BY_ID = Object.fromEntries(Object.entries(ANTIGRAVITY_MODEL_IDS).map(([label, id]) => [id, label]));
 export const ANTIGRAVITY_MODELS = Object.keys(ANTIGRAVITY_MODEL_IDS);
+export function synthesizeAgySlug(input) {
+    const trimmed = input.trim();
+    if (!trimmed)
+        return '';
+    if (!/[\s()]/.test(trimmed)) {
+        return trimmed;
+    }
+    let slug = trimmed
+        .toLowerCase()
+        .replace(/\(([^()]+)\)/g, ' $1 ')
+        .replace(/[^a-z0-9.]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .replace(/-{2,}/g, '-');
+    if (slug.startsWith('claude-')) {
+        slug = slug.replace(/\./g, '-');
+    }
+    return slug;
+}
 export function registerAntigravityModel(slug, label) {
     if (!slug || typeof slug !== 'string')
         return;
-    const cleanSlug = slug.trim();
-    const cleanLabel = (label && typeof label === 'string' && label.trim()) || cleanSlug;
+    const rawSlug = slug.trim();
+    const cleanLabel = (label && typeof label === 'string' && label.trim()) || rawSlug;
+    const cleanSlug = /[\s()]/.test(rawSlug)
+        ? (ANTIGRAVITY_MODEL_IDS[rawSlug] || synthesizeAgySlug(rawSlug))
+        : rawSlug;
     ANTIGRAVITY_MODEL_IDS[cleanLabel] = cleanSlug;
     ANTIGRAVITY_MODEL_IDS[cleanSlug] = cleanSlug;
     ANTIGRAVITY_LABEL_BY_ID[cleanSlug] = cleanLabel;
@@ -40,7 +61,40 @@ export function registerAntigravityModel(slug, label) {
         ANTIGRAVITY_MODELS.push(cleanLabel);
     }
 }
-export function parseAgyModelsOutput(stdout) {
+/**
+ * Authoritatively replace the active Antigravity model list with the live
+ * models returned by the user's current Antigravity account/tier, while
+ * preserving slug lookup mappings in ANTIGRAVITY_MODEL_IDS.
+ */
+export function replaceAntigravityModels(items) {
+    const nextLabels = [];
+    for (const item of items) {
+        if (typeof item === 'string') {
+            const trimmed = item.trim();
+            if (!trimmed)
+                continue;
+            const existingSlug = ANTIGRAVITY_MODEL_IDS[trimmed] || synthesizeAgySlug(trimmed);
+            const label = ANTIGRAVITY_LABEL_BY_ID[trimmed] || trimmed;
+            registerAntigravityModel(existingSlug, label);
+            if (!nextLabels.includes(label))
+                nextLabels.push(label);
+        }
+        else if (item && typeof item === 'object' && typeof item.id === 'string') {
+            const id = item.id.trim();
+            if (!id)
+                continue;
+            const label = (item.label && item.label.trim()) || ANTIGRAVITY_LABEL_BY_ID[id] || id;
+            registerAntigravityModel(id, label);
+            if (!nextLabels.includes(label))
+                nextLabels.push(label);
+        }
+    }
+    if (nextLabels.length > 0) {
+        ANTIGRAVITY_MODELS.splice(0, ANTIGRAVITY_MODELS.length, ...nextLabels);
+    }
+    return [...ANTIGRAVITY_MODELS];
+}
+export function parseAgyModelsOutput(stdout, options = {}) {
     const result = [];
     if (!stdout || typeof stdout !== 'string')
         return result;
@@ -49,7 +103,7 @@ export function parseAgyModelsOutput(stdout) {
         const line = rawLine.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').trim();
         if (!line)
             continue;
-        if (/^(fetching|loading|no models|error)/i.test(line))
+        if (/^(fetching|loading|no models|error|warning|usage|available)/i.test(line))
             continue;
         if (line.endsWith('…') || line.endsWith('...'))
             continue;
@@ -58,28 +112,59 @@ export function parseAgyModelsOutput(stdout) {
         if (!match)
             continue;
         const id = match[1].trim();
-        const label = (match[2] && match[2].trim()) || id;
+        const label = ((match[2] && match[2].trim()) || id).replace(/\s+\(default\)$/i, '').trim();
         result.push({ id, label });
         registerAntigravityModel(id, label);
     }
+    if (options.replaceActiveList && result.length > 0) {
+        replaceAntigravityModels(result);
+    }
     return result;
+}
+export function isAntigravityOnboarded() {
+    try {
+        const home = process.env.HOME || process.env.USERPROFILE || '';
+        if (!home)
+            return false;
+        const onboardingFile = path.join(home, '.gemini', 'antigravity-cli', 'cache', 'onboarding.json');
+        if (fs.existsSync(onboardingFile)) {
+            const parsed = JSON.parse(fs.readFileSync(onboardingFile, 'utf8'));
+            if (parsed && parsed.onboardingComplete === true)
+                return true;
+        }
+        const oauthFile = path.join(home, '.gemini', 'oauth_creds.json');
+        if (fs.existsSync(oauthFile))
+            return true;
+    }
+    catch {
+        // ignore read errors
+    }
+    return false;
 }
 function hydrateModelsFromDiskCache() {
     try {
-        const home = process.env.HOME || process.env.USERPROFILE || '';
-        const cacheFile = path.join(home, '.causyne', 'models_cache.json');
+        const causyneDir = process.env.CAUSYNE_HOME
+            || path.join(process.env.HOME || process.env.USERPROFILE || '', '.causyne');
+        const cacheFile = path.join(causyneDir, 'models_cache.json');
         if (!fs.existsSync(cacheFile))
             return;
         const content = fs.readFileSync(cacheFile, 'utf8');
         const parsed = JSON.parse(content);
-        const agyModels = parsed?.providers?.antigravity?.models;
-        if (Array.isArray(agyModels)) {
+        const agyEntry = parsed?.providers?.antigravity;
+        if (agyEntry?.modelIdMap && typeof agyEntry.modelIdMap === 'object') {
+            for (const [label, slug] of Object.entries(agyEntry.modelIdMap)) {
+                if (typeof slug === 'string' && slug.trim()) {
+                    registerAntigravityModel(slug.trim(), label);
+                }
+            }
+        }
+        const agyModels = agyEntry?.models;
+        if (Array.isArray(agyModels) && agyModels.length > 0) {
             for (const item of agyModels) {
                 if (typeof item === 'string' && item.trim()) {
                     const trimmed = item.trim();
-                    if (!ANTIGRAVITY_MODEL_IDS[trimmed]) {
-                        registerAntigravityModel(trimmed, trimmed);
-                    }
+                    const slug = ANTIGRAVITY_MODEL_IDS[trimmed] || synthesizeAgySlug(trimmed);
+                    registerAntigravityModel(slug, trimmed);
                 }
             }
         }
@@ -115,6 +200,9 @@ export function resolveAgyModelId(model) {
         if (slug.toLowerCase().startsWith(lower) || key.toLowerCase().startsWith(lower)) {
             return slug;
         }
+    }
+    if (/[\s()]/.test(trimmed)) {
+        return synthesizeAgySlug(trimmed);
     }
     return trimmed;
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModelPickerItems, runInteractiveModelPicker } from '../src/tui/modelPicker.js';
+import { buildModelPickerItems, runInteractiveModelPicker, ModelPickerLayer } from '../src/tui/modelPicker.js';
 import { runCommand } from '../src/commands.js';
 import { SelectLayer, InputLayer } from '../src/tui/dialogs.js';
 
@@ -287,4 +287,137 @@ test('runInteractiveModelPicker: accepts pasted API key for BYOK provider and pe
   assert.equal(storedConfig.apiKey, 'causyne-mock-anthropic-key-abc');
   assert.equal(storedConfig.providerKeys?.anthropic, 'causyne-mock-anthropic-key-abc');
 });
+
+test('ModelPickerLayer: dual tabs | ACP | BYOK | switchable via tab, arrows, and brackets', () => {
+  const config = { provider: 'antigravity', model: 'Gemini 3.8 Flash (Low)' };
+  const overview = {
+    activeProvider: 'antigravity',
+    activeModel: 'Gemini 3.8 Flash (Low)',
+    acp: [
+      {
+        id: 'antigravity',
+        providerKey: 'antigravity',
+        label: 'Google Antigravity (AGY)',
+        installed: true,
+        status: 'ready',
+        isCurrent: true,
+        command: 'agy',
+        models: ['Gemini 3.8 Flash (Low)', 'Gemini 3.8 Flash (High)'],
+        setupInstruction: 'Install agy'
+      }
+    ],
+    byok: [
+      {
+        id: 'anthropic',
+        label: 'Anthropic',
+        isConfigured: true,
+        isCurrent: false,
+        models: ['claude-3-7-sonnet'],
+        defaultModel: 'claude-3-7-sonnet'
+      }
+    ]
+  };
+
+  const layer = new ModelPickerLayer({
+    config,
+    overview,
+    onPick: () => {}
+  });
+
+  // 1. Initial tab defaults to 'acp' because config.provider is 'antigravity'
+  assert.equal(layer.activeTab, 'acp');
+  let rows = layer.body(78, 20);
+  assert.ok(rows[0].includes('● ACP'), 'Tab bar must highlight ACP');
+  assert.ok(rows[0].includes('BYOK'), 'Tab bar must show BYOK');
+  // List only shows ACP models
+  assert.ok(layer.list.filtered.some(e => e.item.value.providerId === 'antigravity'));
+  assert.ok(!layer.list.filtered.some(e => e.item.value.providerId === 'anthropic'));
+
+  // 2. Switch tab via 'tab'
+  const tabAction = layer.key({ name: 'tab' });
+  assert.equal(tabAction, 'handled');
+  assert.equal(layer.activeTab, 'byok');
+  rows = layer.body(78, 20);
+  assert.ok(rows[0].includes('● BYOK'), 'Tab bar must highlight BYOK');
+  // List only shows BYOK models
+  assert.ok(layer.list.filtered.some(e => e.item.value.providerId === 'anthropic'));
+  assert.ok(!layer.list.filtered.some(e => e.item.value.providerId === 'antigravity'));
+
+  // 3. Switch back via 'left'
+  const leftAction = layer.key({ name: 'left' });
+  assert.equal(leftAction, 'handled');
+  assert.equal(layer.activeTab, 'acp');
+
+  // 4. Switch to BYOK via 'right'
+  const rightAction = layer.key({ name: 'right' });
+  assert.equal(rightAction, 'handled');
+  assert.equal(layer.activeTab, 'byok');
+
+  // 5. Switch to ACP via '[' and back via ']'
+  assert.equal(layer.key({ name: '[' }), 'handled');
+  assert.equal(layer.activeTab, 'acp');
+  assert.equal(layer.key({ name: ']' }), 'handled');
+  assert.equal(layer.activeTab, 'byok');
+});
+
+test('ModelPickerLayer: smart 10-model pagination with in-place Load more / Load less toggle', () => {
+  // Create an ACP peer with 25 models
+  const dummyModels = Array.from({ length: 25 }, (_, i) => `model-tier-${i + 1}`);
+  const config = { provider: 'acp/cursor', model: 'model-tier-1' };
+  const overview = {
+    activeProvider: 'acp/cursor',
+    activeModel: 'model-tier-1',
+    acp: [
+      {
+        id: 'cursor',
+        providerKey: 'acp/cursor',
+        label: 'Cursor CLI',
+        installed: true,
+        status: 'ready',
+        isCurrent: true,
+        command: 'cursor',
+        models: dummyModels,
+        setupInstruction: 'Install cursor'
+      }
+    ],
+    byok: []
+  };
+
+  const layer = new ModelPickerLayer({
+    config,
+    overview,
+    onPick: () => {}
+  });
+
+  // 1. Initial state: capped at 10 models + 1 toggle item
+  assert.equal(layer.list.filtered.length, 11);
+  const toggleMore = layer.list.filtered[10].item;
+  assert.ok(toggleMore.label.includes('Load more (15 more models)'), 'Must show remaining 15 models in toggle');
+  assert.equal(toggleMore.value.isToggle, true);
+  assert.equal(toggleMore.value.action, 'expand');
+
+  // 2. Select the toggle item (simulate moving to index 10 and pressing Enter)
+  layer.list.selected = 10;
+  const expandAction = layer.key({ name: 'enter' });
+  assert.equal(expandAction, 'handled', 'Load more must not dismiss modal');
+  assert.equal(layer.settled, false, 'Layer must remain open');
+
+  // 3. Expanded state: all 25 models + 1 collapse item
+  assert.equal(layer.list.filtered.length, 26);
+  const toggleLess = layer.list.filtered[25].item;
+  assert.ok(toggleLess.label.includes('Load less (show top 10)'), 'Must show collapse toggle');
+  assert.equal(toggleLess.value.action, 'collapse');
+
+  // 4. Select collapse item
+  layer.list.selected = 25;
+  const collapseAction = layer.key({ name: 'enter' });
+  assert.equal(collapseAction, 'handled');
+  assert.equal(layer.list.filtered.length, 11, 'Must collapse back to 10 + 1 toggle');
+
+  // 5. Search filtering bypasses the 10-model limit to find matches instantly
+  layer.key({ sequence: '2' });
+  layer.key({ sequence: '4' }); // Query: '24' -> matches 'model-tier-24'
+  assert.ok(layer.list.filtered.some(e => e.item.label === 'model-tier-24'));
+});
+
 

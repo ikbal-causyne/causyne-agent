@@ -1,5 +1,6 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
+import { saveCachedModels } from '../dynamicCatalogue.js';
 import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseToolCall, type ChatResponseAction } from './base.js';
 import { AcpClient } from '../acp/client.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
@@ -378,10 +379,35 @@ export class AcpProvider extends LLMProvider {
     await client.start(signal);
     const sessionId = await client.newSession(process.cwd(), [], signal);
 
+    const sessionModels = client.getSessionModels(sessionId);
+    const liveModels = sessionModels.availableModels;
+    if (liveModels.length > 0 && !process.env.NODE_TEST_CONTEXT) {
+      saveCachedModels(`acp/${this.peerId}`, liveModels, {
+        ...(sessionModels.currentModelId ? { currentModel: sessionModels.currentModelId } : {})
+      });
+    }
+
     let targetModel = this.model;
-    if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.startsWith('opencode/')) {
+    if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.includes('/')) {
       targetModel = `opencode/${targetModel}`;
     }
+
+    if (liveModels.length > 0 && targetModel && !liveModels.includes(targetModel)) {
+      const matched = liveModels.find(
+        (m) => m.toLowerCase() === targetModel.toLowerCase() || m.endsWith(`/${targetModel}`)
+      );
+      if (matched) {
+        targetModel = matched;
+        this.model = matched;
+      } else {
+        const staticDefault = (DEFAULT_MODEL_BY_PROVIDER as Record<string, string>)[`acp/${this.peerId}`];
+        if (targetModel === staticDefault || targetModel === this.peerId || targetModel === 'acp') {
+          targetModel = sessionModels.currentModelId || liveModels[0]!;
+          this.model = targetModel;
+        }
+      }
+    }
+
     if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
       try {
         await client.setSessionModel(sessionId, targetModel, signal);
@@ -390,7 +416,17 @@ export class AcpProvider extends LLMProvider {
           await client.close();
           throw err;
         }
-        // peer does not support setSessionModel
+        // If the requested model is unavailable on the user's current account/tier,
+        // gracefully fall back to the peer's active or first advertised live model.
+        const fallbackModel = sessionModels.currentModelId || liveModels[0];
+        if (fallbackModel && fallbackModel !== targetModel) {
+          this.model = fallbackModel;
+          try {
+            await client.setSessionModel(sessionId, fallbackModel, signal);
+          } catch {
+            // Peer already defaults to its own active session model
+          }
+        }
       }
     }
 

@@ -259,6 +259,7 @@ export async function testPeerHandshake(options) {
     const clientOptions = {
         command: options.command,
         cwd,
+        env: { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' },
         promptTimeoutMs: options.timeoutMs || 15000
     };
     if (options.args) {
@@ -275,13 +276,16 @@ export async function testPeerHandshake(options) {
         const authMethods = Array.isArray(init.authMethods)
             ? init.authMethods.map((m) => (typeof m === 'object' && m !== null && 'id' in m ? String(m.id) : String(m)))
             : [];
-        // Attempt session/new to ensure agent is fully operational
+        // Attempt session/new to ensure agent is fully operational and extract live models
         try {
-            await client.newSession(cwd);
+            const sessionId = await client.newSession(cwd);
+            const sessionModels = client.getSessionModels(sessionId);
             return {
                 ready: true,
                 ...(agentInfo ? { agentInfo } : {}),
-                authMethods
+                authMethods,
+                ...(sessionModels.availableModels.length > 0 ? { availableModels: sessionModels.availableModels } : {}),
+                ...(sessionModels.currentModelId ? { currentModelId: sessionModels.currentModelId } : {})
             };
         }
         catch (sessionErr) {
@@ -372,6 +376,8 @@ export async function detectAllPeers(cwd = process.cwd()) {
                 args: activeArgs,
                 ...(handshake.agentInfo ? { agentInfo: handshake.agentInfo } : {}),
                 ...(handshake.authMethods ? { authMethods: handshake.authMethods } : {}),
+                ...(handshake.availableModels ? { availableModels: handshake.availableModels } : {}),
+                ...(handshake.currentModelId ? { currentModelId: handshake.currentModelId } : {}),
                 details: 'Operational and ready for delegation.'
             });
         }

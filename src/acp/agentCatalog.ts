@@ -48,6 +48,8 @@ export interface PeerDetectionResult {
   details?: string;
   agentInfo?: { name: string; version: string };
   authMethods?: string[];
+  availableModels?: string[];
+  currentModelId?: string;
   setupInstruction?: string;
 }
 
@@ -309,12 +311,21 @@ export async function testPeerHandshake(
   ready: boolean;
   agentInfo?: { name: string; version: string };
   authMethods?: string[];
+  availableModels?: string[];
+  currentModelId?: string;
   error?: string;
 }> {
   const cwd = options.cwd || process.cwd();
-  const clientOptions: { command: string; args?: string[]; cwd: string; promptTimeoutMs: number } = {
+  const clientOptions: {
+    command: string;
+    args?: string[];
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    promptTimeoutMs: number;
+  } = {
     command: options.command,
     cwd,
+    env: { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' },
     promptTimeoutMs: options.timeoutMs || 15000
   };
   if (options.args) {
@@ -336,13 +347,16 @@ export async function testPeerHandshake(
       ? init.authMethods.map((m) => (typeof m === 'object' && m !== null && 'id' in m ? String((m as { id: unknown }).id) : String(m)))
       : [];
 
-    // Attempt session/new to ensure agent is fully operational
+    // Attempt session/new to ensure agent is fully operational and extract live models
     try {
-      await client.newSession(cwd);
+      const sessionId = await client.newSession(cwd);
+      const sessionModels = client.getSessionModels(sessionId);
       return {
         ready: true,
         ...(agentInfo ? { agentInfo } : {}),
-        authMethods
+        authMethods,
+        ...(sessionModels.availableModels.length > 0 ? { availableModels: sessionModels.availableModels } : {}),
+        ...(sessionModels.currentModelId ? { currentModelId: sessionModels.currentModelId } : {})
       };
     } catch (sessionErr: unknown) {
       const msg = sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
@@ -439,6 +453,8 @@ export async function detectAllPeers(cwd: string = process.cwd()): Promise<PeerD
         args: activeArgs,
         ...(handshake.agentInfo ? { agentInfo: handshake.agentInfo } : {}),
         ...(handshake.authMethods ? { authMethods: handshake.authMethods } : {}),
+        ...(handshake.availableModels ? { availableModels: handshake.availableModels } : {}),
+        ...(handshake.currentModelId ? { currentModelId: handshake.currentModelId } : {}),
         details: 'Operational and ready for delegation.'
       });
     } else if (handshake.error && /auth/i.test(handshake.error)) {
