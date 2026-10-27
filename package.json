@@ -21,6 +21,7 @@
     "docs/THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
+    "prestart": "npm run build",
     "start": "node ./bin/causyne.js",
     "test": "node --test --import ./tests/helpers/isolateState.js \"tests/**/*.test.{js,ts}\"",
     "build": "node scripts/compile_skills.js && tsc -p tsconfig.runtime.json",

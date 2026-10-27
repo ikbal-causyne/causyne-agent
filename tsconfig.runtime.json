@@ -27,6 +27,7 @@
   },
   "include": [
     "src/sessionJournal.ts",
+    "src/provisioning/npmInstall.ts",
     "src/plugins/pluginSkills.ts",
     "src/agentProfiles.ts",
     "src/subagentJournal.ts",

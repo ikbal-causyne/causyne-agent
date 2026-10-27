@@ -3,7 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
-import { execFileSync } from 'node:child_process';
+import { installCapabilityManifest } from './npmInstall.js';
 import { pathToFileURL } from 'url';
 import { loadConfig, saveConfig } from '../config.js';
 import { isGroupGranted, isGroupDeclined } from './capabilityConsent.js';
@@ -169,12 +169,7 @@ export async function provisionCapabilities(groups = []) {
 
   if (!needsInstall) return { installed: target, skipped: true };
 
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  execFileSync(
-    npm,
-    ['install', '--ignore-scripts', '--no-fund'],
-    { cwd: CAPABILITY_DIR, stdio: 'inherit' }
-  );
+  installCapabilityManifest(CAPABILITY_DIR);
   return { installed: target, skipped: false };
 }
 
