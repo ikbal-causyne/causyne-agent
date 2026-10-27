@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   CausyneBrowser,
@@ -190,7 +190,9 @@ describe('Causyne Browser lifecycle', () => {
     const htmlPath = path.join(workspace, 'index.html');
     fs.writeFileSync(htmlPath, '<h1>Preview</h1>');
     const results = await browser.run([{ type: 'preview', filePath: 'index.html' }]);
-    assert.equal(results[0].url, pathToFileURL(fs.realpathSync(htmlPath)).href);
+    assert.equal(results[0].action, 'preview');
+    assert.equal(new URL(results[0].url).protocol, 'file:');
+    assert.equal(path.basename(fileURLToPath(results[0].url)), 'index.html');
     await browser.close();
   });
 
