@@ -26,10 +26,21 @@ function toCodePoints(text) {
 // path segment and a flag should each move as one unit.
 const WORD_CHARACTER = /[\p{L}\p{N}_-]/u;
 
+function isInsideRange(lineIdx, colIdx, { start, end }) {
+  if (lineIdx < start.line || lineIdx > end.line) return false;
+  if (lineIdx === start.line && lineIdx === end.line) {
+    return colIdx >= start.col && colIdx < end.col;
+  }
+  if (lineIdx === start.line) return colIdx >= start.col;
+  if (lineIdx === end.line) return colIdx < end.col;
+  return true;
+}
+
 export class LineEditor {
   constructor(initial = '') {
     this.setText(initial);
     this.killRing = '';
+    this.selectionAnchor = null;
   }
 
   // -------------------------------------------------------------------------
@@ -41,6 +52,7 @@ export class LineEditor {
     if (this.lines.length === 0) this.lines = [[]];
     this.line = this.lines.length - 1;
     this.col = this.lines[this.line].length;
+    this.selectionAnchor = null;
   }
 
   getText() {
@@ -51,14 +63,75 @@ export class LineEditor {
     return this.lines.length === 1 && this.lines[0].length === 0;
   }
 
+  get hasSelection() {
+    return Boolean(
+      this.selectionAnchor &&
+      (this.selectionAnchor.line !== this.line || this.selectionAnchor.col !== this.col)
+    );
+  }
+
+  getSelectionRange() {
+    if (!this.hasSelection || !this.selectionAnchor) return null;
+    const a = this.selectionAnchor;
+    const b = { line: this.line, col: this.col };
+    if (a.line < b.line || (a.line === b.line && a.col <= b.col)) {
+      return { start: { line: a.line, col: a.col }, end: { line: b.line, col: b.col } };
+    }
+    return { start: { line: b.line, col: b.col }, end: { line: a.line, col: a.col } };
+  }
+
+  getSelectedText() {
+    const range = this.getSelectionRange();
+    if (!range) return '';
+    const { start, end } = range;
+    if (start.line === end.line) {
+      return this.lines[start.line].slice(start.col, end.col).join('');
+    }
+    const parts = [];
+    parts.push(this.lines[start.line].slice(start.col).join(''));
+    for (let i = start.line + 1; i < end.line; i++) {
+      parts.push(this.lines[i].join(''));
+    }
+    parts.push(this.lines[end.line].slice(0, end.col).join(''));
+    return parts.join('\n');
+  }
+
+  clearSelection() {
+    this.selectionAnchor = null;
+  }
+
+  deleteSelection() {
+    const range = this.getSelectionRange();
+    if (!range) return false;
+    const { start, end } = range;
+    const firstLine = this.lines[start.line].slice(0, start.col);
+    const lastLine = this.lines[end.line].slice(end.col);
+    const merged = firstLine.concat(lastLine);
+    this.lines.splice(start.line, end.line - start.line + 1, merged);
+    if (this.lines.length === 0) this.lines = [[]];
+    this.line = start.line;
+    this.col = start.col;
+    this.selectionAnchor = null;
+    return true;
+  }
+
+  selectAll() {
+    if (this.isEmpty) return;
+    this.selectionAnchor = { line: 0, col: 0 };
+    this.line = this.lines.length - 1;
+    this.col = this.lines[this.line].length;
+  }
+
   clear() {
     this.lines = [[]];
     this.line = 0;
     this.col = 0;
+    this.selectionAnchor = null;
   }
 
   /** Insert text at the cursor. Embedded newlines split the line, as a paste does. */
   insert(text) {
+    if (this.hasSelection) this.deleteSelection();
     const normalized = String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const parts = normalized.split('\n');
     const current = this.lines[this.line];
@@ -82,6 +155,7 @@ export class LineEditor {
   }
 
   newline() {
+    if (this.hasSelection) this.deleteSelection();
     const current = this.lines[this.line];
     const before = current.slice(0, this.col);
     const after = current.slice(this.col);
@@ -91,6 +165,10 @@ export class LineEditor {
   }
 
   backspace() {
+    if (this.hasSelection) {
+      this.deleteSelection();
+      return;
+    }
     if (this.col > 0) {
       this.lines[this.line].splice(this.col - 1, 1);
       this.col -= 1;
@@ -105,6 +183,10 @@ export class LineEditor {
   }
 
   deleteForward() {
+    if (this.hasSelection) {
+      this.deleteSelection();
+      return;
+    }
     const current = this.lines[this.line];
     if (this.col < current.length) {
       current.splice(this.col, 1);
@@ -119,45 +201,86 @@ export class LineEditor {
   // Movement
   // -------------------------------------------------------------------------
 
-  moveLeft() {
+  _trackSelection(extend) {
+    if (extend) {
+      if (!this.selectionAnchor) {
+        this.selectionAnchor = { line: this.line, col: this.col };
+      }
+    } else if (this.selectionAnchor) {
+      this.selectionAnchor = null;
+    }
+  }
+
+  moveTo(line, col, extend = false) {
+    this._trackSelection(extend);
+    this.line = Math.max(0, Math.min(this.lines.length - 1, line));
+    this.col = Math.max(0, Math.min(this.lines[this.line].length, col));
+  }
+
+  moveLeft(extend = false) {
+    this._trackSelection(extend);
     if (this.col > 0) { this.col -= 1; return; }
     if (this.line > 0) { this.line -= 1; this.col = this.lines[this.line].length; }
   }
 
-  moveRight() {
+  moveRight(extend = false) {
+    this._trackSelection(extend);
     if (this.col < this.lines[this.line].length) { this.col += 1; return; }
     if (this.line < this.lines.length - 1) { this.line += 1; this.col = 0; }
   }
 
-  moveUp() {
-    if (this.line === 0) return false;
+  moveUp(extend = false) {
+    this._trackSelection(extend);
+    if (this.line === 0) {
+      if (extend) this.col = 0;
+      return false;
+    }
     this.line -= 1;
     this.col = Math.min(this.col, this.lines[this.line].length);
     return true;
   }
 
-  moveDown() {
-    if (this.line >= this.lines.length - 1) return false;
+  moveDown(extend = false) {
+    this._trackSelection(extend);
+    if (this.line >= this.lines.length - 1) {
+      if (extend) this.col = this.lines[this.line].length;
+      return false;
+    }
     this.line += 1;
     this.col = Math.min(this.col, this.lines[this.line].length);
     return true;
   }
 
-  moveHome() { this.col = 0; }
-  moveEnd() { this.col = this.lines[this.line].length; }
+  moveHome(extend = false) {
+    this._trackSelection(extend);
+    this.col = 0;
+  }
 
-  moveWordLeft() {
+  moveEnd(extend = false) {
+    this._trackSelection(extend);
+    this.col = this.lines[this.line].length;
+  }
+
+  moveWordLeft(extend = false) {
+    this._trackSelection(extend);
     const line = this.lines[this.line];
-    if (this.col === 0) { this.moveLeft(); return; }
+    if (this.col === 0) {
+      if (this.line > 0) { this.line -= 1; this.col = this.lines[this.line].length; }
+      return;
+    }
     let index = this.col;
     while (index > 0 && !WORD_CHARACTER.test(line[index - 1])) index -= 1;
     while (index > 0 && WORD_CHARACTER.test(line[index - 1])) index -= 1;
     this.col = index;
   }
 
-  moveWordRight() {
+  moveWordRight(extend = false) {
+    this._trackSelection(extend);
     const line = this.lines[this.line];
-    if (this.col === line.length) { this.moveRight(); return; }
+    if (this.col === line.length) {
+      if (this.line < this.lines.length - 1) { this.line += 1; this.col = 0; }
+      return;
+    }
     let index = this.col;
     while (index < line.length && !WORD_CHARACTER.test(line[index])) index += 1;
     while (index < line.length && WORD_CHARACTER.test(line[index])) index += 1;
@@ -170,6 +293,12 @@ export class LineEditor {
   // -------------------------------------------------------------------------
 
   killToEnd() {
+    if (this.hasSelection) {
+      this.killRing = this.getSelectedText();
+      this.deleteSelection();
+      if (this.killRing) writeClipboardSync(this.killRing);
+      return;
+    }
     const line = this.lines[this.line];
     this.killRing = line.slice(this.col).join('');
     this.lines[this.line] = line.slice(0, this.col);
@@ -177,6 +306,12 @@ export class LineEditor {
   }
 
   killToStart() {
+    if (this.hasSelection) {
+      this.killRing = this.getSelectedText();
+      this.deleteSelection();
+      if (this.killRing) writeClipboardSync(this.killRing);
+      return;
+    }
     const line = this.lines[this.line];
     this.killRing = line.slice(0, this.col).join('');
     this.lines[this.line] = line.slice(this.col);
@@ -185,6 +320,12 @@ export class LineEditor {
   }
 
   killWordLeft() {
+    if (this.hasSelection) {
+      this.killRing = this.getSelectedText();
+      this.deleteSelection();
+      if (this.killRing) writeClipboardSync(this.killRing);
+      return;
+    }
     const start = this.col;
     this.moveWordLeft();
     const line = this.lines[this.line];
@@ -218,6 +359,7 @@ export class LineEditor {
     const rows = [];
     let cursorRow = 0;
     let cursorCol = 0;
+    const range = this.getSelectionRange();
 
     for (let index = 0; index < this.lines.length; index++) {
       const prefix = index === 0 ? '' : continuation;
@@ -249,7 +391,8 @@ export class LineEditor {
             cursorCol = prefixWidth;
           }
         }
-        row += character;
+        const isSelected = range ? isInsideRange(index, position, range) : false;
+        row += isSelected ? `\x1b[7m${character}\x1b[27m` : character;
         used += charWidth;
       }
 

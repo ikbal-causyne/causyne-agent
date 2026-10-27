@@ -208,6 +208,7 @@ export class StageSurface {
   /** Keep Home distinct from a selected or newly started conversation. */
   enterHome(info) {
     this.homeInfo = info;
+    this.disableMouse();
     this.homeSessionSelected = false;
     this.sessionInfo = { title: 'Untitled', cwd: info?.cwd, provider: info?.provider, model: info?.model };
     this.fullSession = true;
@@ -217,6 +218,7 @@ export class StageSurface {
   leaveHome(sessionSelected = false) {
     if (this.homeInfo) this.stage.invalidate();
     this.homeInfo = null;
+    this.enableMouse();
     if (sessionSelected) this.homeSessionSelected = true;
   }
 
@@ -242,7 +244,7 @@ export class StageSurface {
     // the user had typed anything, and 73 of the 77 claimed rows were empty.
     // present() grows it to fit what there actually is.
     if (!this.stage.reserve(1)) return false;
-    this.enableMouse();
+    if (!this.homeInfo) this.enableMouse();
     this.armTeardown();
     return true;
   }

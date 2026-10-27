@@ -690,17 +690,15 @@ export class ChatPrompt {
     }
 
     if (key.ctrl && key.name === 'c') {
-      // A modal owns the screen, so ctrl+c must dismiss THAT before it touches
-      // the turn behind it. closeLayer() answers false, which is what makes
-      // this safe: the pending approval resolves as a denial.
-      //
-      // It shipped the other way round. With an approval up, ctrl+c fell
-      // straight through to handleCtrlC(), saw `busy`, and interrupted the
-      // turn — while the modal stayed on screen and its promise was never
-      // resolved. The loop then waited forever for an answer that could no
-      // longer be given, which is why ctrl+c "did nothing" and only escape
-      // ever got the user out.
       if (this.layer) { this.closeLayer(); return; }
+      if (this.editor.hasSelection) {
+        const text = this.editor.getSelectedText();
+        writeClipboardSync(text);
+        this.editor.killRing = text;
+        this.notice = `copied selection (${text.length} chars) to clipboard`;
+        this.scheduleDraw();
+        return;
+      }
       return this.handleCtrlC();
     }
     if (key.ctrl && key.name === 'd' && this.editor.isEmpty) return this.onExit();
@@ -765,12 +763,22 @@ export class ChatPrompt {
         if (key.alt) this.editor.killWordLeft(); else this.editor.backspace();
         return this.refreshCompletion();
       case 'delete': this.editor.deleteForward(); return this.refreshCompletion();
-      case 'left': return key.ctrl || key.alt ? this.editor.moveWordLeft() : this.editor.moveLeft();
-      case 'right': return key.ctrl || key.alt ? this.editor.moveWordRight() : this.editor.moveRight();
-      case 'home': return this.editor.moveHome();
-      case 'end': return this.editor.moveEnd();
-      case 'up': return this.historyOrMove(-1);
-      case 'down': return this.historyOrMove(1);
+      case 'left': return (key.ctrl || key.alt) ? this.editor.moveWordLeft(Boolean(key.shift)) : this.editor.moveLeft(Boolean(key.shift));
+      case 'right': return (key.ctrl || key.alt) ? this.editor.moveWordRight(Boolean(key.shift)) : this.editor.moveRight(Boolean(key.shift));
+      case 'home': return this.editor.moveHome(Boolean(key.shift));
+      case 'end': return this.editor.moveEnd(Boolean(key.shift));
+      case 'up':
+        if (key.shift) return this.editor.moveUp(true);
+        return this.historyOrMove(-1);
+      case 'down':
+        if (key.shift) return this.editor.moveDown(true);
+        return this.historyOrMove(1);
+      case 'pageup':
+        if (key.shift) { this.editor.moveHome(true); this.editor.line = 0; return; }
+        break;
+      case 'pagedown':
+        if (key.shift) { this.editor.moveEnd(true); this.editor.line = this.editor.lines.length - 1; return; }
+        break;
       case 'char': this.editor.insert(key.text); return this.refreshCompletion();
       default: break;
     }
@@ -783,6 +791,18 @@ export class ChatPrompt {
         case 'u': return this.editor.killToStart();
         case 'w': this.editor.killWordLeft(); return this.refreshCompletion();
         case 'y': this.editor.yank(); return this.refreshCompletion();
+        case 'x': {
+          if (this.editor.hasSelection) {
+            const text = this.editor.getSelectedText();
+            writeClipboardSync(text);
+            this.editor.killRing = text;
+            this.editor.deleteSelection();
+            this.notice = `cut selection (${text.length} chars) to clipboard`;
+            this.scheduleDraw();
+            return;
+          }
+          break;
+        }
         case 'p': return this.openPalette();
         case 'l': return this.clearScreen();
         case 'o': return this.expand();
@@ -801,12 +821,33 @@ export class ChatPrompt {
         default: break;
       }
     }
+    if (key.alt && key.name === 'a') {
+      this.editor.selectAll();
+      this.notice = 'selected all input text';
+      this.scheduleDraw();
+      return;
+    }
+    if (key.alt && key.name === 'x') {
+      if (this.editor.hasSelection) {
+        const text = this.editor.getSelectedText();
+        writeClipboardSync(text);
+        this.editor.killRing = text;
+        this.editor.deleteSelection();
+        this.notice = `cut selection (${text.length} chars) to clipboard`;
+        this.scheduleDraw();
+        return;
+      }
+    }
     if (key.alt && (key.name === 'c' || key.name === 'w')) {
-      const text = this.editor.getText();
+      const text = this.editor.hasSelection
+        ? this.editor.getSelectedText()
+        : this.editor.getText();
       if (text) {
         writeClipboardSync(text);
         this.editor.killRing = text;
-        this.notice = 'copied input to clipboard';
+        this.notice = this.editor.hasSelection
+          ? `copied selection (${text.length} chars) to clipboard`
+          : 'copied input to clipboard';
       } else {
         this.notice = 'input is empty (nothing to copy)';
       }
@@ -884,8 +925,16 @@ export class ChatPrompt {
       if (key.shift) viewport.toBottom(); else viewport.pageDown();
       return true;
     }
-    if (key.shift && key.name === 'up') { viewport.lineUp(); return true; }
-    if (key.shift && key.name === 'down') { viewport.lineDown(); return true; }
+    if (key.shift && key.name === 'up') {
+      if (!this.editor.isEmpty) return false;
+      viewport.lineUp();
+      return true;
+    }
+    if (key.shift && key.name === 'down') {
+      if (!this.editor.isEmpty) return false;
+      viewport.lineDown();
+      return true;
+    }
     if (key.alt && key.ctrl && key.name === 'u') { viewport.halfPageUp(); return true; }
     if (key.alt && key.ctrl && key.name === 'd') { viewport.halfPageDown(); return true; }
 

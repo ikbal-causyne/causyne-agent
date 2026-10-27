@@ -218,3 +218,75 @@ test('emitOsc52Copy formats valid base64 escape sequence', () => {
   assert.equal(success, true);
   assert.equal(emitted, `\x1b]52;c;${Buffer.from('test payload').toString('base64')}\x07`);
 });
+
+test('LineEditor selection with Shift+Left/Right and getSelectedText', () => {
+  const editor = new LineEditor('hello world');
+  assert.equal(editor.hasSelection, false);
+
+  // Shift+Left 5 times selects "world"
+  for (let i = 0; i < 5; i++) editor.moveLeft(true);
+  assert.equal(editor.hasSelection, true);
+  assert.equal(editor.getSelectedText(), 'world');
+
+  // Typing over selection replaces "world" with "earth"
+  editor.insert('earth');
+  assert.equal(editor.hasSelection, false);
+  assert.equal(editor.getText(), 'hello earth');
+});
+
+test('LineEditor render formats selected characters with inverted reverse-video ANSI code', () => {
+  const editor = new LineEditor('cat');
+  editor.moveLeft(true); // selects 't'
+  const rendered = editor.render(80, '');
+  assert.ok(rendered.rows[0]?.includes('\x1b[7mt\x1b[27m'));
+});
+
+test('ChatPrompt Shift+Left selects text and Ctrl+C copies selection without clearing prompt', () => {
+  const prompt = new ChatPrompt({
+    out: { write() {}, columns: 80, on() {}, removeListener() {} },
+    input: { setRawMode() {}, resume() {}, on() {}, off() {}, pause() {} }
+  });
+  prompt.editor.setText('select this word');
+  
+  // Shift+Left 4 times selects "word"
+  for (let i = 0; i < 4; i++) {
+    prompt.handleKey({ name: 'left', shift: true });
+  }
+  assert.equal(prompt.editor.hasSelection, true);
+  assert.equal(prompt.editor.getSelectedText(), 'word');
+
+  // Ctrl+C copies selection without clearing editor
+  prompt.handleKey({ name: 'c', ctrl: true });
+  assert.equal(prompt.editor.getText(), 'select this word');
+  assert.match(prompt.notice, /copied selection \(4 chars\)/);
+  assert.equal(prompt.editor.killRing, 'word');
+});
+
+test('ChatPrompt Ctrl+X cuts active selection to clipboard', () => {
+  const prompt = new ChatPrompt({
+    out: { write() {}, columns: 80, on() {}, removeListener() {} },
+    input: { setRawMode() {}, resume() {}, on() {}, off() {}, pause() {} }
+  });
+  prompt.editor.setText('cut this word now');
+  prompt.editor.moveWordLeft(false); // cursor before "now"
+  prompt.handleKey({ name: 'left', shift: true }); // select space before now
+  for (let i = 0; i < 4; i++) prompt.handleKey({ name: 'left', shift: true }); // select "word"
+  assert.equal(prompt.editor.hasSelection, true);
+
+  prompt.handleKey({ name: 'x', ctrl: true });
+  assert.match(prompt.notice, /cut selection/);
+  assert.doesNotMatch(prompt.editor.getText(), /word/);
+});
+
+test('ChatPrompt Alt+A selects all text in prompt buffer', () => {
+  const prompt = new ChatPrompt({
+    out: { write() {}, columns: 80, on() {}, removeListener() {} },
+    input: { setRawMode() {}, resume() {}, on() {}, off() {}, pause() {} }
+  });
+  prompt.editor.setText('select everything in this chatbox');
+  prompt.handleKey({ name: 'a', alt: true });
+  assert.equal(prompt.editor.hasSelection, true);
+  assert.equal(prompt.editor.getSelectedText(), 'select everything in this chatbox');
+  assert.equal(prompt.notice, 'selected all input text');
+});
+
