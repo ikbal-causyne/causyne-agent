@@ -28,7 +28,7 @@ import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
-import { readClipboardSync } from './clipboardSync.js';
+import { readClipboardSync, writeClipboardSync } from './clipboardSync.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
 import { settleStageResize } from './resizeRecovery.js';
@@ -791,11 +791,39 @@ export class ChatPrompt {
           if (text) {
             this.editor.insert(text);
             this.refreshCompletion();
+            this.notice = 'pasted from clipboard';
+          } else {
+            this.notice = 'clipboard is empty';
           }
+          this.scheduleDraw();
           return;
         }
         default: break;
       }
+    }
+    if (key.alt && (key.name === 'c' || key.name === 'w')) {
+      const text = this.editor.getText();
+      if (text) {
+        writeClipboardSync(text);
+        this.editor.killRing = text;
+        this.notice = 'copied input to clipboard';
+      } else {
+        this.notice = 'input is empty (nothing to copy)';
+      }
+      this.scheduleDraw();
+      return;
+    }
+    if (key.alt && key.name === 'v') {
+      const text = readClipboardSync();
+      if (text) {
+        this.editor.insert(text);
+        this.refreshCompletion();
+        this.notice = 'pasted from clipboard';
+      } else {
+        this.notice = 'clipboard is empty';
+      }
+      this.scheduleDraw();
+      return;
     }
     if (key.alt && key.name === 'b') return this.editor.moveWordLeft();
     if (key.alt && key.name === 'f') return this.editor.moveWordRight();

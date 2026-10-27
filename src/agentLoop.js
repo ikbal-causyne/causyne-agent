@@ -2941,9 +2941,12 @@ export class AgentLoop {
                 }
             }
             catch (e) {
-                if (e?.code === 'AGY_TOKEN_BUDGET') {
+                // A peer can fail after completing billable steps. Charge those steps
+                // once even when no final result was returned, including action and
+                // wall-clock limits, before deciding whether recovery is possible.
+                if (e?.partialUsage) {
                     const usage = e.partialUsage;
-                    if (usage) {
+                    if (usage.promptTokens + usage.completionTokens > 0) {
                         await this.tokenTracker.trackUsage(usage.promptTokens, usage.completionTokens, (message) => this.emitEvent({ type: 'budget_warning', message }), usage);
                         auditLog.log({
                             event: 'model_usage', scope: 'agent_loop_primary', taskId: this.taskId,
@@ -2953,6 +2956,8 @@ export class AgentLoop {
                             measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
                         });
                     }
+                }
+                if (e?.code === 'AGY_TOKEN_BUDGET') {
                     this.emitEvent({ type: 'budget_warning', message: e.message });
                     auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
                         used: this.tokenTracker.taskTokens, limit: this.tokenTracker.budget?.maxTokensPerTask || 0 });
@@ -3062,7 +3067,15 @@ export class AgentLoop {
     }
     // V5: Classify errors for intelligent retry decisions
     classifyError(error) {
-        if (error?.code === 'AGY_NATIVE_ACTION_DENIED')
+        if (error?.code === 'AGY_NATIVE_ACTION_DENIED'
+            || error?.code === 'AGY_NATIVE_ACTION_BUDGET'
+            || error?.code === 'AGY_DESKTOP_TASK_LIMIT')
+            return 'fatal';
+        // A provider may have charged for completed steps before the turn failed.
+        // Replaying that turn can repeat actions and spend the same tokens again.
+        const spent = Number(error?.partialUsage?.promptTokens || 0)
+            + Number(error?.partialUsage?.completionTokens || 0);
+        if (spent > 0)
             return 'fatal';
         const msg = (error.message || '').toLowerCase();
         if (msg.includes('syntax') || msg.includes('unexpected token') || msg.includes('invalid json')) {

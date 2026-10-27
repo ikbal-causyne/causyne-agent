@@ -45,6 +45,7 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { runCopyCommand, runPasteCommand } from './tui/chatboxClipboard.js';
 
 export const SCOPES = ['local'];
 
@@ -988,6 +989,30 @@ export const COMMANDS = [
         return ok('Conversation cleared. The next task starts from a clean context.');
       }
       return fail('No active session to clear.');
+    }
+  },
+
+  {
+    name: 'copy',
+    aliases: ['cp', 'clip'],
+    scope: 'local',
+    usage: '/copy [input | last | <text>]',
+    description: 'Copy chatbox input, last assistant response, or text to system clipboard',
+    run: (argv, ctx) => {
+      const res = runCopyCommand(argv, ctx);
+      return res.ok ? ok(res.output) : fail(res.output);
+    }
+  },
+
+  {
+    name: 'paste',
+    aliases: ['pasteclip'],
+    scope: 'local',
+    usage: '/paste [text]',
+    description: 'Paste clipboard content or text into the chatbox input',
+    run: (argv, ctx) => {
+      const res = runPasteCommand(argv, ctx);
+      return res.ok ? ok(res.output) : fail(res.output);
     }
   },
 

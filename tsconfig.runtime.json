@@ -71,6 +71,7 @@
     "src/tui/modelPicker.ts",
     "src/tui/sessionPicker.ts",
     "src/tui/clipboardSync.ts",
+    "src/tui/chatboxClipboard.ts",
     "src/tui/messageInteraction.ts",
     "src/tui/messageActionPlacement.ts",
     "src/tui/mouseHover.ts",

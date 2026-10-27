@@ -7,6 +7,13 @@ import { AgentLoop, isDesktopWallpaperChangePrompt, isGenericHandoffResponse, is
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
 
+test('desktop safety limits are terminal errors instead of retrying paid turns', () => {
+  const loop = new AgentLoop({ readyState: 1, send: () => {} }, 'desktop-limit-regression', 'change my desktop picture');
+  assert.equal(loop.classifyError({ code: 'AGY_NATIVE_ACTION_BUDGET', message: 'Native action limit reached' }), 'fatal');
+  assert.equal(loop.classifyError({ code: 'AGY_DESKTOP_TASK_LIMIT', message: 'Desktop time limit reached' }), 'fatal');
+  assert.equal(loop.classifyError({ message: 'network error after model step', partialUsage: { promptTokens: 90, completionTokens: 10 } }), 'fatal');
+});
+
 test('a generic handoff after native actions cannot be reported as task completion', async () => {
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-handoff-'));

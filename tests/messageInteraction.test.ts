@@ -94,9 +94,10 @@ test('message actions fit exactly and are placed near the clicked row', () => {
   assert.equal(placeMessageActionPanel(base.slice(0, 2), panel, 90, 10, 24, 2).layout, null);
 });
 
-test('hover tracking is paired and can be disabled for terminal text selection', () => {
-  assert.equal(mouseHoverTracking(true, {}), '\x1b[?1003h');
-  assert.equal(mouseHoverTracking(false, {}), '\x1b[?1003l');
+test('hover tracking is disabled by default for terminal text selection and opt-in with CAUSYNE_MOUSE_HOVER=1', () => {
+  assert.equal(mouseHoverTracking(true, {}), '');
+  assert.equal(mouseHoverTracking(true, { CAUSYNE_MOUSE_HOVER: '1' }), '\x1b[?1003h');
+  assert.equal(mouseHoverTracking(false, { CAUSYNE_MOUSE_HOVER: '1' }), '\x1b[?1003l');
   assert.equal(mouseHoverTracking(true, { CAUSYNE_MOUSE_HOVER: '0' }), '');
 });
 

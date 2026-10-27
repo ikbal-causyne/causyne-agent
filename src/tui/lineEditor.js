@@ -15,6 +15,7 @@
 // Pure Node. No dependency, no shell.
 
 import { visibleWidth } from './text.js';
+import { writeClipboardSync, readClipboardSync } from './clipboardSync.js';
 
 /** Split into code points, so one emoji is one editable unit. */
 function toCodePoints(text) {
@@ -58,7 +59,8 @@ export class LineEditor {
 
   /** Insert text at the cursor. Embedded newlines split the line, as a paste does. */
   insert(text) {
-    const parts = String(text).split('\n');
+    const normalized = String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const parts = normalized.split('\n');
     const current = this.lines[this.line];
     const before = current.slice(0, this.col);
     const after = current.slice(this.col);
@@ -171,6 +173,7 @@ export class LineEditor {
     const line = this.lines[this.line];
     this.killRing = line.slice(this.col).join('');
     this.lines[this.line] = line.slice(0, this.col);
+    if (this.killRing) writeClipboardSync(this.killRing);
   }
 
   killToStart() {
@@ -178,6 +181,7 @@ export class LineEditor {
     this.killRing = line.slice(0, this.col).join('');
     this.lines[this.line] = line.slice(this.col);
     this.col = 0;
+    if (this.killRing) writeClipboardSync(this.killRing);
   }
 
   killWordLeft() {
@@ -186,9 +190,14 @@ export class LineEditor {
     const line = this.lines[this.line];
     this.killRing = line.slice(this.col, start).join('');
     line.splice(this.col, start - this.col);
+    if (this.killRing) writeClipboardSync(this.killRing);
   }
 
   yank() {
+    if (!this.killRing) {
+      const clip = readClipboardSync();
+      if (clip) this.killRing = clip;
+    }
     if (this.killRing) this.insert(this.killRing);
   }
 

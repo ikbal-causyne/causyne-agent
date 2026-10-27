@@ -872,6 +872,12 @@ export class AntigravityProvider extends LLMProvider {
                 if (isSettled)
                     return;
                 isSettled = true;
+                // Failed native turns can have already consumed several model steps.
+                // Preserve their reported usage for the outer task ledger and prevent
+                // the provider from silently replaying a paid turn.
+                if (partialUsage.promptTokens + partialUsage.completionTokens > 0) {
+                    Object.assign(err, { partialUsage: { ...partialUsage } });
+                }
                 cleanup();
                 reject(err);
             };
@@ -1231,6 +1237,9 @@ export class AntigravityProvider extends LLMProvider {
             }
             catch (err) {
                 if (options.signal?.aborted || err?.name === 'AbortError') {
+                    throw err;
+                }
+                if (err?.partialUsage?.promptTokens + err?.partialUsage?.completionTokens > 0) {
                     throw err;
                 }
                 const canRetryResetConversation = hadConversation && !this.currentConversationId

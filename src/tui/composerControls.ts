@@ -1,5 +1,6 @@
 import { loadConfig, saveConfig } from '../config.js';
 import { getAvailableProvidersOverview } from '../dynamicCatalogue.js';
+import { writeClipboardSync } from './clipboardSync.js';
 // @ts-expect-error dialogs.js is awaiting TypeScript migration.
 import { SelectLayer } from './dialogs.js';
 
@@ -142,8 +143,16 @@ export function handlePromptCtrlC(
   now = Date.now()
 ): void {
   if (!prompt.editor.isEmpty) {
+    const text = prompt.editor.getText();
+    if (text) {
+      writeClipboardSync(text);
+      if ('killRing' in prompt.editor) {
+        (prompt.editor as { killRing?: string }).killRing = text;
+      }
+    }
     prompt.editor.clear();
     prompt.completion = null;
+    prompt.notice = text ? 'cleared and copied to clipboard' : '';
     return;
   }
   if (prompt.busy) {

@@ -1,5 +1,6 @@
 import { loadConfig, saveConfig } from '../config.js';
 import { getAvailableProvidersOverview } from '../dynamicCatalogue.js';
+import { writeClipboardSync } from './clipboardSync.js';
 // @ts-expect-error dialogs.js is awaiting TypeScript migration.
 import { SelectLayer } from './dialogs.js';
 export function openModeControl(prompt, loop) {
@@ -93,8 +94,16 @@ export function triggerTurnInterrupt(prompt, formatInterruptedRow, options = {})
 }
 export function handlePromptCtrlC(prompt, formatInterruptedRow, windowMs = 2000, now = Date.now()) {
     if (!prompt.editor.isEmpty) {
+        const text = prompt.editor.getText();
+        if (text) {
+            writeClipboardSync(text);
+            if ('killRing' in prompt.editor) {
+                prompt.editor.killRing = text;
+            }
+        }
         prompt.editor.clear();
         prompt.completion = null;
+        prompt.notice = text ? 'cleared and copied to clipboard' : '';
         return;
     }
     if (prompt.busy) {
