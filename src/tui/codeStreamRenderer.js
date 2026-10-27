@@ -1,5 +1,5 @@
 import { ChatRenderer } from './chatRenderer.js';
-import { CODE_PANEL_LINES, codePreviewLineCount, renderCodeProgress } from './codeProgress.js';
+import { CODE_PANEL_LINES, codePreviewLineCount, defaultPreviewStart, renderCodeProgress } from './codeProgress.js';
 function lastStart(event) {
     return Math.max(0, codePreviewLineCount(event) - CODE_PANEL_LINES);
 }
@@ -113,7 +113,12 @@ export class CodeStreamRenderer extends ChatRenderer {
         const last = transcript?.frames.at(-1);
         const samePanel = last?.meta?.codePreview === true && last.meta.id === event.id;
         const state = samePanel && last ? this.codePanels.get(last) : undefined;
-        const panelState = state || { event, modelNote: this.modelNote, start: lastStart(event), followTail: true };
+        const panelState = state || {
+            event,
+            modelNote: this.modelNote,
+            start: defaultPreviewStart(event),
+            followTail: event.operation !== 'Editing'
+        };
         panelState.event = event;
         panelState.modelNote = this.modelNote;
         panelState.start = panelState.followTail ? lastStart(event) : Math.min(panelState.start, lastStart(event));

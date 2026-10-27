@@ -266,3 +266,95 @@ process.stdin.on('data', chunk => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('created files exceeding 600 lines always retain green add highlights and never degrade to neutral ctx', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-code-large-create-'));
+  const target = path.join(dir, 'index.html');
+  fs.writeFileSync(target, '<p>old small draft</p>');
+
+  const events: Array<any> = [];
+  const observer = new NativeCodeObserver(dir, event => events.push(event));
+  const action = codeProgressFromAction('write_file', { Path: target }, 'create-large');
+  assert.ok(action);
+
+  try {
+    observer.handle(action);
+    const new720Lines = Array.from({ length: 720 }, (_, i) => `<div class="pillar-${i}">Pillar ${i}</div>`).join('\n');
+    fs.writeFileSync(target, new720Lines);
+    observer.poll('create-large');
+    observer.handle({ ...action, phase: 'done' });
+
+    const doneEvent = events.at(-1);
+    assert.ok(doneEvent);
+    assert.equal(doneEvent.operation, 'Creating');
+    assert.equal(doneEvent.before, undefined);
+
+    const rendered = renderCodeProgress(doneEvent, 80, '', 220);
+    const renderedText = stripAnsi(rendered.join('\n'));
+    assert.match(renderedText, /\+ <div class="pillar-220">/);
+    assert.match(renderedText, /\+ <div class="pillar-229">/);
+    assert.doesNotMatch(renderedText, /  <div class="pillar-220">/);
+
+    const script = `import {renderCodeProgress} from './src/tui/codeProgress.js';\n` +
+      `const event = ${JSON.stringify(doneEvent)};\n` +
+      `console.log(renderCodeProgress(event, 80, '', 220).join('\\n'));`;
+    const colored = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '3', NO_COLOR: '', CAUSYNE_NO_COLOR: '0' }
+    });
+    assert.equal(colored.status, 0, colored.stderr);
+    assert.match(colored.stdout, /\x1b\[48;2;32;42;32m/);
+  } finally {
+    observer.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('replace_file_content and multi_replace_file_content extract TargetContent and display red deletions and green additions', () => {
+  const single = codeProgressFromAction('replace_file_content', {
+    TargetFile: 'app.ts',
+    TargetContent: 'const oldVal = 10;',
+    ReplacementContent: 'const newVal = 20;'
+  }, 'edit-replace');
+  assert.ok(single);
+  assert.equal(single.operation, 'Editing');
+  assert.equal(single.before, 'const oldVal = 10;');
+  assert.equal(single.code, 'const newVal = 20;');
+
+  const renderedSingle = renderCodeProgress(single, 80);
+  const textSingle = stripAnsi(renderedSingle.join('\n'));
+  assert.match(textSingle, /- const oldVal = 10;/);
+  assert.match(textSingle, /\+ const newVal = 20;/);
+
+  const multi = codeProgressFromAction('multi_replace_file_content', {
+    TargetFile: 'app.ts',
+    ReplacementChunks: [
+      { TargetContent: 'let a = 1;', ReplacementContent: 'let a = 2;' },
+      { TargetContent: 'let b = 10;', ReplacementContent: 'let b = 20;' }
+    ]
+  }, 'edit-multi');
+  assert.ok(multi);
+  assert.equal(multi.operation, 'Editing');
+  assert.equal(multi.before, 'let a = 1;\nlet b = 10;');
+  assert.equal(multi.code, 'let a = 2;\nlet b = 20;');
+
+  const renderedMulti = renderCodeProgress(multi, 80);
+  const textMulti = stripAnsi(renderedMulti.join('\n'));
+  assert.match(textMulti, /- let a = 1;/);
+  assert.match(textMulti, /\+ let a = 2;/);
+});
+
+test('large edits exceeding MAX_SIDE_LINES maintain additions and deletions without turning into ctx', () => {
+  const hugeOld = Array.from({ length: 700 }, (_, i) => `old line ${i}`).join('\n');
+  const hugeNew = Array.from({ length: 700 }, (_, i) => `new line ${i}`).join('\n');
+  const edit = codeProgressFromAction('fs_edit', {
+    path: 'huge.ts',
+    oldText: hugeOld,
+    newText: hugeNew
+  }, 'huge-edit');
+  assert.ok(edit);
+
+  const rendered = renderCodeProgress(edit, 80, '', 650);
+  const text = stripAnsi(rendered.join('\n'));
+  assert.match(text, /[+-]/);
+  assert.doesNotMatch(text, /  old line/);
+});

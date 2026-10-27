@@ -3,7 +3,7 @@ import { safeDisplay, truncate, padEnd } from './text.js';
 // The terminal theme is still a standalone JavaScript module in the TS migration.
 // @ts-expect-error theme.js has no TypeScript declaration yet.
 import { COLOR_DEPTH, IS_LIGHT, paint } from './theme.js';
-import { diffLines } from './diff.js';
+import { diffLines, MAX_SIDE_LINES } from './diff.js';
 import fs from 'node:fs';
 import path from 'node:path';
 export const CODE_PANEL_LINES = 10;
@@ -13,40 +13,56 @@ const FILE_TOOLS = {
     'fs.write': 'Creating', 'fs.edit': 'Editing',
     fs_delete: 'Removing', fs_move: 'Moving',
     write_file: 'Creating', edit_file: 'Editing', delete_file: 'Removing',
+    create_file: 'Creating', new_file: 'Creating',
+    remove_file: 'Removing', unlink: 'Removing', move_file: 'Moving',
     replace_file_content: 'Editing', multi_replace_file_content: 'Editing',
+    apply_patch: 'Editing', patch: 'Editing', str_replace_editor: 'Editing',
     WriteFile: 'Creating', EditFile: 'Editing', DeleteFile: 'Removing',
+    CreateFile: 'Creating', RemoveFile: 'Removing', MoveFile: 'Moving',
     ReplaceFileContent: 'Editing', MultiReplaceFileContent: 'Editing'
 };
 function stringField(value) {
     return typeof value === 'string' ? value : '';
 }
 function codeFromArgs(args) {
-    const direct = args.content ?? args.Content ?? args.CodeContent ?? args.code ?? args.new_string ?? args.newText ?? args.replaceContent ?? args.ReplacementContent;
+    const direct = args.content ?? args.Content ?? args.CodeContent ?? args.codeContent ?? args.code ?? args.Code
+        ?? args.new_string ?? args.new_str ?? args.newText ?? args.NewText ?? args.replaceContent ?? args.ReplaceContent
+        ?? args.replacementContent ?? args.ReplacementContent ?? args.replacement_content ?? args.text ?? args.Text
+        ?? args.after ?? args.After;
     if (typeof direct === 'string')
         return direct;
-    const edits = args.edits ?? args.ReplacementChunks;
+    const edits = args.edits ?? args.ReplacementChunks ?? args.chunks ?? args.Chunks;
     if (Array.isArray(edits)) {
         return edits.map((item) => {
             if (!item || typeof item !== 'object')
                 return '';
             const entry = item;
-            return stringField(entry.new_string ?? entry.newText ?? entry.replaceContent ?? entry.ReplacementContent ?? entry.content);
+            return stringField(entry.new_string ?? entry.new_str ?? entry.newText ?? entry.NewText
+                ?? entry.replaceContent ?? entry.ReplaceContent ?? entry.replacementContent
+                ?? entry.ReplacementContent ?? entry.replacement_content ?? entry.content ?? entry.Content
+                ?? entry.text ?? entry.Text ?? entry.after ?? entry.After);
         }).join('\n');
     }
     return '';
 }
 function previousCodeFromArgs(args) {
-    const direct = args.old_string ?? args.oldText ?? args.searchContent ?? args.SearchContent;
+    const direct = args.old_string ?? args.old_str ?? args.oldText ?? args.OldText
+        ?? args.searchContent ?? args.SearchContent ?? args.targetContent ?? args.TargetContent
+        ?? args.target_content ?? args.oldContent ?? args.OldContent ?? args.old_content
+        ?? args.before ?? args.Before;
     if (typeof direct === 'string')
         return direct;
-    const edits = args.edits ?? args.ReplacementChunks;
+    const edits = args.edits ?? args.ReplacementChunks ?? args.chunks ?? args.Chunks;
     if (!Array.isArray(edits))
         return undefined;
     const previous = edits.map((item) => {
         if (!item || typeof item !== 'object')
             return undefined;
         const entry = item;
-        const value = entry.old_string ?? entry.oldText ?? entry.searchContent ?? entry.SearchContent;
+        const value = entry.old_string ?? entry.old_str ?? entry.oldText ?? entry.OldText
+            ?? entry.searchContent ?? entry.SearchContent ?? entry.targetContent ?? entry.TargetContent
+            ?? entry.target_content ?? entry.oldContent ?? entry.OldContent ?? entry.old_content
+            ?? entry.before ?? entry.Before;
         return typeof value === 'string' ? value : undefined;
     });
     return previous.length && previous.every(value => value !== undefined) ? previous.join('\n') : undefined;
@@ -172,7 +188,13 @@ export class NativeCodeObserver {
             const entry = this.active.get(event.id);
             const current = this.read(target);
             if (current !== null && (current !== entry?.previous || event.operation === 'Creating')) {
-                this.emit({ ...event, code: current, ...(entry?.previous !== null && entry?.previous !== undefined ? { before: entry.previous } : {}) });
+                this.emit({
+                    ...event,
+                    code: current,
+                    ...(entry?.previous !== null && entry?.previous !== undefined && event.operation !== 'Creating'
+                        ? { before: entry.previous }
+                        : {})
+                });
             }
         }
         this.stop(event.id);
@@ -185,7 +207,11 @@ export class NativeCodeObserver {
         if (current === null || current === entry.previous || current === entry.lastShown)
             return;
         entry.lastShown = current;
-        this.emit({ ...entry.event, code: current, ...(entry.previous !== null ? { before: entry.previous } : {}) });
+        this.emit({
+            ...entry.event,
+            code: current,
+            ...(entry.previous !== null && entry.event.operation !== 'Creating' ? { before: entry.previous } : {})
+        });
     }
     dispose() {
         for (const id of this.active.keys())
@@ -226,6 +252,17 @@ function splitCodeLines(code) {
 function previewLines(event) {
     if (event.code === undefined)
         return [];
+    // When creating or drafting code, every line is new code (addition).
+    // Even if a previous file existed on disk, the action is Creating/Drafting.
+    if (event.operation === 'Creating' || event.operation === 'Drafting') {
+        return splitCodeLines(event.code).map(text => ({ kind: 'add', text }));
+    }
+    // When removing, all lines are deletions.
+    if (event.operation === 'Removing') {
+        const text = event.before ?? event.code;
+        return splitCodeLines(text).map(text => ({ kind: 'del', text }));
+    }
+    // When editing with known previous content:
     if (event.before !== undefined) {
         const oldLines = splitCodeLines(event.before);
         const newLines = splitCodeLines(event.code);
@@ -238,23 +275,57 @@ function previewLines(event) {
             suffix++;
         const changedOld = oldLines.slice(prefix, oldLines.length - suffix);
         const changedNew = newLines.slice(prefix, newLines.length - suffix);
+        if (changedOld.length === 0) {
+            return [
+                ...oldLines.slice(0, prefix).map(text => ({ kind: 'ctx', text })),
+                ...changedNew.map(text => ({ kind: 'add', text })),
+                ...oldLines.slice(oldLines.length - suffix).map(text => ({ kind: 'ctx', text }))
+            ];
+        }
+        if (changedNew.length === 0) {
+            return [
+                ...oldLines.slice(0, prefix).map(text => ({ kind: 'ctx', text })),
+                ...changedOld.map(text => ({ kind: 'del', text })),
+                ...oldLines.slice(oldLines.length - suffix).map(text => ({ kind: 'ctx', text }))
+            ];
+        }
         const result = diffLines(changedOld.join('\n'), changedNew.join('\n'));
-        // Diff only the changed middle so a small edit in a long file stays fast.
-        // A partial middle diff could mislabel lines, so leave that case neutral.
-        if (result.truncated)
-            return newLines.map(text => ({ kind: 'ctx', text }));
+        const ops = [...result.ops];
+        // If diff was truncated due to exceeding MAX_SIDE_LINES, preserve remaining lines as del/add rather than losing them
+        if (result.truncated) {
+            if (changedOld.length > MAX_SIDE_LINES) {
+                for (let i = MAX_SIDE_LINES; i < changedOld.length; i++) {
+                    ops.push({ kind: 'del', text: changedOld[i] });
+                }
+            }
+            if (changedNew.length > MAX_SIDE_LINES) {
+                for (let j = MAX_SIDE_LINES; j < changedNew.length; j++) {
+                    ops.push({ kind: 'add', text: changedNew[j] });
+                }
+            }
+        }
         return [
             ...oldLines.slice(0, prefix).map(text => ({ kind: 'ctx', text })),
-            ...result.ops,
+            ...ops,
             ...oldLines.slice(oldLines.length - suffix).map(text => ({ kind: 'ctx', text }))
         ];
     }
-    const kind = event.operation === 'Removing' ? 'del'
-        : event.operation === 'Creating' || event.operation === 'Drafting' ? 'add' : 'ctx';
-    return splitCodeLines(event.code).map(text => ({ kind, text }));
+    // Editing without evidenced 'before': preserve existing test contract by rendering lines as ctx
+    return splitCodeLines(event.code).map(text => ({ kind: 'ctx', text }));
 }
 export function codePreviewLineCount(event) {
     return previewLines(event).length;
+}
+export function defaultPreviewStart(event) {
+    const codeLines = previewLines(event);
+    const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
+    if (event.operation === 'Editing') {
+        const firstChange = codeLines.findIndex(l => l.kind === 'add' || l.kind === 'del');
+        if (firstChange >= 0) {
+            return Math.max(0, Math.min(maxStart, firstChange - 2));
+        }
+    }
+    return maxStart;
 }
 function highlightCode(kind, text, width) {
     const marker = kind === 'add' ? '+' : kind === 'del' ? '-' : ' ';
@@ -283,7 +354,7 @@ export function renderCodeProgress(event, width, modelNote = '', startLine) {
         rows.push(truncate(`model note: ${safeDisplay(modelNote)}`, inner));
     const codeLines = previewLines(event);
     const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
-    const start = startLine === undefined ? maxStart : Math.max(0, Math.min(Math.floor(startLine), maxStart));
+    const start = startLine === undefined ? defaultPreviewStart(event) : Math.max(0, Math.min(Math.floor(startLine), maxStart));
     const visible = codeLines.slice(start, start + CODE_PANEL_LINES);
     if (visible.length) {
         rows.push('');

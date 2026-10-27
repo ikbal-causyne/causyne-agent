@@ -1,5 +1,5 @@
 import { ChatRenderer } from './chatRenderer.js';
-import { CODE_PANEL_LINES, codePreviewLineCount, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
+import { CODE_PANEL_LINES, codePreviewLineCount, defaultPreviewStart, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
 
 type RendererEvent = { type: string; [key: string]: unknown };
 type CodePanelState = { event: CodeProgressEvent; modelNote: string; start: number; followTail: boolean };
@@ -126,7 +126,12 @@ export class CodeStreamRenderer extends ChatRenderer {
     const last = transcript?.frames.at(-1);
     const samePanel = last?.meta?.codePreview === true && last.meta.id === event.id;
     const state = samePanel && last ? this.codePanels.get(last) : undefined;
-    const panelState: CodePanelState = state || { event, modelNote: this.modelNote, start: lastStart(event), followTail: true };
+    const panelState: CodePanelState = state || {
+      event,
+      modelNote: this.modelNote,
+      start: defaultPreviewStart(event),
+      followTail: event.operation !== 'Editing'
+    };
     panelState.event = event;
     panelState.modelNote = this.modelNote;
     panelState.start = panelState.followTail ? lastStart(event) : Math.min(panelState.start, lastStart(event));
