@@ -27,6 +27,7 @@ import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
 import { TimeMachine, recoveryUserMessage } from './timeMachine.js';
 import { routePacks, packForTool, isCoreTool, isGameIntent, isWebIntent, getPackCatalogue, PACK_PLAYBOOKS, PACKS } from './toolPacks.js';
+import { determineToolScope, filterSuppressedPacks, resolveLazyPlaybooks } from './smartToolsUse.js';
 import { resolveCharPool, measureMessages, resultCapFor, decayToolResults, buildWindow, compactInPlace, describeDroppedMessages, sanitizeSequences, applyProgressiveCompaction, snipOversizedToolOutputs } from './contextManager.js';
 // Provider imports
 import { detectWorkspaceDomains, ensureSkillRepo, getSkillDomainHeader } from './skillsManager.js';
@@ -481,7 +482,8 @@ export class AgentLoop {
         this.webGuardFired = false;
         // P6: rendered surfaces this task wrote, for the anti-slop gate to read back.
         this.webArtifacts = new Set();
-        this.slopGateFired = false;
+        this.slopReviewAttempts = 0;
+        this.slopLastAuditHash = '';
         this.gameCascadeState = { active: true, currentStage: 1, stageHistory: [], verificationPassed: false };
         this.gameToolStats = { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
         this.webVerificationState = { screenshotTaken: false, browserActUsed: false }; // V8 Transcendence: Anti-Slop Guard
@@ -548,6 +550,14 @@ export class AgentLoop {
         this.unlockedPacks.add(packName);
         this.unlockOrder.push(packName);
         return true;
+    }
+    recordWebArtifact(candidate) {
+        if (typeof candidate !== 'string' || !isScannableFile(candidate))
+            return;
+        const expanded = candidate.startsWith('~/')
+            ? path.join(os.homedir(), candidate.slice(2))
+            : candidate;
+        this.webArtifacts.add(path.resolve(this.workspaceRoot, expanded));
     }
     /**
      * Build the parts of the system context that are constant for a whole task.
@@ -1000,7 +1010,8 @@ export class AgentLoop {
         this.gameGuardFired = false;
         this.webGuardFired = false;
         this.webArtifacts = new Set();
-        this.slopGateFired = false;
+        this.slopReviewAttempts = 0;
+        this.slopLastAuditHash = '';
         this.staticContext = null;
         // Plan cache: the procedure THIS task follows, and the template (if any)
         // that was offered to it. Both reset per task — a plan is a property of one
@@ -1031,11 +1042,21 @@ export class AgentLoop {
             // measured budget without making the checkpoint undiscoverable.
             if (this._decisionRequirement.required)
                 this.unlockedTools.add('request_decision');
-            // Scored routing, with the regex router as a safety net so a pack can
-            // never be missed just because it scored below threshold.
+            // SmartToolsUse: evaluate prompt intent to establish a scoped tool set
+            // and suppress irrelevant packs before initial expansion.
+            const smartScope = determineToolScope(this.userPrompt, this.taskShape);
+            if (smartScope.toolScope && (!this.toolScope || (this.toolScope instanceof Set && this.toolScope.size === 0))) {
+                this.toolScope = new Set(smartScope.toolScope);
+                for (const tool of this.toolScope) {
+                    this.unlockedTools.add(tool);
+                }
+                this.debugLog(`[SmartToolsUse] scoped to ${this.toolScope.size} tools (${smartScope.archetype}): ${[...this.toolScope].join(', ')}`);
+            }
+            // Scored routing, with the regex router as a safety net, filtered by SmartToolsUse suppression
             const scored = packsFromShape(this.taskShape);
             const fallback = routePacks(this.userPrompt, this.workspaceContext);
-            for (const pack of [...scored, ...fallback]) {
+            const candidatePacks = filterSuppressedPacks([...scored, ...fallback], this.userPrompt);
+            for (const pack of candidatePacks) {
                 if (pack === 'game' && isDirectGameTask(this.userPrompt))
                     continue;
                 this.unlockPack(pack);
@@ -1381,10 +1402,14 @@ export class AgentLoop {
                 // volatile block kept dead last. Previously just [1] was anchored, so the
                 // pack catalogue and the whole workspace/memory/skills context were
                 // re-billed on every step even though they never changed mid-task.
-                const activePlaybooks = [...this.unlockedPacks]
-                    .map(pack => PACK_PLAYBOOKS[pack])
-                    .filter(Boolean)
-                    .join('\n\n');
+                // LazyPlaybook: disclose multi-page mandates only when tools from that domain
+                // have been actively invoked or explicitly demanded. Otherwise emit micro-indicators.
+                const observedTools = (this._planSteps || []).map((step) => step.tool);
+                const lazyPlaybookResult = resolveLazyPlaybooks(this.unlockedPacks, observedTools, this.userPrompt);
+                const activePlaybooks = [
+                    lazyPlaybookResult.fullPlaybooks,
+                    lazyPlaybookResult.microAnnouncements
+                ].filter(Boolean).join('\n\n');
                 // The task brief turns "here are 28 tools" into "here is the order to
                 // use them in", which is where whole exploratory steps get saved.
                 const taskBrief = this.taskShape
@@ -1592,6 +1617,9 @@ export class AgentLoop {
                         if (nativeCode) {
                             this.emitEvent(nativeCode);
                             nativeCodeObserver.handle(nativeCode);
+                            if (nativeCode.phase === 'done' && ['Creating', 'Editing'].includes(nativeCode.operation)) {
+                                this.recordWebArtifact(nativeCode.path);
+                            }
                         }
                         const detail = action.detail ? ` ${action.detail}` : '';
                         if (action.status === 'running') {
@@ -1623,6 +1651,22 @@ export class AgentLoop {
                 // Track tokens. usage carries cachedPromptTokens / cacheWriteTokens so
                 // the cost estimate reflects the real cache-discounted bill.
                 const tracking = await this.tokenTracker.trackUsage(response.usage.promptTokens, response.usage.completionTokens, (msg) => this.emitEvent({ type: 'budget_warning', message: msg }), response.usage);
+                // Private numeric telemetry only. The daily ledger aggregates calls,
+                // so it cannot attribute usage to a task or distinguish provider data
+                // from the character-count fallback used by some ACP peers.
+                auditLog.log({
+                    event: 'model_usage', scope: 'agent_loop_primary',
+                    taskId: this.taskId, step: this.stepsCompleted,
+                    provider: this.config.provider || 'unknown',
+                    promptTokens: response.usage.promptTokens,
+                    completionTokens: response.usage.completionTokens,
+                    cachedPromptTokens: response.usage.cachedPromptTokens || 0,
+                    measurement: response.usage.measurement || 'unspecified',
+                    cacheMeasurement: response.usage.cacheMeasurement || 'unspecified',
+                    costBasis: /^(acp(?:\/|$)|antigravity$|agy$)/i.test(String(this.config.provider || ''))
+                        ? 'external_subscription_unavailable' : 'rate_card_estimate',
+                    callEstimatedCostUsd: this.tokenTracker.calculateCost(response.usage.promptTokens, response.usage.completionTokens, response.usage)
+                });
                 const cachedTokens = response.usage.cachedPromptTokens || 0;
                 if (cachedTokens > 0) {
                     this.debugLog(`prompt cache hit: ${cachedTokens.toLocaleString()} of ${response.usage.promptTokens.toLocaleString()} input tokens served from cache`);
@@ -1709,12 +1753,7 @@ export class AgentLoop {
                         const actionName = String(extAction.name || '').toLowerCase();
                         const detailPath = typeof extAction.detail === 'string' ? extAction.detail.trim() : '';
                         if (['write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content', 'fs_write', 'fs_edit', 'multiedit'].includes(actionName) && detailPath) {
-                            const resolvedPath = path.isAbsolute(detailPath)
-                                ? detailPath
-                                : path.resolve(this.workspaceRoot, detailPath.replace(/^~\//, os.homedir() + '/'));
-                            if (isScannableFile(resolvedPath)) {
-                                this.webArtifacts.add(resolvedPath);
-                            }
+                            this.recordWebArtifact(detailPath);
                         }
                         if (['capture_browser_screenshot', 'browser_subagent', 'open_browser_url', 'browser_get_dom', 'read_browser_page'].includes(actionName) ||
                             ((actionName === 'read_file' || actionName === 'view_file') && /\.(png|jpe?g|webp|gif|svg)$/i.test(detailPath))) {
@@ -1840,9 +1879,6 @@ export class AgentLoop {
                     //      consecutiveThinkingSteps, which resets on every tool call, so
                     //      a guard could block completion indefinitely and burn the whole
                     //      step budget on an already-finished task.
-                    if (response.content) {
-                        this.emitEvent({ type: 'agent_message', content: response.content });
-                    }
                     const isGameTask = !isLaunchOnlyPrompt(taskPrompt) && isGameIntent(taskPrompt);
                     this.gameToolStats = this.gameToolStats || { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
                     if (isGameTask && !this.gameGuardFired) {
@@ -1864,18 +1900,30 @@ export class AgentLoop {
                     // This reads the HTML/CSS actually written and scores it. Weighted and
                     // threshold-based, never a single tripwire: a guard with false
                     // positives gets switched off (the ZM-09 lesson).
-                    if (!this.slopGateFired && this.webArtifacts.size > 0) {
-                        this.slopGateFired = true; // fires at most once per task, like the others
+                    if (!isLaunchOnlyPrompt(taskPrompt) && isWebIntent(taskPrompt) && this.webArtifacts.size > 0) {
                         try {
                             const files = [];
                             for (const artifactPath of this.webArtifacts) {
+                                if (files.length >= 50)
+                                    break;
                                 try {
+                                    const stat = fsSync.lstatSync(artifactPath);
+                                    if (!stat.isFile() || stat.size > 512_000)
+                                        continue;
                                     files.push({ path: artifactPath, content: fsSync.readFileSync(artifactPath, 'utf8') });
                                 }
-                                catch (e) { /* deleted or moved since: nothing to judge */ }
+                                catch (_error) { /* deleted or moved since: nothing to judge */ }
+                            }
+                            if (files.length === 0) {
+                                this.emitEvent({ type: 'error', message: 'Web design audit could not read the generated files; the result was not verified as complete.' });
+                                this.memoryManager.saveHistory(this.messages);
+                                break;
                             }
                             const result = analyzeFiles(files);
                             if (result.verdict === 'slop') {
+                                const auditHash = createHash('sha256')
+                                    .update(files.map(file => `${file.path}\0${file.content}`).join('\0'))
+                                    .digest('hex');
                                 const recent = Array.isArray(this.staticContext?.recentMovements) ? this.staticContext.recentMovements : [];
                                 const brief = formatMovementBrief(suggestMovements(recent, 3));
                                 auditLog.log({
@@ -1883,8 +1931,16 @@ export class AgentLoop {
                                     score: result.score, signals: result.findings.map((f) => f.id)
                                 });
                                 this.emitEvent({ type: 'status', message: `⚡ Anti-Slop Audit: design scored ${result.score}` });
+                                if (this.slopReviewAttempts >= 2 || auditHash === this.slopLastAuditHash) {
+                                    this.emitEvent({ type: 'error', message: `Web design audit still found generic patterns (score ${result.score}); the result was not verified as complete.` });
+                                    this.memoryManager.saveHistory(this.messages);
+                                    break;
+                                }
+                                this.slopReviewAttempts++;
+                                this.slopLastAuditHash = auditHash;
                                 this.messages.push({ role: 'system', content: formatFindings(result, brief) });
                                 this.memoryManager.saveHistory(this.messages);
+                                continue;
                             }
                             if (result.findings.length > 0) {
                                 auditLog.log({
@@ -1895,8 +1951,10 @@ export class AgentLoop {
                             }
                         }
                         catch (e) {
-                            // A quality gate must never be the reason a task fails.
-                            this.debugLog(`anti-slop gate skipped: ${e.message}`);
+                            this.debugLog(`anti-slop gate failed: ${e.message}`);
+                            this.emitEvent({ type: 'error', message: 'Web design audit failed; the result was not verified as complete.' });
+                            this.memoryManager.saveHistory(this.messages);
+                            break;
                         }
                     }
                     // Web Visual Validation Guard (Anti-Slop / Transcendence)
@@ -1978,6 +2036,9 @@ export class AgentLoop {
                         catch (_err) {
                             // Cold observer fail-open
                         }
+                    }
+                    if (response.content) {
+                        this.emitEvent({ type: 'agent_message', content: response.content });
                     }
                     this.emitEvent({ type: 'status', message: 'Task completed.' });
                     this.memoryManager.saveHistory(this.messages); // Save final state
@@ -2430,15 +2491,6 @@ export class AgentLoop {
                             step: this.stepsCompleted
                         });
                     }
-                    // P6: remember which rendered surfaces this task touched, so the
-                    // anti-slop gate can read the finished result back off disk rather
-                    // than trusting the model's own account of what it built.
-                    if (['fs_write', 'fs_edit', 'MultiEdit'].includes(functionName)) {
-                        const written = args.path || args.file_path;
-                        if (typeof written === 'string' && isScannableFile(written)) {
-                            this.webArtifacts.add(written.replace(/^~\//, os.homedir() + '/'));
-                        }
-                    }
                     // TimeMachine tracks actual failures across tool results and thrown
                     // errors. It only rewinds reasoning; it never replays side effects.
                     let result;
@@ -2511,6 +2563,9 @@ export class AgentLoop {
                             hookFeedback: (postHook.messages || []).join('\n') || undefined
                         };
                     }
+                    if (result && result.success !== false && !result.error && ['fs_write', 'fs_edit', 'MultiEdit'].includes(functionName)) {
+                        this.recordWebArtifact(args.path || args.file_path);
+                    }
                     if (functionName === 'screenshot' && result?.success === true && result?._is_image_marker === true) {
                         this.webVerificationState.screenshotTaken = true;
                     }
@@ -2552,6 +2607,9 @@ export class AgentLoop {
                         }
                         for (const toolName of result._unlock_tools || []) {
                             this.unlockedTools.add(toolName);
+                            if (this.toolScope instanceof Set) {
+                                this.toolScope.add(toolName);
+                            }
                         }
                         delete result._unlock_tools;
                         delete result._unlock_packs;

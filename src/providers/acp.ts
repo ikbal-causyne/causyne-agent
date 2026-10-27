@@ -516,7 +516,9 @@ export class AcpProvider extends LLMProvider {
         usage: {
           promptTokens: Math.ceil(promptText.length / 4),
           completionTokens: Math.ceil(rawContent.length / 4),
-          cachedPromptTokens: 0
+          cachedPromptTokens: 0,
+          measurement: 'text_estimate',
+          cacheMeasurement: 'unavailable'
         }
       };
       if (toolCalls.length > 0) {

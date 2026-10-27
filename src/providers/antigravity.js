@@ -1099,12 +1099,19 @@ export class AntigravityProvider extends LLMProvider {
                 const promptTokens = Number(finalResultObj?.usage?.input_tokens) || Math.ceil(promptText.length / 4);
                 const completionTokens = Number(finalResultObj?.usage?.output_tokens) || Math.ceil(rawContent.length / 4);
                 const thinkingTokens = Number(finalResultObj?.usage?.thinking_tokens) || 0;
+                const usageIsReported = finalResultObj?.usage?.input_tokens != null
+                    && finalResultObj?.usage?.output_tokens != null
+                    && Number.isFinite(Number(finalResultObj.usage.input_tokens))
+                    && Number.isFinite(Number(finalResultObj.usage.output_tokens));
                 const response = {
                     content,
                     usage: {
                         promptTokens,
                         completionTokens: completionTokens + thinkingTokens,
-                        cachedPromptTokens: Number(finalResultObj?.usage?.cache_read_tokens) || 0
+                        cachedPromptTokens: Number(finalResultObj?.usage?.cache_read_tokens) || 0,
+                        measurement: usageIsReported ? 'provider_reported' : 'text_estimate',
+                        cacheMeasurement: finalResultObj?.usage?.cache_read_tokens != null
+                            ? 'provider_reported' : 'unavailable'
                     }
                 };
                 if (extractedReasoning) {

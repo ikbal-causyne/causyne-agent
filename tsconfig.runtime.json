@@ -145,7 +145,8 @@
     "src/tui/viewport.ts",
     "src/tui/scrollInteraction.ts",
     "src/tools/archive.ts",
-    "src/tools/viewImage.ts"
+    "src/tools/viewImage.ts",
+    "src/smartToolsUse.ts"
   ],
   "exclude": [
     "node_modules",

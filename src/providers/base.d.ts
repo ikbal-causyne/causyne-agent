@@ -14,6 +14,8 @@ export interface ChatResponseUsage {
   promptTokens: number;
   completionTokens: number;
   cachedPromptTokens?: number | undefined;
+  measurement?: 'provider_reported' | 'text_estimate' | undefined;
+  cacheMeasurement?: 'provider_reported' | 'unavailable' | undefined;
   totalTokens?: number | undefined;
   thinkingTokens?: number | undefined;
 }

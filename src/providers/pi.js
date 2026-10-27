@@ -119,7 +119,9 @@ export class PiProvider extends LLMProvider {
                     usage = {
                         promptTokens: Number(data.input) || 0,
                         completionTokens: Number(data.output) || 0,
-                        cachedPromptTokens: Number(data.cacheRead) || 0
+                        cachedPromptTokens: Number(data.cacheRead) || 0,
+                        measurement: data.input != null && data.output != null ? 'provider_reported' : 'text_estimate',
+                        cacheMeasurement: data.cacheRead != null ? 'provider_reported' : 'unavailable'
                     };
                 }
                 else if (record.type === 'agent_settled') {
