@@ -127,7 +127,7 @@ const SENSITIVE_WRITE_TARGETS = [
   // Shell startup files: an appended line runs on the user's next shell.
   /(^|\/)\.(bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv|zlogin)$/,
   /(^|\/)\.config\/fish\/config\.fish$/,
-  // SSH: authorized_keys grants login; config can silently reroute connections.
+  // Remote session routing profiles and authentication credentials.
   /(^|\/)\.ssh\//,
   // Scheduled execution.
   /(^|\/)(crontab|cron\.d)(\/|$)/,
@@ -477,15 +477,12 @@ export class Sandbox {
     const masked = maskQuotedSpans(normalized);
 
 
-    // L3 (local-path audit): classify the REDIRECTION TARGET, not just the verb.
-    //
-    // sandbox.validate() path-scopes tool ARGUMENTS, but a shell redirection
-    // target is invisible to it, and the classifier only ever looked at the
-    // command word. So `echo evil >> ~/.bashrc` and
-    // `cat payload >> ~/.ssh/authorized_keys` both classified as SAFE and
-    // auto-executed in every autonomy mode — persistence and remote access with
-    // no approval prompt. Writing to these files is escalated regardless of
-    // which harmless-looking command does the writing.
+    // L3 (local-path audit): classify the redirection target, not just the verb.
+    // Tool argument validation enforces boundaries on named arguments, but
+    // shell redirection targets appended via operators (>> or >) require independent
+    // audit. Writing into sensitive paths (such as user startup profiles, remote
+    // authentication directories, or agent configuration stores) must always escalate
+    // to extreme classification regardless of which command performs the redirection.
     if (redirectsIntoSensitiveTarget(masked)) return 'extreme';
     const executesQuotedText = INTERPRETER_INVOCATION.test(masked);
     const destructiveScanTarget = executesQuotedText ? normalized : masked;

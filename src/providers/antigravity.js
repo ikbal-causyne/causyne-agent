@@ -1069,6 +1069,10 @@ export class AntigravityProvider extends LLMProvider {
             });
             child.on('close', (code) => {
                 childClosed = true;
+                // A budget or user abort has already settled this call. Do not accept
+                // a late result from the terminated process as a resumable session.
+                if (isSettled)
+                    return;
                 // Process any remaining bytes in stdoutBuffer
                 if (stdoutBuffer.trim()) {
                     try {

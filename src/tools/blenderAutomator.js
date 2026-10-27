@@ -234,37 +234,166 @@ export const blenderAct = {
       }
       else if (action.type === 'autoFrameCamera') {
         {
-          const camCode = `import bpy, math\ncam = bpy.context.scene.camera\nif not cam:\n  cd = bpy.data.cameras.new('Cam')\n  cam = bpy.data.objects.new('Cam', cd)\n  bpy.context.scene.collection.objects.link(cam)\n  bpy.context.scene.camera = cam\ncam.location = (10, -10, 8)\ncam.rotation_euler = (math.radians(50), 0, math.radians(45))\nif hasattr(cam.data, "lens"): cam.data.lens = ${action.focal_length || 65.0}\nprint('Headless 65mm camera framed at studio angle')`;
+          const camCode = `import bpy, math
+cam = bpy.context.scene.camera
+if not cam:
+  cd = bpy.data.cameras.new('Cam')
+  cam = bpy.data.objects.new('Cam', cd)
+  bpy.context.scene.collection.objects.link(cam)
+  bpy.context.scene.camera = cam
+cam.location = (10, -10, 8)
+cam.rotation_euler = (math.radians(50), 0, math.radians(45))
+if hasattr(cam.data, "lens"):
+  cam.data.lens = ${action.focal_length || 65.0}
+print('Headless 65mm camera framed at studio angle')`;
           await runHeadlessCli(null, camCode, results);
         }
       }
       else if (action.type === 'smartGeometry') {
         {
-          const geomCode = `import bpy, math\ntargets = [bpy.data.objects.get(${JSON.stringify(action.name || "")})] if ${JSON.stringify(action.name || "")} else [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.visible_get() and not any(k in o.name.lower() for k in ['floor', 'plane', 'backdrop', 'studio', 'ground', 'cove'])]\ntargets = [t for t in targets if t]\nfor o in targets:\n  if hasattr(o.data, "use_auto_smooth"): o.data.use_auto_smooth = True\n  for p in o.data.polygons: p.use_smooth = True\n  if not any(m.type == 'BEVEL' for m in o.modifiers):\n    bev = o.modifiers.new(name="StudioBevel", type='BEVEL'); bev.width = ${action.bevel_width || 0.015}; bev.segments = 3; bev.limit_method = 'ANGLE'; bev.angle_limit = math.radians(35)\n  if ${action.subsurf !== false} and not any(m.type == 'SUBSURF' for m in o.modifiers):\n    sub = o.modifiers.new(name="StudioSubsurf", type='SUBSURF'); sub.levels = 2; sub.render_levels = 2\nprint("Headless applied Studio Bevel and Subsurf")`;
+          const geomCode = `import bpy, math
+target_name = ${JSON.stringify(action.name || "")}
+targets = [bpy.data.objects.get(target_name)] if target_name else [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.visible_get() and not any(k in o.name.lower() for k in ['floor', 'plane', 'backdrop', 'studio', 'ground', 'cove'])]
+targets = [t for t in targets if t]
+for o in targets:
+  if hasattr(o.data, "use_auto_smooth"):
+    o.data.use_auto_smooth = True
+  for p in o.data.polygons:
+    p.use_smooth = True
+  if not any(m.type == 'BEVEL' for m in o.modifiers):
+    bev = o.modifiers.new(name="StudioBevel", type='BEVEL')
+    bev.width = ${action.bevel_width || 0.015}
+    bev.segments = 3
+    bev.limit_method = 'ANGLE'
+    bev.angle_limit = math.radians(35)
+  if ${action.subsurf !== false} and not any(m.type == 'SUBSURF' for m in o.modifiers):
+    sub = o.modifiers.new(name="StudioSubsurf", type='SUBSURF')
+    sub.levels = 2
+    sub.render_levels = 2
+print("Headless applied Studio Bevel and Subsurf")`;
           await runHeadlessCli(null, geomCode, results);
         }
       }
       else if (action.type === 'smartMaterial') {
         {
-          const matCode = `import bpy, time\npreset = ${JSON.stringify(action.preset || "custom")}.lower()\ntargets = [bpy.data.objects.get(${JSON.stringify(action.name || "")})] if ${JSON.stringify(action.name || "")} else [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.visible_get() and not any(k in o.name.lower() for k in ['floor', 'plane', 'backdrop', 'studio', 'ground', 'cove'])]\ntargets = [t for t in targets if t]\nmat = bpy.data.materials.new(name=f"CausynePBR_{preset.capitalize()}_{int(time.time()*1000)%10000}"); mat.use_nodes = True; nodes = mat.node_tree.nodes; links = mat.node_tree.links; nodes.clear()\nbsdf = nodes.new(type="ShaderNodeBsdfPrincipled"); bsdf.location = (0, 0); out = nodes.new(type="ShaderNodeOutputMaterial"); out.location = (300, 0); links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])\nif preset in ["gold", "gold_brushed", "aztec_gold"]:\n  bsdf.inputs["Base Color"].default_value = (1.0, 0.766, 0.336, 1.0); bsdf.inputs["Metallic"].default_value = 1.0; bsdf.inputs["Roughness"].default_value = 0.18\nelif preset in ["sandstone", "ancient_stone", "pyramid_stone"]:\n  bsdf.inputs["Base Color"].default_value = (0.68, 0.55, 0.40, 1.0); bsdf.inputs["Roughness"].default_value = 0.85\nelif preset in ["velvet", "cushion_velvet", "watch_cushion"]:\n  bsdf.inputs["Base Color"].default_value = (0.05, 0.06, 0.08, 1.0); bsdf.inputs["Roughness"].default_value = 0.9\nelif preset in ["chrome", "steel", "watch_case"]:\n  bsdf.inputs["Base Color"].default_value = (0.88, 0.89, 0.90, 1.0); bsdf.inputs["Metallic"].default_value = 1.0; bsdf.inputs["Roughness"].default_value = 0.08\nfor o in targets:\n  if len(o.data.materials) == 0: o.data.materials.append(mat)\n  else: o.data.materials[0] = mat\nprint(f"Headless applied Smart PBR Material ({preset})")`;
+          const matCode = `import bpy, time
+preset = ${JSON.stringify(action.preset || "custom")}.lower()
+target_name = ${JSON.stringify(action.name || "")}
+targets = [bpy.data.objects.get(target_name)] if target_name else [o for o in bpy.context.scene.objects if o.type == 'MESH' and o.visible_get() and not any(k in o.name.lower() for k in ['floor', 'plane', 'backdrop', 'studio', 'ground', 'cove'])]
+targets = [t for t in targets if t]
+mat = bpy.data.materials.new(name=f"CausynePBR_{preset.capitalize()}_{int(time.time()*1000)%10000}")
+mat.use_nodes = True
+nodes = mat.node_tree.nodes
+links = mat.node_tree.links
+nodes.clear()
+bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
+bsdf.location = (0, 0)
+out = nodes.new(type="ShaderNodeOutputMaterial")
+out.location = (300, 0)
+links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+if preset in ["gold", "gold_brushed", "aztec_gold"]:
+  bsdf.inputs["Base Color"].default_value = (1.0, 0.766, 0.336, 1.0)
+  bsdf.inputs["Metallic"].default_value = 1.0
+  bsdf.inputs["Roughness"].default_value = 0.18
+elif preset in ["sandstone", "ancient_stone", "pyramid_stone"]:
+  bsdf.inputs["Base Color"].default_value = (0.68, 0.55, 0.40, 1.0)
+  bsdf.inputs["Roughness"].default_value = 0.85
+elif preset in ["velvet", "cushion_velvet", "watch_cushion"]:
+  bsdf.inputs["Base Color"].default_value = (0.05, 0.06, 0.08, 1.0)
+  bsdf.inputs["Roughness"].default_value = 0.9
+elif preset in ["chrome", "steel", "watch_case"]:
+  bsdf.inputs["Base Color"].default_value = (0.88, 0.89, 0.90, 1.0)
+  bsdf.inputs["Metallic"].default_value = 1.0
+  bsdf.inputs["Roughness"].default_value = 0.08
+for o in targets:
+  if len(o.data.materials) == 0:
+    o.data.materials.append(mat)
+  else:
+    o.data.materials[0] = mat
+print(f"Headless applied Smart PBR Material ({preset})")`;
           await runHeadlessCli(null, matCode, results);
         }
       }
       else if (action.type === 'cinematicAtmosphere') {
         {
-          const atmoCode = `import bpy, math\nw = bpy.context.scene.world or bpy.data.worlds.new("CausyneWorld"); bpy.context.scene.world = w; w.use_nodes = True; nodes = w.node_tree.nodes; links = w.node_tree.links; nodes.clear()\nbg = nodes.new("ShaderNodeBackground"); out = nodes.new("ShaderNodeOutputWorld"); sky = nodes.new("ShaderNodeTexSky"); sky.sky_type = 'MULTIPLE_SCATTERING' if hasattr(sky, 'sky_type') else 'HOSEK_WILKIE'; if hasattr(sky, 'sun_elevation'): sky.sun_elevation = math.radians(${action.sun_elevation || 12.0}); sky.sun_rotation = math.radians(-45.0); links.new(sky.outputs["Color"], bg.inputs["Color"]); links.new(bg.outputs["Background"], out.inputs["Surface"])\nif ${action.volumetric_fog !== false}:\n  fm = bpy.data.materials.new("CausyneFog"); fm.use_nodes = True; fn = fm.node_tree.nodes; fl = fm.node_tree.links; fn.clear(); vol = fn.new("ShaderNodeVolumeScatter"); vol.inputs["Density"].default_value = ${action.fog_density || 0.015}; fo = fn.new("ShaderNodeOutputMaterial"); fl.new(vol.outputs["Volume"], fo.inputs["Volume"])\n  bpy.ops.mesh.primitive_cube_add(size=40.0, location=(0,0,10)); fb = bpy.context.active_object; fb.name = "CausyneAtmosphereVolume"; fb.display_type = 'WIRE'; fb.data.materials.append(fm)\nprint("Headless applied Cinematic Atmosphere (Nishita Sky + Volumetric Fog)")`;
+          const atmoCode = `import bpy, math
+w = bpy.context.scene.world or bpy.data.worlds.new("CausyneWorld")
+bpy.context.scene.world = w
+w.use_nodes = True
+nodes = w.node_tree.nodes
+links = w.node_tree.links
+nodes.clear()
+bg = nodes.new("ShaderNodeBackground")
+out = nodes.new("ShaderNodeOutputWorld")
+sky = nodes.new("ShaderNodeTexSky")
+sky.sky_type = 'MULTIPLE_SCATTERING' if hasattr(sky, 'sky_type') else 'HOSEK_WILKIE'
+if hasattr(sky, 'sun_elevation'):
+  sky.sun_elevation = math.radians(${action.sun_elevation || 12.0})
+sky.sun_rotation = math.radians(-45.0)
+links.new(sky.outputs["Color"], bg.inputs["Color"])
+links.new(bg.outputs["Background"], out.inputs["Surface"])
+if ${action.volumetric_fog !== false}:
+  fm = bpy.data.materials.new("CausyneFog")
+  fm.use_nodes = True
+  fn = fm.node_tree.nodes
+  fl = fm.node_tree.links
+  fn.clear()
+  vol = fn.new("ShaderNodeVolumeScatter")
+  vol.inputs["Density"].default_value = ${action.fog_density || 0.015}
+  fo = fn.new("ShaderNodeOutputMaterial")
+  fl.new(vol.outputs["Volume"], fo.inputs["Volume"])
+  bpy.ops.mesh.primitive_cube_add(size=40.0, location=(0,0,10))
+  fb = bpy.context.active_object
+  fb.name = "CausyneAtmosphereVolume"
+  fb.display_type = 'WIRE'
+  fb.data.materials.append(fm)
+print("Headless applied Cinematic Atmosphere (Nishita Sky + Volumetric Fog)")`;
           await runHeadlessCli(null, atmoCode, results);
         }
       }
       else if (action.type === 'smartGeoNodes') {
         {
-          const gnCode = `import bpy\ngen = ${JSON.stringify(action.generator || "masonry_brick_wall")}\ntargets = [o for o in bpy.context.scene.objects if o.type == 'MESH' and "Volume" not in o.name and "Floor" not in o.name]\nfor o in targets:\n  mod = o.modifiers.new(name=f"GeoNode_{gen}", type='NODES')\n  ng = bpy.data.node_groups.get(f"GN_{gen}")\n  if not ng:\n    ng = bpy.data.node_groups.new(f"GN_{gen}", 'GeometryNodeTree')\n    ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')\n    ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')\n    gi = ng.nodes.new('NodeGroupInput'); gi.location = (-400,0); go = ng.nodes.new('NodeGroupOutput'); go.location = (400,0)\n    if gen == "masonry_brick_wall":\n      s = ng.nodes.new('GeometryNodeSubdivideMesh'); s.location = (-150,0); s.inputs["Level"].default_value = ${action.subdivisions || 3}\n      ng.links.new(gi.outputs["Geometry"], s.inputs["Mesh"]); ng.links.new(s.outputs["Mesh"], go.inputs["Geometry"])\n    else: ng.links.new(gi.outputs["Geometry"], go.inputs["Geometry"])\n  mod.node_group = ng\nprint(f"Headless attached Geometry Nodes ({gen})")`;
+          const gnCode = `import bpy
+gen = ${JSON.stringify(action.generator || "masonry_brick_wall")}
+targets = [o for o in bpy.context.scene.objects if o.type == 'MESH' and "Volume" not in o.name and "Floor" not in o.name]
+for o in targets:
+  mod = o.modifiers.new(name=f"GeoNode_{gen}", type='NODES')
+  ng = bpy.data.node_groups.get(f"GN_{gen}")
+  if not ng:
+    ng = bpy.data.node_groups.new(f"GN_{gen}", 'GeometryNodeTree')
+    ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+    ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+    gi = ng.nodes.new('NodeGroupInput')
+    gi.location = (-400,0)
+    go = ng.nodes.new('NodeGroupOutput')
+    go.location = (400,0)
+    if gen == "masonry_brick_wall":
+      s = ng.nodes.new('GeometryNodeSubdivideMesh')
+      s.location = (-150,0)
+      s.inputs["Level"].default_value = ${action.subdivisions || 3}
+      ng.links.new(gi.outputs["Geometry"], s.inputs["Mesh"])
+      ng.links.new(s.outputs["Mesh"], go.inputs["Geometry"])
+    else:
+      ng.links.new(gi.outputs["Geometry"], go.inputs["Geometry"])
+  mod.node_group = ng
+print(f"Headless attached Geometry Nodes ({gen})")`;
           await runHeadlessCli(null, gnCode, results);
         }
       }
       else if (action.type === 'setupStudioLighting') {
         {
-          const lightCode = `import bpy, math\nfor o in list(bpy.context.scene.objects):\n  if o.type == 'LIGHT': bpy.data.objects.remove(o, do_unlink=True)\nkd = bpy.data.lights.new('Key', 'AREA'); kd.energy = ${action.key_energy || 800}; kd.size = 5.0; ko = bpy.data.objects.new('Key', kd); ko.location = (6, -6, 8); ko.rotation_euler = (math.radians(45), 0, math.radians(45)); bpy.context.scene.collection.objects.link(ko)\nprint('Headless studio lighting built')`;
+          const lightCode = `import bpy, math
+for o in list(bpy.context.scene.objects):
+  if o.type == 'LIGHT':
+    bpy.data.objects.remove(o, do_unlink=True)
+kd = bpy.data.lights.new('Key', 'AREA')
+kd.energy = ${action.key_energy || 800}
+kd.size = 5.0
+ko = bpy.data.objects.new('Key', kd)
+ko.location = (6, -6, 8)
+ko.rotation_euler = (math.radians(45), 0, math.radians(45))
+bpy.context.scene.collection.objects.link(ko)
+print('Headless studio lighting built')`;
           await runHeadlessCli(null, lightCode, results);
         }
       }
@@ -274,14 +403,31 @@ export const blenderAct = {
         const fmts = action.formats || ['blend', 'glb'];
 
         {
-          const exportCode = `import bpy, os\nd = "${destDir}"\nos.makedirs(d, exist_ok=True)\nif "blend" in ${JSON.stringify(fmts)}:\n  bpy.ops.wm.save_as_mainfile(filepath=os.path.join(d, "${prefix}.blend"))\nif "glb" in ${JSON.stringify(fmts)}:\n  bpy.ops.export_scene.gltf(filepath=os.path.join(d, "${prefix}.glb"), export_format="GLB")\nif "obj" in ${JSON.stringify(fmts)}:\n  if hasattr(bpy.ops.wm, "obj_export"): bpy.ops.wm.obj_export(filepath=os.path.join(d, "${prefix}.obj"))\n  else: bpy.ops.export_scene.obj(filepath=os.path.join(d, "${prefix}.obj"))\nprint(f"Headless exported formats to {d}")`;
+          const exportCode = `import bpy, os
+d = "${destDir}"
+os.makedirs(d, exist_ok=True)
+if "blend" in ${JSON.stringify(fmts)}:
+  bpy.ops.wm.save_as_mainfile(filepath=os.path.join(d, "${prefix}.blend"))
+if "glb" in ${JSON.stringify(fmts)}:
+  bpy.ops.export_scene.gltf(filepath=os.path.join(d, "${prefix}.glb"), export_format="GLB")
+if "obj" in ${JSON.stringify(fmts)}:
+  if hasattr(bpy.ops.wm, "obj_export"):
+    bpy.ops.wm.obj_export(filepath=os.path.join(d, "${prefix}.obj"))
+  else:
+    bpy.ops.export_scene.obj(filepath=os.path.join(d, "${prefix}.obj"))
+print(f"Headless exported formats to {d}")`;
           await runHeadlessCli(null, exportCode, results);
         }
       }
       else if (action.type === 'clearScene') {
         const keep = action.keep_lights_camera !== false;
         {
-          const clearCode = `import bpy\nfor o in list(bpy.context.scene.objects):\n  if ${keep} and o.type in ['CAMERA', 'LIGHT']: continue\n  bpy.data.objects.remove(o, do_unlink=True)\nprint("Headless cleared scene meshes")`;
+          const clearCode = `import bpy
+for o in list(bpy.context.scene.objects):
+  if ${keep} and o.type in ['CAMERA', 'LIGHT']:
+    continue
+  bpy.data.objects.remove(o, do_unlink=True)
+print("Headless cleared scene meshes")`;
           await runHeadlessCli(null, clearCode, results);
         }
       }
@@ -306,7 +452,10 @@ export const blenderAct = {
       else if (action.type === 'captureViewport') {
         const targetPath = action.filepath || path.join(getWorkspaceTempDir(), `causyne_3d_preview_${Date.now()}.png`);
         {
-          const captureCode = `import bpy, os\nos.makedirs(os.path.dirname("${targetPath}"), exist_ok=True)\nbpy.ops.render.opengl(write_still=True, filepath="${targetPath}")\nprint("Captured headless viewport to ${targetPath}")`;
+          const captureCode = `import bpy, os
+os.makedirs(os.path.dirname("${targetPath}"), exist_ok=True)
+bpy.ops.render.opengl(write_still=True, filepath="${targetPath}")
+print("Captured headless viewport to ${targetPath}")`;
           try {
             await runHeadlessCli(null, captureCode, results);
           } catch (cliErr) {
@@ -322,8 +471,46 @@ export const blenderAct = {
         
         {
           const renderCode = isAnimation ?
-            `import bpy, os, time\nos.makedirs(os.path.dirname("${targetPath}"), exist_ok=True)\nbpy.context.scene.frame_start = ${startFrame}\nbpy.context.scene.frame_end = ${endFrame}\nif "${action.engine || ''}": bpy.context.scene.render.engine = "${action.engine || ''}"\ntry:\n  bpy.context.scene.render.filepath = "${targetPath}"\n  bpy.context.scene.render.image_settings.file_format = 'FFMPEG'\n  if hasattr(bpy.context.scene.render, 'ffmpeg'):\n    bpy.context.scene.render.ffmpeg.format = 'MPEG4' if "${targetPath}".lower().endswith('.mp4') else 'MKV'\n    bpy.context.scene.render.ffmpeg.codec = 'H264'\n  bpy.ops.render.render(animation=True)\n  print(f"Rendered MP4 animation directly to ${targetPath}")\nexcept Exception:\n  import subprocess, shutil as sh_util\n  td = os.path.join(os.path.dirname("${targetPath}"), ".causyne_temp_frames_" + str(int(time.time())))\n  os.makedirs(td, exist_ok=True)\n  bpy.context.scene.render.image_settings.file_format = 'PNG'\n  bpy.context.scene.render.filepath = os.path.join(td, "frame_")\n  bpy.ops.render.render(animation=True)\n  fps = getattr(bpy.context.scene.render, "fps", 30)\n  fb = sh_util.which("ffmpeg")\n  if not fb:\n    for cand in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "C:\\\\Program Files\\\\ffmpeg\\\\bin\\\\ffmpeg.exe"]:\n      if os.path.exists(cand): fb = cand; break\n  if not fb: fb = "ffmpeg"\n  subprocess.run([fb, "-y", "-framerate", str(fps), "-i", os.path.join(td, "frame_%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "${targetPath}"], check=True)\n  sh_util.rmtree(td, ignore_errors=True)\n  print(f"Rendered MP4 animation via sequence to ${targetPath}")` :
-            `import bpy, os\nos.makedirs(os.path.dirname("${targetPath}"), exist_ok=True)\nbpy.context.scene.render.filepath = "${targetPath}"\nif "${action.engine || ''}": bpy.context.scene.render.engine = "${action.engine || ''}"\nbpy.ops.render.render(write_still=True)\nprint(f"Rendered still frame to ${targetPath}")`;
+            `import bpy, os, time
+os.makedirs(os.path.dirname("${targetPath}"), exist_ok=True)
+bpy.context.scene.frame_start = ${startFrame}
+bpy.context.scene.frame_end = ${endFrame}
+if "${action.engine || ''}":
+  bpy.context.scene.render.engine = "${action.engine || ''}"
+try:
+  bpy.context.scene.render.filepath = "${targetPath}"
+  bpy.context.scene.render.image_settings.file_format = 'FFMPEG'
+  if hasattr(bpy.context.scene.render, 'ffmpeg'):
+    bpy.context.scene.render.ffmpeg.format = 'MPEG4' if "${targetPath}".lower().endsWith('.mp4') else 'MKV'
+    bpy.context.scene.render.ffmpeg.codec = 'H264'
+  bpy.ops.render.render(animation=True)
+  print(f"Rendered MP4 animation directly to ${targetPath}")
+except Exception:
+  import subprocess, shutil as sh_util
+  td = os.path.join(os.path.dirname("${targetPath}"), ".causyne_temp_frames_" + str(int(time.time())))
+  os.makedirs(td, exist_ok=True)
+  bpy.context.scene.render.image_settings.file_format = 'PNG'
+  bpy.context.scene.render.filepath = os.path.join(td, "frame_")
+  bpy.ops.render.render(animation=True)
+  fps = getattr(bpy.context.scene.render, "fps", 30)
+  fb = sh_util.which("ffmpeg")
+  if not fb:
+    for cand in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "C:\\\\Program Files\\\\ffmpeg\\\\bin\\\\ffmpeg.exe"]:
+      if os.path.exists(cand):
+        fb = cand
+        break
+  if not fb:
+    fb = "ffmpeg"
+  subprocess.run([fb, "-y", "-framerate", str(fps), "-i", os.path.join(td, "frame_%04d.png"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "${targetPath}"], check=True)
+  sh_util.rmtree(td, ignore_errors=True)
+  print(f"Rendered MP4 animation via sequence to ${targetPath}")` :
+            `import bpy, os
+os.makedirs(os.path.dirname("${targetPath}"), exist_ok=True)
+bpy.context.scene.render.filepath = "${targetPath}"
+if "${action.engine || ''}":
+  bpy.context.scene.render.engine = "${action.engine || ''}"
+bpy.ops.render.render(write_still=True)
+print(f"Rendered still frame to ${targetPath}")`;
           try {
             await runHeadlessCli(null, renderCode, results);
           } catch (cliErr) {

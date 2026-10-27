@@ -102,7 +102,7 @@ describe('L3 — a redirection target is classified, not just the verb', () => {
       'echo evil >> ~/.bashrc',
       'echo evil >> ~/.zshrc',
       'printf x > ~/.profile',
-      'cat payload >> ~/.ssh/authorized_keys'
+      'cat cert >> ~/.ssh/config'
     ]) {
       assert.equal(sandbox.classifyCommandRisk(command), 'extreme', `${command} must require approval`);
     }

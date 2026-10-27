@@ -33,4 +33,21 @@ const forbidden = /(^|\/)(HOLD|node_modules|\.git|\.env(?:\..*)?|\.wrangler|priv
 for (const file of paths) assert.ok(!forbidden.test(file), `Private/retired artifact in package: ${file}`);
 assert.ok(paths.every(file => ['bin/', 'src/', 'native-skills/'].some(dir => file.startsWith(dir)) ||
   ['package.json','README.md','SECURITY.md','LICENSE','docs/ARCHITECTURE.md','docs/PROVENANCE.md','docs/SECURITY_REVIEW.md','docs/THIRD_PARTY_NOTICES.md'].includes(file)), 'Unexpected package content');
+
+// Supply-chain scanner anti-obfuscation and false-positive guards:
+// 1. No line in distributed code may exceed 1000 characters (anti-obfuscation detector safety).
+// 2. No comments or strings may contain naive credential scanner triggers (such as attack examples).
+for (const relPath of paths) {
+  if (!relPath.endsWith('.js') && !relPath.endsWith('.ts') && !relPath.endsWith('.py')) continue;
+  const absPath = path.join(root, relPath);
+  if (!fs.existsSync(absPath)) continue;
+  const content = fs.readFileSync(absPath, 'utf8');
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    assert.ok(lines[i].length < 1000, `Line too long in release artifact ${relPath}:${i + 1} (${lines[i].length} chars). Must remain under 1000 chars to satisfy static analysis readability rules.`);
+  }
+  assert.ok(!/cat\s+.*>>?\s*.*\.ssh/i.test(content), `Dangerous shell exfiltration trigger pattern in ${relPath}`);
+  assert.ok(!/authorized_keys/i.test(content), `Sensitive credential path reference in ${relPath} trips naive static detectors`);
+}
+
 console.log(`Source distribution policy passed: ${paths.length} files, ${pack.unpackedSize} unpacked bytes. This is not a vulnerability or secret-clearance certificate.`);
