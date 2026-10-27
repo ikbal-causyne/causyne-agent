@@ -39,6 +39,7 @@
     "src/approvalPolicy.ts",
     "src/agentPolicy.ts",
     "src/launchIntent.ts",
+    "src/stallGuard.ts",
     "src/tui/codeProgress.ts",
     "src/tui/layout.ts",
     "src/tui/sessionSidebar.ts",

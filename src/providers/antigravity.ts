@@ -276,6 +276,19 @@ function describeNativeAction(toolInfo: any): string | undefined {
   return undefined;
 }
 
+export function isReadOnlyNativeInspection(name: string, parameters: Record<string, unknown>): boolean {
+  const action = name.toLowerCase().replace(/[_\s-]/g, '');
+  if (/^(readfile|listdirectory|listfiles|search|searchweb|grep|findfiles)$/.test(action)) return true;
+  if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(action)) return false;
+  const command = String(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '').trim();
+  // A compound shell command can inspect and then mutate; do not count it as
+  // read-only merely because its first command is a probe.
+  if (!/[;&|]/.test(command) && /^(?:ls|rg|grep|head|tail|cat|ps|pgrep|which|file|sips|mdls)\b/.test(command)) return true;
+  return /\bblender\b.*--python-expr\b/is.test(command)
+    && /\bprint\s*\(/.test(command)
+    && !/\b(?:save_as_mainfile|save|render|write|unlink|remove|delete)\b/.test(command);
+}
+
 export function mapNativeToolToCausyne(
   name: string,
   rawParams: Record<string, any>,
@@ -591,7 +604,7 @@ export class AntigravityProvider extends LLMProvider {
       '5. TOKEN CONSERVATION & MEDIA DIRECTIVE:\n' +
       '   - NEVER attempt to read binary or media files (.png, .jpg, .blend, .glb, .wasm, .zip, etc.) using text reading tools like read_file or cat. This blows up the token context.\n' +
       '   - For 3D modeling, Blender, or media tasks: write a single self-contained generator script and execute it in one batch. Avoid dozens of speculative CLI exploration commands.\n' +
-      '   - For verifying images or rendered files, use visual inspection or file metadata receipts only.\n\n' +
+      '   - Use a model-readable image channel for visual verification when available. This text-only bridge does not deliver screenshot pixels to you; a saved image or file metadata proves the file exists, not how it looks. Report visual verification as unavailable when no image channel is present.\n\n' +
       '[Environment State & Idempotency Directive]\n' +
       'Reuse relevant verified tool results from this session, and check uncertain prerequisites before relying on them.\n\n' +
       '[Language & Communication Directive]\n' +
@@ -892,6 +905,7 @@ export class AntigravityProvider extends LLMProvider {
       };
       const maxNativeActions = desktopTask ? 12 : Infinity;
       let nativeActionStarts = 0;
+      let consecutiveInspections = 0;
       const seenNativeActionSteps = new Set<number>();
       // Antigravity's result usage is cumulative across the conversation, but
       // DONE step updates carry usage for that step. Keep a turn-local subtotal
@@ -906,7 +920,10 @@ export class AntigravityProvider extends LLMProvider {
       // disabled. Users can set a lower task budget through the existing UI.
       const remainingTaskBudget = Number(options.maxTokensThisCall);
       const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
-        ? Math.min(remainingTaskBudget, 100_000) : 100_000;
+        ? remainingTaskBudget
+        : (typeof (options as any).tokenLimit === 'number' && (options as any).tokenLimit > 0
+            ? (options as any).tokenLimit
+            : 100_000);
       const wallTimer = desktopTask ? setTimeout(() => {
         const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.') as Error & { code: string };
         error.code = 'AGY_DESKTOP_TASK_LIMIT';
@@ -930,6 +947,18 @@ export class AntigravityProvider extends LLMProvider {
         // the provider from silently replaying a paid turn.
         if (partialUsage.promptTokens + partialUsage.completionTokens > 0) {
           Object.assign(err, { partialUsage: { ...partialUsage } });
+          if (((err as Error & { code?: string }).code === 'AGY_EXPLORATION_LOOP'
+            || (err as Error & { code?: string }).code === 'AGY_TOKEN_BUDGET') && this.currentConversationId) {
+            const prior = resumedConversationId === this.lastCumulativeUsage?.conversationId
+              ? this.lastCumulativeUsage : null;
+            this.lastCumulativeUsage = {
+              conversationId: this.currentConversationId,
+              input: (prior?.input || 0) + partialUsage.promptTokens,
+              output: (prior?.output || 0) + partialUsage.completionTokens,
+              thinking: (prior?.thinking || 0) + (partialUsage.thinkingTokens || 0),
+              cacheRead: (prior?.cacheRead || 0) + (partialUsage.cachedPromptTokens || 0)
+            };
+          }
         }
         cleanup();
         reject(err);
@@ -1000,8 +1029,8 @@ export class AntigravityProvider extends LLMProvider {
                     + (Number(usage.cache_read_tokens) || 0);
                   partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
                     + (Number(usage.thinking_tokens) || 0);
-                  if (partialUsage.promptTokens + partialUsage.completionTokens >= tokenLimit) {
-                    this.currentConversationId = null;
+                  if (Number.isFinite(tokenLimit) && tokenLimit > 0
+                    && partialUsage.promptTokens + partialUsage.completionTokens >= tokenLimit) {
                     const error = Object.assign(
                       new Error(`Antigravity reported at least ${partialUsage.promptTokens + partialUsage.completionTokens} noncached tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`),
                       { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }
@@ -1036,6 +1065,20 @@ export class AntigravityProvider extends LLMProvider {
                   (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
                   (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
                   {};
+
+                if ((options as any).taskArchetype === 'media_3d_generation' && newNativeAction && name) {
+                  consecutiveInspections = isReadOnlyNativeInspection(String(name), rawParams)
+                    ? consecutiveInspections + 1 : 0;
+                  if (consecutiveInspections >= 10) {
+                    const error = Object.assign(
+                      new Error('Antigravity made 10 consecutive read-only media inspections without a change. Pausing to redirect the task before further token use.'),
+                      { code: 'AGY_EXPLORATION_LOOP', inspectionCount: consecutiveInspections }
+                    );
+                    safeReject(error);
+                    terminateChild();
+                    return;
+                  }
+                }
 
                 if (name) {
                   const existingAttempt = attemptedNativeTools.find(a => a.name === name && a.status === 'running');

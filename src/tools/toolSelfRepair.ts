@@ -9,6 +9,9 @@
 
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 export interface RepairResult {
   args: Record<string, unknown>;
@@ -866,6 +869,46 @@ export function normalizePaths(
   };
 }
 
+function repairBrowserActions(args: Record<string, unknown>, cwd: string): RepairResult {
+  const repairs: string[] = [];
+  let workspace: string;
+  try {
+    workspace = fs.realpathSync.native(cwd);
+  } catch {
+    return { args, repaired: false, repairs };
+  }
+  const repairAction = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const action = { ...(value as Record<string, unknown>) };
+    const actionType = typeof action.type === 'string' ? 'type' : 'action';
+    if ((action[actionType] === 'goto' || action[actionType] === 'navigate' || action[actionType] === 'open')
+      && typeof action.url === 'string' && action.url.startsWith('file:')) {
+      try {
+        const target = fs.realpathSync.native(fileURLToPath(action.url));
+        const relative = path.relative(workspace, target);
+        if (relative && !relative.startsWith(`..${path.sep}`) && relative !== '..'
+          && !path.isAbsolute(relative) && /\.html?$/i.test(target)) {
+          action[actionType] = 'preview';
+          action.filePath = relative;
+          delete action.url;
+          repairs.push('Converted workspace HTML file navigation to browser preview');
+        }
+      } catch {
+        // Leave malformed or out-of-scope URLs for the browser sandbox to reject.
+      }
+    }
+    if (action[actionType] === 'screenshot' && !action.outputFile) {
+      action.outputFile = `browser-capture-${randomUUID()}.png`;
+      repairs.push('Added a unique workspace screenshot destination');
+    }
+    return action;
+  };
+  const updated = Array.isArray(args.actions)
+    ? { ...args, actions: args.actions.map(repairAction) }
+    : repairAction(args) as Record<string, unknown>;
+  return { args: updated, repaired: repairs.length > 0, repairs };
+}
+
 /**
  * Master self-repair entrypoint: heals raw tool call JSON, canonicalizes tool names,
  * resolves aliases, coerces argument types, and normalizes paths.
@@ -915,9 +958,14 @@ export function selfRepairToolCall(
   const pathResult = normalizePaths(typeResult.args, options.cwd || process.cwd());
   allRepairs.push(...pathResult.repairs);
 
+  const browserResult = canonicalName === 'browser_act'
+    ? repairBrowserActions(pathResult.args, options.cwd || process.cwd())
+    : pathResult;
+  if (canonicalName === 'browser_act') allRepairs.push(...browserResult.repairs);
+
   return {
     name: canonicalName,
-    args: pathResult.args,
+    args: browserResult.args,
     repaired: allRepairs.length > 0,
     repairs: allRepairs
   };

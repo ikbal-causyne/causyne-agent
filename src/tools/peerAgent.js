@@ -13,7 +13,7 @@ import { AcpClient } from '../acp/client.js';
 import { getPeerProfile, listAllPeers, peerEnvironment } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 const execFileAsync = promisify(execFile);
-const MAX_PROMPT_CHARS = 100_000;
+const MAX_PROMPT_CHARS = 2_000_000;
 const READ_ONLY_KINDS = new Set(['read', 'search', 'fetch', 'think']);
 function selectPermission(profile, request, workspaceRoot) {
     const kind = request.toolCall.kind;

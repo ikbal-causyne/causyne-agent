@@ -3,7 +3,46 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AntigravityProvider } from '../src/providers/antigravity.js';
+import { AntigravityProvider, isReadOnlyNativeInspection } from '../src/providers/antigravity.js';
+
+test('native inspection classifier distinguishes Blender probes from scene writes', () => {
+  assert.equal(isReadOnlyNativeInspection('RunCommand', { CommandLine: 'blender --background apple.blend --python-expr "print(bpy.context.scene.world)"' }), true);
+  assert.equal(isReadOnlyNativeInspection('RunCommand', { CommandLine: '/Applications/Blender.app/Contents/MacOS/Blender --background apple.blend --python-expr "import bpy\nprint(bpy.context.scene.world)"' }), true);
+  assert.equal(isReadOnlyNativeInspection('RunCommand', { CommandLine: 'blender --background apple.blend --python-expr "bpy.ops.wm.save_as_mainfile(filepath=\'apple.blend\')"' }), false);
+  assert.equal(isReadOnlyNativeInspection('RunCommand', { CommandLine: 'grep -n world apple.py' }), true);
+  assert.equal(isReadOnlyNativeInspection('RunCommand', { CommandLine: 'ls apple && python mutate.py' }), false);
+  assert.equal(isReadOnlyNativeInspection('write_file', { path: 'apple.py' }), false);
+});
+
+test('Antigravity interrupts repeated Blender probes before the token ceiling and preserves the session', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-inspection-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'inspect-session'});
+  emit({event:'step_update',step_update:{step_index:0,state:'DONE',step_type:'agent_response',usage:{input_tokens:300,output_tokens:30,cache_read_tokens:100}}});
+  for (let index=1; index<=10; index++) emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'grep -n world apple.py'}}}});
+  setTimeout(() => {}, 10000);
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    await assert.rejects(provider.chat([{ role: 'user', content: 'Fix the background in Blender' }], {
+      conversationId: 'inspection-test', taskArchetype: 'media_3d_generation'
+    }), (error: unknown) => {
+      const stopped = error as { code?: string; inspectionCount?: number; partialUsage?: { promptTokens: number } };
+      assert.equal(stopped.code, 'AGY_EXPLORATION_LOOP');
+      assert.equal(stopped.inspectionCount, 10);
+      assert.equal(stopped.partialUsage?.promptTokens, 300);
+      return true;
+    });
+    assert.equal(provider.currentConversationId, 'inspect-session');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('Antigravity cumulative session usage is charged to each turn only once', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-usage-'));
@@ -162,6 +201,53 @@ process.stdin.on('end', () => {
         return true;
       }
     );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity honors a large user task budget without clamping to 100k', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-large-budget-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'large-budget-test'});
+  // Emit 150k tokens, which would have tripped the old 100k clamp
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:150000,output_tokens:200,cache_read_tokens:50000}}});
+  emit({event:'result',result:{status:'SUCCESS',response:'Completed large task successfully',usage:{input_tokens:150000,output_tokens:200}}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    // User configured a 500,000 token budget
+    const res = await provider.chat([{ role: 'user', content: 'Analyze large monorepo' }], { maxTokensThisCall: 500000 });
+    assert.equal(res.content, 'Completed large task successfully');
+    assert.equal(res.usage.promptTokens, 150000);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity does not abort multi-step turns when tokenLimit is Infinity', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-infinity-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'infinity-test'});
+  // Emit 120k cumulative tokens in step update
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:120000,output_tokens:500,cache_read_tokens:40000}}});
+  emit({event:'result',result:{status:'SUCCESS',response:'Completed deep search without budget kill',usage:{input_tokens:120000,output_tokens:500}}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    const res = await provider.chat([{ role: 'user', content: 'Deep research' }], { tokenLimit: Infinity });
+    assert.equal(res.content, 'Completed deep search without budget kill');
+    assert.equal(res.usage.promptTokens, 120000);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

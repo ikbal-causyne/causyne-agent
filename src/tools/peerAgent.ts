@@ -27,7 +27,7 @@ export interface PeerAgentArgs {
   mode?: string;
 }
 
-const MAX_PROMPT_CHARS = 100_000;
+const MAX_PROMPT_CHARS = 2_000_000;
 const READ_ONLY_KINDS = new Set(['read', 'search', 'fetch', 'think']);
 
 function selectPermission(

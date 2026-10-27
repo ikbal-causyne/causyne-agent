@@ -8,6 +8,9 @@
  */
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 /**
  * Universal tool name alias dictionary. Maps hallucinations from OpenAI,
  * Anthropic, DeepSeek, Qwen, Ollama, etc. to Causyne Agent canonical tool names.
@@ -810,6 +813,48 @@ export function normalizePaths(args, cwd = process.cwd()) {
         repairs
     };
 }
+function repairBrowserActions(args, cwd) {
+    const repairs = [];
+    let workspace;
+    try {
+        workspace = fs.realpathSync.native(cwd);
+    }
+    catch {
+        return { args, repaired: false, repairs };
+    }
+    const repairAction = (value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value))
+            return value;
+        const action = { ...value };
+        const actionType = typeof action.type === 'string' ? 'type' : 'action';
+        if ((action[actionType] === 'goto' || action[actionType] === 'navigate' || action[actionType] === 'open')
+            && typeof action.url === 'string' && action.url.startsWith('file:')) {
+            try {
+                const target = fs.realpathSync.native(fileURLToPath(action.url));
+                const relative = path.relative(workspace, target);
+                if (relative && !relative.startsWith(`..${path.sep}`) && relative !== '..'
+                    && !path.isAbsolute(relative) && /\.html?$/i.test(target)) {
+                    action[actionType] = 'preview';
+                    action.filePath = relative;
+                    delete action.url;
+                    repairs.push('Converted workspace HTML file navigation to browser preview');
+                }
+            }
+            catch {
+                // Leave malformed or out-of-scope URLs for the browser sandbox to reject.
+            }
+        }
+        if (action[actionType] === 'screenshot' && !action.outputFile) {
+            action.outputFile = `browser-capture-${randomUUID()}.png`;
+            repairs.push('Added a unique workspace screenshot destination');
+        }
+        return action;
+    };
+    const updated = Array.isArray(args.actions)
+        ? { ...args, actions: args.actions.map(repairAction) }
+        : repairAction(args);
+    return { args: updated, repaired: repairs.length > 0, repairs };
+}
 /**
  * Master self-repair entrypoint: heals raw tool call JSON, canonicalizes tool names,
  * resolves aliases, coerces argument types, and normalizes paths.
@@ -845,9 +890,14 @@ export function selfRepairToolCall(toolCall, toolSchema, options = {}) {
     // 4. Normalize filesystem paths
     const pathResult = normalizePaths(typeResult.args, options.cwd || process.cwd());
     allRepairs.push(...pathResult.repairs);
+    const browserResult = canonicalName === 'browser_act'
+        ? repairBrowserActions(pathResult.args, options.cwd || process.cwd())
+        : pathResult;
+    if (canonicalName === 'browser_act')
+        allRepairs.push(...browserResult.repairs);
     return {
         name: canonicalName,
-        args: pathResult.args,
+        args: browserResult.args,
         repaired: allRepairs.length > 0,
         repairs: allRepairs
     };

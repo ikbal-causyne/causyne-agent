@@ -43,6 +43,7 @@ import { createProvider } from './providers/factory.js';
 import { resolveMentionedContext } from './promptMentions.js';
 import { isLaunchOnlyPrompt, launchScopeError } from './launchIntent.js';
 import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from './tui/codeProgress.js';
+import { StallGuardController } from './stallGuard.js';
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -475,6 +476,7 @@ export class AgentLoop {
         this.consecutiveBlockedActions = 0; // V8 Transcendence: Circuit Breaker
         this.recentActionSignatures = [];
         this.consecutiveReadOnlySteps = 0;
+        this.stallGuard = new StallGuardController();
         // Sovereign Progressive Disclosure: which capability packs have entered the
         // context window for this task. Nothing is disabled — see src/toolPacks.js.
         this.unlockedPacks = new Set();
@@ -1272,7 +1274,9 @@ export class AgentLoop {
         this.circuitBreakerUnlocked = false;
         this.recentActionSignatures = [];
         this.consecutiveReadOnlySteps = 0;
+        this.stallGuard.reset();
         this.tokenTracker.resetTask();
+        let mediaExplorationRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
         while (!this.stopRequested) {
             if (this.stopRequested) {
@@ -1625,6 +1629,7 @@ export class AgentLoop {
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
+                    tokenLimit: Number.isFinite(remainingBudget) ? remainingBudget : Infinity,
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
                     // IARS couples escalation to a wider search. Bounded so a stuck task
@@ -2263,68 +2268,38 @@ export class AgentLoop {
                     if (this.recentActionSignatures.length > 20) {
                         this.recentActionSignatures.shift();
                     }
-                    const isCommandTool = ['sysRun', 'sysRunBg', 'terminal_persistent_shell'].includes(functionName);
-                    if (isCommandTool) {
-                        const duplicateCount = this.recentActionSignatures.filter((sig) => sig === actionSig).length;
-                        // 1. Hard Circuit Breaker on Duplicate Command Thrashing (same command attempted 4 times total)
-                        if (duplicateCount >= 4) {
-                            const fatalMsg = `FATAL ERROR: Infinite Token Drain Detected. Agent repeatedly attempted identical command '${functionName}' (${actionSig}) 4 times without making progress. Forcibly aborting task to save tokens.`;
-                            this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
-                            auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
-                            this.abort();
-                            break;
-                        }
-                        // 2. Block 3rd attempt of identical command and inject a non-negotiable recovery mandate
-                        if (duplicateCount === 3) {
-                            const isExec = isExecutionOrLaunchTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
-                            const isAuthoring = !isExec && isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
-                            let blockMsg;
-                            if (actionSig === 'sysRun:probe:process_or_port' || isExec) {
-                                blockMsg = `REPETITION BLOCKED: You have already checked processes/ports. The result is already in your context above. You are STRICTLY FORBIDDEN from running process/port checks again. Proceed immediately to fulfilling the user's request: start the server (if port 8080 is occupied, start on port 8081 or 8088 using sysRunBg) and open the URL in the browser.`;
-                            }
-                            else if (isAuthoring) {
-                                blockMsg = `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. You must immediately proceed to creating or editing the solution files using fs_write.`;
-                            }
-                            else {
-                                blockMsg = `REPETITION BLOCKED: You have already executed this identical command '${functionName}' 2 times. The result is already in your context above. You are STRICTLY FORBIDDEN from running this action again. Proceed immediately to fulfilling the user's request: if starting a service or server, launch it (if a port is occupied, use an alternate open port); if launching an app, open it in the browser; if done, summarize and finish.`;
-                            }
-                            this.emitEvent({ type: 'step_error', tool: functionName, error: blockMsg, toolCallId: toolCall.id });
-                            this.messages.push({
-                                role: 'tool',
-                                tool_call_id: toolCall.id,
-                                name: functionName,
-                                content: JSON.stringify({
-                                    success: false,
-                                    error: 'DUPLICATE_ACTION_BLOCKED',
-                                    CRITICAL_INSTRUCTION: blockMsg
-                                })
-                            });
-                            continue;
-                        }
-                    }
-                    // 3. Track Read-Only Inspection Chains on Code Authoring Tasks (Max 6 inspection steps)
-                    const isMutatingAction = ['fs_write', 'fs_edit', 'MultiEdit', 'game_build_html5'].includes(functionName)
-                        || (functionName === 'sysRun' && /(npm\s+(i|install|add)|pnpm\s+add|yarn\s+add|pip\s+install|git\s+commit)\b/.test(args?.command || ''));
-                    if (isMutatingAction) {
-                        this.consecutiveReadOnlySteps = 0;
-                    }
-                    else if (['sysRun', 'sysRunBg', 'fs_read', 'fs_list', 'dir_list', 'grep_search'].includes(functionName)) {
-                        this.consecutiveReadOnlySteps = (Number(this.consecutiveReadOnlySteps) || 0) + 1;
-                    }
+                    // Universal Intelligent Loop Guard & Stall Breaker (Hermes / Claude Code architecture)
                     const isExecTask = isExecutionOrLaunchTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
                     const isAuthoringTask = !isExecTask && isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
-                    if (isAuthoringTask && this.consecutiveReadOnlySteps === 4) {
+                    const guardDecision = this.stallGuard.beforeCall(functionName, args || {}, {
+                        isAuthoringTask
+                    });
+                    if (guardDecision.action === 'block') {
+                        this.emitEvent({ type: 'step_error', tool: functionName, error: guardDecision.message, toolCallId: toolCall.id });
+                        auditLog.log({ event: 'tool_blocked', taskId: this.taskId, tool: functionName, args, reason: guardDecision.message });
                         this.messages.push({
-                            role: 'system',
-                            content: `[CRITICAL ACTION MANDATE: You have performed 4 consecutive inspection steps without writing code. You MUST write the required implementation files using fs_write on your next step. Any further read-only commands will be rejected.]`
+                            role: 'tool',
+                            tool_call_id: toolCall.id,
+                            name: functionName,
+                            content: JSON.stringify({
+                                success: false,
+                                error: guardDecision.code,
+                                CRITICAL_INSTRUCTION: guardDecision.message
+                            })
                         });
+                        continue;
                     }
-                    if (isAuthoringTask && this.consecutiveReadOnlySteps >= 6) {
-                        const fatalMsg = `FATAL ERROR: Read-Only Verification Loop Detected. Agent performed 6 consecutive inspection steps without writing any implementation code. Forcibly aborting task to save your token budget.`;
-                        this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
-                        auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
+                    if (guardDecision.action === 'halt') {
+                        this.emitEvent({ type: 'step_error', tool: functionName, error: guardDecision.message, toolCallId: toolCall.id });
+                        auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: guardDecision.message });
                         this.abort();
                         break;
+                    }
+                    if (isAuthoringTask && this.stallGuard.distinctInspectionCount === 12) {
+                        this.messages.push({
+                            role: 'system',
+                            content: `[CRITICAL ACTION MANDATE: You have performed 12 consecutive inspection steps without writing code. If you have gathered sufficient context, proceed to creating or editing implementation files using fs_write/fs_edit.]`
+                        });
                     }
                     this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });
                     const codeAction = codeProgressFromAction(functionName, args || {}, toolCall.id);
@@ -2630,6 +2605,7 @@ export class AgentLoop {
                             name: functionName, content: JSON.stringify({ ...failure,
                                 errorType, timeMachine: recovery.guidance,
                                 ...(alternativeRoute ? { apcReplanAlternative: alternativeRoute.suggestedTool, apcReplanReason: alternativeRoute.reason } : {}) }) });
+                        this.stallGuard.observeCall(functionName, args || {}, failure, toolCall.id, true);
                         this.memoryManager.saveHistory(this.messages);
                         if (errorType === 'fatal' || recovery.kind === 'stop' || recovery.kind === 'human') {
                             this.stopRequested = true;
@@ -2956,6 +2932,11 @@ export class AgentLoop {
                                 this._observationDigests.set(digest, this.stepsCompleted + 1);
                             }
                         }
+                        const isCallFailed = Boolean(result && (result.success === false || typeof result.error === 'string'));
+                        const stallObservation = this.stallGuard.observeCall(functionName, args || {}, result, toolCall.id, isCallFailed);
+                        if (stallObservation.stub && resultString.length >= 256) {
+                            resultString = stallObservation.stub;
+                        }
                         this.messages.push({
                             role: 'tool',
                             tool_call_id: toolCall.id,
@@ -2966,6 +2947,19 @@ export class AgentLoop {
                             // stub keep pointing at the spill after the payload is gone.
                             ...(spill ? { spillPath: spill.path } : {})
                         });
+                        if (stallObservation.notice) {
+                            this.messages.push({
+                                role: 'system',
+                                content: stallObservation.notice
+                            });
+                        }
+                        if (stallObservation.decision?.action === 'halt') {
+                            const fatalMsg = stallObservation.decision.message;
+                            this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
+                            auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
+                            this.abort();
+                            break;
+                        }
                     }
                     // Save state continuously after each tool loop
                     this.memoryManager.saveHistory(this.messages);
@@ -2990,10 +2984,25 @@ export class AgentLoop {
                         });
                     }
                 }
-                if (e?.code === 'AGY_TOKEN_BUDGET') {
+                if (e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET') {
                     this.emitEvent({ type: 'budget_warning', message: e.message });
                     auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
                         used: this.tokenTracker.taskTokens, limit: e.tokenLimit || this.tokenTracker.budget?.maxTokensPerTask || 0 });
+                    break;
+                }
+                if (e?.code === 'AGY_EXPLORATION_LOOP' || e?.code === 'AGENT_EXPLORATION_LOOP' || e?.code === 'STALL_EXPLORATION_LOOP') {
+                    auditLog.log({ event: 'media_exploration_checkpoint', taskId: this.taskId,
+                        inspectionCount: e.inspectionCount, recovery: mediaExplorationRecoveries });
+                    if (mediaExplorationRecoveries++ === 0) {
+                        this.messages.push({ role: 'system', content: '[TASK RECOVERY] Consecutive read-only inspections without workspace changes were paused. ' +
+                                'The user requested a concrete change. Reuse the observations already gathered; do not repeat probes. ' +
+                                'Make one targeted workspace edit now, then run one focused verification. ' +
+                                'If editing is blocked, report the exact blocker. Do not claim completion from inspection alone.' });
+                        this.memoryManager.saveHistory(this.messages);
+                        this.emitEvent({ type: 'notice', message: 'Repeated inspection paused; continuing once with a direct edit instruction.' });
+                        continue;
+                    }
+                    this.emitEvent({ type: 'error', message: 'The provider continued read-only inspection after a corrective checkpoint. The task remains unfinished; no edit was verified.' });
                     break;
                 }
                 if (this.stopRequested || this.abortController?.signal?.aborted || e?.name === 'AbortError') {

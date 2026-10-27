@@ -14,6 +14,41 @@ test('desktop safety limits are terminal errors instead of retrying paid turns',
   assert.equal(loop.classifyError({ message: 'network error after model step', partialUsage: { promptTokens: 90, completionTokens: 10 } }), 'fatal');
 });
 
+test('media inspection recovery is bounded and never reports an unfinished edit as complete', async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-media-recovery-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: Array<{ type: string; message?: string }> = [];
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'media-recovery-regression', 'the apple still has no background in Blender',
+      { workspaceRoot: workspace }
+    );
+    let calls = 0;
+    loop.initializeProvider = () => ({
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls += 1;
+        throw Object.assign(new Error('Repeated read-only inspections'), {
+          code: 'AGY_EXPLORATION_LOOP', inspectionCount: 10,
+          partialUsage: { promptTokens: 100, completionTokens: 10 }
+        });
+      }
+    }) as never;
+    await loop.run();
+    assert.equal(calls, 2);
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
+    assert.equal(events.some((event) => event.type === 'notice' && event.message?.includes('direct edit')), true);
+    assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('remains unfinished')), true);
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test('a generic handoff after native actions cannot be reported as task completion', async () => {
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-handoff-'));
