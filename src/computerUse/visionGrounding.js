@@ -18,14 +18,16 @@ export function extractCoordinateNumbers(raw) {
         .filter((n) => Number.isFinite(n));
 }
 /**
- * Ground normalized coordinates (0-1000) to actual screen pixels.
+ * Ground normalized coordinates (0-1000) to actual screen units.
+ * Defaults to OS logical points on macOS/modern desktop actuators to prevent double-scaling.
  */
 export function groundPoint(nums, screen = { width: 1920, height: 1080, scaleFactor: 1 }, factor = DEFAULT_FACTOR) {
     if (nums.length < 2)
         return null;
     const rawX = nums[0] ?? 0;
     const rawY = nums[1] ?? 0;
-    const scale = screen.scaleFactor || 1;
+    const targetSpace = screen.targetSpace ?? 'logical';
+    const scale = targetSpace === 'physical' ? (screen.scaleFactor || 1) : 1;
     const normX = Math.max(0, Math.min(1, rawX / factor[0]));
     const normY = Math.max(0, Math.min(1, rawY / factor[1]));
     return {
@@ -55,9 +57,11 @@ export function groundBoxCenter(nums, screen = { width: 1920, height: 1080, scal
  * E.g. Action: click(start_box='(240, 500)')
  */
 export function parseSingleAction(rawAction, screenContext = { width: 1920, height: 1080, scaleFactor: 1 }) {
-    const line = rawAction.trim();
+    let line = (rawAction || '').trim();
     if (!line)
         return null;
+    // Strip leading Action: or Action_Summary: prefixes
+    line = line.replace(/^(?:Action(?:_Summary)?[:：]\s*)/i, '').trim();
     const callMatch = line.match(/^([a-zA-Z_0-9]+)\s*\((.*)\)$/);
     if (!callMatch) {
         if (/finished/i.test(line)) {
@@ -68,12 +72,12 @@ export function parseSingleAction(rawAction, screenContext = { width: 1920, heig
     const funcName = callMatch[1]?.toLowerCase();
     const argsRaw = callMatch[2] || '';
     const argsMap = {};
-    const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*['"]([^'"]+)['"]/g;
+    const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*(?:['"]([^'"]+)['"]|([^,\s'")]+))/g;
     let match;
     while ((match = kvRegex.exec(argsRaw)) !== null) {
         const key = match[1];
-        const val = match[2];
-        if (key && val) {
+        const val = match[2] ?? match[3];
+        if (key && val !== undefined) {
             argsMap[key] = val;
         }
     }
@@ -170,18 +174,41 @@ export function parseVisionGroundingPrediction(predictionText, screenContext = {
     return { thought, reflection, actions };
 }
 const MAC_KEY_CODES = {
-    return: 36,
-    enter: 36,
-    tab: 48,
-    space: 49,
-    backspace: 51,
-    escape: 53,
-    esc: 53,
-    up: 126,
-    down: 125,
-    left: 123,
-    right: 124
+    a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9,
+    b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+    1: 18, 2: 19, 3: 20, 4: 21, 6: 22, 5: 23, 9: 25, 7: 26, 8: 28, 0: 29,
+    o: 31, u: 32, i: 34, p: 35, l: 37, j: 38, k: 40,
+    n: 45, m: 46,
+    return: 36, enter: 36, tab: 48, space: 49,
+    backspace: 51, delete: 51, escape: 53, esc: 53,
+    command: 55, cmd: 55, shift: 56,
+    option: 58, alt: 58, control: 59, ctrl: 59,
+    up: 126, down: 125, left: 123, right: 124
 };
+function parseCompoundKeyChord(raw) {
+    const parts = raw.toLowerCase().split(/[+\-_ ]+/).map((p) => p.trim()).filter(Boolean);
+    const modifiers = [];
+    let baseKey;
+    for (const p of parts) {
+        if (p === 'cmd' || p === 'command' || p === 'meta' || p === 'super') {
+            modifiers.push('cmd');
+        }
+        else if (p === 'ctrl' || p === 'control') {
+            modifiers.push('ctrl');
+        }
+        else if (p === 'alt' || p === 'option') {
+            modifiers.push('alt');
+        }
+        else if (p === 'shift') {
+            modifiers.push('shift');
+        }
+        else {
+            baseKey = p;
+        }
+    }
+    const keyCode = baseKey ? MAC_KEY_CODES[baseKey] : undefined;
+    return { chord: raw, modifiers, baseKey, keyCode };
+}
 /**
  * Convert parsed vision grounding actions into Causyne desktop_act equivalent instructions.
  */
@@ -217,14 +244,38 @@ export function visionGroundingToDesktopAct(actions) {
             }
             case 'press_key':
             case 'hotkey': {
-                const keyName = (act.key || '').toLowerCase().trim();
-                const code = MAC_KEY_CODES[keyName];
-                if (code !== undefined) {
-                    result.push({ verb: 'key', keyCode: code });
+                const rawKey = (act.key || '').trim();
+                if (!rawKey)
+                    break;
+                if (rawKey.includes('+') || rawKey.includes('-')) {
+                    const chordInfo = parseCompoundKeyChord(rawKey);
+                    result.push({
+                        verb: 'key',
+                        chord: chordInfo.chord,
+                        modifiers: chordInfo.modifiers,
+                        key: chordInfo.baseKey,
+                        keyCode: chordInfo.keyCode
+                    });
                 }
-                else if (keyName) {
-                    result.push({ verb: 'type', text: keyName });
+                else {
+                    const keyName = rawKey.toLowerCase();
+                    const code = MAC_KEY_CODES[keyName];
+                    if (code !== undefined) {
+                        result.push({ verb: 'key', keyCode: code, key: keyName });
+                    }
+                    else {
+                        result.push({ verb: 'type', text: rawKey });
+                    }
                 }
+                break;
+            }
+            case 'scroll': {
+                result.push({
+                    verb: 'scroll',
+                    direction: act.direction || 'down',
+                    seconds: act.seconds || 1,
+                    ...(act.coordinates ? { x: act.coordinates.x, y: act.coordinates.y } : {})
+                });
                 break;
             }
             case 'wait': {
@@ -232,12 +283,19 @@ export function visionGroundingToDesktopAct(actions) {
                 break;
             }
             case 'drag': {
-                if (act.startCoordinates) {
-                    result.push({ verb: 'clickxy', x: act.startCoordinates.x, y: act.startCoordinates.y });
-                }
-                if (act.endCoordinates) {
-                    result.push({ verb: 'clickxy', x: act.endCoordinates.x, y: act.endCoordinates.y });
-                }
+                const fromX = act.startCoordinates?.x ?? act.coordinates?.x ?? 0;
+                const fromY = act.startCoordinates?.y ?? act.coordinates?.y ?? 0;
+                const toX = act.endCoordinates?.x ?? fromX;
+                const toY = act.endCoordinates?.y ?? fromY;
+                result.push({
+                    verb: 'drag',
+                    fromX,
+                    fromY,
+                    toX,
+                    toY,
+                    x: toX,
+                    y: toY
+                });
                 break;
             }
             case 'finished':

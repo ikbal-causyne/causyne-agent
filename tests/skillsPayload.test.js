@@ -55,8 +55,7 @@ describe('the compiled skills payload ships no internal doctrine', () => {
 // Every description is injected verbatim into the system prompt by
 // getUniversalSkillsIndex(), so a description written in another language is not
 // a cosmetic problem — it steers the model in that language on every single
-// turn. The shipped payload once carried five skills whose descriptions read
-// "Panduan membuat Dockerfile multi-stage yang super ringan dan aman."
+// turn. Skill descriptions must strictly be authored in English.
 //
 // The contract each skill must meet is openclaw's (skills/skill-creator):
 // frontmatter with a name and a model-facing description carrying the routing

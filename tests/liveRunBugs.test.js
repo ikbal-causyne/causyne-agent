@@ -200,8 +200,8 @@ test('render: the user message block reserves the last column at every width', a
   const { wrapBlock, visibleWidth, stripAnsi } = await import('../src/tui/text.js');
   const { barBlock, GUTTER } = await import('../src/tui/block.js');
 
-  const message = 'Buat pena 3D di Blender dan render jadi klip sinematik 8 detik.\n'
-    + 'Pena: barrel logam brushed, grip karet, clip krom. Tiga material berbeda.';
+  const message = 'Create a 3D pen in Blender and render as an 8 second cinematic clip.\n'
+    + 'Pen: brushed metal barrel, rubber grip, chrome clip. Three distinct materials.';
 
   for (const width of [60, 80, 128, 200]) {
     const blockWidth = Math.max(8, width - 1);

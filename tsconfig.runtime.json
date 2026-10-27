@@ -111,6 +111,7 @@
     "src/creative/studioScripts.ts",
     "src/creative/pipeline.ts",
     "src/dynamicCatalogue.ts",
+    "src/computerUse/types.ts",
     "src/computerUse/visionGrounding.ts",
     "src/tools/computerUse.ts",
     "src/uiEngine/uiForge.ts",

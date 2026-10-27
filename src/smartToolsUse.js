@@ -2,8 +2,8 @@
  * @file src/smartToolsUse.ts
  * SmartToolsUse & LazyPlaybook Engine.
  *
- * Implements precision intent-driven tool scoping and lazy on-demand playbook disclosure
- * to eliminate catastrophic token waste on common system, research, and utility tasks.
+ * Provides intent-based tool preloading and lazy playbook disclosure.
+ * Other capabilities remain discoverable through tool_search.
  *
  * Authorship: Strict TypeScript (Causyne Agent).
  */
@@ -12,9 +12,9 @@ import { PACK_PLAYBOOKS } from './toolPacks.js';
 // Intent Matchers & Negative Filters
 // ---------------------------------------------------------------------------
 // Personalization / desktop actions (setting wallpaper, changing desktop background)
-const DESKTOP_PERSONALIZATION_PATTERN = /\b(desktop (picture|wallpaper|background|image)|set wallpaper|change wallpaper|ganti wallpaper|latar belakang desktop)\b/i;
+const DESKTOP_PERSONALIZATION_PATTERN = /\b(desktop (picture|wallpaper|background|image)|set wallpaper|change wallpaper)\b/i;
 // Pure web search / retrieval without UI/frontend construction
-const PURE_WEB_SEARCH_PATTERN = /\b(search(ing)? (the )?web|web search|look up online|find on google|cari di web|brows(e|ing) (the )?web)\b/i;
+const PURE_WEB_SEARCH_PATTERN = /\b(search(ing)? (the )?web|web search|look up online|find on google|brows(e|ing) (the )?web)\b/i;
 const WEB_CONSTRUCTION_EXCLUSION = /\b(build|create|make|design|develop|scaffold|code|program|css|html|tailwind|component|frontend|front-end|landing page|website|webpage|dashboard)\b/i;
 // System admin / process & terminal operations
 const SYSTEM_ADMIN_PATTERN = /\b(kill process|kill port|check port|port \d+|lsof|ps aux|terminate process|zip folder|unzip file|extract archive|compress folder)\b/i;
@@ -26,22 +26,9 @@ const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render 
 const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build.*(website|webpage|landing page|dashboard|ui component|frontend)|create.*(website|webpage|landing page|dashboard|ui)|develop.*(website|web app|webapp))\b/i;
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN = /\b(build.*game|create.*game|develop.*game|godot|unity|unreal|platformer 2d|rpg game|arcade game)\b/i;
-// Base utility tools that cover general execution, file access, and planning
-const BASE_SYSTEM_TOOLS = [
-    'sysRun',
-    'fs_read',
-    'fs_write',
-    'fs_edit',
-    'fs_list',
-    'fs_search',
-    'update_plan',
-    'tool_search',
-    'web_search',
-    'web_fetch'
-];
 /**
- * Determine dynamic precision tool scope based on prompt intent and task shape.
- * Returns null if the task should use standard pack discovery without restriction.
+ * Select tools to preload based on prompt intent. This is never an allowlist:
+ * tool_search can add capabilities as the task develops.
  */
 export function determineToolScope(prompt, _taskShape) {
     const text = (prompt || '').trim();
@@ -63,8 +50,8 @@ export function determineToolScope(prompt, _taskShape) {
         return {
             toolScope: tools,
             archetype: 'desktop_personalization',
-            suppressedPacks: ['media', 'web', 'game', 'advanced'],
-            reason: 'Desktop personalization requires web search and system execution; suppresses heavy 3D media and web dev packs.'
+            suppressedPacks: ['media', 'web', 'game', 'advanced', 'system'],
+            reason: 'Start with search and system execution; discover desktop or browser tools if direct execution is unsuitable.'
         };
     }
     // 2. Pure web research (searching/fetching online information without web app construction)

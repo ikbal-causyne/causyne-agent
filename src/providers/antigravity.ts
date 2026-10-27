@@ -507,6 +507,7 @@ export class AntigravityProvider extends LLMProvider {
   printTimeout: string;
   currentConversationId: string | null = null;
   lastTaskId: string | null = null;
+  private lastCumulativeUsage: { conversationId: string; input: number; output: number; thinking: number; cacheRead: number } | null = null;
 
   constructor(config: ProviderConfig = {}) {
     super(config);
@@ -586,7 +587,7 @@ export class AntigravityProvider extends LLMProvider {
       '[Environment State & Idempotency Directive]\n' +
       'Reuse relevant verified tool results from this session, and check uncertain prerequisites before relying on them.\n\n' +
       '[Language & Communication Directive]\n' +
-      'Dynamically reflect and match the exact language used by the user in their prompt. If the user writes in English, you must respond strictly in English. Default to English for all responses and reasoning. Never default to Indonesian or send canned greetings in Indonesian.'
+      'Communicate strictly in English. Default to English for all responses and reasoning. Never send conversational pleasantries or canned greetings.'
     );
 
     if (tools && tools.length > 0) {
@@ -763,16 +764,20 @@ export class AntigravityProvider extends LLMProvider {
     const currentSessionKey = (options as any).conversationId || (options as any).taskId || null;
     if (currentSessionKey && currentSessionKey !== this.lastTaskId) {
       this.currentConversationId = null;
+      this.lastCumulativeUsage = null;
       this.lastTaskId = currentSessionKey;
     }
     if (messages.length <= 1) {
       this.currentConversationId = null;
+      this.lastCumulativeUsage = null;
     }
 
     const useConversation = Boolean(this.currentConversationId);
+    const resumedConversationId = this.currentConversationId;
     const latestUserMessage = [...messages].reverse().find(message => message.role === 'user');
     const latestPrompt = typeof latestUserMessage?.content === 'string' ? latestUserMessage.content : '';
     const launchOnly = (options as any).taskIntent === 'launch' || isLaunchOnlyPrompt(latestPrompt);
+    const desktopTask = (options as any).taskArchetype === 'desktop_personalization';
     let promptText: string;
 
     if (useConversation) {
@@ -796,6 +801,13 @@ export class AntigravityProvider extends LLMProvider {
         'Inspect the selected project, start an existing server in the background if needed, verify readiness, and open it. ' +
         'Do not create, edit, delete, install, or regenerate files. Do not claim the app opened unless a tool confirmed it. ' +
         'Use Causyne tool calls for commands and desktop opening.\n\n' + promptText;
+    }
+    if (desktopTask) {
+      promptText = '[Current desktop task: finish and verify the requested change]\n' +
+        'Use only the tools needed. Search and download alone are not completion. ' +
+        'After setting the desktop picture, read back the actual system wallpaper and compare it with the intended image. ' +
+        'If a command is denied or the readback does not confirm the change, report the blocker honestly. ' +
+        'Keep native tool actions within 12; use Causyne tool calls when a native action is blocked.\n\n' + promptText;
     }
 
     const modelSlug = resolveAgyModelId(this.model);
@@ -859,8 +871,29 @@ export class AntigravityProvider extends LLMProvider {
         detail?: string | undefined;
       }[] = [];
       let childClosed = false;
+      const terminateChild = () => {
+        try {
+          child.kill('SIGTERM');
+          setTimeout(() => {
+            if (!childClosed) child.kill('SIGKILL');
+          }, 1000).unref();
+        } catch {
+          // A process that already exited needs no further action.
+        }
+      };
+      const maxNativeActions = desktopTask ? 12 : Infinity;
+      let nativeActionStarts = 0;
+      const seenNativeActionSteps = new Set<number>();
+      const wallTimer = desktopTask ? setTimeout(() => {
+        const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.') as Error & { code: string };
+        error.code = 'AGY_DESKTOP_TASK_LIMIT';
+        safeReject(error);
+        terminateChild();
+      }, 180_000) : null;
+      wallTimer?.unref();
 
       const cleanup = () => {
+        if (wallTimer) clearTimeout(wallTimer);
         if (options.signal) {
           options.signal.removeEventListener('abort', onAbort);
         }
@@ -881,14 +914,7 @@ export class AntigravityProvider extends LLMProvider {
       };
 
       const onAbort = () => {
-        try {
-          child.kill('SIGTERM');
-          setTimeout(() => {
-            if (!childClosed) child.kill('SIGKILL');
-          }, 1000).unref();
-        } catch {
-          // ignore kill errors
-        }
+        terminateChild();
         const abortErr = new Error('Turn aborted by user or timeout.');
         abortErr.name = 'AbortError';
         safeReject(abortErr);
@@ -935,11 +961,22 @@ export class AntigravityProvider extends LLMProvider {
               const stepType = stepUpdate?.step_type;
               if (stepType === 'tool') {
                 const state = stepUpdate?.state;
+                const stepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
+                const newNativeAction = (state === 'ACTIVE' || (state === 'DONE' && Number.isFinite(stepIndex)))
+                  && (!Number.isFinite(stepIndex) || !seenNativeActionSteps.has(stepIndex));
+                if (newNativeAction && Number.isFinite(stepIndex)) seenNativeActionSteps.add(stepIndex);
+                if (desktopTask && newNativeAction && ++nativeActionStarts > maxNativeActions) {
+                  const error = new Error(`Antigravity exceeded ${maxNativeActions} native actions for this desktop task. Outcome is unverified.`) as Error & { code: string };
+                  error.code = 'AGY_NATIVE_ACTION_BUDGET';
+                  safeReject(error);
+                  terminateChild();
+                  return;
+                }
                 const toolInfo = stepUpdate?.tool_info || {};
                 const name = stepUpdate?.tool_name || toolInfo?.name;
-                const status = state === 'DONE'
-                  ? 'completed'
-                  : (state === 'ERROR' ? 'failed' : 'running');
+                const status = state === 'DONE' || state === 'ERROR'
+                  ? (state === 'ERROR' || toolInfo?.error ? 'failed' : 'completed')
+                  : 'running';
                 const rawParams = (toolInfo && typeof toolInfo === 'object' && toolInfo.parameters) ||
                   (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
                   (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
@@ -1055,9 +1092,10 @@ export class AntigravityProvider extends LLMProvider {
           }
         }
 
-        if (code !== 0 || finalResultObj?.status === 'ERROR') {
+        if (code !== 0 || (finalResultObj?.status && finalResultObj.status !== 'SUCCESS')) {
           if (useConversation) this.currentConversationId = null;
-          const errDetail = finalResultObj?.error || stderrBuffer.trim() || `exit code ${code}`;
+          const errDetail = finalResultObj?.error || stderrBuffer.trim() ||
+            `terminal status ${finalResultObj?.status || 'unknown'}, exit code ${code}`;
           safeReject(new Error(`Antigravity Agent (agy) failed: ${errDetail}`));
           return;
         }
@@ -1148,20 +1186,31 @@ export class AntigravityProvider extends LLMProvider {
         const missingResultEvent =
           finalResultObj === null && deniedActions.length === 0 && toolCalls.length === 0;
 
-        const promptTokens = Number(finalResultObj?.usage?.input_tokens) || Math.ceil(promptText.length / 4);
-        const completionTokens = Number(finalResultObj?.usage?.output_tokens) || Math.ceil(rawContent.length / 4);
-        const thinkingTokens = Number(finalResultObj?.usage?.thinking_tokens) || 0;
         const usageIsReported = finalResultObj?.usage?.input_tokens != null
           && finalResultObj?.usage?.output_tokens != null
           && Number.isFinite(Number(finalResultObj.usage.input_tokens))
           && Number.isFinite(Number(finalResultObj.usage.output_tokens));
+        const cumulative = {
+          input: usageIsReported ? Number(finalResultObj.usage.input_tokens) : Math.ceil(promptText.length / 4),
+          output: usageIsReported ? Number(finalResultObj.usage.output_tokens) : Math.ceil(rawContent.length / 4),
+          thinking: Number(finalResultObj?.usage?.thinking_tokens) || 0,
+          cacheRead: Number(finalResultObj?.usage?.cache_read_tokens) || 0
+        };
+        const prior = useConversation && resumedConversationId === this.lastCumulativeUsage?.conversationId
+          ? this.lastCumulativeUsage : null;
+        const delta = (current: number, previous: number): number => current >= previous ? current - previous : current;
+        const promptTokens = prior && usageIsReported ? delta(cumulative.input, prior.input) : cumulative.input;
+        const completionTokens = prior && usageIsReported ? delta(cumulative.output, prior.output) : cumulative.output;
+        const thinkingTokens = prior && usageIsReported ? delta(cumulative.thinking, prior.thinking) : cumulative.thinking;
+        const cachedPromptTokens = prior && usageIsReported ? delta(cumulative.cacheRead, prior.cacheRead) : cumulative.cacheRead;
 
         const response: ChatResponse = {
           content,
           usage: {
             promptTokens,
-            completionTokens: completionTokens + thinkingTokens,
-            cachedPromptTokens: Number(finalResultObj?.usage?.cache_read_tokens) || 0,
+            completionTokens,
+            thinkingTokens,
+            cachedPromptTokens,
             measurement: usageIsReported ? 'provider_reported' : 'text_estimate',
             cacheMeasurement: finalResultObj?.usage?.cache_read_tokens != null
               ? 'provider_reported' : 'unavailable'
@@ -1184,6 +1233,9 @@ export class AntigravityProvider extends LLMProvider {
           response.incompleteTurn = true;
         }
 
+        if (usageIsReported && this.currentConversationId) {
+          this.lastCumulativeUsage = { conversationId: this.currentConversationId, ...cumulative };
+        }
         safeResolve(response);
       });
     });

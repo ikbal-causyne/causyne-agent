@@ -257,7 +257,7 @@ process.stdin.on('end', () => {
 `);
     try {
       const provider = new AntigravityProvider({ command: fake.command, model: 'Gemini 3.8 Flash (Low)' });
-      const response = await provider.chat([{ role: 'user', content: 'buatkan game savanna' }]);
+      const response = await provider.chat([{ role: 'user', content: 'build a savanna game' }]);
       assert.ok(response.toolCalls && response.toolCalls.length === 1);
       assert.equal(response.toolCalls[0].function.name, 'sysRun');
       const args = JSON.parse(response.toolCalls[0].function.arguments);

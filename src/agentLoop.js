@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { execFileSync } from 'node:child_process';
 import { processApprovalScope, createApprovalScope } from './approvalGrants.js';
 import { pruneSessions as pruneEmbodimentSessions, describeSession } from './embodimentSession.js';
 import { WorkspacePerception } from './perception.js';
@@ -49,8 +50,30 @@ export function isActionableTaskPrompt(text) {
     const pureGreeting = /^(hi|hello|hey|yo|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
     if (pureGreeting)
         return false;
-    const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find)\b/i;
+    const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find|download)\b/i;
     return actionKeywords.test(t);
+}
+export function isGenericHandoffResponse(text) {
+    const answer = (text || '').trim();
+    if (!answer || answer.length > 500)
+        return false;
+    const lower = answer.toLowerCase();
+    const handoff = /\b(let me know what you would like to do next|what would you like me to do next|how (can|may) i help|what can i help you with|feel free to (ask|tell me))\b/i.test(lower);
+    const verifiedOutcome = /\b(completed|changed|set the (desktop|wallpaper)|saved|created|installed|verified|downloaded|finished)\b/i.test(lower);
+    return handoff && !verifiedOutcome;
+}
+export function isDesktopWallpaperChangePrompt(text) {
+    return /\b(?:change|set|switch|replace)\b[\s\S]{0,100}\b(?:desktop picture|wallpaper|desktop background)\b|\b(?:desktop picture|wallpaper|desktop background)\b[\s\S]{0,100}\b(?:change|set|switch|replace)\b/i.test(text || '');
+}
+function readMacDesktopPictures() {
+    try {
+        return execFileSync('osascript', ['-e', 'tell application "System Events" to get picture of every desktop'], {
+            encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore']
+        }).trim() || null;
+    }
+    catch {
+        return null;
+    }
 }
 export function isExecutionOrLaunchTaskPrompt(text) {
     const t = (text || '').trim();
@@ -154,7 +177,7 @@ ${AGENT_USER_POLICY}
 Follow the selected project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
 
 # Operational Guidelines & Communication
-- **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. If the user communicates in English, communicate strictly in English. Default language is English. Never use or default to Indonesian unless the user explicitly speaks to you in Indonesian.
+- **Strict English Communication**: Communicate strictly in English. Default language is English. All code, comments, documentation, and communication must be 100% in English.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
 - **Evidence-Based Recovery Reports**: State only observed tool results and checks. Never claim a failed task was fixed without a passing check. Keep failure reports brief; if the user requests a detailed report, write it to a Markdown file in their selected workspace and give its path instead of dumping it into chat.
 - **Status Updates**: For substantial work, give brief progress notes while using tools. Use a tool when it contributes to the task, and report what it actually returned.
@@ -951,6 +974,8 @@ export class AgentLoop {
         // awareness instead of burning steps rediscovering it. The result used to be
         // assigned to a local variable and thrown away.
         auditLog.log({ event: 'task_start', taskId: this.taskId, request: this.userPrompt });
+        this.initialDesktopPictures = process.platform === 'darwin' && isDesktopWallpaperChangePrompt(this.userPrompt || '')
+            ? readMacDesktopPictures() : null;
         // Preserve an explicit workspace selected by the caller (for example ACP).
         // The constructor already defaults to process.cwd() when none was supplied.
         coldObserver.beginTask(this.taskId);
@@ -1042,15 +1067,14 @@ export class AgentLoop {
             // measured budget without making the checkpoint undiscoverable.
             if (this._decisionRequirement.required)
                 this.unlockedTools.add('request_decision');
-            // SmartToolsUse: evaluate prompt intent to establish a scoped tool set
-            // and suppress irrelevant packs before initial expansion.
+            // SmartToolsUse preloads likely tools but never changes a delegated
+            // subagent's permission scope. A task's intent is a routing hint, not an
+            // authorization boundary: later tool_search results must remain usable.
             const smartScope = determineToolScope(this.userPrompt, this.taskShape);
-            if (smartScope.toolScope && (!this.toolScope || (this.toolScope instanceof Set && this.toolScope.size === 0))) {
-                this.toolScope = new Set(smartScope.toolScope);
-                for (const tool of this.toolScope) {
+            if (smartScope.toolScope) {
+                for (const tool of smartScope.toolScope)
                     this.unlockedTools.add(tool);
-                }
-                this.debugLog(`[SmartToolsUse] scoped to ${this.toolScope.size} tools (${smartScope.archetype}): ${[...this.toolScope].join(', ')}`);
+                this.debugLog(`[SmartToolsUse] preloaded ${smartScope.toolScope.size} tools (${smartScope.archetype})`);
             }
             // Scored routing, with the regex router as a safety net, filtered by SmartToolsUse suppression
             const scored = packsFromShape(this.taskShape);
@@ -1574,6 +1598,7 @@ export class AgentLoop {
                     taskId: this.taskId,
                     conversationId: this.memoryManager?.sessionId || this.taskId,
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
+                    taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
                     // IARS couples escalation to a wider search. Bounded so a stuck task
@@ -1767,6 +1792,11 @@ export class AgentLoop {
                     const lower = contentText.toLowerCase();
                     const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
                     const isActionable = isActionableTaskPrompt(taskPrompt);
+                    if (isActionable && isGenericHandoffResponse(contentText) && (hasExternalActions || this.stepsCompleted > 0)) {
+                        this.emitEvent({ type: 'error', message: 'The provider returned a generic handoff after tool activity. The requested outcome was not verified; no completion is recorded.' });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
                     // A native workspace action already changed the workspace. Do not
                     // demand a Causyne tool call for the same work, and do not treat the
                     // turn as a no-op.
@@ -2035,6 +2065,14 @@ export class AgentLoop {
                         }
                         catch (_err) {
                             // Cold observer fail-open
+                        }
+                    }
+                    if (process.platform === 'darwin' && isDesktopWallpaperChangePrompt(taskPrompt)) {
+                        const currentDesktopPictures = readMacDesktopPictures();
+                        if (!this.initialDesktopPictures || !currentDesktopPictures || currentDesktopPictures === this.initialDesktopPictures) {
+                            this.emitEvent({ type: 'error', message: 'The desktop wallpaper change was not confirmed by macOS readback. The task remains incomplete.' });
+                            this.memoryManager.saveHistory(this.messages);
+                            break;
                         }
                     }
                     if (response.content) {
@@ -2607,9 +2645,6 @@ export class AgentLoop {
                         }
                         for (const toolName of result._unlock_tools || []) {
                             this.unlockedTools.add(toolName);
-                            if (this.toolScope instanceof Set) {
-                                this.toolScope.add(toolName);
-                            }
                         }
                         delete result._unlock_tools;
                         delete result._unlock_packs;

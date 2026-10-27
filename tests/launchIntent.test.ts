@@ -10,7 +10,7 @@ import { AgentLoop } from '../src/agentLoop.js';
 
 test('opening an existing project excludes file mutation and unrelated commands', () => {
   assert.equal(isLaunchOnlyPrompt('open it'), true);
-  assert.equal(isLaunchOnlyPrompt('buka project ini'), true);
+  assert.equal(isLaunchOnlyPrompt('preview this project'), true);
   assert.equal(isLaunchOnlyPrompt('open it and edit server.py'), false);
   assert.equal(isLaunchOnlyPrompt('run tests'), false);
   assert.match(launchScopeError('fs_edit', { path: 'server.py' }), /not change/);

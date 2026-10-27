@@ -96,13 +96,13 @@ function summary() {
 
 const SUITE = [
   'build me a python script to rename files',
-  'buatkan aku quick script untuk backup folder',
+  'create a quick script to backup folder',
   'trace the bug in my logger',
-  'tolong buatkan requirements.txt',
+  'please generate requirements.txt',
   'list the files on my Desktop and tell me how many there are',
   'what is 2+2',
   'build me a landing page for my startup',
-  'buatkan game platformer 2D',
+  'build a 2D platformer game',
   'build me a 3D racing game in godot',
   'generate a background music track for my video',
   'kill whatever is running on port 3000'

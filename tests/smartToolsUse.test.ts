@@ -5,6 +5,7 @@ import {
   filterSuppressedPacks,
   resolveLazyPlaybooks
 } from '../src/smartToolsUse.js';
+import { resolveActiveTools } from '../src/toolPacks.js';
 
 test('determineToolScope correctly identifies desktop personalization intent', () => {
   const userPrompt =
@@ -68,10 +69,30 @@ test('filterSuppressedPacks removes suppressed packs cleanly', () => {
 
   const filtered = filterSuppressedPacks(initialPacks, wallpaperPrompt);
 
-  assert.ok(filtered.has('system'));
+  assert.equal(filtered.has('system'), false);
   assert.equal(filtered.has('web'), false);
   assert.equal(filtered.has('media'), false);
   assert.equal(filtered.has('game'), false);
+});
+
+test('desktop tools remain available on demand after initial pack suppression', () => {
+  const prompt = 'change my desktop wallpaper to a snowy mountain';
+  const recommendation = determineToolScope(prompt);
+  const packs = filterSuppressedPacks(['system', 'web', 'media'], prompt);
+  const definitions = [
+    { name: 'sysRun' },
+    { name: 'tool_search' },
+    { name: 'web_search' },
+    { name: 'desktop_act' }
+  ];
+  const unlockedTools = new Set(recommendation.toolScope);
+
+  const initial = resolveActiveTools(definitions, packs, unlockedTools, null, { residentOnly: true });
+  assert.deepEqual(initial.map((tool: { name: string }) => tool.name), ['sysRun', 'tool_search', 'web_search']);
+
+  unlockedTools.add('desktop_act');
+  const discovered = resolveActiveTools(definitions, packs, unlockedTools, null, { residentOnly: true });
+  assert.ok(discovered.some((tool: { name: string }) => tool.name === 'desktop_act'));
 });
 
 test('resolveLazyPlaybooks suppresses massive playbooks when tools are uninvoked', () => {

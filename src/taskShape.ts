@@ -18,20 +18,20 @@ interface ArchetypeDefinition {
 
 const PACK_SIGNALS: Record<string, SignalSet> = {
   game: {
-    strong: ['game', 'gamedev', 'permainan', 'godot', 'unity', 'unreal', 'rpg', 'platformer', 'roguelike', 'arcade', 'voxel', 'minecraft', 'tilemap', 'spritesheet', 'boss fight', 'level design'],
+    strong: ['game', 'gamedev', 'godot', 'unity', 'unreal', 'rpg', 'platformer', 'roguelike', 'arcade', 'voxel', 'minecraft', 'tilemap', 'spritesheet', 'boss fight', 'level design'],
     weak: ['sprite', 'player', 'enemy', 'quest', 'npc', 'gameplay', 'multiplayer', 'leaderboard']
   },
   web: {
-    strong: ['web app', 'webapp', 'website', 'situs', 'landing page', 'homepage', 'frontend', 'front-end', 'dashboard', 'portfolio', 'react', 'vue', 'svelte', 'angular', 'nextjs', 'next.js', 'nuxt', 'astro', 'tailwind', 'html', 'css'],
-    weak: ['web', 'ui', 'ux', 'page', 'halaman', 'responsive', 'browser', 'dom', 'component', 'layout', 'design', 'desain', 'tampilan']
+    strong: ['web app', 'webapp', 'website', 'landing page', 'homepage', 'frontend', 'front-end', 'dashboard', 'portfolio', 'react', 'vue', 'svelte', 'angular', 'nextjs', 'next.js', 'nuxt', 'astro', 'tailwind', 'html', 'css'],
+    weak: ['web', 'ui', 'ux', 'page', 'responsive', 'browser', 'dom', 'component', 'layout', 'design']
   },
   media: {
-    strong: ['generate image', 'generate video', 'generate music', 'text to speech', 'voiceover', 'blender', 'davinci', 'resolve', 'render', '3d model', 'animation', 'animasi'],
-    weak: ['image', 'gambar', 'photo', 'foto', 'video', 'audio', 'sound', 'suara', 'music', 'musik', 'lagu', 'thumbnail', 'poster', 'logo', 'illustration']
+    strong: ['generate image', 'generate video', 'generate music', 'text to speech', 'voiceover', 'blender', 'davinci', 'resolve', 'render', '3d model', 'animation'],
+    weak: ['image', 'photo', 'video', 'audio', 'sound', 'music', 'thumbnail', 'poster', 'logo', 'illustration']
   },
   system: {
-    strong: ['kill process', 'port', 'zip', 'unzip', 'tar', 'archive', 'clipboard', 'printer', 'print', 'cetak'],
-    weak: ['process', 'proses', 'compress', 'extract', 'ekstrak', 'open app', 'launch']
+    strong: ['kill process', 'port', 'zip', 'unzip', 'tar', 'archive', 'clipboard', 'printer', 'print'],
+    weak: ['process', 'compress', 'extract', 'open app', 'launch']
   },
   advanced: {
     strong: ['pdf', 'forge a tool', 'custom tool', 'plugin', 'plugins', 'custom plugin', 'subagent', 'sub-agent', 'parallel agent'],

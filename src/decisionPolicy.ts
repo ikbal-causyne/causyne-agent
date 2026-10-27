@@ -38,16 +38,14 @@ const ARCHITECTURE_TERMS = [
 
 const CHANGE_TERMS = [
   'change', 'replace', 'switch', 'choose', 'decide', 'redesign', 'restructure',
-  'rewrite', 'rebuild', 'migration', 'migrate',
-  'ubah', 'ganti', 'pilih', 'tentukan', 'rombak', 'beralih', 'migrasi'
+  'rewrite', 'rebuild', 'migration', 'migrate'
 ];
 
 const EXPLICIT_CHOICE_PATTERNS = [
   /\b(?:i|we)\s+(?:choose|chose|selected?|decided? (?:on|to use))\s+[a-z0-9@._+-]+/i,
   /\b(?:must use|will use|switch to|rewrite (?:to|in)|migrate to)\s+[a-z0-9@._+-]+/i,
-  /\b(?:saya pilih|aku pilih|kita pilih|harus memakai|beralih ke|ubah ke|ganti ke)\s+[a-z0-9@._+-]+/i,
-  /^(?:please\s+)?(?:use|choose|gunakan|pilih)\s+[a-z0-9@._+-]+/i,
-  /\b(?:do not|don't|jangan)\s+(?:use|gunakan|pakai)\s+[a-z0-9@._+-]+/i
+  /^(?:please\s+)?(?:use|choose)\s+[a-z0-9@._+-]+/i,
+  /\b(?:do not|don't)\s+use\s+[a-z0-9@._+-]+/i
 ];
 
 const MUTATING_TOOLS = new Set([
@@ -64,9 +62,9 @@ export function assessDecisionRequirement(prompt: string): DecisionRequirement {
   const text = raw.toLowerCase();
   const architectural = containsAny(text, ARCHITECTURE_TERMS);
   const change = containsAny(text, CHANGE_TERMS);
-  const alternatives = /\b(?:or|versus|vs\.?|atau|dibanding(?:kan)? dengan)\b/i.test(raw);
-  const asksForChoice = /\b(?:which|what should|should we|mana|apakah sebaiknya|bagaimana sebaiknya)\b/i.test(raw);
-  const delegatesBroadRedesign = /\b(?:redesign|restructure|rombak)\s+(?:the\s+)?(?:architecture|system|runtime|database|arsitektur|sistem)\b/i.test(raw);
+  const alternatives = /\b(?:or|versus|vs\.?)\b/i.test(raw);
+  const asksForChoice = /\b(?:which|what should|should we)\b/i.test(raw);
+  const delegatesBroadRedesign = /\b(?:redesign|restructure)\s+(?:the\s+)?(?:architecture|system|runtime|database)\b/i.test(raw);
   const explicit = EXPLICIT_CHOICE_PATTERNS.some(pattern => pattern.test(raw));
 
   if (!architectural || explicit || (!alternatives && !asksForChoice && !(change && delegatesBroadRedesign))) {
@@ -83,7 +81,7 @@ export function assessDecisionRequirement(prompt: string): DecisionRequirement {
 export function requiresImplementationPlan(prompt: string, archetype = '', confidence = ''): boolean {
   const text = String(prompt ?? '').toLowerCase();
   if (archetype === 'build_app' || archetype === 'integrate') return true;
-  if (confidence === 'high' && /\b(?:implement|build|create|migrate|rewrite|refactor|integrate|buat|bangun|ubah)\b/i.test(text)) {
+  if (confidence === 'high' && /\b(?:implement|build|create|migrate|rewrite|refactor|integrate)\b/i.test(text)) {
     return true;
   }
   return containsAny(text, ARCHITECTURE_TERMS) && containsAny(text, CHANGE_TERMS);

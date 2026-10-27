@@ -104,7 +104,7 @@ export function compileDocumentHtml(spec: FormalDocumentSpec): { html: string; c
   size: A4 portrait;
   margin: 20mm 18mm 18mm 18mm;
   @bottom-right {
-    content: "Halaman " counter(page);
+    content: "Page " counter(page);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 8.5pt;
     color: #64748b;
@@ -266,7 +266,7 @@ tr:nth-child(even) td {
   <div class="cover-content">
     <div class="cover-title">${escapeHtml(spec.title)}</div>
     ${spec.subtitle ? `<div class="cover-subtitle">${escapeHtml(spec.subtitle)}</div>` : ''}
-    ${spec.authorOrProposer ? `<div class="cover-meta">Disusun oleh: <strong>${escapeHtml(spec.authorOrProposer)}</strong></div>` : ''}
+    ${spec.authorOrProposer ? `<div class="cover-meta">Prepared by: <strong>${escapeHtml(spec.authorOrProposer)}</strong></div>` : ''}
   </div>
   <div class="cover-band-bottom"></div>
 </div>`;
@@ -306,7 +306,7 @@ tr:nth-child(even) td {
   bodyHtml += '\n</div>';
 
   const html = `<!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>${escapeHtml(spec.title)}</title>

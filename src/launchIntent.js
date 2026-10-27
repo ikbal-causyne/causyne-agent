@@ -1,5 +1,5 @@
-const LAUNCH_VERBS = /\b(open|launch|start|run|play|serve|preview|buka|jalankan|mainkan|pratinjau)\b/i;
-const CHANGE_VERBS = /\b(create|build|make|write|edit|fix|modify|change|update|implement|generate|refactor|delete|remove|install|deploy|buat|bangun|tulis|ubah|perbaiki|hapus|pasang)\b/i;
+const LAUNCH_VERBS = /\b(open|launch|start|run|play|serve|preview)\b/i;
+const CHANGE_VERBS = /\b(create|build|make|write|edit|fix|modify|change|update|implement|generate|refactor|delete|remove|install|deploy)\b/i;
 const SERVER_COMMAND = /^\s*(?:python(?:3(?:\.\d+)?)?\s+(?:-u\s+)?(?:\S*\/)?server\.py\b|python(?:3(?:\.\d+)?)?\s+-m\s+http\.server\b|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b|(?:npx|bunx)\s+(?:vite|next\s+dev|http-server)\b|uvicorn\b|gunicorn\b|flask\s+run\b)/i;
 const READ_ONLY_COMMAND = /^\s*(?:pwd|ls|rg|grep|cat|head|tail|find|which|where|ps|pgrep|lsof|netstat|ss|git\s+(?:status|diff|log|show)|node\s+(?:-v|--version)|python(?:3(?:\.\d+)?)?\s+(?:-V|--version))\b/i;
 const OPEN_COMMAND = /^\s*(?:open|xdg-open|start)\s+\S+/i;
@@ -11,7 +11,7 @@ const MUTATION_TOOLS = new Set([
     'create_skill', 'manage_local_dependencies'
 ]);
 export function isLaunchOnlyPrompt(prompt) {
-    if (/\b(?:run|jalankan)\s+(?:the\s+)?(?:tests?|checks?|lint|benchmarks?|scripts?|commands?)\b/i.test(prompt))
+    if (/\brun\s+(?:the\s+)?(?:tests?|checks?|lint|benchmarks?|scripts?|commands?)\b/i.test(prompt))
         return false;
     return LAUNCH_VERBS.test(prompt) && !CHANGE_VERBS.test(prompt);
 }

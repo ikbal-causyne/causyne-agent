@@ -77,22 +77,12 @@ const STOPWORDS = new Set([
     'with', 'from', 'into', 'then', 'this', 'that', 'it', 'its', 'as', 'by',
     'please', 'just', 'now', 'my', 'me', 'you', 'your', 'i',
     // Generic creation verbs. Every task has one, so they inflate the union
-    // without discriminating between tasks — the exact shape that made
-    // "buat pena 3D di Blender" and "bikin pulpen 3D di blender" score 0.40
-    // when they describe the same job. `build`, `fix`, `debug` and `render` are
+    // without discriminating between tasks. `build`, `fix`, `debug` and `render` are
     // deliberately NOT here: those DO separate tasks inside one archetype.
-    'make', 'create', 'creating', 'made', 'generate',
-    // Indonesian — the owner writes in both, and a mixed-language prompt must
-    // key the same way whichever language framed it.
-    'dan', 'atau', 'yang', 'untuk', 'dari', 'ke', 'di', 'itu', 'ini', 'dengan',
-    'tolong', 'saya', 'aku', 'kamu', 'adalah', 'pada', 'juga', 'agar', 'jadi',
-    'buat', 'bikin', 'membuat', 'lalu', 'kemudian', 'terus', 'dulu', 'saja',
-    'sekarang', 'harus', 'bisa', 'sudah', 'belum', 'akan', 'mau', 'coba'
+    'make', 'create', 'creating', 'made', 'generate'
 ]);
-// HONEST LIMIT. Matching is LEXICAL. A task cached in English and re-asked in
-// Indonesian (or the reverse) will miss, because Jaccard cannot know that
-// "pen" and "pena" are the same object. That is a deliberate trade: this path
-// is deterministic, instant, and works on a machine with no embedding model
+// HONEST LIMIT. Matching is LEXICAL.
+// This path is deterministic, instant, and works on a machine with no embedding model
 // provisioned. Cortex is the semantic route and already carries embeddings;
 // these two compose rather than compete.
 /**

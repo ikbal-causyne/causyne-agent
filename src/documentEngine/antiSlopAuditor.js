@@ -6,18 +6,6 @@
  * Enforces authentic human cadence, strict hyphenation rules, and zero ungrounded placeholders.
  */
 const BANNED_LONG_DASHES = /[—–]/g;
-const AI_SLOP_CLICHES_ID = [
-    /\bsangatlah\b/i,
-    /\btak terbantahkan\b/i,
-    /\brevolusioner\b/i,
-    /\bgame[- ]?changer\b/i,
-    /\bdi era yang serba\b/i,
-    /\bmari kita\b/i,
-    /\btidak dapat dipungkiri\b/i,
-    /\bperlu diingat bahwa\b/i,
-    /\bdalam lanskap modern\b/i,
-    /\bmerupakan sebuah bukti nyata\b/i
-];
 const AI_SLOP_CLICHES_EN = [
     /\bdelve(?:s|d|ing)?\b/i,
     /\bcrucial(?:ly)?\b/i,
@@ -36,8 +24,8 @@ const AI_SLOP_CLICHES_EN = [
     /\bholistic approach\b/i
 ];
 const PLACEHOLDER_BRACKETS = [
-    /\[(?:insert|masukkan|isi|tbd|todo|placeholder|nama|tanggal|lokasi)[^\]]*\]/i,
-    /<(?:insert|masukkan|isi|tbd|todo|placeholder)[^>]*>/i
+    /\[(?:insert|placeholder|tbd|todo|name|date|location)[^\]]*\]/i,
+    /<(?:insert|placeholder|tbd|todo)[^>]*>/i
 ];
 /**
  * Scan raw text or HTML content for AI slop, long em-dashes, and placeholder tokens.
@@ -45,7 +33,6 @@ const PLACEHOLDER_BRACKETS = [
 export function auditTextContent(content, options = {}) {
     const findings = [];
     const lines = (content || '').split(/\r?\n/);
-    const lang = options.language || 'both';
     const strictDashes = options.strictDashes !== false;
     lines.forEach((line, idx) => {
         const lineNum = idx + 1;
@@ -75,34 +62,17 @@ export function auditTextContent(content, options = {}) {
                 });
             }
         }
-        // 3. AI Slop Cliches (ID)
-        if (lang === 'id' || lang === 'both') {
-            for (const pat of AI_SLOP_CLICHES_ID) {
-                const m = line.match(pat);
-                if (m) {
-                    findings.push({
-                        rule: 'anti_ai_slop_phrase_id',
-                        severity: 'warning',
-                        match: m[0],
-                        line: lineNum,
-                        message: `Found formulaic AI phrase "${m[0]}". Rewrite in authentic, direct human voice.`
-                    });
-                }
-            }
-        }
-        // 4. AI Slop Cliches (EN)
-        if (lang === 'en' || lang === 'both') {
-            for (const pat of AI_SLOP_CLICHES_EN) {
-                const m = line.match(pat);
-                if (m) {
-                    findings.push({
-                        rule: 'anti_ai_slop_phrase_en',
-                        severity: 'warning',
-                        match: m[0],
-                        line: lineNum,
-                        message: `Found generic AI trope "${m[0]}". Replace with concrete, factual language.`
-                    });
-                }
+        // 3. AI Slop Cliches (EN)
+        for (const pat of AI_SLOP_CLICHES_EN) {
+            const m = line.match(pat);
+            if (m) {
+                findings.push({
+                    rule: 'anti_ai_slop_phrase_en',
+                    severity: 'warning',
+                    match: m[0],
+                    line: lineNum,
+                    message: `Found generic AI trope "${m[0]}". Replace with concrete, factual language.`
+                });
             }
         }
     });

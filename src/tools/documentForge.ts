@@ -55,7 +55,7 @@ export interface DocumentForgeArgs {
 export const documentForgeTool = {
   schema: {
     name: 'document_forge',
-    description: 'Causyne Document Forge: Professional document & media production harness. Generates pixel-perfect A4/Letter publications via HTML/CSS-First Paged Media and Headless Chrome, renders vector PDFs (<2MB compliant), extracts page images for visual QA ("Lihat Hasilnya"), audits anti-slop and math integrity, formats Hollywood Courier 12pt screenplays, creates production shot lists, and times VO narration.',
+    description: 'Causyne Document Forge: Professional document & media production harness. Generates pixel-perfect A4/Letter publications via HTML/CSS-First Paged Media and Headless Chrome, renders vector PDFs (<2MB compliant), extracts page images for visual QA ("Inspect Results"), audits anti-slop and math integrity, formats Hollywood Courier 12pt screenplays, creates production shot lists, and times VO narration.',
     parameters: {
       type: 'object',
       properties: {

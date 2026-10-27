@@ -21,9 +21,9 @@ import { TOOL_DEFINITIONS, toolRegistry } from '../src/tools/registry.js';
 
 test('document forge: anti-slop audit catches long em-dashes and AI cliches', () => {
   const badText = `
-Di era yang serba digital ini, pelestarian budaya sangatlah krusial — tak terbantahkan lagi.
-Kami akan menyusun naskah [Insert nama narasumber di sini] untuk dokumenter ini.
-In conclusion, this project is a testament to cultural heritage.
+In today's digital landscape, innovation is crucial — without question.
+We will draft the proposal [Insert interviewee name here] for this document.
+In conclusion, this project is a testament to cultural heritage and delves into deep themes.
 `;
 
   const audit = auditTextContent(badText);
@@ -31,10 +31,9 @@ In conclusion, this project is a testament to cultural heritage.
   const rules = audit.findings.map((f) => f.rule);
   assert.ok(rules.includes('no_long_em_dash'), 'Should catch long em-dash');
   assert.ok(rules.includes('no_ungrounded_placeholders'), 'Should catch placeholder brackets');
-  assert.ok(rules.includes('anti_ai_slop_phrase_id'), 'Should catch Indonesian AI cliches');
   assert.ok(rules.includes('anti_ai_slop_phrase_en'), 'Should catch English AI tropes');
 
-  const goodText = 'Perekaman tradisi lodong bambu di Kabupaten Serang dilakukan dengan pendekatan etnografi visual.';
+  const goodText = 'Field documentation of traditional craft was conducted with visual ethnographic methods.';
   const cleanAudit = auditTextContent(goodText);
   assert.equal(cleanAudit.clean, true);
   assert.equal(cleanAudit.findings.length, 0);
@@ -45,18 +44,18 @@ test('document forge: budget arithmetic validates line items and gross-up taxes'
     categories: [
       {
         code: 'A',
-        name: 'Pra-Produksi',
+        name: 'Pre-Production',
         items: [
-          { name: 'Riset Awal', volume: 1, frequency: 1, unitPrice: 2000000, total: 2000000 },
-          { name: 'Survey Lokasi', volume: 2, frequency: 1, unitPrice: 1500000, total: 3000000 }
+          { name: 'Initial Research', volume: 1, frequency: 1, unitPrice: 2000000, total: 2000000 },
+          { name: 'Location Scouting', volume: 2, frequency: 1, unitPrice: 1500000, total: 3000000 }
         ],
         subtotal: 5000000
       },
       {
         code: 'B',
-        name: 'Produksi',
+        name: 'Production',
         items: [
-          { name: 'Sewa Kamera', volume: 5, frequency: 1, unitPrice: 1000000, total: 5000000 }
+          { name: 'Camera Rental', volume: 5, frequency: 1, unitPrice: 1000000, total: 5000000 }
         ],
         subtotal: 5000000
       }
@@ -76,7 +75,7 @@ test('document forge: budget arithmetic validates line items and gross-up taxes'
     categories: [
       {
         code: 'A',
-        name: 'Produksi',
+        name: 'Production',
         items: [
           { name: 'Honorarium', volume: 3, frequency: 2, unitPrice: 1000000, total: 5000000 } // should be 6M
         ]
@@ -90,31 +89,32 @@ test('document forge: budget arithmetic validates line items and gross-up taxes'
 
 test('document forge: compiles formal HTML/CSS with editorial palette and A4 pagination', () => {
   const spec = {
-    title: 'Dentuman Terakhir: Mengarsipkan Teknologi Tradisional',
-    subtitle: 'Proposal Dokumentasi Pengetahuan Tradisional Rawan Punah',
-    categoryOrKicker: 'DANA INDONESIARAYA 2026',
-    authorOrProposer: 'Meli Anggraeni',
+    title: 'The Final Detonation: Archiving Traditional Technology',
+    subtitle: 'Technical Documentation of Endangered Heritage Techniques',
+    categoryOrKicker: 'GLOBAL HERITAGE INITIATIVE 2026',
+    authorOrProposer: 'Elena Vance',
     palette: 'editorial_dair',
     includeCover: true,
     sections: [
       {
-        title: 'Latar Belakang',
-        paragraphs: ['Bebeledugan merupakan teknologi tradisional berbasis vegetasi bambu gombong tua.'],
-        callout: 'Lokus utama penelitian dipusatkan di Kabupaten Serang, Banten.'
+        title: 'Background',
+        paragraphs: ['Traditional acoustic resonance systems utilize aged timber harvested during dry seasons.'],
+        callout: 'Field research was concentrated across the valley workshops.'
       },
       {
-        title: 'Struktur Pembiayaan',
+        title: 'Funding Structure',
         table: {
-          headers: ['Uraian', 'Kuantitas', 'Biaya'],
-          rows: [['Bamboe Gombong', '10 Batang', 'Rp500.000']]
+          headers: ['Description', 'Quantity', 'Cost'],
+          rows: [['Aged Timber Nodes', '10 Stalks', '$500.00']]
         }
       }
     ]
   };
 
   const compiled = compileDocumentHtml(spec);
-  assert.ok(compiled.html.includes('Dentuman Terakhir'));
-  assert.ok(compiled.html.includes('Meli Anggraeni'));
+  assert.ok(compiled.html.includes('The Final Detonation'));
+  assert.ok(compiled.html.includes('Elena Vance'));
+  assert.ok(compiled.html.includes('Prepared by: <strong>Elena Vance</strong>'));
   assert.ok(compiled.html.includes('cover-band-top'));
   assert.ok(compiled.css.includes('size: A4 portrait'));
   assert.ok(compiled.css.includes('--primary: #78281F'));
@@ -174,8 +174,8 @@ test('document forge: generates production shot list with duration sums', () => 
     }
   ];
 
-  const shotList = formatShotListHtml('Bebeledugan Doc', shots);
-  assert.ok(shotList.html.includes('Bebeledugan Doc — Production Shot List'));
+  const shotList = formatShotListHtml('Echoes Doc', shots);
+  assert.ok(shotList.html.includes('Echoes Doc — Production Shot List'));
   assert.ok(shotList.html.includes('Total Shots: 2 | Est. Duration: 7s'));
   assert.ok(shotList.html.includes('Morning fog drifts'));
   assert.ok(shotList.css.includes('size: A4 landscape'));

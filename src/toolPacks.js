@@ -367,15 +367,15 @@ When the user asks you to build, create, test, expand, or develop a game, follow
 // raw prompt only.
 // ---------------------------------------------------------------------------
 
-const GAME_INTENT = /\b(game|games|gamedev|permainan|godot|unity|unreal|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight)\b|\.(tscn|gd)\b/i;
+const GAME_INTENT = /\b(game|games|gamedev|godot|unity|unreal|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight)\b|\.(tscn|gd)\b/i;
 
-const WEB_INTENT = /\b(web|webpage|website|situs|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component)\b/i;
+const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component)\b/i;
 
-const MEDIA_INTENT = /\b(image|images|picture|photo|gambar|render|3d model|blender|animation|animate|video|movie|film|klip|audio|sound|sfx|music|musik|song|lagu|voice|suara|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
+const MEDIA_INTENT = /\b(image|images|picture|photo|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
 
-const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|cetak|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
+const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
 
-const ADVANCED_INTENT = /\b(pdf|document|proposal|dokumen|screenplay|naskah|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
+const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 
 const INTENT_MATCHERS = {
   game: GAME_INTENT,

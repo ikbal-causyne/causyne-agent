@@ -3,9 +3,74 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentLoop, isMidTaskProgressText } from '../src/agentLoop.js';
+import { AgentLoop, isDesktopWallpaperChangePrompt, isGenericHandoffResponse, isMidTaskProgressText } from '../src/agentLoop.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
+
+test('a generic handoff after native actions cannot be reported as task completion', async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-handoff-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: Array<{ type: string; message?: string; content?: string }> = [];
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'handoff-regression', 'search and download a wallpaper and change my desktop picture',
+      { workspaceRoot: workspace }
+    );
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => ({
+        content: 'Acknowledged. Vision capabilities and browser actions are noted. Let me know what you would like to do next.',
+        externalActions: [{ name: 'search_web', status: 'completed' }],
+        usage: { promptTokens: 10, completionTokens: 8 }
+      })
+    };
+    loop.initializeProvider = () => model as never;
+    await loop.run();
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
+    assert.equal(events.some((event) => event.type === 'agent_message' && event.content?.startsWith('Acknowledged')), false);
+    assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('not verified')), true);
+    assert.equal(isGenericHandoffResponse('Changed the desktop wallpaper. Let me know if you want another.'), false);
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a claimed macOS wallpaper change needs an actual changed desktop readback', { skip: process.platform !== 'darwin' }, async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wallpaper-readback-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: Array<{ type: string; message?: string }> = [];
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'wallpaper-readback-regression', 'change my desktop picture',
+      { workspaceRoot: workspace }
+    );
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => ({
+        content: 'Changed the desktop picture.',
+        externalActions: [{ name: 'run_command', status: 'completed' }],
+        usage: { promptTokens: 10, completionTokens: 8 }
+      })
+    };
+    loop.initializeProvider = () => model as never;
+    await loop.run();
+    assert.equal(isDesktopWallpaperChangePrompt('please change my desktop picture'), true);
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
+    assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('macOS readback')), true);
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 test('an actionable request fails visibly after repeated greetings without showing them as answers', async () => {
   const previousDirectory = process.cwd();

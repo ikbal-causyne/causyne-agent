@@ -90,15 +90,15 @@ test('plan cache: keywords are extracted without a model call', () => {
   assert.ok(!/\ballm\b|\.chat\(|createProvider/.test(source),
     'the plan cache reached for inference; the whole point is that it does not');
 
-  const words = extractKeywords('Buat pena 3D di Blender dan render jadi klip sinematik 8 detik');
-  assert.ok(words.includes('blender') && words.includes('sinematik'));
-  assert.ok(!words.includes('dan') && !words.includes('buat'),
+  const words = extractKeywords('Create 3D pen in Blender and render as 8 second cinematic clip');
+  assert.ok(words.includes('blender') && words.includes('cinematic'));
+  assert.ok(!words.includes('and') && !words.includes('create'),
     'generic verbs and connectives inflate the union without discriminating');
 });
 
 test('plan cache: the same job phrased differently still matches', () => {
   recordPlan({
-    prompt: 'Buat pena 3D di Blender dan render jadi klip sinematik 8 detik',
+    prompt: 'Create 3D pen in Blender and render as 8 second cinematic clip',
     archetype: 'media',
     steps: [
       toStep('blender_act', { action: 'checkBridge' }, true),
@@ -107,7 +107,7 @@ test('plan cache: the same job phrased differently still matches', () => {
     ]
   });
 
-  const hit = lookupPlan({ prompt: 'bikin pulpen 3D di blender lalu render klip sinematik', archetype: 'media' });
+  const hit = lookupPlan({ prompt: 'Make 3D pen in Blender then render cinematic clip', archetype: 'media' });
   assert.ok(hit, 'a re-phrasing of the same job missed the cache');
   assert.ok(hit.similarity >= MATCH_THRESHOLD);
 });
