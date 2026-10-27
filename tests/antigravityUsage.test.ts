@@ -84,12 +84,47 @@ process.stdin.on('end', () => {
     status: 'WAITING', response: 'Done.', conversation_id: 'waiting-conversation'
   } }) + '\\n');
 });
+
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
     await assert.rejects(
       provider.chat([{ role: 'user', content: 'Change my wallpaper' }], { conversationId: 'session-3' }),
       /terminal status WAITING/
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity stops within a streamed turn when completed steps exhaust the remaining token budget', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-token-cap-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'budget-test'});
+  emit({event:'step_update',step_update:{step_index:1,state:'ACTIVE',step_type:'agent_response'}});
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:30,output_tokens:5,cache_read_tokens:20}}});
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:30,output_tokens:5,cache_read_tokens:20}}});
+  emit({event:'step_update',step_update:{step_index:2,state:'DONE',step_type:'checkpoint',usage:{input_tokens:16,output_tokens:2,cache_read_tokens:0}}});
+  setTimeout(() => emit({event:'result',result:{status:'SUCCESS',response:'Should not finish',usage:{input_tokens:46,output_tokens:7}}}), 1000);
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Do task' }], { maxTokensThisCall: 40, maxRetries: 2 }),
+      (error: unknown) => {
+        const stopped = error as { code?: string; partialUsage?: { promptTokens: number; completionTokens: number; cachedPromptTokens?: number } };
+        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
+        assert.deepEqual(stopped.partialUsage, {
+          promptTokens: 46, completionTokens: 7, cachedPromptTokens: 20,
+          thinkingTokens: 0, measurement: 'provider_reported', cacheMeasurement: 'provider_reported'
+        });
+        return true;
+      }
     );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
