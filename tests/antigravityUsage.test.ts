@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 
-test('Antigravity cumulative session usage is charged to each turn only once', async () => {
+test('Antigravity cumulative session usage is charged to each turn only once', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-usage-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -44,7 +44,7 @@ process.stdin.on('end', () => {
   }
 });
 
-test('a desktop task stops after its native action budget', async () => {
+test('a desktop task stops after its native action budget', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-budget-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -74,7 +74,7 @@ process.stdin.on('end', () => {
   }
 });
 
-test('a non-success terminal status cannot be treated as a completed turn', async () => {
+test('a non-success terminal status cannot be treated as a completed turn', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-status-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node

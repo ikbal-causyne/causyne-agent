@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
-import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseAction, type ChatResponseToolCall } from './base.js';
+import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseAction, type ChatResponseToolCall, type ChatResponseUsage } from './base.js';
 
 /**
  * Baseline fallback models for instant offline availability.
@@ -587,7 +587,7 @@ export class AntigravityProvider extends LLMProvider {
       '[Environment State & Idempotency Directive]\n' +
       'Reuse relevant verified tool results from this session, and check uncertain prerequisites before relying on them.\n\n' +
       '[Language & Communication Directive]\n' +
-      'Communicate strictly in English. Default to English for all responses and reasoning. Never send conversational pleasantries or canned greetings.'
+      'Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language. Never send conversational pleasantries or canned greetings.'
     );
 
     if (tools && tools.length > 0) {
@@ -884,6 +884,16 @@ export class AntigravityProvider extends LLMProvider {
       const maxNativeActions = desktopTask ? 12 : Infinity;
       let nativeActionStarts = 0;
       const seenNativeActionSteps = new Set<number>();
+      // Antigravity's result usage is cumulative across the conversation, but
+      // DONE step updates carry usage for that step. Keep a turn-local subtotal
+      // so a single headless run cannot consume an entire task budget unseen.
+      const completedUsageSteps = new Set<number>();
+      const partialUsage: ChatResponseUsage = {
+        promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0,
+        thinkingTokens: 0, measurement: 'provider_reported', cacheMeasurement: 'provider_reported'
+      };
+      const tokenLimit = Number(options.maxTokensThisCall);
+      const enforceTokenLimit = Number.isFinite(tokenLimit) && tokenLimit > 0;
       const wallTimer = desktopTask ? setTimeout(() => {
         const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.') as Error & { code: string };
         error.code = 'AGY_DESKTOP_TASK_LIMIT';
@@ -957,6 +967,32 @@ export class AntigravityProvider extends LLMProvider {
               }
             } else if (event.event === 'step_update') {
               const stepUpdate = event.step_update;
+              const usage = stepUpdate?.usage;
+              const usageStepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
+              if (stepUpdate?.state === 'DONE' && usage && Number.isFinite(usageStepIndex)
+                && !completedUsageSteps.has(usageStepIndex)) {
+                const input = Number(usage.input_tokens);
+                const output = Number(usage.output_tokens);
+                if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
+                  completedUsageSteps.add(usageStepIndex);
+                  partialUsage.promptTokens += input;
+                  partialUsage.completionTokens += output;
+                  partialUsage.cachedPromptTokens = (partialUsage.cachedPromptTokens || 0)
+                    + (Number(usage.cache_read_tokens) || 0);
+                  partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
+                    + (Number(usage.thinking_tokens) || 0);
+                  if (enforceTokenLimit && partialUsage.promptTokens + partialUsage.completionTokens >= tokenLimit) {
+                    this.currentConversationId = null;
+                    const error = Object.assign(
+                      new Error(`Antigravity token budget reached during this turn: at least ${partialUsage.promptTokens + partialUsage.completionTokens} tokens reported for a ${tokenLimit}-token remaining budget. The task outcome is unverified.`),
+                      { code: 'AGY_TOKEN_BUDGET', partialUsage: { ...partialUsage } }
+                    );
+                    safeReject(error);
+                    terminateChild();
+                    return;
+                  }
+                }
+              }
               const delta = stepUpdate?.text_delta;
               const stepType = stepUpdate?.step_type;
               if (stepType === 'tool') {
@@ -1253,7 +1289,9 @@ export class AntigravityProvider extends LLMProvider {
           throw err;
         }
         const canRetryResetConversation =
-          hadConversation && !this.currentConversationId && (err as any)?.code !== 'AGY_NATIVE_ACTION_DENIED';
+          hadConversation && !this.currentConversationId
+          && (err as any)?.code !== 'AGY_NATIVE_ACTION_DENIED'
+          && (err as any)?.code !== 'AGY_TOKEN_BUDGET';
         if (attempt < maxRetries && (this._isTransientError(err.message) || canRetryResetConversation)) {
           attempt++;
           const delay = attempt * 1200;

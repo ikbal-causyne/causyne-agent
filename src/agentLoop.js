@@ -177,7 +177,7 @@ ${AGENT_USER_POLICY}
 Follow the selected project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
 
 # Operational Guidelines & Communication
-- **Strict English Communication**: Communicate strictly in English. Default language is English. All code, comments, documentation, and communication must be 100% in English.
+- **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language without mentioning language policies.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
 - **Evidence-Based Recovery Reports**: State only observed tool results and checks. Never claim a failed task was fixed without a passing check. Keep failure reports brief; if the user requests a detailed report, write it to a Markdown file in their selected workspace and give its path instead of dumping it into chat.
 - **Status Updates**: For substantial work, give brief progress notes while using tools. Use a tool when it contributes to the task, and report what it actually returned.
@@ -1565,6 +1565,28 @@ export class AgentLoop {
                 // passed, so a run always overshot by one step — with ~9,000-token
                 // steps a 299,000 ceiling landed near 308,000. Asking first is what
                 // makes a ceiling mean the number the user typed.
+                // A peer CLI may execute many model steps inside one chat() call.
+                // Pass the remaining hard budget into peers that expose per-step usage.
+                const budget = this.tokenTracker.budget || {};
+                const hardBudget = (budget.enabled && budget.hardStop) ||
+                    (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0);
+                const taskLimit = Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0
+                    ? this.taskTokenLimit : Number(budget.maxTokensPerTask || 0);
+                const dailyLimit = budget.enabled && budget.hardStop
+                    ? Number(budget.maxTokensPerDay || 0) : 0;
+                const dailyUsed = hardBudget && dailyLimit > 0
+                    ? (await this.tokenTracker.getDailyUsage()).totalTokens : 0;
+                const remainingBudget = hardBudget
+                    ? Math.min(taskLimit > 0 ? taskLimit - this.tokenTracker.taskTokens : Infinity, dailyLimit > 0 ? dailyLimit - dailyUsed : Infinity) : Infinity;
+                if (remainingBudget <= 0) {
+                    this.emitEvent({ type: 'budget_warning', message: 'Token budget reached before the next model call.' });
+                    break;
+                }
+                // trackUsage reloads persisted settings; restore the per-task profile
+                // limit before the predictive check on each iteration.
+                if (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0) {
+                    this.tokenTracker.budget = { ...budget, enabled: true, hardStop: true, maxTokensPerTask: this.taskTokenLimit };
+                }
                 const affordability = this.tokenTracker.canAffordAnotherStep();
                 if (!affordability.allowed) {
                     this.emitEvent({ type: 'budget_warning', message: affordability.reason });
@@ -1599,6 +1621,7 @@ export class AgentLoop {
                     conversationId: this.memoryManager?.sessionId || this.taskId,
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
+                    maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
                     // IARS couples escalation to a wider search. Bounded so a stuck task
@@ -2918,6 +2941,23 @@ export class AgentLoop {
                 }
             }
             catch (e) {
+                if (e?.code === 'AGY_TOKEN_BUDGET') {
+                    const usage = e.partialUsage;
+                    if (usage) {
+                        await this.tokenTracker.trackUsage(usage.promptTokens, usage.completionTokens, (message) => this.emitEvent({ type: 'budget_warning', message }), usage);
+                        auditLog.log({
+                            event: 'model_usage', scope: 'agent_loop_primary', taskId: this.taskId,
+                            step: this.stepsCompleted, provider: this.config.provider || 'unknown',
+                            promptTokens: usage.promptTokens, completionTokens: usage.completionTokens,
+                            cachedPromptTokens: usage.cachedPromptTokens || 0,
+                            measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
+                        });
+                    }
+                    this.emitEvent({ type: 'budget_warning', message: e.message });
+                    auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
+                        used: this.tokenTracker.taskTokens, limit: this.tokenTracker.budget?.maxTokensPerTask || 0 });
+                    break;
+                }
                 if (this.stopRequested || this.abortController?.signal?.aborted || e?.name === 'AbortError') {
                     this.debugLog(`agent loop interrupted: ${e?.message || 'aborted'}`);
                     auditLog.log({ event: 'task_interrupted', taskId: this.taskId });
