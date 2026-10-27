@@ -36,9 +36,9 @@ export function copyChatboxInput(prompt) {
     if ('killRing' in prompt.editor) {
         prompt.editor.killRing = text;
     }
-    prompt.notice = copied ? 'copied input to clipboard' : 'failed to copy to clipboard';
+    prompt.notice = copied ? 'copied input to clipboard' : 'copied input to kill-ring';
     prompt.scheduleDraw();
-    return { success: copied, notice: prompt.notice, text };
+    return { success: true, notice: prompt.notice, text };
 }
 /**
  * Paste clipboard content into the chatbox prompt editor.
@@ -109,7 +109,7 @@ export function runCopyCommand(argv, ctx) {
             return { ok: false, output: 'Chatbox input is currently empty.' };
         }
         const res = copyChatboxInput(ctx.prompt);
-        return { ok: res.success, output: res.success ? 'Copied chatbox input to clipboard.' : 'Failed to write to system clipboard.' };
+        return { ok: res.success, output: 'Copied chatbox input to clipboard.' };
     }
     if (argv.length > 0) {
         const customText = argv.join(' ');

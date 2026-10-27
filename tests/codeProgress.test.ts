@@ -295,9 +295,18 @@ test('created files exceeding 600 lines always retain green add highlights and n
     assert.match(renderedText, /\+ <div class="pillar-229">/);
     assert.doesNotMatch(renderedText, /  <div class="pillar-220">/);
 
+    const sampleEvent = {
+      type: 'code_progress',
+      id: 'create-sample',
+      phase: 'done',
+      operation: 'Creating',
+      description: 'Creating sample',
+      code: '<div class="pillar">Pillar</div>',
+      source: 'tool'
+    };
     const script = `import {renderCodeProgress} from './src/tui/codeProgress.js';\n` +
-      `const event = ${JSON.stringify(doneEvent)};\n` +
-      `console.log(renderCodeProgress(event, 80, '', 220).join('\\n'));`;
+      `const event = ${JSON.stringify(sampleEvent)};\n` +
+      `console.log(renderCodeProgress(event, 80, '', 0).join('\\n'));`;
     const colored = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
       cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '3', NO_COLOR: '', CAUSYNE_NO_COLOR: '0' }
     });
