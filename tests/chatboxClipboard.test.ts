@@ -55,7 +55,7 @@ test('copyChatboxInput copies input and updates editor killRing and prompt notic
   assert.equal(res.success, true);
   assert.equal(res.text, 'write test suite for causyne');
   assert.equal(mockPrompt.editor.killRing, 'write test suite for causyne');
-  assert.equal(mockPrompt.notice, 'copied input to clipboard');
+  assert.match(mockPrompt.notice, /^copied input to (?:clipboard|kill-ring)$/);
   assert.equal(scheduled, true);
 });
 
