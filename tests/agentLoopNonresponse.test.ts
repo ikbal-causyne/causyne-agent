@@ -165,7 +165,7 @@ test('isMidTaskProgressText identifies intermediate progress announcements and i
   );
 });
 
-test('AgentLoop auto-continues when provider returns externalActions with mid-task progress or incompleteTurn', async () => {
+test('AgentLoop auto-continues progress but does not certify a web page without rendered inspection', async () => {
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-midtask-continue-'));
   fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
@@ -176,7 +176,7 @@ test('AgentLoop auto-continues when provider returns externalActions with mid-ta
     const loop = new AgentLoop(
       { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
       'midtask-regression',
-      'redesign the roadster page',
+      'redesign the roadster landing page',
       { workspaceRoot: workspace }
     );
     let calls = 0;
@@ -206,6 +206,7 @@ test('AgentLoop auto-continues when provider returns externalActions with mid-ta
             usage: { promptTokens: 25, completionTokens: 18 }
           };
         }
+        fs.writeFileSync(path.join(workspace, 'index.html'), '<!doctype html><html lang="en"><head><title>Roadster</title></head><body><main><h1>Roadster</h1></main></body></html>');
         return {
           content: 'Redesigned index.html and verified all Roadster assets.',
           externalActions: [
@@ -222,11 +223,9 @@ test('AgentLoop auto-continues when provider returns externalActions with mid-ta
 
     assert.equal(calls, 3, 'loop must continue across mid-task progress and incompleteTurn until the final completion turn');
     assert.equal(loop.stepsCompleted, 4, 'completed external actions must be counted in stepsCompleted');
-    assert.equal(
-      events.some((event) => event.type === 'agent_message' && event.content?.includes('Redesigned index.html')),
-      true
-    );
-    assert.equal(events.some((event) => event.type === 'task_complete'), true);
+    assert.equal(events.some((event) => event.type === 'agent_message' && event.content?.includes('verified all Roadster assets')), false);
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
+    assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('rendered-page verification did not succeed')), true, JSON.stringify(events));
   } finally {
     process.chdir(previousDirectory);
     fs.rmSync(workspace, { recursive: true, force: true });
@@ -297,6 +296,34 @@ process.stdin.on('end', () => {
     assert.equal(loggedArgs[0][loggedArgs[0].indexOf('--print-timeout') + 1], '1800s');
     assert.equal(loggedArgs[1].includes('--conversation'), true, 'second turn in same session must reuse --conversation even when taskId rotated');
     assert.equal(loggedArgs[1][loggedArgs[1].indexOf('--conversation') + 1], 'conv-session-42');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity stops a runaway headless turn at its default token ceiling without replaying it', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-ceiling-'));
+  const agy = path.join(dir, 'agy');
+  const countFile = path.join(dir, 'invocations');
+  fs.writeFileSync(agy, `#!/usr/bin/env node
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(countFile)}, '1');
+process.stdout.write(JSON.stringify({event:'step_update',step_update:{step_type:'agent_response',state:'DONE',step_index:1,usage:{input_tokens:100001,output_tokens:1}}})+'\\n');
+setTimeout(() => {}, 10000);
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command: agy, model: 'Claude Opus 5.5 (High)' });
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'build a page' }], { taskId: 'ceiling-test' }),
+      (error: unknown) => {
+        const e = error as { code?: string; tokenLimit?: number; partialUsage?: { promptTokens: number } };
+        assert.equal(e.code, 'AGY_TOKEN_BUDGET');
+        assert.equal(e.tokenLimit, 100_000);
+        assert.equal(e.partialUsage?.promptTokens, 100_001);
+        return true;
+      }
+    );
+    assert.equal(fs.readFileSync(countFile, 'utf8'), '1', 'a paid partial turn must not be retried');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

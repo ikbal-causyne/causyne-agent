@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
+import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseAction, type ChatResponseToolCall, type ChatResponseUsage } from './base.js';
 
 /**
@@ -516,7 +517,10 @@ export class AntigravityProvider extends LLMProvider {
     this.printTimeout = typeof config.printTimeout === 'string' && config.printTimeout.trim()
       ? config.printTimeout.trim()
       : '1800s';
-    this.visionModels = ['*'];
+    // This ACP bridge currently sends text-only stream-json messages. Image
+    // blocks are reduced to labels in formatDelta/formatConversation, so do
+    // not advertise vision or ask for desktop capture as proof of inspection.
+    this.visionModels = [];
     this.audioModels = [];
   }
 
@@ -583,7 +587,11 @@ export class AntigravityProvider extends LLMProvider {
       '   - Immediately open the URL or project in the user\'s browser using desktop.open with {"target": "http://localhost:<port>"} or run the native open command.\n' +
       '   - Confirm the application is accessible only after a readiness check succeeds.\n' +
       '3. NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
-      '4. Create or edit files only when the current user request authorizes it.\n\n' +
+      '4. Create or edit files only when the current user request authorizes it.\n' +
+      '5. TOKEN CONSERVATION & MEDIA DIRECTIVE:\n' +
+      '   - NEVER attempt to read binary or media files (.png, .jpg, .blend, .glb, .wasm, .zip, etc.) using text reading tools like read_file or cat. This blows up the token context.\n' +
+      '   - For 3D modeling, Blender, or media tasks: write a single self-contained generator script and execute it in one batch. Avoid dozens of speculative CLI exploration commands.\n' +
+      '   - For verifying images or rendered files, use visual inspection or file metadata receipts only.\n\n' +
       '[Environment State & Idempotency Directive]\n' +
       'Reuse relevant verified tool results from this session, and check uncertain prerequisites before relying on them.\n\n' +
       '[Language & Communication Directive]\n' +
@@ -591,10 +599,11 @@ export class AntigravityProvider extends LLMProvider {
     );
 
     if (tools && tools.length > 0) {
-      const toolSummaries = tools.map(t => {
-        const name = t.name || t.function?.name || 'unknown';
-        const desc = t.description || t.function?.description || '';
-        const params = t.parameters || t.input_schema || t.function?.parameters || {};
+      const scanReport = scanAndAdaptToolsForProvider(tools, 'antigravity');
+      const toolSummaries = scanReport.adaptedTools.map((t: any) => {
+        const name = t.name || 'unknown';
+        const desc = t.description || '';
+        const params = t.parameters || {};
         const paramKeys = Object.keys(params.properties || {}).join(', ');
         return `- ${name}(${paramKeys}): ${desc}`;
       }).join('\n');
@@ -892,8 +901,12 @@ export class AntigravityProvider extends LLMProvider {
         promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0,
         thinkingTokens: 0, measurement: 'provider_reported', cacheMeasurement: 'provider_reported'
       };
-      const tokenLimit = Number(options.maxTokensThisCall);
-      const enforceTokenLimit = Number.isFinite(tokenLimit) && tokenLimit > 0;
+      // A headless peer can run many paid model steps before chat() returns.
+      // Keep a finite per-call ceiling even when the optional task budget is
+      // disabled. Users can set a lower task budget through the existing UI.
+      const remainingTaskBudget = Number(options.maxTokensThisCall);
+      const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
+        ? Math.min(remainingTaskBudget, 100_000) : 100_000;
       const wallTimer = desktopTask ? setTimeout(() => {
         const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.') as Error & { code: string };
         error.code = 'AGY_DESKTOP_TASK_LIMIT';
@@ -987,11 +1000,11 @@ export class AntigravityProvider extends LLMProvider {
                     + (Number(usage.cache_read_tokens) || 0);
                   partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
                     + (Number(usage.thinking_tokens) || 0);
-                  if (enforceTokenLimit && partialUsage.promptTokens + partialUsage.completionTokens >= tokenLimit) {
+                  if (partialUsage.promptTokens + partialUsage.completionTokens >= tokenLimit) {
                     this.currentConversationId = null;
                     const error = Object.assign(
-                      new Error(`Antigravity token budget reached during this turn: at least ${partialUsage.promptTokens + partialUsage.completionTokens} tokens reported for a ${tokenLimit}-token remaining budget. The task outcome is unverified.`),
-                      { code: 'AGY_TOKEN_BUDGET', partialUsage: { ...partialUsage } }
+                      new Error(`Antigravity reported at least ${partialUsage.promptTokens + partialUsage.completionTokens} noncached tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`),
+                      { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }
                     );
                     safeReject(error);
                     terminateChild();

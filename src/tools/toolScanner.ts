@@ -328,6 +328,8 @@ export function scanAndAdaptToolsForProvider(
   const isGemini = normProvider === 'gemini';
   const isAnthropic = normProvider === 'anthropic';
   const isOllama = normProvider === 'ollama';
+  const isAntigravity = normProvider === 'antigravity' || normProvider === 'agy';
+  const isAcp = normProvider.startsWith('acp');
 
   for (let index = 0; index < tools.length; index++) {
     const t = tools[index];
@@ -381,6 +383,21 @@ export function scanAndAdaptToolsForProvider(
       adaptedTools.push(adaptSchemaForAnthropic(toolObj, { deferLoading }));
     } else if (isOllama) {
       adaptedTools.push(adaptSchemaForOllama(toolObj));
+    } else if (isAntigravity) {
+      const cleanParams = cleanUnionTypes(rawSchema || { type: 'object', properties: {} }) as Record<string, unknown>;
+      adaptedTools.push({
+        name,
+        description: toolObj.description || '',
+        parameters: cleanParams,
+        snippet: `<tool_call>{"name": "${name}", "arguments": { ... }}</tool_call>`
+      });
+    } else if (isAcp) {
+      const cleanParams = cleanUnionTypes(rawSchema || { type: 'object', properties: {} }) as Record<string, unknown>;
+      adaptedTools.push({
+        name,
+        description: toolObj.description || '',
+        inputSchema: cleanParams
+      });
     } else {
       // Default to OpenAI / OpenAI-Compatible (DeepSeek, XAI, Mistral, etc.)
       adaptedTools.push(adaptSchemaForOpenAI(toolObj));

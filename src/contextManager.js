@@ -449,6 +449,22 @@ export function applyProgressiveCompaction(messages, maxCharPool, options = {}) 
   let totalReclaimed = 0;
   const stagesFired = [];
 
+  // Stage 0: Ephemeral Observation Compaction (Hyper-Lean Context Engine / HLCE)
+  // Decays stale tool outputs older than ephemeralKeepRecent (default 3) exceeding ephemeralMinChars (default 1200)
+  // to prevent turn-over-turn cumulative prompt token blowup while preserving full detail on active turns.
+  if (options.enableEphemeralDecay) {
+    const ephemeralKeepRecent = options.ephemeralKeepRecent ?? 3;
+    const ephemeralMinChars = options.ephemeralMinChars ?? 1200;
+    const ephemeralReclaimed = decayToolResults(messages, {
+      keepRecent: ephemeralKeepRecent,
+      minChars: ephemeralMinChars
+    });
+    if (ephemeralReclaimed > 0) {
+      totalReclaimed += ephemeralReclaimed;
+      stagesFired.push(`ephemeral_decay:${(ephemeralReclaimed / 1024).toFixed(1)}kb`);
+    }
+  }
+
   // Stage 2: Snip oversized tool outputs (>15K tokens / 60K chars)
   const snipRes = snipOversizedToolOutputs(messages, options.snipOptions);
   if (snipRes.snippedCount > 0) {

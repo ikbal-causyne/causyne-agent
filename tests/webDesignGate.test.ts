@@ -19,7 +19,7 @@ header { border-bottom: 2px solid #182820; padding: 2rem; }
 </style></head><body><header><h1>Field Notes</h1>
 <p>A record of the community garden's planting seasons.</p></header></body></html>`;
 
-test('web design audit requires a revision before accepting a provider-written page', async () => {
+test('web design audit requires a revision, then blocks completion without rendered inspection', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-design-revise-'));
   fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
   const page = path.join(workspace, 'index.html');
@@ -53,7 +53,8 @@ test('web design audit requires a revision before accepting a provider-written p
 
     assert.equal(calls, 2);
     assert.equal(events.some(event => event.type === 'agent_message' && event.content === 'The website is complete.'), false);
-    assert.equal(events.some(event => event.type === 'task_complete'), true);
+    assert.equal(events.some(event => event.type === 'task_complete'), false);
+    assert.equal(events.some(event => event.type === 'error' && event.message?.includes('rendered-page verification did not succeed')), true);
     assert.equal(fs.readFileSync(page, 'utf8'), consideredPage);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });

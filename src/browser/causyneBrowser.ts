@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   capabilityDirectory,
@@ -419,7 +420,7 @@ export type BrowserActionType =
   | 'listTabs' | 'list_tabs'
   | 'closeTab' | 'close_tab'
   | 'search'
-  | 'goto' | 'open' | 'navigate'
+  | 'goto' | 'open' | 'navigate' | 'preview'
   | 'snapshot' | 'scrape'
   | 'click' | 'clickIndex'
   | 'type' | 'typeIndex' | 'fill'
@@ -1123,6 +1124,13 @@ export class CausyneBrowser {
     if (/^(about:|data:|blob:|moz-extension:)/i.test(url)) return route.continue();
     try {
       const parsed = new URL(url);
+      if (parsed.protocol === 'file:') {
+        const workspace = await fs.realpath(this.workspace);
+        const file = await fs.realpath(fileURLToPath(parsed));
+        if (!isWithin(workspace, file)) throw new Error('File is outside the selected workspace');
+        await route.continue();
+        return;
+      }
       if (parsed.protocol === 'ws:' || parsed.protocol === 'wss:') {
         parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
         await this.validateUrl(parsed.href);
@@ -1286,6 +1294,22 @@ export class CausyneBrowser {
     if (status >= 400) throw new Error(`Destination returned HTTP ${status}`);
     await state.page.waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS });
     await this.validateUrl(state.page.url());
+    state.refs.clear();
+    state.lastSnapshot = '';
+    state.lastStructure = null;
+  }
+
+  private async preview(state: TabState, filePath: string, workspace: string): Promise<void> {
+    const root = await fs.realpath(workspace);
+    const target = await fs.realpath(path.resolve(root, filePath));
+    if (!isWithin(root, target) || !/\.html?$/i.test(target)) {
+      throw new Error('Preview requires an HTML file inside the selected workspace');
+    }
+    await state.page.goto(pathToFileURL(target).href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
+    await state.page.waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS });
+    if (state.page.url() !== pathToFileURL(target).href) {
+      throw new Error('Preview navigated away from the selected workspace file');
+    }
     state.refs.clear();
     state.lastSnapshot = '';
     state.lastStructure = null;
@@ -1603,6 +1627,11 @@ export class CausyneBrowser {
       await this.navigateWithMacroFallback(state, action);
       return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
     }
+    if (action.type === 'preview') {
+      if (typeof action.filePath !== 'string') throw new Error('preview requires filePath');
+      await this.preview(state, action.filePath, workspace);
+      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
+    }
     if (action.type === 'snapshot' || action.type === 'scrape') {
       const snapshot = await this.snapshot(action.offset ?? 0);
       return {
@@ -1808,6 +1837,12 @@ export function validateBrowserActSandbox(
   let hasDownload = false;
   for (const action of actions) {
     if (!action || typeof action !== 'object') continue;
+    if (action.type === 'preview') {
+      const filePath = typeof action.filePath === 'string' ? action.filePath : '';
+      if (!filePath || !/\.html?$/i.test(filePath) || !isPathAllowed(path.resolve(workspaceRoot, filePath))) {
+        return { allowed: false, reason: 'Preview requires an HTML file inside the selected workspace', risk: 'forbidden' };
+      }
+    }
     const rawUrl = typeof action.url === 'string' ? action.url.trim() : '';
     const rawMacro = typeof action.macro === 'string' ? action.macro.trim() : '';
     if (rawMacro) {

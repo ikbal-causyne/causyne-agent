@@ -151,6 +151,27 @@ export function determineToolScope(
     };
   }
 
+  // 5. Media / 3D generation & creative audio intent
+  if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
+    const tools = new Set([
+      'blender_act',
+      'creative_apps',
+      'execute_procedural_media',
+      'fs_read',
+      'fs_write',
+      'sysRun',
+      'view_image',
+      'update_plan',
+      'tool_search'
+    ]);
+    return {
+      toolScope: tools,
+      archetype: 'media_3d_generation',
+      suppressedPacks: ['web', 'game', 'advanced', 'system'],
+      reason: 'Media generation intent prioritizes 3D studio, procedural media, and image inspection; suppresses web and game packs.'
+    };
+  }
+
   // Default: unconstrained (standard progressive disclosure and packs apply)
   return {
     toolScope: null,

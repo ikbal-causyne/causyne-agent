@@ -5,7 +5,7 @@ const SUPPORTED_ACTION_TYPES = [
     'listTabs', 'list_tabs',
     'closeTab', 'close_tab',
     'search',
-    'goto', 'open', 'navigate',
+    'goto', 'open', 'navigate', 'preview',
     'snapshot', 'scrape',
     'click', 'clickIndex',
     'type', 'typeIndex', 'fill',
@@ -45,7 +45,7 @@ function normalizeActions(args) {
 export const browserAct = {
     schema: {
         name: 'browser.act',
-        description: `Use the dedicated Causyne Browser for resilient search, navigation, search macros (${getSupportedSearchMacros().slice(0, 6).join(', ')}, etc.), accessible snapshots (including child iframes and structured forms/tables), interaction, deterministic schema extraction, and workspace-scoped uploads/downloads. Take a snapshot before interacting by ref.`,
+        description: `Use the dedicated Causyne Browser for search, public navigation, and preview of a workspace HTML file (type preview, filePath), accessible snapshots, interaction, extraction, and workspace-scoped screenshots. Use preview followed by snapshot and screenshot to check a local web page; a saved screenshot alone is not visual inspection by the model.`,
         parameters: {
             type: 'object',
             properties: {
@@ -94,7 +94,7 @@ export const browserAct = {
                                     { type: 'string' },
                                     { type: 'array', items: { type: 'string' } }
                                 ],
-                                description: 'Workspace-relative file path(s) for upload action.'
+                                description: 'Workspace-relative HTML path for preview, or file path(s) for upload.'
                             },
                             outputFile: { type: 'string', description: 'Download or screenshot destination inside the selected workspace.' },
                             fullPage: { type: 'boolean', description: 'Capture the complete page for a screenshot instead of the visible viewport.' }

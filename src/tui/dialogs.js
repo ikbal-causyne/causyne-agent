@@ -348,6 +348,11 @@ export class ApprovalLayer extends Layer {
     // Selectable options, modelled on opencode's permission prompt: a row of
     // chips moved with ←/→ and committed with enter. Typing y/n still answers
     // directly, so the fast path stays one keystroke rather than two.
+    // grant_capability stores consent for the named capability group itself.
+    // A standing grant for the *manager tool* would also authorize unrelated
+    // package and MCP operations, and adds a redundant second confirmation.
+    this.capabilityGrant = this.request.tool === 'manage_local_dependencies'
+      && this.request.args?.action === 'grant_capability';
     this.options = [
       { id: 'once', label: 'Allow once', answer: true },
       // Standing approval for the rest of the PROCESS — never written to disk.
@@ -355,7 +360,7 @@ export class ApprovalLayer extends Layer {
       // and a gate people hammer through is worse than one they chose to lift.
       // It is not the default and it is confirmed a second time before it takes
       // effect; see makeApprovalHandler in cliMode.js.
-      { id: 'always', label: 'Allow always', answer: true },
+      ...(!this.capabilityGrant ? [{ id: 'always', label: 'Allow always', answer: true }] : []),
       { id: 'reject', label: 'Reject', answer: false }
     ];
 
@@ -372,7 +377,7 @@ export class ApprovalLayer extends Layer {
     // authorises anything the agent asks for.
     this.selected = this.options.findIndex(option => option.id === 'reject');
 
-    this.footer = `←→ choose  ${GLYPHS.dot}  enter confirm  ${GLYPHS.dot}  y/a/n direct  ${GLYPHS.dot}  ↑↓ scroll  ${GLYPHS.dot}  esc reject`;
+    this.footer = `←→ choose  ${GLYPHS.dot}  enter confirm  ${GLYPHS.dot}  ${this.capabilityGrant ? 'y/n' : 'y/a/n'} direct  ${GLYPHS.dot}  ↑↓ scroll  ${GLYPHS.dot}  esc reject`;
 
     this.diff = approvalDiff(this.request.tool, this.request.args, { width: this.width - 6, maxLines: 400 });
   }
@@ -466,7 +471,7 @@ export class ApprovalLayer extends Layer {
     // dialog could not be approved at all; escape worked, which made it look
     // responsive. See src/tui/keys.js isChar().
     if (isChar(event, 'y')) { this.answer(true, 'once'); return 'close'; }
-    if (isChar(event, 'a')) { this.answer(true, 'always'); return 'close'; }
+    if (!this.capabilityGrant && isChar(event, 'a')) { this.answer(true, 'always'); return 'close'; }
     if (isChar(event, 'n')) { this.answer(false, 'reject'); return 'close'; }
     if (event.name === 'escape') { this.answer(false, 'reject'); return 'close'; }
 

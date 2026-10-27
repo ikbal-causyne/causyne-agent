@@ -240,6 +240,8 @@ export function scanAndAdaptToolsForProvider(tools, provider, options = {}) {
     const isGemini = normProvider === 'gemini';
     const isAnthropic = normProvider === 'anthropic';
     const isOllama = normProvider === 'ollama';
+    const isAntigravity = normProvider === 'antigravity' || normProvider === 'agy';
+    const isAcp = normProvider.startsWith('acp');
     for (let index = 0; index < tools.length; index++) {
         const t = tools[index];
         if (!t)
@@ -288,6 +290,23 @@ export function scanAndAdaptToolsForProvider(tools, provider, options = {}) {
         }
         else if (isOllama) {
             adaptedTools.push(adaptSchemaForOllama(toolObj));
+        }
+        else if (isAntigravity) {
+            const cleanParams = cleanUnionTypes(rawSchema || { type: 'object', properties: {} });
+            adaptedTools.push({
+                name,
+                description: toolObj.description || '',
+                parameters: cleanParams,
+                snippet: `<tool_call>{"name": "${name}", "arguments": { ... }}</tool_call>`
+            });
+        }
+        else if (isAcp) {
+            const cleanParams = cleanUnionTypes(rawSchema || { type: 'object', properties: {} });
+            adaptedTools.push({
+                name,
+                description: toolObj.description || '',
+                inputSchema: cleanParams
+            });
         }
         else {
             // Default to OpenAI / OpenAI-Compatible (DeepSeek, XAI, Mistral, etc.)

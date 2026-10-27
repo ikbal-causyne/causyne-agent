@@ -1420,9 +1420,12 @@ export class AgentLoop {
         const MAX_CHAR_POOL = resolveCharPool(activeTier, this.config.maxCharPool);
 
         // 5-Stage Progressive Compaction (Claude Code Architecture / Research Section E):
-        // Stage 2 (Snip >15K tokens / 60K chars) + Stage 1 (Budget Reduction >70%) +
-        // Stage 3 (Microcompact) + Stage 4 (Context Collapse >85%)
+        // Stage 0 (HLCE Ephemeral Decay) + Stage 2 (Snip >15K tokens / 60K chars) +
+        // Stage 1 (Budget Reduction >70%) + Stage 3 (Microcompact) + Stage 4 (Context Collapse >85%)
         const compaction = applyProgressiveCompaction(this.messages, MAX_CHAR_POOL, {
+          enableEphemeralDecay: true,
+          ephemeralKeepRecent: 3,
+          ephemeralMinChars: 1200,
           budgetKeepRecent: this.config.keepRecentToolResults ?? 8,
           collapseKeepRecent: 2
         });
@@ -1978,11 +1981,11 @@ export class AgentLoop {
             if (['write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content', 'fs_write', 'fs_edit', 'multiedit'].includes(actionName) && detailPath) {
               this.recordWebArtifact(detailPath);
             }
-            if (
-              ['capture_browser_screenshot', 'browser_subagent', 'open_browser_url', 'browser_get_dom', 'read_browser_page'].includes(actionName) ||
-              ((actionName === 'read_file' || actionName === 'view_file') && /\.(png|jpe?g|webp|gif|svg)$/i.test(detailPath))
-            ) {
-              this.webVerificationState.screenshotTaken = true;
+            // A native action's name is not evidence that a model inspected
+            // pixels. Keep visual verification false unless a real image result
+            // has reached a vision-capable provider.
+            if (['browser_get_dom', 'read_browser_page'].includes(actionName)) {
+              this.webVerificationState.browserActUsed = true;
             }
           }
         }
@@ -2221,23 +2224,33 @@ export class AgentLoop {
             let visionDeclined = false;
             let browserReady = false;
             let browserDeclined = false;
+            let browserRuntimeError = '';
             try {
               const { groupStatus, isGroupDeclined } = await import('./provisioning/capabilityProvisioner.js');
               visionReady = groupStatus('vision').state === 'ready';
               visionDeclined = isGroupDeclined('vision');
               browserReady = groupStatus('browser').state === 'ready';
               browserDeclined = isGroupDeclined('browser');
+              if (browserReady) {
+                const { resolveBrowserRuntime } = await import('./browser/browserRuntime.js');
+                try { resolveBrowserRuntime(); } catch (error: unknown) {
+                  browserReady = false;
+                  browserRuntimeError = error instanceof Error ? error.message : String(error);
+                }
+              }
             } catch (e: any) { /* treat as not ready */ }
             let webGuardMsg = '';
 
-            if (!browserReady && !browserDeclined) {
+            if (browserRuntimeError) {
+              webGuardMsg = `[WEB CHECK: The browser capability is granted, but its runtime cannot launch: ${browserRuntimeError} Do not request the same grant again or claim a rendered-page check. Inspect the source and report the runtime blocker. This check fires once.]`;
+            } else if (!browserReady && !browserDeclined) {
               webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project and must inspect it before finishing, but the dedicated browser capability is not enabled yet. Call \`manage_local_dependencies\` with action "grant_capability" and group "browser" to request the Causyne Browser runtime. If the user declines, read the final compiled HTML/CSS instead. This check fires once.]`;
             } else if (hasVision && !visionReady && !visionDeclined) {
               webGuardMsg = `[ANTI-SLOP CHECK: The browser is available, but desktop screen capture is not enabled. Call \`manage_local_dependencies\` with action "grant_capability" and group "vision" to request it, or use \`browser_act\` snapshots and its workspace-scoped screenshot action. This check fires once.]`;
             } else if (hasVision && visionReady && !this.webVerificationState.screenshotTaken) {
-              webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project but attempted to finish without VISUALLY verifying your work. Use \`screenshot\` or \`vision_inspect_ui\` to look at the UI in a browser. A human looks at their work to avoid slop. This check fires once — if there is genuinely nothing visual to inspect, say so plainly and finish.]`;
+              webGuardMsg = `[ANTI-SLOP CHECK: You are building a Web/UI project but attempted to finish without VISUALLY verifying your work. Use \`screenshot\` or \`vision_inspect_ui\` to look at the UI in a browser. A saved file is not evidence that the model saw the image. If capture fails, report that visual verification was not completed. This check fires once.]`;
             } else if ((!hasVision || visionDeclined) && browserReady && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken) {
-              webGuardMsg = `[TRANSCENDENCE CHECK: You are building a Web/UI project. As a vision-disabled model you cannot screenshot, but you MUST use \`browser_act\` to inspect the DOM, or read the final compiled HTML/CSS, to verify semantic correctness before finishing. This check fires once.]`;
+              webGuardMsg = `[WEB CHECK: You are building a Web/UI project. Use \`browser_act\` with preview and a workspace-relative HTML filePath, then snapshot to inspect the rendered DOM. A screenshot file by itself is not visual inspection. If browser access fails, read the final HTML/CSS and report that visual verification was not completed. This check fires once.]`;
             }
 
             if (webGuardMsg) {
@@ -2252,6 +2265,21 @@ export class AgentLoop {
                 continue;
               }
             }
+          }
+
+          // Tool availability and a completed plan are not evidence of visual
+          // inspection. A failed browser/capture attempt must not become a
+          // successful task merely because the provider says "verified".
+          if (isWebTask && this.stepsCompleted > 0
+            && !this.webVerificationState.browserActUsed
+            && !this.webVerificationState.screenshotTaken) {
+            this.emitEvent({
+              type: 'error',
+              message: 'The web files may have changed, but rendered-page verification did not succeed. The task remains unverified; no completion is recorded.'
+            });
+            auditLog.log({ event: 'task_unverified', taskId: this.taskId, reason: 'web_render_not_inspected' });
+            this.memoryManager.saveHistory(this.messages);
+            break;
           }
 
           // Cold Observer: Overconfidence & Loop Verification Check
@@ -2871,13 +2899,13 @@ export class AgentLoop {
             this.recordWebArtifact(args.path || args.file_path);
           }
 
-          if (functionName === 'screenshot' && result?.success === true && result?._is_image_marker === true) {
+          if (['screenshot', 'vision_inspect_ui'].includes(functionName) && this.llm.supportsVision !== false && result?.success === true && result?._is_image_marker === true) {
             this.webVerificationState.screenshotTaken = true;
           }
           if (functionName === 'browser_act' && result?.success === true) {
-            this.webVerificationState.browserActUsed = true;
-            if (Array.isArray(args?.actions) && args.actions.some((action: any) => action?.type === 'screenshot')) {
-              this.webVerificationState.screenshotTaken = true;
+            const browserResults = Array.isArray(result.data) ? result.data : [];
+            if (browserResults.some((item: any) => ['snapshot', 'scrape'].includes(item?.action))) {
+              this.webVerificationState.browserActUsed = true;
             }
           }
 
@@ -3053,7 +3081,7 @@ export class AgentLoop {
                  role: 'tool',
                  tool_call_id: toolCall.id,
                  name: functionName,
-                 content: `[Image observed: ${result.filename || 'image'} (${result.mimeType || 'image/png'}) - verified on disk. Vision observation payload passed.]`
+                 content: `[Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'}). This provider cannot receive image pixels; visual inspection was not completed.]`
                });
             } else {
                // Provider-specific format.
@@ -3225,7 +3253,7 @@ export class AgentLoop {
         if (e?.code === 'AGY_TOKEN_BUDGET') {
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
-            used: this.tokenTracker.taskTokens, limit: this.tokenTracker.budget?.maxTokensPerTask || 0 });
+            used: this.tokenTracker.taskTokens, limit: e.tokenLimit || this.tokenTracker.budget?.maxTokensPerTask || 0 });
           break;
         }
         if (this.stopRequested || this.abortController?.signal?.aborted || e?.name === 'AbortError') {

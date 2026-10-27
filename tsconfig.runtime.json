@@ -65,6 +65,8 @@
     "src/tools/webSearch.ts",
     "src/tools/webFetch.ts",
     "src/tools/screenshot.ts",
+    "src/tools/visionInspector.ts",
+    "src/tools/fsRead.ts",
     "src/tools/sysRun.ts",
     "src/tools/desktopOpen.ts",
     "src/tui/banner.ts",

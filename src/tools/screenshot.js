@@ -50,7 +50,11 @@ export const screenshot = {
             };
         }
         catch (error) {
-            return { success: false, error: `Screen capture failed: ${error instanceof Error ? error.message : String(error)}` };
+            const reason = error instanceof Error ? error.message : String(error);
+            const guidance = process.platform === 'darwin' && /could not create image from display/i.test(reason)
+                ? ' macOS could not capture the display. Check Screen Recording access for the terminal app and that a display session is available; then restart the terminal.'
+                : '';
+            return { success: false, error: `Screen capture failed: ${reason}.${guidance}` };
         }
         finally {
             await fs.rm(tempDir, { recursive: true, force: true });

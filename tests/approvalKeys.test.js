@@ -316,6 +316,21 @@ test('always: the modal offers three options with Reject still the default', () 
   assert.equal(layer.options[layer.selected].id, 'reject');
 });
 
+test('capability consent does not grant the entire dependency manager', () => {
+  const request = {
+    toolCallId: 'vision-grant', tool: 'manage_local_dependencies', risk: 'dangerous',
+    args: { action: 'grant_capability', group: 'vision' }
+  };
+  let answer = null;
+  const layer = new ApprovalLayer({ request, onAnswer: (approved, scope) => { answer = { approved, scope }; } });
+  assert.deepEqual(layer.options.map(option => option.id), ['once', 'reject']);
+  assert.equal(layer.options[layer.selected].id, 'reject');
+  assert.equal(layer.key(press('a')), 'handled');
+  assert.equal(answer, null, 'the standing-approval shortcut must not authorize unrelated manager actions');
+  assert.equal(layer.key(press('y')), 'close');
+  assert.deepEqual(answer, { approved: true, scope: 'once' });
+});
+
 test('always: the dialog reports WHICH option was chosen, not just yes/no', () => {
   // A bare boolean would silently downgrade "always" to "once" and the standing
   // grant would never be recorded.

@@ -1,154 +1,92 @@
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-
 const execFileAsync = promisify(execFile);
-
-// Helper: Sovereign Workspace Buffer to prevent /tmp/ boundary errors
-function getWorkspaceTempDir() {
-  const dir = path.join(process.cwd(), '.tmp_causyne_3d');
-  if (!fsSync.existsSync(dir)) {
-    fsSync.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-
 export const visionInspector = {
-  schema: {
-    name: 'vision.inspect_ui',
-    description: 'Captures live desktop (macOS/Windows) or mobile (Android via ADB) screenshots directly into the local workspace buffer (.tmp_causyne_3d/) and extracts spatial bounding box coordinates for visual layout verification, LCP debugging, and UI automation.',
-    parameters: {
-      type: 'object',
-      properties: {
-        target: { 
-          type: 'string', 
-          enum: ['desktop', 'android_adb'], 
-          description: 'Target device screen to capture: desktop (OS GUI) or android_adb (connected mobile screen).' 
-        },
-        prompt: { type: 'string', description: 'The verification prompt describing what UI element, visual bug, alignment, or LCP state is being audited.' },
-        deviceSerial: { type: 'string', description: 'Optional Android ADB device serial when target is android_adb.' }
-      },
-      required: ['target', 'prompt']
-    }
-  },
-
-  async execute(args, context = {}) {
-    try {
-      const target = args.target || 'desktop';
-      const prompt = args.prompt || 'Inspect UI spatial layout';
-      const tempDir = getWorkspaceTempDir();
-      const timestamp = Date.now();
-      const destPath = path.join(tempDir, `ui_inspect_${target}_${timestamp}.png`);
-
-      if (target === 'android_adb') {
-        const adbArgs = [];
-        if (args.deviceSerial) adbArgs.push('-s', args.deviceSerial);
-        adbArgs.push('shell', 'screencap', '-p');
-
-        try {
-          const { stdout } = await execFileAsync('adb', adbArgs, { encoding: 'buffer', maxBuffer: 20 * 1024 * 1024 });
-          // Handle CRLF on Windows ADB pipes
-          let cleanBuffer = stdout;
-          if (process.platform === 'win32') {
-            cleanBuffer = Buffer.from(stdout.toString('binary').replace(/\r\n/g, '\n'), 'binary');
-          }
-          await fs.writeFile(destPath, cleanBuffer);
-        } catch (adbErr) {
-          return {
-            success: false,
-            error: `ADB Mobile Vision Capture Failed: ${adbErr.message}. Ensure device is connected via ADB USB/WiFi.`
-          };
+    schema: {
+        name: 'vision.inspect_ui',
+        description: 'Capture a live desktop or Android screen and pass its pixels to a vision-capable model. OCR coordinates are included when the OCR capability is available. A capture failure is not visual verification.',
+        parameters: {
+            type: 'object',
+            properties: {
+                target: { type: 'string', enum: ['desktop', 'android_adb'] },
+                prompt: { type: 'string', description: 'What to inspect in the captured UI.' },
+                deviceSerial: { type: 'string', description: 'Optional Android ADB device serial.' }
+            },
+            required: ['target', 'prompt']
         }
-      } else {
-        // Desktop OS Screen Capture
+    },
+    async execute(args) {
+        const target = args.target;
+        if (target !== 'desktop' && target !== 'android_adb') {
+            return { success: false, error: 'target must be desktop or android_adb' };
+        }
+        const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-vision-inspect-'));
+        const imagePath = path.join(tempDir, 'screen.png');
         try {
-          if (process.platform === 'darwin') {
-            await execFileAsync('screencapture', ['-x', destPath]);
-          } else if (process.platform === 'win32') {
-            const psCmd = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height; $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); $bitmap.Save('${destPath.replace(/\\/g, '\\\\')}', [System.Drawing.Imaging.ImageFormat]::Png); $graphics.Dispose(); $bitmap.Dispose();`;
-            await execFileAsync('powershell.exe', ['-NoLogo', '-NoProfile', '-Command', psCmd]);
-          } else {
-            // macOS and Windows capture natively above; only this branch needs
-            // the provisioned package.
-            const vision = await ensureCapability('vision');
-            if (!vision.ok) throw new Error(vision.reason);
-            const screenshotDesktop = await loadCapabilityPackage('screenshot-desktop');
-            await screenshotDesktop({ filename: destPath });
-          }
-        } catch (captureErr) {
-          
-          if (captureErr.message && (captureErr.message.includes('could not create image from display') || captureErr.message.includes('No display') || captureErr.message.includes('xclip'))) {
-            // Check if any existing buffer image exists in tempDir to inspect
-            const existingFiles = fsSync.readdirSync(tempDir).filter(f => f.endsWith('.png'));
-            if (existingFiles.length > 0) {
-              const fallbackFile = path.join(tempDir, existingFiles[existingFiles.length - 1]);
-              return {
-                success: true,
-                output: JSON.stringify({
-                  status: 'Headless environment detected: GUI capture restricted. Returned latest buffered workspace visual frame.',
-                  target_device: target,
-                  verification_prompt: prompt,
-                  filepath: fallbackFile,
-                  workspace_boundary_safe: true,
-                  headless_notice: captureErr.message
-                }, null, 2)
-              };
+            if (target === 'android_adb') {
+                const adbArgs = args.deviceSerial ? ['-s', args.deviceSerial] : [];
+                const { stdout } = await execFileAsync('adb', [...adbArgs, 'shell', 'screencap', '-p'], {
+                    encoding: 'buffer', maxBuffer: 20 * 1024 * 1024
+                });
+                const bytes = process.platform === 'win32'
+                    ? Buffer.from(stdout.toString('binary').replace(/\r\n/g, '\n'), 'binary')
+                    : stdout;
+                await fs.writeFile(imagePath, bytes);
+            }
+            else {
+                const vision = await ensureCapability('vision');
+                if (!vision.ok)
+                    return { success: false, error: vision.reason, requiresConsent: vision.requiresConsent };
+                const capture = await loadCapabilityPackage('screenshot-desktop');
+                await capture({ filename: imagePath });
+            }
+            const bytes = await fs.readFile(imagePath);
+            if (bytes.length === 0 || bytes.length > 20 * 1024 * 1024) {
+                return { success: false, error: 'Captured image is empty or exceeds 20 MB' };
+            }
+            let ocrOutput = 'OCR was not available for this capture.';
+            try {
+                const ocr = await ensureCapability('ocr');
+                if (ocr.ok) {
+                    const tesseract = await loadCapabilityPackage('tesseract.js');
+                    const worker = await tesseract.createWorker('eng');
+                    try {
+                        const recognized = await worker.recognize(imagePath);
+                        const words = (recognized.data?.words ?? []).filter(word => word.confidence > 75).slice(0, 30);
+                        ocrOutput = words.length > 0
+                            ? words.map(word => `- [${word.text}] X:${Math.floor((word.bbox.x0 + word.bbox.x1) / 2)}, Y:${Math.floor((word.bbox.y0 + word.bbox.y1) / 2)}`).join('\n')
+                            : 'No confident OCR text tokens detected.';
+                    }
+                    finally {
+                        await worker.terminate();
+                    }
+                }
+            }
+            catch (error) {
+                ocrOutput = `OCR unavailable: ${error instanceof Error ? error.message : String(error)}`;
             }
             return {
-              success: true,
-              output: JSON.stringify({
-                status: 'Live GUI capture is unavailable in this desktop session. Connect an active display or use an ADB mobile target.',
-                target_device: target,
-                verification_prompt: prompt,
-                headless_notice: captureErr.message
-              }, null, 2)
+                success: true,
+                _is_image_marker: true,
+                mimeType: 'image/png',
+                base64: bytes.toString('base64'),
+                filename: `${target} screenshot`,
+                output: `Capture prompt: ${args.prompt}\n${ocrOutput}`
             };
-          }
-          throw captureErr;
         }
-      }
-
-      // Check spatial OCR / bounding box extraction
-      let textMap = '';
-      try {
-        const ocr = await ensureCapability('ocr');
-        if (!ocr.ok) throw new Error(ocr.reason);
-        const Tesseract = await loadCapabilityPackage('tesseract.js');
-        const worker = await Tesseract.createWorker('eng');
-        const { data: { words } } = await worker.recognize(destPath);
-        await worker.terminate();
-
-        const confidentWords = (words || []).filter(w => w.confidence > 75).slice(0, 30);
-        if (confidentWords.length > 0) {
-          textMap = confidentWords.map(w => {
-            const centerX = Math.floor((w.bbox.x0 + w.bbox.x1) / 2);
-            const centerY = Math.floor((w.bbox.y0 + w.bbox.y1) / 2);
-            return `- [${w.text}] X:${centerX}, Y:${centerY}`;
-          }).join('\n');
+        catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            const guidance = process.platform === 'darwin' && /could not create image from display/i.test(reason)
+                ? ' macOS could not capture the display. Check Screen Recording access for the terminal app and that a display session is available; then restart the terminal.'
+                : '';
+            return { success: false, error: `Live screen capture failed: ${reason}.${guidance}` };
         }
-      } catch (ocrErr) {
-        textMap = `[OCR Text Bounding extraction skipped: ${ocrErr.message}]`;
-      }
-
-      // Route notification to mobile app (`AgentScreen.kt`)
-
-      return {
-        success: true,
-        output: JSON.stringify({
-          status: 'Visual inspection frame captured cleanly inside workspace buffer',
-          target_device: target,
-          verification_prompt: prompt,
-          filepath: destPath,
-          workspace_boundary_safe: true,
-          detected_spatial_elements: textMap || 'No confident OCR text tokens detected.'
-        }, null, 2)
-      };
-    } catch (e) {
-      return { success: false, error: e.message };
+        finally {
+            await fs.rm(tempDir, { recursive: true, force: true });
+        }
     }
-  }
 };

@@ -184,6 +184,24 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('previews a workspace HTML file without opening private network URLs', async () => {
+    const { browser, workspace } = fakeRuntime();
+    fs.writeFileSync(path.join(workspace, 'index.html'), '<h1>Preview</h1>');
+    const results = await browser.run([{ type: 'preview', filePath: 'index.html' }]);
+    assert.equal(results[0].url, new URL(`file://${workspace}/index.html`).href);
+    await browser.close();
+  });
+
+  test('preview rejects symlink escape from the workspace', async () => {
+    const { browser, workspace } = fakeRuntime();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-preview-outside-'));
+    workspaces.push(outside);
+    fs.writeFileSync(path.join(outside, 'outside.html'), '<h1>Private</h1>');
+    fs.symlinkSync(path.join(outside, 'outside.html'), path.join(workspace, 'linked.html'));
+    await assert.rejects(browser.run([{ type: 'preview', filePath: 'linked.html' }]), /inside the selected workspace/);
+    await browser.close();
+  });
+
   test('a download cannot escape the workspace', async () => {
     const { browser } = fakeRuntime();
     await browser.run([{ type: 'snapshot' }]);
@@ -218,6 +236,8 @@ describe('web boundaries', () => {
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://127.0.0.1:8080' }] }).risk, 'forbidden');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://[::1]/' }] }).risk, 'forbidden');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'file:///etc/passwd' }] }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'preview', filePath: 'index.html' }] }).risk, 'safe');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'preview', filePath: '../outside.html' }] }).risk, 'forbidden');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'download', outputFile: 'file.bin' }] }).risk, 'extreme');
     assert.equal(sandbox.validate('browser_act', { actions: [
       { type: 'download', outputFile: 'file.bin' },
