@@ -867,7 +867,6 @@ export class AntigravityProvider extends LLMProvider {
             };
             const maxNativeActions = desktopTask ? 12 : Infinity;
             let nativeActionStarts = 0;
-            let consecutiveInspections = 0;
             const seenNativeActionSteps = new Set();
             // Antigravity's result usage is cumulative across the conversation, but
             // DONE step updates carry usage for that step. Keep a turn-local subtotal
@@ -1022,16 +1021,6 @@ export class AntigravityProvider extends LLMProvider {
                                     (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
                                     (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
                                     {};
-                                if (options.taskArchetype === 'media_3d_generation' && newNativeAction && name) {
-                                    consecutiveInspections = isReadOnlyNativeInspection(String(name), rawParams)
-                                        ? consecutiveInspections + 1 : 0;
-                                    if (consecutiveInspections >= 10) {
-                                        const error = Object.assign(new Error('Antigravity made 10 consecutive read-only media inspections without a change. Pausing to redirect the task before further token use.'), { code: 'AGY_EXPLORATION_LOOP', inspectionCount: consecutiveInspections });
-                                        safeReject(error);
-                                        terminateChild();
-                                        return;
-                                    }
-                                }
                                 if (name) {
                                     const existingAttempt = attemptedNativeTools.find(a => a.name === name && a.status === 'running');
                                     if (existingAttempt) {

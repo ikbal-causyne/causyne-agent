@@ -14,7 +14,7 @@ test('native inspection classifier distinguishes Blender probes from scene write
   assert.equal(isReadOnlyNativeInspection('write_file', { path: 'apple.py' }), false);
 });
 
-test('Antigravity interrupts repeated Blender probes before the token ceiling and preserves the session', { skip: process.platform === 'win32' }, async () => {
+test('Antigravity allows a long sequence of distinct Blender inspections', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-inspection-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -23,21 +23,16 @@ process.stdin.resume();
 process.stdin.on('end', () => {
   emit({event:'init',conversation_id:'inspect-session'});
   emit({event:'step_update',step_update:{step_index:0,state:'DONE',step_type:'agent_response',usage:{input_tokens:300,output_tokens:30,cache_read_tokens:100}}});
-  for (let index=1; index<=10; index++) emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'grep -n world apple.py'}}}});
-  setTimeout(() => {}, 10000);
+  for (let index=1; index<=30; index++) emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'grep -n world scene-' + index + '.py'}}}});
+  emit({event:'result',result:{status:'SUCCESS',conversation_id:'inspect-session',response:'Inspected all scene files.',usage:{input_tokens:300,output_tokens:30,cache_read_tokens:100}}});
 });
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    await assert.rejects(provider.chat([{ role: 'user', content: 'Fix the background in Blender' }], {
+    const response = await provider.chat([{ role: 'user', content: 'Inspect the background in Blender' }], {
       conversationId: 'inspection-test', taskArchetype: 'media_3d_generation'
-    }), (error: unknown) => {
-      const stopped = error as { code?: string; inspectionCount?: number; partialUsage?: { promptTokens: number } };
-      assert.equal(stopped.code, 'AGY_EXPLORATION_LOOP');
-      assert.equal(stopped.inspectionCount, 10);
-      assert.equal(stopped.partialUsage?.promptTokens, 300);
-      return true;
     });
+    assert.match(String(response.content), /Inspected all scene files/);
     assert.equal(provider.currentConversationId, 'inspect-session');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });

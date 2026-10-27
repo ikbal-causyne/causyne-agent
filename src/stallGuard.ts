@@ -259,18 +259,9 @@ export class StallGuardController {
       }
     }
 
-    if (context?.isAuthoringTask && !this.isMutating(toolName, args) && this._distinctInspectionCount >= 24) {
-      const decision: StallGuardDecision = {
-        action: 'halt',
-        code: 'read_only_loop_halt',
-        message: `FATAL ERROR: Read-Only Verification Loop Detected. Agent performed ${this._distinctInspectionCount} consecutive inspection steps without writing any implementation code. Forcibly aborting task to save tokens.`,
-        toolName,
-        count: this._distinctInspectionCount,
-        signature
-      };
-      this._haltDecision = decision;
-      return decision;
-    }
+    // Distinct inspections can be necessary for large codebases and research.
+    // Count them for a progress nudge, but only stop on evidence of repetition
+    // or an explicit task budget. Task intent alone is not evidence of a stall.
 
     return {
       action: 'allow',

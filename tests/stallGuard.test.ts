@@ -140,3 +140,14 @@ test('Deep research across 25 distinct files emits gentle progress notice withou
   assert.equal(obs26.notice, null);
   assert.equal(guard.haltDecision, null);
 });
+
+test('large authoring task can inspect 100 distinct files without a blind halt', () => {
+  const guard = new StallGuardController({ hardStopEnabled: true, researchNudgeAfter: 25 });
+  for (let i = 0; i < 100; i++) {
+    const args = { path: `src/module_${i}.ts` };
+    assert.equal(guard.beforeCall('fs_read', args, { isAuthoringTask: true }).action, 'allow');
+    guard.observeCall('fs_read', args, `unique content ${i}`, `call_${i}`);
+  }
+  assert.equal(guard.distinctInspectionCount, 100);
+  assert.equal(guard.haltDecision, null);
+});
