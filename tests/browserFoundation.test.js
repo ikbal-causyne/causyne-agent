@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   CausyneBrowser,
@@ -186,9 +187,10 @@ describe('Causyne Browser lifecycle', () => {
 
   test('previews a workspace HTML file without opening private network URLs', async () => {
     const { browser, workspace } = fakeRuntime();
-    fs.writeFileSync(path.join(workspace, 'index.html'), '<h1>Preview</h1>');
+    const htmlPath = path.join(workspace, 'index.html');
+    fs.writeFileSync(htmlPath, '<h1>Preview</h1>');
     const results = await browser.run([{ type: 'preview', filePath: 'index.html' }]);
-    assert.equal(results[0].url, new URL(`file://${workspace}/index.html`).href);
+    assert.equal(results[0].url, pathToFileURL(fs.realpathSync(htmlPath)).href);
     await browser.close();
   });
 
