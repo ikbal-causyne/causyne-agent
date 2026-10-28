@@ -18,6 +18,7 @@ export class ChatRenderer {
   stopSpinner(): void;
   frame(kind: string, produce: () => void, meta?: Record<string, unknown> | null): void;
   updateTailFrame(kind: string, produce: () => void, meta?: Record<string, unknown> | null): void;
+  capture(width: number, produce: () => void): string[];
   measure(): number;
   write(line?: string): void;
 }

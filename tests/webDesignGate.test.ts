@@ -33,11 +33,14 @@ test('web design audit requires a revision, then blocks completion without rende
       { workspaceRoot: workspace }
     );
     let calls = 0;
+    let sawCapabilityFollowup = false;
     const model = {
       supportsVision: false,
       supportsToolSearch: () => false,
-      chat: async () => {
+      chat: async (messages: Array<{ content: unknown }>) => {
         calls++;
+        sawCapabilityFollowup ||= messages.some(message => typeof message.content === 'string'
+          && message.content.includes('grant_capability') && message.content.includes('browser'));
         fs.writeFileSync(page, calls === 1 ? genericPage : consideredPage);
         return {
           content: calls === 1 ? 'The website is complete.' : 'Revised the website and checked its files.',
@@ -51,7 +54,8 @@ test('web design audit requires a revision, then blocks completion without rende
 
     await loop.run();
 
-    assert.equal(calls, 2);
+    assert.equal(calls, 3, 'a missing browser gets an execution opportunity after the design revision');
+    assert.equal(sawCapabilityFollowup, true);
     assert.equal(events.some(event => event.type === 'agent_message' && event.content === 'The website is complete.'), false);
     assert.equal(events.some(event => event.type === 'task_complete'), false);
     assert.equal(events.some(event => event.type === 'error' && event.message?.includes('rendered-page verification did not succeed')), true);

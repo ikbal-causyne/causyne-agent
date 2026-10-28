@@ -80,6 +80,14 @@ export function assessDecisionRequirement(prompt: string): DecisionRequirement {
 
 export function requiresImplementationPlan(prompt: string, archetype = '', confidence = ''): boolean {
   const text = String(prompt ?? '').toLowerCase();
+  // A classifier can label any "create" request build_app. A single plain
+  // text/data-file operation needs no checklist or rejected mutation round trip.
+  const namedFiles = new Set([...text.matchAll(/\b[\w./-]+\.(?:txt|md|csv|json)\b/g)].map(match => match[0]));
+  const simpleFileOperation = text.length < 700 && namedFiles.size === 1
+    && /\b(?:create|write|save)\b/.test(text)
+    && !/\b(?:research|search|scrap\w*|codebase|migrat\w*|refactor|integrat\w*|application|website|database|security|authentication|authorization|framework|architecture|runtime)\b/.test(text)
+    && !/\b(?:package(?:-lock)?\.json|tsconfig\w*\.json|permissions?\.json|policy\.json)\b/.test(text);
+  if (simpleFileOperation) return false;
   if (archetype === 'build_app' || archetype === 'integrate') return true;
   if (confidence === 'high' && /\b(?:implement|build|create|migrate|rewrite|refactor|integrate)\b/i.test(text)) {
     return true;

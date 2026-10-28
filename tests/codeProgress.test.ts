@@ -97,6 +97,59 @@ test('code panel replaces its live frame and preserves user-visible thinking as 
   }
 });
 
+test('code panel updates in place across intermediate step_start and checkpoint frames without duplicating', () => {
+  const transcript = new Transcript();
+  const renderer = new CodeStreamRenderer({ transcript });
+  
+  // 1. Streaming emits draft code panel
+  renderer.handle({
+    type: 'code_progress',
+    id: 'model-draft',
+    phase: 'draft',
+    operation: 'Writing code from the model stream',
+    description: 'Writing code from the model stream',
+    code: 'const horse = new THREE.Mesh();',
+    source: 'model'
+  });
+  assert.equal(transcript.length, 1);
+  assert.equal(transcript.frames.filter((f: any) => f.meta?.codePreview).length, 1);
+
+  // 2. step_start arrives
+  renderer.handle({
+    type: 'step_start',
+    tool: 'fs_write',
+    args: { path: 'horse-biomechanics/style.css' },
+    toolCallId: 'call-101'
+  });
+  assert.equal(transcript.length, 2);
+
+  // 3. Tool execution starts (phase: working) with real tool call ID
+  const toolAction = codeProgressFromAction('fs_write', {
+    path: 'horse-biomechanics/style.css',
+    content: 'body { margin: 0; }'
+  }, 'call-101');
+  assert.ok(toolAction);
+  renderer.handle(toolAction);
+  // Code preview frame was updated in place; no duplicate code preview frame was added
+  assert.equal(transcript.frames.filter((f: any) => f.meta?.codePreview).length, 1);
+
+  // 4. Restore point checkpoint arrives
+  renderer.handle({
+    type: 'checkpoint',
+    taskId: 'task-test',
+    count: 1,
+    tool: 'fs_write',
+    path: 'horse-biomechanics/style.css',
+    step: 7
+  });
+
+  // 5. Tool execution finishes (phase: done)
+  renderer.handle({ ...toolAction, phase: 'done' });
+  // Still exactly 1 code preview frame!
+  assert.equal(transcript.frames.filter((f: any) => f.meta?.codePreview).length, 1);
+});
+
+
 test('wheel over a long code panel reveals earlier lines and does not scroll the chat', () => {
   const transcript = new Transcript();
   const renderer = new CodeStreamRenderer({ transcript });

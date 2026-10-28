@@ -110,9 +110,24 @@ export class CodeStreamRenderer extends ChatRenderer {
     }
     paintCodePanel(event) {
         const transcript = this.transcript;
-        const last = transcript?.frames.at(-1);
-        const samePanel = last?.meta?.codePreview === true && last.meta.id === event.id;
-        const state = samePanel && last ? this.codePanels.get(last) : undefined;
+        const frames = transcript?.frames || [];
+        const last = frames.at(-1);
+        const sameTail = last?.meta?.codePreview === true && (last.meta.id === event.id || last.meta.id === 'model-draft');
+        // Look back for an existing code panel frame for this operation (e.g. model-draft or same id)
+        let targetFrame;
+        if (sameTail && last) {
+            targetFrame = last;
+        }
+        else {
+            for (let i = frames.length - 1; i >= Math.max(0, frames.length - 6); i--) {
+                const f = frames[i];
+                if (f?.meta?.codePreview === true && (f.meta.id === event.id || (f.meta.id === 'model-draft' && event.id !== 'model-draft'))) {
+                    targetFrame = f;
+                    break;
+                }
+            }
+        }
+        const state = targetFrame ? this.codePanels.get(targetFrame) : undefined;
         const panelState = state || {
             event,
             modelNote: this.modelNote,
@@ -126,12 +141,25 @@ export class CodeStreamRenderer extends ChatRenderer {
             for (const row of renderCodeProgress(panelState.event, this.measure(), panelState.modelNote, panelState.start))
                 this.write(row);
         };
-        if (samePanel)
+        if (targetFrame && targetFrame === last) {
             this.updateTailFrame('step', produce, { codePreview: true, id: event.id, phase: event.phase });
-        else
+            this.codePanels.set(last, panelState);
+        }
+        else if (targetFrame && transcript) {
+            targetFrame.produce = (width) => this.capture(width, produce);
+            targetFrame.meta = { ...(targetFrame.meta || {}), codePreview: true, id: event.id, phase: event.phase };
+            targetFrame.rows = null;
+            targetFrame.renderedWidth = -1;
+            transcript.cache = null;
+            transcript.revision++;
+            transcript.changed();
+            this.codePanels.set(targetFrame, panelState);
+        }
+        else {
             this.frame('step', produce, { codePreview: true, id: event.id, phase: event.phase });
-        const current = transcript?.frames.at(-1);
-        if (current)
-            this.codePanels.set(current, panelState);
+            const current = transcript?.frames.at(-1);
+            if (current)
+                this.codePanels.set(current, panelState);
+        }
     }
 }

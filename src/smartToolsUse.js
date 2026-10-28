@@ -121,7 +121,7 @@ const SIMPLE_FILE_OP_PATTERN = /\b(list (the )?files|show files|count files|rena
 // Media generation intent (explicit creation of 3D, video, audio, or synthesized speech)
 const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.blend\d*\b/i;
 // Explicit web engineering intent
-const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend)\b/i;
+const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|3js)\b/i;
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN = /\b(build.*game|create.*game|develop.*game|godot|unity|unreal|platformer 2d|rpg game|arcade game)\b/i;
 /**
@@ -209,7 +209,24 @@ export function determineToolScope(prompt, _taskShape) {
         };
     }
     if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
-        return { toolScope: null, archetype: 'web_engineering', suppressedPacks: [] };
+        const tools = new Set([
+            'fs_write',
+            'fs_edit',
+            'fs_read',
+            'fs_list',
+            'sysRun',
+            'browser_act',
+            'screenshot',
+            'vision_inspect_ui',
+            'update_plan',
+            'tool_search'
+        ]);
+        return {
+            toolScope: tools,
+            archetype: 'web_engineering',
+            suppressedPacks: ['media', 'game', 'advanced', 'system'],
+            reason: 'Web engineering intent focuses on filesystem authoring, terminal execution, and browser verification; suppresses unrelated media and game packs.'
+        };
     }
     // 5. Media / 3D generation & creative audio intent
     if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {

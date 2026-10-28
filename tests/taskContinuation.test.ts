@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { AgentLoop } from '../src/agentLoop.js';
 import { isPlanningOnlyRequest, isPlanReviewHandoff } from '../src/taskContinuation.js';
+import { requiresImplementationPlan } from '../src/decisionPolicy.js';
 
 test('plan-review handoffs are distinct from explicit planning-only requests', () => {
   assert.equal(isPlanReviewHandoff('The plan is ready. Click Proceed to start implementation.'), true);
@@ -13,6 +14,21 @@ test('plan-review handoffs are distinct from explicit planning-only requests', (
   assert.equal(isPlanningOnlyRequest('Only plan the migration; wait for my review.'), true);
   assert.equal(isPlanningOnlyRequest('Research and plan first, then implement the feature.'), false);
   assert.equal(isPlanningOnlyRequest('Create the requested application.'), false);
+});
+
+test('simple file I/O does not acquire a complex-app checklist, while actual projects retain it', () => {
+  assert.equal(requiresImplementationPlan('Create proof.txt containing READY, then read proof.txt to verify it.', 'build_app', 'high'), false);
+  assert.equal(requiresImplementationPlan('Research 100 keyboards and create keyboards.json for the application.', 'build_app', 'high'), true);
+  assert.equal(requiresImplementationPlan('Create package.json for the new workspace', 'build_app', 'high'), true);
+  assert.equal(requiresImplementationPlan('Integrate a plugin system', 'integrate', 'medium'), true);
+});
+
+test('readback cannot prefetch stale contents across an earlier file mutation', () => {
+  const loop = Object.create(AgentLoop.prototype) as AgentLoop;
+  loop.config = { autonomyMode: 'C' };
+  const calls = ['fs_write', 'fs_read', 'fs_read'].map((name, index) => ({ id: String(index),
+    function: { name, arguments: JSON.stringify({ path: 'proof.txt', content: 'READY' }) } }));
+  assert.equal(loop.prefetchReadOnlyCalls(calls).size, 0);
 });
 
 test('web design instructions reach the first real request after userPrompt is consumed', async () => {
@@ -28,6 +44,21 @@ test('web design instructions reach the first real request after userPrompt is c
       throw new Error('401 fixture: stop after observing the assembled request');
     } }) as never;
   try { await loop.run(); assert.equal(sawWebPlaybook, true); }
+  finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+});
+
+test('verification from a previous task cannot certify the next task', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-verification-reset-'));
+  const loop = new AgentLoop({ readyState: 1, send: () => {} }, 'verification-reset', 'Build a new website', { workspaceRoot: workspace });
+  loop.webVerificationState = { screenshotTaken: true, browserActUsed: true, htmlInspected: true };
+  let checked = false;
+  loop.initializeProvider = () => ({ supportsVision: false, supportsToolSearch: () => false,
+    chat: async () => {
+      assert.deepEqual(loop.webVerificationState, { screenshotTaken: false, browserActUsed: false, htmlInspected: false });
+      checked = true;
+      throw new Error('401 fixture: stop after inspecting the task state');
+    } }) as never;
+  try { await loop.run(); assert.equal(checked, true); }
   finally { fs.rmSync(workspace, { recursive: true, force: true }); }
 });
 

@@ -48,7 +48,7 @@ import { StallGuardController } from './stallGuard.js';
 import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
 import { isOutputRecoveryRead } from './outputRecovery.js';
 import { isPlanReviewHandoff, isPlanningOnlyRequest } from './taskContinuation.js';
-import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
+import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, tokenLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -182,6 +182,11 @@ ${AGENT_USER_POLICY}
 # Project Conventions
 Follow the selected project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
 
+# Greenfield Application Scaffolding vs. Legacy Codebase Exploration
+- When the user asks to CREATE or BUILD a new application, web page, 3D model, game, or tool from scratch (e.g., "buatkan", "create", "build", "make", "generate"), focus DIRECTLY on authoring the project in its designated project directory.
+- DO NOT perform exploratory directory listings of the root repository or inspect unrelated legacy projects in the workspace.
+- Immediately initialize the target directory and author the required implementation files (e.g. index.html, style.css, app.js).
+
 # Operational Guidelines & Communication
 - **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language without mentioning language policies.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
@@ -193,6 +198,7 @@ Follow the selected project's existing style and architecture. Check dependencie
 
 # Task Management & Planning
 - Use update_plan to create a visible implementation checklist before complex implementation. Create atomic, verb-led, verifiable steps and keep exactly one step in progress.
+- Return known tool calls together when their arguments are already available. Calls execute in order: a checklist update, file write, and readback of that path can share one response. Wait for results before choosing arguments that depend on their contents.
 - Check off completed TODOs immediately before reporting progress. Do not batch up multiple task completions.
 - Reconcile and close the todo list when all goal tasks are done. If the user asks you to implement, do not output a separate text-based plan. Just build and display the todo list.
 
@@ -778,8 +784,10 @@ export class AgentLoop {
             if (eligible.length >= capacity)
                 break;
             const functionName = canonicalToolName(toolCall.function.name);
+            // A later read may verify an earlier write. Never prefetch it across
+            // that mutation barrier and accidentally return the pre-edit contents.
             if (!AgentLoop.READ_ONLY_TOOLS.has(functionName))
-                continue;
+                break;
             // Prefetch begins before the serial dispatch path. If this tool has a
             // PreToolUse hook, running it here would create a temporal pre-trust
             // window where the read happens before the hook can deny it.
@@ -1047,6 +1055,7 @@ export class AgentLoop {
         // ORDER to work in, which saves whole exploratory steps.
         this.gameGuardFired = false;
         this.webGuardFired = false;
+        this.webVerificationState = { screenshotTaken: false, browserActUsed: false, htmlInspected: false };
         this.webArtifacts = new Set();
         this.slopReviewAttempts = 0;
         this.slopLastAuditHash = '';
@@ -1291,7 +1300,16 @@ export class AgentLoop {
         this.tokenTracker.resetTask();
         const turnArchetype = determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype;
         const efficiency = this.config.efficiency || {};
-        this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0 ? efficiency.maxTurnTokens : 100_000, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype));
+        const taskTokenCeiling = Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0
+            ? this.taskTokenLimit
+            : this.tokenTracker.budget?.enabled && Number.isFinite(this.tokenTracker.budget?.maxTokensPerTask) && this.tokenTracker.budget.maxTokensPerTask > 0
+                ? this.tokenTracker.budget.maxTokensPerTask
+                : Number.isFinite(efficiency.maxTaskTokens) && efficiency.maxTaskTokens > 0
+                    ? efficiency.maxTaskTokens
+                    : Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
+                        ? efficiency.maxTurnTokens
+                        : tokenLimitFor(turnArchetype);
+        this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0 ? efficiency.maxTurnTokens : 100_000, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype), taskTokenCeiling);
         const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
@@ -1692,7 +1710,8 @@ export class AgentLoop {
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
                     tokenBudgetBasis: Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
-                    tokenLimit: Number.isFinite(remainingBudget) && remainingBudget > 0 ? remainingBudget : undefined,
+                    tokenLimit: Number.isFinite(remainingBudget) && remainingBudget > 0
+                        ? Math.min(this.efficiencyBudget.maxTurnTokens, remainingBudget) : this.efficiencyBudget.maxTurnTokens,
                     maxNativeActions: this.efficiencyBudget.getRemainingActions(),
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
@@ -2188,7 +2207,7 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: '⚡ Anti-Slop Check: Visual/semantic verification recommended.' });
                             this.messages.push({ role: 'system', content: webGuardMsg });
                             this.memoryManager.saveHistory(this.messages);
-                            if (browserReady || (hasVision && visionReady)) {
+                            if (!this.webVerificationState.htmlInspected || browserReady || (hasVision && visionReady)) {
                                 continue;
                             }
                         }
@@ -2199,6 +2218,10 @@ export class AgentLoop {
                     const isVerified = Boolean(this.webVerificationState.browserActUsed ||
                         this.webVerificationState.screenshotTaken ||
                         (!browserReady && this.webVerificationState.htmlInspected));
+                    if (isWebTask && !browserReady && this.webVerificationState.htmlInspected
+                        && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken) {
+                        this.emitEvent({ type: 'notice', message: 'Source inspection completed. Rendered-page and visual verification were not performed because the browser runtime is unavailable.' });
+                    }
                     if (isWebTask && this.stepsCompleted > 0 && !isVerified) {
                         this.emitEvent({
                             type: 'error',
@@ -2414,10 +2437,10 @@ export class AgentLoop {
                         this.abort();
                         break;
                     }
-                    if (isAuthoringTask && this.stallGuard.distinctInspectionCount === 12) {
+                    if (isAuthoringTask && (this.stallGuard.distinctInspectionCount === 3 || this.stallGuard.distinctInspectionCount === 6)) {
                         this.messages.push({
                             role: 'system',
-                            content: `[CRITICAL ACTION MANDATE: You have performed 12 consecutive inspection steps without writing code. If you have gathered sufficient context, proceed to creating or editing implementation files using fs_write/fs_edit.]`
+                            content: `[CRITICAL ACTION MANDATE: You have performed ${this.stallGuard.distinctInspectionCount} inspection steps without writing code. This is an authoring task. Proceed immediately to creating or editing implementation files using fs_write/fs_edit in the target directory.]`
                         });
                     }
                     this.emitEvent({ type: 'step_start', tool: functionName, args: args, toolCallId: toolCall.id });

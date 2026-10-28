@@ -56,3 +56,44 @@ test('UnifiedBudgetEnforcer halts turn when action count cap is exceeded', () =>
     }
   );
 });
+
+test('UnifiedBudgetEnforcer allows multi-turn tasks to progress within task token ceiling', () => {
+  const enforcer = new UnifiedBudgetEnforcer(100_000, 35, 500_000);
+  assert.equal(enforcer.getRemainingTokens(), 500_000);
+  assert.equal(enforcer.getRemainingTurnTokens(), 100_000);
+
+  // Simulate 7 steps of 20,000 noncached tokens each (total 140,000 tokens)
+  for (let i = 0; i < 7; i++) {
+    enforcer.recordUsage({ promptTokens: 15_000, completionTokens: 5_000 });
+  }
+  assert.equal(enforcer.getRemainingTokens(), 360_000);
+
+  // Single turn blowout exceeding 100,000 tokens throws turn-scoped checkpoint
+  assert.throws(
+    () => enforcer.recordUsage({ promptTokens: 120_000, completionTokens: 5_000 }),
+    (error: unknown) => {
+      assert.ok(error instanceof EfficiencyCheckpoint);
+      assert.equal((error as EfficiencyCheckpoint).reason, 'tokens');
+      assert.equal((error as EfficiencyCheckpoint).scope, 'turn');
+      return true;
+    }
+  );
+});
+
+test('UnifiedBudgetEnforcer halts when cumulative task limit is reached', () => {
+  const enforcer = new UnifiedBudgetEnforcer(50_000, 35, 100_000);
+  enforcer.recordUsage({ promptTokens: 40_000, completionTokens: 5_000 }); // 45k
+  enforcer.recordUsage({ promptTokens: 40_000, completionTokens: 5_000 }); // 90k
+  assert.equal(enforcer.getRemainingTokens(), 10_000);
+
+  assert.throws(
+    () => enforcer.recordUsage({ promptTokens: 15_000, completionTokens: 5_000 }), // 110k > 100k
+    (error: unknown) => {
+      assert.ok(error instanceof EfficiencyCheckpoint);
+      assert.equal((error as EfficiencyCheckpoint).reason, 'tokens');
+      assert.equal((error as EfficiencyCheckpoint).scope, 'task');
+      return true;
+    }
+  );
+});
+

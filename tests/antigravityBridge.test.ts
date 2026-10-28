@@ -11,7 +11,7 @@ test('managed peer profile is tool-less, repeatable, and confined to Causyne ada
   assert.notEqual(root, process.cwd());
   const file = path.join(root, '.agents', 'agents', 'causyne-inference.md');
   assert.equal(fs.readFileSync(file, 'utf8'), INFERENCE_AGENT_DEFINITION);
-  assert.match(INFERENCE_AGENT_DEFINITION, /tools: \[\]/);
+  assert.match(INFERENCE_AGENT_DEFINITION, /tools: \[finish\]/);
   assert.match(INFERENCE_AGENT_DEFINITION, /inheritMcp: false/);
   assert.match(INFERENCE_AGENT_DEFINITION, /commandExecutionPolicy: off/);
   const before = fs.statSync(file).mtimeMs;

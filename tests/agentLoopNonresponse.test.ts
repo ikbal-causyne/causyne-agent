@@ -256,8 +256,8 @@ test('AgentLoop auto-continues progress but does not certify a web page without 
 
     await loop.run();
 
-    assert.equal(calls, 3, 'loop must continue across mid-task progress and incompleteTurn until the final completion turn');
-    assert.equal(loop.stepsCompleted, 4, 'completed external actions must be counted in stepsCompleted');
+    assert.equal(calls, 4, 'loop must also give the missing browser setup directive a follow-up step');
+    assert.equal(loop.stepsCompleted, 5, 'completed external actions must be counted in stepsCompleted');
     assert.equal(events.some((event) => event.type === 'agent_message' && event.content?.includes('verified all Roadster assets')), false);
     assert.equal(events.some((event) => event.type === 'task_complete'), false);
     assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('rendered-page verification did not succeed')), true, JSON.stringify(events));

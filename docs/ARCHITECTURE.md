@@ -26,7 +26,16 @@ Peer agents (OpenCode, Claude Code, Codex, Gemini CLI, Cursor, Antigravity) are
 providers in the same sense as an HTTP API, addressed as `acp/<peer>`: the
 user's existing CLI login is the credential, the peer's own `models` command
 supplies the catalogue, and the session is billed by that subscription — Causyne
-reports it at zero cost because it never sees the invoice.
+cannot determine the monetary cost when the peer does not expose its invoice.
+
+The Antigravity CLI adapter uses a Causyne-managed inference profile in private
+adapter state and carries the actual host workspace in its prompt. It emits
+Causyne tool requests; host execution and approvals remain in `AgentLoop`.
+It does not force the peer's plan mode or modify global peer settings. A
+profile's declared tool list is application policy, not an OS security boundary;
+zero observed native actions in a test does not certify native-tool isolation.
+Session token counters, cache-read counters, and unknown monetary cost must be
+reported separately.
 
 `LocalCLIConnection` is a local rendering/event adapter, not an inbound network
 connection. `emitEvent` feeds the terminal. Tools can execute host commands;
