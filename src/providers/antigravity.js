@@ -273,20 +273,97 @@ function describeNativeAction(toolInfo) {
     }
     return undefined;
 }
+function cleanCommandString(raw) {
+    if (typeof raw !== 'string')
+        return '';
+    let cmd = raw.trim();
+    if ((cmd.startsWith('"') && cmd.endsWith('"')) || (cmd.startsWith("'") && cmd.endsWith("'"))) {
+        cmd = cmd.slice(1, -1).trim();
+    }
+    return cmd.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\').trim();
+}
 export function isReadOnlyNativeInspection(name, parameters) {
     const action = name.toLowerCase().replace(/[_\s-]/g, '');
-    if (/^(readfile|listdirectory|listfiles|search|searchweb|grep|findfiles)$/.test(action))
+    if (/^(readfile|viewfile|listdirectory|listfiles|search|searchweb|grep|findfiles)$/.test(action))
         return true;
     if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(action))
         return false;
-    const command = String(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '').trim();
-    // A compound shell command can inspect and then mutate; do not count it as
-    // read-only merely because its first command is a probe.
-    if (!/[;&|]/.test(command) && /^(?:ls|rg|grep|head|tail|cat|ps|pgrep|which|file|sips|mdls)\b/.test(command))
+    const command = cleanCommandString(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '');
+    if (!command)
+        return false;
+    // Single or compound read-only shell commands (e.g. ps aux | grep -i blender)
+    if (/^(?:ls|rg|grep|head|tail|cat|sed|ps|pgrep|which|file|sips|mdls|git\s+status|git\s+diff|git\s+log)\b/i.test(command)) {
+        if (/[;&|]/.test(command)) {
+            const parts = command.split(/[;&|]/).map(p => p.trim()).filter(Boolean);
+            return parts.every(p => /^(?:ls|rg|grep|head|tail|cat|sed|ps|pgrep|which|file|sips|mdls|awk|cut|sort|uniq|wc)\b/i.test(p));
+        }
         return true;
-    return /\bblender\b.*--python-expr\b/is.test(command)
-        && /\bprint\s*\(/.test(command)
-        && !/\b(?:save_as_mainfile|save|render|write|unlink|remove|delete)\b/.test(command);
+    }
+    // Python image / PIL pixel inspection probes without mutation
+    if (/^python[23]?\s+-c\b/i.test(command) && /Image\.open/i.test(command) && !/\b(?:save|write|remove|unlink)\b/i.test(command)) {
+        return true;
+    }
+    // Blender inspection expressions (printing objects, collections, render engine)
+    if (/\bblender\b.*--python-expr\b/is.test(command)) {
+        const exprMatch = /--python-expr\s+["']([\s\S]*?)["'](?:\s|$)/i.exec(command)
+            || /--python-expr\s+([\s\S]+)$/i.exec(command);
+        const expr = (exprMatch ? exprMatch[1] : null) || command;
+        return !/\b(?:save_as_mainfile|save_mainfile|write_still\s*=\s*True|write_text|write_bytes|os\.remove|os\.unlink)\b/i.test(expr);
+    }
+    return false;
+}
+function nativeInspectionTarget(name, parameters) {
+    const normName = name.toLowerCase().replace(/[_\s-]/g, '');
+    if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(normName)) {
+        if (/^(readfile|viewfile)$/.test(normName)) {
+            const p = String(parameters.AbsolutePath ?? parameters.filePath ?? parameters.path ?? parameters.file ?? '');
+            if (p)
+                return p.trim().toLowerCase();
+        }
+        return null;
+    }
+    const command = cleanCommandString(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '');
+    if (!command)
+        return null;
+    // 1. Blender scene probes (handles escaped quotes and spaces in filepath)
+    if (/\bblender\b/i.test(command)) {
+        if (/\b(?:save_as_mainfile|save_mainfile)\b/.test(command))
+            return null;
+        if (/--python-expr\b/i.test(command) || /-b\b|--background\b/i.test(command)) {
+            const blendMatch = /--background\s+["']?([^"'\n]+?\.blend\d*)["']?(?:\s|$)/i.exec(command)
+                || /["']?([^"'\n]+?\.blend\d*)["']?/i.exec(command);
+            if (blendMatch && blendMatch[1]) {
+                return blendMatch[1].trim().toLowerCase();
+            }
+        }
+    }
+    // 2. Python image inspections: from PIL import Image; Image.open(...)
+    if (/Image\.open\s*\(\s*["']([^"'\n]+)["']\s*\)/i.test(command)) {
+        const imgMatch = /Image\.open\s*\(\s*["']([^"'\n]+)["']\s*\)/i.exec(command);
+        if (imgMatch && imgMatch[1]) {
+            return imgMatch[1].trim().toLowerCase();
+        }
+    }
+    // 3. Repetitive CLI file reads on workspace files
+    const fileProbeMatch = /^(?:head|tail|sed|cat|grep)\b.*?["']([^"'\n]+\.(?:py|blend\d*|json|ts|js|png|jpg))["']/i.exec(command)
+        || /^(?:head|tail|sed|cat|grep)\b.*?(\S+\.(?:py|blend\d*|json|ts|js|png|jpg))/i.exec(command);
+    const rawFile = fileProbeMatch ? (fileProbeMatch[1] || fileProbeMatch[2]) : null;
+    if (rawFile) {
+        return rawFile.trim().toLowerCase();
+    }
+    return null;
+}
+function isNativeMutation(name, parameters) {
+    const action = name.toLowerCase().replace(/[_\s-]/g, '');
+    if (/^(writefile|editfile|deletefile|applypatch|createfile|replaceinfile)$/.test(action))
+        return true;
+    if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(action))
+        return false;
+    const command = cleanCommandString(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '');
+    if (!command)
+        return false;
+    return /\b(?:save_as_mainfile|save_mainfile|write_text|write_bytes|tee)\b/.test(command)
+        || /(?:^|[;&|]\s*)(?:cp|mv|rm|install|patch)\s/.test(command);
 }
 export function mapNativeToolToCausyne(name, rawParams, index) {
     if (!name || typeof name !== 'string')
@@ -787,6 +864,8 @@ export class AntigravityProvider extends LLMProvider {
         else {
             promptText = this.formatConversation(messages, options.tools);
         }
+        const isMediaTask = options.taskArchetype === 'media_3d_generation'
+            || /\b(blender|\.blend\d*|render 3d|render frame)\b/i.test(latestPrompt);
         // A resumed agy conversation retains its old instructions. Reassert the
         // current turn's narrower scope on every call, including formatDelta turns.
         if (launchOnly) {
@@ -801,6 +880,12 @@ export class AntigravityProvider extends LLMProvider {
                 'After setting the desktop picture, read back the actual system wallpaper and compare it with the intended image. ' +
                 'If a command is denied or the readback does not confirm the change, report the blocker honestly. ' +
                 'Keep native tool actions within 12; use Causyne tool calls when a native action is blocked.\n\n' + promptText;
+        }
+        if (isMediaTask) {
+            promptText = '[Current 3D / Blender task: make measurable progress]\n' +
+                'Inspect the scene and relevant sources as needed, but do not repeat the same probe without a reason. ' +
+                'Use the observations to make a targeted change, then verify the saved scene and rendered result. ' +
+                'If verification fails, revise the change and verify again; report unfinished work accurately.\n\n' + promptText;
         }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
@@ -868,6 +953,8 @@ export class AntigravityProvider extends LLMProvider {
             const maxNativeActions = desktopTask ? 12 : Infinity;
             let nativeActionStarts = 0;
             const seenNativeActionSteps = new Set();
+            const mediaInspectionCounts = new Map();
+            const pendingMediaMutations = new Set();
             // Antigravity's result usage is cumulative across the conversation, but
             // DONE step updates carry usage for that step. Keep a turn-local subtotal
             // so a single headless run cannot consume an entire task budget unseen.
@@ -880,11 +967,12 @@ export class AntigravityProvider extends LLMProvider {
             // Keep a finite per-call ceiling even when the optional task budget is
             // disabled. Users can set a lower task budget through the existing UI.
             const remainingTaskBudget = Number(options.maxTokensThisCall);
+            const rawTokenLimit = Number(options.tokenLimit);
             const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
                 ? remainingTaskBudget
-                : (typeof options.tokenLimit === 'number' && options.tokenLimit > 0
-                    ? options.tokenLimit
-                    : 100_000);
+                : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
+                    ? rawTokenLimit
+                    : (options.tokenLimit === Infinity ? Infinity : 100_000));
             const wallTimer = desktopTask ? setTimeout(() => {
                 const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.');
                 error.code = 'AGY_DESKTOP_TASK_LIMIT';
@@ -1021,6 +1109,31 @@ export class AntigravityProvider extends LLMProvider {
                                     (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
                                     (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
                                     {};
+                                if (options.taskArchetype === 'media_3d_generation' && name) {
+                                    if (newNativeAction) {
+                                        const target = isReadOnlyNativeInspection(name, rawParams)
+                                            ? nativeInspectionTarget(name, rawParams) : null;
+                                        if (target) {
+                                            const inspectionCount = (mediaInspectionCounts.get(target) || 0) + 1;
+                                            mediaInspectionCounts.set(target, inspectionCount);
+                                            if (inspectionCount >= 8) {
+                                                const error = Object.assign(new Error('Antigravity repeated read-only inspection of the same Blender scene without an edit. The task remains unfinished.'), { code: 'AGY_EXPLORATION_LOOP', inspectionCount, inspectionTarget: target });
+                                                safeReject(error);
+                                                terminateChild();
+                                                return;
+                                            }
+                                        }
+                                        else if (isNativeMutation(name, rawParams) && Number.isFinite(stepIndex)) {
+                                            pendingMediaMutations.add(stepIndex);
+                                        }
+                                    }
+                                    if (Number.isFinite(stepIndex) && pendingMediaMutations.has(stepIndex)
+                                        && (state === 'DONE' || state === 'ERROR')) {
+                                        pendingMediaMutations.delete(stepIndex);
+                                        if (state === 'DONE' && !toolInfo?.error)
+                                            mediaInspectionCounts.clear();
+                                    }
+                                }
                                 if (name) {
                                     const existingAttempt = attemptedNativeTools.find(a => a.name === name && a.status === 'running');
                                     if (existingAttempt) {

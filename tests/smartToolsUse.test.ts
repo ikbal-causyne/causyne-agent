@@ -45,6 +45,12 @@ test('determineToolScope correctly identifies pure web research intent without U
   assert.ok(scope.suppressedPacks.includes('media'));
 });
 
+test('a .blend follow-up keeps the Blender tool scope', () => {
+  const scope = determineToolScope('I do not see the background in red_apple.blend; fix the scene.');
+  assert.equal(scope.archetype, 'media_3d_generation');
+  assert.ok(scope.toolScope?.has('blender_act'));
+});
+
 test('determineToolScope does not suppress web pack for explicit website construction', () => {
   const prompt = 'build a modern website landing page for my company with tailwind';
   const scope = determineToolScope(prompt);

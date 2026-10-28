@@ -6,6 +6,21 @@ import { AcpClient } from '../acp/client.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 import type { RequestPermissionRequest, SessionUpdate } from '../acp/protocol.js';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+
+interface AcpTransportSnapshot {
+  conversationId: string;
+  workspaceRoot: string;
+  systemHashes: string[];
+  historyHashes: string[];
+  toolHash: string;
+  lastResponse: { content: string; toolCalls: ChatResponseToolCall[] };
+}
+
+function fingerprint(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
 
 export function isAcpProvider(provider?: string | null): boolean {
   if (!provider) return false;
@@ -25,6 +40,7 @@ export class AcpProvider extends LLMProvider {
   private currentTurnReasoningHandler: ((chunk: string) => void) | null = null;
   private currentTurnNativeActionHandler: ((action: ChatResponseAction) => void) | null = null;
   private readonly liveFileActions = new Map<string, ChatResponseAction>();
+  private transportSnapshot: AcpTransportSnapshot | null = null;
 
   constructor(config: ProviderConfig = {}) {
     super(config);
@@ -133,7 +149,7 @@ export class AcpProvider extends LLMProvider {
     return lines.join('\n\n');
   }
 
-  formatPromptBlocks(messages: any[], tools: any[] = [], imageSupport = false): any[] {
+  formatPromptBlocks(messages: any[], tools: any[] = [], imageSupport = false, includeBridgeInstructions = true): any[] {
     const blocks: any[] = [];
     let pending: string[] = [];
     const flush = () => {
@@ -142,7 +158,9 @@ export class AcpProvider extends LLMProvider {
       pending = [];
     };
 
-    pending.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
+    if (includeBridgeInstructions) {
+      pending.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
+    }
 
     if (tools && tools.length > 0) {
       const toolSummaries = tools.map(t => {
@@ -152,11 +170,9 @@ export class AcpProvider extends LLMProvider {
         const paramKeys = Object.keys(params.properties || {}).join(', ');
         return `- ${name}(${paramKeys}): ${desc}`;
       }).join('\n');
-      pending.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
+      pending.push(`[Current Available Tools — this list replaces earlier tool lists]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
     }
 
-    const seenToolOutputs = new Set<string>();
-    const seenAssistantCalls = new Set<string>();
     for (const msg of messages) {
       const role = this._roleLabel(msg);
       let text = '';
@@ -166,23 +182,10 @@ export class AcpProvider extends LLMProvider {
         text = msg.content.map((c: any) => typeof c === 'string' ? c : (c?.text || '')).filter(Boolean).join('\n');
       }
 
-      if (msg.role === 'tool' && text.trim()) {
-        const normalized = text.trim();
-        if (seenToolOutputs.has(normalized)) {
-          continue;
-        }
-        seenToolOutputs.add(normalized);
-      }
-
       if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
         for (const tc of msg.tool_calls) {
           const fn = tc.function || {};
           const fnArgs = typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {});
-          const callSig = `${fn.name}:${fnArgs}`;
-          if (seenAssistantCalls.has(callSig)) {
-            continue;
-          }
-          seenAssistantCalls.add(callSig);
           text += `\n<tool_call>{"name": "${fn.name}", "arguments": ${fnArgs}}</tool_call>`;
         }
       }
@@ -310,7 +313,7 @@ export class AcpProvider extends LLMProvider {
     return calls;
   }
 
-  private async getOrCreateClient(signal?: AbortSignal): Promise<{ client: AcpClient; sessionId: string }> {
+  private async getOrCreateClient(signal?: AbortSignal, workspaceRoot = process.cwd()): Promise<{ client: AcpClient; sessionId: string }> {
     if (signal?.aborted) {
       const abortErr = new Error('ACP request aborted by user');
       abortErr.name = 'AbortError';
@@ -323,7 +326,7 @@ export class AcpProvider extends LLMProvider {
     const client = new AcpClient({
       command: this.command,
       args: this.args,
-      cwd: process.cwd(),
+      cwd: workspaceRoot,
       promptTimeoutMs: 900_000,
       permissionHandler: async (req: RequestPermissionRequest) => {
         if (this.currentTurnAborted || signal?.aborted) return { outcome: 'cancelled' };
@@ -377,7 +380,7 @@ export class AcpProvider extends LLMProvider {
     });
 
     await client.start(signal);
-    const sessionId = await client.newSession(process.cwd(), [], signal);
+    const sessionId = await client.newSession(workspaceRoot, [], signal);
 
     const sessionModels = client.getSessionModels(sessionId);
     const liveModels = sessionModels.availableModels;
@@ -455,6 +458,7 @@ export class AcpProvider extends LLMProvider {
     const client = this.activeClient;
     this.activeClient = null;
     this.activeSessionId = null;
+    this.transportSnapshot = null;
     if (client) {
       try {
         await client.close();
@@ -480,11 +484,58 @@ export class AcpProvider extends LLMProvider {
     };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      const { client, sessionId } = await this.getOrCreateClient(options.signal);
+      const workspaceRoot = path.resolve(String(options.workspaceRoot || process.cwd()));
+      const conversationId = String(options.conversationId || options.taskId || '__default__');
+      const systemMessages = messages.filter(message => message.role === 'system');
+      const historyMessages = messages.filter(message => message.role !== 'system');
+      const systemHashes = systemMessages.map(fingerprint);
+      const historyHashes = historyMessages.map(fingerprint);
+      const toolHash = fingerprint(options.tools || []);
+      let previous = this.transportSnapshot;
+
+      const sessionChanged = previous && (
+        previous.workspaceRoot !== workspaceRoot || previous.conversationId !== conversationId
+      );
+      const historyDiverged = previous && (
+        historyHashes.length < previous.historyHashes.length ||
+        previous.historyHashes.some((hash, index) => historyHashes[index] !== hash)
+      );
+      const systemShapeChanged = previous && systemHashes.length < previous.systemHashes.length;
+      if (sessionChanged || historyDiverged || systemShapeChanged) {
+        await this.close();
+        previous = null;
+      }
+
+      const { client, sessionId } = await this.getOrCreateClient(options.signal, workspaceRoot);
 
       const supportsImages = client.agentCapabilities?.promptCapabilities?.image === true;
-      const promptBlocks = this.formatPromptBlocks(messages, options.tools, supportsImages);
-      const promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
+      let promptMessages = messages;
+      let promptTools = options.tools || [];
+      let includeBridgeInstructions = true;
+      if (previous) {
+        const changedSystem = systemMessages.filter((_, index) => systemHashes[index] !== previous.systemHashes[index]);
+        const newHistory = historyMessages.slice(previous.historyHashes.length);
+        // The peer already generated its previous assistant turn. AgentLoop
+        // records that turn for stateless BYOK APIs; replaying it into ACP would
+        // duplicate the peer's own response before the next tool result.
+        const firstNew = newHistory[0];
+        if (firstNew?.role === 'assistant' &&
+            firstNew.content === previous.lastResponse.content &&
+            fingerprint(firstNew.tool_calls || []) === fingerprint(previous.lastResponse.toolCalls)) {
+          newHistory.shift();
+        }
+        promptMessages = [
+          ...changedSystem.map(message => ({ ...message, content: `[Current system context — replaces the prior version of this section]\n${message.content}` })),
+          ...newHistory
+        ];
+        if (toolHash !== previous.toolHash && !(options.tools || []).length) {
+          promptMessages.push({ role: 'system', content: '[Current Available Tools — this list replaces earlier tool lists]\nNo Causyne tools are currently available.' });
+        }
+        promptTools = toolHash === previous.toolHash ? [] : options.tools || [];
+        includeBridgeInstructions = false;
+      }
+      let promptBlocks = this.formatPromptBlocks(promptMessages, promptTools, supportsImages, includeBridgeInstructions);
+      let promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
 
       let result;
       try {
@@ -495,7 +546,9 @@ export class AcpProvider extends LLMProvider {
         }
         // If peer failed before any user abort, try recreating client once in case connection dropped
         await this.close();
-        const fresh = await this.getOrCreateClient(options.signal);
+        const fresh = await this.getOrCreateClient(options.signal, workspaceRoot);
+        promptBlocks = this.formatPromptBlocks(messages, options.tools, fresh.client.agentCapabilities?.promptCapabilities?.image === true);
+        promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
         result = await fresh.client.prompt(fresh.sessionId, promptBlocks, options.signal);
       }
 
@@ -510,6 +563,11 @@ export class AcpProvider extends LLMProvider {
 
       // Strip tool call XML from chat content display
       let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+
+      this.transportSnapshot = {
+        conversationId, workspaceRoot, systemHashes, historyHashes, toolHash,
+        lastResponse: { content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`), toolCalls }
+      };
 
       const response: ChatResponse = {
         content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`),

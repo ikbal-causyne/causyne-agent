@@ -21,7 +21,7 @@ const SYSTEM_ADMIN_PATTERN = /\b(kill process|kill port|check port|port \d+|lsof
 // Simple file management operations
 const SIMPLE_FILE_OP_PATTERN = /\b(list (the )?files|show files|count files|rename file(s)?|delete file(s)?|move file(s)?|clean (up )?folder)\b/i;
 // Media generation intent (explicit creation of 3D, video, audio, or synthesized speech)
-const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b/i;
+const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.blend\d*\b/i;
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build.*(website|webpage|landing page|dashboard|ui component|frontend)|create.*(website|webpage|landing page|dashboard|ui)|develop.*(website|web app|webapp))\b/i;
 // Explicit game development intent

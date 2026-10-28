@@ -1629,7 +1629,7 @@ export class AgentLoop {
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
-                    tokenLimit: Number.isFinite(remainingBudget) ? remainingBudget : Infinity,
+                    tokenLimit: Number.isFinite(remainingBudget) && remainingBudget > 0 ? remainingBudget : undefined,
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
                     // IARS couples escalation to a wider search. Bounded so a stuck task

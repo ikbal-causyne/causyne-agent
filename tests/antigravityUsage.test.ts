@@ -39,6 +39,96 @@ process.stdin.on('end', () => {
   }
 });
 
+test('Antigravity checkpoints repeated reads of one Blender scene before another paid probe', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-scene-loop-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'scene-loop'});
+  emit({event:'step_update',step_update:{step_index:0,state:'DONE',step_type:'agent_response',usage:{input_tokens:80,output_tokens:20,cache_read_tokens:40}}});
+  for (let index=1; index<=9; index++) {
+    emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'blender --background "apple.blend1" --python-expr "print(' + index + ')"'}}}});
+    if (index === 4) emit({event:'step_update',step_update:{step_index:20,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'git status'}}}});
+  }
+  emit({event:'result',result:{status:'SUCCESS',conversation_id:'scene-loop',response:'Inspected only.',usage:{input_tokens:80,output_tokens:20}}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Fix the missing background in apple.blend' }], {
+        conversationId: 'scene-loop-test', taskArchetype: 'media_3d_generation'
+      }),
+      (error: unknown) => {
+        const checkpoint = error as { code?: string; inspectionCount?: number; partialUsage?: { promptTokens: number; completionTokens: number } };
+        assert.equal(checkpoint.code, 'AGY_EXPLORATION_LOOP');
+        assert.equal(checkpoint.inspectionCount, 8);
+        assert.equal(checkpoint.partialUsage?.promptTokens, 80);
+        assert.equal(checkpoint.partialUsage?.completionTokens, 20);
+        return true;
+      }
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a scene edit resets the repeated-inspection checkpoint', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-scene-progress-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'scene-progress'});
+  for (let index=1; index<=7; index++) emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'blender --background "apple.blend1" --python-expr "print(' + index + ')"'}}}});
+  emit({event:'step_update',step_update:{step_index:8,state:'ACTIVE',step_type:'tool',tool_name:'write_file',tool_info:{name:'write_file',parameters:{path:'fix.py'}}}});
+  emit({event:'step_update',step_update:{step_index:8,state:'DONE',step_type:'tool',tool_name:'write_file',tool_info:{name:'write_file',parameters:{path:'fix.py'}}}});
+  for (let index=9; index<=15; index++) emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'blender --background "apple.blend1" --python-expr "print(' + index + ')"'}}}});
+  emit({event:'result',result:{status:'SUCCESS',conversation_id:'scene-progress',response:'Edited and verified.',usage:{input_tokens:200,output_tokens:40}}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    const response = await provider.chat([{ role: 'user', content: 'Fix the missing background in apple.blend' }], {
+      conversationId: 'scene-progress-test', taskArchetype: 'media_3d_generation'
+    });
+    assert.equal(response.content, 'Edited and verified.');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a failed scene edit does not reset the repeated-inspection checkpoint', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-scene-failed-edit-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'scene-failed-edit'});
+  for (let index=1; index<=7; index++) emit({event:'step_update',step_update:{step_index:index,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'blender --background "apple.blend1" --python-expr "print(' + index + ')"'}}}});
+  emit({event:'step_update',step_update:{step_index:8,state:'ACTIVE',step_type:'tool',tool_name:'write_file',tool_info:{name:'write_file',parameters:{path:'fix.py'}}}});
+  emit({event:'step_update',step_update:{step_index:8,state:'ERROR',step_type:'tool',tool_name:'write_file',tool_info:{name:'write_file',parameters:{path:'fix.py'},error:{message:'Permission denied'}}}});
+  emit({event:'step_update',step_update:{step_index:9,state:'ACTIVE',step_type:'tool',tool_name:'RunCommand',tool_info:{name:'RunCommand',parameters:{CommandLine:'blender --background "apple.blend1" --python-expr "print(8)"'}}}});
+  emit({event:'result',result:{status:'SUCCESS',conversation_id:'scene-failed-edit',response:'No change.'}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Fix the missing background in apple.blend' }], {
+        conversationId: 'scene-failed-edit-test', taskArchetype: 'media_3d_generation'
+      }),
+      (error: unknown) => (error as { code?: string }).code === 'AGY_EXPLORATION_LOOP'
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('Antigravity cumulative session usage is charged to each turn only once', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-usage-'));
   const command = path.join(directory, 'agy');
@@ -243,6 +333,80 @@ process.stdin.on('end', () => {
     const res = await provider.chat([{ role: 'user', content: 'Deep research' }], { tokenLimit: Infinity });
     assert.equal(res.content, 'Completed deep search without budget kill');
     assert.equal(res.usage.promptTokens, 120000);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity extracts Blender targets with escaped quotes and spaces in path for exploration checkpoints', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-escaped-path-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'escaped-path-loop'});
+  for (let index = 1; index <= 9; index++) {
+    emit({
+      event: 'step_update',
+      step_update: {
+        step_index: index,
+        state: 'ACTIVE',
+        step_type: 'tool',
+        tool_name: 'run_command',
+        tool_info: {
+          name: 'run_command',
+          parameters: {
+            CommandLine: '"/Applications/Blender.app/Contents/MacOS/Blender --background \\\\"/Users/developer/Causyne AI/causyne-agent/blender_apple/red_apple.blend\\\\" --python-expr \\\\"print(scene.render.engine)\\\\""'
+          }
+        }
+      }
+    });
+  }
+  emit({event:'result',result:{status:'SUCCESS',conversation_id:'escaped-path-loop',response:'Should not finish'}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Fix the background in .blend' }], {
+        conversationId: 'escaped-path-test', taskArchetype: 'media_3d_generation'
+      }),
+      (error: unknown) => {
+        const checkpoint = error as { code?: string; inspectionCount?: number };
+        assert.equal(checkpoint.code, 'AGY_EXPLORATION_LOOP');
+        assert.equal(checkpoint.inspectionCount, 8);
+        return true;
+      }
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity enforces the default 100k ceiling when tokenLimit is undefined', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-default-100k-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'default-cap-test'});
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:99000,output_tokens:2000,cache_read_tokens:10000}}});
+  setTimeout(() => emit({event:'result',result:{status:'SUCCESS',response:'Should be stopped by default 100k ceiling'}}), 500);
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Normal prompt without task budget' }], { conversationId: 'session-default-cap' }),
+      (error: unknown) => {
+        const stopped = error as { code?: string; tokenLimit?: number };
+        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
+        assert.equal(stopped.tokenLimit, 100_000);
+        return true;
+      }
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

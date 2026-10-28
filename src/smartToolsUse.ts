@@ -49,7 +49,7 @@ const SIMPLE_FILE_OP_PATTERN =
 
 // Media generation intent (explicit creation of 3D, video, audio, or synthesized speech)
 const EXPLICIT_MEDIA_GENERATION_PATTERN =
-  /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b/i;
+  /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.blend\d*\b/i;
 
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN =
