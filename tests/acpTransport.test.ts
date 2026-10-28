@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { AcpClient } from '../src/acp/client.js';
 import { AcpProvider } from '../src/providers/acp.js';
 
@@ -37,7 +38,8 @@ test('ACP keeps one workspace-scoped peer and sends only new context and tool re
 
   const provider = new AcpProvider({ provider: 'acp/test-peer', command: 'unused', args: [] });
   const tools = [{ name: 'fs_read', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }];
-  const workspaceRoot = '/tmp/causyne-acp-selected-workspace';
+  const workspaceRoot = path.resolve('/tmp/causyne-acp-selected-workspace');
+  const anotherWorkspace = path.resolve('/tmp/another-workspace');
   const base = [
     { role: 'system', content: 'Stable system guidance' },
     { role: 'system', content: 'Current mode B' },
@@ -81,14 +83,14 @@ test('ACP keeps one workspace-scoped peer and sends only new context and tool re
     assert.match(text(3), /Read b\.txt instead/);
     assert.match(text(3), /Current Available Tools/);
 
-    await provider.chat(revised, { ...opts, conversationId: 'task-2', workspaceRoot: '/tmp/another-workspace' });
+    await provider.chat(revised, { ...opts, conversationId: 'task-2', workspaceRoot: anotherWorkspace });
     assert.equal(sessionCount, 3);
-    assert.equal(workspaces[2], '/tmp/another-workspace');
+    assert.equal(workspaces[2], anotherWorkspace);
 
     // A broken peer is restarted with the full context, never a delta alone.
     failNext = true;
     await provider.chat([...revised, { role: 'tool', name: 'fs_read', content: 'Repeated result' }], {
-      ...opts, conversationId: 'task-2', workspaceRoot: '/tmp/another-workspace'
+      ...opts, conversationId: 'task-2', workspaceRoot: anotherWorkspace
     });
     assert.equal(sessionCount, 4);
     assert.match(text(6), /Read b\.txt instead/);
