@@ -24,6 +24,7 @@ export class AcpProvider extends LLMProvider {
     activeClient = null;
     activeSessionId = null;
     currentTurnAborted = false;
+    currentTurnSawAction = false;
     currentTurnChunkHandler = null;
     currentTurnReasoningHandler = null;
     currentTurnNativeActionHandler = null;
@@ -335,10 +336,13 @@ export class AcpProvider extends LLMProvider {
                             this.currentTurnChunkHandler(text);
                     }
                     else if (updateObj.sessionUpdate === 'tool_call' || updateObj.sessionUpdate === 'tool_call_update') {
+                        this.currentTurnSawAction = true;
                         const id = String(updateObj.toolCallId || '');
                         const earlier = this.liveFileActions.get(id);
                         const kind = updateObj.kind || (earlier?.name === 'fs_edit' ? 'edit' : earlier?.name === 'fs_delete' ? 'delete' : earlier?.name === 'fs_move' ? 'move' : '');
-                        const name = kind === 'edit' ? 'fs_edit' : kind === 'delete' ? 'fs_delete' : kind === 'move' ? 'fs_move' : '';
+                        const name = kind === 'edit' ? 'fs_edit' : kind === 'delete' ? 'fs_delete' : kind === 'move' ? 'fs_move'
+                            : kind === 'read' ? 'fs_read' : kind === 'search' ? 'codebase_search' : kind === 'fetch' ? 'web_fetch'
+                                : kind === 'execute' ? 'sysRun' : String(updateObj.title || earlier?.name || 'provider_tool');
                         if (name && id) {
                             const diff = Array.isArray(updateObj.content)
                                 ? updateObj.content.find((item) => item?.type === 'diff')
@@ -351,7 +355,7 @@ export class AcpProvider extends LLMProvider {
                                 ...(updateObj.locations?.[0]?.path ? { path: updateObj.locations[0].path } : {})
                             };
                             const status = updateObj.status === 'completed' ? 'completed' : updateObj.status === 'failed' ? 'failed' : 'running';
-                            const action = { name, status, parameters,
+                            const action = { id: `acp:${id}`, name, status, parameters,
                                 detail: String(parameters.path || updateObj.title || '') };
                             if (status === 'running')
                                 this.liveFileActions.set(id, action);
@@ -455,6 +459,7 @@ export class AcpProvider extends LLMProvider {
     }
     async chat(messages, options = {}) {
         this.currentTurnAborted = Boolean(options.signal?.aborted);
+        this.currentTurnSawAction = false;
         if (this.currentTurnAborted) {
             const abortErr = new Error('ACP request aborted by user');
             abortErr.name = 'AbortError';
@@ -522,6 +527,10 @@ export class AcpProvider extends LLMProvider {
                 if (this.currentTurnAborted || options.signal?.aborted || promptErr?.name === 'AbortError') {
                     throw promptErr;
                 }
+                // Replaying after a peer executed native tools can duplicate mutations
+                // and charges. Restart only before any observed native action.
+                if (this.currentTurnSawAction)
+                    throw promptErr;
                 // If peer failed before any user abort, try recreating client once in case connection dropped
                 await this.close();
                 const fresh = await this.getOrCreateClient(options.signal, workspaceRoot);
@@ -552,6 +561,21 @@ export class AcpProvider extends LLMProvider {
                     cacheMeasurement: 'unavailable'
                 }
             };
+            const usage = result?.usage;
+            if (usage && Number.isFinite(usage.inputTokens) && usage.inputTokens >= 0
+                && Number.isFinite(usage.outputTokens) && usage.outputTokens >= 0) {
+                const safeCount = (value) => Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
+                const cached = safeCount(usage.cachedReadTokens);
+                const writes = safeCount(usage.cachedWriteTokens);
+                response.usage = {
+                    promptTokens: usage.inputTokens + cached + writes,
+                    uncachedPromptTokens: usage.inputTokens + writes,
+                    completionTokens: usage.outputTokens + safeCount(usage.thoughtTokens),
+                    cachedPromptTokens: cached,
+                    measurement: 'provider_reported',
+                    cacheMeasurement: usage.cachedReadTokens !== undefined ? 'provider_reported' : 'unavailable'
+                };
+            }
             if (toolCalls.length > 0) {
                 response.toolCalls = toolCalls;
             }

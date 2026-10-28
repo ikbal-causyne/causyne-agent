@@ -1479,6 +1479,11 @@ export class AgentLoop {
                     lazyPlaybookResult.fullPlaybooks,
                     lazyPlaybookResult.microAnnouncements
                 ].filter(Boolean).join('\n\n');
+                auditLog.log({ event: 'smart_tools_context', taskId: this.taskId, step: this.stepsCompleted,
+                    archetype: determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype,
+                    toolCount: dynamicTools.length, toolSchemaChars: JSON.stringify(dynamicTools).length,
+                    playbookDomains: lazyPlaybookResult.activePlaybookDomains,
+                    playbookChars: activePlaybooks.length, planCacheHit: Boolean(this._planMatch) });
                 // The task brief turns "here are 28 tools" into "here is the order to
                 // use them in", which is where whole exploratory steps get saved.
                 const taskBrief = this.taskShape
@@ -1712,6 +1717,9 @@ export class AgentLoop {
                             return;
                         if (!action || typeof action.name !== 'string')
                             return;
+                        auditLog.log({ event: 'native_action', taskId: this.taskId,
+                            provider: this.config.provider || 'unknown', tool: action.name, status: action.status,
+                            ...(action.id ? { actionId: action.id } : {}) });
                         if (action.status === 'running') {
                             try {
                                 this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
@@ -1739,13 +1747,18 @@ export class AgentLoop {
                             this.emitEvent({ type: 'agent_activity', activity: `Acting: ${action.name}${detail}` });
                         }
                         else if (action.status === 'completed') {
-                            this.emitEvent({ type: 'notice', tone: 'muted', nativeStep: true, message: `Antigravity ${action.name}${detail}` });
+                            this.emitEvent({ type: 'notice', tone: 'muted', nativeStep: true, message: `${this.config.provider || 'Provider'} ${action.name}${detail}` });
                         }
                         else if (action.status === 'failed') {
-                            this.emitEvent({ type: 'warning', message: `Antigravity could not ${action.name}${detail}` });
+                            this.emitEvent({ type: 'warning', message: `${this.config.provider || 'Provider'} could not ${action.name}${detail}` });
                         }
                     }
-                }).catch((error) => { throw nativeCheckpoint || error; })
+                }).catch((error) => {
+                    if (nativeCheckpoint && error && typeof error === 'object' && 'partialUsage' in error) {
+                        Object.assign(nativeCheckpoint, { partialUsage: error.partialUsage });
+                    }
+                    throw nativeCheckpoint || error;
+                })
                     .finally(() => nativeCodeObserver.dispose());
                 this._totalPlanMs = (this._totalPlanMs || 0) + (performance.now() - planStepStart);
                 if (this.stopRequested || this.abortController?.signal?.aborted) {
@@ -2136,9 +2149,8 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: '⚡ Anti-Slop Check: Visual/semantic verification recommended.' });
                             this.messages.push({ role: 'system', content: webGuardMsg });
                             this.memoryManager.saveHistory(this.messages);
-                            if (browserReady || (hasVision && visionReady)) {
-                                continue;
-                            }
+                            // Allow a planning step to perform the setup just requested.
+                            continue;
                         }
                     }
                     // Tool availability and a completed plan are not evidence of visual
@@ -3044,14 +3056,6 @@ export class AgentLoop {
                 }
             }
             catch (e) {
-                if (e instanceof EfficiencyCheckpoint) {
-                    this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
-                    this.memoryManager.saveHistory(this.messages);
-                    this.emitEvent({ type: 'budget_warning', message: e.message });
-                    auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e.reason,
-                        ...this.efficiencyBudget.snapshot() });
-                    break;
-                }
                 // A peer can fail after completing billable steps. Charge those steps
                 // once even when no final result was returned, including action and
                 // wall-clock limits, before deciding whether recovery is possible.
@@ -3067,6 +3071,14 @@ export class AgentLoop {
                             measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
                         });
                     }
+                }
+                if (e instanceof EfficiencyCheckpoint) {
+                    this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
+                    this.memoryManager.saveHistory(this.messages);
+                    this.emitEvent({ type: 'budget_warning', message: e.message });
+                    auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e.reason,
+                        ...this.efficiencyBudget.snapshot() });
+                    break;
                 }
                 if (e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET') {
                     this.emitEvent({ type: 'budget_warning', message: e.message });

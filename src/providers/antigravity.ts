@@ -984,6 +984,7 @@ export class AntigravityProvider extends LLMProvider {
       let sawToolAfterLastText = false;
       const nativeActions: ChatResponseAction[] = [];
       const attemptedNativeTools: {
+        id?: string | undefined;
         name: string;
         parameters: Record<string, any>;
         status: 'running' | 'completed' | 'failed';
@@ -1206,7 +1207,9 @@ export class AntigravityProvider extends LLMProvider {
                 }
 
                 if (name) {
-                  const existingAttempt = attemptedNativeTools.find(a => a.name === name && a.status === 'running');
+                  const actionId = Number.isFinite(stepIndex) ? `agy:${stepIndex}` : undefined;
+                  const existingAttempt = attemptedNativeTools.find(a => actionId
+                    ? a.id === actionId : a.name === name && a.status === 'running');
                   if (existingAttempt) {
                     existingAttempt.status = status;
                     if (rawParams && Object.keys(rawParams).length > 0) {
@@ -1215,6 +1218,7 @@ export class AntigravityProvider extends LLMProvider {
                     if (toolInfo?.error?.message) existingAttempt.error = toolInfo.error.message;
                   } else {
                     attemptedNativeTools.push({
+                      ...(actionId ? { id: actionId } : {}),
                       name,
                       parameters: { ...rawParams },
                       status,
@@ -1351,8 +1355,9 @@ export class AntigravityProvider extends LLMProvider {
         for (const action of nativeActions) {
           if (deniedNames.has(normalizeAction(action.name))) action.status = 'failed';
           if (typeof options.onNativeAction === 'function') {
-            const attempt = [...attemptedNativeTools].reverse().find(candidate =>
-              normalizeAction(candidate.name) === normalizeAction(action.name));
+            const attempt = [...attemptedNativeTools].reverse().find(candidate => action.id
+              ? candidate.id === action.id
+              : normalizeAction(candidate.name) === normalizeAction(action.name) && candidate.detail === action.detail);
             options.onNativeAction({ ...action, parameters: attempt?.parameters || {} });
           }
         }
@@ -1462,6 +1467,13 @@ export class AntigravityProvider extends LLMProvider {
 
         if (usageIsReported && this.currentConversationId) {
           this.lastCumulativeUsage = { conversationId: this.currentConversationId, ...cumulative };
+        }
+        // A peer may report usage only in its final result.
+        if (promptTokens + completionTokens >= tokenLimit) {
+          Object.assign(partialUsage, response.usage);
+          safeReject(Object.assign(new Error(`Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`),
+            { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }));
+          return;
         }
         safeResolve(response);
       });

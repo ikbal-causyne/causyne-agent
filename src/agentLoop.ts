@@ -1910,7 +1910,12 @@ export class AgentLoop {
               this.emitEvent({ type: 'warning', message: `${this.config.provider || 'Provider'} could not ${action.name}${detail}` });
             }
           }
-        }).catch((error: unknown) => { throw nativeCheckpoint || error; })
+        }).catch((error: unknown) => {
+          if (nativeCheckpoint && error && typeof error === 'object' && 'partialUsage' in error) {
+            Object.assign(nativeCheckpoint, { partialUsage: error.partialUsage });
+          }
+          throw nativeCheckpoint || error;
+        })
           .finally(() => nativeCodeObserver.dispose());
         this._totalPlanMs = (this._totalPlanMs || 0) + (performance.now() - planStepStart);
 
@@ -2336,9 +2341,8 @@ export class AgentLoop {
               this.emitEvent({ type: 'status', message: '⚡ Anti-Slop Check: Visual/semantic verification recommended.' });
               this.messages.push({ role: 'system', content: webGuardMsg });
               this.memoryManager.saveHistory(this.messages);
-              if (browserReady || (hasVision && visionReady)) {
-                continue;
-              }
+              // Allow a planning step to perform the setup just requested.
+              continue;
             }
           }
 
@@ -3322,14 +3326,6 @@ export class AgentLoop {
         }
         
       } catch (e: any) {
-        if (e instanceof EfficiencyCheckpoint) {
-          this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
-          this.memoryManager.saveHistory(this.messages);
-          this.emitEvent({ type: 'budget_warning', message: e.message });
-          auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e.reason,
-            ...this.efficiencyBudget.snapshot() });
-          break;
-        }
         // A peer can fail after completing billable steps. Charge those steps
         // once even when no final result was returned, including action and
         // wall-clock limits, before deciding whether recovery is possible.
@@ -3348,6 +3344,14 @@ export class AgentLoop {
               measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
             });
           }
+        }
+        if (e instanceof EfficiencyCheckpoint) {
+          this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
+          this.memoryManager.saveHistory(this.messages);
+          this.emitEvent({ type: 'budget_warning', message: e.message });
+          auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e.reason,
+            ...this.efficiencyBudget.snapshot() });
+          break;
         }
         if (e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET') {
           this.emitEvent({ type: 'budget_warning', message: e.message });
