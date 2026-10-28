@@ -369,7 +369,7 @@ When the user asks you to build, create, test, expand, or develop a game, follow
 
 const GAME_INTENT = /\b(game|games|gamedev|godot|unity|unreal|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight)\b|\.(tscn|gd)\b/i;
 
-const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component)\b/i;
+const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component|three\.?js|threejs|webgl|canvas|babylon)\b/i;
 
 const MEDIA_INTENT = /\b(image|images|picture|photo|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
 
