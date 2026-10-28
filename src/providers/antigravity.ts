@@ -714,7 +714,7 @@ export class AntigravityProvider extends LLMProvider {
       '   - If a background server is required (e.g. server.py, python -m http.server, npm run dev), start it using sysRunBg or a background command.\n' +
       '   - If the default port (e.g. 8080 or 3000) is already occupied or in use by another process, immediately use the next available port (e.g. 8081, 8082, 3001) rather than getting stuck in process-checking loops.\n' +
       '   - Immediately open the URL or project in the user\'s browser using desktop.open with {"target": "http://localhost:<port>"} or run the native open command.\n' +
-      '   - Confirm the application is accessible only after a readiness check succeeds.\n' +
+      '   - Confirm the application is accessible only after a readiness check succeeds (e.g. using curl -sI http://localhost:<port>).\n' +
       '3. NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
       '4. Create or edit files only when the current user request authorizes it.\n' +
       '5. Greenfield Application Scaffolding vs. Legacy Codebase Exploration:\n' +

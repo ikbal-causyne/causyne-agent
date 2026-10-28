@@ -23,12 +23,17 @@ export function stripAnsi(str) {
     return str.replace(new RegExp(pattern, 'g'), '');
 }
 /**
- * Strips ANSI escape sequences and normalizes carriage returns so terminal split-panes never glitch.
+ * Strips ANSI escape sequences, normalizes carriage returns, and filters
+ * transient progress meters (curl, wget) so agent history and split-panes never glitch.
  */
 export function cleanSubprocessOutput(str) {
-    return stripAnsi(str)
+    const normalized = stripAnsi(str)
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n');
+    return normalized
+        .split('\n')
+        .filter(line => !/^\s*(?:%\s+Total\b|Dload\s+Upload\b|\d+\s+\d+(?:\.[0-9kKmM]+)?\s+\d+\s+.*--:--:--)/i.test(line))
+        .join('\n');
 }
 /**
  * Commands whose exit code 1 indicates a normal query result (e.g. no matches found,
