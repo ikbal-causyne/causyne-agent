@@ -3322,8 +3322,8 @@ export class AgentLoop {
                 if (val.startsWith('~')) {
                     args[field] = val.replace(/^~(?=$|[\\/])/, os.homedir());
                 }
-                else if (!val.startsWith('/')) {
-                    args[field] = `${this.workspaceRoot || process.cwd()}/${val}`;
+                else if (!path.isAbsolute(val)) {
+                    args[field] = path.resolve(this.workspaceRoot || process.cwd(), val);
                 }
             }
         }
