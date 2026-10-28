@@ -47,6 +47,7 @@ export interface AcpClientOptions {
 export interface AcpPromptResult {
   stopReason: PromptResponse['stopReason'];
   text: string;
+  usage?: PromptResponse['usage'];
 }
 
 interface PendingRequest {
@@ -299,6 +300,7 @@ export class AcpClient {
       }, this.options.promptTimeoutMs ?? 15 * 60 * 1000, signal);
       return {
         stopReason: response?.stopReason ?? 'end_turn',
+        ...(response?.usage ? { usage: response.usage } : {}),
         text: collected
       };
     } finally {

@@ -315,7 +315,7 @@ process.stdin.on('end', () => {
   }
 });
 
-test('Antigravity does not abort multi-step turns when tokenLimit is Infinity', { skip: process.platform === 'win32' }, async () => {
+test('Antigravity treats tokenLimit Infinity as unset and keeps a finite default ceiling', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-infinity-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -324,15 +324,22 @@ process.stdin.resume();
 process.stdin.on('end', () => {
   emit({event:'init',conversation_id:'infinity-test'});
   // Emit 120k cumulative tokens in step update
-  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:120000,output_tokens:500,cache_read_tokens:40000}}});
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:120000,output_tokens:500,cache_read_tokens:0}}});
   emit({event:'result',result:{status:'SUCCESS',response:'Completed deep search without budget kill',usage:{input_tokens:120000,output_tokens:500}}});
 });
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    const res = await provider.chat([{ role: 'user', content: 'Deep research' }], { tokenLimit: Infinity });
-    assert.equal(res.content, 'Completed deep search without budget kill');
-    assert.equal(res.usage.promptTokens, 120000);
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Deep research' }], { tokenLimit: Infinity }),
+      (error: unknown) => {
+        const stopped = error as { code?: string; tokenLimit?: number; partialUsage?: { promptTokens?: number } };
+        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
+        assert.equal(stopped.tokenLimit, 100_000);
+        assert.equal(stopped.partialUsage?.promptTokens, 120000);
+        return true;
+      }
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -392,7 +399,7 @@ const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
 process.stdin.resume();
 process.stdin.on('end', () => {
   emit({event:'init',conversation_id:'default-cap-test'});
-  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:99000,output_tokens:2000,cache_read_tokens:10000}}});
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:99000,output_tokens:2000,cache_read_tokens:0}}});
   setTimeout(() => emit({event:'result',result:{status:'SUCCESS',response:'Should be stopped by default 100k ceiling'}}), 500);
 });
 `, { mode: 0o755 });
@@ -407,6 +414,27 @@ process.stdin.on('end', () => {
         return true;
       }
     );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('automatic ceiling counts cache hits separately from new tokens', { skip: process.platform === 'win32' }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-cached-floor-'));
+  const command = path.join(directory, 'agy');
+  fs.writeFileSync(command, `#!/usr/bin/env node
+const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
+process.stdin.resume();
+process.stdin.on('end', () => {
+  emit({event:'init',conversation_id:'cached-floor-test'});
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:99000,output_tokens:2000,cache_read_tokens:10000}}});
+  emit({event:'result',result:{status:'SUCCESS',response:'Finished with cached input',usage:{input_tokens:99000,output_tokens:2000,cache_read_tokens:10000}}});
+});
+`, { mode: 0o755 });
+  try {
+    const provider = new AntigravityProvider({ command });
+    const response = await provider.chat([{ role: 'user', content: 'Use cached context' }], {});
+    assert.equal(response.content, 'Finished with cached input');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

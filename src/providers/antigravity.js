@@ -866,6 +866,8 @@ export class AntigravityProvider extends LLMProvider {
         }
         const isMediaTask = options.taskArchetype === 'media_3d_generation'
             || /\b(blender|\.blend\d*|render 3d|render frame)\b/i.test(latestPrompt);
+        const isWebTask = options.taskArchetype === 'web_fullstack'
+            || /\b(website|web app|html|css|web page|frontend|web application)\b/i.test(latestPrompt);
         // A resumed agy conversation retains its old instructions. Reassert the
         // current turn's narrower scope on every call, including formatDelta turns.
         if (launchOnly) {
@@ -886,6 +888,12 @@ export class AntigravityProvider extends LLMProvider {
                 'Inspect the scene and relevant sources as needed, but do not repeat the same probe without a reason. ' +
                 'Use the observations to make a targeted change, then verify the saved scene and rendered result. ' +
                 'If verification fails, revise the change and verify again; report unfinished work accurately.\n\n' + promptText;
+        }
+        if (isWebTask) {
+            promptText = '[Current Web / UI engineering task: verification requirements]\n' +
+                'Create complete, high-fidelity web files. Do not declare completion merely by running curl or open in the terminal. ' +
+                'You must use Causyne visual verification: invoke browser_act or screenshot to visually inspect the rendered UI before completing the task. ' +
+                'A saved HTML/CSS/JS file or a local server launch is not proof of visual inspection.\n\n' + promptText;
         }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
@@ -950,7 +958,9 @@ export class AntigravityProvider extends LLMProvider {
                     // A process that already exited needs no further action.
                 }
             };
-            const maxNativeActions = desktopTask ? 12 : Infinity;
+            const configuredActions = Number(options.maxNativeActions);
+            const maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions > 0
+                ? configuredActions : desktopTask ? 12 : 35;
             let nativeActionStarts = 0;
             const seenNativeActionSteps = new Set();
             const mediaInspectionCounts = new Map();
@@ -968,11 +978,13 @@ export class AntigravityProvider extends LLMProvider {
             // disabled. Users can set a lower task budget through the existing UI.
             const remainingTaskBudget = Number(options.maxTokensThisCall);
             const rawTokenLimit = Number(options.tokenLimit);
+            const hasExplicitLimit = (Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0)
+                || (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0);
             const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
                 ? remainingTaskBudget
                 : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
                     ? rawTokenLimit
-                    : (options.tokenLimit === Infinity ? Infinity : 100_000));
+                    : 100_000);
             const wallTimer = desktopTask ? setTimeout(() => {
                 const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.');
                 error.code = 'AGY_DESKTOP_TASK_LIMIT';
@@ -1075,9 +1087,17 @@ export class AntigravityProvider extends LLMProvider {
                                         + (Number(usage.cache_read_tokens) || 0);
                                     partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
                                         + (Number(usage.thinking_tokens) || 0);
+                                    // Explicit task budgets track all provider-reported tokens.
+                                    // The automatic safety floor counts uncached input plus
+                                    // output, so a cache hit does not masquerade as fresh spend.
+                                    const reportedTotal = partialUsage.promptTokens + partialUsage.completionTokens;
+                                    const uncachedTotal = Math.max(0, partialUsage.promptTokens
+                                        - Math.min(partialUsage.promptTokens, partialUsage.cachedPromptTokens || 0))
+                                        + partialUsage.completionTokens;
+                                    const spentAgainstLimit = hasExplicitLimit ? reportedTotal : uncachedTotal;
                                     if (Number.isFinite(tokenLimit) && tokenLimit > 0
-                                        && partialUsage.promptTokens + partialUsage.completionTokens >= tokenLimit) {
-                                        const error = Object.assign(new Error(`Antigravity reported at least ${partialUsage.promptTokens + partialUsage.completionTokens} noncached tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } });
+                                        && spentAgainstLimit >= tokenLimit) {
+                                        const error = Object.assign(new Error(`Antigravity reported ${spentAgainstLimit} tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } });
                                         safeReject(error);
                                         terminateChild();
                                         return;
@@ -1093,8 +1113,8 @@ export class AntigravityProvider extends LLMProvider {
                                     && (!Number.isFinite(stepIndex) || !seenNativeActionSteps.has(stepIndex));
                                 if (newNativeAction && Number.isFinite(stepIndex))
                                     seenNativeActionSteps.add(stepIndex);
-                                if (desktopTask && newNativeAction && ++nativeActionStarts > maxNativeActions) {
-                                    const error = new Error(`Antigravity exceeded ${maxNativeActions} native actions for this desktop task. Outcome is unverified.`);
+                                if (newNativeAction && ++nativeActionStarts > maxNativeActions) {
+                                    const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`);
                                     error.code = 'AGY_NATIVE_ACTION_BUDGET';
                                     safeReject(error);
                                     terminateChild();
@@ -1158,6 +1178,7 @@ export class AntigravityProvider extends LLMProvider {
                                     sawToolAfterLastText = true;
                                     const detail = describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams });
                                     const action = {
+                                        ...(Number.isFinite(stepIndex) ? { id: `agy:${stepIndex}` } : {}),
                                         name,
                                         status,
                                         ...(detail ? { detail } : {})

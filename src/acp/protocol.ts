@@ -264,6 +264,15 @@ export type StopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refu
 
 export interface PromptResponse {
   stopReason: StopReason;
+  usage?: AcpUsage;
+}
+
+export interface AcpUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedReadTokens?: number;
+  cachedWriteTokens?: number;
+  thoughtTokens?: number;
 }
 
 export interface SetSessionModeRequest {

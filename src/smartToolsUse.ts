@@ -8,7 +8,118 @@
  * Authorship: Strict TypeScript (Causyne Agent).
  */
 
-import { PACK_PLAYBOOKS } from './toolPacks.js';
+import { PACK_PLAYBOOKS, isWebIntent } from './toolPacks.js';
+import { isMutatingToolCall } from './decisionPolicy.js';
+
+export type ExecutionPhase = 'inspection' | 'synthesis' | 'execution' | 'verification';
+
+export interface ToolPhaseSnapshot {
+  phase: ExecutionPhase;
+  consecutiveInspections: number;
+  mutationAttempted: boolean;
+  verificationObserved: boolean;
+}
+
+const INSPECTION_TOOLS = new Set([
+  'fs_read', 'fs_list', 'fs_find', 'fs_search', 'grep_search', 'code_searcher',
+  'codebase_search', 'web_search', 'web_fetch', 'browser_snapshot',
+  'browser_get_dom', 'view_image', 'pdf_read', 'dir_list'
+]);
+const VERIFICATION_TOOLS = new Set([
+  'screenshot', 'vision_inspect_ui', 'browser_console', 'ax_snapshot'
+]);
+
+function isInspection(toolName: string, args: Record<string, unknown>): boolean {
+  if (INSPECTION_TOOLS.has(toolName)) return true;
+  if (toolName !== 'sysRun') return false;
+  return /^\s*(?:pwd|ls|find|rg|grep|cat|sed|head|tail|git\s+(?:status|diff|log|show)|npm\s+(?:view|audit))\b/i
+    .test(String(args.command ?? ''));
+}
+
+function isVerification(toolName: string, args: Record<string, unknown>): boolean {
+  if (VERIFICATION_TOOLS.has(toolName)) return true;
+  if (toolName !== 'sysRun') return false;
+  return /^\s*(?:npm\s+(?:test|run\s+(?:test|typecheck|build))|node\s+--check|pytest|cargo\s+test|go\s+test)\b/i
+    .test(String(args.command ?? ''));
+}
+
+/**
+ * An advisory phase governor. A fixed two-read denial is unsafe for research,
+ * debugging, and large repositories, so the third inspection receives one
+ * short synthesis nudge. Exact repeated calls remain subject to StallGuard.
+ * Provider-native ACP actions are outside this local tool interceptor.
+ */
+export class SmartToolsGovernor {
+  private phase: ExecutionPhase = 'inspection';
+  private consecutiveInspections = 0;
+  private mutationAttempted = false;
+  private verificationObserved = false;
+  private nudgeIssued = false;
+
+  get inspectionCapacity(): number { return Math.max(0, 2 - this.consecutiveInspections); }
+
+  beginModelStep(): void {
+    // A synthesis checkpoint yields to the planner; it does not prohibit
+    // additional evidence on research or long engineering tasks forever.
+    if (this.phase === 'synthesis') {
+      this.phase = 'inspection';
+      this.consecutiveInspections = 0;
+      this.nudgeIssued = false;
+    }
+  }
+
+  interceptAction(toolName: string, args: Record<string, unknown>): { allowed: boolean; reason?: string } {
+    if (!isInspection(toolName, args) || isVerification(toolName, args)) return { allowed: true };
+    if (this.consecutiveInspections < 2) return { allowed: true };
+    this.phase = 'synthesis';
+    return { allowed: false, reason: 'Inspection batch complete (2 actions). Synthesize the observations before another batch. '
+      + 'Continue with a targeted edit or verification when evidence is sufficient; further research remains available in the next planning step.' };
+  }
+
+  reset(): void {
+    this.phase = 'inspection';
+    this.consecutiveInspections = 0;
+    this.mutationAttempted = false;
+    this.verificationObserved = false;
+    this.nudgeIssued = false;
+  }
+
+  snapshot(): ToolPhaseSnapshot {
+    return {
+      phase: this.phase,
+      consecutiveInspections: this.consecutiveInspections,
+      mutationAttempted: this.mutationAttempted,
+      verificationObserved: this.verificationObserved
+    };
+  }
+
+  observe(toolName: string, args: Record<string, unknown>, result: unknown): string | null {
+    if (isVerification(toolName, args)) {
+      this.phase = 'verification';
+      this.consecutiveInspections = 0;
+      if (result !== null && typeof result === 'object'
+        && (result as Record<string, unknown>).success === true) {
+        this.verificationObserved = true;
+      }
+      return null;
+    }
+    if (isMutatingToolCall(toolName, args)) {
+      this.phase = 'execution';
+      this.mutationAttempted = true;
+      this.consecutiveInspections = 0;
+      this.nudgeIssued = false;
+      return null;
+    }
+    if (!isInspection(toolName, args)) return null;
+    this.consecutiveInspections++;
+    if (!this.mutationAttempted) this.phase = this.consecutiveInspections > 2 ? 'synthesis' : 'inspection';
+    if (this.consecutiveInspections === 3 && !this.nudgeIssued) {
+      this.nudgeIssued = true;
+      return 'You have inspected three times without an action. Synthesize what is known and choose the next useful step. Continue inspecting if the task still needs evidence; avoid repeating unchanged probes.';
+    }
+    return null;
+  }
+}
 
 export interface SmartToolsScopeResult {
   readonly toolScope: Set<string> | null;
@@ -53,7 +164,7 @@ const EXPLICIT_MEDIA_GENERATION_PATTERN =
 
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN =
-  /\b(build.*(website|webpage|landing page|dashboard|ui component|frontend)|create.*(website|webpage|landing page|dashboard|ui)|develop.*(website|web app|webapp))\b/i;
+  /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|application|applicatio\w*|landing page|dashboard|ui|frontend)\b/i;
 
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN =
@@ -151,6 +262,10 @@ export function determineToolScope(
     };
   }
 
+  if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
+    return { toolScope: null, archetype: 'web_engineering', suppressedPacks: [] };
+  }
+
   // 5. Media / 3D generation & creative audio intent
   if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
     const tools = new Set([
@@ -226,7 +341,8 @@ export function resolveLazyPlaybooks(
       tools.has('vision_inspect_ui') ||
       tools.has('screenshot') ||
       tools.has('astryx_oracle');
-    const webExplicitDemand = EXPLICIT_WEB_ENGINEERING_PATTERN.test(text);
+    const webExplicitDemand = EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)
+      || (isWebIntent(text) && WEB_CONSTRUCTION_EXCLUSION.test(text));
 
     if ((webToolInvoked || webExplicitDemand) && PACK_PLAYBOOKS.web) {
       activePlaybooks.push(PACK_PLAYBOOKS.web);

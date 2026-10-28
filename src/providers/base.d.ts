@@ -14,6 +14,7 @@ export interface ChatResponseUsage {
   promptTokens: number;
   completionTokens: number;
   cachedPromptTokens?: number | undefined;
+  uncachedPromptTokens?: number | undefined;
   measurement?: 'provider_reported' | 'text_estimate' | undefined;
   cacheMeasurement?: 'provider_reported' | 'unavailable' | undefined;
   totalTokens?: number | undefined;
@@ -30,6 +31,7 @@ export interface ChatResponseToolCall {
 }
 
 export interface ChatResponseAction {
+  id?: string | undefined;
   name: string;
   status: 'running' | 'completed' | 'failed';
   detail?: string | undefined;

@@ -40,6 +40,8 @@
     "src/agentPolicy.ts",
     "src/launchIntent.ts",
     "src/stallGuard.ts",
+    "src/historyPruner.ts",
+    "src/providers/budgetEnforcer.ts",
     "src/tui/codeProgress.ts",
     "src/tui/layout.ts",
     "src/tui/sessionSidebar.ts",
@@ -152,6 +154,7 @@
     "src/tui/scrollInteraction.ts",
     "src/tools/archive.ts",
     "src/tools/viewImage.ts",
+    "src/tools/toolOutputStore.ts",
     "src/smartToolsUse.ts"
   ],
   "exclude": [

@@ -28,7 +28,7 @@ import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
 import { TimeMachine, recoveryUserMessage } from './timeMachine.js';
 import { routePacks, packForTool, isCoreTool, isGameIntent, isWebIntent, getPackCatalogue, PACK_PLAYBOOKS, PACKS } from './toolPacks.js';
-import { determineToolScope, filterSuppressedPacks, resolveLazyPlaybooks } from './smartToolsUse.js';
+import { determineToolScope, filterSuppressedPacks, resolveLazyPlaybooks, SmartToolsGovernor } from './smartToolsUse.js';
 import { resolveCharPool, measureMessages, resultCapFor, decayToolResults, buildWindow, compactInPlace, describeDroppedMessages, sanitizeSequences, applyProgressiveCompaction, snipOversizedToolOutputs } from './contextManager.js';
 // Provider imports
 import { detectWorkspaceDomains, ensureSkillRepo, getSkillDomainHeader } from './skillsManager.js';
@@ -44,6 +44,8 @@ import { resolveMentionedContext } from './promptMentions.js';
 import { isLaunchOnlyPrompt, launchScopeError } from './launchIntent.js';
 import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from './tui/codeProgress.js';
 import { StallGuardController } from './stallGuard.js';
+import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations } from './historyPruner.js';
+import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -477,6 +479,8 @@ export class AgentLoop {
         this.recentActionSignatures = [];
         this.consecutiveReadOnlySteps = 0;
         this.stallGuard = new StallGuardController();
+        this.smartToolsGovernor = new SmartToolsGovernor();
+        this._smartToolsNudge = null;
         // Sovereign Progressive Disclosure: which capability packs have entered the
         // context window for this task. Nothing is disabled — see src/toolPacks.js.
         this.unlockedPacks = new Set();
@@ -766,6 +770,9 @@ export class AgentLoop {
             return prefetched;
         const eligible = [];
         for (const toolCall of toolCalls) {
+            const capacity = Math.min(this.smartToolsGovernor?.inspectionCapacity ?? 2, this.efficiencyBudget?.getRemainingActions() ?? 35);
+            if (eligible.length >= capacity)
+                break;
             const functionName = canonicalToolName(toolCall.function.name);
             if (!AgentLoop.READ_ONLY_TOOLS.has(functionName))
                 continue;
@@ -1275,7 +1282,13 @@ export class AgentLoop {
         this.recentActionSignatures = [];
         this.consecutiveReadOnlySteps = 0;
         this.stallGuard.reset();
+        this.smartToolsGovernor.reset();
+        this._smartToolsNudge = null;
         this.tokenTracker.resetTask();
+        const turnArchetype = determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype;
+        const efficiency = this.config.efficiency || {};
+        this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0 ? efficiency.maxTurnTokens : 100_000, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype));
+        let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
         while (!this.stopRequested) {
@@ -1286,6 +1299,13 @@ export class AgentLoop {
             }
             this.emitEvent({ type: 'status', message: 'Thinking...' });
             try {
+                this.smartToolsGovernor.beginModelStep();
+                // Insert at the model boundary, never between one assistant tool-call
+                // message and the matching tool results in a multi-call batch.
+                if (this._smartToolsNudge) {
+                    this.messages.push({ role: 'system', content: this._smartToolsNudge });
+                    this._smartToolsNudge = null;
+                }
                 // --- V8 MEMORY ARCHITECTURE: DECAY → WINDOW → REAL COMPACTION ---
                 // The window is no longer only a view over an ever-growing array. Old
                 // tool payloads decay into stubs, and anything amputated is physically
@@ -1295,13 +1315,31 @@ export class AgentLoop {
                 // 5-Stage Progressive Compaction (Claude Code Architecture / Research Section E):
                 // Stage 0 (HLCE Ephemeral Decay) + Stage 2 (Snip >15K tokens / 60K chars) +
                 // Stage 1 (Budget Reduction >70%) + Stage 3 (Microcompact) + Stage 4 (Context Collapse >85%)
-                const compaction = applyProgressiveCompaction(this.messages, MAX_CHAR_POOL, {
-                    enableEphemeralDecay: true,
-                    ephemeralKeepRecent: 3,
-                    ephemeralMinChars: 1200,
-                    budgetKeepRecent: this.config.keepRecentToolResults ?? 8,
-                    collapseKeepRecent: 2
+                const observationPrune = pruneStaleToolObservations(this.messages, {
+                    keepRecent: this.config.keepRecentToolResults ?? 4,
+                    minChars: 600,
+                    taskId: this.taskId
                 });
+                const oversizedPrune = shortenOversizedToolObservations(this.messages, {
+                    taskId: this.taskId
+                });
+                const compaction = applyProgressiveCompaction(this.messages, MAX_CHAR_POOL, {
+                    // historyPruner preserves full output before eliding it. The legacy
+                    // decay path cannot promise that recovery, so keep it disabled here.
+                    enableEphemeralDecay: false,
+                    // The legacy snipper can discard data when a disk spill fails. The
+                    // recoverable TypeScript path above owns all oversized tool output.
+                    snipOptions: { threshold: Number.MAX_SAFE_INTEGER },
+                    budgetKeepRecent: Number.MAX_SAFE_INTEGER,
+                    collapseKeepRecent: Number.MAX_SAFE_INTEGER
+                });
+                compaction.totalReclaimed += observationPrune.reclaimedChars + oversizedPrune.reclaimedChars;
+                if (observationPrune.pruned > 0) {
+                    compaction.stagesFired.push(`recoverable_observation_decay:${observationPrune.pruned}`);
+                }
+                if (oversizedPrune.pruned > 0) {
+                    compaction.stagesFired.push(`recoverable_oversized_output:${oversizedPrune.pruned}`);
+                }
                 if (compaction.totalReclaimed > 0) {
                     this.debugLog(`progressive compaction reclaimed ${(compaction.totalReclaimed / 1024).toFixed(1)} KB [${compaction.stagesFired.join(', ')}]`);
                     auditLog.log({
@@ -1332,7 +1370,7 @@ export class AgentLoop {
                 if (splitIndex >= 1) {
                     const dropped = this.messages.slice(1, splitIndex + 1);
                     if (dropped.length > 0) {
-                        const compactSummary = buildStructuralSummary(dropped) || describeDroppedMessages(dropped);
+                        const compactSummary = buildRecoverableDroppedSummary(dropped, buildStructuralSummary(dropped) || describeDroppedMessages(dropped));
                         const removed = compactInPlace(this.messages, splitIndex, compactSummary);
                         this._lastCompactionIndex = null;
                         this.debugLog(`compacted ${removed} messages out of the live context`);
@@ -1583,8 +1621,9 @@ export class AgentLoop {
                     ? Number(budget.maxTokensPerDay || 0) : 0;
                 const dailyUsed = hardBudget && dailyLimit > 0
                     ? (await this.tokenTracker.getDailyUsage()).totalTokens : 0;
-                const remainingBudget = hardBudget
+                const configuredRemainingBudget = hardBudget
                     ? Math.min(taskLimit > 0 ? taskLimit - this.tokenTracker.taskTokens : Infinity, dailyLimit > 0 ? dailyLimit - dailyUsed : Infinity) : Infinity;
+                const remainingBudget = Math.min(configuredRemainingBudget, this.efficiencyBudget.getRemainingTokens());
                 if (remainingBudget <= 0) {
                     this.emitEvent({ type: 'budget_warning', message: 'Token budget reached before the next model call.' });
                     break;
@@ -1623,6 +1662,9 @@ export class AgentLoop {
                 this.emitEvent({ type: 'status', message: 'Thinking…' });
                 this.emitEvent({ type: 'agent_activity', activity: 'Thinking…' });
                 const planStepStart = performance.now();
+                const nativeControl = new AbortController();
+                let nativeCheckpoint = null;
+                const invocation = ++modelCallIndex;
                 const response = await this.llm.chat(prunedMessages, {
                     taskId: this.taskId,
                     conversationId: this.memoryManager?.sessionId || this.taskId,
@@ -1630,13 +1672,15 @@ export class AgentLoop {
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
                     tokenLimit: Number.isFinite(remainingBudget) && remainingBudget > 0 ? remainingBudget : undefined,
+                    maxNativeActions: this.efficiencyBudget.getRemainingActions(),
                     workspaceRoot: this.workspaceRoot,
                     tools: dynamicTools,
                     // IARS couples escalation to a wider search. Bounded so a stuck task
                     // cannot climb into randomness across repeated escalations.
                     temperature: Math.min(1, this.taskTemperature + uncertaintyTemperatureDelta),
                     coreToolCount: dynamicTools.filter((t) => isCoreTool(t.name)).length,
-                    signal: this.abortController?.signal,
+                    signal: this.abortController?.signal
+                        ? AbortSignal.any([this.abortController.signal, nativeControl.signal]) : nativeControl.signal,
                     onReasoningChunk: (chunk) => {
                         if (this.stopRequested || this.abortController?.signal?.aborted)
                             return;
@@ -1668,6 +1712,18 @@ export class AgentLoop {
                             return;
                         if (!action || typeof action.name !== 'string')
                             return;
+                        if (action.status === 'running') {
+                            try {
+                                this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
+                            }
+                            catch (error) {
+                                if (error instanceof EfficiencyCheckpoint) {
+                                    nativeCheckpoint = error;
+                                    nativeControl.abort();
+                                }
+                                return;
+                            }
+                        }
                         const nativeCode = codeProgressFromAction(action.name, { ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
                             path: action.parameters?.path || action.parameters?.Path || action.detail || '' }, `provider:${action.name}:${action.detail || ''}`, action.status === 'completed' ? 'done' : action.status === 'failed' ? 'failed' : 'working', 'provider');
                         if (nativeCode) {
@@ -1689,7 +1745,8 @@ export class AgentLoop {
                             this.emitEvent({ type: 'warning', message: `Antigravity could not ${action.name}${detail}` });
                         }
                     }
-                }).finally(() => nativeCodeObserver.dispose());
+                }).catch((error) => { throw nativeCheckpoint || error; })
+                    .finally(() => nativeCodeObserver.dispose());
                 this._totalPlanMs = (this._totalPlanMs || 0) + (performance.now() - planStepStart);
                 if (this.stopRequested || this.abortController?.signal?.aborted) {
                     auditLog.log({ event: 'task_interrupted', taskId: this.taskId });
@@ -1717,12 +1774,14 @@ export class AgentLoop {
                     promptTokens: response.usage.promptTokens,
                     completionTokens: response.usage.completionTokens,
                     cachedPromptTokens: response.usage.cachedPromptTokens || 0,
+                    noncachedTokens: noncachedTokens(response.usage),
                     measurement: response.usage.measurement || 'unspecified',
                     cacheMeasurement: response.usage.cacheMeasurement || 'unspecified',
                     costBasis: /^(acp(?:\/|$)|antigravity$|agy$)/i.test(String(this.config.provider || ''))
                         ? 'external_subscription_unavailable' : 'rate_card_estimate',
                     callEstimatedCostUsd: this.tokenTracker.calculateCost(response.usage.promptTokens, response.usage.completionTokens, response.usage)
                 });
+                this.efficiencyBudget.recordUsage(response.usage);
                 const cachedTokens = response.usage.cachedPromptTokens || 0;
                 if (cachedTokens > 0) {
                     this.debugLog(`prompt cache hit: ${cachedTokens.toLocaleString()} of ${response.usage.promptTokens.toLocaleString()} input tokens served from cache`);
@@ -2225,6 +2284,13 @@ export class AgentLoop {
                         continue;
                     }
                     let args = repair.args;
+                    const phaseAdmission = this.smartToolsGovernor.interceptAction(functionName, args || {});
+                    if (!phaseAdmission.allowed) {
+                        this.messages.push({ role: 'tool', tool_call_id: toolCall.id, name: functionName,
+                            content: JSON.stringify({ success: false, checkpoint: 'synthesis', error: phaseAdmission.reason }) });
+                        auditLog.log({ event: 'smart_tools_checkpoint', taskId: this.taskId, tool: functionName, phase: 'synthesis' });
+                        continue;
+                    }
                     if (repair.repaired && repair.repairs.length > 0) {
                         this.debugLog(`[TOOL SELF-REPAIR] Healed tool call '${functionName}': ${repair.repairs.join(', ')}`);
                     }
@@ -2564,6 +2630,7 @@ export class AgentLoop {
                     // errors. It only rewinds reasoning; it never replays side effects.
                     let result;
                     let duration;
+                    this.efficiencyBudget.recordAction();
                     try {
                         const startTime = Date.now();
                         const actStart = performance.now();
@@ -2794,6 +2861,13 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: `⚡ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
                         }
                     }
+                    // SmartToolsUse tracks actual local tool calls, without denying
+                    // useful inspection during long research or code tasks.
+                    const phaseNudge = this.smartToolsGovernor.observe(functionName, args || {}, result);
+                    if (phaseNudge)
+                        this._smartToolsNudge = phaseNudge;
+                    else if (this.smartToolsGovernor.snapshot().phase === 'execution')
+                        this._smartToolsNudge = null;
                     // Feed result back to LLM (4. OBSERVE)
                     if (result && result._is_image_marker) {
                         if (!this.llm.supportsVision) {
@@ -2922,10 +2996,12 @@ export class AgentLoop {
                             const seenAt = this._observationDigests.get(digest);
                             if (seenAt !== undefined) {
                                 resultString = JSON.stringify({
-                                    success: true,
-                                    unchanged: true,
-                                    output: `Identical to the result of step ${seenAt} — nothing has changed since. `
-                                        + `That earlier result is still in your context; re-read it there rather than asking again.`
+                                    ...(result && typeof result.success === 'boolean' ? { success: result.success } : {}),
+                                    identicalResult: true,
+                                    output: `The serialized tool response matches step ${seenAt}. This does not prove external state is unchanged. `
+                                        + (spill
+                                            ? `Full output is saved at ${spill.path}; read a relevant range if needed.`
+                                            : 'The earlier response may have left the active context; make a targeted read if its details are needed.')
                                 });
                             }
                             else {
@@ -2968,6 +3044,14 @@ export class AgentLoop {
                 }
             }
             catch (e) {
+                if (e instanceof EfficiencyCheckpoint) {
+                    this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
+                    this.memoryManager.saveHistory(this.messages);
+                    this.emitEvent({ type: 'budget_warning', message: e.message });
+                    auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e.reason,
+                        ...this.efficiencyBudget.snapshot() });
+                    break;
+                }
                 // A peer can fail after completing billable steps. Charge those steps
                 // once even when no final result was returned, including action and
                 // wall-clock limits, before deciding whether recovery is possible.
