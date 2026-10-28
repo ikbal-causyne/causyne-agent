@@ -49,7 +49,7 @@ import { StallGuardController } from './stallGuard.js';
 import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
 import { isOutputRecoveryRead } from './outputRecovery.js';
 import { isPlanReviewHandoff, isPlanningOnlyRequest } from './taskContinuation.js';
-import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, tokenLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
+import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, tokenLimitFor, turnTokenLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -803,6 +803,9 @@ export class AgentLoop {
             catch (e) {
                 continue; // malformed arguments are the serial loop's business
             }
+            const prefetchedTool = resolveTool(functionName);
+            if (validateToolArguments(args, prefetchedTool?.schema?.parameters || prefetchedTool?.schema?.input_schema).length)
+                continue;
             // The same guard the serial path applies, applied before anything runs.
             let validation;
             try {
@@ -1310,7 +1313,9 @@ export class AgentLoop {
                     : Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
                         ? efficiency.maxTurnTokens
                         : tokenLimitFor(turnArchetype);
-        this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0 ? efficiency.maxTurnTokens : 100_000, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype), taskTokenCeiling);
+        this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
+            ? efficiency.maxTurnTokens
+            : turnTokenLimitFor(turnArchetype), Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype), taskTokenCeiling);
         const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
@@ -2361,16 +2366,13 @@ export class AgentLoop {
                         continue;
                     }
                     let args = repair.args;
-                    // Pre-flight Tool Argument Validation & Self-Repair Diagnostic
-                    const preflightErrors = validateToolArguments(args, toolSchema);
-                    if (preflightErrors.length > 0) {
-                        const diagnostic = generateSelfRepairDiagnostic(functionName, args || {}, preflightErrors.join('; '), toolSchema);
-                        this.messages.push({
-                            role: 'tool',
-                            tool_call_id: toolCall.id,
-                            name: functionName,
-                            content: JSON.stringify(diagnostic)
-                        });
+                    const schemaErrors = validateToolArguments(args, toolSchema);
+                    if (schemaErrors.length) {
+                        const diagnostic = generateSelfRepairDiagnostic(functionName, args, schemaErrors.join('; '), toolSchema);
+                        this.messages.push({ role: 'tool', tool_call_id: toolCall.id, name: functionName,
+                            content: JSON.stringify({ ...diagnostic, code: 'INVALID_TOOL_ARGUMENTS', expectedSchema: toolSchema }) });
+                        this.emitEvent({ type: 'step_error', tool: functionName, error: schemaErrors.join('; '), toolCallId: toolCall.id });
+                        auditLog.log({ event: 'tool_argument_validation_failed', taskId: this.taskId, tool: functionName });
                         continue;
                     }
                     // Introspection Attractor Loop Breaker: Protect Causyne Agent runtime files from accidental self-debugging

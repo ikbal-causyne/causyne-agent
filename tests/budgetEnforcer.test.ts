@@ -4,6 +4,8 @@ import {
   UnifiedBudgetEnforcer,
   EfficiencyCheckpoint,
   actionLimitFor,
+  tokenLimitFor,
+  turnTokenLimitFor,
   noncachedTokens
 } from '../src/providers/budgetEnforcer.js';
 
@@ -15,11 +17,17 @@ test('noncachedTokens calculates input and completion tokens with cache deductio
   assert.equal(noncachedTokens(usage2), 3_000 + 1_000); // 4,000
 });
 
-test('actionLimitFor returns strictly bounded limits per task archetype', () => {
+test('actionLimitFor and token limits return strictly bounded limits per task archetype', () => {
   assert.equal(actionLimitFor('desktop_personalization'), 12);
   assert.equal(actionLimitFor('media_3d_generation'), 25);
   assert.equal(actionLimitFor('web_fullstack'), 35);
   assert.equal(actionLimitFor('system_admin'), 35);
+
+  assert.equal(tokenLimitFor('web_engineering'), 500_000);
+  assert.equal(tokenLimitFor('media_3d_generation'), 400_000);
+  assert.equal(turnTokenLimitFor('web_engineering'), 250_000);
+  assert.equal(turnTokenLimitFor('media_3d_generation'), 200_000);
+  assert.equal(turnTokenLimitFor('desktop_personalization'), 100_000);
 });
 
 test('UnifiedBudgetEnforcer halts turn when token limit is exceeded', () => {

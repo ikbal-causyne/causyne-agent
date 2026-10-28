@@ -1,3 +1,4 @@
+import { formatToolContracts } from './toolContracts.js';
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { saveCachedModels } from '../dynamicCatalogue.js';
@@ -80,13 +81,7 @@ export class AcpProvider extends LLMProvider {
         const lines = [];
         lines.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.');
         if (tools && tools.length > 0) {
-            const toolSummaries = tools.map(t => {
-                const name = t.name || t.function?.name || 'unknown';
-                const desc = t.description || t.function?.description || '';
-                const params = t.parameters || t.input_schema || t.function?.parameters || {};
-                const paramKeys = Object.keys(params.properties || {}).join(', ');
-                return `- ${name}(${paramKeys}): ${desc}`;
-            }).join('\n');
+            const toolSummaries = formatToolContracts(tools);
             lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
         }
         const seenToolOutputs = new Set();
@@ -146,13 +141,7 @@ export class AcpProvider extends LLMProvider {
             pending.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
         }
         if (tools && tools.length > 0) {
-            const toolSummaries = tools.map(t => {
-                const name = t.name || t.function?.name || 'unknown';
-                const desc = t.description || t.function?.description || '';
-                const params = t.parameters || t.input_schema || t.function?.parameters || {};
-                const paramKeys = Object.keys(params.properties || {}).join(', ');
-                return `- ${name}(${paramKeys}): ${desc}`;
-            }).join('\n');
+            const toolSummaries = formatToolContracts(tools);
             pending.push(`[Current Available Tools — this list replaces earlier tool lists]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
         }
         for (const msg of messages) {

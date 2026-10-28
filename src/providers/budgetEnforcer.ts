@@ -32,6 +32,13 @@ export function tokenLimitFor(archetype: string): number {
   return 100_000;
 }
 
+export function turnTokenLimitFor(archetype: string): number {
+  if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 250_000;
+  if (archetype === 'media_3d_generation') return 200_000;
+  if (archetype === 'desktop_personalization') return 100_000;
+  return 100_000;
+}
+
 export class EfficiencyCheckpoint extends Error {
   readonly code = 'CAUSYNE_EFFICIENCY_CHECKPOINT';
   readonly reason: 'tokens' | 'actions';

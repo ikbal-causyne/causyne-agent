@@ -6,3 +6,5 @@ export function isWebIntent(...args: any[]): any;
 export function getPackCatalogue(...args: any[]): any;
 export const PACK_PLAYBOOKS: any;
 export const PACKS: any;
+export const PACK_NAMES: string[];
+export function isResidentTool(toolName: string): boolean;

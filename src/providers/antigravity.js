@@ -1,10 +1,10 @@
+import { formatToolContracts, toolContractUpdate, contractFingerprint } from './toolContracts.js';
 import { noncachedTokens } from './budgetEnforcer.js';
 import { ensureAntigravityBridgeWorkspace, INFERENCE_AGENT_NAME } from './antigravityBridge.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
-import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { isBrowserRuntimeInstalled } from '../browser/browserRuntime.js';
 import { LLMProvider } from './base.js';
 /**
@@ -618,6 +618,7 @@ export class AntigravityProvider extends LLMProvider {
     printTimeout;
     currentConversationId = null;
     lastTaskId = null;
+    contextSnapshot = null;
     lastCumulativeUsage = null;
     constructor(config = {}) {
         super(config);
@@ -695,7 +696,8 @@ export class AntigravityProvider extends LLMProvider {
             '4. Create or edit files only when the current user request authorizes it.\n' +
             '5. Greenfield Application Scaffolding vs. Legacy Codebase Exploration:\n' +
             '   - When the user asks to build, create, or generate a new web application, 3D visualization, or component from scratch, author a dedicated directory and create fresh files directly.\n' +
-            '   - DO NOT list or read unrelated legacy projects, demo folders, or sibling directories in the workspace (such as horse-tinder, etc.). Exploring existing directories for inspiration wastes significant context tokens.\n' +
+            '   - Do not explore, list, or inspect existing directories, demo folders, or sibling projects in the workspace. Directly author the target files in a dedicated new project directory.\n' +
+            '   - Move directly from initial plan to authoring complete code files.\n' +
             '6. TOKEN CONSERVATION & MEDIA DIRECTIVE:\n' +
             '   - NEVER attempt to read binary or media files (.png, .jpg, .blend, .glb, .wasm, .zip, etc.) using text reading tools like read_file or cat. This blows up the token context.\n' +
             '   - For 3D modeling, Blender, or media tasks: write a single self-contained generator script and execute it in one batch. Avoid dozens of speculative CLI exploration commands.\n' +
@@ -705,14 +707,7 @@ export class AntigravityProvider extends LLMProvider {
             '[Language & Communication Directive]\n' +
             'Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language. Never send conversational pleasantries or canned greetings.');
         if (tools && tools.length > 0) {
-            const scanReport = scanAndAdaptToolsForProvider(tools, 'antigravity');
-            const toolSummaries = scanReport.adaptedTools.map((t) => {
-                const name = t.name || 'unknown';
-                const desc = t.description || '';
-                const params = t.parameters || {};
-                const paramKeys = Object.keys(params.properties || {}).join(', ');
-                return `- ${name}(${paramKeys}): ${desc}`;
-            }).join('\n');
+            const toolSummaries = formatToolContracts(tools);
             lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
         }
         const seenToolOutputs = new Set();
@@ -747,13 +742,16 @@ export class AntigravityProvider extends LLMProvider {
                     return '';
                 }).filter(Boolean).join('\n');
             }
-            // Compact duplicate identical tool outputs to prevent token ballooning
+            // Compact duplicate identical tool outputs and elide older observations (SWE-agent / OpenCode pattern)
             if (msg.role === 'tool' && text.trim()) {
                 const normalized = text.trim();
                 if (seenToolOutputs.has(normalized)) {
                     continue;
                 }
                 seenToolOutputs.add(normalized);
+                if (!isRecent && text.length > 300) {
+                    text = `[Tool result: ${msg.name || 'tool'} completed successfully. Full log archived in toolOutputStore.]`;
+                }
             }
             if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
                 for (const tc of msg.tool_calls) {
@@ -883,6 +881,9 @@ export class AntigravityProvider extends LLMProvider {
         }
         const useConversation = Boolean(this.currentConversationId);
         const resumedConversationId = this.currentConversationId;
+        const previousContext = this.contextSnapshot?.conversationId === resumedConversationId ? this.contextSnapshot : null;
+        const systemMessages = messages.filter(message => message.role === 'system');
+        const systemHashes = systemMessages.map(message => contractFingerprint(message));
         const latestUserMessage = [...messages].reverse().find(message => message.role === 'user');
         const latestPrompt = typeof latestUserMessage?.content === 'string' ? latestUserMessage.content : '';
         const launchOnly = options.taskIntent === 'launch' || isLaunchOnlyPrompt(latestPrompt);
@@ -897,7 +898,13 @@ export class AntigravityProvider extends LLMProvider {
                 }
             }
             const deltaMessages = lastAssistantIndex >= 0 ? messages.slice(lastAssistantIndex + 1) : messages;
-            promptText = this.formatDelta(deltaMessages.length > 0 ? deltaMessages : [messages[messages.length - 1]]);
+            const changedSystems = systemMessages.filter((_, index) => systemHashes[index] !== previousContext?.systemHashes[index]);
+            const contractUpdates = toolContractUpdate(options.tools || [], previousContext?.tools || []);
+            promptText = [
+                ...changedSystems.map(message => `[Current system context — replaces the prior version of this section]\n${message.content}`),
+                contractUpdates,
+                this.formatDelta(deltaMessages.length > 0 ? deltaMessages : [messages[messages.length - 1]])
+            ].filter(Boolean).join('\n\n');
         }
         else {
             promptText = this.formatConversation(messages, options.tools);
@@ -925,8 +932,8 @@ export class AntigravityProvider extends LLMProvider {
         if (isWebTask || isMediaTask) {
             promptText = '[Greenfield Scaffolding vs. Legacy Codebase Exploration]\n' +
                 'When the user requests to create, build, or implement a new web application, 3D visualization, or component from scratch:\n' +
-                '- Author a dedicated project directory (e.g. horse-biomechanics) and write fresh, complete, production-grade files directly.\n' +
-                '- DO NOT list, explore, or read unrelated legacy projects, demo folders, or sibling directories in the workspace (such as horse-tinder, etc.). Exploring existing directories for inspiration wastes significant context tokens.\n' +
+                '- Author a dedicated project directory and write fresh, complete, production-grade files directly.\n' +
+                '- Do not list, explore, or read unrelated legacy projects, demo folders, or sibling directories in the workspace. Exploring existing directories for inspiration wastes significant context tokens.\n' +
                 '- Move directly from initial plan to authoring HTML/CSS/JS or generator scripts.\n\n' + promptText;
         }
         if (isMediaTask) {
@@ -1074,6 +1081,10 @@ export class AntigravityProvider extends LLMProvider {
                 if (isSettled)
                     return;
                 isSettled = true;
+                if (this.currentConversationId)
+                    this.contextSnapshot = {
+                        conversationId: this.currentConversationId, tools: structuredClone(options.tools || []), systemHashes
+                    };
                 cleanup();
                 resolve(res);
             };
