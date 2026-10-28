@@ -97,7 +97,7 @@ export class ToolOutputStore {
     } else {
       const rawHead = lines.slice(0, this.config.headLines).join('\n');
       const rawTail = lines.slice(-this.config.tailLines).join('\n');
-      const maxBudget = Math.max(this.config.maxChars, 4000);
+      const maxBudget = this.config.maxChars;
       if (rawHead.length + rawTail.length + notice.length > maxBudget) {
         const budget = Math.max(0, maxBudget - notice.length);
         const half = Math.floor(budget / 2);
