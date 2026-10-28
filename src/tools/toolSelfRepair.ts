@@ -595,6 +595,30 @@ export function resolveParameterAliases(
         return norm;
       });
     }
+  } else if (canonicalName === 'generate_media_via_api') {
+    if (!modified.mediaType && modified.type) {
+      modified.mediaType = modified.type;
+      delete modified.type;
+      repairs.push("Mapped 'type' to 'mediaType' parameter for 'generate_media_via_api'");
+    }
+    if (!modified.prompt && (modified.text || modified.description || modified.query)) {
+      modified.prompt = modified.text || modified.description || modified.query;
+      delete modified.text;
+      delete modified.description;
+      delete modified.query;
+      repairs.push("Mapped prompt alias to 'prompt' parameter for 'generate_media_via_api'");
+    }
+    if (!modified.outputPath && (modified.output || modified.path || modified.destination || modified.file)) {
+      modified.outputPath = modified.output || modified.path || modified.destination || modified.file;
+      delete modified.output;
+      delete modified.destination;
+      delete modified.file;
+      repairs.push("Mapped output path alias to 'outputPath' parameter for 'generate_media_via_api'");
+    }
+    if (!modified.mediaType) {
+      modified.mediaType = 'image';
+      repairs.push("Defaulted missing 'mediaType' to 'image' for 'generate_media_via_api'");
+    }
   } else if (canonicalName === 'browser_act') {
     if (!modified.actions) {
       if (Array.isArray(modified.steps) || Array.isArray(modified.items)) {
@@ -842,7 +866,7 @@ export function normalizePaths(
 ): RepairResult {
   const repairs: string[] = [];
   const modified = { ...args };
-  const pathKeys = ['path', 'file_path', 'source', 'destination', 'targetFile', 'target'];
+  const pathKeys = ['path', 'file_path', 'source', 'destination', 'targetFile', 'target', 'outputPath', 'output_path', 'outputFileName'];
 
   for (const key of pathKeys) {
     const val = modified[key];

@@ -7,6 +7,7 @@ import { audioFormatForMimeType } from './providers/base.js';
 import { TaskBuffer } from './taskBuffer.js';
 import { TOOL_DEFINITIONS, getDynamicTools, resolveTool, canonicalToolName } from './tools/registry.js';
 import { selfRepairToolCall, generateSelfRepairDiagnostic } from './tools/toolSelfRepair.js';
+import { validateToolArguments } from './tools/argumentValidation.js';
 import { Sandbox } from './sandbox.js';
 import { auditLog } from './auditLog.js';
 import { hasMatchingHook, runConfiguredHooks } from './hooks.js';
@@ -2564,6 +2565,38 @@ export class AgentLoop {
           }
 
           let args: any = repair.args;
+
+          // Pre-flight Tool Argument Validation & Self-Repair Diagnostic
+          const preflightErrors = validateToolArguments(args, toolSchema);
+          if (preflightErrors.length > 0) {
+            const diagnostic = generateSelfRepairDiagnostic(functionName, args || {}, preflightErrors.join('; '), toolSchema);
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify(diagnostic)
+            });
+            continue;
+          }
+
+          // Introspection Attractor Loop Breaker: Protect Causyne Agent runtime files from accidental self-debugging
+          if (['fs_read', 'fs_search', 'codebase_search', 'grep_search', 'code_searcher'].includes(functionName)) {
+            const targetStr = String(args?.path || args?.query || args?.searchPath || '');
+            const isAgentDevTask = /\b(causyne|agentLoop|smartToolsUse|toolSelfRepair)\b/i.test(this.currentTaskPrompt || this.userPrompt || '');
+            if (!isAgentDevTask && (targetStr.includes('src/smartToolsUse') || targetStr.includes('src/agentLoop') || targetStr.includes('src/tools/generateMediaViaApi'))) {
+              this.messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                name: functionName,
+                content: JSON.stringify({
+                  success: false,
+                  error: 'Introspection Blocked: Do not inspect Causyne Agent internal runtime files during application tasks. Fulfill the user request directly in the target directory.'
+                })
+              });
+              continue;
+            }
+          }
+
           const phaseAdmission = this.smartToolsGovernor.interceptAction(functionName, args || {});
           if (!phaseAdmission.allowed) {
             this.messages.push({ role: 'tool', tool_call_id: toolCall.id, name: functionName,
