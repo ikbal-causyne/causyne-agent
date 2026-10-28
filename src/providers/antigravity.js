@@ -1,4 +1,5 @@
 import { noncachedTokens } from './budgetEnforcer.js';
+import { ensureAntigravityBridgeWorkspace, INFERENCE_AGENT_NAME } from './antigravityBridge.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -930,22 +931,16 @@ export class AntigravityProvider extends LLMProvider {
         }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
-        // Standard high-performance non-blocking CLI invocation:
-        // 1. stream-json output for real-time responsiveness and non-buffering progress.
-        // 2. Keep mode expansion enabled. The CLI ignores --mode plan when slash
-        //    expansion is disabled, which would silently bypass the chosen mode.
-        // 3. agy only treats stdin as a prompt in stream-json input mode. Plain text
-        //    stdin without --print starts an interactive session and loses the task.
-        //    Keep the prompt off the process command line by sending one user event.
-        // 4. Plan mode keeps file mutations behind Causyne's tool boundary too.
-        //    Denied native actions are mapped to explicit Causyne calls below.
-        //    No peer CLI receives a blanket host permission grant.
-        // 5. Launch-only turns use a shorter limit because they should not spend
-        //    several minutes generating code or holding a foreground server open.
-        // 6. --conversation links multi-turn steps to agy's local session memory to prevent re-reading files.
+        // Causyne owns execution. A tool-less primary agent avoids a second native
+        // planner/executor; --mode plan would inject /plan and wait for peer review.
+        // Keep all account settings intact and disable peer slash/skill expansion.
+        const inferenceWorkspace = ensureAntigravityBridgeWorkspace();
+        promptText = `[Causyne host workspace]\n${JSON.stringify({ workspaceRoot: options.workspaceRoot || process.cwd() })}\n`
+            + 'The process directory is inference-adapter state. Use the supplied host workspace for Causyne tool paths.\n\n' + promptText;
         const args = [
-            '--mode',
-            'plan',
+            '--agent',
+            INFERENCE_AGENT_NAME,
+            '--disable-slash-commands',
             '--input-format',
             'stream-json',
             '--output-format',
@@ -963,7 +958,7 @@ export class AntigravityProvider extends LLMProvider {
         return new Promise((resolve, reject) => {
             let isSettled = false;
             const child = spawn(this.command, args, {
-                cwd: typeof options.workspaceRoot === 'string' ? options.workspaceRoot : process.cwd(),
+                cwd: inferenceWorkspace,
                 env: process.env,
                 stdio: ['pipe', 'pipe', 'pipe'],
                 windowsHide: true

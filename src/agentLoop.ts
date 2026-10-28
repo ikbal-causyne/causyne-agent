@@ -84,6 +84,7 @@ import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from
 import { StallGuardController, type StallGuardDecision, type IdenticalCallObservation } from './stallGuard.js';
 import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
 import { isOutputRecoveryRead } from './outputRecovery.js';
+import { isPlanReviewHandoff, isPlanningOnlyRequest } from './taskContinuation.js';
 import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
 
 export interface AgentLoopEvent {
@@ -533,7 +534,7 @@ export class AgentLoop {
       : processApprovalScope;
 
     this.config = loadConfig();
-    this.sandbox = new Sandbox();
+    this.sandbox = new Sandbox({ workspaceRoot: this.workspaceRoot });
 
     // Retire spilled tool outputs past their retention window. Fire-and-forget
     // at task start rather than on a timer: nothing may run in the background
@@ -1424,6 +1425,7 @@ export class AgentLoop {
     const recoveryPaths = new Set<string>();
     let modelCallIndex = 0;
     let mediaExplorationRecoveries = 0;
+    let planHandoffRecoveries = 0;
 
     // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
     while (!this.stopRequested) {
@@ -1632,7 +1634,7 @@ export class AgentLoop {
         const lazyPlaybookResult = resolveLazyPlaybooks(
           this.unlockedPacks,
           observedTools,
-          this.userPrompt
+          this.currentTaskPrompt || this.userPrompt || ''
         );
         const activePlaybooks = [
           lazyPlaybookResult.fullPlaybooks,
@@ -2095,6 +2097,27 @@ export class AgentLoop {
           const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
           const isActionable = isActionableTaskPrompt(taskPrompt);
 
+          // A peer may have completed searches or a plan artifact while still
+          // waiting for its own UI's Proceed button. Those actions do not
+          // satisfy an implementation request in the enclosing Causyne loop.
+          if (isActionable && !isPlanningOnlyRequest(taskPrompt) && isPlanReviewHandoff(contentText)) {
+            if (planHandoffRecoveries++ > 0) {
+              this.emitEvent({ type: 'error', message: 'The selected peer stopped for plan review again instead of implementing the request. Work remains unfinished.' });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+            this._implementationPlanRequired = false;
+            this.messages.push({ role: 'system', content:
+              '[IMPLEMENTATION CONTINUATION] The user requested implementation, not a plan-only deliverable. '
+              + 'Continue from the useful evidence and plan already gathered. Use update_plan for the checklist and invoke the next Causyne execution tool now. '
+              + 'There is no peer Proceed button in this interface. Ask only through request_decision if a genuinely unresolved consequential choice blocks progress; '
+              + 'routine details with a safe default do not require another approval. Do not repeat completed searches or write another plan artifact.' });
+            this.emitEvent({ type: 'status', message: 'Continuing the requested implementation from the existing plan…' });
+            auditLog.log({ event: 'plan_handoff_recovered', taskId: this.taskId, provider: this.config.provider });
+            this.memoryManager.saveHistory(this.messages);
+            continue;
+          }
+
           if (isActionable && isGenericHandoffResponse(contentText) && (hasExternalActions || this.stepsCompleted > 0)) {
             this.emitEvent({ type: 'error', message: 'The provider returned a generic handoff after tool activity. The requested outcome was not verified; no completion is recorded.' });
             this.memoryManager.saveHistory(this.messages);
@@ -2308,7 +2331,7 @@ export class AgentLoop {
           }
 
           // Web Visual Validation Guard (Anti-Slop / Transcendence)
-          const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && isWebIntent(taskPrompt);
+          const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && !isPlanningOnlyRequest(taskPrompt) && isWebIntent(taskPrompt);
           let browserReady = false;
           let browserDeclined = false;
           let browserRuntimeError = '';

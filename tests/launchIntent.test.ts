@@ -28,7 +28,7 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.equal(isServerLaunchCommand('python3 /tmp/server.py'), true);
 });
 
-test('resumed Antigravity launch turn uses plan mode and carries current scope', { skip: process.platform === 'win32' }, async () => {
+test('resumed Antigravity launch keeps a tool-less peer and carries the actual host scope', { skip: process.platform === 'win32' }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-launch-agy-'));
   const agy = path.join(dir, 'agy');
   const log = path.join(dir, 'calls.jsonl');
@@ -53,10 +53,12 @@ process.stdin.on('end', () => {
       { role: 'user', content: 'open it' }
     ], { taskId: 'same-task', taskIntent: 'launch', workspaceRoot: dir });
     const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
-    assert.equal(calls[0].args[calls[0].args.indexOf('--mode') + 1], 'plan');
-    assert.equal(calls[1].args[calls[1].args.indexOf('--mode') + 1], 'plan');
+    assert.equal(calls[0].args[calls[0].args.indexOf('--agent') + 1], 'causyne-inference');
+    assert.equal(calls[1].args[calls[1].args.indexOf('--agent') + 1], 'causyne-inference');
+    assert.ok(!calls[1].args.includes('--mode'));
     assert.equal(calls[1].args[calls[1].args.indexOf('--print-timeout') + 1], '90s');
-    assert.equal(fs.realpathSync(calls[1].cwd), fs.realpathSync(dir));
+    assert.notEqual(fs.realpathSync(calls[1].cwd), fs.realpathSync(dir), 'peer tools are isolated from the host project');
+    assert.ok(calls[1].input.includes(JSON.stringify({ workspaceRoot: dir })), 'Causyne paths still target the user-selected project');
     assert.match(calls[1].input, /Do not create, edit, delete/);
     assert.ok(calls[1].args.includes('--conversation'));
     assert.doesNotMatch(calls[0].input, /Pre-Verified Host Environment/);
