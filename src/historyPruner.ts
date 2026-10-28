@@ -1,4 +1,5 @@
 import { spillToolResult, buildDecayPointer } from './outputStore.js';
+import { processToolOutputWithStore, renderSpillDocument } from './tools/toolOutputStore.js';
 
 export interface ToolObservation {
   role: string;
@@ -6,6 +7,52 @@ export interface ToolObservation {
   content: unknown;
   spillPath?: string;
   tool_call_id?: string;
+  tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }>;
+}
+
+/** Archive large arguments only after a matching tool observation exists. */
+export function pruneExecutedToolArguments(
+  messages: ToolObservation[], options: { threshold?: number; taskId?: string } = {}
+): ObservationPruneResult & { recoveryPaths: string[] } {
+  const completed = new Set(messages.filter(message => message.role === 'tool').map(message => message.tool_call_id));
+  const recoveryPaths: string[] = [];
+  let pruned = 0, reclaimedChars = 0, spillFailures = 0;
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    for (const call of message.tool_calls || []) {
+      const original = call.function?.arguments;
+      if (typeof original !== 'string' || !call.id || !completed.has(call.id)) continue;
+      let args: Record<string, unknown>;
+      try {
+        const parsed: unknown = JSON.parse(original);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+        args = parsed as Record<string, unknown>;
+      } catch { continue; }
+      if (typeof args._causyne_archived_args === 'string') {
+        recoveryPaths.push(args._causyne_archived_args);
+        continue;
+      }
+      if (original.length <= (options.threshold ?? 2500)) continue;
+      const stored = processToolOutputWithStore(options.taskId ?? 'history', `arguments-${call.id}`,
+        renderSpillDocument(args, { taskId: options.taskId ?? 'history', step: index, tool: call.function?.name ?? 'tool' }));
+      if (!stored.diskPath) { spillFailures++; continue; }
+      const compact: Record<string, unknown> = {
+        _causyne_archived_args: stored.diskPath,
+        note: 'Historical executed call; complete parameters are archived. Do not replay this placeholder. Read the current target file or archived parameters if needed.'
+      };
+      for (const key of ['path', 'file_path', 'target', 'action']) {
+        if (typeof args[key] === 'string' && args[key].length <= 500) compact[key] = args[key];
+      }
+      const replacement = JSON.stringify(compact);
+      if (replacement.length >= original.length || !call.function) continue;
+      call.function.arguments = replacement;
+      recoveryPaths.push(stored.diskPath);
+      pruned++;
+      reclaimedChars += original.length - replacement.length;
+    }
+  }
+  return { pruned, reclaimedChars, spillFailures, recoveryPaths };
 }
 
 export interface ObservationPruneResult {
@@ -66,6 +113,15 @@ export function buildRecoverableDroppedSummary(
 ): string {
   const paths = new Map<string, string>();
   for (const message of dropped) {
+    for (const call of message.role === 'assistant' ? message.tool_calls ?? [] : []) {
+      try {
+        const args: unknown = typeof call.function?.arguments === 'string' ? JSON.parse(call.function.arguments) : null;
+        if (args && typeof args === 'object' && '_causyne_archived_args' in args
+          && typeof args._causyne_archived_args === 'string') {
+          paths.set(args._causyne_archived_args, `${call.function?.name ?? 'tool'} arguments (outcome unverified): ${args._causyne_archived_args}`);
+        }
+      } catch { /* Unarchived or malformed historical arguments have no recovery pointer. */ }
+    }
     // A later compaction may remove an earlier compaction summary. Carry its
     // recovery index forward so repeated compaction does not orphan files.
     if (message.role === 'user' && typeof message.content === 'string'

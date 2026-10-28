@@ -2,7 +2,11 @@ export function noncachedTokens(usage) {
     const finite = (value) => Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
     const input = usage.uncachedPromptTokens !== undefined
         ? finite(usage.uncachedPromptTokens)
-        : Math.max(0, finite(usage.promptTokens) - Math.min(finite(usage.promptTokens), finite(usage.cachedPromptTokens)));
+        // Cache reads larger than input prove these are separate peer counters.
+        // Do not erase fresh input by subtracting that counter again.
+        : finite(usage.cachedPromptTokens) > finite(usage.promptTokens)
+            ? finite(usage.promptTokens)
+            : Math.max(0, finite(usage.promptTokens) - finite(usage.cachedPromptTokens));
     return input + finite(usage.completionTokens);
 }
 export function actionLimitFor(archetype) {

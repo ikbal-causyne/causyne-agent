@@ -49,6 +49,7 @@ export interface ChatResponse {
 }
 
 export interface ChatOptions {
+  tokenBudgetBasis?: 'total' | 'noncached' | undefined;
   tools?: any[] | undefined;
   temperature?: number | undefined;
   maxRetries?: number | undefined;

@@ -1,3 +1,4 @@
+import { noncachedTokens } from './budgetEnforcer.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -445,9 +446,11 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
             };
         }
     }
-    if (lowerName === 'writetofile' || lowerName === 'fswrite') {
+    if (['writetofile', 'writefile', 'createfile', 'fswrite'].includes(lowerName)) {
         const filePath = params.TargetFile ?? params.path ?? params.file_path ?? '';
-        const content = params.CodeContent ?? params.content ?? '';
+        const content = params.CodeContent ?? params.content ?? params.fileContent ?? params.file_content ?? params.text;
+        if (typeof content !== 'string')
+            return null;
         if (typeof filePath === 'string' && filePath.trim()) {
             return {
                 id: `agy_native_${Date.now()}_${index}`,
@@ -459,10 +462,12 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
             };
         }
     }
-    if (lowerName === 'replacefilecontent' || lowerName === 'fsedit') {
+    if (['replacefilecontent', 'editfile', 'replaceinfile', 'fsedit'].includes(lowerName)) {
         const filePath = params.TargetFile ?? params.path ?? params.file_path ?? '';
-        const oldText = params.TargetContent ?? params.oldText ?? '';
-        const newText = params.ReplacementContent ?? params.newText ?? '';
+        const oldText = params.TargetContent ?? params.oldText ?? params.old_text ?? params.old_string;
+        const newText = params.ReplacementContent ?? params.newText ?? params.new_text ?? params.new_string;
+        if (typeof oldText !== 'string' || typeof newText !== 'string')
+            return null;
         if (typeof filePath === 'string' && filePath.trim()) {
             return {
                 id: `agy_native_${Date.now()}_${index}`,
@@ -575,6 +580,34 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
                 };
             }
         }
+    }
+    if (['screenshot', 'takescreenshot', 'capturescreenshot', 'take_screenshot'].includes(lowerName)) {
+        return {
+            id: `agy_native_${Date.now()}_${index}`,
+            type: 'function',
+            function: {
+                name: 'screenshot',
+                arguments: JSON.stringify({
+                    path: params.path ?? params.target ?? params.TargetFile ?? '',
+                    crop: params.crop
+                })
+            }
+        };
+    }
+    if (['browseract', 'browser_act', 'browser'].includes(lowerName)) {
+        return {
+            id: `agy_native_${Date.now()}_${index}`,
+            type: 'function',
+            function: {
+                name: 'browser_act',
+                arguments: JSON.stringify({
+                    action: params.action ?? 'snapshot',
+                    filePath: params.filePath ?? params.path ?? params.TargetFile,
+                    url: params.url ?? params.Url,
+                    selector: params.selector
+                })
+            }
+        };
     }
     return null;
 }
@@ -899,7 +932,8 @@ export class AntigravityProvider extends LLMProvider {
         const effort = resolveAgyEffort(this.model);
         // Standard high-performance non-blocking CLI invocation:
         // 1. stream-json output for real-time responsiveness and non-buffering progress.
-        // 2. --disable-slash-commands prevents sluggish filesystem and customization scans.
+        // 2. Keep mode expansion enabled. The CLI ignores --mode plan when slash
+        //    expansion is disabled, which would silently bypass the chosen mode.
         // 3. agy only treats stdin as a prompt in stream-json input mode. Plain text
         //    stdin without --print starts an interactive session and loses the task.
         //    Keep the prompt off the process command line by sending one user event.
@@ -911,12 +945,11 @@ export class AntigravityProvider extends LLMProvider {
         // 6. --conversation links multi-turn steps to agy's local session memory to prevent re-reading files.
         const args = [
             '--mode',
-            launchOnly ? 'plan' : 'accept-edits',
+            'plan',
             '--input-format',
             'stream-json',
             '--output-format',
             'stream-json',
-            '--disable-slash-commands',
             '--print-timeout',
             launchOnly ? '90s' : this.printTimeout,
             '--model',
@@ -940,6 +973,7 @@ export class AntigravityProvider extends LLMProvider {
             let streamedResponse = '';
             let finalResultObj = null;
             let sawToolAfterLastText = false;
+            let sawProviderProgress = false;
             const nativeActions = [];
             const attemptedNativeTools = [];
             let childClosed = false;
@@ -977,6 +1011,7 @@ export class AntigravityProvider extends LLMProvider {
             const rawTokenLimit = Number(options.tokenLimit);
             const hasExplicitLimit = (Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0)
                 || (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0);
+            const countReportedTotal = hasExplicitLimit && options.tokenBudgetBasis !== 'noncached';
             const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
                 ? remainingTaskBudget
                 : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
@@ -1070,6 +1105,10 @@ export class AntigravityProvider extends LLMProvider {
                         }
                         else if (event.event === 'step_update') {
                             const stepUpdate = event.step_update;
+                            if (typeof stepUpdate?.text_delta === 'string' && stepUpdate.text_delta.trim())
+                                sawProviderProgress = true;
+                            if (stepUpdate?.step_type === 'tool' && stepUpdate?.state === 'ACTIVE')
+                                sawProviderProgress = true;
                             const usage = stepUpdate?.usage;
                             const usageStepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
                             if (stepUpdate?.state === 'DONE' && usage && Number.isFinite(usageStepIndex)
@@ -1084,14 +1123,12 @@ export class AntigravityProvider extends LLMProvider {
                                         + (Number(usage.cache_read_tokens) || 0);
                                     partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
                                         + (Number(usage.thinking_tokens) || 0);
-                                    // Explicit task budgets track all provider-reported tokens.
+                                    // User task budgets can track all provider-reported tokens.
                                     // The automatic safety floor counts uncached input plus
                                     // output, so a cache hit does not masquerade as fresh spend.
                                     const reportedTotal = partialUsage.promptTokens + partialUsage.completionTokens;
-                                    const uncachedTotal = Math.max(0, partialUsage.promptTokens
-                                        - Math.min(partialUsage.promptTokens, partialUsage.cachedPromptTokens || 0))
-                                        + partialUsage.completionTokens;
-                                    const spentAgainstLimit = hasExplicitLimit ? reportedTotal : uncachedTotal;
+                                    const uncachedTotal = noncachedTokens(partialUsage);
+                                    const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
                                     if (Number.isFinite(tokenLimit) && tokenLimit > 0
                                         && spentAgainstLimit >= tokenLimit) {
                                         const error = Object.assign(new Error(`Antigravity reported ${spentAgainstLimit} tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } });
@@ -1349,6 +1386,10 @@ export class AntigravityProvider extends LLMProvider {
                 }
                 if (!content && toolCalls.length === 0) {
                     const detail = stderrBuffer.trim();
+                    if (!sawProviderProgress && /print timeout after .* with turn in progress|returning partial output/i.test(detail)) {
+                        safeReject(Object.assign(new Error('The selected peer produced no model output or tool activity before its timeout. The task remains unfinished; retry after the peer is responsive.'), { code: 'PROVIDER_NO_PROGRESS' }));
+                        return;
+                    }
                     safeReject(new Error(detail
                         ? `Antigravity returned no response: ${detail}`
                         : 'Antigravity returned no response.'));
@@ -1404,8 +1445,8 @@ export class AntigravityProvider extends LLMProvider {
                 }
                 // A peer may report usage only in its final result.
                 const reportedTotal = promptTokens + completionTokens;
-                const uncachedTotal = Math.max(0, promptTokens - Math.min(promptTokens, cachedPromptTokens || 0)) + completionTokens;
-                const spentAgainstLimit = hasExplicitLimit ? reportedTotal : uncachedTotal;
+                const uncachedTotal = noncachedTokens(response.usage);
+                const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
                 if (spentAgainstLimit >= tokenLimit) {
                     Object.assign(partialUsage, response.usage);
                     safeReject(Object.assign(new Error(`Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }));
@@ -1427,6 +1468,8 @@ export class AntigravityProvider extends LLMProvider {
                 if (options.signal?.aborted || err?.name === 'AbortError') {
                     throw err;
                 }
+                if (err?.code === 'PROVIDER_NO_PROGRESS')
+                    throw err;
                 if (err?.partialUsage?.promptTokens + err?.partialUsage?.completionTokens > 0) {
                     throw err;
                 }

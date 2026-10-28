@@ -53,7 +53,7 @@ process.stdin.on('end', () => {
       { role: 'user', content: 'open it' }
     ], { taskId: 'same-task', taskIntent: 'launch', workspaceRoot: dir });
     const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
-    assert.equal(calls[0].args[calls[0].args.indexOf('--mode') + 1], 'accept-edits');
+    assert.equal(calls[0].args[calls[0].args.indexOf('--mode') + 1], 'plan');
     assert.equal(calls[1].args[calls[1].args.indexOf('--mode') + 1], 'plan');
     assert.equal(calls[1].args[calls[1].args.indexOf('--print-timeout') + 1], '90s');
     assert.equal(fs.realpathSync(calls[1].cwd), fs.realpathSync(dir));

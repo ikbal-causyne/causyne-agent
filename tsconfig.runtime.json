@@ -42,6 +42,7 @@
     "src/launchIntent.ts",
     "src/stallGuard.ts",
     "src/historyPruner.ts",
+    "src/outputRecovery.ts",
     "src/providers/budgetEnforcer.ts",
     "src/tui/codeProgress.ts",
     "src/tui/layout.ts",
@@ -156,7 +157,9 @@
     "src/tools/archive.ts",
     "src/tools/viewImage.ts",
     "src/tools/toolOutputStore.ts",
-    "src/smartToolsUse.ts"
+    "src/smartToolsUse.ts",
+    "src/tokenTracker.ts",
+    "src/outputRecovery.ts"
   ],
   "exclude": [
     "node_modules",

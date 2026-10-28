@@ -45,7 +45,8 @@ import { resolveMentionedContext } from './promptMentions.js';
 import { isLaunchOnlyPrompt, launchScopeError } from './launchIntent.js';
 import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from './tui/codeProgress.js';
 import { StallGuardController } from './stallGuard.js';
-import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations } from './historyPruner.js';
+import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
+import { isOutputRecoveryRead } from './outputRecovery.js';
 import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
@@ -203,11 +204,11 @@ Follow the selected project's existing style and architecture. Check dependencie
 
 # Context Understanding & Searching
 - Semantic search (or grep) is your MAIN exploration tool. Start with a broad, high-level query. 
-- MANDATORY: Run multiple searches with different wording in parallel; first-pass results often miss key details. 
-- Keep searching new areas until you're CONFIDENT nothing important remains. Bias towards not asking the user for help if you can find the answer yourself.
+- Batch independent searches when the task needs them. Gather enough evidence to choose the next useful action; avoid repeating unchanged probes.
+- Expand research when uncertainty or a failed check justifies it. Keep exploration proportional to the user's goal.
 
 # Making Code Changes & Execution
-- **No Blind Patching**: NEVER edit a file using a patch/edit tool if you have not opened it with the read tool within your last 5 messages. Read the file again to confirm its contents before patching.
+- **No Blind Patching**: Base edits on observed current file contents. Read again when the file changed or the observation is stale; reuse an unchanged verified observation across loop steps.
 - **Verification Loop**: NEVER assume code works. After making code changes, execute the project-specific build, linting, and type-checking commands (e.g., 'tsc', 'npm run lint', 'pytest'). Identify these commands by examining 'README' files or 'package.json'.
 - **Code Quality**: Write HIGH-VERBOSITY code. Optimize for clarity. Use meaningful variable names (no 1-letter names like 'n'). Use guard clauses/early returns. Avoid deep nesting.
 - **No TODOs/Comments**: Do not add comments for trivial code. NEVER use inline comments. Avoid TODO comments—implement the logic instead.
@@ -243,8 +244,8 @@ If asked to perform ANY harmful task, politely decline, state that Causyne exist
 - **Mode C (Autonomous)**: Work independently within the user's task and selected workspace. Ordinary in-scope actions do not require an approval dialog. Whole-file or directory deletion requires approval. Hard policy blocks, workspace boundaries, and explicit user limits still apply.
 
 # Direct API & Automation Policy
-- **Prefer REST APIs (curl)**: When interacting with external services (like web, email, chat), prioritize finding and using official REST APIs via \`curl\` or simple scripts.
-- **Avoid UI/Browser Automation**: Automating a browser (e.g., Puppeteer/Playwright) is noisy, expensive, and fragile. ONLY use browser automation if a site genuinely has no API. Reading JSON is always better than reading DOM.
+- **Prefer REST APIs (curl) for External Services**: When interacting with external services (like web, email, chat), prioritize finding and using official REST APIs via \`curl\` or simple scripts over browser scraping.
+- **Web/UI Verification Requirement**: For web development, UI components, and frontend applications, ALWAYS verify your rendered output before concluding. Use \`browser_act\` (preview and snapshot) or \`screenshot\`/\`vision_inspect_ui\` to inspect the visual/DOM state of your web pages.
 
 # Universal Tool Calling & Registry Discipline
 1. **Strict Registry Adherence**: Use ONLY the tools declared in the catalogue. Invoke tools using exact parameter names specified in the schema. Do not invent or rename parameters.
@@ -517,7 +518,7 @@ export class AgentLoop {
         this.slopLastAuditHash = '';
         this.gameCascadeState = { active: true, currentStage: 1, stageHistory: [], verificationPassed: false };
         this.gameToolStats = { godot_act: 0, game_asset_fetch: 0, game_build_html5: 0, last_godot_action: null };
-        this.webVerificationState = { screenshotTaken: false, browserActUsed: false }; // V8 Transcendence: Anti-Slop Guard
+        this.webVerificationState = { screenshotTaken: false, browserActUsed: false, htmlInspected: false }; // V8 Transcendence: Anti-Slop Guard
         this.abortController = new AbortController();
         // V5: Context compaction tracking
         this._lastCompactionIndex = null;
@@ -1290,6 +1291,7 @@ export class AgentLoop {
         const turnArchetype = determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype;
         const efficiency = this.config.efficiency || {};
         this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0 ? efficiency.maxTurnTokens : 100_000, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype));
+        const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
@@ -1322,9 +1324,16 @@ export class AgentLoop {
                     minChars: 600,
                     taskId: this.taskId
                 });
+                const argumentPrune = pruneExecutedToolArguments(this.messages, { taskId: this.taskId });
+                for (const saved of argumentPrune.recoveryPaths)
+                    recoveryPaths.add(path.resolve(saved));
                 const oversizedPrune = shortenOversizedToolObservations(this.messages, {
                     taskId: this.taskId
                 });
+                for (const message of this.messages) {
+                    if (typeof message.spillPath === 'string')
+                        recoveryPaths.add(path.resolve(message.spillPath));
+                }
                 const compaction = applyProgressiveCompaction(this.messages, MAX_CHAR_POOL, {
                     // historyPruner preserves full output before eliding it. The legacy
                     // decay path cannot promise that recovery, so keep it disabled here.
@@ -1335,7 +1344,9 @@ export class AgentLoop {
                     budgetKeepRecent: Number.MAX_SAFE_INTEGER,
                     collapseKeepRecent: Number.MAX_SAFE_INTEGER
                 });
-                compaction.totalReclaimed += observationPrune.reclaimedChars + oversizedPrune.reclaimedChars;
+                compaction.totalReclaimed += observationPrune.reclaimedChars + oversizedPrune.reclaimedChars + argumentPrune.reclaimedChars;
+                if (argumentPrune.pruned > 0)
+                    compaction.stagesFired.push(`executed_argument_archive:${argumentPrune.pruned}`);
                 if (observationPrune.pruned > 0) {
                     compaction.stagesFired.push(`recoverable_observation_decay:${observationPrune.pruned}`);
                 }
@@ -1678,6 +1689,7 @@ export class AgentLoop {
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
+                    tokenBudgetBasis: Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
                     tokenLimit: Number.isFinite(remainingBudget) && remainingBudget > 0 ? remainingBudget : undefined,
                     maxNativeActions: this.efficiencyBudget.getRemainingActions(),
                     workspaceRoot: this.workspaceRoot,
@@ -1891,8 +1903,13 @@ export class AgentLoop {
                         // A native action's name is not evidence that a model inspected
                         // pixels. Keep visual verification false unless a real image result
                         // has reached a vision-capable provider.
-                        if (['browser_get_dom', 'read_browser_page'].includes(actionName)) {
+                        if (['browser_get_dom', 'read_browser_page', 'browser_act', 'browser_subagent'].includes(actionName)) {
                             this.webVerificationState.browserActUsed = true;
+                        }
+                        if (['fs_read', 'read_file', 'view_file', 'viewfile', 'view_file_content'].includes(actionName) && detailPath) {
+                            if (/\.(html|htm|css|jsx|tsx|vue|svelte)$/i.test(detailPath)) {
+                                this.webVerificationState.htmlInspected = true;
+                            }
                         }
                     }
                 }
@@ -2099,19 +2116,12 @@ export class AgentLoop {
                     }
                     // Web Visual Validation Guard (Anti-Slop / Transcendence)
                     const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && isWebIntent(taskPrompt);
-                    if (isWebTask && !this.webGuardFired && this.stepsCompleted > 0) {
-                        const hasVision = this.llm.supportsVision !== false;
-                        // Finding D-6: this guard used to demand `screenshot` /
-                        // `vision_inspect_ui` unconditionally. Both need the browser and
-                        // capture packages, which are provisioned only after the user
-                        // consents — so on a fresh install the guard was ordering the agent
-                        // to use a tool that could not run. Ask for the capability once;
-                        // if it was declined, fall through to the path that needs nothing.
-                        let visionReady = false;
-                        let visionDeclined = false;
-                        let browserReady = false;
-                        let browserDeclined = false;
-                        let browserRuntimeError = '';
+                    let browserReady = false;
+                    let browserDeclined = false;
+                    let browserRuntimeError = '';
+                    let visionReady = false;
+                    let visionDeclined = false;
+                    if (isWebTask) {
                         try {
                             const { groupStatus, isGroupDeclined } = await import('./provisioning/capabilityProvisioner.js');
                             visionReady = groupStatus('vision').state === 'ready';
@@ -2130,6 +2140,9 @@ export class AgentLoop {
                             }
                         }
                         catch (e) { /* treat as not ready */ }
+                    }
+                    if (isWebTask && !this.webGuardFired && this.stepsCompleted > 0) {
+                        const hasVision = this.llm.supportsVision !== false;
                         let webGuardMsg = '';
                         if (browserRuntimeError) {
                             webGuardMsg = `[WEB CHECK: The browser capability is granted, but its runtime cannot launch: ${browserRuntimeError} Do not request the same grant again or claim a rendered-page check. Inspect the source and report the runtime blocker. This check fires once.]`;
@@ -2162,9 +2175,10 @@ export class AgentLoop {
                     // Tool availability and a completed plan are not evidence of visual
                     // inspection. A failed browser/capture attempt must not become a
                     // successful task merely because the provider says "verified".
-                    if (isWebTask && this.stepsCompleted > 0
-                        && !this.webVerificationState.browserActUsed
-                        && !this.webVerificationState.screenshotTaken) {
+                    const isVerified = Boolean(this.webVerificationState.browserActUsed ||
+                        this.webVerificationState.screenshotTaken ||
+                        (!browserReady && this.webVerificationState.htmlInspected));
+                    if (isWebTask && this.stepsCompleted > 0 && !isVerified) {
                         this.emitEvent({
                             type: 'error',
                             message: 'The web files may have changed, but rendered-page verification did not succeed. The task remains unverified; no completion is recorded.'
@@ -2439,7 +2453,11 @@ export class AgentLoop {
                     }
                     // 4-Layer Security Sandbox Validation
                     // 2. Sandbox Security Validation (CRITICAL FIX: Prevent Infinite Loop on Block)
-                    const validation = this.sandbox.validate(functionName, args);
+                    let validation = this.sandbox.validate(functionName, args);
+                    if (!validation.allowed && /^Path outside allowed workspace:/.test(validation.reason || '')
+                        && isOutputRecoveryRead(functionName, args.path, recoveryPaths)) {
+                        validation = { allowed: true, risk: 'safe', reason: 'Read exact tool output referenced by this session' };
+                    }
                     if (!validation.allowed) {
                         this.consecutiveBlockedActions++;
                         // Hard Circuit Breaker (Transcendence Context Consciousness)
@@ -2721,12 +2739,18 @@ export class AgentLoop {
                     if (result && result.success !== false && !result.error && ['fs_write', 'fs_edit', 'MultiEdit'].includes(functionName)) {
                         this.recordWebArtifact(args.path || args.file_path);
                     }
+                    if (result && result.success !== false && !result.error && ['fs_read', 'view_file', 'read_file'].includes(functionName)) {
+                        const filePath = String(args.path || args.file_path || args.AbsolutePath || args.target || '');
+                        if (/\.(html|htm|css|jsx|tsx|vue|svelte)$/i.test(filePath)) {
+                            this.webVerificationState.htmlInspected = true;
+                        }
+                    }
                     if (['screenshot', 'vision_inspect_ui'].includes(functionName) && this.llm.supportsVision !== false && result?.success === true && result?._is_image_marker === true) {
                         this.webVerificationState.screenshotTaken = true;
                     }
                     if (functionName === 'browser_act' && result?.success === true) {
                         const browserResults = Array.isArray(result.data) ? result.data : [];
-                        if (browserResults.some((item) => ['snapshot', 'scrape'].includes(item?.action))) {
+                        if (browserResults.some((item) => ['snapshot', 'scrape', 'preview'].includes(item?.action))) {
                             this.webVerificationState.browserActUsed = true;
                         }
                     }
@@ -3041,6 +3065,15 @@ export class AgentLoop {
                             cachedPromptTokens: usage.cachedPromptTokens || 0,
                             measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
                         });
+                        try {
+                            this.efficiencyBudget.recordUsage(usage);
+                        }
+                        catch (checkpoint) {
+                            if (checkpoint instanceof EfficiencyCheckpoint)
+                                e = checkpoint;
+                            else
+                                throw checkpoint;
+                        }
                     }
                 }
                 if (e instanceof EfficiencyCheckpoint) {
@@ -3051,7 +3084,10 @@ export class AgentLoop {
                         ...this.efficiencyBudget.snapshot() });
                     break;
                 }
-                if (e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET') {
+                if (e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
+                    || e?.code === 'AGY_NATIVE_ACTION_BUDGET' || e?.code === 'AGY_DESKTOP_TASK_LIMIT') {
+                    this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
+                    this.memoryManager.saveHistory(this.messages);
                     this.emitEvent({ type: 'budget_warning', message: e.message });
                     auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
                         used: this.tokenTracker.taskTokens, limit: e.tokenLimit || this.tokenTracker.budget?.maxTokensPerTask || 0 });
@@ -3176,6 +3212,8 @@ export class AgentLoop {
     }
     // V5: Classify errors for intelligent retry decisions
     classifyError(error) {
+        if (error?.code === 'PROVIDER_NO_PROGRESS')
+            return 'fatal';
         if (error?.code === 'AGY_NATIVE_ACTION_DENIED'
             || error?.code === 'AGY_NATIVE_ACTION_BUDGET'
             || error?.code === 'AGY_DESKTOP_TASK_LIMIT')

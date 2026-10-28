@@ -7,7 +7,8 @@ import path from 'node:path';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-history-prune-'));
 const previousHome = process.env.CAUSYNE_HOME;
 process.env.CAUSYNE_HOME = root;
-const { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations } = await import('../src/historyPruner.ts');
+const { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations,
+  pruneExecutedToolArguments } = await import('../src/historyPruner.ts');
 
 after(() => {
   if (previousHome === undefined) delete process.env.CAUSYNE_HOME;
@@ -126,5 +127,60 @@ test('observations exceeding 2,500 chars are shortened by default to preserve co
   assert.equal(result.pruned, 1);
   assert.ok(messages[0]?.content.length < 3500);
   assert.equal(fs.readFileSync(messages[0]?.spillPath ?? '', 'utf8'), original);
+});
+
+test('executed file arguments are archived once, with complete contents and stable call pairing', () => {
+  const source = Array.from({ length: 600 }, (_, index) => `export const value${index} = ${index};`).join('\n');
+  const first = { id: 'first-write', function: { name: 'fs_write', arguments: JSON.stringify({ path: 'first.ts', content: source }) } };
+  const second = { id: 'second-write', function: { name: 'fs_write', arguments: JSON.stringify({ path: 'second.ts', content: source + '\n// second file' }) } };
+  const pending = { id: 'pending-write', function: { name: 'fs_write', arguments: JSON.stringify({ path: 'pending.ts', content: source }) } };
+  const pendingOriginal = pending.function.arguments;
+  const userText = 'The user requires this full text: ' + source;
+  const messages = [
+    { role: 'user', content: userText },
+    { role: 'assistant', content: '', tool_calls: [first, second, pending] },
+    { role: 'tool', name: 'fs_write', tool_call_id: 'first-write', content: '{"success":true}' },
+    { role: 'tool', name: 'fs_write', tool_call_id: 'second-write', content: '{"success":true}' }
+  ];
+  const originalLength = first.function.arguments.length + second.function.arguments.length;
+  const result = pruneExecutedToolArguments(messages, { taskId: 'file-arguments' });
+  assert.equal(result.pruned, 2);
+  assert.equal(result.spillFailures, 0);
+  assert.ok(result.reclaimedChars > originalLength * 0.9);
+  assert.equal(messages[0]?.content, userText);
+  assert.equal(pending.function.arguments, pendingOriginal, 'never archive a request that has not executed');
+  assert.equal(first.id, messages[2]?.tool_call_id);
+  const savedFirst = JSON.parse(first.function.arguments)._causyne_archived_args;
+  const savedSecond = JSON.parse(second.function.arguments)._causyne_archived_args;
+  assert.notEqual(savedFirst, savedSecond, 'same-step writes must not overwrite one another');
+  assert.ok(fs.readFileSync(savedFirst, 'utf8').includes(source));
+  assert.ok(fs.readFileSync(savedSecond, 'utf8').includes(source + '\n// second file'));
+  assert.equal(JSON.parse(first.function.arguments).path, 'first.ts');
+  const repeat = pruneExecutedToolArguments(messages, { taskId: 'file-arguments' });
+  assert.equal(repeat.pruned, 0);
+  assert.deepEqual(repeat.recoveryPaths, [savedFirst, savedSecond]);
+  const summary = buildRecoverableDroppedSummary(messages, 'Two writes were attempted.');
+  assert.ok(summary.includes(savedFirst));
+  assert.ok(summary.includes(savedSecond));
+  assert.match(summary, /arguments \(outcome unverified\)/);
+});
+
+test('executed arguments remain intact if their recovery copy cannot be saved', () => {
+  const prior = process.env.CAUSYNE_OUTPUT_SPILL;
+  process.env.CAUSYNE_OUTPUT_SPILL = '0';
+  try {
+    const original = JSON.stringify({ path: 'app.ts', content: 'important code\n'.repeat(1500) });
+    const call = { id: 'blocked-spill', function: { name: 'fs_write', arguments: original } };
+    const result = pruneExecutedToolArguments([
+      { role: 'assistant', content: '', tool_calls: [call] },
+      { role: 'tool', content: '{"success":true}', tool_call_id: 'blocked-spill' }
+    ]);
+    assert.equal(result.pruned, 0);
+    assert.equal(result.spillFailures, 1);
+    assert.equal(call.function.arguments, original);
+  } finally {
+    if (prior === undefined) delete process.env.CAUSYNE_OUTPUT_SPILL;
+    else process.env.CAUSYNE_OUTPUT_SPILL = prior;
+  }
 });
 
