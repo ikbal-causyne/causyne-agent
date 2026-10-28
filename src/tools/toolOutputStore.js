@@ -27,7 +27,8 @@ export class ToolOutputStore {
         const lines = text.split('\n');
         const totalLines = lines.length;
         const contentHash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 12);
-        if (text.length <= this.config.maxChars && totalLines <= this.config.maxLines && totalBytes <= this.config.maxBytes) {
+        if (process.env.CAUSYNE_OUTPUT_SPILL === '0'
+            || (text.length <= this.config.maxChars && totalLines <= this.config.maxLines && totalBytes <= this.config.maxBytes)) {
             return {
                 contentForModel: text,
                 isTruncated: false,
@@ -39,19 +40,57 @@ export class ToolOutputStore {
         const safeSession = sanitizeIdentifier(sessionId);
         const safeToolId = sanitizeIdentifier(toolCallId);
         const sessionDir = path.join(this.config.storageDir, safeSession);
-        fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
         const diskPath = path.join(sessionDir, `${safeToolId}_${contentHash}.log`);
-        fs.writeFileSync(diskPath, text, { encoding: 'utf8', mode: 0o600 });
-        const head = lines.slice(0, this.config.headLines).join('\n');
-        const tail = lines.slice(-this.config.tailLines).join('\n');
+        let temporaryPath;
+        try {
+            fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+            if (fs.lstatSync(sessionDir).isSymbolicLink())
+                throw new Error('Output directory is a symlink');
+            temporaryPath = path.join(sessionDir, `.${crypto.randomUUID()}.tmp`);
+            fs.writeFileSync(temporaryPath, text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+            fs.renameSync(temporaryPath, diskPath);
+        }
+        catch {
+            if (temporaryPath) {
+                try {
+                    fs.unlinkSync(temporaryPath);
+                }
+                catch { /* already renamed or unavailable */ }
+            }
+            // Never discard an observation when its recovery file could not be saved.
+            return { contentForModel: text, isTruncated: false, totalLines, totalBytes, contentHash };
+        }
+        // Line bounds alone do not bound a minified file or a single huge JSON line.
         const omittedLines = Math.max(0, totalLines - (this.config.headLines + this.config.tailLines));
-        const contentForModel = [
-            head,
+        const notice = [
             `\n[... Causyne ToolOutputStore: ${omittedLines} lines (${Math.max(1, Math.round(totalBytes / 1024))} KB) truncated. Content Hash: ${contentHash} ...]`,
             `[... Full log persisted to: ${diskPath} ...]`,
-            `[... To inspect exact lines without bloating prompt, run: sed -n '<start>,<end>p' "${diskPath}" ...]\n`,
-            tail
+            '[... Read or search a relevant range with fs_read or code_search_ripgrep; do not rerun the original tool ...]\n'
         ].join('\n');
+        let head = '';
+        let tail = '';
+        if (lines.length === 1) {
+            const budget = Math.max(0, this.config.maxChars - notice.length);
+            const half = Math.floor(budget / 2);
+            head = text.slice(0, half);
+            tail = text.slice(-half);
+        }
+        else {
+            const rawHead = lines.slice(0, this.config.headLines).join('\n');
+            const rawTail = lines.slice(-this.config.tailLines).join('\n');
+            const maxBudget = Math.max(this.config.maxChars, 4000);
+            if (rawHead.length + rawTail.length + notice.length > maxBudget) {
+                const budget = Math.max(0, maxBudget - notice.length);
+                const half = Math.floor(budget / 2);
+                head = rawHead.slice(0, half);
+                tail = rawTail.slice(-half);
+            }
+            else {
+                head = rawHead;
+                tail = rawTail;
+            }
+        }
+        const contentForModel = head + notice + tail;
         return {
             contentForModel,
             isTruncated: true,
@@ -65,6 +104,10 @@ export class ToolOutputStore {
         const resolvedPath = path.resolve(diskPath);
         if (!fs.existsSync(resolvedPath)) {
             throw new Error(`ToolOutputStore: Log file not found at ${resolvedPath}`);
+        }
+        const relative = path.relative(fs.realpathSync(this.config.storageDir), fs.realpathSync(resolvedPath));
+        if (relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+            throw new Error('ToolOutputStore: Requested file is outside the output store');
         }
         const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n');
         const clampedStart = Math.max(1, Math.min(startLine, lines.length));
@@ -80,7 +123,7 @@ export class ToolOutputStore {
             const sessions = fs.readdirSync(this.config.storageDir);
             for (const session of sessions) {
                 const sessionPath = path.join(this.config.storageDir, session);
-                const stat = fs.statSync(sessionPath);
+                const stat = fs.lstatSync(sessionPath);
                 if (stat.isDirectory()) {
                     const files = fs.readdirSync(sessionPath);
                     for (const file of files) {
@@ -106,4 +149,32 @@ export class ToolOutputStore {
 export const defaultToolOutputStore = new ToolOutputStore();
 export function processToolOutputWithStore(sessionId, toolCallId, rawOutput, store = defaultToolOutputStore) {
     return store.processToolOutput(sessionId, toolCallId, rawOutput);
+}
+export function renderSpillDocument(result, meta = {}) {
+    if (typeof result === 'string')
+        return result;
+    if (result === null || typeof result !== 'object')
+        return String(result);
+    const header = [
+        '=== CAUSYNE TOOL OUTPUT (full, untruncated) ===',
+        `tool : ${meta.tool || 'unknown'}`,
+        `task : ${meta.taskId || 'unknown'}   step: ${meta.step == null ? 'unknown' : meta.step}`,
+        `saved: ${new Date().toISOString()}`
+    ];
+    const sections = [];
+    const scalars = [];
+    for (const [key, value] of Object.entries(result)) {
+        if (typeof value === 'string' && value.length > 500) {
+            sections.push(`\n--- field: ${key} (${value.length} chars) ---\n${value}`);
+        }
+        else if (value !== null && typeof value === 'object') {
+            sections.push(`\n--- field: ${key} (JSON) ---\n${JSON.stringify(value, null, 2)}`);
+        }
+        else {
+            scalars.push(`${key}: ${JSON.stringify(value)}`);
+        }
+    }
+    if (scalars.length > 0)
+        header.push('', ...scalars);
+    return header.join('\n') + '\n' + sections.join('\n') + '\n';
 }

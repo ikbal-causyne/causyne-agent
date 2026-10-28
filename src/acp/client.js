@@ -115,8 +115,8 @@ export class AcpClient {
             const detail = this.stderrTail.trim() || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
             this.failAll(new Error(`agent process exited: ${detail}`));
         });
-        const hasFsRead = Boolean(this.options.fsReadHandler || this.options.cwd);
-        const hasFsWrite = Boolean(this.options.fsWriteHandler || this.options.cwd);
+        const hasFsRead = this.options.allowHostTools !== false && Boolean(this.options.fsReadHandler || this.options.cwd);
+        const hasFsWrite = this.options.allowHostTools !== false && Boolean(this.options.fsWriteHandler || this.options.cwd);
         const params = {
             protocolVersion: ACP_PROTOCOL_VERSION,
             clientCapabilities: {
@@ -340,6 +340,12 @@ export class AcpClient {
         }
     }
     async handleServerRequest(request) {
+        if (this.options.allowHostTools === false
+            && (request.method === ACP_METHODS.READ_TEXT_FILE || request.method === ACP_METHODS.WRITE_TEXT_FILE)) {
+            this.write({ jsonrpc: '2.0', id: request.id,
+                error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Use the advertised Causyne tools for host file access.' } });
+            return;
+        }
         if (request.method === ACP_METHODS.REQUEST_PERMISSION) {
             const handler = this.options.permissionHandler;
             if (!handler) {

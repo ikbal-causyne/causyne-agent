@@ -329,10 +329,11 @@ export class AcpProvider extends LLMProvider {
       args: this.args,
       cwd: workspaceRoot,
       promptTimeoutMs: 900_000,
+      allowHostTools: false,
       permissionHandler: async (req: RequestPermissionRequest) => {
         if (this.currentTurnAborted || signal?.aborted) return { outcome: 'cancelled' };
-        const allowOpt = req.options?.find(o => o.kind === 'allow_once' || o.kind === 'allow_always' || o.optionId === 'allow');
-        if (allowOpt) return { outcome: 'selected', optionId: allowOpt.optionId };
+        // Inference peers cannot grant themselves host execution authority.
+        // Return a Causyne tool call so the shared policy and budget can apply.
         return { outcome: 'cancelled' };
       },
       onUpdate: (_sessionId: string, update: SessionUpdate) => {

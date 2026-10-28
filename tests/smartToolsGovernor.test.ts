@@ -2,15 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SmartToolsGovernor } from '../src/smartToolsUse.ts';
 
-test('third inspection suggests synthesis once but does not block evidence gathering', () => {
+test('second inspection yields to synthesis while further research stays available', () => {
   const governor = new SmartToolsGovernor();
   assert.equal(governor.observe('fs_read', { path: 'a' }, { success: true }), null);
-  assert.equal(governor.observe('fs_search', { query: 'b' }, { success: true }), null);
-  const nudge = governor.observe('web_search', { query: 'c' }, { success: true });
+  const nudge = governor.observe('fs_search', { query: 'b' }, { success: true });
   assert.match(nudge ?? '', /Continue inspecting if the task still needs evidence/);
   assert.equal(governor.snapshot().phase, 'synthesis');
+  assert.equal(governor.interceptAction('fs_read', { path: 'd' }).allowed, false);
+  governor.beginModelStep();
   assert.equal(governor.observe('fs_read', { path: 'd' }, { success: true }), null);
-  assert.equal(governor.snapshot().consecutiveInspections, 4);
+  assert.equal(governor.snapshot().consecutiveInspections, 1);
 });
 
 test('mutation resets the inspection streak and verification requires explicit success', () => {
@@ -36,4 +37,16 @@ test('tool discovery does not consume inspection budget', () => {
   const governor = new SmartToolsGovernor();
   governor.observe('tool_search', { query: 'browser' }, { success: true });
   assert.equal(governor.snapshot().consecutiveInspections, 0);
+});
+
+test('third inspection is intercepted before execution, then a new planning step can request evidence', () => {
+  const governor = new SmartToolsGovernor();
+  for (const file of ['a', 'b']) {
+    assert.equal(governor.interceptAction('fs_read', { path: file }).allowed, true);
+    governor.observe('fs_read', { path: file }, { success: true });
+  }
+  assert.equal(governor.interceptAction('fs_read', { path: 'c' }).allowed, false);
+  assert.equal(governor.interceptAction('fs_write', { path: 'fixed' }).allowed, true);
+  governor.beginModelStep();
+  assert.equal(governor.interceptAction('fs_read', { path: 'c' }).allowed, true);
 });

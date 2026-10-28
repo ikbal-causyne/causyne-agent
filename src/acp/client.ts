@@ -38,6 +38,7 @@ export interface AcpClientOptions {
   env?: NodeJS.ProcessEnv;
   clientVersion?: string;
   promptTimeoutMs?: number;
+  allowHostTools?: boolean;
   permissionHandler?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse['outcome']>;
   onUpdate?: (sessionId: string, update: SessionUpdate) => void;
   fsReadHandler?: (filePath: string, options?: { line?: number; limit?: number }) => Promise<string>;
@@ -183,8 +184,8 @@ export class AcpClient {
       this.failAll(new Error(`agent process exited: ${detail}`));
     });
 
-    const hasFsRead = Boolean(this.options.fsReadHandler || this.options.cwd);
-    const hasFsWrite = Boolean(this.options.fsWriteHandler || this.options.cwd);
+    const hasFsRead = this.options.allowHostTools !== false && Boolean(this.options.fsReadHandler || this.options.cwd);
+    const hasFsWrite = this.options.allowHostTools !== false && Boolean(this.options.fsWriteHandler || this.options.cwd);
 
     const params: InitializeRequest = {
       protocolVersion: ACP_PROTOCOL_VERSION,
@@ -402,6 +403,12 @@ export class AcpClient {
   }
 
   private async handleServerRequest(request: JsonRpcRequest): Promise<void> {
+    if (this.options.allowHostTools === false
+      && (request.method === ACP_METHODS.READ_TEXT_FILE || request.method === ACP_METHODS.WRITE_TEXT_FILE)) {
+      this.write({ jsonrpc: '2.0', id: request.id,
+        error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Use the advertised Causyne tools for host file access.' } });
+      return;
+    }
     if (request.method === ACP_METHODS.REQUEST_PERMISSION) {
       const handler = this.options.permissionHandler;
       if (!handler) {

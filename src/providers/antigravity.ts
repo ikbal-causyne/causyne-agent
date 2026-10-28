@@ -939,12 +939,9 @@ export class AntigravityProvider extends LLMProvider {
     // 3. agy only treats stdin as a prompt in stream-json input mode. Plain text
     //    stdin without --print starts an interactive session and loses the task.
     //    Keep the prompt off the process command line by sending one user event.
-    // 4. --mode accept-edits lets agy create and edit workspace files in
-    //    headless mode, where the default request-review policy cannot prompt
-    //    and would auto-deny every write. --dangerously-skip-permissions must
-    //    stay off: it would also grant shell commands and other host tools,
-    //    bypassing Causyne. Native terminal/browser tools remain denied; those
-    //    must go through Causyne XML tool calls.
+    // 4. Plan mode keeps file mutations behind Causyne's tool boundary too.
+    //    Denied native actions are mapped to explicit Causyne calls below.
+    //    No peer CLI receives a blanket host permission grant.
     // 5. Launch-only turns use a shorter limit because they should not spend
     //    several minutes generating code or holding a foreground server open.
     // 6. --conversation links multi-turn steps to agy's local session memory to prevent re-reading files.
@@ -1003,7 +1000,7 @@ export class AntigravityProvider extends LLMProvider {
         }
       };
       const configuredActions = Number(options.maxNativeActions);
-      const maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions > 0
+      const maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions >= 0
         ? configuredActions : desktopTask ? 12 : 35;
       let nativeActionStarts = 0;
       const seenNativeActionSteps = new Set<number>();
@@ -1469,7 +1466,10 @@ export class AntigravityProvider extends LLMProvider {
           this.lastCumulativeUsage = { conversationId: this.currentConversationId, ...cumulative };
         }
         // A peer may report usage only in its final result.
-        if (promptTokens + completionTokens >= tokenLimit) {
+        const reportedTotal = promptTokens + completionTokens;
+        const uncachedTotal = Math.max(0, promptTokens - Math.min(promptTokens, cachedPromptTokens || 0)) + completionTokens;
+        const spentAgainstLimit = hasExplicitLimit ? reportedTotal : uncachedTotal;
+        if (spentAgainstLimit >= tokenLimit) {
           Object.assign(partialUsage, response.usage);
           safeReject(Object.assign(new Error(`Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`),
             { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }));

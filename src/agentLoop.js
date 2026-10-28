@@ -32,7 +32,8 @@ import { determineToolScope, filterSuppressedPacks, resolveLazyPlaybooks, SmartT
 import { resolveCharPool, measureMessages, resultCapFor, decayToolResults, buildWindow, compactInPlace, describeDroppedMessages, sanitizeSequences, applyProgressiveCompaction, snipOversizedToolOutputs } from './contextManager.js';
 // Provider imports
 import { detectWorkspaceDomains, ensureSkillRepo, getSkillDomainHeader } from './skillsManager.js';
-import { spillToolResult, buildSpillNotice, buildDecayPointer, pruneOutputStore } from './outputStore.js';
+import { spillToolResult, buildDecayPointer, pruneOutputStore } from './outputStore.js';
+import { defaultToolOutputStore, processToolOutputWithStore, renderSpillDocument } from './tools/toolOutputStore.js';
 import { beginTask as beginCheckpointTask, captureBeforeMutation, pruneStore as pruneCheckpointStore, resolveProjectRoot } from './checkpoints.js';
 import fsSync from 'fs';
 import os from 'os';
@@ -434,6 +435,7 @@ export class AgentLoop {
         // (rule ZM-01), and a task boundary is often enough for a 7-day window.
         try {
             pruneOutputStore();
+            defaultToolOutputStore.pruneOldOutputs();
         }
         catch (e) { /* never block a task on housekeeping */ }
         try {
@@ -1795,6 +1797,9 @@ export class AgentLoop {
                     callEstimatedCostUsd: this.tokenTracker.calculateCost(response.usage.promptTokens, response.usage.completionTokens, response.usage)
                 });
                 this.efficiencyBudget.recordUsage(response.usage);
+                for (const action of response.externalActions || []) {
+                    this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
+                }
                 const cachedTokens = response.usage.cachedPromptTokens || 0;
                 if (cachedTokens > 0) {
                     this.debugLog(`prompt cache hit: ${cachedTokens.toLocaleString()} of ${response.usage.promptTokens.toLocaleString()} input tokens served from cache`);
@@ -2149,8 +2154,9 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: '⚡ Anti-Slop Check: Visual/semantic verification recommended.' });
                             this.messages.push({ role: 'system', content: webGuardMsg });
                             this.memoryManager.saveHistory(this.messages);
-                            // Allow a planning step to perform the setup just requested.
-                            continue;
+                            if (browserReady || (hasVision && visionReady)) {
+                                continue;
+                            }
                         }
                     }
                     // Tool availability and a completed plan are not evidence of visual
@@ -2940,71 +2946,36 @@ export class AgentLoop {
                         // Per tool, not one number for all of them. A build log and a
                         // source file are not equally worth their space in the window.
                         const MAX_RESULT_CHARS = resultCapFor(functionName);
+                        const originalFingerprint = createHash('sha256').update(resultString).digest('hex');
                         let spill = null;
-                        if (resultString.length > MAX_RESULT_CHARS) {
-                            // A1: spill the WHOLE result to disk before shortening it. The
-                            // previous code threw the overflow away, so the only way back to
-                            // it was re-running the tool — a second full execution and a
-                            // second full-size result in the window. Now the bytes survive
-                            // behind a path and recovery is one bounded read.
-                            // The raw result, not JSON.stringify(result): JSON escapes every
-                            // newline, which would land a large payload on a single line and
-                            // make the fs_read/ripgrep recovery route we advertise useless.
-                            spill = spillToolResult(result, {
-                                taskId: this.taskId,
-                                step: this.stepsCompleted,
-                                tool: functionName
-                            });
-                            const TRUNCATION_NOTICE = buildSpillNotice(spill);
-                            const truncatedResult = {};
-                            // Budget shared across every oversized string field on the result.
-                            let budget = MAX_RESULT_CHARS - 2000;
-                            for (const [key, value] of Object.entries(result)) {
-                                if (typeof value === 'string' && value.length > 500) {
-                                    const allowance = Math.max(0, Math.min(value.length, budget));
-                                    budget -= allowance;
-                                    truncatedResult[key] = allowance < value.length
-                                        ? value.substring(0, allowance) + TRUNCATION_NOTICE
-                                        : value;
-                                }
-                                else if (value !== null && typeof value === 'object') {
-                                    const serialized = JSON.stringify(value);
-                                    if (serialized.length > budget) {
-                                        truncatedResult[key] = spill
-                                            ? `[${key} omitted here: ${(serialized.length / 1024).toFixed(1)} KB. The complete result is saved at ${spill.path} — read or search that file rather than re-running.]`
-                                            : `[${key} omitted: ${(serialized.length / 1024).toFixed(1)} KB. Re-run with narrower arguments if you need it.]`;
-                                    }
-                                    else {
-                                        budget -= serialized.length;
-                                        truncatedResult[key] = value;
-                                    }
-                                }
-                                else {
-                                    truncatedResult[key] = value;
+                        if (resultString.length > Math.min(MAX_RESULT_CHARS, 2500)) {
+                            const document = renderSpillDocument(result, { taskId: this.taskId, step: this.stepsCompleted, tool: functionName });
+                            const stored = processToolOutputWithStore(this.taskId, toolCall.id, document);
+                            if (stored.isTruncated && stored.diskPath) {
+                                spill = { path: stored.diskPath };
+                                resultString = JSON.stringify({
+                                    ...(typeof result?.success === 'boolean' ? { success: result.success } : {}),
+                                    ...(typeof result?.error === 'string' ? { error: result.error.slice(0, 500) } : {}),
+                                    output: stored.contentForModel
+                                });
+                            }
+                            else if (document.length > 2500) {
+                                // Compatibility recovery store if the primary store is unavailable.
+                                // spillToolResult preserves the full document; never truncate on failure.
+                                const fallback = spillToolResult(result, { taskId: this.taskId, step: this.stepsCompleted, tool: functionName });
+                                if (fallback) {
+                                    spill = fallback;
+                                    resultString = JSON.stringify({
+                                        ...(typeof result?.success === 'boolean' ? { success: result.success } : {}),
+                                        output: document.slice(0, 1000) + buildDecayPointer(fallback) + document.slice(-500)
+                                    });
                                 }
                             }
-                            resultString = JSON.stringify(truncatedResult);
                         }
-                        // B5 — OBSERVATION COMPACTION.
-                        //
-                        // ARC Prize measured the same GPT-6 Astra weights at 62.7% under a
-                        // note-passing harness and 99.9% under one that compacts and reuses
-                        // prior work — with 49% FEWER tokens. Re-reading a file the agent
-                        // already read, or re-listing an unchanged directory, pays full
-                        // price for bytes that are verbatim identical to bytes already in
-                        // the window.
-                        //
-                        // Replacing the repeat with a pointer is not a loss of information:
-                        // "identical to step N" is strictly MORE informative than the bytes
-                        // alone, because it tells the model the thing did not change —
-                        // which after an edit is exactly the question it is asking.
-                        //
-                        // Only payloads worth the trade are folded. A small `{"success":true}`
-                        // ack costs less than the pointer that would replace it, and every
-                        // Plan updates would otherwise collide with unrelated plan updates.
+                        // Fold identical bytes without treating them as proof of external state.
                         const OBSERVATION_FOLD_FLOOR = 600;
                         if (resultString.length >= OBSERVATION_FOLD_FLOOR) {
-                            const digest = createHash('sha256').update(resultString).digest('hex');
+                            const digest = originalFingerprint;
                             const seenAt = this._observationDigests.get(digest);
                             if (seenAt !== undefined) {
                                 resultString = JSON.stringify({

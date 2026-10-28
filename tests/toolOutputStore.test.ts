@@ -31,7 +31,7 @@ test('ToolOutputStore: oversized output is truncated with head and tail preserve
       maxLines: 20,
       headLines: 5,
       tailLines: 5,
-      maxChars: 500
+      maxChars: 1500
     });
 
     const lines: string[] = [];
@@ -66,4 +66,18 @@ test('ToolOutputStore: standalone helper uses default store', () => {
   const result = processToolOutputWithStore('s_temp', 'call_help', 'Hello world');
   assert.equal(result.isTruncated, false);
   assert.equal(result.contentForModel, 'Hello world');
+});
+
+test('a single minified line has a bounded preview and exact recoverable bytes', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-minified-'));
+  try {
+    const store = new ToolOutputStore({ storageDir: directory });
+    const text = 'START' + 'x'.repeat(200_000) + 'END';
+    const stored = store.processToolOutput('session', 'call', text);
+    assert.ok(stored.contentForModel.length <= 2500);
+    assert.match(stored.contentForModel, /^START/);
+    assert.match(stored.contentForModel, /END$/);
+    assert.equal(fs.readFileSync(stored.diskPath!, 'utf8'), text);
+    assert.throws(() => store.readSlice(path.join(directory, '..', 'outside'), 1, 2));
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

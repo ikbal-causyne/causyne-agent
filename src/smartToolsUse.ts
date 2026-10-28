@@ -44,10 +44,9 @@ function isVerification(toolName: string, args: Record<string, unknown>): boolea
 }
 
 /**
- * An advisory phase governor. A fixed two-read denial is unsafe for research,
- * debugging, and large repositories, so the third inspection receives one
- * short synthesis nudge. Exact repeated calls remain subject to StallGuard.
- * Provider-native ACP actions are outside this local tool interceptor.
+ * Bound each inspection batch to two calls, then yield to a synthesis step.
+ * Further evidence remains available after that planning boundary, so long
+ * research tasks do not deadlock. Exact repeated calls also use StallGuard.
  */
 export class SmartToolsGovernor {
   private phase: ExecutionPhase = 'inspection';
@@ -112,10 +111,10 @@ export class SmartToolsGovernor {
     }
     if (!isInspection(toolName, args)) return null;
     this.consecutiveInspections++;
-    if (!this.mutationAttempted) this.phase = this.consecutiveInspections > 2 ? 'synthesis' : 'inspection';
-    if (this.consecutiveInspections === 3 && !this.nudgeIssued) {
+    this.phase = this.consecutiveInspections >= 2 ? 'synthesis' : 'inspection';
+    if (this.consecutiveInspections === 2 && !this.nudgeIssued) {
       this.nudgeIssued = true;
-      return 'You have inspected three times without an action. Synthesize what is known and choose the next useful step. Continue inspecting if the task still needs evidence; avoid repeating unchanged probes.';
+      return 'Inspection batch complete. Synthesize what is known and choose the next useful step. Continue inspecting if the task still needs evidence; avoid repeating unchanged probes.';
     }
     return null;
   }
