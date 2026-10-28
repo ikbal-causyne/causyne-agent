@@ -839,9 +839,11 @@ export class ChatRenderer {
     const cleaned = safeDisplay(source).replace(/\n{3,}/g, '\n\n').trim();
 
     // Wrap first, THEN cut — bounding by source newlines lets a single long
-    // line through as thousands of wrapped rows.
+    // line through as thousands of wrapped rows. Filter out transient curl progress noise.
     const wrapped = [];
-    for (const line of cleaned.split('\n')) {
+    for (const rawLine of cleaned.split('\n')) {
+      const line = rawLine.replace(/\r/g, '').trimEnd();
+      if (/^\s*(?:% Total\b|Dload\s+Upload\b|\d+\s+\d+\s+\d+\s+.*--:--:--)/i.test(line)) continue;
       for (const part of wrap(line, width)) {
         wrapped.push(part);
         if (wrapped.length > PREVIEW_LINES + 1) break;

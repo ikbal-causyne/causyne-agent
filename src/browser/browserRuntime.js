@@ -289,3 +289,26 @@ export function resolveBrowserRuntime() {
         source: configured ? 'environment' : 'system'
     };
 }
+/**
+ * Synchronously checks if a valid Causyne / Camoufox browser executable exists.
+ */
+export function isBrowserRuntimeInstalled() {
+    try {
+        const configured = process.env.CAUSYNE_BROWSER_EXECUTABLE?.trim()
+            || process.env.CAMOUFOX_EXECUTABLE_PATH?.trim();
+        const candidates = configured
+            ? [resolveCandidateExecutablePath(path.resolve(configured))]
+            : candidateExecutables().map(resolveCandidateExecutablePath);
+        return candidates.some(candidate => {
+            try {
+                return existsSync(candidate);
+            }
+            catch {
+                return false;
+            }
+        });
+    }
+    catch {
+        return false;
+    }
+}

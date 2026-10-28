@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { isBrowserRuntimeInstalled } from '../browser/browserRuntime.js';
 import { LLMProvider } from './base.js';
 /**
  * Baseline fallback models for instant offline availability.
@@ -935,10 +936,17 @@ export class AntigravityProvider extends LLMProvider {
                 'If verification fails, revise the change and verify again; report unfinished work accurately.\n\n' + promptText;
         }
         if (isWebTask) {
-            promptText = '[Current Web / UI engineering task: verification requirements]\n' +
-                'Create complete, high-fidelity web files. Do not declare completion merely by running curl or open in the terminal. ' +
-                'You must use Causyne visual verification: invoke browser_act or screenshot to visually inspect the rendered UI before completing the task. ' +
-                'A saved HTML/CSS/JS file or a local server launch is not proof of visual inspection.\n\n' + promptText;
+            if (isBrowserRuntimeInstalled()) {
+                promptText = '[Current Web / UI engineering task: verification requirements]\n' +
+                    'Create complete, high-fidelity web files. Do not declare completion merely by running curl or open in the terminal. ' +
+                    'You must use Causyne visual verification: invoke browser_act or screenshot to visually inspect the rendered UI before completing the task. ' +
+                    'A saved HTML/CSS/JS file or a local server launch is not proof of visual inspection.\n\n' + promptText;
+            }
+            else {
+                promptText = '[Current Web / UI engineering task: verification requirements]\n' +
+                    'Create complete, high-fidelity web files. The dedicated headless browser runtime is not installed on this workstation. ' +
+                    'Do NOT attempt to invoke browser_act. Instead, verify code syntax using node --check or test runners, launch the local web server, and verify that the HTML/CSS/JS assets are properly served.\n\n' + promptText;
+            }
         }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);

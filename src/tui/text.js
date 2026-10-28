@@ -309,7 +309,10 @@ export function sanitize(text) {
   // columnar output into an unreadable run, and leaving them corrupts the
   // frame. Expansion is the only option that preserves what the user meant to
   // see. Everything else in this class is genuinely unwanted and is removed.
-  return expandTabs(stripAnsi(text))
+  const normalized = String(text == null ? '' : text)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+  return expandTabs(stripAnsi(normalized))
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }

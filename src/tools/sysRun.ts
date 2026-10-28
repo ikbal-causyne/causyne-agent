@@ -61,6 +61,15 @@ export function stripAnsi(str: string): string {
 }
 
 /**
+ * Strips ANSI escape sequences and normalizes carriage returns so terminal split-panes never glitch.
+ */
+export function cleanSubprocessOutput(str: string): string {
+  return stripAnsi(str)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+}
+
+/**
  * Commands whose exit code 1 indicates a normal query result (e.g. no matches found,
  * differences found, or condition evaluated to false) rather than a system error.
  */
@@ -199,7 +208,7 @@ export const sysRun = {
             child.unref();
             resolve({
               success: true,
-              output: stripAnsi(outputBuffer),
+              output: cleanSubprocessOutput(outputBuffer),
               exitCode: 0,
               note: 'Server readiness verified. Running in background.'
             });
@@ -227,7 +236,7 @@ export const sysRun = {
             child.unref();
             resolve({
               success: true,
-              output: stripAnsi(outputBuffer) || 'Server process started and running in background.',
+              output: cleanSubprocessOutput(outputBuffer) || 'Server process started and running in background.',
               exitCode: 0,
               note: 'Server detached after clean execution.'
             });
@@ -243,7 +252,7 @@ export const sysRun = {
           child.kill('SIGKILL');
           resolve({
             success: false,
-            output: stripAnsi(outputBuffer),
+            output: cleanSubprocessOutput(outputBuffer),
             error: `Process timed out after ${timeoutMs}ms`,
             exitCode: 124
           });
@@ -256,7 +265,7 @@ export const sysRun = {
         if (serverGraceTimer) clearTimeout(serverGraceTimer);
         resolve({
           success: false,
-          output: stripAnsi(outputBuffer),
+          output: cleanSubprocessOutput(outputBuffer),
           error: err.message,
           exitCode: 1
         });
@@ -266,7 +275,7 @@ export const sysRun = {
         if (isDetached) return;
         if (timeoutId) clearTimeout(timeoutId);
         if (serverGraceTimer) clearTimeout(serverGraceTimer);
-        const cleanOutput = stripAnsi(outputBuffer);
+        const cleanOutput = cleanSubprocessOutput(outputBuffer);
         const exitCode = typeof code === 'number' ? code : 1;
 
         if (exitCode === 0) {
