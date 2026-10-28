@@ -99,7 +99,7 @@ test('background start reports an invalid working directory as failure', async (
 test('relative file paths use the caller-selected workspace', () => {
   const args = { path: 'server.py', content: 'x' };
   AgentLoop.prototype.validateToolArgs.call({ workspaceRoot: '/tmp/selected-project' }, 'fs_write', args);
-  assert.equal(args.path, '/tmp/selected-project/server.py');
+  assert.equal(args.path, path.resolve('/tmp/selected-project', 'server.py'));
 });
 
 test('desktopOpen expands home directory and opens targets natively without consent blocker', async () => {
