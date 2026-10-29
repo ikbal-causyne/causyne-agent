@@ -37,7 +37,7 @@ describe('sysRun: Semantic Exit Code Normalization & Anti-Repeat Caching', () =>
     assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('git tag new-release'));
     assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('node -v'));
     assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('ls -la'));
-    assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('git status'));
+    assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('git status'), 'Git inspection executes normally because configured helpers can have effects');
     assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('git push origin main'));
     assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('rm -f test.txt'));
   });

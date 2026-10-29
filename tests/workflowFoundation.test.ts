@@ -56,7 +56,7 @@ test('virtual preview serves local modules without ports and denies secrets, tra
 });
 
 test('arbitrary snippets and compound shell commands cannot be cached as read-only', () => {
-  for (const command of ['node -e "mutate()"', 'python3 -c "mutate()"', 'ls && mutate', 'echo $(mutate)', 'git branch new-name', 'git tag new-name']) assert.equal(IDEMPOTENT_COMMAND_PATTERN.test(command), false, command);
+  for (const command of ['node -e "mutate()"', 'python3 -c "mutate()"', 'ls && mutate', 'echo $(mutate)', 'git branch new-name', 'git tag new-name', 'git diff --output=changes.patch', 'git show --textconv HEAD:file']) assert.equal(IDEMPOTENT_COMMAND_PATTERN.test(command), false, command);
   assert.equal(isPersistentServerCommand('nohup python3 -m http.server 8095 > server.log 2>&1 & sleep 1 && curl -I localhost:8095'), false);
   assert.equal(isPersistentServerCommand('node server.js && node check.js'), false);
   assert.equal(isPersistentServerCommand('python3 -m http.server 8095'), true);
@@ -78,16 +78,26 @@ test('compound server commands return their actual final error instead of readin
 test('mutating snippets execute twice and invalidate cached file inspections', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-shell-cache-'));
   fs.writeFileSync(path.join(root, 'counter.txt'), '0');
-  const code = "const fs=require('fs');fs.writeFileSync('counter.txt',String(Number(fs.readFileSync('counter.txt','utf8'))+1));";
+  const scriptPath = path.join(root, 'step.js');
+  fs.writeFileSync(
+    scriptPath,
+    "const fs = require('node:fs'); fs.writeFileSync('counter.txt', String(Number(fs.readFileSync('counter.txt', 'utf8')) + 1));\n"
+  );
   const inspect = process.platform === 'win32' ? 'type counter.txt' : 'cat counter.txt';
   clearSysRunCache();
   try {
-    await sysRun.execute({ command: inspect, cwd: root });
-    for (let index = 0; index < 2; index++) await sysRun.execute({ command: `node -e "${code}"`, cwd: root });
+    const initial = await sysRun.execute({ command: inspect, cwd: root });
+    assert.equal(initial.output.trim(), '0');
+    for (let index = 0; index < 2; index++) {
+      const step = await sysRun.execute({ command: 'node step.js', cwd: root });
+      assert.equal(step.success, true, step.error || step.output);
+    }
     const result = await sysRun.execute({ command: inspect, cwd: root });
     assert.equal(result.cached, undefined);
     assert.equal(result.output.trim(), '2');
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('shared host schedules rendering through normal tool dispatch before accepting completion', async () => {

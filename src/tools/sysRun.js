@@ -44,7 +44,9 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
  * Commands that are strictly read-only and idempotent.
  * Repeated identical executions within a short TTL window return cached output.
  */
-export const IDEMPOTENT_COMMAND_PATTERN = /^(?!.*[;&|<>`$\r\n])(?:(?:python[0-9.]*|node|bun|npm|pnpm)\s+(?:-v|-V|--version)|pwd|(?:ls|cat|head|tail|grep|which|where|echo)(?:\s+[^;&|<>`$\r\n]+)?|git\s+(?:status|log|diff|show)(?:\s+[^;&|<>`$\r\n]+)?)$/;
+// Git inspection commands can invoke configured helpers or write --output
+// files. Execute them normally instead of memoizing a name-based assumption.
+export const IDEMPOTENT_COMMAND_PATTERN = /^(?!.*[;&|<>`$\r\n])(?:(?:python[0-9.]*|node|bun|npm|pnpm)\s+(?:-v|-V|--version)|pwd|(?:ls|dir|cat|type|head|tail|grep|which|where|echo)(?:\s+[^;&|<>`$\r\n]+)?)$/;
 /**
  * Detect long-running dev servers and web application listeners that must not block foreground loops.
  */
@@ -128,7 +130,11 @@ export const sysRun = {
             const shellArgs = os.platform() === 'win32' ? ['/c', executedCommand] : ['-c', executedCommand];
             let child;
             try {
-                child = spawn(shell, shellArgs, { cwd, signal });
+                child = spawn(shell, shellArgs, {
+                    cwd,
+                    signal,
+                    ...(os.platform() === 'win32' ? { windowsVerbatimArguments: true } : {})
+                });
             }
             catch (err) {
                 const errorMsg = err instanceof Error ? err.message : String(err);
@@ -294,7 +300,12 @@ export const sysRunBg = {
             const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
             const shellArgs = os.platform() === 'win32' ? ['/c', args.command] : ['-c', args.command];
             return await new Promise(resolve => {
-                const child = spawn(shell, shellArgs, { cwd, detached: true, stdio: 'ignore' });
+                const child = spawn(shell, shellArgs, {
+                    cwd,
+                    detached: true,
+                    stdio: 'ignore',
+                    ...(os.platform() === 'win32' ? { windowsVerbatimArguments: true } : {})
+                });
                 child.once('error', error => resolve({ success: false, error: error.message }));
                 child.once('spawn', () => {
                     child.unref();
