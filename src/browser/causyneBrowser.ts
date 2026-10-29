@@ -1030,6 +1030,7 @@ export class CausyneBrowser {
     this.session = null;
     this.starting = null;
     this.tabs.clear();
+    this.workspacePreview.clear();
     this.activeTabId = null;
     this.contextRouteInstalled = false;
     this.securedPages = new WeakSet<object>();
@@ -1100,6 +1101,9 @@ export class CausyneBrowser {
     })();
     try {
       await this.starting;
+    } catch (error) {
+      await this.close();
+      throw error;
     } finally {
       this.starting = null;
     }
@@ -1650,7 +1654,7 @@ export class CausyneBrowser {
     if (action.type === 'preview') {
       if (typeof action.filePath !== 'string') throw new Error('preview requires filePath');
       await this.preview(state, action.filePath, workspace);
-      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
+      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title(), output: 'Rendered in an isolated internal preview. This browser-only origin is not user-openable. Start a real local server with sysRunBg if the user needs an interactive URL.' };
     }
     if (action.type === 'snapshot' || action.type === 'scrape') {
       const snapshot = await this.snapshot(action.offset ?? 0);

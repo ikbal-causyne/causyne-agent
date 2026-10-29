@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError } from '../src/launchIntent.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { sysRun, sysRunBg } from '../src/tools/sysRun.js';
@@ -79,6 +82,8 @@ test('launch-only sysRun does not wait for a foreground server', { skip: process
       parentLoop: { currentTaskPrompt: 'open it' }
     });
     assert.equal(result.success, true);
+    assert.equal(result.exitCode, null, 'a running server has no final exit status');
+    assert.equal(result.running, true);
     assert.ok(Date.now() - start < 2000, 'foreground call waited for the server');
     assert.match(result.output, /Readiness and browser opening have not been verified/);
     pid = Number(result.output.match(/process (\d+)/)?.[1]);
@@ -102,15 +107,28 @@ test('relative file paths use the caller-selected workspace', () => {
   assert.equal(args.path, path.resolve('/tmp/selected-project', 'server.py'));
 });
 
-test('desktopOpen expands home directory and opens targets natively without consent blocker', async () => {
-  const { resolveOpenTarget, desktopOpen } = await import('../src/tools/desktopOpen.js');
-  assert.equal(resolveOpenTarget('~/project/index.html'), path.join(os.homedir(), 'project/index.html'));
-  assert.equal(resolveOpenTarget('http://localhost:3000'), 'http://localhost:3000');
+test('desktopOpen expands home directory and opens targets natively without consent blocker', async (t) => {
+  // Verify native dispatch without opening a real personal browser during tests.
+  let dispatched: string[] = [];
+  const stub = t.mock.method(childProcess, 'spawn', (_command: string, args: string[]) => {
+    dispatched = args;
+    return Object.assign(new EventEmitter(), { unref() {} });
+  });
+  syncBuiltinESMExports();
+  try {
+    const { resolveOpenTarget, desktopOpen } = await import('../src/tools/desktopOpen.js');
+    assert.equal(resolveOpenTarget('~/project/index.html'), path.join(os.homedir(), 'project/index.html'));
+    assert.equal(resolveOpenTarget('http://localhost:3000'), 'http://localhost:3000');
 
-  const result = await desktopOpen.execute({ target: 'http://localhost:8080' });
-  assert.equal(result.success, true);
-  assert.equal(result.requiresConsent, undefined);
-  assert.match(result.output, /Successfully dispatched native OS open event/);
+    const result = await desktopOpen.execute({ target: 'http://localhost:8080' });
+    assert.equal(result.success, true);
+    assert.equal(result.requiresConsent, undefined);
+    assert.match(result.output, /Successfully dispatched native OS open event/);
+    assert.ok(dispatched.includes('http://localhost:8080'));
+  } finally {
+    stub.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test('updatePlan heals non-standard parameters and status casing', async () => {

@@ -38,6 +38,7 @@ export interface ToolOutcome {
   command: string;
   path: string;
   at: number;
+  rendered?: boolean;
 }
 
 const SEVERITY_WEIGHT: Record<RiskSeverity, number> = {
@@ -68,7 +69,7 @@ const CODE_EXTENSIONS = new Set([
   '.html', '.css', '.scss', '.sass', '.vue', '.svelte'
 ]);
 
-const VERIFICATION_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|build|lint|typecheck|types)|node\s+--test|pytest|py_compile|compileall|cargo\s+(?:test|check)|go\s+(?:test|vet)|mvn\s+test|gradle\s+test|dotnet\s+test|swift\s+test|tsc(?:\s|$)|eslint|biome\s+(?:check|ci)|ruby\s+-c|php\s+-l)\b/i;
+const VERIFICATION_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|build|lint|typecheck|types)|node\s+(?:--test|--check|-c)|pytest|py_compile|compileall|cargo\s+(?:test|check)|go\s+(?:test|vet)|mvn\s+test|gradle\s+test|dotnet\s+test|swift\s+test|tsc(?:\s|$)|eslint|biome\s+(?:check|ci)|ruby\s+-c|php\s+-l)\b/i;
 
 const HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; code: string; detail: string; severity?: RiskSeverity }> = [
   { pattern: /\bgit\s+reset\s+--hard\b/i, code: 'git-reset-hard', detail: 'git reset --hard discards uncommitted work' },
@@ -486,6 +487,11 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
   const command = typeof args.command === 'string'
     ? args.command
     : typeof args.cmd === 'string' ? args.cmd : '';
+  const browserData = Array.isArray(record.data) ? record.data : [];
+  const rendered = success && tool === 'browser_act' && browserData.some((item: unknown) => {
+    const action = item as { action?: string; data?: { runtimeErrors?: unknown[] } };
+    return ['snapshot', 'scrape'].includes(action?.action || '') && Array.isArray(action.data?.runtimeErrors) && action.data.runtimeErrors.length === 0;
+  });
   return {
     tool,
     args: boundedArgs(args),
@@ -494,6 +500,7 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
     exitCode,
     command: command.slice(0, 600),
     path: pathArgument(args).slice(0, 400),
-    at
+    at,
+    ...(rendered ? { rendered: true } : {})
   };
 }

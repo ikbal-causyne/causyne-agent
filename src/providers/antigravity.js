@@ -685,24 +685,11 @@ export class AntigravityProvider extends LLMProvider {
             '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
             'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
             '[Action Directive]\n' +
-            '1. When the user requests to create, build, code, fix, write, optimize, or implement anything, invoke the relevant file or command tools immediately.\n' +
-            '2. When the user requests to OPEN, LAUNCH, RUN, SERVE, or PLAY an application, project, or game:\n' +
-            '   - If a background server is required (e.g. server.py, python -m http.server, npm run dev), start it using sysRunBg or a background command.\n' +
-            '   - If the default port (e.g. 8080 or 3000) is already occupied or in use by another process, immediately use the next available port (e.g. 8081, 8082, 3001) rather than getting stuck in process-checking loops.\n' +
-            '   - Immediately open the URL or project in the user\'s browser using desktop.open with {"target": "http://localhost:<port>"} or run the native open command.\n' +
-            '   - Confirm the application is accessible only after a readiness check succeeds (e.g. using curl -sI http://localhost:<port>).\n' +
-            '3. NEVER reply with conversational pleasantries, canned greetings (e.g. "How can I help you today?"), or ask what the user wants when an instruction has already been provided.\n' +
-            '4. Create or edit files only when the current user request authorizes it.\n' +
-            '5. Greenfield Application Scaffolding vs. Legacy Codebase Exploration:\n' +
-            '   - When the user asks to build, create, or generate a new web application, 3D visualization, or component from scratch, author a dedicated directory and create fresh files directly.\n' +
-            '   - Do not explore, list, or inspect existing directories, demo folders, or sibling projects in the workspace. Directly author the target files in a dedicated new project directory.\n' +
-            '   - Move directly from initial plan to authoring complete code files.\n' +
-            '6. TOKEN CONSERVATION & MEDIA DIRECTIVE:\n' +
-            '   - NEVER attempt to read binary or media files (.png, .jpg, .blend, .glb, .wasm, .zip, etc.) using text reading tools like read_file or cat. This blows up the token context.\n' +
-            '   - For 3D modeling, Blender, or media tasks: write a single self-contained generator script and execute it in one batch. Avoid dozens of speculative CLI exploration commands.\n' +
-            '   - Use a model-readable image channel for visual verification when available. This text-only bridge does not deliver screenshot pixels to you; a saved image or file metadata proves the file exists, not how it looks. Report visual verification as unavailable when no image channel is present.\n\n' +
-            '[Environment State & Idempotency Directive]\n' +
-            'Reuse relevant verified tool results from this session, and check uncertain prerequisites before relying on them.\n\n' +
+            'Follow the host task scope and verification requirements. Invoke only tools needed for that task. ' +
+            'Put file contents in executable tool-call arguments rather than repeating whole drafts in reasoning or summaries. ' +
+            'Do not add unrequested subsystems or keep editing completed work to appear productive. ' +
+            'NEVER reply with conversational pleasantries when the user has supplied a task. ' +
+            'Do not present pending tool calls as completed work. Use actual results, and report blockers precisely.\n\n' +
             '[Language & Communication Directive]\n' +
             'Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language. Never send conversational pleasantries or canned greetings.');
         if (tools && tools.length > 0) {
@@ -908,11 +895,6 @@ export class AntigravityProvider extends LLMProvider {
         else {
             promptText = this.formatConversation(messages, options.tools);
         }
-        const isMediaTask = options.taskArchetype === 'media_3d_generation'
-            || /\b(blender|\.blend\d*|render 3d|render frame|threejs|three\.js)\b/i.test(latestPrompt);
-        const isWebTask = options.taskArchetype === 'web_engineering'
-            || options.taskArchetype === 'web_fullstack'
-            || /\b(website|web app|html|css|web page|frontend|web application|threejs|three\.js|\bweb\b)\b/i.test(latestPrompt);
         // A resumed agy conversation retains its old instructions. Reassert the
         // current turn's narrower scope on every call, including formatDelta turns.
         if (launchOnly) {
@@ -927,19 +909,6 @@ export class AntigravityProvider extends LLMProvider {
                 'After setting the desktop picture, read back the actual system wallpaper and compare it with the intended image. ' +
                 'If a command is denied or the readback does not confirm the change, report the blocker honestly. ' +
                 'Keep native tool actions within 12; use Causyne tool calls when a native action is blocked.\n\n' + promptText;
-        }
-        if (isWebTask || isMediaTask) {
-            promptText = '[Greenfield Scaffolding vs. Legacy Codebase Exploration]\n' +
-                'When the user requests to create, build, or implement a new web application, 3D visualization, or component from scratch:\n' +
-                '- Author a dedicated project directory and write fresh, complete, production-grade files directly.\n' +
-                '- Do not list, explore, or read unrelated legacy projects, demo folders, or sibling directories in the workspace. Exploring existing directories for inspiration wastes significant context tokens.\n' +
-                '- Move directly from initial plan to authoring HTML/CSS/JS or generator scripts.\n\n' + promptText;
-        }
-        if (isMediaTask) {
-            promptText = '[Current 3D / Blender task: make measurable progress]\n' +
-                'Inspect the scene and relevant sources as needed, but do not repeat the same probe without a reason. ' +
-                'Use the observations to make a targeted change, then verify the saved scene and rendered result. ' +
-                'If verification fails, revise the change and verify again; report unfinished work accurately.\n\n' + promptText;
         }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
@@ -1415,7 +1384,10 @@ export class AntigravityProvider extends LLMProvider {
                 const completionTokens = prior && usageIsReported ? delta(cumulative.output, prior.output) : cumulative.output;
                 const thinkingTokens = prior && usageIsReported ? delta(cumulative.thinking, prior.thinking) : cumulative.thinking;
                 const cachedPromptTokens = prior && usageIsReported ? delta(cumulative.cacheRead, prior.cacheRead) : cumulative.cacheRead;
-                const uncachedPromptTokens = Math.max(0, promptTokens - cachedPromptTokens);
+                // AGY reports cache reads separately (they can exceed input_tokens).
+                // Keep the same accounting on terminal and streamed/error paths; do
+                // not conditionally subtract cache reads from an unrelated counter.
+                const uncachedPromptTokens = promptTokens;
                 if (usageIsReported)
                     Object.assign(partialUsage, { promptTokens, uncachedPromptTokens, completionTokens, thinkingTokens, cachedPromptTokens });
                 if (usageIsReported && this.currentConversationId) {

@@ -158,7 +158,7 @@ export const sysRun = {
     if (isLaunchOnlyPrompt(taskPrompt) && !/[;&|<>`$\r\n]/.test(rawCommand) && isServerLaunchCommand(rawCommand)) {
       const started = await sysRunBg.execute({ command: rawCommand, cwd, label: 'local-server' });
       return started.success
-        ? { success: true, output: `Started server process ${started.pid} in background. Readiness and browser opening have not been verified.`, exitCode: 0, note: 'Check the server URL before reporting it accessible.' }
+        ? { success: true, output: `Started server process ${started.pid} in background. Readiness and browser opening have not been verified.`, exitCode: null, running: true, ...(started.pid !== undefined ? { pid: started.pid } : {}), note: 'Check the server URL before reporting it accessible.' }
         : { success: false, output: '', error: started.error || 'Unable to start server process.', exitCode: 1 };
     }
 

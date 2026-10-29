@@ -59,7 +59,7 @@ function normalizeActions(args: Record<string, unknown> | undefined): BrowserAct
 export const browserAct = {
   schema: {
     name: 'browser.act',
-    description: `Use the dedicated Causyne Browser for search, public navigation, and preview of a workspace HTML file (type preview, filePath), accessible snapshots, interaction, extraction, and workspace-scoped screenshots. Use preview followed by snapshot and screenshot to check a local web page; a saved screenshot alone is not visual inspection by the model.`,
+    description: `Use the dedicated Causyne Browser for search, public navigation, and preview of a workspace HTML file (type preview, filePath), accessible snapshots, interaction, extraction, and workspace-scoped screenshots. Preview uses an internal browser-only origin, not a user-openable URL. Use a real local server when the user needs an interactive URL. Use preview followed by snapshot and screenshot to check a local web page; a saved screenshot alone is not visual inspection by the model.`,
     parameters: {
       type: 'object',
       properties: {

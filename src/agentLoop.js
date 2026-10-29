@@ -254,7 +254,7 @@ If asked to perform ANY harmful task, politely decline, state that Causyne exist
 
 # Direct API & Automation Policy
 - **Prefer REST APIs (curl) for External Services**: When interacting with external services (like web, email, chat), prioritize finding and using official REST APIs via \`curl\` or simple scripts over browser scraping.
-- **Web/UI Verification Requirement**: For web development, UI components, and frontend applications, ALWAYS verify your rendered output before concluding. Use \`browser_act\` (preview and snapshot) or \`screenshot\`/\`vision_inspect_ui\` to inspect the visual/DOM state of your web pages.
+- **Web/UI Verification Requirement**: Prefer \`browser_act\` preview for static workspace HTML and ES modules; it does not need a separate HTTP server. Use \`sysRunBg\` only when a real application server is required. Do not kill unrelated processes to claim a port. For web development, UI components, and frontend applications, ALWAYS verify your rendered output before concluding. Use \`browser_act\` (preview and snapshot) or \`screenshot\`/\`vision_inspect_ui\` to inspect the visual/DOM state of your web pages. Report DOM inspection separately from visual inspection; only claim visual inspection when you actually receive and inspect image pixels.
 
 # Universal Tool Calling & Registry Discipline
 1. **Strict Registry Adherence**: Use ONLY the tools declared in the catalogue. Invoke tools using exact parameter names specified in the schema. Do not invent or rename parameters.
@@ -1974,9 +1974,8 @@ export class AgentLoop {
                         // A native action's name is not evidence that a model inspected
                         // pixels. Keep visual verification false unless a real image result
                         // has reached a vision-capable provider.
-                        if (['browser_get_dom', 'read_browser_page', 'browser_act', 'browser_subagent'].includes(actionName)) {
-                            this.webVerificationState.browserActUsed = true;
-                        }
+                        // A native action label alone carries no rendered-page evidence.
+                        // The shared host inspection below verifies its resulting artifacts.
                         if (['fs_read', 'read_file', 'view_file', 'viewfile', 'view_file_content'].includes(actionName) && detailPath) {
                             if (/\.(html|htm|css|jsx|tsx|vue|svelte)$/i.test(detailPath)) {
                                 this.webVerificationState.htmlInspected = true;
@@ -2870,7 +2869,8 @@ export class AgentLoop {
                     }
                     if (functionName === 'browser_act' && result?.success === true) {
                         const browserResults = Array.isArray(result.data) ? result.data : [];
-                        if (browserResults.some((item) => ['snapshot', 'scrape'].includes(item?.action) && !(item?.data?.runtimeErrors?.length))) {
+                        if (browserResults.some((item) => ['snapshot', 'scrape'].includes(item?.action)
+                            && Array.isArray(item?.data?.runtimeErrors) && item.data.runtimeErrors.length === 0)) {
                             this.webVerificationState.browserActUsed = true;
                         }
                     }

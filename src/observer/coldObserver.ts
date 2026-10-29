@@ -91,7 +91,7 @@ const HONEST_CAVEATS = [
 ];
 
 const TEST_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test|node\s+--test|pytest|cargo\s+test|go\s+test|mvn\s+test|gradle\s+test|dotnet\s+test|swift\s+test)\b/i;
-const BUILD_OR_CHECK_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|check|lint|typecheck|types)|tsc(?:\s|$)|eslint|biome\s+(?:check|ci)|cargo\s+check|go\s+vet|ruby\s+-c|php\s+-l)\b/i;
+const BUILD_OR_CHECK_COMMAND = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:build|check|lint|typecheck|types)|node\s+(?:--check|-c)|py_compile|compileall|tsc(?:\s|$)|eslint|biome\s+(?:check|ci)|cargo\s+check|go\s+vet|ruby\s+-c|php\s+-l)\b/i;
 const TESTS_CLAIM = /\b(?:all\s+)?tests?\b[^.\n]{0,40}\b(?:pass|passed|passing|green|succeed|succeeded)\b/i;
 const BUILD_CLAIM = /\b(?:build|typecheck|types|lint|compilation)\b[^.\n]{0,40}\b(?:pass|passed|passing|clean|succeed|succeeded)\b/i;
 
@@ -458,13 +458,18 @@ export class ColdObserver {
     const lastFailure = outcomes.findLastIndex((outcome) => !outcome.success);
     const successAfterFailure = lastFailure >= 0
       && outcomes.slice(lastFailure + 1).some((outcome) => outcome.success);
-    const hasTestRun = outcomes.some((outcome) => outcome.success
-      && (TEST_COMMAND.test(outcome.command) || TEST_COMMAND.test(outcome.tool)));
-    const hasBuildRun = outcomes.some((outcome) => outcome.success
-      && (BUILD_OR_CHECK_COMMAND.test(outcome.command) || outcome.tool === 'code_verify_syntax'));
-    const modifiedCode = outcomes.some((outcome) => outcome.success
+    const isCodeMutation = (outcome: ToolOutcome): boolean => outcome.success
       && ['fs_write', 'fs_edit', 'MultiEdit'].includes(outcome.tool)
-      && /\.(?:[cm]?[jt]sx?|py|rb|php|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|fs|sh|sql|html|css|scss|sass|vue|svelte)$/i.test(outcome.path));
+      && /\.(?:[cm]?[jt]sx?|py|rb|php|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|fs|sh|sql|html|css|scss|sass|vue|svelte)$/i.test(outcome.path);
+    const lastCodeChange = outcomes.findLastIndex(isCodeMutation);
+    const checks = outcomes.slice(lastCodeChange + 1);
+    const hasTestRun = checks.some((outcome) => outcome.success
+      && (TEST_COMMAND.test(outcome.command) || TEST_COMMAND.test(outcome.tool)));
+    const hasBuildRun = checks.some((outcome) => outcome.success
+      && (BUILD_OR_CHECK_COMMAND.test(outcome.command) || outcome.tool === 'code_verify_syntax'));
+    const modifiedCode = lastCodeChange >= 0;
+    const declarativeOnly = modifiedCode && outcomes.filter(isCodeMutation).every(outcome => /\.(?:html|css)$/i.test(outcome.path));
+    const hasRenderedCheck = checks.some(outcome => outcome.success && outcome.rendered === true);
 
     let overconfident = false;
     let confidence = 0;
@@ -486,7 +491,7 @@ export class ColdObserver {
       confidence = 0.82;
       discrepancy = 'claimed a passing build or check without a successful verification command';
       coldDirective = '[OBSERVER] You claimed that a build or check passed, but no successful verification command appears in this task. Run the relevant command and report its actual result, or state that it is unverified.';
-    } else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun) {
+    } else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && hasRenderedCheck)) {
       overconfident = true;
       confidence = 0.72;
       discrepancy = 'code was modified without a successful test or syntax check';

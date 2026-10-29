@@ -156,12 +156,12 @@ process.stdin.on('end', () => {
       { role: 'user', content: 'Continue' }
     ], { conversationId: 'session-1' });
     assert.deepEqual(
-      [first.usage.promptTokens, first.usage.completionTokens, first.usage.cachedPromptTokens, first.usage.thinkingTokens],
-      [100, 20, 30, 5]
+      [first.usage.promptTokens, first.usage.uncachedPromptTokens, first.usage.completionTokens, first.usage.cachedPromptTokens, first.usage.thinkingTokens],
+      [100, 100, 20, 30, 5]
     );
     assert.deepEqual(
-      [second.usage.promptTokens, second.usage.completionTokens, second.usage.cachedPromptTokens, second.usage.thinkingTokens],
-      [20, 7, 4, 2]
+      [second.usage.promptTokens, second.usage.uncachedPromptTokens, second.usage.completionTokens, second.usage.cachedPromptTokens, second.usage.thinkingTokens],
+      [20, 20, 7, 4, 2]
     );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });

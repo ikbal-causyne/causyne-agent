@@ -157,7 +157,7 @@ process.stdin.on('end', () => {
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('a shared fresh-token ceiling does not count inclusive cache hits as fresh spend', { skip: process.platform === 'win32' }, async () => {
+test('separate peer cache counters cannot bypass the fresh-token ceiling while inclusive accounting is preserved', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cache-budget-'));
   const executable = path.join(directory, 'peer');
   fs.writeFileSync(executable, `#!/usr/bin/env node
@@ -167,9 +167,17 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({event:'result
 `, { mode: 0o755 });
   try {
     const peer = new AntigravityProvider({ command: executable });
-    const response = await peer.chat([{ role: 'user', content: 'Hello' }], {
-      maxTokensThisCall: 2000, tokenBudgetBasis: 'noncached' });
-    assert.equal(noncachedTokens(response.usage), 1100);
+    // Inclusive API counters still subtract cache reads through the shared
+    // helper. AGY counters are separate even when cache happens to be smaller.
+    assert.equal(noncachedTokens({ promptTokens: 90000, completionTokens: 100, cachedPromptTokens: 89000 }), 1100);
+    await assert.rejects(peer.chat([{ role: 'user', content: 'Hello' }], {
+      maxTokensThisCall: 2000, tokenBudgetBasis: 'noncached' }),
+    (error: unknown) => {
+      const stopped = error as { code?: string; partialUsage?: { uncachedPromptTokens?: number } };
+      assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
+      assert.equal(stopped.partialUsage?.uncachedPromptTokens, 90000);
+      return true;
+    });
     await assert.rejects(new AntigravityProvider({ command: executable }).chat([{ role: 'user', content: 'Hello' }], {
       maxTokensThisCall: 2000, tokenBudgetBasis: 'total' }),
     (error: unknown) => (error as { code?: string }).code === 'AGY_TOKEN_BUDGET');
