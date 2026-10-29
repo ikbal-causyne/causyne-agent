@@ -184,7 +184,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({event:'result
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('ACP inference bridge denies native permission and host write requests', async () => {
+test('ACP without attached host authorization cannot grant itself permission or write files', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-acp-bridge-'));
   const executable = path.join(directory, 'peer.cjs');
   const target = path.join(directory, 'should-not-exist.txt');

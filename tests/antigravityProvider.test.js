@@ -81,7 +81,7 @@ describe('AntigravityProvider and isAntigravityProvider', () => {
     assert.strictEqual(callsFenced[0].function.name, 'file_read');
   });
 
-  test('chat uses the tool-less Causyne inference profile instead of peer plan mode', { skip: process.platform === 'win32' }, async () => {
+  test('chat preserves native peer capabilities without forcing a profile or plan mode', { skip: process.platform === 'win32' }, async () => {
     const argsFile = path.join(os.tmpdir(), `causyne-agy-args-${process.pid}.json`);
     const stdinFile = path.join(os.tmpdir(), `causyne-agy-stdin-${process.pid}.txt`);
     process.env.AGY_ARGS_FILE = argsFile;
@@ -108,11 +108,11 @@ process.stdin.on('end', () => {
 
       const args = JSON.parse(fs.readFileSync(argsFile, 'utf8'));
       assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
-      assert.equal(args[args.indexOf('--agent') + 1], 'causyne-inference');
+      assert.ok(!args.includes('--agent'));
       assert.ok(!args.includes('--mode'));
       assert.ok(args.includes('--output-format'));
       assert.ok(!args.includes('--dangerously-skip-permissions'));
-      assert.ok(args.includes('--disable-slash-commands'));
+      assert.ok(!args.includes('--disable-slash-commands'));
       assert.ok(!args.includes('-p'));
       assert.ok(!args.includes('-'));
 

@@ -1,3 +1,5 @@
+import type { RequestPermissionRequest, RequestPermissionResponse } from '../acp/protocol.js';
+
 export interface ProviderConfig {
   apiKey?: string | undefined;
   model?: string | undefined;
@@ -49,6 +51,10 @@ export interface ChatResponse {
 }
 
 export interface ChatOptions {
+  onPeerPermission?: ((request: RequestPermissionRequest) => Promise<RequestPermissionResponse['outcome']>) | undefined;
+  onPeerFileRead?: ((file: string, options?: { line?: number; limit?: number }) => Promise<string>) | undefined;
+  onPeerFileWrite?: ((file: string, content: string) => Promise<void>) | undefined;
+  peerMcpServers?: unknown[] | undefined;
   tokenBudgetBasis?: 'total' | 'noncached' | undefined;
   tools?: any[] | undefined;
   temperature?: number | undefined;

@@ -9,6 +9,7 @@ import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 import type { RequestPermissionRequest, SessionUpdate } from '../acp/protocol.js';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 
 interface AcpTransportSnapshot {
   conversationId: string;
@@ -44,6 +45,7 @@ export class AcpProvider extends LLMProvider {
   private currentTurnNativeActionHandler: ((action: ChatResponseAction) => void) | null = null;
   private readonly liveFileActions = new Map<string, ChatResponseAction>();
   private transportSnapshot: AcpTransportSnapshot | null = null;
+  private peerServices: ChatOptions | null = null;
 
   constructor(config: ProviderConfig = {}) {
     super(config);
@@ -92,7 +94,7 @@ export class AcpProvider extends LLMProvider {
 
   formatConversation(messages: any[], tools: any[] = []): string {
     const lines: string[] = [];
-    lines.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Causyne Agent supports billions of users worldwide and provides full ACP compatibility. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns verified results back to you, preserving your full reasoning and ACP capabilities.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.');
+    lines.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Use the negotiated ACP capabilities and preserve configured native tools, MCPs, skills, and project settings. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns results back to you, preserving your full reasoning and ACP capabilities. ' + PEER_COLLABORATION_POLICY + '\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.');
 
     if (tools && tools.length > 0) {
       const toolSummaries = formatToolContracts(tools);
@@ -156,7 +158,7 @@ export class AcpProvider extends LLMProvider {
     };
 
     if (includeBridgeInstructions) {
-      pending.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Causyne Agent supports billions of users worldwide and provides full ACP compatibility. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns verified results back to you, preserving your full reasoning and ACP capabilities.');
+      pending.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Use the negotiated ACP capabilities and preserve configured native tools, MCPs, skills, and project settings. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns results back to you, preserving your full reasoning and ACP capabilities. ' + PEER_COLLABORATION_POLICY);
     }
 
     if (tools && tools.length > 0) {
@@ -321,12 +323,18 @@ export class AcpProvider extends LLMProvider {
       args: this.args,
       cwd: workspaceRoot,
       promptTimeoutMs: 900_000,
-      allowHostTools: false,
+      allowHostTools: true,
       permissionHandler: async (req: RequestPermissionRequest) => {
-        if (this.currentTurnAborted || signal?.aborted) return { outcome: 'cancelled' };
-        // Inference peers cannot grant themselves host execution authority.
-        // Return a Causyne tool call so the shared policy and budget can apply.
-        return { outcome: 'cancelled' };
+        if (this.currentTurnAborted || this.peerServices?.signal?.aborted) return { outcome: 'cancelled' };
+        return this.peerServices?.onPeerPermission?.(req) ?? { outcome: 'cancelled' };
+      },
+      fsReadHandler: async (file, options) => {
+        if (!this.peerServices?.onPeerFileRead) throw new Error('The ACP client has no file-read service attached');
+        return this.peerServices.onPeerFileRead(file, options);
+      },
+      fsWriteHandler: async (file, content) => {
+        if (!this.peerServices?.onPeerFileWrite) throw new Error('The ACP client has no file-write service attached');
+        await this.peerServices.onPeerFileWrite(file, content);
       },
       onUpdate: (_sessionId: string, update: SessionUpdate) => {
         if (this.currentTurnAborted) return;
@@ -377,7 +385,7 @@ export class AcpProvider extends LLMProvider {
     });
 
     await client.start(signal);
-    const sessionId = await client.newSession(workspaceRoot, [], signal);
+    const sessionId = await client.newSession(workspaceRoot, this.peerServices?.peerMcpServers || [], signal);
 
     const sessionModels = client.getSessionModels(sessionId);
     const liveModels = sessionModels.availableModels;
@@ -466,6 +474,7 @@ export class AcpProvider extends LLMProvider {
   }
 
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
+    this.peerServices = options;
     this.currentTurnAborted = Boolean(options.signal?.aborted);
     this.currentTurnSawAction = false;
     if (this.currentTurnAborted) {
@@ -612,6 +621,7 @@ export class AcpProvider extends LLMProvider {
       throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
     } finally {
       options.signal?.removeEventListener('abort', onAbort);
+      this.peerServices = null;
       this.currentTurnChunkHandler = null;
       this.currentTurnReasoningHandler = null;
       this.currentTurnNativeActionHandler = null;

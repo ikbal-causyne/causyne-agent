@@ -28,19 +28,28 @@ user's existing CLI login is the credential, the peer's own `models` command
 supplies the catalogue, and the session is billed by that subscription — Causyne
 cannot determine the monetary cost when the peer does not expose its invoice.
 
-### Universal ACP Capability and Global Scale Mandate
-1. **ENGINEERED FOR BILLIONS OF USERS GLOBALLY**: Causyne Agent is engineered for billions of software developers and users worldwide across all development ecosystems. It is NEVER a hobby project, personal hack, or local sandbox experiment.
-2. **ZERO DEGRADATION OF ACP CAPABILITIES**: Ensuring Causyne Agent executes its own tools must NEVER destroy, strip, castrate, or degrade ACP (Agent Client Protocol) capabilities, MCP tool inheritance, or peer execution environments.
-3. **PROHIBITION OF CASTRATED SANDBOX PROFILES**: Under NO circumstances may any bridge, adapter, or harness inject restrictive profiles (`tools: [finish]`, `inheritMcp: false`, `commandExecutionPolicy: off`) or restrictive system instructions (such as "Transport verification only. No files, shell, web, or native actions are authorized").
-4. **UNIVERSAL COMPATIBILITY**: All external AI coding agents (Cursor, Claude Code, Antigravity CLI/IDE, Codex, OpenCode, Hermes) must retain their full ACP capabilities, MCP capabilities, reasoning power, and execution context when collaborating with Causyne Agent. Causyne coordinates workspace tools collaboratively without crippling connected peers.
+### Connected-agent capability preservation
 
-The Antigravity CLI adapter uses a Causyne-managed profile in private adapter state
-and carries the actual host workspace in its prompt. It preserves MCP inheritance and
-native tooling capabilities while emitting Causyne tool requests (`<tool_call>`).
-Host execution and approvals remain in `AgentLoop`, and any native peer tool calls
-are seamlessly mapped to Causyne host execution. It does not force the peer's plan mode
-or modify global peer settings. Session token counters, cache-read counters, and unknown
-monetary cost are reported separately.
+Causyne is intended for worldwide distribution. Tool routing is independent of
+the developer's machine and complements each connected agent's configured
+capabilities. It does not force a tool-less peer profile or disable inherited
+MCPs, native tools, skills, or project instructions to promote host tools.
+
+Antigravity CLI starts in the selected workspace using the user's normal agent
+configuration. ACP permission requests are routed to the host's authorization
+policy; client file operations use scoped, audited host services. Configured
+client MCP servers can be supplied at session creation. Pi RPC retains the
+peer's native tool, extension, MCP, skill, and project-context configuration.
+Native action updates remain visible and budgeted; native actions are not
+silently executed twice through host-tool mapping.
+
+Client-provided ACP terminal methods are not yet implemented or advertised;
+this does not disable terminal tools implemented by a peer itself. The
+Antigravity stream-json adapter remains text-only for host image payloads.
+Preserving capabilities does not invent support missing from a transport or
+bypass user authorization. Account settings are not rewritten. Diagnostic
+conversations never define normal-session permissions. Token usage, cache reads,
+and unavailable subscription pricing remain distinct measurements.
 
 `LocalCLIConnection` is a local rendering/event adapter, not an inbound network
 connection. `emitEvent` feeds the terminal. Tools can execute host commands;

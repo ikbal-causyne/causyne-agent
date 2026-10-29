@@ -1,6 +1,6 @@
 import { formatToolContracts, toolContractUpdate, contractFingerprint } from './toolContracts.js';
 import { noncachedTokens } from './budgetEnforcer.js';
-import { ensureAntigravityBridgeWorkspace, INFERENCE_AGENT_NAME } from './antigravityBridge.js';
+import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -704,8 +704,8 @@ export class AntigravityProvider extends LLMProvider {
     lines.push(
       '[System Instructions]\n' +
       'You are the execution engine for Causyne Agent, operating inside the user\'s workspace. ' +
-      'Do not claim a tool action succeeded without evidence. Use Causyne tools for file changes, terminal commands, and browser actions. ' +
-      'When a command, browser action, or other external action is required, output an explicit tool call in this exact format:\n' +
+      PEER_COLLABORATION_POLICY + '\n' +
+      'Do not claim a tool action succeeded without evidence. When requesting a Causyne host tool, output an explicit tool call in this exact format:\n' +
       '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
       'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
       '[Action Directive]\n' +
@@ -934,7 +934,7 @@ export class AntigravityProvider extends LLMProvider {
       promptText = '[Current request: open existing project only]\n' +
         'Inspect the selected project, start an existing server in the background if needed, verify readiness, and open it. ' +
         'Do not create, edit, delete, install, or regenerate files. Do not claim the app opened unless a tool confirmed it. ' +
-        'Use Causyne tool calls for commands and desktop opening.\n\n' + promptText;
+        'Use the available native or Causyne tools for commands and desktop opening.\n\n' + promptText;
     }
     if (desktopTask) {
       promptText = '[Current desktop task: finish and verify the requested change]\n' +
@@ -947,16 +947,11 @@ export class AntigravityProvider extends LLMProvider {
     const modelSlug = resolveAgyModelId(this.model);
     const effort = resolveAgyEffort(this.model);
 
-    // Causyne owns execution. A tool-less primary agent avoids a second native
-    // planner/executor; --mode plan would inject /plan and wait for peer review.
-    // Keep all account settings intact and disable peer slash/skill expansion.
-    const inferenceWorkspace = ensureAntigravityBridgeWorkspace();
-    promptText = `[Causyne host workspace]\n${JSON.stringify({ workspaceRoot: options.workspaceRoot || process.cwd() })}\n`
-      + 'The process directory is inference-adapter state. Use the supplied host workspace for Causyne tool paths.\n\n' + promptText;
+    // Run the user's normal peer in the selected project. Do not substitute a
+    // managed inference profile or hide project MCPs, skills, and instructions.
+    const workspaceRoot = path.resolve(options.workspaceRoot || process.cwd());
+    promptText = `[Causyne host workspace]\n${JSON.stringify({ workspaceRoot })}\n\n` + promptText;
     const args = [
-      '--agent',
-      INFERENCE_AGENT_NAME,
-      '--disable-slash-commands',
       '--input-format',
       'stream-json',
       '--output-format',
@@ -976,7 +971,7 @@ export class AntigravityProvider extends LLMProvider {
     return new Promise<ChatResponse>((resolve, reject) => {
       let isSettled = false;
       const child = spawn(this.command, args, {
-        cwd: inferenceWorkspace,
+        cwd: workspaceRoot,
         env: process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true

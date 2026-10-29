@@ -29,7 +29,7 @@ export function toolContractUpdate(tools, previous) {
     if (contractFingerprint(current) === contractFingerprint(normalizeToolContracts(previous)))
         return '';
     const changed = current.filter(tool => before.get(tool.name) !== contractFingerprint(tool));
-    return '[Current Causyne tools — replaces the prior allowlist]\n'
+    return '[Current Causyne tools — replaces the prior host allowlist only; peer-native tools remain available]\n'
         + JSON.stringify(current.map(tool => tool.name))
         + '\nUse retained schemas for unchanged tools. New or changed contracts (JSON Schema):\n'
         + changed.map(tool => JSON.stringify(tool)).join('\n');

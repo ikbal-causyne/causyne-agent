@@ -96,6 +96,7 @@
     "src/providers/antigravity.ts",
     "src/providers/antigravityBridge.ts",
     "src/providers/acp.ts",
+    "src/providers/collaborationPolicy.ts",
     "src/providers/pi.ts",
     "src/continuum/types.ts",
     "src/continuum/sanitizer.ts",

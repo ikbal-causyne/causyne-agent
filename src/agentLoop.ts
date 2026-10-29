@@ -1,5 +1,7 @@
 import { clearSysRunCache } from './tools/sysRun.js';
-import { createHash } from 'crypto';
+import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
+import type { RequestPermissionRequest, RequestPermissionResponse } from './acp/protocol.js';
+import { createHash, randomUUID } from 'crypto';
 import { execFileSync } from 'node:child_process';
 import { processApprovalScope, createApprovalScope } from './approvalGrants.js';
 import { pruneSessions as pruneEmbodimentSessions, describeSession } from './embodimentSession.js';
@@ -257,6 +259,8 @@ export function isMidTaskProgressText(text: string): boolean {
 }
 
 const SYSTEM_PROMPT = `You are Causyne Agent, an autonomous local AI agent. Your capabilities are the tools actually available in this session. Never invent a capability or claim an action occurred without evidence.
+
+${PEER_COLLABORATION_POLICY}
 
 # Your Capabilities
 Use only tools actually present and permitted in this session. Read each tool result before reporting an outcome. A user message that only asks a question or greets you may be answered directly without calling a tool.
@@ -965,6 +969,115 @@ export class AgentLoop {
     for (let i = 0; i < lanes; i++) worker();
 
     return prefetched;
+  }
+
+  /** Apply host policy to an ACP operation without disabling the peer itself. */
+  private resolvePeerFilePath(file: string): string {
+    const target = path.resolve(this.workspaceRoot, file);
+    let ancestor = target;
+    while (true) {
+      try { fsSync.lstatSync(ancestor); break; }
+      catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        const parent = path.dirname(ancestor);
+        if (parent === ancestor) throw new Error('ACP path was not authorized');
+        ancestor = parent;
+      }
+    }
+    const physical = path.resolve(fsSync.realpathSync(ancestor), path.relative(ancestor, target));
+    const allowed = this.sandbox.grantAllAccess || this.sandbox.workspacePaths.some((root: string) => {
+      try {
+        const relative = path.relative(fsSync.realpathSync(root), physical);
+        return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      } catch { return false; }
+    });
+    if (!allowed) throw new Error('ACP path was not authorized by the selected workspace');
+    return target;
+  }
+
+  async authorizePeerOperation(tool: string, args: Record<string, unknown>, id: string, uncertain = false): Promise<boolean> {
+    if (this.stopRequested || this.abortController.signal.aborted) return false;
+    const validation = this.sandbox.validate(tool, args);
+    if (!validation.allowed) return false;
+    const hook = await this.runPreToolUse(tool, args, id);
+    if (hook?.denied) return false;
+    const assessment = await coldObserver.evaluateMutation(tool, args, { workspaceRoot: this.workspaceRoot });
+    if (assessment.veto) return false;
+    const needsApproval = uncertain || requiresToolApproval({
+      mode: this.config.autonomyMode || 'C', tool, args,
+      risk: assessment.requiresConfirmation ? 'dangerous' : validation.risk,
+      heavyDownload: false, standingApproval: this.isAlwaysAllowed(tool)
+    });
+    if (needsApproval) {
+      this.emitEvent({ type: 'approval_request', toolCallId: id, tool, args, risk: validation.risk });
+      if (!await this.waitForApproval(id)) return false;
+    }
+    if (this.stopRequested || this.abortController.signal.aborted) return false;
+    auditLog.log({ event: 'peer_operation_authorized', taskId: this.taskId, tool });
+    return true;
+  }
+
+  async requestPeerPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse['outcome']> {
+    const call = request.toolCall;
+    const raw = call.rawInput && typeof call.rawInput === 'object' && !Array.isArray(call.rawInput)
+      ? call.rawInput as Record<string, unknown> : {};
+    const args = { ...raw };
+    if (!args.path && call.locations?.[0]?.path) args.path = call.locations[0].path;
+    for (const field of ['path', 'file_path', 'filePath', 'filepath', 'absolutePath', 'cwd', 'source', 'destination', 'directory', 'targetFile', 'outputFile', 'outputPath']) {
+      if (typeof args[field] === 'string') {
+        try { args[field] = this.resolvePeerFilePath(args[field] as string); } catch { return { outcome: 'cancelled' }; }
+      }
+    }
+    args.path ??= args.file_path ?? args.filePath ?? args.filepath ?? args.absolutePath;
+    const tool = call.kind === 'read' ? 'fs_read' : call.kind === 'edit' ? 'fs_edit'
+      : call.kind === 'delete' ? 'fs_delete' : call.kind === 'move' ? 'fs_move'
+      : call.kind === 'execute' ? 'sysRun' : 'peer_native';
+    if (tool === 'sysRun' && !args.command && typeof args.cmd === 'string') args.command = args.cmd;
+    const uncertain = !['read', 'search', 'fetch', 'think'].includes(call.kind || '')
+      && (tool === 'peer_native' || (tool === 'sysRun' ? !args.command : !args.path));
+    const option = request.options.find(item => item.kind === 'allow_once');
+    // Never propagate a standing peer grant across sessions or forks.
+    if (!option || !await this.authorizePeerOperation(tool, { ...args, peerTitle: call.title }, `peer:${call.toolCallId}`, uncertain)) {
+      return { outcome: 'cancelled' };
+    }
+    return { outcome: 'selected', optionId: option.optionId };
+  }
+
+  async executePeerFile(tool: 'fs_read' | 'fs_write', file: string, content?: string, options?: { line?: number; limit?: number }): Promise<string> {
+    const target = this.resolvePeerFilePath(file);
+    if (options?.line !== undefined && (!Number.isSafeInteger(options.line) || options.line < 1)) throw new Error('ACP line must be a positive integer');
+    if (options?.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) throw new Error('ACP limit must be a positive integer');
+    const args = { path: target, ...(tool === 'fs_write' ? { content } : {}),
+      ...(options?.line !== undefined ? { startLine: options.line } : {}),
+      ...(options?.limit !== undefined ? { endLine: (options.line || 1) + options.limit - 1 } : {}) };
+    const id = `peer-file:${randomUUID()}:${tool}`;
+    if (!await this.authorizePeerOperation(tool, args, id)) throw new Error('The requested ACP file operation was not authorized');
+    if (tool === 'fs_write') captureBeforeMutation(tool, args, { taskId: this.taskId, step: this.stepsCompleted });
+    this.efficiencyBudget.recordAction();
+    let result: { success: boolean; error?: string; output?: string };
+    if (tool === 'fs_read') {
+      // ACP expects the actual requested text, not the host tool's paging
+      // warning appended to a silently shortened file.
+      const stat = fsSync.statSync(target);
+      if (stat.size > 4 * 1024 * 1024) throw new Error('ACP text file exceeds the 4 MiB client transfer limit');
+      const bytes = fsSync.readFileSync(target);
+      if (bytes.includes(0)) throw new Error('ACP read_text_file requires a text file');
+      let output = bytes.toString('utf8');
+      if (options?.line !== undefined || options?.limit !== undefined) {
+        const start = Math.max(0, (options.line || 1) - 1);
+        output = output.split('\n').slice(start, options?.limit === undefined ? undefined : start + options.limit).join('\n');
+      }
+      result = { success: true, output };
+    } else {
+      result = await withToolAutonomyMode(this.config.autonomyMode || 'C', () => resolveTool(tool).execute(args, { parentLoop: this, signal: this.abortController.signal })) as typeof result;
+    }
+    const postHook = await this.runPostToolUse(tool, args, result);
+    const success = result.success !== false && !result.error && !postHook?.denied;
+    coldObserver.recordToolOutcome(this.taskId, tool, args, { ...result, success });
+    auditLog.log({ event: 'tool_exec', taskId: this.taskId, tool, success, source: 'acp_client' });
+    if (!success) throw new Error(result.error || postHook?.reason || 'ACP file operation failed');
+    if (tool === 'fs_write') { this.recordWebArtifact(target); clearSysRunCache(); }
+    return typeof result.output === 'string' ? result.output : '';
   }
 
   emitEvent(messageObj: AgentLoopEvent) {
@@ -1887,6 +2000,9 @@ export class AgentLoop {
             ? Math.min(this.efficiencyBudget.maxTurnTokens, remainingBudget) : this.efficiencyBudget.maxTurnTokens,
           maxNativeActions: this.efficiencyBudget.getRemainingActions(),
           workspaceRoot: this.workspaceRoot,
+          onPeerPermission: (request: RequestPermissionRequest) => this.requestPeerPermission(request),
+          onPeerFileRead: (file: string, options?: { line?: number; limit?: number }) => this.executePeerFile('fs_read', file, undefined, options),
+          onPeerFileWrite: async (file: string, content: string) => { await this.executePeerFile('fs_write', file, content); },
           tools: dynamicTools,
           // IARS couples escalation to a wider search. Bounded so a stuck task
           // cannot climb into randomness across repeated escalations.

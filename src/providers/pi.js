@@ -8,7 +8,7 @@ export const PI_SETUP_PROVIDER = {
     id: 'pi', label: 'Pi coding agent', hint: 'local Pi RPC · uses Causyne tools',
     category: 'Peer Agent', model: 'default'
 };
-/** Pi supplies reasoning over RPC; Causyne remains the sole executor of tools. */
+/** Pi collaborates over RPC with its configured capabilities intact. */
 export class PiProvider extends LLMProvider {
     command;
     formatter;
@@ -21,8 +21,7 @@ export class PiProvider extends LLMProvider {
         this.audioModels = [];
     }
     async chat(messages, options = {}) {
-        const args = ['--mode', 'rpc', '--no-session', '--no-tools', '--no-extensions',
-            '--no-mcp', '--no-context-files', '--no-skills', '--no-prompt-templates'];
+        const args = ['--mode', 'rpc', '--no-session'];
         if (this.model !== 'default')
             args.push('--model', this.model);
         const cwd = typeof options.workspaceRoot === 'string' && options.workspaceRoot
@@ -41,6 +40,7 @@ export class PiProvider extends LLMProvider {
             let settled = false;
             let finished = false;
             let usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
+            const nativeActions = new Map();
             const cleanup = () => {
                 options.signal?.removeEventListener('abort', abort);
                 child.stdin.end();
@@ -67,6 +67,7 @@ export class PiProvider extends LLMProvider {
                 resolve({
                     content: raw.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim(),
                     usage,
+                    externalActions: [...nativeActions.values()].filter(action => action.status !== 'running'),
                     toolCalls: this.formatter.extractToolCalls(raw)
                 });
             };
@@ -109,6 +110,17 @@ export class PiProvider extends LLMProvider {
                         options.onReasoningChunk?.(update.delta);
                     }
                 }
+                else if (record.type === 'tool_execution_start' || record.type === 'tool_execution_end') {
+                    const id = String(record.toolCallId || '');
+                    const earlier = nativeActions.get(id);
+                    const action = {
+                        id, name: String(record.toolName || earlier?.name || 'pi_tool'),
+                        parameters: record.args || earlier?.parameters || {},
+                        status: record.type === 'tool_execution_start' ? 'running' : record.isError ? 'failed' : 'completed'
+                    };
+                    nativeActions.set(id, action);
+                    options.onNativeAction?.(action);
+                }
                 else if (record.type === 'message_end' && record.message?.role === 'assistant') {
                     const message = record.message;
                     finalText = Array.isArray(message.content)
@@ -117,10 +129,10 @@ export class PiProvider extends LLMProvider {
                     stopReason = String(message.stopReason || '');
                     const data = message.usage || {};
                     usage = {
-                        promptTokens: Number(data.input) || 0,
-                        uncachedPromptTokens: Number(data.input) || 0,
-                        completionTokens: Number(data.output) || 0,
-                        cachedPromptTokens: Number(data.cacheRead) || 0,
+                        promptTokens: usage.promptTokens + (Number(data.input) || 0),
+                        uncachedPromptTokens: (usage.uncachedPromptTokens || 0) + (Number(data.input) || 0),
+                        completionTokens: usage.completionTokens + (Number(data.output) || 0),
+                        cachedPromptTokens: (usage.cachedPromptTokens || 0) + (Number(data.cacheRead) || 0),
                         measurement: data.input != null && data.output != null ? 'provider_reported' : 'text_estimate',
                         cacheMeasurement: data.cacheRead != null ? 'provider_reported' : 'unavailable'
                     };

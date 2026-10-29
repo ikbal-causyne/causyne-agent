@@ -20,7 +20,10 @@ Causyne Agent seamlessly maps, coordinates, and validates tool executions in the
 Never disable or degrade ACP capabilities. Retain full reasoning, execution capability, and professional engineering discipline.
 The inference process directory is private adapter state, not the user's workspace. Work with the workspace paths supplied by Causyne. Never claim that a requested action happened without its tool result.
 `;
-/** Own adapter state only; never changes account settings or the selected project. */
+/**
+ * Historical adapter-state helper, retained for compatibility checks only.
+ * Normal product sessions must not call this or substitute this workspace/profile.
+ */
 export function ensureAntigravityBridgeWorkspace() {
     const root = path.join(causyneHome(), 'provider-bridges', 'antigravity-inference-v1');
     const agents = path.join(root, '.agents', 'agents');
