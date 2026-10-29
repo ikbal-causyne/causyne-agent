@@ -72,7 +72,7 @@ describe('Automated cross-platform installers (macOS, Linux, Windows)', () => {
         encoding: 'utf8',
       });
 
-      assert.match(output, /Causyne Agent 1\.20\.12 installed\./);
+      assert.match(output, /Causyne Agent 1\.20\.12/);
 
       // Verify the pre-existing symlink target was NEVER overwritten
       assert.equal(

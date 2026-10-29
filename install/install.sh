@@ -9,9 +9,112 @@ RUNTIME_ROOT="$HOME/.causyne/runtime"
 BIN_DIR="$HOME/.local/bin"
 MIN_NODE_MAJOR=24
 
+START_TIME=$(date +%s)
+ACTIVE_SPINNER_PID=""
+
+# Determine color & interactive capabilities
+IS_TTY=0
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]; then
+  IS_TTY=1
+fi
+
+if [ "$IS_TTY" -eq 1 ]; then
+  C_RESET='\033[0m'
+  C_BOLD='\033[1m'
+  C_DIM='\033[2m'
+  C_CYAN='\033[36m'
+  C_GREEN='\033[32m'
+  C_YELLOW='\033[33m'
+  C_RED='\033[31m'
+else
+  C_RESET=''
+  C_BOLD=''
+  C_DIM=''
+  C_CYAN=''
+  C_GREEN=''
+  C_YELLOW=''
+  C_RED=''
+fi
+
+cleanup() {
+  if [ -n "$ACTIVE_SPINNER_PID" ] && kill -0 "$ACTIVE_SPINNER_PID" 2>/dev/null; then
+    kill "$ACTIVE_SPINNER_PID" 2>/dev/null || true
+    wait "$ACTIVE_SPINNER_PID" 2>/dev/null || true
+  fi
+  if [ "$IS_TTY" -eq 1 ]; then
+    printf '\033[?25h\033[0m'
+  fi
+}
+trap cleanup EXIT INT TERM
+
 say() { printf '  %s\n' "$*"; }
-fail() { printf '  Error: %s\n' "$*" >&2; exit 1; }
+step_pass() { printf "  ${C_GREEN}✔${C_RESET} %s\n" "$*"; }
+step_warn() { printf "  ${C_YELLOW}⚠${C_RESET} %s\n" "$*"; }
+step_info() { printf "  ${C_CYAN}ℹ${C_RESET} %s\n" "$*"; }
+fail() { printf "\n  ${C_RED}✖ Error:${C_RESET} %s\n\n" "$*" >&2; exit 1; }
 has() { command -v "$1" >/dev/null 2>&1; }
+
+# Animated step runner: displays a smooth spinner while a command runs
+run_with_spinner() {
+  local label="$1"
+  shift
+
+  if [ "$IS_TTY" -eq 0 ]; then
+    printf '  ... %s\n' "$label"
+    if "$@"; then
+      step_pass "$label"
+      return 0
+    else
+      local ec=$?
+      printf "  ${C_RED}✖${C_RESET} %s\n" "$label"
+      return "$ec"
+    fi
+  fi
+
+  local tmp_log
+  tmp_log="$(mktemp "${TMPDIR:-/tmp}/causyne-step.XXXXXX")"
+  
+  # Run target command in background with output redirected to temp log
+  "$@" > "$tmp_log" 2>&1 &
+  local cmd_pid=$!
+
+  # Hide cursor
+  printf '\033[?25l'
+
+  # Run animation loop in background
+  (
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local num_frames=${#frames}
+    local idx=0
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+      local char="${frames:idx%num_frames:1}"
+      printf "\r  ${C_CYAN}%s${C_RESET} %s" "$char" "$label"
+      idx=$((idx + 1))
+      sleep 0.08
+    done
+  ) &
+  ACTIVE_SPINNER_PID=$!
+
+  wait "$cmd_pid"
+  local exit_code=$?
+
+  kill "$ACTIVE_SPINNER_PID" 2>/dev/null || true
+  wait "$ACTIVE_SPINNER_PID" 2>/dev/null || true
+  ACTIVE_SPINNER_PID=""
+
+  if [ "$exit_code" -eq 0 ]; then
+    printf "\r\033[2K  ${C_GREEN}✔${C_RESET} %s\n" "$label"
+    rm -f "$tmp_log"
+    return 0
+  else
+    printf "\r\033[2K  ${C_RED}✖${C_RESET} %s\n" "$label"
+    if [ -s "$tmp_log" ]; then
+      printf "\n${C_DIM}%s${C_RESET}\n" "$(cat "$tmp_log")" >&2
+    fi
+    rm -f "$tmp_log"
+    return "$exit_code"
+  fi
+}
 
 node_major() {
   local bin="${1:-node}"
@@ -24,6 +127,7 @@ find_existing_node() {
     m="$(node_major "$RUNTIME_ROOT/node/bin/node" || true)"
     if [ -n "$m" ] && [ "$m" -ge "$MIN_NODE_MAJOR" ]; then
       export PATH="$RUNTIME_ROOT/node/bin:$PATH"
+      FOUND_NODE_SOURCE="private runtime ($("$RUNTIME_ROOT/node/bin/node" --version))"
       return 0
     fi
   fi
@@ -32,6 +136,7 @@ find_existing_node() {
     local m
     m="$(node_major node || true)"
     if [ -n "$m" ] && [ "$m" -ge "$MIN_NODE_MAJOR" ]; then
+      FOUND_NODE_SOURCE="system PATH ($(node --version))"
       return 0
     fi
   fi
@@ -51,6 +156,7 @@ find_existing_node() {
       m="$(node_major "$dir/node" || true)"
       if [ -n "$m" ] && [ "$m" -ge "$MIN_NODE_MAJOR" ]; then
         export PATH="$dir:$PATH"
+        FOUND_NODE_SOURCE="$dir ($("$dir/node" --version))"
         return 0
       fi
     fi
@@ -69,6 +175,7 @@ find_existing_node() {
       local m
       m="$(node_major node || true)"
       if [ -n "$m" ] && [ "$m" -ge "$MIN_NODE_MAJOR" ]; then
+        FOUND_NODE_SOURCE="nvm ($(node --version))"
         return 0
       fi
     fi
@@ -126,39 +233,53 @@ install_private_node() {
     *) fail 'Use https://causyne.com/install.ps1 on Windows.' ;;
   esac
 
-  say "Node.js $MIN_NODE_MAJOR+ was not found; installing a private runtime..."
-  checksums="$(curl -fsSL "$dist_base/SHASUMS256.txt")" || fail 'Could not download Node.js checksums.'
-  archive="$(printf '%s\n' "$checksums" | awk -v suffix="-${platform}-${machine}.tar.gz" '$2 ~ suffix "$" { print $2; exit }')"
-  [ -n "$archive" ] || fail "Could not resolve a compatible Node.js archive for ${platform}-${machine}."
-  expected="$(printf '%s\n' "$checksums" | awk -v file="$archive" '$2 == file { print $1; exit }')"
+  dl_task() {
+    checksums="$(curl -fsSL --connect-timeout 10 "$dist_base/SHASUMS256.txt")" || return 1
+    archive="$(printf '%s\n' "$checksums" | awk -v suffix="-${platform}-${machine}.tar.gz" '$2 ~ suffix "$" { print $2; exit }')"
+    [ -n "$archive" ] || return 1
+    expected="$(printf '%s\n' "$checksums" | awk -v file="$archive" '$2 == file { print $1; exit }')"
 
-  temp="$(mktemp -d "${TMPDIR:-/tmp}/causyne-install.XXXXXX")"
-  trap 'rm -rf "$temp"' EXIT
-  curl -fsSL "$dist_base/$archive" -o "$temp/$archive"
-  verify_sha256 "$temp/$archive" "$expected"
+    temp="$(mktemp -d "${TMPDIR:-/tmp}/causyne-install.XXXXXX")"
+    curl -fsSL --connect-timeout 10 "$dist_base/$archive" -o "$temp/$archive"
+    verify_sha256 "$temp/$archive" "$expected"
 
-  tar -xzf "$temp/$archive" -C "$temp"
-  extracted="$temp/${archive%.tar.gz}"
-  mkdir -p "$RUNTIME_ROOT"
-  rm -rf "$RUNTIME_ROOT/node.next"
-  mv "$extracted" "$RUNTIME_ROOT/node.next"
-  rm -rf "$RUNTIME_ROOT/node"
-  mv "$RUNTIME_ROOT/node.next" "$RUNTIME_ROOT/node"
-  export PATH="$RUNTIME_ROOT/node/bin:$PATH"
+    tar -xzf "$temp/$archive" -C "$temp"
+    extracted="$temp/${archive%.tar.gz}"
+    mkdir -p "$RUNTIME_ROOT"
+    rm -rf "$RUNTIME_ROOT/node.next"
+    mv "$extracted" "$RUNTIME_ROOT/node.next"
+    rm -rf "$RUNTIME_ROOT/node"
+    mv "$RUNTIME_ROOT/node.next" "$RUNTIME_ROOT/node"
+    rm -rf "$temp"
+    export PATH="$RUNTIME_ROOT/node/bin:$PATH"
+  }
+
+  run_with_spinner "Downloading private Node.js $MIN_NODE_MAJOR runtime (${platform}-${machine})" dl_task \
+    || fail "Failed to download and install private Node.js runtime."
+  FOUND_NODE_SOURCE="installed private runtime ($("$RUNTIME_ROOT/node/bin/node" --version))"
+}
+
+execute_npm_install() {
+  npm install --global --prefix "$INSTALL_ROOT" "$PACKAGE" --ignore-scripts --no-audit --no-fund
 }
 
 install_package() {
+  FOUND_NODE_SOURCE=""
   if ! find_existing_node; then
+    step_info "Node.js $MIN_NODE_MAJOR+ was not found; provisioning a private runtime..."
     install_private_node
   fi
-  has npm || fail 'npm was not found after installing Node.js.'
+  has npm || fail 'npm was not found after verifying Node.js.'
+
+  step_pass "Runtime ready: $FOUND_NODE_SOURCE"
 
   local active_node_dir
   active_node_dir="$(dirname "$(command -v node)")"
 
   mkdir -p "$INSTALL_ROOT" "$BIN_DIR"
-  say "Installing Causyne Agent from the public npm registry..."
-  npm install --global --prefix "$INSTALL_ROOT" "$PACKAGE" --ignore-scripts --no-audit --no-fund
+
+  run_with_spinner "Installing Causyne Agent from the public npm registry" execute_npm_install \
+    || fail "npm package installation failed."
 
   rm -f "$BIN_DIR/causyne" "$BIN_DIR/causyne-agent"
 
@@ -204,7 +325,7 @@ append_path_to_profile() {
   touch "$profile" 2>/dev/null || return 0
   if ! grep -Fq 'export PATH="$HOME/.local/bin:$PATH"' "$profile" 2>/dev/null; then
     printf '\n# Causyne Agent\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$profile"
-    say "Added $BIN_DIR to PATH in $profile."
+    step_info "Added $BIN_DIR to PATH in $profile"
   fi
 }
 
@@ -233,21 +354,25 @@ register_path() {
     touch "$fish_cfg" 2>/dev/null || true
     if ! grep -Fq 'fish_add_path' "$fish_cfg" 2>/dev/null && ! grep -Fq '/.local/bin' "$fish_cfg" 2>/dev/null; then
       printf '\n# Causyne Agent\nfish_add_path -g "$HOME/.local/bin"\n' >> "$fish_cfg"
-      say "Added $BIN_DIR to PATH in $fish_cfg."
+      step_info "Added $BIN_DIR to PATH in $fish_cfg"
     fi
   fi
   export PATH="$BIN_DIR:$PATH"
 }
 
 main() {
-  printf '\n  Causyne Agent installer\n\n'
+  printf '\n'
+  printf "  ${C_CYAN}╭────────────────────────────────────────────────────────╮${C_RESET}\n"
+  printf "  ${C_CYAN}│${C_RESET}   ${C_BOLD}Causyne Agent${C_RESET} — Universal CLI Installer            ${C_CYAN}│${C_RESET}\n"
+  printf "  ${C_CYAN}╰────────────────────────────────────────────────────────╯${C_RESET}\n\n"
+
   local os_name
   os_name="$(uname -s)"
   case "$os_name" in
-    Darwin) say "Detected macOS ($(resolve_arch))." ;;
-    Linux) say "Detected Linux/WSL ($(resolve_arch))." ;;
+    Darwin) step_pass "Platform detected: macOS ($(resolve_arch))" ;;
+    Linux) step_pass "Platform detected: Linux/WSL ($(resolve_arch))" ;;
     MINGW*|MSYS*|CYGWIN*|Windows_NT)
-      say "Detected Windows shell ($os_name); delegating to PowerShell installer..."
+      step_info "Detected Windows shell ($os_name); delegating to PowerShell installer..."
       if has powershell.exe; then
         powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "irm https://causyne.com/install.ps1 | iex"
         return $?
@@ -260,14 +385,24 @@ main() {
       ;;
     *) fail "Unsupported operating system: $os_name" ;;
   esac
+
   install_package
   register_path
+  step_pass "CLI binaries linked to $BIN_DIR (causyne, causyne-agent)"
+
   local installed
   installed="$("$BIN_DIR/causyne" --version)"
-  printf '\n  Causyne Agent %s installed.\n' "$installed"
-  say 'Run `causyne` in your project directory to start.'
-  say 'If `causyne` is not found in this terminal, run: export PATH="$HOME/.local/bin:$PATH"'
+  local elapsed=$(( $(date +%s) - START_TIME ))
+
   printf '\n'
+  printf "  ${C_GREEN}${C_BOLD}✨ Causyne Agent %s successfully installed in %ds!${C_RESET}\n\n" "$installed" "$elapsed"
+  printf "  ${C_BOLD}Next steps:${C_RESET}\n"
+  printf "    1. Navigate to your project directory:  ${C_CYAN}cd /path/to/project${C_RESET}\n"
+  printf "    2. Start Causyne Agent:                 ${C_CYAN}causyne${C_RESET}\n\n"
+  if ! has causyne; then
+    printf "  ${C_DIM}Note: To use \`causyne\` in your current shell without restarting, run:${C_RESET}\n"
+    printf "    ${C_CYAN}export PATH=\"\$HOME/.local/bin:\$PATH\"${C_RESET}\n\n"
+  fi
 }
 
 main "$@"

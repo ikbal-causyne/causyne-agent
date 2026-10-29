@@ -8,6 +8,8 @@ if (($PSVersionTable.PSVersion.Major -ge 6) -and ($IsMacOS -or $IsLinux)) {
     return
 }
 
+$Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 } catch {}
@@ -17,6 +19,27 @@ $InstallRoot = Join-Path $HOME '.causyne\installation'
 $RuntimeRoot = Join-Path $HOME '.causyne\runtime'
 $BinDir = Join-Path $HOME '.local\bin'
 $MinimumNodeMajor = 24
+
+function Write-StepPass {
+    param([string]$Message)
+    Write-Host '  ' -NoNewline
+    Write-Host '✔ ' -ForegroundColor Green -NoNewline
+    Write-Host $Message
+}
+
+function Write-StepInfo {
+    param([string]$Message)
+    Write-Host '  ' -NoNewline
+    Write-Host 'ℹ ' -ForegroundColor Cyan -NoNewline
+    Write-Host $Message
+}
+
+function Write-StepWarn {
+    param([string]$Message)
+    Write-Host '  ' -NoNewline
+    Write-Host '⚠ ' -ForegroundColor Yellow -NoNewline
+    Write-Host $Message
+}
 
 function Get-NodeMajor {
     param([string]$NodeExe = 'node')
@@ -29,14 +52,18 @@ function Get-NodeMajor {
     }
 }
 
+$Script:FoundNodeSource = ''
+
 function Find-ExistingNode {
     $privateNode = Join-Path $RuntimeRoot 'node\node.exe'
     if ((Test-Path $privateNode) -and ((Get-NodeMajor $privateNode) -ge $MinimumNodeMajor)) {
         $privateDir = Split-Path -Parent $privateNode
         $env:Path = "$privateDir;$env:Path"
+        $Script:FoundNodeSource = "private runtime ($(& $privateNode --version))"
         return $true
     }
     if ((Get-NodeMajor 'node') -ge $MinimumNodeMajor) {
+        $Script:FoundNodeSource = "system PATH ($(& node --version))"
         return $true
     }
     $candidates = @(
@@ -50,6 +77,7 @@ function Find-ExistingNode {
         if ($candidate -and (Test-Path $candidate) -and ((Get-NodeMajor $candidate) -ge $MinimumNodeMajor)) {
             $dir = Split-Path -Parent $candidate
             $env:Path = "$dir;$env:Path"
+            $Script:FoundNodeSource = "$dir ($(& $candidate --version))"
             return $true
         }
     }
@@ -59,14 +87,14 @@ function Find-ExistingNode {
 function Install-PrivateNode {
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
     $distBase = "https://nodejs.org/dist/latest-v$MinimumNodeMajor.x"
-    Write-Host "  Node.js $MinimumNodeMajor+ was not found; installing a private runtime (win-$arch)..."
+    Write-StepInfo "Node.js $MinimumNodeMajor+ was not found; provisioning private runtime (win-$arch)..."
 
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("causyne-node-" + [System.Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     $prevProgress = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
     try {
-        $shasumsText = [string](Invoke-RestMethod -Uri "$distBase/SHASUMS256.txt" -UseBasicParsing)
+        $shasumsText = [string](Invoke-RestMethod -Uri "$distBase/SHASUMS256.txt" -UseBasicParsing -TimeoutSec 15)
         $pattern = "([0-9a-fA-F]{64})\s+(node-v$MinimumNodeMajor\.[0-9]+\.[0-9]+-win-$arch\.zip)"
         $match = [regex]::Match($shasumsText, $pattern)
         if (-not $match.Success) {
@@ -76,7 +104,8 @@ function Install-PrivateNode {
         $archiveName = $match.Groups[2].Value
         $zipPath = Join-Path $tempDir $archiveName
 
-        Invoke-WebRequest -Uri "$distBase/$archiveName" -OutFile $zipPath -UseBasicParsing
+        Write-StepInfo "Downloading portable Node.js runtime archive..."
+        Invoke-WebRequest -Uri "$distBase/$archiveName" -OutFile $zipPath -UseBasicParsing -TimeoutSec 30
         $actualHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash) {
             throw 'Node.js checksum verification failed.'
@@ -94,6 +123,7 @@ function Install-PrivateNode {
         }
         Move-Item -Path $extractedNode -Destination $targetNode -Force
         $env:Path = "$targetNode;$env:Path"
+        $Script:FoundNodeSource = "installed private runtime ($(& (Join-Path $targetNode 'node.exe') --version))"
     } finally {
         $ProgressPreference = $prevProgress
         if (Test-Path $tempDir) {
@@ -108,10 +138,10 @@ function Install-NodeIfNeeded {
         Install-PrivateNode
         if ((Get-NodeMajor 'node') -ge $MinimumNodeMajor) { return }
     } catch {
-        Write-Host "  Private runtime download fallback: $($_.Exception.Message)"
+        Write-StepWarn "Private runtime bootstrap fallback: $($_.Exception.Message)"
     }
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host '  Installing Node.js with Windows Package Manager...'
+        Write-StepInfo "Installing Node.js with Windows Package Manager (winget)..."
         & winget install OpenJS.NodeJS --accept-package-agreements --accept-source-agreements --silent
         $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
     }
@@ -126,7 +156,7 @@ function Register-CausynePath {
     if ($parts -notcontains $BinDir) {
         $next = (@($parts) + $BinDir) -join ';'
         [Environment]::SetEnvironmentVariable('Path', $next, 'User')
-        Write-Host "  Added $BinDir to User PATH."
+        Write-StepInfo "Added $BinDir to User PATH."
     }
     if (($env:Path -split ';') -notcontains $BinDir) {
         $env:Path = "$BinDir;$env:Path"
@@ -134,15 +164,23 @@ function Register-CausynePath {
 }
 
 Write-Host ''
-Write-Host '  Causyne Agent installer'
-Write-Host '  Detected Windows.'
+Write-Host '  ╭────────────────────────────────────────────────────────╮' -ForegroundColor Cyan
+Write-Host '  │   Causyne Agent — Universal CLI Installer              │' -ForegroundColor Cyan
+Write-Host '  ╰────────────────────────────────────────────────────────╯' -ForegroundColor Cyan
+Write-Host ''
+
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
+Write-StepPass "Platform detected: Windows ($arch)"
+
 Install-NodeIfNeeded
+Write-StepPass "Runtime ready: $Script:FoundNodeSource"
 
 $ActiveNodeDir = Split-Path -Parent (Get-Command node).Source
 
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
-Write-Host '  Installing Causyne Agent from the public npm registry...'
+
+Write-StepInfo "Installing Causyne Agent from the public npm registry..."
 
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -152,6 +190,7 @@ $ErrorActionPreference = $prevEap
 if ($npmExit -ne 0) {
     throw "npm install failed with exit code $npmExit"
 }
+Write-StepPass "Package installed: @causyne/agent (latest)"
 
 $CmdWrapper = @"
 @echo off
@@ -163,12 +202,13 @@ if exist "%USERPROFILE%\.causyne\runtime\node\node.exe" (
 )
 set "CAUSYNE_INSTALL_ROOT=%USERPROFILE%\.causyne\installation"
 set "CAUSYNE_NPM_COMMAND=npm.cmd"
-if exist "%USERPROFILE%\.causyne\installation\node_modules\@causyne\agent\bin\causyne.js" (
+if exist "%USERPROFILE%\.causyne\installation\node_modules\@causyne/agent\bin\causyne.js" (
   node "%USERPROFILE%\.causyne\installation\node_modules\@causyne\agent\bin\causyne.js" %*
 ) else (
   node "%USERPROFILE%\.causyne\installation\lib\node_modules\@causyne\agent\bin\causyne.js" %*
 )
 "@
+
 foreach ($wrapperName in @('causyne.cmd', 'causyne-agent.cmd', 'causyne', 'causyne-agent')) {
     $wrapperPath = Join-Path $BinDir $wrapperName
     if (Test-Path $wrapperPath) {
@@ -196,10 +236,15 @@ fi
 [System.IO.File]::WriteAllText((Join-Path $BinDir 'causyne-agent'), $ShWrapper, (New-Object System.Text.UTF8Encoding($false)))
 
 Register-CausynePath
+Write-StepPass "CLI commands configured in $BinDir (causyne, causyne-agent)"
 
 $Version = & (Join-Path $BinDir 'causyne.cmd') --version
+$ElapsedSec = [math]::Round($Stopwatch.Elapsed.TotalSeconds, 1)
+
 Write-Host ''
-Write-Host "  Causyne Agent $Version installed."
-Write-Host '  Run `causyne` in your project directory to start.'
-Write-Host '  The first run opens the foreground local CLI menu.'
+Write-Host "  ✨ Causyne Agent $Version installed in ${ElapsedSec}s." -ForegroundColor Green
+Write-Host ''
+Write-Host '  Next steps:' -ForegroundColor White
+Write-Host '    1. Navigate to your project directory:  cd \path\to\project' -ForegroundColor Cyan
+Write-Host '    2. Start Causyne Agent:                 causyne' -ForegroundColor Cyan
 Write-Host ''
