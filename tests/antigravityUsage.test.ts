@@ -280,7 +280,7 @@ process.stdin.on('end', () => {
         const stopped = error as { code?: string; partialUsage?: { promptTokens: number; completionTokens: number; cachedPromptTokens?: number } };
         assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
         assert.deepEqual(stopped.partialUsage, {
-          promptTokens: 46, completionTokens: 7, cachedPromptTokens: 20,
+          promptTokens: 46, uncachedPromptTokens: 46, completionTokens: 7, cachedPromptTokens: 20,
           thinkingTokens: 0, measurement: 'provider_reported', cacheMeasurement: 'provider_reported'
         });
         return true;

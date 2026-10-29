@@ -1,3 +1,4 @@
+import { clearSysRunCache } from './tools/sysRun.js';
 import { createHash } from 'crypto';
 import { execFileSync } from 'node:child_process';
 import { processApprovalScope, createApprovalScope } from './approvalGrants.js';
@@ -2873,6 +2874,8 @@ export class AgentLoop {
                             this.webVerificationState.browserActUsed = true;
                         }
                     }
+                    if (result?.success === true && ['fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit'].includes(functionName))
+                        clearSysRunCache();
                     // The journal is the observer's own record of what actually ran. It
                     // is written only after post-hook review, so a formatter that rejects
                     // a write is remembered as a failure rather than a success.

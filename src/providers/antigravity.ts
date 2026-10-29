@@ -1174,6 +1174,7 @@ export class AntigravityProvider extends LLMProvider {
                 if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
                   completedUsageSteps.add(usageStepIndex);
                   partialUsage.promptTokens += input;
+                  partialUsage.uncachedPromptTokens = (partialUsage.uncachedPromptTokens || 0) + input;
                   partialUsage.completionTokens += output;
                   partialUsage.cachedPromptTokens = (partialUsage.cachedPromptTokens || 0)
                     + (Number(usage.cache_read_tokens) || 0);
@@ -1466,7 +1467,7 @@ export class AntigravityProvider extends LLMProvider {
         const cachedPromptTokens = prior && usageIsReported ? delta(cumulative.cacheRead, prior.cacheRead) : cumulative.cacheRead;
 
         const uncachedPromptTokens = Math.max(0, promptTokens - cachedPromptTokens);
-        if (usageIsReported) Object.assign(partialUsage, { promptTokens, completionTokens, thinkingTokens, cachedPromptTokens });
+        if (usageIsReported) Object.assign(partialUsage, { promptTokens, uncachedPromptTokens, completionTokens, thinkingTokens, cachedPromptTokens });
         if (usageIsReported && this.currentConversationId) {
           this.lastCumulativeUsage = { conversationId: this.currentConversationId, ...cumulative };
           usageBaselineCommitted = true;

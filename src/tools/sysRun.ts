@@ -24,7 +24,9 @@ export interface SysRunResult {
   success: boolean;
   output: string;
   error?: string | undefined;
-  exitCode: number;
+  exitCode: number | null;
+  running?: boolean;
+  pid?: number;
   note?: string | undefined;
   cached?: boolean | undefined;
 }
@@ -162,6 +164,7 @@ export const sysRun = {
 
     // Fast-path: Return cached output for identical read-only idempotent commands
     const isIdempotent = IDEMPOTENT_COMMAND_PATTERN.test(rawCommand);
+    if (!isIdempotent) commandCache.clear();
     const cacheKey = `${cwd}:::${rawCommand}`;
 
     if (!context.skipCache && isIdempotent && commandCache.has(cacheKey)) {
@@ -217,8 +220,8 @@ export const sysRun = {
             resolve({
               success: true,
               output: cleanSubprocessOutput(outputBuffer),
-              exitCode: 0,
-              note: 'Server readiness verified. Running in background.'
+              exitCode: null, running: true, ...(child.pid ? { pid: child.pid } : {}),
+              note: 'The server reported startup. This process is still running; an independent readiness check is required.'
             });
           }
         }
@@ -245,8 +248,8 @@ export const sysRun = {
             resolve({
               success: true,
               output: cleanSubprocessOutput(outputBuffer) || 'Server process started and running in background.',
-              exitCode: 0,
-              note: 'Server detached after clean execution.'
+              exitCode: null, running: true, ...(child.pid ? { pid: child.pid } : {}),
+              note: 'The process is still running. No final exit status or readiness check is available.'
             });
           }
         }, 2500);
@@ -297,7 +300,8 @@ export const sysRun = {
             });
           }
           resolve(res);
-        } else if (exitCode === 1 && SEARCH_COMMAND_PATTERN.test(rawCommand)) {
+        } else if (exitCode === 1 && !/[;&<>`$\r\n]/.test(rawCommand) && !rawCommand.includes('||')
+          && /^(grep|egrep|fgrep|diff|test|which|cmp)\b/.test(rawCommand.split('|').at(-1)?.trim() || '')) {
           // Semantic Exit Code Normalization: POSIX search tool found 0 matching lines.
           const res: SysRunResult = {
             success: true,
