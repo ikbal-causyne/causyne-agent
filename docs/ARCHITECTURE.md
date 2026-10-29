@@ -28,11 +28,11 @@ user's existing CLI login is the credential, the peer's own `models` command
 supplies the catalogue, and the session is billed by that subscription — Causyne
 cannot determine the monetary cost when the peer does not expose its invoice.
 
-Causyne Agent is engineered for billions of users globally across diverse engineering
-ecosystems. Universal ACP capability preservation is mandatory: provider bridges and
-ACP adapters must NEVER destroy, strip, or degrade ACP capabilities, MCP tool inheritance,
-or peer execution environments. Peer agents are never locked into artificial
-"transport verification only" or tool-less sandboxes.
+### Universal ACP Capability and Global Scale Mandate
+1. **ENGINEERED FOR BILLIONS OF USERS GLOBALLY**: Causyne Agent is engineered for billions of software developers and users worldwide across all development ecosystems. It is NEVER a hobby project, personal hack, or local sandbox experiment.
+2. **ZERO DEGRADATION OF ACP CAPABILITIES**: Ensuring Causyne Agent executes its own tools must NEVER destroy, strip, castrate, or degrade ACP (Agent Client Protocol) capabilities, MCP tool inheritance, or peer execution environments.
+3. **PROHIBITION OF CASTRATED SANDBOX PROFILES**: Under NO circumstances may any bridge, adapter, or harness inject restrictive profiles (`tools: [finish]`, `inheritMcp: false`, `commandExecutionPolicy: off`) or restrictive system instructions (such as "Transport verification only. No files, shell, web, or native actions are authorized").
+4. **UNIVERSAL COMPATIBILITY**: All external AI coding agents (Cursor, Claude Code, Antigravity CLI/IDE, Codex, OpenCode, Hermes) must retain their full ACP capabilities, MCP capabilities, reasoning power, and execution context when collaborating with Causyne Agent. Causyne coordinates workspace tools collaboratively without crippling connected peers.
 
 The Antigravity CLI adapter uses a Causyne-managed profile in private adapter state
 and carries the actual host workspace in its prompt. It preserves MCP inheritance and
