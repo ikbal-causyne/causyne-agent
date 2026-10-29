@@ -619,6 +619,7 @@ export class AgentLoop {
     // entire 300-step budget on a task that was already done.
     this.gameGuardFired = false;
     this.webGuardFired = false;
+    this.webVerificationScheduled = false;
     // P6: rendered surfaces this task wrote, for the anti-slop gate to read back.
     this.webArtifacts = new Set();
     this.slopReviewAttempts = 0;
@@ -703,6 +704,9 @@ export class AgentLoop {
       ? path.join(os.homedir(), candidate.slice(2))
       : candidate;
     this.webArtifacts.add(path.resolve(this.workspaceRoot, expanded));
+    this.webVerificationScheduled = false;
+    this.webVerificationState.browserActUsed = false;
+    this.webVerificationState.screenshotTaken = false;
   }
 
   /**
@@ -1173,6 +1177,7 @@ export class AgentLoop {
     // ORDER to work in, which saves whole exploratory steps.
     this.gameGuardFired = false;
     this.webGuardFired = false;
+    this.webVerificationScheduled = false;
     this.webVerificationState = { screenshotTaken: false, browserActUsed: false, htmlInspected: false };
     this.webArtifacts = new Set();
     this.slopReviewAttempts = 0;
@@ -1450,6 +1455,7 @@ export class AgentLoop {
     const recoveryPaths = new Set<string>();
     let modelCallIndex = 0;
     let mediaExplorationRecoveries = 0;
+    let reasoningOnlyRecoveries = 0;
     let planHandoffRecoveries = 0;
 
     // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
@@ -1991,6 +1997,7 @@ export class AgentLoop {
           promptTokens: response.usage.promptTokens,
           completionTokens: response.usage.completionTokens,
           cachedPromptTokens: response.usage.cachedPromptTokens || 0,
+          uncachedPromptTokens: response.usage.uncachedPromptTokens,
           noncachedTokens: noncachedTokens(response.usage),
           measurement: response.usage.measurement || 'unspecified',
           cacheMeasurement: response.usage.cacheMeasurement || 'unspecified',
@@ -2046,6 +2053,41 @@ export class AgentLoop {
           break;
         }
 
+        // The host owns verification policy. A model cannot substitute repeated
+        // HTTP checks for rendering, and adapters must not contradict this gate.
+        if (!response.toolCalls?.length && !this.webVerificationScheduled
+          && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken
+          && isWebIntent(this.currentTaskPrompt || this.userPrompt || '')
+          && !isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '')
+          && !isPlanningOnlyRequest(this.currentTaskPrompt || this.userPrompt || '')) {
+          const files: Array<{ path: string; content: string }> = [];
+          for (const candidate of this.webArtifacts) {
+            if (files.length >= 50) break;
+            try {
+              const stat = fsSync.lstatSync(candidate);
+              if (stat.isFile() && stat.size <= 512_000) files.push({ path: candidate, content: fsSync.readFileSync(candidate, 'utf8') });
+            } catch { /* Deleted artifacts cannot be verified. */ }
+          }
+          const entry = files.find(file => /\.html?$/i.test(file.path));
+          if (entry && analyzeFiles(files).verdict !== 'slop') {
+            const { groupStatus } = await import('./provisioning/capabilityProvisioner.js');
+            const { isBrowserRuntimeInstalled } = await import('./browser/browserRuntime.js');
+            if (groupStatus('browser').state === 'ready' && isBrowserRuntimeInstalled()) {
+              this.webVerificationScheduled = true;
+              this.webGuardFired = true;
+              response.toolCalls = [{ id: `host-verify-${this.stepsCompleted}`, type: 'function', function: {
+                name: 'browser_act', arguments: JSON.stringify({ actions: [
+                  { type: 'preview', filePath: path.relative(this.workspaceRoot, entry.path) },
+                  { type: 'snapshot' }
+                ] })
+              } }];
+              response.content = '';
+              auditLog.log({ event: 'host_verification_scheduled', taskId: this.taskId, tool: 'browser_act' });
+              this.emitEvent({ type: 'status', message: 'Inspecting the rendered page through Causyne Browser…' });
+            }
+          }
+        }
+
         // Add assistant response to history. This is the ONLY place the turn is
         // recorded — the completion and guard branches below used to push it a
         // second time, duplicating every finished turn in the history.
@@ -2054,7 +2096,7 @@ export class AgentLoop {
           role: 'assistant',
           // An assistant message with neither text nor tool calls is rejected by
           // some providers, so a terminal turn always carries something.
-          content: response.content || (hasToolCalls ? '' : 'Task completed.')
+          content: hasToolCalls ? '' : (response.content || 'No final response was provided.')
         };
         if (hasToolCalls) {
           assistantMsg.tool_calls = response.toolCalls;
@@ -2082,9 +2124,8 @@ export class AgentLoop {
         }
         this.messages.push(assistantMsg);
         
-        if (response.content && hasToolCalls) {
-          this.emitEvent({ type: 'agent_message', content: response.content });
-        }
+        // Prose accompanying pending actions is not an execution result.
+        // Tool events provide progress; terminal claims pass completion gates below.
 
         const externalActions = Array.isArray((response as any).externalActions)
           ? (response as any).externalActions
@@ -3074,7 +3115,7 @@ export class AgentLoop {
           }
           if (functionName === 'browser_act' && result?.success === true) {
             const browserResults = Array.isArray(result.data) ? result.data : [];
-            if (browserResults.some((item: any) => ['snapshot', 'scrape', 'preview'].includes(item?.action))) {
+            if (browserResults.some((item: any) => ['snapshot', 'scrape'].includes(item?.action) && !(item?.data?.runtimeErrors?.length))) {
               this.webVerificationState.browserActUsed = true;
             }
           }
@@ -3439,6 +3480,21 @@ export class AgentLoop {
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
             used: this.tokenTracker.taskTokens, limit: e.tokenLimit || this.tokenTracker.budget?.maxTokensPerTask || 0 });
+          break;
+        }
+        if (e?.code === 'PROVIDER_REASONING_ONLY' && e.continuationSafe === true && reasoningOnlyRecoveries++ === 0) {
+          this.messages.push({ role: 'system', content:
+            '[Response recovery] The previous turn contained reasoning but no executable tool call or user response. '
+            + 'Continue from the existing draft in this session. Emit the next actual Causyne tool call with all required arguments. '
+            + 'Do not repeat searches, dependency probes, or prior actions. Do not claim completion until a tool result verifies it. '
+            + 'If a provider key, balance, or user decision is required, report that precise blocker.' });
+          this.memoryManager.saveHistory(this.messages);
+          this.emitEvent({ type: 'notice', message: 'The peer returned reasoning without an action; continuing once from its existing session.' });
+          auditLog.log({ event: 'reasoning_only_recovery', taskId: this.taskId, recovery: reasoningOnlyRecoveries });
+          continue;
+        }
+        if (e?.code === 'PROVIDER_REASONING_ONLY') {
+          this.emitEvent({ type: 'error', message: 'The peer returned reasoning without an executable action or final answer. The task remains unfinished. The saved session is available; no further automatic retry will spend your budget.' });
           break;
         }
         if (e?.code === 'AGY_EXPLORATION_LOOP' || e?.code === 'AGENT_EXPLORATION_LOOP' || e?.code === 'STALL_EXPLORATION_LOOP') {

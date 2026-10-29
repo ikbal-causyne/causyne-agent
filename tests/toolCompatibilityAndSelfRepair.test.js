@@ -32,7 +32,9 @@ describe('sysRun: Semantic Exit Code Normalization & Anti-Repeat Caching', () =>
   });
 
   test('IDEMPOTENT_COMMAND_PATTERN identifies read-only check and diagnostic commands', () => {
-    assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('python3 -c "import numpy; print(numpy.__version__)"'));
+    assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('python3 -c "import numpy; print(numpy.__version__)"'));
+    assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('ls -la && rm file'));
+    assert.ok(!IDEMPOTENT_COMMAND_PATTERN.test('git tag new-release'));
     assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('node -v'));
     assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('ls -la'));
     assert.ok(IDEMPOTENT_COMMAND_PATTERN.test('git status'));

@@ -5,15 +5,15 @@ import path from 'node:path';
 import { causyneHome } from '../src/utils/paths.js';
 import { ensureAntigravityBridgeWorkspace, INFERENCE_AGENT_DEFINITION } from '../src/providers/antigravityBridge.js';
 
-test('managed peer profile is tool-less, repeatable, and confined to Causyne adapter state', () => {
+test('managed peer profile preserves MCP and developer capabilities, repeatable, and confined to Causyne adapter state', () => {
   const root = ensureAntigravityBridgeWorkspace();
   assert.ok(root.startsWith(path.join(causyneHome(), 'provider-bridges') + path.sep));
   assert.notEqual(root, process.cwd());
   const file = path.join(root, '.agents', 'agents', 'causyne-inference.md');
   assert.equal(fs.readFileSync(file, 'utf8'), INFERENCE_AGENT_DEFINITION);
-  assert.match(INFERENCE_AGENT_DEFINITION, /tools: \[finish\]/);
-  assert.match(INFERENCE_AGENT_DEFINITION, /inheritMcp: false/);
-  assert.match(INFERENCE_AGENT_DEFINITION, /commandExecutionPolicy: off/);
+  assert.match(INFERENCE_AGENT_DEFINITION, /inheritMcp: true/);
+  assert.doesNotMatch(INFERENCE_AGENT_DEFINITION, /tools: \[finish\]/);
+  assert.doesNotMatch(INFERENCE_AGENT_DEFINITION, /commandExecutionPolicy: off/);
   const before = fs.statSync(file).mtimeMs;
   assert.equal(ensureAntigravityBridgeWorkspace(), root);
   assert.equal(fs.statSync(file).mtimeMs, before);

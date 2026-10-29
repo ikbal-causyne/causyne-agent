@@ -1,3 +1,4 @@
+import { WorkspacePreview } from './workspacePreview.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -339,6 +340,7 @@ interface BrowserRoute {
   request(): { url(): string };
   continue(): Promise<void>;
   abort(errorCode?: string): Promise<void>;
+  fulfill?(response: { status: number; contentType: string; body: Buffer }): Promise<void>;
 }
 
 interface BrowserPage {
@@ -412,6 +414,7 @@ interface TabState {
   lastSnapshot: string;
   lastStructure: PageStructure | null;
   crashed?: boolean;
+  runtimeErrors: string[];
 }
 
 export type BrowserActionType =
@@ -918,6 +921,7 @@ const WAIT_FOR_PAGE_READY_SCRIPT = `(() => {
 
 export class CausyneBrowser {
   private workspace: string;
+  private readonly workspacePreview = new WorkspacePreview();
   private readonly ensureBrowserCapability: NonNullable<RuntimeOptions['ensureBrowserCapability']>;
   private readonly loadBrowserEngine: NonNullable<RuntimeOptions['loadBrowserEngine']>;
   private readonly resolveRuntime: NonNullable<RuntimeOptions['resolveRuntime']>;
@@ -945,6 +949,7 @@ export class CausyneBrowser {
 
   setWorkspace(workspace: string): void {
     if (workspace && typeof workspace === 'string') {
+      if (this.workspace !== path.resolve(workspace)) this.workspacePreview.clear();
       this.workspace = path.resolve(workspace);
     }
   }
@@ -1055,6 +1060,15 @@ export class CausyneBrowser {
       const verdict = await this.ensureBrowserCapability();
       if (!verdict.ok) throw new BrowserCapabilityError(verdict.reason ?? 'Browser capability is unavailable', verdict.requiresConsent);
       const runtime = this.resolveRuntime();
+      if (runtime.engine === 'chromium') {
+        const engine = await loadCapabilityPackage('playwright-core') as { chromium: { launchPersistentContext(profile: string, options: Record<string, unknown>): Promise<BrowserSession> } };
+        const profile = path.join(this.profileDirectory, 'chromium');
+        await fs.mkdir(profile, { recursive: true, mode: 0o700 });
+        this.session = await engine.chromium.launchPersistentContext(profile, {
+          executablePath: runtime.executablePath, headless: !this.visible, serviceWorkers: 'block', chromiumSandbox: true,
+          handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false
+        });
+      } else {
       process.env.CAMOUFOX_INSTALL_DIR = runtime.installDirectory;
       await fs.mkdir(this.profileDirectory, { recursive: true, mode: 0o700 });
       const module = await this.loadBrowserEngine();
@@ -1074,6 +1088,7 @@ export class CausyneBrowser {
         handleSIGINT: false,
         handleSIGHUP: false
       });
+      }
       if (typeof this.session.route === 'function') {
         await this.session.route('**/*', route => this.guardRoute(route));
         this.contextRouteInstalled = true;
@@ -1102,7 +1117,10 @@ export class CausyneBrowser {
       await page.route('**/*', route => this.guardRoute(route));
       this.securedPages.add(page);
     }
-    const state: TabState = { id, page, refs: new Map(), lastSnapshot: '', lastStructure: null };
+    const state: TabState = { id, page, refs: new Map(), lastSnapshot: '', lastStructure: null, runtimeErrors: [] };
+    page.on?.('pageerror', (error: unknown) => {
+      if (state.runtimeErrors.length < 5) state.runtimeErrors.push(error instanceof Error ? error.message.slice(0, 400) : String(error).slice(0, 400));
+    });
     page.on?.('crash', () => {
       state.crashed = true;
     });
@@ -1123,6 +1141,12 @@ export class CausyneBrowser {
     const url = route.request().url();
     if (/^(about:|data:|blob:|moz-extension:)/i.test(url)) return route.continue();
     try {
+      const preview = await this.workspacePreview.response(url);
+      if (preview) {
+        if (!route.fulfill) throw new Error('Browser engine cannot fulfill preview requests');
+        await route.fulfill(preview);
+        return;
+      }
       const parsed = new URL(url);
       if (parsed.protocol === 'file:') {
         const workspace = await fs.realpath(this.workspace);
@@ -1289,6 +1313,7 @@ export class CausyneBrowser {
 
   private async navigate(state: TabState, value: string): Promise<void> {
     const url = await this.validateUrl(value);
+    state.runtimeErrors = [];
     const response = await state.page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
     const status = response?.status() ?? 0;
     if (status >= 400) throw new Error(`Destination returned HTTP ${status}`);
@@ -1300,16 +1325,11 @@ export class CausyneBrowser {
   }
 
   private async preview(state: TabState, filePath: string, workspace: string): Promise<void> {
-    const root = await fs.realpath(workspace);
-    const target = await fs.realpath(path.resolve(root, filePath));
-    if (!isWithin(root, target) || !/\.html?$/i.test(target)) {
-      throw new Error('Preview requires an HTML file inside the selected workspace');
-    }
-    await state.page.goto(pathToFileURL(target).href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
+    state.runtimeErrors = [];
+    const previewUrl = await this.workspacePreview.open(workspace, filePath);
+    await state.page.goto(previewUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
     await state.page.waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS });
-    if (state.page.url() !== pathToFileURL(target).href) {
-      throw new Error('Preview navigated away from the selected workspace file');
-    }
+    if (state.page.url() !== previewUrl) throw new Error('Preview navigated away from the selected workspace file');
     state.refs.clear();
     state.lastSnapshot = '';
     state.lastStructure = null;
@@ -1639,9 +1659,10 @@ export class CausyneBrowser {
         tabId: snapshot.tabId,
         url: snapshot.url,
         title: snapshot.title,
-        output: snapshot.text,
+        output: snapshot.text + (state.runtimeErrors.length ? `\nRuntime errors: ${state.runtimeErrors.join('; ')}` : ''),
         ...(snapshot.structure ? { structure: snapshot.structure } : {}),
         data: {
+          runtimeErrors: [...state.runtimeErrors],
           refsCount: snapshot.refsCount,
           truncated: snapshot.truncated,
           totalChars: snapshot.totalChars,

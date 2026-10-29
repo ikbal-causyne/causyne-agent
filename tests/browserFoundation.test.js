@@ -191,8 +191,9 @@ describe('Causyne Browser lifecycle', () => {
     fs.writeFileSync(htmlPath, '<h1>Preview</h1>');
     const results = await browser.run([{ type: 'preview', filePath: 'index.html' }]);
     assert.equal(results[0].action, 'preview');
-    assert.equal(new URL(results[0].url).protocol, 'file:');
-    assert.equal(path.basename(fileURLToPath(results[0].url)), 'index.html');
+    assert.equal(new URL(results[0].url).protocol, 'https:');
+    assert.match(new URL(results[0].url).hostname, /\.causyne-preview\.invalid$/);
+    assert.equal(path.basename(new URL(results[0].url).pathname), 'index.html');
     await browser.close();
   });
 

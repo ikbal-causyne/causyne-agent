@@ -5,7 +5,6 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
-import { isBrowserRuntimeInstalled } from '../browser/browserRuntime.js';
 import { LLMProvider } from './base.js';
 /**
  * Baseline fallback models for instant offline availability.
@@ -903,7 +902,7 @@ export class AntigravityProvider extends LLMProvider {
             promptText = [
                 ...changedSystems.map(message => `[Current system context — replaces the prior version of this section]\n${message.content}`),
                 contractUpdates,
-                this.formatDelta(deltaMessages.length > 0 ? deltaMessages : [messages[messages.length - 1]])
+                this.formatDelta((deltaMessages.length > 0 ? deltaMessages : [messages[messages.length - 1]]).filter(message => message?.role !== 'system'))
             ].filter(Boolean).join('\n\n');
         }
         else {
@@ -941,19 +940,6 @@ export class AntigravityProvider extends LLMProvider {
                 'Inspect the scene and relevant sources as needed, but do not repeat the same probe without a reason. ' +
                 'Use the observations to make a targeted change, then verify the saved scene and rendered result. ' +
                 'If verification fails, revise the change and verify again; report unfinished work accurately.\n\n' + promptText;
-        }
-        if (isWebTask) {
-            if (isBrowserRuntimeInstalled()) {
-                promptText = '[Current Web / UI engineering task: verification requirements]\n' +
-                    'Create complete, high-fidelity web files. Do not declare completion merely by running curl or open in the terminal. ' +
-                    'You must use Causyne visual verification: invoke browser_act or screenshot to visually inspect the rendered UI before completing the task. ' +
-                    'A saved HTML/CSS/JS file or a local server launch is not proof of visual inspection.\n\n' + promptText;
-            }
-            else {
-                promptText = '[Current Web / UI engineering task: verification requirements]\n' +
-                    'Create complete, high-fidelity web files. The dedicated headless browser runtime is not installed on this workstation. ' +
-                    'Do NOT attempt to invoke browser_act. Instead, verify code syntax using node --check or test runners, launch the local web server, and verify that the HTML/CSS/JS assets are properly served.\n\n' + promptText;
-            }
         }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
@@ -995,6 +981,8 @@ export class AntigravityProvider extends LLMProvider {
             let finalResultObj = null;
             let sawToolAfterLastText = false;
             let sawProviderProgress = false;
+            let reasoningChars = 0;
+            let usageBaselineCommitted = false;
             const nativeActions = [];
             const attemptedNativeTools = [];
             let childClosed = false;
@@ -1032,7 +1020,7 @@ export class AntigravityProvider extends LLMProvider {
             const rawTokenLimit = Number(options.tokenLimit);
             const hasExplicitLimit = (Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0)
                 || (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0);
-            const countReportedTotal = hasExplicitLimit && options.tokenBudgetBasis !== 'noncached';
+            const countReportedTotal = options.tokenBudgetBasis !== 'noncached';
             const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
                 ? remainingTaskBudget
                 : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
@@ -1061,8 +1049,7 @@ export class AntigravityProvider extends LLMProvider {
                 // the provider from silently replaying a paid turn.
                 if (partialUsage.promptTokens + partialUsage.completionTokens > 0) {
                     Object.assign(err, { partialUsage: { ...partialUsage } });
-                    if ((err.code === 'AGY_EXPLORATION_LOOP'
-                        || err.code === 'AGY_TOKEN_BUDGET') && this.currentConversationId) {
+                    if (!usageBaselineCommitted && this.currentConversationId) {
                         const prior = resumedConversationId === this.lastCumulativeUsage?.conversationId
                             ? this.lastCumulativeUsage : null;
                         this.lastCumulativeUsage = {
@@ -1264,6 +1251,7 @@ export class AntigravityProvider extends LLMProvider {
                             }
                             if (delta && typeof delta === 'string') {
                                 if (stepType === 'thought' || stepType === 'agent_thought') {
+                                    reasoningChars += delta.length;
                                     if (typeof options.onReasoningChunk === 'function') {
                                         options.onReasoningChunk(delta);
                                     }
@@ -1409,21 +1397,6 @@ export class AntigravityProvider extends LLMProvider {
                         .map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
                         .join(', ')}`;
                 }
-                if (!content && toolCalls.length === 0) {
-                    const detail = stderrBuffer.trim();
-                    if (!sawProviderProgress && /print timeout after .* with turn in progress|returning partial output/i.test(detail)) {
-                        safeReject(Object.assign(new Error('The selected peer produced no model output or tool activity before its timeout. The task remains unfinished; retry after the peer is responsive.'), { code: 'PROVIDER_NO_PROGRESS' }));
-                        return;
-                    }
-                    safeReject(new Error(detail
-                        ? `Antigravity returned no response: ${detail}`
-                        : 'Antigravity returned no response.'));
-                    return;
-                }
-                const timedOutMidTurn = /print timeout after .* with turn in progress|returning partial output/i.test(stderrBuffer);
-                const finalResponseText = typeof finalResultObj?.response === 'string' ? finalResultObj.response.trim() : '';
-                const endedAfterToolWithoutFinalResponse = sawToolAfterLastText && !finalResponseText && deniedActions.length === 0 && toolCalls.length === 0;
-                const missingResultEvent = finalResultObj === null && deniedActions.length === 0 && toolCalls.length === 0;
                 const usageIsReported = finalResultObj?.usage?.input_tokens != null
                     && finalResultObj?.usage?.output_tokens != null
                     && Number.isFinite(Number(finalResultObj.usage.input_tokens))
@@ -1441,10 +1414,38 @@ export class AntigravityProvider extends LLMProvider {
                 const completionTokens = prior && usageIsReported ? delta(cumulative.output, prior.output) : cumulative.output;
                 const thinkingTokens = prior && usageIsReported ? delta(cumulative.thinking, prior.thinking) : cumulative.thinking;
                 const cachedPromptTokens = prior && usageIsReported ? delta(cumulative.cacheRead, prior.cacheRead) : cumulative.cacheRead;
+                const uncachedPromptTokens = Math.max(0, promptTokens - cachedPromptTokens);
+                if (usageIsReported)
+                    Object.assign(partialUsage, { promptTokens, completionTokens, thinkingTokens, cachedPromptTokens });
+                if (usageIsReported && this.currentConversationId) {
+                    this.lastCumulativeUsage = { conversationId: this.currentConversationId, ...cumulative };
+                    usageBaselineCommitted = true;
+                }
+                if (!content && toolCalls.length === 0) {
+                    const detail = stderrBuffer.trim();
+                    if (!sawProviderProgress && /print timeout after .* with turn in progress|returning partial output/i.test(detail)) {
+                        safeReject(Object.assign(new Error('The selected peer produced no model output or tool activity before its timeout. The task remains unfinished; retry after the peer is responsive.'), { code: 'PROVIDER_NO_PROGRESS' }));
+                        return;
+                    }
+                    const reasoningOnly = (reasoningChars > 0 || Boolean(extractedReasoning)) && attemptedNativeTools.length === 0;
+                    safeReject(Object.assign(new Error(detail
+                        ? `Antigravity returned no response: ${detail}`
+                        : 'Antigravity returned no response.'), {
+                        code: reasoningOnly ? 'PROVIDER_REASONING_ONLY' : 'PROVIDER_EMPTY_RESPONSE',
+                        continuationSafe: reasoningOnly && Boolean(this.currentConversationId),
+                        reasoningChars, responseChars: rawContent.length
+                    }));
+                    return;
+                }
+                const timedOutMidTurn = /print timeout after .* with turn in progress|returning partial output/i.test(stderrBuffer);
+                const finalResponseText = typeof finalResultObj?.response === 'string' ? finalResultObj.response.trim() : '';
+                const endedAfterToolWithoutFinalResponse = sawToolAfterLastText && !finalResponseText && deniedActions.length === 0 && toolCalls.length === 0;
+                const missingResultEvent = finalResultObj === null && deniedActions.length === 0 && toolCalls.length === 0;
                 const response = {
                     content,
                     usage: {
                         promptTokens,
+                        uncachedPromptTokens,
                         completionTokens,
                         thinkingTokens,
                         cachedPromptTokens,

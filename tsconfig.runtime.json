@@ -170,9 +170,9 @@
     "src/tools/toolOutputStore.ts",
     "src/smartToolsUse.ts",
     "src/tokenTracker.ts",
-    "src/outputRecovery.ts",
-    "src/providers/toolContracts.ts",
-    "src/tools/argumentValidation.ts"
+    "src/tools/generateMediaViaApi.ts",
+    "src/tools/deferredMcpSearch.ts",
+    "src/browser/workspacePreview.ts"
   ],
   "exclude": [
     "node_modules",

@@ -1,3 +1,4 @@
+import { WorkspacePreview } from './workspacePreview.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -654,6 +655,7 @@ const WAIT_FOR_PAGE_READY_SCRIPT = `(() => {
 })()`;
 export class CausyneBrowser {
     workspace;
+    workspacePreview = new WorkspacePreview();
     ensureBrowserCapability;
     loadBrowserEngine;
     resolveRuntime;
@@ -679,6 +681,8 @@ export class CausyneBrowser {
     }
     setWorkspace(workspace) {
         if (workspace && typeof workspace === 'string') {
+            if (this.workspace !== path.resolve(workspace))
+                this.workspacePreview.clear();
             this.workspace = path.resolve(workspace);
         }
     }
@@ -793,26 +797,37 @@ export class CausyneBrowser {
             if (!verdict.ok)
                 throw new BrowserCapabilityError(verdict.reason ?? 'Browser capability is unavailable', verdict.requiresConsent);
             const runtime = this.resolveRuntime();
-            process.env.CAMOUFOX_INSTALL_DIR = runtime.installDirectory;
-            await fs.mkdir(this.profileDirectory, { recursive: true, mode: 0o700 });
-            const module = await this.loadBrowserEngine();
-            if (!module || typeof module.Camoufox !== 'function')
-                throw new Error('Causyne Browser has no usable launcher');
-            this.session = await module.Camoufox({
-                headless: !this.visible,
-                user_data_dir: this.profileDirectory,
-                humanize: 0.35,
-                block_webrtc: true,
-                geoip: false,
-                enable_cache: true,
-                ...(runtime.executablePath ? { executable_path: runtime.executablePath } : {}),
-                firefox_user_prefs: {
-                    'Security.OCSP.enabled': 0
-                },
-                handleSIGTERM: false,
-                handleSIGINT: false,
-                handleSIGHUP: false
-            });
+            if (runtime.engine === 'chromium') {
+                const engine = await loadCapabilityPackage('playwright-core');
+                const profile = path.join(this.profileDirectory, 'chromium');
+                await fs.mkdir(profile, { recursive: true, mode: 0o700 });
+                this.session = await engine.chromium.launchPersistentContext(profile, {
+                    executablePath: runtime.executablePath, headless: !this.visible, serviceWorkers: 'block', chromiumSandbox: true,
+                    handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false
+                });
+            }
+            else {
+                process.env.CAMOUFOX_INSTALL_DIR = runtime.installDirectory;
+                await fs.mkdir(this.profileDirectory, { recursive: true, mode: 0o700 });
+                const module = await this.loadBrowserEngine();
+                if (!module || typeof module.Camoufox !== 'function')
+                    throw new Error('Causyne Browser has no usable launcher');
+                this.session = await module.Camoufox({
+                    headless: !this.visible,
+                    user_data_dir: this.profileDirectory,
+                    humanize: 0.35,
+                    block_webrtc: true,
+                    geoip: false,
+                    enable_cache: true,
+                    ...(runtime.executablePath ? { executable_path: runtime.executablePath } : {}),
+                    firefox_user_prefs: {
+                        'Security.OCSP.enabled': 0
+                    },
+                    handleSIGTERM: false,
+                    handleSIGINT: false,
+                    handleSIGHUP: false
+                });
+            }
             if (typeof this.session.route === 'function') {
                 await this.session.route('**/*', route => this.guardRoute(route));
                 this.contextRouteInstalled = true;
@@ -843,7 +858,11 @@ export class CausyneBrowser {
             await page.route('**/*', route => this.guardRoute(route));
             this.securedPages.add(page);
         }
-        const state = { id, page, refs: new Map(), lastSnapshot: '', lastStructure: null };
+        const state = { id, page, refs: new Map(), lastSnapshot: '', lastStructure: null, runtimeErrors: [] };
+        page.on?.('pageerror', (error) => {
+            if (state.runtimeErrors.length < 5)
+                state.runtimeErrors.push(error instanceof Error ? error.message.slice(0, 400) : String(error).slice(0, 400));
+        });
         page.on?.('crash', () => {
             state.crashed = true;
         });
@@ -864,6 +883,13 @@ export class CausyneBrowser {
         if (/^(about:|data:|blob:|moz-extension:)/i.test(url))
             return route.continue();
         try {
+            const preview = await this.workspacePreview.response(url);
+            if (preview) {
+                if (!route.fulfill)
+                    throw new Error('Browser engine cannot fulfill preview requests');
+                await route.fulfill(preview);
+                return;
+            }
             const parsed = new URL(url);
             if (parsed.protocol === 'file:') {
                 const workspace = await fs.realpath(this.workspace);
@@ -1045,6 +1071,7 @@ export class CausyneBrowser {
     }
     async navigate(state, value) {
         const url = await this.validateUrl(value);
+        state.runtimeErrors = [];
         const response = await state.page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
         const status = response?.status() ?? 0;
         if (status >= 400)
@@ -1056,16 +1083,12 @@ export class CausyneBrowser {
         state.lastStructure = null;
     }
     async preview(state, filePath, workspace) {
-        const root = await fs.realpath(workspace);
-        const target = await fs.realpath(path.resolve(root, filePath));
-        if (!isWithin(root, target) || !/\.html?$/i.test(target)) {
-            throw new Error('Preview requires an HTML file inside the selected workspace');
-        }
-        await state.page.goto(pathToFileURL(target).href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
+        state.runtimeErrors = [];
+        const previewUrl = await this.workspacePreview.open(workspace, filePath);
+        await state.page.goto(previewUrl, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
         await state.page.waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS });
-        if (state.page.url() !== pathToFileURL(target).href) {
+        if (state.page.url() !== previewUrl)
             throw new Error('Preview navigated away from the selected workspace file');
-        }
         state.refs.clear();
         state.lastSnapshot = '';
         state.lastStructure = null;
@@ -1415,9 +1438,10 @@ export class CausyneBrowser {
                 tabId: snapshot.tabId,
                 url: snapshot.url,
                 title: snapshot.title,
-                output: snapshot.text,
+                output: snapshot.text + (state.runtimeErrors.length ? `\nRuntime errors: ${state.runtimeErrors.join('; ')}` : ''),
                 ...(snapshot.structure ? { structure: snapshot.structure } : {}),
                 data: {
+                    runtimeErrors: [...state.runtimeErrors],
                     refsCount: snapshot.refsCount,
                     truncated: snapshot.truncated,
                     totalChars: snapshot.totalChars,

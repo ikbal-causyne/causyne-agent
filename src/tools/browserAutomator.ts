@@ -9,6 +9,7 @@ import {
 interface SandboxContext {
   workspacePaths?: string[];
   workspaceRoot?: string;
+  parentLoop?: { workspaceRoot?: string };
 }
 
 const SUPPORTED_ACTION_TYPES: BrowserActionType[] = [
@@ -124,7 +125,7 @@ export const browserAct = {
 
   async execute(args: { actions?: BrowserAction[] } & Record<string, unknown>, sandbox?: SandboxContext) {
     try {
-      const workspace = sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd();
+      const workspace = sandbox?.parentLoop?.workspaceRoot ?? sandbox?.workspaceRoot ?? sandbox?.workspacePaths?.[0] ?? process.cwd();
       const actions = normalizeActions(args);
       const results = await causyneBrowser({ workspace }).run(actions, { workspace });
       return { success: true, output: JSON.stringify(results, null, 2), data: results };

@@ -24,6 +24,7 @@ export interface PreparedBrowserRuntime {
   resourceDirectory: string;
   executablePath?: string;
   source: 'environment' | 'system';
+  engine?: 'chromium';
 }
 
 function resolveCandidateExecutablePath(candidate: string): string {
@@ -295,6 +296,22 @@ function ensureLaunchShim(resolvedExecutable: string, resourceDirectory: string)
   return shimExecutable;
 }
 
+/** Discover existing installations only. Never downloads or uses a personal profile. */
+export function resolveChromiumRuntime(configured?: string): PreparedBrowserRuntime | null {
+  const candidates = configured ? [configured] : process.platform === 'darwin'
+    ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium']
+    : process.platform === 'win32'
+      ? [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter((root): root is string => Boolean(root)).flatMap(root => [path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'), path.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe')])
+      : ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/opt/google/chrome/chrome'];
+  for (const candidate of candidates) {
+    try {
+      assertExecutable(candidate);
+      return { engine: 'chromium', executablePath: candidate, installDirectory: path.dirname(candidate), resourceDirectory: path.dirname(candidate), source: configured ? 'environment' : 'system' };
+    } catch { /* Try the next existing installation. */ }
+  }
+  return null;
+}
+
 export function resolveBrowserRuntime(): PreparedBrowserRuntime {
   const configured = process.env.CAUSYNE_BROWSER_EXECUTABLE?.trim()
     || process.env.CAMOUFOX_EXECUTABLE_PATH?.trim();
@@ -302,7 +319,13 @@ export function resolveBrowserRuntime(): PreparedBrowserRuntime {
     ? [resolveCandidateExecutablePath(path.resolve(configured))]
     : candidateExecutables().map(resolveCandidateExecutablePath);
   const executablePath = candidates.find(existsSync);
+  if (configured && /(?:chrome|chromium|msedge)(?:\.exe)?$/i.test(path.basename(configured))) {
+    const chromium = resolveChromiumRuntime(configured);
+    if (chromium) return chromium;
+  }
   if (!executablePath) {
+    const chromium = !configured ? resolveChromiumRuntime() : null;
+    if (chromium) return chromium;
     throw new Error(
       'Causyne Browser runtime is not installed. Causyne does not download browser binaries automatically. ' +
       'Install a supported browser runtime separately, then set CAUSYNE_BROWSER_EXECUTABLE to its executable path.'

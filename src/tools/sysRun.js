@@ -44,7 +44,7 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
  * Commands that are strictly read-only and idempotent.
  * Repeated identical executions within a short TTL window return cached output.
  */
-export const IDEMPOTENT_COMMAND_PATTERN = /^(python3?|node|bun|pnpm|npm)\s+(-v|--version|(-c|-e)\s+["'].*?["'])$|^ls\b|^cat\b|^head\b|^tail\b|^grep\b|^find\b|^which\b|^where\b|^pwd$|^git\s+(status|log|diff|branch|tag|show\b)|^echo\b/;
+export const IDEMPOTENT_COMMAND_PATTERN = /^(?!.*[;&|<>`$\r\n])(?:(?:python[0-9.]*|node|bun|npm|pnpm)\s+(?:-v|-V|--version)|pwd|(?:ls|cat|head|tail|grep|which|where|echo)(?:\s+[^;&|<>`$\r\n]+)?|git\s+(?:status|log|diff|show)(?:\s+[^;&|<>`$\r\n]+)?)$/;
 /**
  * Detect long-running dev servers and web application listeners that must not block foreground loops.
  */
@@ -52,7 +52,9 @@ export function isPersistentServerCommand(cmd) {
     if (!cmd || typeof cmd !== 'string')
         return false;
     const trimmed = cmd.trim();
-    if (/^(?:cat|head|tail|grep|lsof|ps|kill|pkill|pgrep|curl|wget|echo|test)\b/i.test(trimmed)) {
+    // A chained launch/check command must run through its actual final exit.
+    // Returning at a readiness-looking line would skip later checks or failures.
+    if (/[;&|<>`$\r\n]/.test(trimmed) || /^(?:cat|head|tail|grep|lsof|ps|kill|pkill|pgrep|curl|wget|echo|test)\b/i.test(trimmed)) {
         return false;
     }
     const patterns = [
@@ -93,7 +95,7 @@ export const sysRun = {
         // A foreground server waits forever for requests. Keep launch-only turns
         // responsive and make it explicit that starting is not a readiness check.
         const taskPrompt = context.parentLoop?.currentTaskPrompt || context.parentLoop?.userPrompt || '';
-        if (isLaunchOnlyPrompt(taskPrompt) && isServerLaunchCommand(rawCommand)) {
+        if (isLaunchOnlyPrompt(taskPrompt) && !/[;&|<>`$\r\n]/.test(rawCommand) && isServerLaunchCommand(rawCommand)) {
             const started = await sysRunBg.execute({ command: rawCommand, cwd, label: 'local-server' });
             return started.success
                 ? { success: true, output: `Started server process ${started.pid} in background. Readiness and browser opening have not been verified.`, exitCode: 0, note: 'Check the server URL before reporting it accessible.' }
@@ -143,7 +145,7 @@ export const sysRun = {
             const checkServerDetach = () => {
                 if (isDetached)
                     return;
-                if (isPersistentServerCommand(rawCommand) || isServerLaunchCommand(rawCommand)) {
+                if (isPersistentServerCommand(rawCommand)) {
                     if (SERVER_READY_PATTERN.test(outputBuffer)) {
                         isDetached = true;
                         if (timeoutId)
@@ -170,7 +172,7 @@ export const sysRun = {
             child.stdout?.on('data', appendToBuffer);
             child.stderr?.on('data', appendToBuffer);
             let serverGraceTimer;
-            if (isPersistentServerCommand(rawCommand) || isServerLaunchCommand(rawCommand)) {
+            if (isPersistentServerCommand(rawCommand)) {
                 serverGraceTimer = setTimeout(() => {
                     if (!isDetached && child.exitCode === null) {
                         isDetached = true;

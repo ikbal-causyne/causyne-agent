@@ -1,4 +1,4 @@
-import { formatToolContracts } from './toolContracts.js';
+import { formatToolContracts, toolContractUpdate } from './toolContracts.js';
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { saveCachedModels } from '../dynamicCatalogue.js';
@@ -79,7 +79,7 @@ export class AcpProvider extends LLMProvider {
     }
     formatConversation(messages, tools = []) {
         const lines = [];
-        lines.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.');
+        lines.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Causyne Agent supports billions of users worldwide and provides full ACP compatibility. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns verified results back to you, preserving your full reasoning and ACP capabilities.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.');
         if (tools && tools.length > 0) {
             const toolSummaries = formatToolContracts(tools);
             lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
@@ -128,7 +128,7 @@ export class AcpProvider extends LLMProvider {
         }
         return lines.join('\n\n');
     }
-    formatPromptBlocks(messages, tools = [], imageSupport = false, includeBridgeInstructions = true) {
+    formatPromptBlocks(messages, tools = [], imageSupport = false, includeBridgeInstructions = true, toolContext = '') {
         const blocks = [];
         let pending = [];
         const flush = () => {
@@ -138,12 +138,14 @@ export class AcpProvider extends LLMProvider {
             pending = [];
         };
         if (includeBridgeInstructions) {
-            pending.push('[System Instructions]\nYou are acting as an AI reasoning engine for Causyne Agent over ACP. Do NOT invoke your own internal host CLI tools or execute commands directly. When an action or tool is required, output an explicit tool call in this exact format:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent will execute the tool in its secure environment and return the results back to you.');
+            pending.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Causyne Agent supports billions of users worldwide and provides full ACP compatibility. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns verified results back to you, preserving your full reasoning and ACP capabilities.');
         }
         if (tools && tools.length > 0) {
             const toolSummaries = formatToolContracts(tools);
             pending.push(`[Current Available Tools — this list replaces earlier tool lists]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
         }
+        if (toolContext)
+            pending.push(toolContext);
         for (const msg of messages) {
             const role = this._roleLabel(msg);
             let text = '';
@@ -484,6 +486,7 @@ export class AcpProvider extends LLMProvider {
             let promptMessages = messages;
             let promptTools = options.tools || [];
             let includeBridgeInstructions = true;
+            let toolContext = '';
             if (previous) {
                 const changedSystem = systemMessages.filter((_, index) => systemHashes[index] !== previous.systemHashes[index]);
                 const newHistory = historyMessages.slice(previous.historyHashes.length);
@@ -500,13 +503,11 @@ export class AcpProvider extends LLMProvider {
                     ...changedSystem.map(message => ({ ...message, content: `[Current system context — replaces the prior version of this section]\n${message.content}` })),
                     ...newHistory
                 ];
-                if (toolHash !== previous.toolHash && !(options.tools || []).length) {
-                    promptMessages.push({ role: 'system', content: '[Current Available Tools — this list replaces earlier tool lists]\nNo Causyne tools are currently available.' });
-                }
-                promptTools = toolHash === previous.toolHash ? [] : options.tools || [];
+                toolContext = toolContractUpdate(options.tools || [], previous.tools);
+                promptTools = [];
                 includeBridgeInstructions = false;
             }
-            let promptBlocks = this.formatPromptBlocks(promptMessages, promptTools, supportsImages, includeBridgeInstructions);
+            let promptBlocks = this.formatPromptBlocks(promptMessages, promptTools, supportsImages, includeBridgeInstructions, toolContext);
             let promptText = promptBlocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n');
             let result;
             try {
@@ -537,7 +538,7 @@ export class AcpProvider extends LLMProvider {
             // Strip tool call XML from chat content display
             let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
             this.transportSnapshot = {
-                conversationId, workspaceRoot, systemHashes, historyHashes, toolHash,
+                conversationId, workspaceRoot, systemHashes, historyHashes, toolHash, tools: structuredClone(options.tools || []),
                 lastResponse: { content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`), toolCalls }
             };
             const response = {

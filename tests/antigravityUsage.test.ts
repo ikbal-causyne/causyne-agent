@@ -419,7 +419,7 @@ process.stdin.on('end', () => {
   }
 });
 
-test('automatic ceiling counts cache hits separately from new tokens', { skip: process.platform === 'win32' }, async () => {
+test('separate peer cache counters never subtract already-fresh input', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-cached-floor-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -433,8 +433,7 @@ process.stdin.on('end', () => {
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    const response = await provider.chat([{ role: 'user', content: 'Use cached context' }], {});
-    assert.equal(response.content, 'Finished with cached input');
+    await assert.rejects(provider.chat([{ role: 'user', content: 'Use cached context' }], {}), (error: unknown) => (error as { code: string }).code === 'AGY_TOKEN_BUDGET');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

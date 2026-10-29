@@ -269,6 +269,7 @@ export class StageSurface {
 
   
   armTeardown() {
+    if (this.signalHooks.length > 0 || this.exitHook) this.disarmTeardown();
     this.exitHook = () => { try { this.close(); } catch { /* nothing left to do */ } };
     process.once('exit', this.exitHook);
 

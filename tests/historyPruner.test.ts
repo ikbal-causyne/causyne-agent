@@ -184,3 +184,34 @@ test('executed arguments remain intact if their recovery copy cannot be saved', 
   }
 });
 
+test('closed-window pattern compacts earlier inspections of the same target within buffer', () => {
+  const fileContent = 'class MassiveFile {\n' + '  // code\n'.repeat(200) + '}';
+  const messages = [
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'call-read-1', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'src/main.ts' }) } }]
+    },
+    { role: 'tool', name: 'fs_read', tool_call_id: 'call-read-1', content: fileContent },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'call-edit-1', function: { name: 'fs_edit', arguments: JSON.stringify({ path: 'src/main.ts', edits: [] }) } }]
+    },
+    { role: 'tool', name: 'fs_edit', tool_call_id: 'call-edit-1', content: '{"success":true}' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ id: 'call-read-2', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'src/main.ts' }) } }]
+    },
+    { role: 'tool', name: 'fs_read', tool_call_id: 'call-read-2', content: fileContent + '\n// edited' }
+  ];
+
+  // Even with keepRecent = 4 (both reads are inside recent 4 observations),
+  // the earlier read of src/main.ts must be compacted to prevent prompt bloat.
+  const result = pruneStaleToolObservations(messages, { keepRecent: 4, taskId: 'closed-window' });
+  assert.equal(result.pruned, 1, 'earlier duplicate read must be pruned');
+  assert.match(messages[1]?.content ?? '', /Prior inspection of src\/main\.ts omitted/);
+  assert.equal(messages[5]?.content, fileContent + '\n// edited', 'latest inspection must remain intact');
+});
+

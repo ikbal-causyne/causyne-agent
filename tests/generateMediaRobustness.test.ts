@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { generateMediaViaApi } from '../src/tools/generateMediaViaApi.js';
+import { saveConfig } from '../src/config.js';
 import { selfRepairToolCall } from '../src/tools/toolSelfRepair.js';
 
 describe('generateMediaViaApi robustness', () => {
@@ -18,22 +19,19 @@ describe('generateMediaViaApi robustness', () => {
     assert.equal(healed.args.prompt, 'a beautiful sunset');
   });
 
-  it('heals missing outputPath by defaulting to valid local path without crashing', async () => {
+  it('uses a default workspace filename when an authenticated provider returns valid media', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-media-test-'));
-    const testOutputPath = path.join(tmpDir, 'test_output.png');
-
-    const result = await generateMediaViaApi.execute({
-      mediaType: 'image',
-      prompt: 'a radiant solar system with planets',
-      outputPath: testOutputPath,
-      width: 256,
-      height: 256
-    });
-
-    assert.equal(result.success, true);
-    assert.ok(fs.existsSync(testOutputPath));
-    assert.ok(result.sizeBytes > 0);
-
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    saveConfig({ provider: 'antigravity', autonomyMode: 'C', pollinationsApiKey: 'fixture-only-key' });
+    const original = globalThis.fetch;
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aKp8AAAAASUVORK5CYII=', 'base64');
+    globalThis.fetch = async () => new Response(png, { headers: { 'content-type': 'image/png' } });
+    try {
+      const result = await generateMediaViaApi.execute({ mediaType: 'image', prompt: 'a radiant solar system with planets', width: 256, height: 256 }, { workspaceRoot: tmpDir });
+      assert.equal(result.success, true);
+      const files = fs.readdirSync(tmpDir);
+      assert.equal(files.length, 1);
+      assert.deepEqual(fs.readFileSync(path.join(tmpDir, files[0]!)), png);
+      assert.equal(result.sizeBytes, png.length);
+    } finally { globalThis.fetch = original; fs.rmSync(tmpDir, { recursive: true, force: true }); }
   });
 });

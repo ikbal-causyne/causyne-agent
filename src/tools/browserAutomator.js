@@ -110,7 +110,7 @@ export const browserAct = {
     },
     async execute(args, sandbox) {
         try {
-            const workspace = sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd();
+            const workspace = sandbox?.parentLoop?.workspaceRoot ?? sandbox?.workspaceRoot ?? sandbox?.workspacePaths?.[0] ?? process.cwd();
             const actions = normalizeActions(args);
             const results = await causyneBrowser({ workspace }).run(actions, { workspace });
             return { success: true, output: JSON.stringify(results, null, 2), data: results };

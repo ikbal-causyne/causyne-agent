@@ -155,14 +155,47 @@ function verdictFor(content) {
     }
     return 'outcome unverified';
 }
+function buildCallInfoMap(messages) {
+    const map = new Map();
+    for (const msg of messages) {
+        if (msg.role !== 'assistant')
+            continue;
+        for (const call of msg.tool_calls || []) {
+            if (!call.id || !call.function?.name)
+                continue;
+            const toolName = call.function.name;
+            let target;
+            const isInspection = /^(?:fs_read|read_file|view_file|cat|head|tail|grep|fs_list|dir_list|fs_search)$/i.test(toolName);
+            if (typeof call.function.arguments === 'string') {
+                try {
+                    const args = JSON.parse(call.function.arguments);
+                    if (args && typeof args === 'object') {
+                        const rawTarget = args.path || args.file_path || args.AbsolutePath || args.target;
+                        if (typeof rawTarget === 'string' && rawTarget.trim()) {
+                            target = rawTarget.trim();
+                        }
+                    }
+                }
+                catch { /* ignore parse error */ }
+            }
+            map.set(call.id, { toolName, target, isInspection });
+        }
+    }
+    return map;
+}
 /**
  * Preserve recent observations verbatim. Older large observations are replaced
- * only after the complete text is saved to the private output store. The
- * assistant/tool call pairing and IDs are left untouched.
+ * only after the complete text is saved to the private output store.
+ *
+ * Additionally enforces the ClosedWindow pattern (SWE-agent arXiv:2405.15793):
+ * Earlier inspections of the same target file within the window are compacted
+ * to a lightweight pointer since the latest inspection is already in context.
  */
 export function pruneStaleToolObservations(messages, options = {}) {
     const keepRecent = Math.max(0, options.keepRecent ?? 4);
     const minChars = Math.max(1, options.minChars ?? 600);
+    const callInfoMap = buildCallInfoMap(messages);
+    const seenTargets = new Set();
     let seen = 0;
     let pruned = 0;
     let reclaimedChars = 0;
@@ -172,10 +205,20 @@ export function pruneStaleToolObservations(messages, options = {}) {
         if (!message || message.role !== 'tool')
             continue;
         seen++;
-        if (seen <= keepRecent || typeof message.content !== 'string')
+        if (typeof message.content !== 'string')
             continue;
         const original = message.content;
-        if (original.length < minChars || original.startsWith(MARKER))
+        if (original.startsWith(MARKER))
+            continue;
+        const callInfo = message.tool_call_id ? callInfoMap.get(message.tool_call_id) : undefined;
+        const target = callInfo?.target;
+        const isDuplicateInspection = Boolean(callInfo?.isInspection && target && seenTargets.has(target));
+        if (callInfo?.isInspection && target) {
+            seenTargets.add(target);
+        }
+        if (seen <= keepRecent && !isDuplicateInspection)
+            continue;
+        if (original.length < minChars)
             continue;
         let spillPath = message.spillPath;
         if (!spillPath) {
@@ -190,9 +233,12 @@ export function pruneStaleToolObservations(messages, options = {}) {
             }
             spillPath = spill.path;
         }
-        const summary = `${MARKER} ${message.name ?? 'tool'}: ${verdictFor(original)}. `
-            + `Earlier output (${original.length} characters) was cleared from context.`
-            + buildDecayPointer({ path: spillPath });
+        const summary = isDuplicateInspection
+            ? `${MARKER} ${message.name ?? 'tool'}: [Prior inspection of ${target} omitted; latest inspection is in active context.]`
+                + buildDecayPointer({ path: spillPath })
+            : `${MARKER} ${message.name ?? 'tool'}: ${verdictFor(original)}. `
+                + `Earlier output (${original.length} characters) was cleared from context.`
+                + buildDecayPointer({ path: spillPath });
         if (summary.length >= original.length)
             continue;
         message.content = summary;
