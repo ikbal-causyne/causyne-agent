@@ -34,6 +34,7 @@ import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
+import { collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard } from './turnRail.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -433,6 +434,14 @@ export class StageSurface {
       this.decorate(rows, contentWidth);
       markHoveredMessage(rows, this, contentWidth);
       if (rail) this.attachRail(rows, contentWidth);
+      if (this.hoveredTurnIndex && this.turnRailLayout?.turns?.length) {
+        const hoveredTurn = this.turnRailLayout.turns.find(t => t.turnIndex === this.hoveredTurnIndex);
+        if (hoveredTurn) {
+          const card = renderTurnPreviewCard(hoveredTurn, 52);
+          const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
+          rows = overlayTurnPreviewCard(rows, card, anchorY, contentWidth + 1, mainWidth);
+        }
+      }
       if (this.messageActionOverlay) {
         const overlay = this.messageActionOverlay;
         const placed = placeMessageActionPanel(rows, overlay.panel, contentWidth,
@@ -625,9 +634,26 @@ export class StageSurface {
    * keeps the rail in one column instead of ragged against the text.
    */
   attachRail(rows, contentWidth) {
+    const turns = collectSessionTurns(this.transcript, contentWidth);
+    const railResult = turns.length > 0
+      ? buildTurnRailCells(turns, rows.length, this.activeTurnIndex || turns.length, this.hoveredTurnIndex)
+      : null;
+
+    this.turnRailLayout = {
+      railX: contentWidth + 1,
+      stageTop: (this.out.rows || this.stage.height) - this.stage.height,
+      viewportHeight: rows.length,
+      dotRows: railResult?.layout?.dotRows || new Map(),
+      rowToTurn: railResult?.layout?.rowToTurn || new Map(),
+      turns
+    };
+
     const rail = this.buildRail(rows.length, contentWidth);
     for (let i = 0; i < rows.length; i++) {
-      rows[i] = `${padEnd(rows[i], contentWidth)} ${rail[i]}`;
+      const cell = railResult?.cells[i] && railResult.cells[i] !== ' '
+        ? railResult.cells[i]
+        : rail[i];
+      rows[i] = `${padEnd(rows[i], contentWidth)} ${cell}`;
     }
     return rows;
   }

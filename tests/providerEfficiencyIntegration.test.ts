@@ -11,7 +11,10 @@ import { noncachedTokens } from '../src/providers/budgetEnforcer.js';
 import { AntigravityProvider, mapNativeToolToCausyne } from '../src/providers/antigravity.js';
 import { isOutputRecoveryRead } from '../src/outputRecovery.js';
 import { causyneHome } from '../src/utils/paths.js';
-import type { ChatOptions } from '../src/providers/base.js';
+import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
+import { Transcript } from '../src/tui/transcript.js';
+import { stripAnsi } from '../src/tui/text.js';
+import type { ChatOptions, ChatResponseAction } from '../src/providers/base.js';
 
 test('horse-app wording selects web construction and loads its design playbook before any tool', () => {
   const prompt = 'i want you create web applicatio  tinder for horse';
@@ -19,6 +22,9 @@ test('horse-app wording selects web construction and loads its design playbook b
   const result = resolveLazyPlaybooks(['web'], [], prompt);
   assert.ok(result.activePlaybookDomains.includes('web'));
   assert.ok(result.fullPlaybooks.length > 100);
+  const typoThreePrompt = 'make horse tinder 3d in thre.js';
+  assert.equal(determineToolScope(typoThreePrompt).archetype, 'web_engineering');
+  assert.ok(resolveLazyPlaybooks(['web'], [], typoThreePrompt).activePlaybookDomains.includes('web'));
   assert.notEqual(determineToolScope('Create an Android application for notes').archetype, 'web_engineering');
 });
 
@@ -262,4 +268,135 @@ test('a workspace-scoped run can recover its exact stored result through fs_read
     assert.equal(recovered, true);
     assert.deepEqual(loop.sandbox.workspacePaths, [workspace]);
   } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+});
+
+test('ACP preserves tool kinds across completion updates, returns externalActions and reasoningContent, and avoids duplicate running notifications', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-acp-actions-'));
+  const executable = path.join(directory, 'peer.cjs');
+  fs.writeFileSync(executable, `const readline = require('node:readline');
+const send = value => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n');
+readline.createInterface({input:process.stdin}).on('line', line => {
+  const req = JSON.parse(line);
+  if (req.method === 'initialize') send({id:req.id,result:{protocolVersion:1,agentCapabilities:{}}});
+  else if (req.method === 'session/new') send({id:req.id,result:{sessionId:'acp-action-session'}});
+  else if (req.method === 'session/prompt') {
+    send({method:'session/update',params:{sessionId:'acp-action-session',update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'Inspecting desktop preview.'}}}});
+    send({method:'session/update',params:{sessionId:'acp-action-session',update:{sessionUpdate:'tool_call',toolCallId:'call-read-1',kind:'read',title:'read',status:'pending',rawInput:{}}}});
+    send({method:'session/update',params:{sessionId:'acp-action-session',update:{sessionUpdate:'tool_call_update',toolCallId:'call-read-1',kind:'read',title:'read',status:'in_progress',locations:[{path:'/workspace/horse-tinder-3d/preview-desktop.png'}]}}});
+    send({method:'session/update',params:{sessionId:'acp-action-session',update:{sessionUpdate:'tool_call_update',toolCallId:'call-read-1',kind:'read',title:'read',status:'in_progress',locations:[{path:'/workspace/horse-tinder-3d/preview-desktop.png'}]}}});
+    send({method:'session/update',params:{sessionId:'acp-action-session',update:{sessionUpdate:'tool_call_update',toolCallId:'call-read-1',title:'workspace/horse-tinder-3d/preview-desktop.png',status:'completed'}}});
+    send({method:'session/update',params:{sessionId:'acp-action-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Verified desktop preview.'}}}});
+    send({id:req.id,result:{stopReason:'end_turn',usage:{inputTokens:120,outputTokens:15,cachedReadTokens:500}}});
+  }
+});`);
+  const observedActions: ChatResponseAction[] = [];
+  const peer = new AcpProvider({ provider: 'acp/opencode', command: process.execPath, args: [executable] });
+  try {
+    const response = await peer.chat([{ role: 'user', content: 'make horse tinder 3d in thre.js' }], {
+      workspaceRoot: directory,
+      onNativeAction: action => observedActions.push({ ...action })
+    });
+    assert.equal(response.reasoningContent, 'Inspecting desktop preview.');
+    assert.ok(Array.isArray(response.externalActions));
+    assert.equal(response.externalActions?.length, 1);
+    assert.equal(response.externalActions?.[0]?.name, 'fs_read');
+    assert.equal(response.externalActions?.[0]?.status, 'completed');
+    assert.equal(response.externalActions?.[0]?.detail, '/workspace/horse-tinder-3d/preview-desktop.png');
+    assert.ok(observedActions.every(a => a.name === 'fs_read'), 'completed update must not overwrite tool name with file path');
+    assert.ok(observedActions.every(a => a.detail !== 'read'), 'generic tool kind title must not be emitted as action detail');
+    assert.equal(observedActions.filter(a => a.status === 'running' && a.detail === '/workspace/horse-tinder-3d/preview-desktop.png').length, 1);
+  } finally {
+    await peer.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('interleaved reasoning and native actions finalize each thought block without cumulative duplication or stuck streaming thoughts', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-reasoning-segments-'));
+  const transcript = new Transcript();
+  const renderer = new CodeStreamRenderer({ transcript, out: { write: () => true, columns: 100, isTTY: true } });
+  renderer.resetTurn();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const loop = new AgentLoop(
+      {
+        readyState: 1,
+        send: value => {
+          const parsed = JSON.parse(value);
+          events.push(parsed);
+          renderer.handle(parsed);
+        }
+      },
+      'reasoning-segments-test',
+      'Inspect the three preview screenshots',
+      { workspaceRoot: workspace }
+    );
+    loop.initializeProvider = () => {
+      loop.config.provider = 'acp/opencode';
+      loop.config.autonomyMode = 'C';
+      return {
+        supportsVision: false,
+        supportsToolSearch: () => false,
+        chat: async (_messages: unknown[], options: ChatOptions) => {
+          options.onReasoningChunk?.('First thought about preview-desktop.png.');
+          options.onNativeAction?.({
+            id: 'acp:read-1',
+            name: 'fs_read',
+            status: 'running',
+            detail: '/workspace/horse-tinder-3d/preview-desktop.png'
+          });
+          options.onNativeAction?.({
+            id: 'acp:read-1',
+            name: 'fs_read',
+            status: 'completed',
+            detail: '/workspace/horse-tinder-3d/preview-desktop.png'
+          });
+          options.onReasoningChunk?.('Second thought about preview-after-like.png.');
+          options.onNativeAction?.({
+            id: 'acp:read-2',
+            name: 'fs_read',
+            status: 'running',
+            detail: '/workspace/horse-tinder-3d/preview-after-like.png'
+          });
+          options.onNativeAction?.({
+            id: 'acp:read-2',
+            name: 'fs_read',
+            status: 'completed',
+            detail: '/workspace/horse-tinder-3d/preview-after-like.png'
+          });
+          options.onReasoningChunk?.('Third thought before hitting action budget.');
+          for (let i = 3; i <= 36; i++) {
+            options.onNativeAction?.({
+              id: `acp:read-${i}`,
+              name: 'fs_read',
+              status: 'running',
+              detail: `/workspace/horse-tinder-3d/file-${i}.js`
+            });
+          }
+          const err = new Error('ACP request aborted');
+          err.name = 'AbortError';
+          throw err;
+        }
+      } as never;
+    };
+
+    await loop.run();
+    const rendered = transcript.rows(100).map(stripAnsi).join('\n');
+    assert.equal(rendered.includes('streaming thoughts…'), false, 'no reasoning block may remain stuck in streaming state');
+    assert.equal(rendered.includes('thinking…'), false, 'all reasoning headers must transition from thinking… to finalized thinking');
+    const firstMatches = rendered.match(/First thought about preview-desktop\.png\./g) || [];
+    const secondMatches = rendered.match(/Second thought about preview-after-like\.png\./g) || [];
+    const thirdMatches = rendered.match(/Third thought before hitting action budget\./g) || [];
+    assert.equal(firstMatches.length, 1, 'first thought segment must not be duplicated in subsequent reasoning frames');
+    assert.equal(secondMatches.length, 1, 'second thought segment must appear exactly once');
+    assert.equal(thirdMatches.length, 1, 'third thought segment must appear exactly once');
+    assert.equal(rendered.includes('Acting: fs_read'), false, 'transient running status must not pollute permanent transcript frames');
+    assert.equal(
+      loop.messages.some((m: { content?: string }) => typeof m.content === 'string' && m.content.includes('no tools were called')),
+      false,
+      'must never claim no tools were called when native actions ran'
+    );
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });

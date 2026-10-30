@@ -22,6 +22,7 @@ export function noncachedTokens(usage: BudgetUsage): number {
 export function actionLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 12;
   if (archetype === 'media_3d_generation') return 25;
+  if (archetype === 'web_engineering') return 120;
   return 35;
 }
 

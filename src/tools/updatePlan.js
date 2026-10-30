@@ -3,8 +3,8 @@ function healPlanArgs(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return raw;
     const input = { ...raw };
-    if (!input.plan && (input.steps || input.items || input.tasks)) {
-        input.plan = input.steps || input.items || input.tasks;
+    if (!input.plan && (input.steps || input.items || input.tasks || input.todos || input.entries)) {
+        input.plan = input.steps || input.items || input.tasks || input.todos || input.entries;
     }
     if (Array.isArray(input.plan)) {
         let activeSeen = false;

@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider } from './base.js';
+import { extractToolCallJsonObjects, stripToolCallMarkup } from '../implementationPlan.js';
 /**
  * Baseline fallback models for instant offline availability.
  * Live models are autodetected dynamically from `agy models`
@@ -761,81 +762,29 @@ export class AntigravityProvider extends LLMProvider {
         const calls = [];
         if (!text || typeof text !== 'string')
             return calls;
-        const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
-        let match;
         let index = 0;
-        while ((match = regex.exec(text)) !== null) {
-            try {
-                const raw = match[1]?.trim() || '';
-                const parsed = JSON.parse(raw);
-                const name = parsed.name || parsed.tool || parsed.function?.name;
-                if (name) {
-                    const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-                    calls.push({
-                        id: `agy_call_${Date.now()}_${index++}`,
-                        type: 'function',
-                        function: {
-                            name,
-                            arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-                        }
-                    });
+        for (const parsed of extractToolCallJsonObjects(text)) {
+            const fnObj = parsed.function && typeof parsed.function === 'object'
+                ? parsed.function
+                : null;
+            const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
+            if (!name)
+                continue;
+            const rawArgs = parsed.arguments !== undefined
+                ? parsed.arguments
+                : parsed.parameters !== undefined
+                    ? parsed.parameters
+                    : parsed.input !== undefined
+                        ? parsed.input
+                        : (fnObj?.arguments ?? {});
+            calls.push({
+                id: `agy_call_${Date.now()}_${index++}`,
+                type: 'function',
+                function: {
+                    name,
+                    arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
                 }
-            }
-            catch {
-                // ignore malformed tool_call blocks
-            }
-        }
-        if (calls.length === 0) {
-            const fenceRegex = /```(?:tool_call|json)?\s*(\{[\s\S]*?"name"\s*:\s*[\s\S]*?\})\s*```/g;
-            while ((match = fenceRegex.exec(text)) !== null) {
-                try {
-                    const raw = match[1]?.trim() || '';
-                    const parsed = JSON.parse(raw);
-                    const name = parsed.name || parsed.tool || parsed.function?.name;
-                    if (name) {
-                        const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-                        calls.push({
-                            id: `agy_call_${Date.now()}_${index++}`,
-                            type: 'function',
-                            function: {
-                                name,
-                                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-                            }
-                        });
-                    }
-                }
-                catch {
-                    // ignore
-                }
-            }
-        }
-        // Unclosed tool_call recovery (when model generated large file content and closed turn)
-        if (calls.length === 0) {
-            const openIndex = text.lastIndexOf('<tool_call>');
-            if (openIndex !== -1 && text.indexOf('</tool_call>', openIndex) === -1) {
-                const partial = text.slice(openIndex + '<tool_call>'.length).trim();
-                for (const suffix of ['', '}', '}}', '}}}', '"}', '"}}', '"}}}', '"}]}}', '"]}}', '"]}}}']) {
-                    try {
-                        const parsed = JSON.parse(partial + suffix);
-                        const name = parsed.name || parsed.tool || parsed.function?.name;
-                        if (name) {
-                            const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-                            calls.push({
-                                id: `agy_call_${Date.now()}_0`,
-                                type: 'function',
-                                function: {
-                                    name,
-                                    arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-                                }
-                            });
-                            break;
-                        }
-                    }
-                    catch {
-                        // try next candidate
-                    }
-                }
-            }
+            });
         }
         return calls;
     }
@@ -1309,8 +1258,8 @@ export class AntigravityProvider extends LLMProvider {
                     rawContent = rawContent.replace(/<(?:thought|thinking)>[\s\S]*?<\/(?:thought|thinking)>/gi, '').trim();
                 }
                 const toolCalls = this.extractToolCalls(rawContent);
-                // Strip tool call tags from prose so raw XML does not leak into chat display
-                let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+                // Strip tool call tags from prose so raw XML/DSML does not leak into chat display
+                let content = stripToolCallMarkup(rawContent);
                 const deniedActions = Array.isArray(finalResultObj?.denied_actions)
                     ? finalResultObj.denied_actions : [];
                 const normalizeAction = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');

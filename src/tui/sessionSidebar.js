@@ -37,7 +37,10 @@ export function sessionSidebarRows(facts, height) {
     const limit = Number.isFinite(facts.contextLimit) ? Number(facts.contextLimit) : 0;
     const used = Number.isFinite(facts.contextChars) ? Number(facts.contextChars) : 0;
     if (limit > 0) {
-        const percent = Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
+        const rawPercent = (used / limit) * 100;
+        const percent = used > 0
+            ? Math.max(1, Math.min(100, Math.round(rawPercent)))
+            : 0;
         styled(dim(`${percent}% of available window`));
     }
     else {
@@ -55,7 +58,7 @@ export function sessionSidebarRows(facts, height) {
         styled(bold(`Plan  ${completed}/${facts.plan.length}`));
         for (const item of facts.plan) {
             const mark = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▸' : '·';
-            line(`${mark} ${item.text || item.step || ''}`);
+            line(`${mark} ${item.text || item.step || item.content || ''}`);
         }
     }
     const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;

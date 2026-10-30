@@ -76,15 +76,25 @@ export class CodeStreamRenderer extends ChatRenderer {
                 const note = content.trim().split('\n').at(-1) || '';
                 this.modelNote = note.slice(-140);
                 this.paintCodePanel(this.activeCode);
+                if (message.streaming === false)
+                    this.lastReasoning = '';
                 return true;
             }
-        }
-        if (['agent_message', 'step_start', 'task_complete', 'error'].includes(message?.type || '')) {
-            this._activeReasoning = false;
-            this.activeCode = null;
-            this.modelNote = '';
-            if (message.type === 'task_complete' || message.type === 'error')
+            const handled = super.handle(message);
+            if (message.streaming === false)
                 this.lastReasoning = '';
+            return handled;
+        }
+        if (['agent_message', 'agent_activity', 'notice', 'budget_warning', 'step_start', 'task_complete', 'error', 'agent_plan'].includes(message?.type || '')) {
+            if (this._activeReasoning && this.lastReasoning) {
+                super.onAgentReasoning({ content: this.lastReasoning, streaming: false });
+            }
+            this._activeReasoning = false;
+            this.lastReasoning = '';
+            if (['agent_message', 'step_start', 'task_complete', 'error'].includes(message?.type || '')) {
+                this.activeCode = null;
+                this.modelNote = '';
+            }
         }
         return super.handle(message);
     }

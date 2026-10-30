@@ -163,7 +163,7 @@ const EXPLICIT_MEDIA_GENERATION_PATTERN =
 
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN =
-  /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|3js)\b/i;
+  /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|thre\.?js|3js|webgl)\b/i;
 
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN =

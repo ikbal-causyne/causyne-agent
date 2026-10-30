@@ -3,9 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentLoop, isDesktopWallpaperChangePrompt, isGenericHandoffResponse, isMidTaskProgressText } from '../src/agentLoop.js';
+import { AgentLoop, isDesktopWallpaperChangePrompt, isGenericHandoffResponse, isMidTaskProgressText, isProviderPlanOrQuotaRefusal } from '../src/agentLoop.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
+import { AcpProvider } from '../src/providers/acp.js';
+import { actionLimitFor } from '../src/providers/budgetEnforcer.js';
+import { extractLivePlanFromText, normalizePeerPlanEntries } from '../src/implementationPlan.js';
+import { isWebIntent } from '../src/toolPacks.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
+import { sessionSidebarRows } from '../src/tui/sessionSidebar.js';
+import { stripAnsi } from '../src/tui/text.js';
 
 test('desktop safety limits are terminal errors instead of retrying paid turns', () => {
   const loop = new AgentLoop({ readyState: 1, send: () => {} }, 'desktop-limit-regression', 'change my desktop picture');
@@ -372,4 +378,253 @@ test('CodeStreamRenderer increments stepCount on nativeStep notice events', () =
   renderer.handle({ type: 'notice', tone: 'muted', nativeStep: true, message: 'Antigravity run_command ls' });
   renderer.handle({ type: 'notice', tone: 'muted', message: 'Context compacted' });
   assert.equal(renderer.stepCount, 2);
+});
+
+test('provider plan refusal stops immediately without polluting history or poisoning consecutiveThinkingSteps on the next run', async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-horse-tinder-regression-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+
+  try {
+    const events: Array<{ type: string; message?: string; content?: string }> = [];
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'cli_chat_1',
+      'build me a 3d horse this is horse tinder in three.js',
+      { workspaceRoot: workspace }
+    );
+
+    let cursorCalls = 0;
+    loop.initializeProvider = () => ({
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        cursorCalls += 1;
+        return {
+          content: 'Upgrade your plan to continue',
+          usage: { promptTokens: 10, completionTokens: 5 }
+        };
+      }
+    }) as never;
+
+    await loop.run();
+    assert.equal(isProviderPlanOrQuotaRefusal('Upgrade your plan to continue'), true);
+    assert.equal(cursorCalls, 1, 'plan refusal must stop immediately without 3 retry nudges');
+    assert.equal(
+      loop.messages.some((m: any) => typeof m.content === 'string' && m.content.includes('Upgrade your plan to continue')),
+      false,
+      'plan refusal text must not remain in loop.messages'
+    );
+
+    // Now simulate switching to OpenCode in the same session and running the second task
+    events.length = 0;
+    loop.taskId = 'cli_chat_2';
+    loop.userPrompt = 'make horse tinder 3d in thre.js';
+    loop.currentTaskPrompt = 'make horse tinder 3d in thre.js';
+
+    let opencodeCalls = 0;
+    const opencodePrompts: any[] = [];
+    const opencodeModel = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async (msgs: any[]) => {
+        opencodeCalls += 1;
+        opencodePrompts.push(msgs.map((m) => ({ role: m.role, content: m.content })));
+        if (opencodeCalls === 1) {
+          // Turn 1: 23 completed external actions + 1 failed /tmp read, ending incomplete
+          return {
+            content: '',
+            externalActions: [
+              { name: 'fs_write', status: 'completed', detail: path.join(workspace, 'index.html') },
+              { name: 'fs_read', status: 'failed', detail: '/tmp/horse.png' }
+            ],
+            incompleteTurn: true,
+            usage: { promptTokens: 100, completionTokens: 50 }
+          };
+        }
+        if (opencodeCalls === 2) {
+          // Turn 2: 0 completed actions, 1 failed cp /tmp/horse.png action
+          return {
+            content: '',
+            externalActions: [
+              { name: 'sysRun', status: 'failed', detail: 'cp /tmp/horse.png .shots/shot1.png' }
+            ],
+            incompleteTurn: true,
+            usage: { promptTokens: 80, completionTokens: 20 }
+          };
+        }
+        // Turn 3: recovers by writing inside workspace and invoking browser_act or finishing HTML inspection
+        fs.writeFileSync(
+          path.join(workspace, 'index.html'),
+          '<!doctype html><html lang="en"><head><title>Equus 3D</title></head><body><main><h1>Equus 3D</h1></main></body></html>'
+        );
+        return {
+          content: 'Completed Equus 3D inside workspace.',
+          externalActions: [
+            { name: 'fs_read', status: 'completed', detail: path.join(workspace, 'index.html') }
+          ],
+          usage: { promptTokens: 60, completionTokens: 25 }
+        };
+      }
+    };
+    loop.initializeProvider = () => opencodeModel as never;
+    loop.llm = opencodeModel as never;
+
+    await loop.run();
+
+    assert.equal(isWebIntent('make horse tinder 3d in thre.js'), true, 'thre.js typo must be recognized as web intent');
+    assert.equal(
+      opencodeCalls >= 3,
+      true,
+      `loop must not abort at Step 24 after Turn 1 incomplete + Turn 2 blocked /tmp action (got ${opencodeCalls} calls)`
+    );
+    const turn3SystemNotices = opencodePrompts[2]
+      .filter((m: any) => m.role === 'system' || m.role === 'user')
+      .map((m: any) => String(m.content))
+      .join('\n');
+    assert.equal(
+      turn3SystemNotices.includes('Never read, copy (cp/mv), or write files in /tmp'),
+      true,
+      'recovery notice must explicitly warn against reading or copying from /tmp'
+    );
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('AcpProvider formatPromptBlocks includes ACP tool-routing rules and strips synthetic No final response placeholders', () => {
+  const provider = new AcpProvider({ peer: 'opencode', model: 'opencode/deepseek' });
+  const formatted = provider.formatConversation([
+    { role: 'system', content: 'System prompt\n[Current Available Tools]:\n- browser_act: Inspect page' },
+    { role: 'user', content: 'make horse tinder 3d in thre.js' }
+  ]);
+  assert.equal(formatted.includes('[ACP Tool Routing & Workspace Boundary Rules]'), true);
+  assert.equal(formatted.includes('NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`)'), true);
+  assert.equal(formatted.includes('NEVER write to, read from, or `cp`/`mv` paths in `/tmp`'), true);
+});
+
+test('AgentLoop extracts reasoning Plan checklists and todowrite updates into sidebar Plan and allows 120 actions for web_engineering', async () => {
+  assert.equal(actionLimitFor('web_engineering'), 120);
+  assert.equal(actionLimitFor('general'), 35);
+
+  const reasoningSample = [
+    'Greenfield: create `horse-simulator/` at workspace root. Use CDN three.js via importmap.',
+    '',
+    'Plan:',
+    '1. Scaffold project structure (index.html, styles.css, src modules).',
+    '2. Build procedural horse model + skeleton rig.',
+    '3. Implement gait engine and locomotion/camera controls.',
+    '4. Build environment and HUD design.',
+    '5. Run preview + verify visuals, fix issues.',
+    '',
+    'Let me design the code carefully.'
+  ].join('\n');
+
+  const extracted = extractLivePlanFromText(reasoningSample, false);
+  assert.ok(extracted);
+  assert.equal(extracted.plan.length, 5);
+  assert.equal(extracted.plan[0]?.status, 'in_progress');
+  assert.equal(extracted.plan[1]?.status, 'pending');
+
+  const todoNormalized = normalizePeerPlanEntries({
+    todos: [
+      { content: 'Scaffold horse-simulator project and vendor Three.js', status: 'in_progress', priority: 'high' },
+      { content: 'Build procedural horse model with articulated rig', status: 'pending', priority: 'high' },
+      { content: 'Preview, visually verify and fix issues', status: 'pending', priority: 'high' }
+    ]
+  });
+  assert.ok(todoNormalized);
+  assert.equal(todoNormalized.plan.length, 3);
+  assert.equal(todoNormalized.plan[0]?.step, 'Scaffold horse-simulator project and vendor Three.js');
+
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sidebar-plan-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+
+  try {
+    const events: Array<{ type: string; plan?: Array<{ id: string; text: string; status: string }> }> = [];
+    let latestSidebarPlan: Array<{ id?: string; text?: string; step?: string; status?: string }> = [];
+    const renderer = new CodeStreamRenderer({ out: { write: () => {}, columns: 140 } });
+    (renderer as any).onPlanChange = (plan: Array<{ id?: string; text?: string; status?: string }>) => {
+      latestSidebarPlan = plan;
+      return 'sidebar';
+    };
+
+    const loop = new AgentLoop(
+      {
+        readyState: 1,
+        send: (payload: string) => {
+          const parsed = JSON.parse(payload);
+          events.push(parsed);
+          renderer.handle(parsed);
+        }
+      },
+      'sidebar-plan-regression',
+      'build a 3d horse simulator using three.js',
+      { workspaceRoot: workspace }
+    );
+
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async (_msgs: any[], options: any) => {
+        options.onReasoningChunk?.(reasoningSample);
+        options.onNativeAction?.({
+          id: 'acp:todo-1',
+          name: 'todowrite',
+          status: 'completed',
+          parameters: {
+            todos: [
+              { content: 'Scaffold horse-simulator project and vendor Three.js', status: 'in_progress' },
+              { content: 'Build procedural horse model with articulated rig', status: 'pending' },
+              { content: 'Preview, visually verify and fix issues', status: 'pending' }
+            ]
+          }
+        });
+        fs.writeFileSync(
+          path.join(workspace, 'index.html'),
+          '<!doctype html><html lang="en"><head><title>Stride</title></head><body><main><h1>Stride</h1></main></body></html>'
+        );
+        return {
+          content: 'Completed Stride simulator.',
+          externalActions: [
+            { name: 'fs_read', status: 'completed', detail: path.join(workspace, 'index.html') }
+          ],
+          usage: { promptTokens: 50, completionTokens: 20 }
+        };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+
+    await loop.run();
+
+    const planEvents = events.filter((e) => e.type === 'agent_plan');
+    assert.equal(planEvents.length >= 2, true, 'must emit agent_plan from reasoning and then update from todowrite');
+    assert.equal(latestSidebarPlan.length, 3);
+    assert.equal(latestSidebarPlan[0]?.text, 'Scaffold horse-simulator project and vendor Three.js');
+
+    const sidebarText = sessionSidebarRows(
+      {
+        title: 'Horse Simulator',
+        cwd: workspace,
+        provider: 'acp/opencode',
+        model: 'deepseek-v4.1-flash',
+        contextChars: 12000,
+        contextLimit: 180000,
+        plan: latestSidebarPlan
+      },
+      28
+    )
+      .map(stripAnsi)
+      .join('\n');
+    assert.equal(sidebarText.includes('Plan  '), true, 'sidebar must render Plan header');
+    assert.equal(sidebarText.includes('Scaffold horse-simulator project'), true, 'sidebar must render plan steps');
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });

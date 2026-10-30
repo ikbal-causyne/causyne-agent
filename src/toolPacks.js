@@ -11,204 +11,170 @@
 //   3. Auto-unlock recovery — calling a locked-but-real tool unlocks its pack
 //
 // Set config.grantAllTools = true to disable deferral entirely.
-
-// ---------------------------------------------------------------------------
-// Pack membership. Names match the `name` field of each tool schema, with dots
-// already normalised to underscores (see tools/registry.js TOOL_DEFINITIONS).
-// ---------------------------------------------------------------------------
-
 export const CORE_TOOLS = [
-  'sysRun',
-  'sysRunBg',
-  'terminal_persistent_shell',
-  'fs_read',
-  'fs_write',
-  'fs_edit',
-  'MultiEdit',
-  'fs_list',
-  'fs_search',
-  'fs_find',
-  'fs_move',
-  'fs_delete',
-  'gitOp',
-  'code_search_ripgrep',
-  'codebase_search',
-  'code_verify_syntax',
-  'web_search',
-  'web_fetch',
-  'update_plan',
-  'request_decision',
-  'memory_write',
-  'fs_read_skill',
-  'skill_create',
-  'tool_search'
+    'sysRun',
+    'sysRunBg',
+    'terminal_persistent_shell',
+    'fs_read',
+    'fs_write',
+    'fs_edit',
+    'MultiEdit',
+    'fs_list',
+    'fs_search',
+    'fs_find',
+    'fs_move',
+    'fs_delete',
+    'gitOp',
+    'code_search_ripgrep',
+    'codebase_search',
+    'code_verify_syntax',
+    'web_search',
+    'web_fetch',
+    'update_plan',
+    'request_decision',
+    'memory_write',
+    'fs_read_skill',
+    'skill_create',
+    'tool_search'
 ];
-
 export const PACKS = {
-  game: [
-    // Stage 1 of the game cascade calls check_system_specs to verify the
-    // engine, so it must travel with this pack as well as with media.
-    'check_system_specs',
-    'godot_act',
-    'game_build_html5',
-    'game_asset_fetch',
-    'game_asset_harvest',
-    'game_lore_forge',
-    'game_dialogue_tree_gen',
-    'game_quest_arc_builder',
-    'game_animation_rig',
-    'game_ai_behavior_tree',
-    'game_cinematic_sequencer',
-    'game_audio_synth',
-    'game_vfx_emitter_gen',
-    'game_shader_forge',
-    'game_scene_build',
-    'game_entity_spawner',
-    'game_tilemap_gen',
-    'game_ui_hud_builder',
-    'game_economy_balancer',
-    'game_data_forge',
-    'game_web_runtime_inspector',
-    'game_canvas_audit'
-  ],
-  web: [
-    'browser_act',
-    'screenshot',
-    'vision_inspect_ui',
-    'view_image',
-    'astryx_oracle',
-    'ui_forge'
-  ],
-  media: [
-    'generate_media_via_api',
-    'execute_procedural_media',
-    'check_system_specs',
-    'manage_local_dependencies',
-    'blender_act',
-    'creative_apps',
-    'native_engine',
-    'resolve_act',
-    'palmier_act',
-    'document_forge',
-    'open_source_tool_provisioner'
-  ],
-  system: [
-    // Channel B of the Three-Channel Doctrine: reading the screen as structured
-    // text instead of pixels. Lives here rather than in core because most tasks
-    // never touch a GUI, and tool_search brings it in the moment one does.
-    'ax_snapshot',
-    // Channel C. Ships beside its observer on purpose: acting on a screen you
-    // have not read is how an agent clicks the wrong button confidently.
-    'desktop_act',
-    'computer_use',
-    'process_list',
-    'proc_term',
-    'archive',
-    'clipboard',
-    'desktop_open',
-    'printer_print',
-    'printer_list_printers',
-    'printer_get_status'
-  ],
-  advanced: [
-    'tool_forge',
-    'plugin_manager',
-    'document_forge',
-    'agent_subagent_orchestrate',
-    'peer_agent_delegate',
-    'code_search_ast',
-    'code_list_symbols',
-    'pdf_read'
-  ]
+    game: [
+        // Stage 1 of the game cascade calls check_system_specs to verify the
+        // engine, so it must travel with this pack as well as with media.
+        'check_system_specs',
+        'godot_act',
+        'game_build_html5',
+        'game_asset_fetch',
+        'game_asset_harvest',
+        'game_lore_forge',
+        'game_dialogue_tree_gen',
+        'game_quest_arc_builder',
+        'game_animation_rig',
+        'game_ai_behavior_tree',
+        'game_cinematic_sequencer',
+        'game_audio_synth',
+        'game_vfx_emitter_gen',
+        'game_shader_forge',
+        'game_scene_build',
+        'game_entity_spawner',
+        'game_tilemap_gen',
+        'game_ui_hud_builder',
+        'game_economy_balancer',
+        'game_data_forge',
+        'game_web_runtime_inspector',
+        'game_canvas_audit'
+    ],
+    web: [
+        'browser_act',
+        'screenshot',
+        'vision_inspect_ui',
+        'view_image',
+        'astryx_oracle',
+        'ui_forge'
+    ],
+    media: [
+        'generate_media_via_api',
+        'execute_procedural_media',
+        'check_system_specs',
+        'manage_local_dependencies',
+        'blender_act',
+        'creative_apps',
+        'native_engine',
+        'resolve_act',
+        'palmier_act',
+        'document_forge',
+        'open_source_tool_provisioner'
+    ],
+    system: [
+        // Channel B of the Three-Channel Doctrine: reading the screen as structured
+        // text instead of pixels. Lives here rather than in core because most tasks
+        // never touch a GUI, and tool_search brings it in the moment one does.
+        'ax_snapshot',
+        // Channel C. Ships beside its observer on purpose: acting on a screen you
+        // have not read is how an agent clicks the wrong button confidently.
+        'desktop_act',
+        'computer_use',
+        'process_list',
+        'proc_term',
+        'archive',
+        'clipboard',
+        'desktop_open',
+        'printer_print',
+        'printer_list_printers',
+        'printer_get_status'
+    ],
+    advanced: [
+        'tool_forge',
+        'plugin_manager',
+        'document_forge',
+        'agent_subagent_orchestrate',
+        'peer_agent_delegate',
+        'code_search_ast',
+        'code_list_symbols',
+        'pdf_read'
+    ]
 };
-
 export const PACK_NAMES = Object.keys(PACKS);
-
 /**
  * The core tools that ship in EVERY request on a provider with no native
  * schema deferral. The rest of CORE_TOOLS is withheld until the model asks for
  * it with `tool_search`, exactly as a capability pack is.
- *
- * WHY: Anthropic can hold schemas server-side (`defer_loading` +
- * `tool_search_tool_regex`), so on Claude the full core costs nothing to
- * advertise. That is one provider out of eleven. On OpenAI, Gemini, DeepSeek,
- * Qwen, Muse, xAI, Moonshot, Ollama and the two BYOK paths, all 24 core
- * schemas were serialised into every single request — 3,341 tokens, of which a
- * typical turn calls two.
- *
- * WHAT IS IN, AND WHY EXACTLY THESE: read, write, edit, list and search cover
- * every file operation a first turn can need; `sysRun` is the escape hatch that
- * can reach anything the other resident tools cannot; `update_plan` is how a
- * multi-step task announces its plan on step one; `tool_search` is the door to
- * deferred tools. `request_decision` is injected on the first turn only when
- * task policy detects an unresolved durable choice. With this set the agent is
- * never stuck — worst case it spends one call
- * discovering the tool it wants, and the tool it discovers stays loaded for the
- * rest of the task.
- *
- * WHAT WITHHOLDING DOES NOT DO: it does not remove capability. `resolveTool()`
- * still resolves a withheld core tool by name, so a model that calls one from
- * memory simply gets it. Only the schema is absent, never the tool.
  */
 export const RESIDENT_TOOLS = [
-  'fs_read',
-  'fs_write',
-  'fs_edit',
-  'fs_list',
-  'fs_search',
-  'sysRun',
-  'update_plan',
-  'tool_search'
+    'fs_read',
+    'fs_write',
+    'fs_edit',
+    'fs_list',
+    'fs_search',
+    'sysRun',
+    'update_plan',
+    'tool_search'
 ];
-
 const RESIDENT_TOOL_SET = new Set(RESIDENT_TOOLS);
-
 /** True when this core tool ships in every request even without native deferral. */
 export function isResidentTool(toolName) {
-  return RESIDENT_TOOL_SET.has(toolName);
+    return RESIDENT_TOOL_SET.has(toolName);
 }
-
 // A tool may legitimately belong to more than one pack — check_system_specs is
 // Stage 1 of the game cascade and Stage 2 of the media hierarchy — so
 // membership is a set, not a single value.
 const TOOL_TO_PACKS = (() => {
-  const map = new Map();
-  for (const packName of PACK_NAMES) {
-    for (const toolName of PACKS[packName]) {
-      if (!map.has(toolName)) map.set(toolName, new Set());
-      map.get(toolName).add(packName);
+    const map = new Map();
+    for (const packName of PACK_NAMES) {
+        for (const toolName of PACKS[packName]) {
+            let set = map.get(toolName);
+            if (!set) {
+                set = new Set();
+                map.set(toolName, set);
+            }
+            set.add(packName);
+        }
     }
-  }
-  return map;
+    return map;
 })();
-
 const CORE_TOOL_SET = new Set(CORE_TOOLS);
-
 /** Every pack a tool belongs to. Empty for core and forged tools. */
 export function packsForTool(toolName) {
-  return TOOL_TO_PACKS.get(toolName) || null;
+    return TOOL_TO_PACKS.get(toolName) || null;
 }
-
 /** Primary pack for a tool, or 'core' if it is always loaded. */
 export function packForTool(toolName) {
-  if (CORE_TOOL_SET.has(toolName)) return 'core';
-  const packs = TOOL_TO_PACKS.get(toolName);
-  return packs ? [...packs][0] : null;
+    if (CORE_TOOL_SET.has(toolName))
+        return 'core';
+    const packs = TOOL_TO_PACKS.get(toolName);
+    return packs ? ([...packs][0] ?? null) : null;
 }
-
 export function isCoreTool(toolName) {
-  return CORE_TOOL_SET.has(toolName);
+    return CORE_TOOL_SET.has(toolName);
 }
-
 // ---------------------------------------------------------------------------
 // Pack playbooks. These were previously hardcoded into the always-on
 // SYSTEM_PROMPT, costing every task ~2,000 tokens of instructions about game
 // cascades and media hierarchies it would never use. They now travel with their
 // pack, so they arrive exactly when they become relevant.
 // ---------------------------------------------------------------------------
-
 export const PACK_PLAYBOOKS = {
-  web: `# FRONTEND ENGINEERING MANDATE (CREATIVE DIVERSITY ENGINE)
+    web: `# FRONTEND ENGINEERING MANDATE (CREATIVE DIVERSITY ENGINE)
 When building websites, UIs, dashboards, or web applications, follow this design system hierarchy:
 ## Design System Selection
 1. **If the user specifies a design system** (Tailwind, Material-UI, Astryx, etc.) — use it without question.
@@ -228,8 +194,7 @@ You MUST produce visually UNIQUE output on every project. Specifically:
 - **REQUIRED**: After building, use 'screenshot' or 'browser_act' to VISUALLY VERIFY your work. If it looks like every other AI-generated site, tear it down and rebuild with a different approach.
 - **REQUIRED**: Once the design is finished, call 'memory_write' with the creativePattern argument (project, designApproach, colorPalette, fonts). This is what lets the next project deliberately differ from this one instead of drifting back into the same house style.
 - **ENFORCED, NOT ADVISORY**: every HTML/CSS file you write is read back and scored by an automatic gate before the task can finish (src/slopDetector.js). It looks for the stock gradient hexes, purple-to-blue ramps, placeholder marketing copy, emoji used as icons, default-only typography, the centered-hero/3-cards/"Get Started" skeleton and the stock soft shadow. Score too high and you will be sent back to rebuild with a named design movement. Design it properly the first time; the gate is not fooled by swapping one gradient for another.`,
-
-  media: `# Media Generation Protocol (Sovereign 5-Stage Hierarchy & Seamless Consent Routing)
+    media: `# Media Generation Protocol (Sovereign 5-Stage Hierarchy & Seamless Consent Routing)
 
 ## Native engine-first for file media work
 For editing or producing media from files in the workspace, check \`native_engine\` status first; engines are added one at a time, starting with film. If the engine is missing, explain the download and ask before calling \`install\` with \`confirm: true\`. When the needed engine is installed, use \`catalog\` -> \`execute\` or \`batch\`. Pass \`project\` to edit an existing document or \`saveAs\` for a new one, then \`render\` a preview and inspect it before exporting. Engines are headless: never use MCP servers, \`computer_use\`, or screenshots to drive them. The generation chain below applies only when no native engine capability exists or the user explicitly asks for generated media.
@@ -346,191 +311,133 @@ Blender genuinely missing. Then say so plainly, offer the two options — instal
 with \`execute_procedural_media\` — and let the user choose. Never start a large
 download on your own initiative.
 `,
-
-  game: `# Sovereign Game Development Cascade & Enforcement Engine
+    game: `# Sovereign Game Development Cascade & Enforcement Engine
 When the user asks you to build, create, test, expand, or develop a game, follow these rules:
 
 - **Browser / Three.js / WebGL / Python Games**: If the user explicitly requests a Three.js, WebGL, Canvas, HTML5, or Python game (or mentions libraries like Three.js, 3js, NumPy, Pygame), you do NOT need Godot. Build the game directly in HTML/JS/CSS or Python using \`fs_write\` (or \`file_write\`) and run/verify using \`sysRun\` or \`game_build_html5\`.
 - **Godot / Full Engine Games**: When building a full engine game (Godot), follow the 7-stage production methodology using \`godot_act\`, \`game_lore_forge\`, \`game_asset_harvest\`, \`game_scene_build\`, and verify with \`game_web_runtime_inspector\` and \`game_canvas_audit\`.`
 };
-
 // ---------------------------------------------------------------------------
 // Intent routing.
-//
-// The previous implementation used bare substring matching, which produced
-// catastrophic false positives: 'ui' matched "build", "quick" and
-// "requirements"; 'race' matched "trace". Those false positives triggered
-// completion-blocking guards that forced dozens of extra LLM round trips on
-// tasks that had nothing to do with games or web UI.
 //
 // Every matcher below is anchored on word boundaries and tested against the
 // raw prompt only.
 // ---------------------------------------------------------------------------
-
 const GAME_INTENT = /\b(game|games|gamedev|godot|unity|unreal|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight)\b|\.(tscn|gd)\b/i;
-
-const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component|three\.?js|threejs|webgl|canvas|babylon)\b/i;
-
+const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component|three?\.?js|three?js|webgl|canvas|babylon)\b/i;
 const MEDIA_INTENT = /\b(image|images|picture|photo|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
-
 const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
-
 const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
-
 const INTENT_MATCHERS = {
-  game: GAME_INTENT,
-  web: WEB_INTENT,
-  media: MEDIA_INTENT,
-  system: SYSTEM_INTENT,
-  advanced: ADVANCED_INTENT
+    game: GAME_INTENT,
+    web: WEB_INTENT,
+    media: MEDIA_INTENT,
+    system: SYSTEM_INTENT,
+    advanced: ADVANCED_INTENT
 };
-
 /** True when the prompt genuinely describes game development work. */
 export function isGameIntent(prompt) {
-  return GAME_INTENT.test(prompt || '');
+    return GAME_INTENT.test(prompt || '');
 }
-
 /** True when the prompt genuinely describes web/UI work. */
 export function isWebIntent(prompt) {
-  return WEB_INTENT.test(prompt || '');
+    return WEB_INTENT.test(prompt || '');
 }
-
 /**
  * Decide which packs to unlock before the first LLM call, so the common case
  * costs zero discovery round trips.
- *
- * @param {string} prompt            The user's task text.
- * @param {object} workspaceContext  Optional perception output; its detected
- *                                   frameworks and files are strong signals.
- * @returns {string[]} pack names to unlock
  */
 export function routePacks(prompt, workspaceContext = null) {
-  const unlocked = new Set();
-  const text = prompt || '';
-
-  for (const packName of PACK_NAMES) {
-    if (INTENT_MATCHERS[packName].test(text)) {
-      unlocked.add(packName);
+    const unlocked = new Set();
+    const text = prompt || '';
+    for (const packName of PACK_NAMES) {
+        if (INTENT_MATCHERS[packName].test(text)) {
+            unlocked.add(packName);
+        }
     }
-  }
-
-  // Workspace signals. A Godot project on disk is far more reliable evidence of
-  // game work than any keyword, and a detected web framework means the agent
-  // will eventually need to look at what it built.
-  if (workspaceContext) {
-    const signals = [
-      workspaceContext.framework,
-      workspaceContext.projectType,
-      workspaceContext.designSystem,
-      Array.isArray(workspaceContext.keyFiles) ? workspaceContext.keyFiles.join(' ') : ''
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
-
-    if (/godot|project\.godot|unity|\.tscn/.test(signals)) unlocked.add('game');
-    if (/react|vue|svelte|next|nuxt|astro|angular|tailwind|vite|html/.test(signals)) unlocked.add('web');
-  }
-
-  return [...unlocked];
+    // Workspace signals. A Godot project on disk is far more reliable evidence of
+    // game work than any keyword, and a detected web framework means the agent
+    // will eventually need to look at what it built.
+    if (workspaceContext) {
+        const signals = [
+            workspaceContext.framework,
+            workspaceContext.projectType,
+            workspaceContext.designSystem,
+            Array.isArray(workspaceContext.keyFiles) ? workspaceContext.keyFiles.join(' ') : ''
+        ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+        if (/godot|project\.godot|unity|\.tscn/.test(signals))
+            unlocked.add('game');
+        if (/react|vue|svelte|next|nuxt|astro|angular|tailwind|vite|html/.test(signals))
+            unlocked.add('web');
+    }
+    return [...unlocked];
 }
-
 /**
  * Resolve the tool schemas that should enter the context window.
  * Core tools always load; pack tools load only once their pack is unlocked.
- *
- * Ordering is APPEND-ONLY and this matters a great deal for cost. Every
- * provider's prompt cache binds on an identical prefix, and tool definitions
- * sit at the very front of that prefix — so if unlocking a pack mid-task
- * reshuffles the array, the cache is invalidated from the first changed byte
- * onward, taking the system prompt and the whole message history with it.
- * Sorting pack tools alphabetically did exactly that: unlocking `system`
- * inserted `archive` ahead of `astryx_oracle` and truncated the stable prefix
- * to 82%. Ordering by unlock sequence instead keeps 100% of the previously
- * cached prefix intact and appends only the new tail.
- *
- * @param {Array}  allDefinitions  Full TOOL_DEFINITIONS list.
- * @param {Set}    unlockedPacks   Pack names unlocked for this task.
- * @param {Set}    unlockedTools   Individually unlocked tool names.
- * @param {Array}  unlockOrder     Pack names in the order they were unlocked.
- * @returns {Array} filtered definitions, deterministically ordered
  */
 export function resolveActiveTools(allDefinitions, unlockedPacks, unlockedTools, unlockOrder = null, options = {}) {
-  const packs = unlockedPacks || new Set();
-  const tools = unlockedTools || new Set();
-  // Providers with native schema deferral (Anthropic) leave this off — server
-  // side deferral is strictly better, since it costs no discovery round trip.
-  const residentOnly = options.residentOnly === true;
-
-  const active = allDefinitions.filter(def => {
-    if (isCoreTool(def.name)) {
-      if (!residentOnly) return true;
-      return isResidentTool(def.name) || tools.has(def.name);
-    }
-    if (tools.has(def.name)) return true;
-    if (def.xCausyneDeferred === true) return false;
-    const memberOf = packsForTool(def.name);
-    // A native tool with no declared pack stays available. Manifest plugins are
-    // marked xCausyneDeferred and enter through tool_search, so enabling many
-    // plugins does not permanently spend their schemas on unrelated tasks.
-    if (!memberOf) return true;
-    for (const pack of memberOf) {
-      if (packs.has(pack)) return true;
-    }
-    return false;
-  });
-
-  // The stable head of the array. Without residentOnly that is the whole core;
-  // with it, only the resident subset — and that distinction matters for the
-  // prompt cache, not just for token count.
-  //
-  // A core tool unlocked mid-task must NOT be slotted back into its CORE_TOOLS
-  // position: that inserts into the middle of the array and invalidates the
-  // cached prefix from that point on, every time. It is appended to the tail
-  // below instead, so the head stays byte-identical for the whole task.
-  const isHead = (name) => !residentOnly || isResidentTool(name);
-  const coreFirst = active.filter(d => isCoreTool(d.name) && isHead(d.name));
-  coreFirst.sort((a, b) => CORE_TOOLS.indexOf(a.name) - CORE_TOOLS.indexOf(b.name));
-
-  // Pack tools grouped by unlock sequence, alphabetical only within a group so
-  // the tail added by any single unlock is itself deterministic.
-  const sequence = Array.isArray(unlockOrder) && unlockOrder.length > 0
-    ? unlockOrder
-    : [...packs];
-  const rankOfPack = new Map(sequence.map((name, index) => [name, index]));
-
-  const rankOf = (def) => {
-    // A non-resident core tool the model discovered via tool_search. Ranked
-    // ahead of every pack so the tail stays grouped, but behind the fixed head.
-    if (isCoreTool(def.name)) return -1;
-    const memberOf = packsForTool(def.name);
-    if (!memberOf) return Number.MAX_SAFE_INTEGER; // forged tools last
-    let best = Number.MAX_SAFE_INTEGER;
-    for (const pack of memberOf) {
-      const rank = rankOfPack.get(pack);
-      if (rank !== undefined && rank < best) best = rank;
-    }
-    return best;
-  };
-
-  const rest = active.filter(d => !isCoreTool(d.name) || !isHead(d.name));
-  rest.sort((a, b) => {
-    const diff = rankOf(a) - rankOf(b);
-    return diff !== 0 ? diff : a.name.localeCompare(b.name);
-  });
-
-  return [...coreFirst, ...rest];
+    const packs = unlockedPacks instanceof Set ? unlockedPacks : new Set(unlockedPacks || []);
+    const tools = unlockedTools instanceof Set ? unlockedTools : new Set(unlockedTools || []);
+    const residentOnly = options.residentOnly === true;
+    const active = allDefinitions.filter(def => {
+        if (isCoreTool(def.name)) {
+            if (!residentOnly)
+                return true;
+            return isResidentTool(def.name) || tools.has(def.name);
+        }
+        if (tools.has(def.name))
+            return true;
+        if (def.xCausyneDeferred === true)
+            return false;
+        const memberOf = packsForTool(def.name);
+        if (!memberOf)
+            return true;
+        for (const pack of memberOf) {
+            if (packs.has(pack))
+                return true;
+        }
+        return false;
+    });
+    const isHead = (name) => !residentOnly || isResidentTool(name);
+    const coreFirst = active.filter(d => isCoreTool(d.name) && isHead(d.name));
+    coreFirst.sort((a, b) => CORE_TOOLS.indexOf(a.name) - CORE_TOOLS.indexOf(b.name));
+    const sequence = Array.isArray(unlockOrder) && unlockOrder.length > 0
+        ? unlockOrder
+        : [...packs];
+    const rankOfPack = new Map(sequence.map((name, index) => [name, index]));
+    const rankOf = (def) => {
+        if (isCoreTool(def.name))
+            return -1;
+        const memberOf = packsForTool(def.name);
+        if (!memberOf)
+            return Number.MAX_SAFE_INTEGER;
+        let best = Number.MAX_SAFE_INTEGER;
+        for (const pack of memberOf) {
+            const rank = rankOfPack.get(pack);
+            if (rank !== undefined && rank < best)
+                best = rank;
+        }
+        return best;
+    };
+    const rest = active.filter(d => !isCoreTool(d.name) || !isHead(d.name));
+    rest.sort((a, b) => {
+        const diff = rankOf(a) - rankOf(b);
+        return diff !== 0 ? diff : a.name.localeCompare(b.name);
+    });
+    return [...coreFirst, ...rest];
 }
-
 /** Human-readable catalogue injected into the system prompt so the model knows what it can unlock. */
 export function getPackCatalogue(unlockedPacks) {
-  const packs = unlockedPacks || new Set();
-  const lines = PACK_NAMES.map(name => {
-    const state = packs.has(name) ? 'LOADED' : 'available';
-    return `- ${name} (${PACKS[name].length} tools, ${state})`;
-  });
-
-  return `# EXTENDED CAPABILITY PACKS
+    const packs = unlockedPacks instanceof Set ? unlockedPacks : new Set(unlockedPacks || []);
+    const lines = PACK_NAMES.map(name => {
+        const state = packs.has(name) ? 'LOADED' : 'available';
+        return `- ${name} (${PACKS[name].length} tools, ${state})`;
+    });
+    return `# EXTENDED CAPABILITY PACKS
 Beyond the tools currently in your context you have access to specialised capability packs. Nothing is disabled — packs load on demand to keep your context focused.
 ${lines.join('\n')}
 To load a pack, call \`tool_search\` with a query describing what you need (for example "godot scene", "generate music", "kill process on port"). The matching tool schemas become available immediately on your next turn. Never claim a capability is missing without searching first.`;

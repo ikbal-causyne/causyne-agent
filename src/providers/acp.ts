@@ -10,6 +10,7 @@ import type { RequestPermissionRequest, SessionUpdate } from '../acp/protocol.js
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
+import { extractToolCallJsonObjects, stripToolCallMarkup } from '../implementationPlan.js';
 
 interface AcpTransportSnapshot {
   conversationId: string;
@@ -43,7 +44,10 @@ export class AcpProvider extends LLMProvider {
   private currentTurnChunkHandler: ((chunk: string) => void) | null = null;
   private currentTurnReasoningHandler: ((chunk: string) => void) | null = null;
   private currentTurnNativeActionHandler: ((action: ChatResponseAction) => void) | null = null;
+  private currentTurnPlanHandler: ((plan: unknown) => void) | null = null;
   private readonly liveFileActions = new Map<string, ChatResponseAction>();
+  private readonly turnActions = new Map<string, ChatResponseAction>();
+  private turnReasoning = '';
   private transportSnapshot: AcpTransportSnapshot | null = null;
   private peerServices: ChatOptions | null = null;
 
@@ -94,7 +98,17 @@ export class AcpProvider extends LLMProvider {
 
   formatConversation(messages: any[], tools: any[] = []): string {
     const lines: string[] = [];
-    lines.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Use the negotiated ACP capabilities and preserve configured native tools, MCPs, skills, and project settings. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns results back to you, preserving your full reasoning and ACP capabilities. ' + PEER_COLLABORATION_POLICY + '\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.');
+    lines.push(
+      '[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Use the negotiated ACP capabilities and preserve configured native tools, MCPs, skills, and project settings. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns results back to you, preserving your full reasoning and ACP capabilities. ' +
+      PEER_COLLABORATION_POLICY +
+      '\n\n[ACP Tool Routing & Workspace Boundary Rules]\n' +
+      '1. NATIVE FUNCTION CHANNEL vs CAUSYNE HOST XML CHANNEL:\n' +
+      '   - Your native function-calling channel ONLY accepts your own native tools (such as `read`, `write`, `edit`, `bash`, `glob`, `grep`, `todowrite`, and configured MCP tools). Use your native tools directly for workspace file reads/writes, shell commands, and todo checklists (use `todowrite` if available instead of calling `update_plan` as a native function).\n' +
+      '   - Causyne host tools listed under [Available Tools] / [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
+      '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
+      '2. WORKSPACE PATH BOUNDARY (NO /tmp):\n' +
+      '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.'
+    );
 
     if (tools && tools.length > 0) {
       const toolSummaries = formatToolContracts(tools);
@@ -158,7 +172,17 @@ export class AcpProvider extends LLMProvider {
     };
 
     if (includeBridgeInstructions) {
-      pending.push('[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Use the negotiated ACP capabilities and preserve configured native tools, MCPs, skills, and project settings. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns results back to you, preserving your full reasoning and ACP capabilities. ' + PEER_COLLABORATION_POLICY);
+      pending.push(
+        '[System Instructions]\nYou are collaborating with Causyne Agent over the Agent Client Protocol (ACP). Use the negotiated ACP capabilities and preserve configured native tools, MCPs, skills, and project settings. When requesting workspace tools from the Causyne host, format your calls as:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\nCausyne Agent coordinates, validates, and executes the tools in the active workspace and returns results back to you, preserving your full reasoning and ACP capabilities. ' +
+        PEER_COLLABORATION_POLICY +
+        '\n\n[ACP Tool Routing & Workspace Boundary Rules]\n' +
+        '1. NATIVE FUNCTION CHANNEL vs CAUSYNE HOST XML CHANNEL:\n' +
+        '   - Your native function-calling channel ONLY accepts your own native tools (such as `read`, `write`, `edit`, `bash`, `glob`, `grep`, `todowrite`, and configured MCP tools). Use your native tools directly for workspace file reads/writes, shell commands, and todo checklists (use `todowrite` if available instead of calling `update_plan` as a native function).\n' +
+        '   - Causyne host tools listed under [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
+        '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
+        '2. WORKSPACE PATH BOUNDARY (NO /tmp):\n' +
+        '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.'
+      );
     }
 
     if (tools && tools.length > 0) {
@@ -230,81 +254,29 @@ export class AcpProvider extends LLMProvider {
   extractToolCalls(text: string): ChatResponseToolCall[] {
     const calls: ChatResponseToolCall[] = [];
     if (!text || typeof text !== 'string') return calls;
-    const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
-    let match: RegExpExecArray | null;
     let index = 0;
-    while ((match = regex.exec(text)) !== null) {
-      try {
-        const raw = match[1]?.trim() || '';
-        const parsed = JSON.parse(raw);
-        const name = parsed.name || parsed.tool || parsed.function?.name;
-        if (name) {
-          const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-          calls.push({
-            id: `acp_call_${Date.now()}_${index++}`,
-            type: 'function',
-            function: {
-              name,
-              arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-            }
-          });
+    for (const parsed of extractToolCallJsonObjects(text)) {
+      const fnObj = parsed.function && typeof parsed.function === 'object'
+        ? (parsed.function as Record<string, unknown>)
+        : null;
+      const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
+      if (!name) continue;
+      const rawArgs = parsed.arguments !== undefined
+        ? parsed.arguments
+        : parsed.parameters !== undefined
+          ? parsed.parameters
+          : parsed.input !== undefined
+            ? parsed.input
+            : (fnObj?.arguments ?? {});
+      calls.push({
+        id: `acp_call_${Date.now()}_${index++}`,
+        type: 'function',
+        function: {
+          name,
+          arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
         }
-      } catch {
-        // ignore malformed tool_call blocks
-      }
+      });
     }
-
-    if (calls.length === 0) {
-      const fenceRegex = /```(?:tool_call|json)?\s*(\{[\s\S]*?"name"\s*:\s*[\s\S]*?\})\s*```/g;
-      while ((match = fenceRegex.exec(text)) !== null) {
-        try {
-          const raw = match[1]?.trim() || '';
-          const parsed = JSON.parse(raw);
-          const name = parsed.name || parsed.tool || parsed.function?.name;
-          if (name) {
-            const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-            calls.push({
-              id: `acp_call_${Date.now()}_${index++}`,
-              type: 'function',
-              function: {
-                name,
-                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-              }
-            });
-          }
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    if (calls.length === 0) {
-      const openIndex = text.lastIndexOf('<tool_call>');
-      if (openIndex !== -1 && text.indexOf('</tool_call>', openIndex) === -1) {
-        const partial = text.slice(openIndex + '<tool_call>'.length).trim();
-        for (const suffix of ['', '}', '}}', '}}}', '"}', '"}}', '"}}}', '"}]}}', '"]}}', '"]}}}']) {
-          try {
-            const parsed = JSON.parse(partial + suffix);
-            const name = parsed.name || parsed.tool || parsed.function?.name;
-            if (name) {
-              const rawArgs = parsed.arguments !== undefined ? parsed.arguments : (parsed.parameters !== undefined ? parsed.parameters : (parsed.input !== undefined ? parsed.input : (parsed.function?.arguments || {})));
-              calls.push({
-                id: `acp_call_${Date.now()}_0`,
-                type: 'function',
-                function: {
-                  name,
-                  arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-                }
-              });
-              break;
-            }
-          } catch {
-            // try next candidate
-          }
-        }
-      }
-    }
-
     return calls;
   }
 
@@ -330,11 +302,40 @@ export class AcpProvider extends LLMProvider {
       },
       fsReadHandler: async (file, options) => {
         if (!this.peerServices?.onPeerFileRead) throw new Error('The ACP client has no file-read service attached');
-        return this.peerServices.onPeerFileRead(file, options);
+        const content = await this.peerServices.onPeerFileRead(file, options);
+        this.currentTurnSawAction = true;
+        const hasTrackedRead = [...this.turnActions.values()].some(
+          a => a.name === 'fs_read' && (a.detail === file || a.parameters?.path === file)
+        );
+        if (!hasTrackedRead) {
+          const synthId = `fs_read:${file}`;
+          this.turnActions.set(synthId, {
+            id: `acp:${synthId}`,
+            name: 'fs_read',
+            status: 'completed',
+            parameters: { path: file },
+            detail: file
+          });
+        }
+        return content;
       },
       fsWriteHandler: async (file, content) => {
         if (!this.peerServices?.onPeerFileWrite) throw new Error('The ACP client has no file-write service attached');
         await this.peerServices.onPeerFileWrite(file, content);
+        this.currentTurnSawAction = true;
+        const hasTrackedWrite = [...this.turnActions.values()].some(
+          a => (a.name === 'fs_write' || a.name === 'fs_edit') && (a.detail === file || a.parameters?.path === file)
+        );
+        if (!hasTrackedWrite) {
+          const synthId = `fs_write:${file}`;
+          this.turnActions.set(synthId, {
+            id: `acp:${synthId}`,
+            name: 'fs_write',
+            status: 'completed',
+            parameters: { path: file, content },
+            detail: file
+          });
+        }
       },
       onUpdate: (_sessionId: string, update: SessionUpdate) => {
         if (this.currentTurnAborted) return;
@@ -342,37 +343,144 @@ export class AcpProvider extends LLMProvider {
           const updateObj = update as any;
           if (updateObj.sessionUpdate === 'agent_thought_chunk') {
             const thought = updateObj.content?.text || updateObj.thought || (typeof updateObj.content === 'string' ? updateObj.content : '');
-            if (thought && this.currentTurnReasoningHandler) {
-              this.currentTurnReasoningHandler(thought);
+            if (thought) {
+              this.turnReasoning += thought;
+              if (this.currentTurnReasoningHandler) {
+                this.currentTurnReasoningHandler(thought);
+              }
             }
           } else if (updateObj.sessionUpdate === 'agent_message_chunk') {
             const text = updateObj.content?.type === 'text' ? updateObj.content.text : '';
             if (text && this.currentTurnChunkHandler) this.currentTurnChunkHandler(text);
+          } else if (updateObj.sessionUpdate === 'plan') {
+            if (Array.isArray(updateObj.entries) && updateObj.entries.length > 0) {
+              this.currentTurnPlanHandler?.({ entries: updateObj.entries });
+            }
           } else if (updateObj.sessionUpdate === 'tool_call' || updateObj.sessionUpdate === 'tool_call_update') {
             this.currentTurnSawAction = true;
             const id = String(updateObj.toolCallId || '');
-            const earlier = this.liveFileActions.get(id);
-            const kind = updateObj.kind || (earlier?.name === 'fs_edit' ? 'edit' : earlier?.name === 'fs_delete' ? 'delete' : earlier?.name === 'fs_move' ? 'move' : '');
-            const name = kind === 'edit' ? 'fs_edit' : kind === 'delete' ? 'fs_delete' : kind === 'move' ? 'fs_move'
-              : kind === 'read' ? 'fs_read' : kind === 'search' ? 'codebase_search' : kind === 'fetch' ? 'web_fetch'
-              : kind === 'execute' ? 'sysRun' : String(updateObj.title || earlier?.name || 'provider_tool');
+            const earlier = this.liveFileActions.get(id) || this.turnActions.get(id);
+            const earlierKind = earlier?.name === 'fs_edit' ? 'edit'
+              : earlier?.name === 'fs_delete' ? 'delete'
+              : earlier?.name === 'fs_move' ? 'move'
+              : earlier?.name === 'fs_read' ? 'read'
+              : earlier?.name === 'codebase_search' ? 'search'
+              : earlier?.name === 'web_fetch' ? 'fetch'
+              : earlier?.name === 'sysRun' ? 'execute'
+              : '';
+            const kind = updateObj.kind || earlierKind;
+            const rawTitle = String(updateObj.title || '').trim();
+            const input = updateObj.rawInput && typeof updateObj.rawInput === 'object' ? updateObj.rawInput : {};
+            const rawOutputObj = updateObj.rawOutput && typeof updateObj.rawOutput === 'object'
+              ? updateObj.rawOutput as Record<string, any>
+              : null;
+            const hasTodoPayload = Array.isArray((input as any).todos)
+              || Array.isArray((earlier?.parameters as any)?.todos)
+              || Array.isArray(rawOutputObj?.todos)
+              || Array.isArray(rawOutputObj?.metadata?.todos)
+              || /^\d+\s+todos?$/i.test(rawTitle);
+            const name = kind === 'edit' ? 'fs_edit'
+              : kind === 'delete' ? 'fs_delete'
+              : kind === 'move' ? 'fs_move'
+              : kind === 'read' ? 'fs_read'
+              : kind === 'search' ? 'codebase_search'
+              : kind === 'fetch' ? 'web_fetch'
+              : kind === 'execute' ? 'sysRun'
+              : hasTodoPayload ? 'todowrite'
+              : (earlier?.name && earlier.name !== 'provider_tool' ? earlier.name : (rawTitle || 'provider_tool'));
             if (name && id) {
               const diff = Array.isArray(updateObj.content)
                 ? updateObj.content.find((item: any) => item?.type === 'diff')
                 : null;
-              const input = updateObj.rawInput && typeof updateObj.rawInput === 'object' ? updateObj.rawInput : {};
+              const isInvalidPseudoTool = rawTitle.toLowerCase() === 'invalid'
+                || earlier?.parameters?.__invalidTool === true
+                || (typeof input.error === 'string' && input.error.length > 0 && typeof input.tool === 'string');
+              if (isInvalidPseudoTool) {
+                this.liveFileActions.delete(id);
+                this.turnActions.delete(id);
+                return;
+              }
+              const locationPath = updateObj.locations?.[0]?.path;
+              const inputPath = typeof input.path === 'string' ? input.path
+                : typeof input.filePath === 'string' ? input.filePath
+                : typeof input.file === 'string' ? input.file
+                : '';
+              const resolvedPath = name === 'sysRun'
+                ? ''
+                : (diff?.path || locationPath || inputPath || (typeof earlier?.parameters?.path === 'string' ? earlier.parameters.path : ''));
               const parameters: Record<string, unknown> = {
-                ...(earlier?.parameters || {}), ...input,
-                ...(diff?.path ? { path: diff.path } : {}),
-                ...(diff?.newText ? { content: diff.newText } : {}),
-                ...(updateObj.locations?.[0]?.path ? { path: updateObj.locations[0].path } : {})
+                ...(earlier?.parameters || {}),
+                ...input,
+                ...(resolvedPath ? { path: resolvedPath } : {}),
+                ...(diff?.newText ? { content: diff.newText } : {})
               };
+              const planCandidate = Array.isArray((parameters as any).todos) ? { todos: (parameters as any).todos }
+                : Array.isArray((parameters as any).plan) ? { plan: (parameters as any).plan }
+                : Array.isArray(rawOutputObj?.todos) ? { todos: rawOutputObj.todos }
+                : Array.isArray(rawOutputObj?.metadata?.todos) ? { todos: rawOutputObj.metadata.todos }
+                : null;
+              if (planCandidate) {
+                this.currentTurnPlanHandler?.(planCandidate);
+              }
+              const commandDetail = typeof parameters.command === 'string' ? parameters.command
+                : typeof parameters.cmd === 'string' ? parameters.cmd
+                : '';
+              const rawToolCandidate = typeof (parameters as any).tool === 'string' ? (parameters as any).tool
+                : typeof (input as any).tool === 'string' ? (input as any).tool
+                : '';
+              const isInvalidToolAttempt = rawToolCandidate.toLowerCase() === 'invalid'
+                || rawTitle.toLowerCase() === 'invalid'
+                || rawTitle.toLowerCase() === 'invalid tool'
+                || name.toLowerCase() === 'invalid tool'
+                || name.toLowerCase() === 'invalid'
+                || (typeof parameters.error === 'string' && /Model tried to call unavailable tool/i.test(parameters.error));
+              if (isInvalidToolAttempt || (name === 'sysRun' && (commandDetail.trim() === 'true' || commandDetail.trim() === ':'))) {
+                this.liveFileActions.delete(id);
+                this.turnActions.delete(id);
+                return;
+              }
+              const queryDetail = typeof parameters.query === 'string' ? parameters.query
+                : typeof parameters.pattern === 'string' ? parameters.pattern
+                : typeof parameters.url === 'string' ? parameters.url
+                : '';
+              const titleIsGeneric = !rawTitle
+                || /^(read|write|edit|multiedit|delete|move|search|grep|glob|fetch|execute|bash|sh|zsh|terminal|provider_tool)$/i.test(rawTitle)
+                || rawTitle.toLowerCase() === name.toLowerCase();
+              const detail = String(
+                commandDetail
+                || resolvedPath
+                || queryDetail
+                || (!titleIsGeneric ? rawTitle : '')
+                || earlier?.detail
+                || ''
+              );
               const status = updateObj.status === 'completed' ? 'completed' : updateObj.status === 'failed' ? 'failed' : 'running';
-              const action: ChatResponseAction = { id: `acp:${id}`, name, status, parameters,
-                detail: String(parameters.path || updateObj.title || '') };
+              const isEmptyPendingStub = updateObj.status === 'pending'
+                && !detail
+                && Object.keys(input).length === 0
+                && !diff?.newText
+                && !planCandidate;
+              const action: ChatResponseAction = {
+                id: `acp:${id}`,
+                name,
+                status,
+                parameters: { ...parameters, __pendingStub: isEmptyPendingStub },
+                detail
+              };
+              const shouldNotify = !isEmptyPendingStub && (
+                !earlier
+                || earlier.parameters?.__pendingStub === true
+                || earlier.status !== status
+                || earlier.name !== name
+                || earlier.detail !== detail
+                || Boolean(diff?.newText && diff.newText !== earlier?.parameters?.content)
+              );
+              this.turnActions.set(id, action);
               if (status === 'running') this.liveFileActions.set(id, action);
               else this.liveFileActions.delete(id);
-              this.currentTurnNativeActionHandler?.(action);
+              if (shouldNotify) {
+                this.currentTurnNativeActionHandler?.(action);
+              }
             }
           } else if ('textDelta' in updateObj) {
             const delta = updateObj.textDelta;
@@ -448,6 +556,7 @@ export class AcpProvider extends LLMProvider {
     this.currentTurnChunkHandler = null;
     this.currentTurnReasoningHandler = null;
     this.currentTurnNativeActionHandler = null;
+    this.currentTurnPlanHandler = null;
     this.liveFileActions.clear();
     if (this.activeClient && this.activeSessionId) {
       try {
@@ -485,7 +594,10 @@ export class AcpProvider extends LLMProvider {
     this.currentTurnChunkHandler = options.onChunk || null;
     this.currentTurnReasoningHandler = options.onReasoningChunk || null;
     this.currentTurnNativeActionHandler = options.onNativeAction || null;
+    this.currentTurnPlanHandler = options.onPlanUpdate || null;
     this.liveFileActions.clear();
+    this.turnActions.clear();
+    this.turnReasoning = '';
     const onAbort = (): void => {
       this.abort();
     };
@@ -528,13 +640,17 @@ export class AcpProvider extends LLMProvider {
         // duplicate the peer's own response before the next tool result.
         const firstNew = newHistory[0];
         if (firstNew?.role === 'assistant' &&
-            firstNew.content === previous.lastResponse.content &&
+            (firstNew.content === previous.lastResponse.content ||
+             (!previous.lastResponse.content && firstNew.content === 'No final response was provided.')) &&
             fingerprint(firstNew.tool_calls || []) === fingerprint(previous.lastResponse.toolCalls)) {
           newHistory.shift();
         }
+        const filteredNewHistory = newHistory.filter(
+          message => !(message?.role === 'assistant' && message?.content === 'No final response was provided.' && (!message.tool_calls || message.tool_calls.length === 0))
+        );
         promptMessages = [
           ...changedSystem.map(message => ({ ...message, content: `[Current system context — replaces the prior version of this section]\n${message.content}` })),
-          ...newHistory
+          ...filteredNewHistory
         ];
         toolContext = toolContractUpdate(options.tools || [], previous.tools);
         promptTools = [];
@@ -570,16 +686,21 @@ export class AcpProvider extends LLMProvider {
       let rawContent = (result?.text || '').trim();
       const toolCalls = this.extractToolCalls(rawContent);
 
-      // Strip tool call XML from chat content display
-      let content = rawContent.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
+      // Strip tool call XML / DSML from chat content display
+      let content = stripToolCallMarkup(rawContent);
+      const externalActions = [...this.turnActions.values()].map(action => (
+        action.status === 'running' ? { ...action, status: 'completed' as const } : action
+      ));
+      const incompleteFromActions = !content && toolCalls.length === 0 && externalActions.length > 0;
+      const finalContent = content || (toolCalls.length > 0 || incompleteFromActions ? '' : `Turn completed by ${this.peerId} over ACP.`);
 
       this.transportSnapshot = {
         conversationId, workspaceRoot, systemHashes, historyHashes, toolHash, tools: structuredClone(options.tools || []),
-        lastResponse: { content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`), toolCalls }
+        lastResponse: { content: finalContent, toolCalls }
       };
 
       const response: ChatResponse = {
-        content: content || (toolCalls.length > 0 ? '' : `Turn completed by ${this.peerId} over ACP.`),
+        content: finalContent,
         usage: {
           promptTokens: Math.ceil(promptText.length / 4),
           completionTokens: Math.ceil(rawContent.length / 4),
@@ -588,6 +709,12 @@ export class AcpProvider extends LLMProvider {
           cacheMeasurement: 'unavailable'
         }
       };
+      if (externalActions.length > 0) {
+        response.externalActions = externalActions;
+      }
+      if (this.turnReasoning.trim()) {
+        response.reasoningContent = this.turnReasoning;
+      }
       const usage = result?.usage;
       if (usage && Number.isFinite(usage.inputTokens) && usage.inputTokens >= 0
         && Number.isFinite(usage.outputTokens) && usage.outputTokens >= 0) {
@@ -606,7 +733,7 @@ export class AcpProvider extends LLMProvider {
       if (toolCalls.length > 0) {
         response.toolCalls = toolCalls;
       }
-      if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests') {
+      if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || incompleteFromActions) {
         response.incompleteTurn = true;
       }
       return response;
@@ -625,6 +752,7 @@ export class AcpProvider extends LLMProvider {
       this.currentTurnChunkHandler = null;
       this.currentTurnReasoningHandler = null;
       this.currentTurnNativeActionHandler = null;
+      this.currentTurnPlanHandler = null;
       this.liveFileActions.clear();
     }
   }

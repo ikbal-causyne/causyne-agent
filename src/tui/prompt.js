@@ -35,6 +35,7 @@ import { settleStageResize } from './resizeRecovery.js';
 import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { isStartupDialog, startupDialogView } from './homeView.js';
 import { handleMessageMouse, handleMessageActionMenuMouse, isMouseMotion } from './messageInteraction.js';
+import { handleTurnRailMouse } from './turnRail.js';
 import {
   resetTurnInterruptState,
   shouldAcceptStatusUpdate,
@@ -899,6 +900,7 @@ export class ChatPrompt {
     // future case could act on it by accident — and, worse, a terminal that
     // kept reporting after a failed teardown would type into the user's line.
     if (key.name === 'mouse') {
+      if (handleTurnRailMouse(key, this.surface, this)) return true;
       if (this.messageActionLoop && isMouseMotion(key.sequence)) {
         return handleMessageMouse(this, this.messageActionLoop, key);
       }
@@ -953,8 +955,8 @@ export class ChatPrompt {
     // sit at almost the same seam — a footer is immediately followed by the next
     // question — so accepting either made the jump land twice two rows apart
     // instead of once per exchange.
-    if (key.alt && key.name === '<') { viewport.jump(-1, ['user']); return true; }
-    if (key.alt && key.name === '>') { viewport.jump(1, ['user']); return true; }
+    if (key.name === '[' || (key.alt && key.name === '<')) { viewport.jump(-1, ['user']); return true; }
+    if (key.name === ']' || (key.alt && key.name === '>')) { viewport.jump(1, ['user']); return true; }
 
     if (key.alt && key.name === 'u') { this.offerUndo(); return true; }
 

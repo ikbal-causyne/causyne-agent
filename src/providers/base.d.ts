@@ -63,6 +63,7 @@ export interface ChatOptions {
   onChunk?: ((chunk: string) => void) | undefined;
   onReasoningChunk?: ((chunk: string) => void) | undefined;
   onNativeAction?: ((action: ChatResponseAction) => void) | undefined;
+  onPlanUpdate?: ((plan: unknown) => void) | undefined;
   coreToolCount?: number | undefined;
   [key: string]: any;
 }

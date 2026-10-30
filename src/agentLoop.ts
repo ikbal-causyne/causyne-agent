@@ -37,6 +37,7 @@ import {
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
+import { normalizePeerPlanEntries, extractLivePlanFromText } from './implementationPlan.js';
 import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
@@ -170,12 +171,20 @@ export function isCodeAuthoringTaskPrompt(text: string): boolean {
   const t = (text || '').trim();
   if (!t) return false;
   if (isExecutionOrLaunchTaskPrompt(t)) return false;
-  return /\b(create|build|make|write|code|implement|generate|game|3js|threejs|three\.js|app)\b/i.test(t);
+  return /\b(create|build|make|write|code|implement|generate|game|3js|three?\.?js|three?js|app)\b/i.test(t);
 }
 
 export function isDirectGameTask(text: string): boolean {
-  return /\b(three\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
+  return /\b(three?\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
     && !/\b(godot|unity|unreal|full engine)\b/i.test(text);
+}
+
+export function isProviderPlanOrQuotaRefusal(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 320) return false;
+  if (/^upgrade your plan to continue\.?$/i.test(trimmed)) return true;
+  return /\b(upgrade your plan to continue|insufficient[_ ]quota|credit balance is too low|billing hard limit|quota exceeded for|plan limit reached|subscription required to continue)\b/i.test(trimmed);
 }
 
 /**
@@ -578,6 +587,7 @@ export class AgentLoop {
     this._decisionResolved = true;
     this._implementationPlan = [];
     this._implementationPlanRequired = false;
+    this._implementationPlanSeeded = false;
     // A delegated subagent can tighten these two ceilings. They are applied
     // after every config refresh so run() cannot accidentally replace a
     // worker's declared bounds with the parent tier defaults.
@@ -643,6 +653,7 @@ export class AgentLoop {
     this.taskTemperature = 0.1; // Default
     // Set only on a delegated subagent loop; null means "the full catalogue".
     this.toolScope = null;
+    this._inModelCall = false;
   }
 
   /** True when this loop's own conversation scope has a standing approval. */
@@ -712,6 +723,26 @@ export class AgentLoop {
     this.webVerificationScheduled = false;
     this.webVerificationState.browserActUsed = false;
     this.webVerificationState.screenshotTaken = false;
+  }
+
+  recordInspectedWebFile(candidate: unknown): void {
+    if (typeof candidate !== 'string' || !candidate.trim()) return;
+    const matches = candidate.match(/[\w./-]+\.(?:html?|css|jsx|tsx|vue|svelte)\b/gi) || [candidate];
+    for (const rawMatch of matches) {
+      if (!isScannableFile(rawMatch)) continue;
+      const expanded = rawMatch.startsWith('~/')
+        ? path.join(os.homedir(), rawMatch.slice(2))
+        : rawMatch;
+      const resolved = path.resolve(this.workspaceRoot, expanded);
+      try {
+        if (fsSync.existsSync(resolved) && fsSync.statSync(resolved).isFile()) {
+          this.webArtifacts.add(resolved);
+          this.webVerificationState.htmlInspected = true;
+        }
+      } catch {
+        // ignore non-existent paths in shell commands
+      }
+    }
   }
 
   /**
@@ -1053,7 +1084,9 @@ export class AgentLoop {
     const id = `peer-file:${randomUUID()}:${tool}`;
     if (!await this.authorizePeerOperation(tool, args, id)) throw new Error('The requested ACP file operation was not authorized');
     if (tool === 'fs_write') captureBeforeMutation(tool, args, { taskId: this.taskId, step: this.stepsCompleted });
-    this.efficiencyBudget.recordAction();
+    if (!this._inModelCall) {
+      this.efficiencyBudget?.recordAction(`peer-file:${tool}:${target}`);
+    }
     let result: { success: boolean; error?: string; output?: string };
     if (tool === 'fs_read') {
       // ACP expects the actual requested text, not the host tool's paging
@@ -1119,8 +1152,17 @@ export class AgentLoop {
     }
   }
 
-  updateImplementationPlan(update: any) {
-    this._implementationPlan = update.plan.map((item: any) => ({ ...item }));
+  updateImplementationPlan(update: any, options: { seeded?: boolean } = {}) {
+    const nextPlan = update.plan.map((item: any) => ({ ...item }));
+    const prevKey = JSON.stringify(this._implementationPlan.map((item: any) => ({ id: item.id, step: item.step, status: item.status })));
+    const nextKey = JSON.stringify(nextPlan.map((item: any) => ({ id: item.id, step: item.step, status: item.status })));
+    this._implementationPlan = nextPlan;
+    if (options.seeded !== undefined) {
+      this._implementationPlanSeeded = Boolean(options.seeded);
+    } else {
+      this._implementationPlanSeeded = false;
+    }
+    if (prevKey === nextKey) return;
     this.emitEvent({
       type: 'agent_plan',
       explanation: update.explanation || '',
@@ -1131,6 +1173,46 @@ export class AgentLoop {
       steps: this._implementationPlan.length,
       completed: this._implementationPlan.filter((item: any) => item.status === 'completed').length
     });
+  }
+
+  seedTaskPhasePlanIfEmpty(): void {
+    if (this._implementationPlan.length > 0) return;
+    const phases = this.taskShape?.phases;
+    if (!Array.isArray(phases) || phases.length < 2) return;
+    const prompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
+    if (!isActionableTaskPrompt(prompt)) return;
+    const plan = phases.map((phase: any, idx: number) => ({
+      id: `phase-${idx + 1}`,
+      step: String(phase.name || `Step ${idx + 1}`).trim(),
+      status: (idx === 0 ? 'in_progress' : 'pending') as 'in_progress' | 'pending'
+    }));
+    this.updateImplementationPlan({ explanation: this.taskShape?.archetypeLabel || '', plan }, { seeded: true });
+  }
+
+  advanceImplementationPlanProgress(kind: 'mutation' | 'verification' | 'complete') {
+    if (!Array.isArray(this._implementationPlan) || this._implementationPlan.length === 0) return;
+    const keepSeeded = Boolean(this._implementationPlanSeeded);
+    if (kind === 'complete') {
+      if (this._implementationPlan.every((item: any) => item.status === 'completed')) return;
+      this.updateImplementationPlan({
+        explanation: 'Task completed.',
+        plan: this._implementationPlan.map((item: any) => ({ ...item, status: 'completed' }))
+      }, { seeded: keepSeeded });
+      return;
+    }
+    if (this._implementationPlan.length < 2) return;
+    const activeIndex = this._implementationPlan.findIndex((item: any) => item.status === 'in_progress');
+    const currentIndex = activeIndex >= 0 ? activeIndex : 0;
+    const lastIndex = this._implementationPlan.length - 1;
+    const targetIndex = kind === 'verification'
+      ? lastIndex
+      : Math.min(currentIndex + 1, Math.max(0, lastIndex - 1));
+    if (targetIndex <= currentIndex) return;
+    const nextPlan = this._implementationPlan.map((item: any, idx: number) => ({
+      ...item,
+      status: idx < targetIndex ? 'completed' : idx === targetIndex ? 'in_progress' : 'pending'
+    }));
+    this.updateImplementationPlan({ explanation: '', plan: nextPlan }, { seeded: keepSeeded });
   }
 
   async requestDecision(request: any) {
@@ -1165,7 +1247,7 @@ export class AgentLoop {
     if (this._decisionRequirement.required && !this._decisionResolved) {
       return 'ARCHITECTURE_DECISION_REQUIRED: Before changing the system, call request_decision with kind "architecture", 2-4 concrete options, their consequences, and a clear reason. Do not ask about routine details; this checkpoint exists because the current request crosses a durable architecture boundary.';
     }
-    if (this._implementationPlanRequired && this._implementationPlan.length === 0) {
+    if (this._implementationPlanRequired && (this._implementationPlan.length === 0 || this._implementationPlanSeeded)) {
       return 'IMPLEMENTATION_PLAN_REQUIRED: Call update_plan with atomic, verifiable steps and exactly one in_progress step before mutating this complex task.';
     }
     return null;
@@ -1308,6 +1390,7 @@ export class AgentLoop {
     this._lastToolResult = null;
     this._paradigmShiftPending = false;
     this._implementationPlan = [];
+    this._implementationPlanSeeded = false;
     this._decisionAnswers = new Map();
     this._decisionRequirement = assessDecisionRequirement(this.userPrompt || '');
     this._decisionResolved = !this._decisionRequirement.required;
@@ -1540,6 +1623,8 @@ export class AgentLoop {
     // Fresh per task. A digest from a previous task would point at a step
     // number the model can no longer see, which is worse than paying twice.
     this._observationDigests = new Map();
+    this.consecutiveThinkingSteps = 0;
+    this.consecutiveBlockedActions = 0;
     this.consecutiveCommands = 0;
     this.circuitBreakerUnlocked = false;
     this.recentActionSignatures = [];
@@ -1571,6 +1656,7 @@ export class AgentLoop {
     let mediaExplorationRecoveries = 0;
     let reasoningOnlyRecoveries = 0;
     let planHandoffRecoveries = 0;
+    let incompleteTurnContinuations = 0;
 
     // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
     while (!this.stopRequested) {
@@ -1924,6 +2010,7 @@ export class AgentLoop {
           ];
           this.debugLog('request had no user/tool message; re-anchored before sending');
         }
+        this._contextChars = measureMessages(prunedMessages);
 
         // BUDGET CEILING, CHECKED BEFORE SPENDING RATHER THAN AFTER.
         //
@@ -1977,10 +2064,35 @@ export class AgentLoop {
         // 2. PLAN (Call LLM). dynamicTools was resolved above so the task brief
         // could reference the tools actually in context.
         let hasStreamedChunk = false;
+        let streamedTextAccumulated = '';
+        let hasStructuredToolPlan = this._implementationPlan.length > 0 && !this._implementationPlanSeeded;
         const streamingCode = new StreamingCodePreview();
         const nativeCodeObserver = new NativeCodeObserver(this.workspaceRoot, event => this.emitEvent(event));
         let reasoningAccumulated = '';
+        let segmentReasoning = '';
         let thoughtStartedAt = 0;
+        let nativeMutationCount = 0;
+        let nativeExplorationCount = 0;
+        const completedNativeActionIds = new Set<string>();
+        const finalizeReasoningSegment = (): void => {
+          if (!segmentReasoning) return;
+          const content = segmentReasoning;
+          const elapsedMs = thoughtStartedAt ? Math.max(1, Date.now() - thoughtStartedAt) : 0;
+          segmentReasoning = '';
+          thoughtStartedAt = 0;
+          if (!hasStructuredToolPlan) {
+            const extracted = extractLivePlanFromText(content, true);
+            if (extracted) {
+              this.updateImplementationPlan(extracted);
+            }
+          }
+          this.emitEvent({
+            type: 'agent_reasoning',
+            content,
+            streaming: false,
+            elapsedMs
+          });
+        };
 
         this.emitEvent({ type: 'status', message: 'Thinking…' });
         this.emitEvent({ type: 'agent_activity', activity: 'Thinking…' });
@@ -1989,6 +2101,7 @@ export class AgentLoop {
         const nativeControl = new AbortController();
         let nativeCheckpoint: EfficiencyCheckpoint | null = null;
         const invocation = ++modelCallIndex;
+        this._inModelCall = true;
         const response = await this.llm.chat(prunedMessages, {
           taskId: this.taskId,
           conversationId: this.memoryManager?.sessionId || this.taskId,
@@ -2010,13 +2123,28 @@ export class AgentLoop {
           coreToolCount: dynamicTools.filter((t: any) => isCoreTool(t.name)).length,
           signal: this.abortController?.signal
             ? AbortSignal.any([this.abortController.signal, nativeControl.signal]) : nativeControl.signal,
+          onPlanUpdate: (rawPlan: unknown) => {
+            if (this.stopRequested || this.abortController?.signal?.aborted) return;
+            const normalized = normalizePeerPlanEntries(rawPlan);
+            if (normalized) {
+              hasStructuredToolPlan = true;
+              this.updateImplementationPlan(normalized);
+            }
+          },
           onReasoningChunk: (chunk: string) => {
             if (this.stopRequested || this.abortController?.signal?.aborted) return;
             if (!thoughtStartedAt) thoughtStartedAt = Date.now();
             reasoningAccumulated += chunk;
+            segmentReasoning += chunk;
+            if (!hasStructuredToolPlan && chunk.includes('\n')) {
+              const extracted = extractLivePlanFromText(segmentReasoning, false);
+              if (extracted) {
+                this.updateImplementationPlan(extracted);
+              }
+            }
             this.emitEvent({
               type: 'agent_reasoning',
-              content: reasoningAccumulated,
+              content: segmentReasoning,
               delta: chunk,
               streaming: true,
               elapsedMs: Date.now() - thoughtStartedAt
@@ -2024,10 +2152,19 @@ export class AgentLoop {
           },
           onChunk: (_chunk: string) => {
             if (this.stopRequested || this.abortController?.signal?.aborted) return;
+            finalizeReasoningSegment();
+            streamedTextAccumulated += _chunk;
             if (!hasStreamedChunk) {
               hasStreamedChunk = true;
               this.emitEvent({ type: 'status', message: 'Responding…' });
               this.emitEvent({ type: 'agent_activity', activity: 'Responding…' });
+            }
+            if ((streamedTextAccumulated.includes('<tool_call>') || (!hasStructuredToolPlan && _chunk.includes('\n')))) {
+              const extracted = extractLivePlanFromText(streamedTextAccumulated, false);
+              if (extracted) {
+                if (streamedTextAccumulated.includes('<tool_call>')) hasStructuredToolPlan = true;
+                this.updateImplementationPlan(extracted);
+              }
             }
             const preview = streamingCode.accept(_chunk);
             if (preview) this.emitEvent(preview);
@@ -2035,15 +2172,58 @@ export class AgentLoop {
           onNativeAction: (action: any) => {
             if (this.stopRequested || this.abortController?.signal?.aborted) return;
             if (!action || typeof action.name !== 'string') return;
+            finalizeReasoningSegment();
+            const actionPlan = normalizePeerPlanEntries(action.parameters);
+            if (actionPlan) {
+              hasStructuredToolPlan = true;
+              this.updateImplementationPlan(actionPlan);
+            }
+            const isChecklistTool = Boolean(actionPlan) || ['todowrite', 'todo_write', 'update_plan'].includes(action.name.toLowerCase());
+            if (!isChecklistTool && this._implementationPlan.length === 0) {
+              this.seedTaskPhasePlanIfEmpty();
+            }
             auditLog.log({ event: 'native_action', taskId: this.taskId,
               provider: this.config.provider || 'unknown', tool: action.name, status: action.status,
               ...(action.id ? { actionId: action.id } : {}) });
-            if (action.status === 'running') {
+            if (action.status === 'running' && !isChecklistTool) {
               try {
                 this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
               } catch (error: unknown) {
-                if (error instanceof EfficiencyCheckpoint) { nativeCheckpoint = error; nativeControl.abort(); }
+                if (error instanceof EfficiencyCheckpoint) {
+                  finalizeReasoningSegment();
+                  nativeCheckpoint = error;
+                  nativeControl.abort();
+                }
                 return;
+              }
+            }
+            if (action.status === 'completed' && action.id && !isChecklistTool) {
+              completedNativeActionIds.add(String(action.id));
+            }
+            if (action.status === 'completed' && !isChecklistTool) {
+              const lowerName = action.name.toLowerCase();
+              const rawDetail = String(action.detail || '');
+              const lowerDetail = rawDetail.toLowerCase();
+              if (['fs_write', 'fs_edit', 'write_file', 'edit_file'].includes(lowerName)) {
+                nativeMutationCount++;
+                if (nativeMutationCount === 1 && this._implementationPlanSeeded) {
+                  this.advanceImplementationPlanProgress('mutation');
+                } else if (nativeMutationCount % 2 === 0) {
+                  this.advanceImplementationPlanProgress('mutation');
+                }
+              } else if (lowerName === 'fs_read' && /\.(png|jpg|jpeg|webp)$/i.test(lowerDetail)) {
+                this.advanceImplementationPlanProgress('verification');
+              } else if (['fs_read', 'read_file', 'sysrun', 'bash'].includes(lowerName)) {
+                nativeExplorationCount++;
+                if (/\.(html?|css|jsx|tsx|vue|svelte)\b/i.test(rawDetail)) {
+                  this.recordInspectedWebFile(rawDetail);
+                }
+                if (this._implementationPlanSeeded && nativeExplorationCount === 2) {
+                  const activeIdx = this._implementationPlan.findIndex((item: any) => item.status === 'in_progress');
+                  if (activeIdx === 0) {
+                    this.advanceImplementationPlanProgress('mutation');
+                  }
+                }
               }
             }
             const nativeCode = codeProgressFromAction(
@@ -2054,6 +2234,9 @@ export class AgentLoop {
               action.status === 'completed' ? 'done' : action.status === 'failed' ? 'failed' : 'working',
               'provider'
             );
+            if (nativeCode || action.status === 'completed' || action.status === 'failed') {
+              finalizeReasoningSegment();
+            }
             if (nativeCode) {
               this.emitEvent(nativeCode);
               nativeCodeObserver.handle(nativeCode);
@@ -2064,7 +2247,6 @@ export class AgentLoop {
             const detail = action.detail ? ` ${action.detail}` : '';
             if (action.status === 'running') {
               this.emitEvent({ type: 'status', message: `Acting: ${action.name}${detail}` });
-              this.emitEvent({ type: 'agent_activity', activity: `Acting: ${action.name}${detail}` });
             } else if (action.status === 'completed') {
               this.emitEvent({ type: 'notice', tone: 'muted', nativeStep: true, message: `${this.config.provider || 'Provider'} ${action.name}${detail}` });
             } else if (action.status === 'failed') {
@@ -2072,12 +2254,28 @@ export class AgentLoop {
             }
           }
         }).catch((error: unknown) => {
-          if (nativeCheckpoint && error && typeof error === 'object' && 'partialUsage' in error) {
-            Object.assign(nativeCheckpoint, { partialUsage: error.partialUsage });
+          if (nativeCheckpoint) {
+            if (completedNativeActionIds.size > 0) {
+              this.stepsCompleted += completedNativeActionIds.size;
+            }
+            if (reasoningAccumulated) {
+              this.messages.push({
+                role: 'assistant',
+                content: 'Turn paused at efficiency checkpoint.',
+                reasoning_content: reasoningAccumulated
+              });
+            }
+            if (error && typeof error === 'object' && 'partialUsage' in error) {
+              Object.assign(nativeCheckpoint, { partialUsage: error.partialUsage });
+            }
           }
           throw nativeCheckpoint || error;
         })
-          .finally(() => nativeCodeObserver.dispose());
+          .finally(() => {
+            finalizeReasoningSegment();
+            nativeCodeObserver.dispose();
+            this._inModelCall = false;
+          });
         this._totalPlanMs = (this._totalPlanMs || 0) + (performance.now() - planStepStart);
 
         if (this.stopRequested || this.abortController?.signal?.aborted) {
@@ -2223,14 +2421,22 @@ export class AgentLoop {
         } else if (reasoningAccumulated) {
           assistantMsg.reasoning_content = reasoningAccumulated;
         }
-        const finalReasoning = response.reasoningContent || reasoningAccumulated;
-        if (finalReasoning) {
+        if (!reasoningAccumulated && response.reasoningContent) {
           this.emitEvent({
             type: 'agent_reasoning',
-            content: finalReasoning,
+            content: response.reasoningContent,
             streaming: false,
-            elapsedMs: thoughtStartedAt ? Date.now() - thoughtStartedAt : 0
+            elapsedMs: 0
           });
+        }
+        if (!hasStructuredToolPlan) {
+          const fallbackPlan = extractLivePlanFromText(
+            `${response.reasoningContent || ''}\n${response.content || ''}`,
+            true
+          );
+          if (fallbackPlan) {
+            this.updateImplementationPlan(fallbackPlan);
+          }
         }
         // Kept verbatim on the turn. A thinking-enabled model that gets its own
         // thinking blocks back is continuing a thought; one that does not is
@@ -2255,6 +2461,11 @@ export class AgentLoop {
         if (hasExternalActions) {
           this.stepsCompleted += completedExternalActions.length;
           for (const extAction of completedExternalActions) {
+            const extPlan = normalizePeerPlanEntries(extAction.parameters);
+            if (extPlan) {
+              hasStructuredToolPlan = true;
+              this.updateImplementationPlan(extPlan);
+            }
             const actionName = String(extAction.name || '').toLowerCase();
             const detailPath = typeof extAction.detail === 'string' ? extAction.detail.trim() : '';
             if (['write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content', 'fs_write', 'fs_edit', 'multiedit'].includes(actionName) && detailPath) {
@@ -2265,9 +2476,9 @@ export class AgentLoop {
             // has reached a vision-capable provider.
             // A native action label alone carries no rendered-page evidence.
             // The shared host inspection below verifies its resulting artifacts.
-            if (['fs_read', 'read_file', 'view_file', 'viewfile', 'view_file_content'].includes(actionName) && detailPath) {
-              if (/\.(html|htm|css|jsx|tsx|vue|svelte)$/i.test(detailPath)) {
-                this.webVerificationState.htmlInspected = true;
+            if (['fs_read', 'read_file', 'view_file', 'viewfile', 'view_file_content', 'sysrun', 'bash'].includes(actionName) && detailPath) {
+              if (/\.(html|htm|css|jsx|tsx|vue|svelte)\b/i.test(detailPath)) {
+                this.recordInspectedWebFile(detailPath);
               }
             }
           }
@@ -2279,6 +2490,19 @@ export class AgentLoop {
           const lower = contentText.toLowerCase();
           const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
           const isActionable = isActionableTaskPrompt(taskPrompt);
+
+          if (!hasExternalActions && isProviderPlanOrQuotaRefusal(contentText)) {
+            this.messages.pop();
+            if (this.stepsCompleted === 0 && this.messages[this.messages.length - 1]?.role === 'user') {
+              this.messages.pop();
+            }
+            this.emitEvent({
+              type: 'error',
+              message: `Provider plan or quota limit reached: ${contentText.trim()}`
+            });
+            this.memoryManager.saveHistory(this.messages);
+            break;
+          }
 
           // A peer may have completed searches or a plan artifact while still
           // waiting for its own UI's Proceed button. Those actions do not
@@ -2307,19 +2531,23 @@ export class AgentLoop {
             break;
           }
 
+          if (hasExternalActions) {
+            this.consecutiveThinkingSteps = 0;
+          }
+
           // A native workspace action already changed the workspace. Do not
           // demand a Causyne tool call for the same work, and do not treat the
           // turn as a no-op.
-          if (!hasExternalActions && failedExternalActions.length > 0 && this.consecutiveThinkingSteps < 2) {
+          if (!hasExternalActions && failedExternalActions.length > 0 && this.consecutiveThinkingSteps < 3) {
             this.consecutiveThinkingSteps++;
             const blocked = failedExternalActions
               .map((a: any) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
               .join(', ');
-            this.emitEvent({ type: 'status', message: 'Native action blocked; switching to Causyne tools...' });
-            this.emitEvent({ type: 'agent_activity', activity: 'Retrying blocked action through Causyne…' });
+            this.emitEvent({ type: 'status', message: 'Native action blocked; switching to workspace-scoped verification...' });
+            this.emitEvent({ type: 'agent_activity', activity: 'Retrying blocked action within workspace…' });
             this.messages.push({
               role: 'system',
-              content: `[SYSTEM NOTICE: Your native action(s) were blocked: ${blocked}. Do not retry native terminal or browser tools. Instead use Causyne's XML tool call format, for example <tool_call>{"name": "sysRun", "arguments": {"command": "..."}}</tool_call>.]`
+              content: `[SYSTEM NOTICE: Your native action(s) were blocked: ${blocked}. All file reads, writes, copies, and screenshot outputs must stay strictly inside the active workspace directory (${this.workspaceRoot}). Never read, copy (cp/mv), or write files in /tmp or outside the workspace root — write screenshots and temporary files directly to a path inside ${this.workspaceRoot} (for example ${path.join(this.workspaceRoot, 'preview.png')}), or invoke Causyne host tools using plain-text <tool_call>{"name": "browser_act", "arguments": {...}}</tool_call>.]`
             });
             this.memoryManager.saveHistory(this.messages);
             continue;
@@ -2377,25 +2605,28 @@ export class AgentLoop {
             continue;
           }
 
-          if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress) && this.consecutiveThinkingSteps < 3) {
-            this.consecutiveThinkingSteps++;
+          if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress) && incompleteTurnContinuations < 3) {
+            incompleteTurnContinuations++;
             if (response.content) {
               this.emitEvent({ type: 'agent_message', content: response.content });
             }
+            const blockedNote = failedExternalActions.length > 0
+              ? ` Note: ${failedExternalActions.map((a: any) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`).join(', ')} could not be authorized outside the active workspace (${this.workspaceRoot}); do NOT read, copy (cp/mv), or reference /tmp paths — write all screenshots, logs, and temporary files directly inside ${this.workspaceRoot}.`
+              : '';
             this.emitEvent({ type: 'status', message: 'Continuing task execution...' });
             this.emitEvent({ type: 'agent_activity', activity: 'Continuing mid-task execution…' });
             this.messages.push({
               role: 'system',
               content: isIncompleteTurn
-                ? '[SYSTEM NOTICE: Your previous turn ended while the task was still in progress. Continue immediately from where you left off and execute the remaining steps to complete the task.]'
-                : '[SYSTEM NOTICE: You announced the next step without executing it. Continue immediately from where you left off and execute the remaining file edits or tool calls to complete the task.]'
+                ? `[SYSTEM NOTICE: Your previous turn ended while the task was still in progress. Continue immediately from where you left off and execute the remaining steps to complete the task.${blockedNote}]`
+                : `[SYSTEM NOTICE: You announced the next step without executing it. Continue immediately from where you left off and execute the remaining file edits or tool calls to complete the task.${blockedNote}]`
             });
             this.memoryManager.saveHistory(this.messages);
             continue;
           }
 
-          if (hasExternalActions) {
-            this.consecutiveThinkingSteps = 0;
+          if (hasExternalActions && !isIncompleteTurn && !isMidTaskProgress) {
+            incompleteTurnContinuations = 0;
           }
 
           if (!hasExternalActions && this.stepsCompleted === 0 && this.consecutiveThinkingSteps < 2) {
@@ -2415,6 +2646,18 @@ export class AgentLoop {
           if (!hasExternalActions && this.stepsCompleted === 0 && isActionable) {
             this.messages.pop();
             this.emitEvent({ type: 'error', message: 'The selected model returned text without taking any action. No work was completed.' });
+            this.memoryManager.saveHistory(this.messages);
+            break;
+          }
+
+          if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
+            if (!contentText.trim()) {
+              this.messages.pop();
+            }
+            this.emitEvent({
+              type: 'error',
+              message: 'The task stopped before completion after repeated blocked or incomplete turns. Work remains unfinished.'
+            });
             this.memoryManager.saveHistory(this.messages);
             break;
           }
@@ -2634,6 +2877,9 @@ export class AgentLoop {
 
           if (response.content) {
             this.emitEvent({ type: 'agent_message', content: response.content });
+          }
+          if (this.stepsCompleted > 0) {
+            this.advanceImplementationPlanProgress('complete');
           }
           this.emitEvent({ type: 'status', message: 'Task completed.' });
           this.memoryManager.saveHistory(this.messages); // Save final state
@@ -2964,7 +3210,7 @@ export class AgentLoop {
 
           if (!isCoreTool(functionName) && !this.unlockedTools.has(functionName)) {
             const pack = packForTool(functionName);
-            if (this.unlockPack(pack)) {
+            if (pack && this.unlockPack(pack)) {
               this.debugLog(`unlocked capability pack "${pack}" for ${functionName}`);
             }
             this.unlockedTools.add(functionName);
@@ -3230,6 +3476,7 @@ export class AgentLoop {
             this.webVerificationState.screenshotTaken = true;
           }
           if (functionName === 'browser_act' && result?.success === true) {
+            this.advanceImplementationPlanProgress('verification');
             const browserResults = Array.isArray(result.data) ? result.data : [];
             if (browserResults.some((item: any) => ['snapshot', 'scrape'].includes(item?.action)
               && Array.isArray(item?.data?.runtimeErrors) && item.data.runtimeErrors.length === 0)) {
