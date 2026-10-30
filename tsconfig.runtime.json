@@ -153,6 +153,7 @@
     "src/observer/evidence.ts",
     "src/observer/advisory.ts",
     "src/observer/coldObserver.ts",
+    "src/observer.ts",
     "src/timeMachine.ts",
     "src/acp/protocol.ts",
     "src/acp/agentCatalog.ts",

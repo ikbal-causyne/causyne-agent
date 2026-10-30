@@ -79,6 +79,7 @@ export class UnifiedBudgetEnforcer {
     }
     extendBudget(extraTokens, extraActions) {
         this.maxTaskTokens = Math.max(this.maxTaskTokens, this.tokens + extraTokens);
+        this.maxTurnTokens = Math.max(this.maxTurnTokens, extraTokens);
         this.maxTurnActions = Math.max(this.maxTurnActions, this.actions + extraActions);
     }
     recordUsage(usage) {

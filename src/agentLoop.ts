@@ -42,6 +42,8 @@ import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js'
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
+import { CausyneObserver, defaultObserver } from './observer.js';
+import type { Observation } from './observer.js';
 import { TimeMachine, recoveryUserMessage, TIME_MACHINE_MAX_ATTEMPTS } from './timeMachine.js';
 import type { RecoveryDecision } from './timeMachine.js';
 import {
@@ -671,6 +673,7 @@ export class AgentLoop {
     // V5: Context compaction tracking
     this._lastCompactionIndex = null;
     this.timeMachine = new TimeMachine();
+    this.observer = defaultObserver;
     this.isInitialized = false;
     this.taskTemperature = 0.1; // Default
     // Set only on a delegated subagent loop; null means "the full catalogue".
@@ -2208,19 +2211,24 @@ export class AgentLoop {
         }
         const affordability = this.tokenTracker.canAffordAnotherStep();
         if (!affordability.allowed) {
-          this.emitEvent({ type: 'budget_warning', message: affordability.reason });
-          this.emitEvent({ type: 'notice', message: 'Stopped before the token ceiling. Nothing was truncated mid-step.' });
-          // A plan that was offered and did NOT carry the task through loses
-          // rank, so a stale template stops being suggested forever. Only the
-          // denominator moves here — recordPlan() is what awards a win.
-          if (this._offeredPlanId) {
-            try { recordMiss(this._offeredPlanId); } catch (e: any) { /* never block a stop */ }
+          if (hardBudget) {
+            this.emitEvent({ type: 'budget_warning', message: affordability.reason });
+            this.emitEvent({ type: 'notice', message: 'Stopped before the token ceiling. Nothing was truncated mid-step.' });
+            if (this._offeredPlanId) {
+              try { recordMiss(this._offeredPlanId); } catch (e: any) { /* never block a stop */ }
+            }
+            auditLog.log({
+              event: 'task_stopped_on_budget', taskId: this.taskId,
+              used: affordability.used, limit: affordability.limit, projected: affordability.projected
+            });
+            break;
+          } else {
+            // Proactive history compaction rather than artificial abort (OpenCode / SWE-agent pattern)
+            pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
+            shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
+            pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
+            this.efficiencyBudget?.extendBudget?.(1_000_000, 50);
           }
-          auditLog.log({
-            event: 'task_stopped_on_budget', taskId: this.taskId,
-            used: affordability.used, limit: affordability.limit, projected: affordability.projected
-          });
-          break;
         }
 
         // 2. PLAN (Call LLM). dynamicTools was resolved above so the task brief
@@ -3153,6 +3161,31 @@ export class AgentLoop {
               }
             } catch (_err: any) {
               // Cold observer fail-open
+            }
+          }
+
+          // Unified Observer: Phase 7 progress and verification evaluation
+          {
+            try {
+              const observation = this.observer.evaluate({
+                taskId: this.taskId,
+                workspaceRoot: this.workspaceRoot,
+                userGoal: this.currentTaskPrompt || this.userPrompt || '',
+                agentClaim: response.content || '',
+                toolHistory: coldObserver.getToolOutcomes(this.taskId)
+              });
+
+              if (observation.status === 'ready-to-verify' && !this._verificationPlanFired) {
+                this.emitEvent({ type: 'status', message: `Observer: ${observation.message || 'Deliverables require verification check.'}` });
+                this.messages.push({
+                  role: 'system',
+                  content: `[OBSERVER VERIFICATION]: ${observation.message || 'Deliverables require verification.'} Next action: ${observation.nextAction || 'Run tests or build to verify.'}`
+                });
+                this.memoryManager.saveHistory(this.messages);
+                continue;
+              }
+            } catch (_err: any) {
+              // Observer fail-open
             }
           }
 
@@ -4140,14 +4173,14 @@ export class AgentLoop {
           auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: (e as any)?.reason || (e as any)?.code,
             ...this.efficiencyBudget.snapshot() });
 
-          const isTurnCheckpoint = !(e instanceof EfficiencyCheckpoint) || e.scope === 'turn';
-          const canContinue = incompleteTurnContinuations < 5;
+          const isHard = Boolean((this.tokenTracker.budget?.enabled && this.tokenTracker.budget?.hardStop) ||
+            (Number.isInteger(this.taskTokenLimit) && (this.taskTokenLimit as number) > 0));
+          const maxContinuations = isHard ? 5 : 25;
+          const canContinue = incompleteTurnContinuations < maxContinuations;
 
           if (canContinue) {
             incompleteTurnContinuations++;
-            if (!isTurnCheckpoint) {
-              this.efficiencyBudget.extendBudget?.(1_000_000, 50);
-            }
+            this.efficiencyBudget.extendBudget?.(1_000_000, 50);
 
             // Compact history aggressively (Pillar 1 / SWE-agent / OpenCode style)
             pruneStaleToolObservations(this.messages, {

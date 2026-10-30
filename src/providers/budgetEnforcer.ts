@@ -63,7 +63,7 @@ export class EfficiencyCheckpoint extends Error {
 }
 
 export class UnifiedBudgetEnforcer {
-  readonly maxTurnTokens: number;
+  maxTurnTokens: number;
   maxTurnActions: number;
   maxTaskTokens: number;
   private tokens = 0;
@@ -84,6 +84,7 @@ export class UnifiedBudgetEnforcer {
 
   extendBudget(extraTokens: number, extraActions: number): void {
     this.maxTaskTokens = Math.max(this.maxTaskTokens, this.tokens + extraTokens);
+    this.maxTurnTokens = Math.max(this.maxTurnTokens, extraTokens);
     this.maxTurnActions = Math.max(this.maxTurnActions, this.actions + extraActions);
   }
 
