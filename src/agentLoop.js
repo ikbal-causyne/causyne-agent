@@ -2449,22 +2449,7 @@ export class AgentLoop {
                         ? 'external_subscription_unavailable' : 'rate_card_estimate',
                     callEstimatedCostUsd: this.tokenTracker.calculateCost(response.usage.promptTokens, response.usage.completionTokens, response.usage)
                 });
-                if (hardBudget) {
-                    this.efficiencyBudget.recordUsage(response.usage);
-                }
-                else {
-                    try {
-                        this.efficiencyBudget.recordUsage(response.usage);
-                    }
-                    catch (e) {
-                        if (e instanceof EfficiencyCheckpoint) {
-                            this.efficiencyBudget.extendBudget?.(2_000_000, 100);
-                            pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
-                            shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
-                            pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
-                        }
-                    }
-                }
+                this.efficiencyBudget.recordUsage(response.usage);
                 for (const action of response.externalActions || []) {
                     this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
                 }
@@ -2970,22 +2955,13 @@ export class AgentLoop {
                         this.emitEvent({ type: 'notice', message: 'Source inspection completed. Rendered-page and visual verification were not performed because the browser runtime is unavailable.' });
                     }
                     if (isWebTask && this.stepsCompleted > 0 && !isVerified) {
-                        if (!this.webGuardFired) {
-                            this.webGuardFired = true;
-                            this.unlockPack('web');
-                            this.emitEvent({ type: 'status', message: '⚡ Anti-Slop Check: Visual/semantic verification recommended.' });
-                            this.messages.push({
-                                role: 'system',
-                                content: '[VERIFICATION NEEDED: Web/UI deliverables were modified, but rendered-page or test verification has not been completed. Use `browser_act` preview/snapshot or run automated test suites (`node --test`, etc.) to confirm functionality before finishing.]'
-                            });
-                            this.memoryManager.saveHistory(this.messages);
-                            continue;
-                        }
                         this.emitEvent({
-                            type: 'notice',
-                            tone: 'warning',
-                            message: 'Automated test suite or source inspection completed; rendered-page visual snapshot was not explicitly refreshed.'
+                            type: 'error',
+                            message: 'The web files may have changed, but rendered-page verification did not succeed. The task remains unverified; no completion is recorded.'
                         });
+                        auditLog.log({ event: 'task_unverified', taskId: this.taskId, reason: 'web_render_not_inspected' });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
                     }
                     // Assess actual outcomes again after every verification attempt. A
                     // one-shot reminder must not turn missing evidence into completion.
@@ -3967,57 +3943,39 @@ export class AgentLoop {
                     this.memoryManager.saveHistory(this.messages);
                     continue;
                 }
-                if (e instanceof EfficiencyCheckpoint || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
+                if (e instanceof EfficiencyCheckpoint && e.scope === 'turn' && e.reason === 'tokens' && incompleteTurnContinuations < 5) {
+                    incompleteTurnContinuations++;
                     this.emitEvent({ type: 'budget_warning', message: e.message });
-                    auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e?.reason || e?.code,
-                        ...this.efficiencyBudget.snapshot() });
-                    const isHard = Boolean((this.tokenTracker.budget?.enabled && this.tokenTracker.budget?.hardStop) ||
-                        (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0));
-                    const maxContinuations = isHard ? 5 : 25;
-                    const canContinue = incompleteTurnContinuations < maxContinuations;
-                    if (canContinue) {
-                        incompleteTurnContinuations++;
-                        this.efficiencyBudget.extendBudget?.(1_000_000, 50);
-                        // Compact history aggressively (Pillar 1 / SWE-agent / OpenCode style)
-                        pruneStaleToolObservations(this.messages, {
-                            keepRecent: 3,
-                            minChars: 300,
-                            taskId: this.taskId
-                        });
-                        shortenOversizedToolObservations(this.messages, {
-                            threshold: 1500,
-                            taskId: this.taskId
-                        });
-                        pruneExecutedToolArguments(this.messages, {
-                            threshold: 1500,
-                            taskId: this.taskId
-                        });
-                        if (this.stepsCompleted > 0) {
-                            this.advanceImplementationPlanProgress('mutation');
-                        }
-                        this.emitEvent({ type: 'status', message: 'Continuing task execution from efficiency checkpoint…' });
-                        this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
-                        const remaining = this._implementationPlan.filter((s) => s.status !== 'completed');
-                        const remainingHint = remaining.length > 0
-                            ? ` Remaining steps to complete: ${remaining.map((s) => s.step).join('; ')}.`
-                            : '';
-                        this.messages.push({
-                            role: 'system',
-                            content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans.${remainingHint} Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
-                        });
-                        this.memoryManager.saveHistory(this.messages);
-                        continue;
-                    }
-                    this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
+                    auditLog.log({
+                        event: 'efficiency_checkpoint',
+                        taskId: this.taskId,
+                        reason: e.reason,
+                        ...this.efficiencyBudget.snapshot()
+                    });
+                    this.efficiencyBudget.extendBudget?.(1_000_000, 50);
+                    pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
+                    shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
+                    pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
+                    this.emitEvent({ type: 'status', message: 'Continuing task execution from efficiency checkpoint…' });
+                    this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
+                    this.messages.push({
+                        role: 'system',
+                        content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans. Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
+                    });
                     this.memoryManager.saveHistory(this.messages);
-                    break;
+                    continue;
                 }
-                if (e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET' || e?.code === 'AGY_DESKTOP_TASK_LIMIT') {
+                if (e instanceof EfficiencyCheckpoint || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
+                    || e?.code === 'AGY_DESKTOP_TASK_LIMIT' || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
                     this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
                     this.memoryManager.saveHistory(this.messages);
                     this.emitEvent({ type: 'budget_warning', message: e.message });
-                    auditLog.log({ event: 'task_stopped_on_budget', taskId: this.taskId,
-                        used: this.tokenTracker.taskTokens, limit: e.tokenLimit || this.tokenTracker.budget?.maxTokensPerTask || 0 });
+                    auditLog.log({
+                        event: 'efficiency_checkpoint',
+                        taskId: this.taskId,
+                        reason: e?.reason || e?.code,
+                        ...this.efficiencyBudget.snapshot()
+                    });
                     break;
                 }
                 if (e?.code === 'PROVIDER_REASONING_ONLY' && e.continuationSafe === true && reasoningOnlyRecoveries++ === 0) {
