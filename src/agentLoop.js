@@ -2063,8 +2063,10 @@ export class AgentLoop {
                     ? (await this.tokenTracker.getDailyUsage()).totalTokens : 0;
                 const configuredRemainingBudget = hardBudget
                     ? Math.min(taskLimit > 0 ? taskLimit - this.tokenTracker.taskTokens : Infinity, dailyLimit > 0 ? dailyLimit - dailyUsed : Infinity) : Infinity;
-                const remainingBudget = Math.min(configuredRemainingBudget, this.efficiencyBudget.getRemainingTokens());
-                if (remainingBudget <= 0) {
+                const remainingBudget = hardBudget
+                    ? Math.min(configuredRemainingBudget, this.efficiencyBudget.getRemainingTokens())
+                    : Infinity;
+                if (hardBudget && remainingBudget <= 0) {
                     this.emitEvent({ type: 'budget_warning', message: 'Token budget reached before the next model call.' });
                     break;
                 }
@@ -2138,9 +2140,10 @@ export class AgentLoop {
                     conversationId: this.memoryManager?.sessionId || this.taskId,
                     taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
-                    maxTokensThisCall: Number.isFinite(remainingBudget) ? remainingBudget : undefined,
+                    hardBudget: hardBudget,
+                    maxTokensThisCall: Number.isFinite(configuredRemainingBudget) && hardBudget ? configuredRemainingBudget : undefined,
                     tokenBudgetBasis: Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
-                    tokenLimit: Number.isFinite(remainingBudget) && remainingBudget > 0
+                    tokenLimit: hardBudget && Number.isFinite(remainingBudget) && remainingBudget > 0
                         ? Math.min(this.efficiencyBudget.maxTurnTokens, remainingBudget) : this.efficiencyBudget.maxTurnTokens,
                     maxNativeActions: this.efficiencyBudget.getRemainingActions(),
                     workspaceRoot: this.workspaceRoot,
@@ -2429,7 +2432,22 @@ export class AgentLoop {
                         ? 'external_subscription_unavailable' : 'rate_card_estimate',
                     callEstimatedCostUsd: this.tokenTracker.calculateCost(response.usage.promptTokens, response.usage.completionTokens, response.usage)
                 });
-                this.efficiencyBudget.recordUsage(response.usage);
+                if (hardBudget) {
+                    this.efficiencyBudget.recordUsage(response.usage);
+                }
+                else {
+                    try {
+                        this.efficiencyBudget.recordUsage(response.usage);
+                    }
+                    catch (e) {
+                        if (e instanceof EfficiencyCheckpoint) {
+                            this.efficiencyBudget.extendBudget?.(2_000_000, 100);
+                            pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
+                            shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
+                            pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
+                        }
+                    }
+                }
                 for (const action of response.externalActions || []) {
                     this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
                 }
@@ -3877,16 +3895,52 @@ export class AgentLoop {
                     this.memoryManager.saveHistory(this.messages);
                     continue;
                 }
-                if (e instanceof EfficiencyCheckpoint) {
+                if (e instanceof EfficiencyCheckpoint || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
+                    this.emitEvent({ type: 'budget_warning', message: e.message });
+                    auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e?.reason || e?.code,
+                        ...this.efficiencyBudget.snapshot() });
+                    const isTurnCheckpoint = !(e instanceof EfficiencyCheckpoint) || e.scope === 'turn';
+                    const canContinue = incompleteTurnContinuations < 5;
+                    if (canContinue) {
+                        incompleteTurnContinuations++;
+                        if (!isTurnCheckpoint) {
+                            this.efficiencyBudget.extendBudget?.(1_000_000, 50);
+                        }
+                        // Compact history aggressively (Pillar 1 / SWE-agent / OpenCode style)
+                        pruneStaleToolObservations(this.messages, {
+                            keepRecent: 3,
+                            minChars: 300,
+                            taskId: this.taskId
+                        });
+                        shortenOversizedToolObservations(this.messages, {
+                            threshold: 1500,
+                            taskId: this.taskId
+                        });
+                        pruneExecutedToolArguments(this.messages, {
+                            threshold: 1500,
+                            taskId: this.taskId
+                        });
+                        if (this.stepsCompleted > 0) {
+                            this.advanceImplementationPlanProgress('mutation');
+                        }
+                        this.emitEvent({ type: 'status', message: 'Continuing task execution from efficiency checkpoint…' });
+                        this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
+                        const remaining = this._implementationPlan.filter((s) => s.status !== 'completed');
+                        const remainingHint = remaining.length > 0
+                            ? ` Remaining steps to complete: ${remaining.map((s) => s.step).join('; ')}.`
+                            : '';
+                        this.messages.push({
+                            role: 'system',
+                            content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans.${remainingHint} Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
                     this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
                     this.memoryManager.saveHistory(this.messages);
-                    this.emitEvent({ type: 'budget_warning', message: e.message });
-                    auditLog.log({ event: 'efficiency_checkpoint', taskId: this.taskId, reason: e.reason,
-                        ...this.efficiencyBudget.snapshot() });
                     break;
                 }
-                if (e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
-                    || e?.code === 'AGY_NATIVE_ACTION_BUDGET' || e?.code === 'AGY_DESKTOP_TASK_LIMIT') {
+                if (e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET' || e?.code === 'AGY_DESKTOP_TASK_LIMIT') {
                     this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
                     this.memoryManager.saveHistory(this.messages);
                     this.emitEvent({ type: 'budget_warning', message: e.message });

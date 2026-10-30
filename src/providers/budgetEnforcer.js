@@ -15,7 +15,7 @@ export function actionLimitFor(archetype) {
     if (archetype === 'media_3d_generation')
         return 25;
     if (archetype === 'game_development' || archetype === 'game')
-        return 120;
+        return 250;
     if (archetype === 'web_engineering')
         return 120;
     return 35;
@@ -24,7 +24,7 @@ export function tokenLimitFor(archetype) {
     if (archetype === 'desktop_personalization')
         return 150_000;
     if (archetype === 'game_development' || archetype === 'game')
-        return 600_000;
+        return 3_000_000;
     if (archetype === 'media_3d_generation')
         return 400_000;
     if (archetype === 'web_engineering' || archetype === 'web_fullstack')
@@ -33,7 +33,7 @@ export function tokenLimitFor(archetype) {
 }
 export function turnTokenLimitFor(archetype) {
     if (archetype === 'game_development' || archetype === 'game')
-        return 250_000;
+        return 1_000_000;
     if (archetype === 'web_engineering' || archetype === 'web_fullstack')
         return 250_000;
     if (archetype === 'media_3d_generation')
@@ -76,6 +76,10 @@ export class UnifiedBudgetEnforcer {
         this.maxTaskTokens = typeof maxTaskTokens === 'number' && Number.isFinite(maxTaskTokens) && maxTaskTokens > 0
             ? Math.max(maxTaskTokens, maxTurnTokens)
             : maxTurnTokens;
+    }
+    extendBudget(extraTokens, extraActions) {
+        this.maxTaskTokens = Math.max(this.maxTaskTokens, this.tokens + extraTokens);
+        this.maxTurnActions = Math.max(this.maxTurnActions, this.actions + extraActions);
     }
     recordUsage(usage) {
         const fresh = noncachedTokens(usage);

@@ -1058,10 +1058,17 @@ export class AntigravityProvider extends LLMProvider {
                                     const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
                                     if (Number.isFinite(tokenLimit) && tokenLimit > 0
                                         && spentAgainstLimit >= tokenLimit) {
-                                        const error = Object.assign(new Error(`Antigravity reported ${spentAgainstLimit} tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } });
-                                        safeReject(error);
-                                        terminateChild();
-                                        return;
+                                        if (options.hardBudget === false) {
+                                            if (process.env.CAUSYNE_DEBUG === '1') {
+                                                console.log(`[BUDGET] Turn spent ${spentAgainstLimit} tokens against soft checkpoint ${tokenLimit}. Continuing execution.`);
+                                            }
+                                        }
+                                        else {
+                                            const error = Object.assign(new Error(`Antigravity reported ${spentAgainstLimit} tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } });
+                                            safeReject(error);
+                                            terminateChild();
+                                            return;
+                                        }
                                     }
                                 }
                             }
@@ -1445,9 +1452,16 @@ export class AntigravityProvider extends LLMProvider {
                 const uncachedTotal = noncachedTokens(response.usage);
                 const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
                 if (spentAgainstLimit >= tokenLimit) {
-                    Object.assign(partialUsage, response.usage);
-                    safeReject(Object.assign(new Error(`Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }));
-                    return;
+                    if (options.hardBudget === false) {
+                        if (process.env.CAUSYNE_DEBUG === '1') {
+                            console.log(`[BUDGET] Turn finished with ${spentAgainstLimit} tokens against soft checkpoint ${tokenLimit}. Preserving result.`);
+                        }
+                    }
+                    else {
+                        Object.assign(partialUsage, response.usage);
+                        safeReject(Object.assign(new Error(`Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`), { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }));
+                        return;
+                    }
                 }
                 safeResolve(response);
             });

@@ -22,21 +22,21 @@ export function noncachedTokens(usage: BudgetUsage): number {
 export function actionLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 12;
   if (archetype === 'media_3d_generation') return 25;
-  if (archetype === 'game_development' || archetype === 'game') return 120;
+  if (archetype === 'game_development' || archetype === 'game') return 250;
   if (archetype === 'web_engineering') return 120;
   return 35;
 }
 
 export function tokenLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 150_000;
-  if (archetype === 'game_development' || archetype === 'game') return 600_000;
+  if (archetype === 'game_development' || archetype === 'game') return 3_000_000;
   if (archetype === 'media_3d_generation') return 400_000;
   if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 500_000;
   return 100_000;
 }
 
 export function turnTokenLimitFor(archetype: string): number {
-  if (archetype === 'game_development' || archetype === 'game') return 250_000;
+  if (archetype === 'game_development' || archetype === 'game') return 1_000_000;
   if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 250_000;
   if (archetype === 'media_3d_generation') return 200_000;
   if (archetype === 'desktop_personalization') return 100_000;
@@ -64,8 +64,8 @@ export class EfficiencyCheckpoint extends Error {
 
 export class UnifiedBudgetEnforcer {
   readonly maxTurnTokens: number;
-  readonly maxTurnActions: number;
-  readonly maxTaskTokens: number;
+  maxTurnActions: number;
+  maxTaskTokens: number;
   private tokens = 0;
   private actions = 0;
   private readonly nativeIds = new Set<string>();
@@ -80,6 +80,11 @@ export class UnifiedBudgetEnforcer {
     this.maxTaskTokens = typeof maxTaskTokens === 'number' && Number.isFinite(maxTaskTokens) && maxTaskTokens > 0
       ? Math.max(maxTaskTokens, maxTurnTokens)
       : maxTurnTokens;
+  }
+
+  extendBudget(extraTokens: number, extraActions: number): void {
+    this.maxTaskTokens = Math.max(this.maxTaskTokens, this.tokens + extraTokens);
+    this.maxTurnActions = Math.max(this.maxTurnActions, this.actions + extraActions);
   }
 
   recordUsage(usage: BudgetUsage): void {
