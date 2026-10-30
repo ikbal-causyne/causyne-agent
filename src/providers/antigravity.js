@@ -1,5 +1,6 @@
 import { formatToolContracts, toolContractUpdate, contractFingerprint } from './toolContracts.js';
-import { noncachedTokens } from './budgetEnforcer.js';
+import { noncachedTokens, turnTokenLimitFor } from './budgetEnforcer.js';
+import { determineToolScope } from '../smartToolsUse.js';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -859,6 +860,15 @@ export class AntigravityProvider extends LLMProvider {
                 'If a command is denied or the readback does not confirm the change, report the blocker honestly. ' +
                 'Keep native tool actions within 12; use Causyne tool calls when a native action is blocked.\n\n' + promptText;
         }
+        const taskArchetype = options.taskArchetype || determineToolScope(latestPrompt).archetype;
+        const webOrGameTask = taskArchetype === 'web_engineering' || taskArchetype === 'game_development';
+        if (webOrGameTask) {
+            promptText = '[Web & Interactive Verification Directive]\n' +
+                'Causyne provides native host tools for browser verification: `browser_act` (preview and snapshot) and `screenshot`/`vision_inspect_ui`. ' +
+                'DO NOT write custom Node.js/Python headless Chrome or CDP WebSocket scripts to inspect console logs or take screenshots. ' +
+                'Causyne automatically captures browser console errors and renders WebGL/Canvas with hardware acceleration. ' +
+                'Use <tool_call>{"name": "browser_act", "arguments": {"action": "preview", "filePath": "index.html"}}</tool_call> to verify rendered output directly.\n\n' + promptText;
+        }
         const modelSlug = resolveAgyModelId(this.model);
         const effort = resolveAgyEffort(this.model);
         // Run the user's normal peer in the selected project. Do not substitute a
@@ -935,11 +945,12 @@ export class AntigravityProvider extends LLMProvider {
             const hasExplicitLimit = (Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0)
                 || (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0);
             const countReportedTotal = options.tokenBudgetBasis !== 'noncached';
+            const defaultTokenLimit = turnTokenLimitFor(taskArchetype);
             const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
                 ? remainingTaskBudget
                 : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
                     ? rawTokenLimit
-                    : 100_000);
+                    : defaultTokenLimit);
             const wallTimer = desktopTask ? setTimeout(() => {
                 const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.');
                 error.code = 'AGY_DESKTOP_TASK_LIMIT';

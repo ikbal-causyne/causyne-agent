@@ -801,9 +801,16 @@ export class CausyneBrowser {
             if (runtime.engine === 'chromium') {
                 const engine = await loadCapabilityPackage('playwright-core');
                 const profile = path.join(this.profileDirectory, 'chromium');
-                await fs.mkdir(profile, { recursive: true, mode: 0o700 });
+                const chromiumArgs = [
+                    '--enable-webgl',
+                    '--use-gl=angle',
+                    ...(process.platform === 'darwin' ? ['--use-angle=metal'] : ['--use-gl=swiftshader']),
+                    '--ignore-gpu-blocklist',
+                    '--enable-gpu-rasterization'
+                ];
                 this.session = await engine.chromium.launchPersistentContext(profile, {
                     executablePath: runtime.executablePath, headless: !this.visible, serviceWorkers: 'block', chromiumSandbox: true,
+                    args: chromiumArgs,
                     handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false
                 });
             }
@@ -865,8 +872,17 @@ export class CausyneBrowser {
         }
         const state = { id, page, refs: new Map(), lastSnapshot: '', lastStructure: null, runtimeErrors: [] };
         page.on?.('pageerror', (error) => {
-            if (state.runtimeErrors.length < 5)
+            if (state.runtimeErrors.length < 10)
                 state.runtimeErrors.push(error instanceof Error ? error.message.slice(0, 400) : String(error).slice(0, 400));
+        });
+        page.on?.('console', (msg) => {
+            const type = typeof msg?.type === 'function' ? msg.type() : (msg?.type || 'log');
+            const text = typeof msg?.text === 'function' ? msg.text() : String(msg?.text || msg || '');
+            if (type === 'error' || type === 'warning') {
+                if (state.runtimeErrors.length < 10) {
+                    state.runtimeErrors.push(`[console.${type}] ${text.slice(0, 400)}`);
+                }
+            }
         });
         page.on?.('crash', () => {
             state.crashed = true;

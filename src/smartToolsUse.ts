@@ -170,11 +170,11 @@ const EXPLICIT_MEDIA_GENERATION_PATTERN =
 
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN =
-  /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|thre\.?js|3js|webgl)\b/i;
+  /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|thre\.?js|3js|webgl|canvas)\b/i;
 
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN =
-  /(?:\b(build.*game|create.*game|develop.*game|buat\w*.*game|bikin\w*.*game|game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive|3d\s*(?:game|app|simulator))\b|[-_]3d\b|\b3d[-_])/i;
+  /(?:\b(build.*(?:game|simulation|simulator)|create.*(?:game|simulation|simulator)|develop.*(?:game|simulation|simulator)|buat\w*.*(?:game|simulation|simulator)|bikin\w*.*(?:game|simulation|simulator)|game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive|3d\s*(?:game|app|simulator|scene|city|world|view))\b|[-_]3d\b|\b3d[-_]|\b(?:threejs|three\.js|webgl|canvas3d|babylonjs)\b)/i;
 
 /**
  * Select tools to preload based on prompt intent. This is never an allowlist:
@@ -289,6 +289,27 @@ export function determineToolScope(
     };
   }
 
+  // 5. Media / 3D generation & creative audio intent
+  if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
+    const tools = new Set([
+      'blender_act',
+      'creative_apps',
+      'execute_procedural_media',
+      'fs_read',
+      'fs_write',
+      'sysRun',
+      'view_image',
+      'update_plan',
+      'tool_search'
+    ]);
+    return {
+      toolScope: tools,
+      archetype: 'media_3d_generation',
+      suppressedPacks: ['web', 'game', 'advanced', 'system'],
+      reason: 'Media generation intent prioritizes 3D studio, procedural media, and image inspection; suppresses web and game packs.'
+    };
+  }
+
   // Game development and interactive simulation intent
   if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
     const tools = new Set([
@@ -308,27 +329,6 @@ export function determineToolScope(
       archetype: 'game_development',
       suppressedPacks: ['media', 'advanced', 'system'],
       reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
-    };
-  }
-
-  // 5. Media / 3D generation & creative audio intent
-  if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
-    const tools = new Set([
-      'blender_act',
-      'creative_apps',
-      'execute_procedural_media',
-      'fs_read',
-      'fs_write',
-      'sysRun',
-      'view_image',
-      'update_plan',
-      'tool_search'
-    ]);
-    return {
-      toolScope: tools,
-      archetype: 'media_3d_generation',
-      suppressedPacks: ['web', 'game', 'advanced', 'system'],
-      reason: 'Media generation intent prioritizes 3D studio, procedural media, and image inspection; suppresses web and game packs.'
     };
   }
 

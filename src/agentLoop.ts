@@ -1807,9 +1807,11 @@ export class AgentLoop {
     this._recoveryNote = null;
     this._verificationNudges = 0;
     this._verificationPlanFired = false;
-    this._smartToolsNudge = null;
-    this.tokenTracker.resetTask();
-    const turnArchetype = determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype;
+    const effectivePrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
+    if (!this.currentTaskPrompt && this.userPrompt) {
+      this.currentTaskPrompt = this.userPrompt;
+    }
+    const turnArchetype = determineToolScope(effectivePrompt, this.taskShape).archetype;
     const efficiency = this.config.efficiency || {};
     const taskTokenCeiling = Number.isInteger(this.taskTokenLimit) && (this.taskTokenLimit as number) > 0
       ? (this.taskTokenLimit as number)
@@ -2042,7 +2044,7 @@ export class AgentLoop {
           lazyPlaybookResult.microAnnouncements
         ].filter(Boolean).join('\n\n');
         auditLog.log({ event: 'smart_tools_context', taskId: this.taskId, step: this.stepsCompleted,
-          archetype: determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype,
+          archetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
           toolCount: dynamicTools.length, toolSchemaChars: JSON.stringify(dynamicTools).length,
           catalogTools: this.toolsListEntries?.length || 0, catalogChars: this.toolsListText.length,
           selectedToolCount: this.unlockedTools.size,

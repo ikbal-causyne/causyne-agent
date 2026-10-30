@@ -567,6 +567,7 @@ export async function chatMode({ home = false } = {}) {
 
     homeTransition.beginTurn(loop);
     loop.userPrompt = task;
+    loop.currentTaskPrompt = task;
     // ONE USER REQUEST IS ONE TASK.
     //
     // The loop object is reused across the whole chat — that is deliberate, it
