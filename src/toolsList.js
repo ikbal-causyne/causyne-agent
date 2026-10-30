@@ -135,18 +135,19 @@ export function curatedToolNames() {
  * Build the list. Native tools come first in curated order; anything else the
  * registry reports (plugins, MCP servers, forged tools) follows as `custom`.
  */
-export function buildToolsList(definitions = []) {
+export function buildToolsList(definitions) {
     const entries = [];
-    const available = new Set(definitions.map((definition) => definition.name));
+    const filterAvailable = Array.isArray(definitions);
+    const available = filterAvailable ? new Set(definitions.map((definition) => definition.name)) : null;
     for (const group of GROUP_ORDER) {
         for (const [name, hint] of Object.entries(CATALOGUE[group])) {
-            if (available.has(name))
+            if (!available || available.has(name))
                 entries.push({ name, group, hint });
         }
     }
     const seen = new Set(entries.map((entry) => entry.name));
     let custom = 0;
-    for (const definition of [...definitions].sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const definition of (definitions ? [...definitions] : []).sort((a, b) => a.name.localeCompare(b.name))) {
         const name = String(definition.name || '');
         if (!/^[A-Za-z0-9_.:@/-]{1,200}$/.test(name) || seen.has(name))
             continue;

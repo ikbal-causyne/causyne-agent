@@ -168,9 +168,7 @@ export function decideTools(input: DecideToolsInput): ToolDecision {
       if (pack === 'game' && isDirectGameTask(prompt)) continue;
       packs.push(pack as PackName);
     }
-    // Intent suggests individual tools; only an explicit model pack request expands a whole pack.
     if (packs.length > 0) reasons.push(`suggested domains ${packs.join(', ')}`);
-    packs.length = 0;
     for (const name of input.cachedTools ?? []) {
       const canonical = known.get(name.toLowerCase());
       if (!canonical) continue;

@@ -127,10 +127,8 @@ export function decideTools(input) {
                 continue;
             packs.push(pack);
         }
-        // Intent suggests individual tools; only an explicit model pack request expands a whole pack.
         if (packs.length > 0)
             reasons.push(`suggested domains ${packs.join(', ')}`);
-        packs.length = 0;
         for (const name of input.cachedTools ?? []) {
             const canonical = known.get(name.toLowerCase());
             if (!canonical)
