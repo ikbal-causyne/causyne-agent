@@ -7,7 +7,7 @@ import { pruneSessions as pruneEmbodimentSessions, describeSession } from './emb
 import { WorkspacePerception } from './perception.js';
 import { audioFormatForMimeType } from './providers/base.js';
 import { TaskBuffer } from './taskBuffer.js';
-import { TOOL_DEFINITIONS, getDynamicTools, resolveTool, canonicalToolName } from './tools/registry.js';
+import { TOOL_DEFINITIONS, getDynamicTools, getSearchableToolDefinitions, resolveTool, canonicalToolName } from './tools/registry.js';
 import { selfRepairToolCall, generateSelfRepairDiagnostic } from './tools/toolSelfRepair.js';
 import { validateToolArguments } from './tools/argumentValidation.js';
 import { Sandbox } from './sandbox.js';
@@ -20,19 +20,24 @@ import { getMemoryContextString } from './memory.js';
 import { MemoryManager } from './memoryManager.js';
 import { cortexDb } from './cortex/vectorDb.js';
 import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
-import { analyzeTask, buildTaskBrief, packsFromShape } from './taskShape.js';
+import { analyzeTask, buildTaskBrief } from './taskShape.js';
 import { lookupPlan, recordPlan, recordPlanAsync, recordMiss, renderPlanHint, toStep, recordAPCPipelineLatency, lookupAlternativeStep, failureClass } from './planCache.js';
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
-import { normalizePeerPlanEntries, extractLivePlanFromText } from './implementationPlan.js';
+import { normalizePeerPlanEntries, extractLivePlanFromText, stripToolCallMarkup, stripThinkBlocks } from './implementationPlan.js';
 import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
-import { TimeMachine, recoveryUserMessage } from './timeMachine.js';
-import { routePacks, packForTool, isCoreTool, isGameIntent, isWebIntent, getPackCatalogue, PACK_PLAYBOOKS, PACKS } from './toolPacks.js';
-import { determineToolScope, filterSuppressedPacks, resolveLazyPlaybooks, SmartToolsGovernor } from './smartToolsUse.js';
+import { TimeMachine, recoveryUserMessage, TIME_MACHINE_MAX_ATTEMPTS } from './timeMachine.js';
+import { packForTool, isCoreTool, isGameIntent, isWebIntent, PACK_PLAYBOOKS, PACKS } from './toolPacks.js';
+import { determineToolScope, resolveLazyPlaybooks, refineToolDecision, SmartToolsGovernor } from './smartToolsUse.js';
+import { buildToolsList, renderToolsList, omittedCustomCount } from './toolsList.js';
+import { assessVerification } from './verificationPlan.js';
+import { SmartTools } from './SmartTools.js';
+import { decideTools, isDirectGameTask as isDirectGameTaskDecision } from './decideTools.js';
+import { SavedTools, readSavedTools, writeSavedTools } from './saveTools.js';
 import { resolveCharPool, measureMessages, resultCapFor, decayToolResults, buildWindow, compactInPlace, describeDroppedMessages, sanitizeSequences, applyProgressiveCompaction, snipOversizedToolOutputs } from './contextManager.js';
 // Provider imports
 import { detectWorkspaceDomains, ensureSkillRepo, getSkillDomainHeader } from './skillsManager.js';
@@ -57,11 +62,13 @@ export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
         return false;
-    const pureGreeting = /^(hi|hello|hey|yo|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
+    const pureGreeting = /^(hi|hello|hey|yo|halo|hai|p|assalamu['a]?[l]?aikum|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
     if (pureGreeting)
         return false;
-    const actionKeywords = /\b(create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find|download)\b/i;
-    return actionKeywords.test(t);
+    const actionKeywords = /\b(continue|resume|proceed|lanjut\w*|create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find|download|buat\w*|bikin\w*|perbaik\w*|tambah\w*|ubah\w*|hapus\w*|jalan\w*|pasang\w*|analis\w*|cek\w*|rancang\w*|desain\w*|kerjakan\w*|tolong\w*|bantu\w*|ganti\w*|tulis\w*|kembangkan\w*)\b/i;
+    if (actionKeywords.test(t))
+        return true;
+    return false; // Length alone does not turn an information question into an execution order.
 }
 export function isGenericHandoffResponse(text) {
     const answer = (text || '').trim();
@@ -101,8 +108,7 @@ export function isCodeAuthoringTaskPrompt(text) {
     return /\b(create|build|make|write|code|implement|generate|game|3js|three?\.?js|three?js|app)\b/i.test(t);
 }
 export function isDirectGameTask(text) {
-    return /\b(three?\.?js|3js|webgl|canvas|html5|pygame)\b/i.test(text)
-        && !/\b(godot|unity|unreal|full engine)\b/i.test(text);
+    return isDirectGameTaskDecision(text);
 }
 export function isProviderPlanOrQuotaRefusal(text) {
     if (!text || typeof text !== 'string')
@@ -432,6 +438,9 @@ export function explainNetworkError(error, config = {}) {
 // classifyError() returns this for every connection-level failure. Assembled
 // the same way the classifier does, so the two can never drift apart.
 const NETWORK_ERROR_TYPE = "network_error";
+class RetryConsentCheckpoint extends Error {
+    constructor() { super('Peer paused after three failed attempts; explicit retry approval is required.'); }
+}
 export class AgentLoop {
     /**
      * How many times in a row the same class of failure may repeat before the
@@ -518,6 +527,17 @@ export class AgentLoop {
         // Unlock sequence drives append-only tool ordering, which is what keeps the
         // prompt-cache prefix intact when a pack loads mid-task.
         this.unlockOrder = [];
+        // Pipeline stage 4. It wraps the three collections above rather than
+        // replacing them, so every existing reader keeps seeing the same state.
+        this.smartTools = new SmartTools();
+        this.savedTools = new SavedTools({ packs: this.unlockedPacks, tools: this.unlockedTools, order: this.unlockOrder });
+        this.toolsListEntries = null;
+        this.toolsListText = '';
+        this._savedToolsRestored = false;
+        this._pendingConsent = null;
+        this._recoveryNote = null;
+        this._verificationNudges = 0;
+        this._verificationPlanFired = false;
         this.workspaceContext = null;
         this.activeSubproject = null;
         this.taskShape = null;
@@ -603,11 +623,122 @@ export class AgentLoop {
      * invalidates the cache for the tools, the system prompt and every message.
      */
     unlockPack(packName) {
-        if (!packName || this.unlockedPacks.has(packName))
-            return false;
-        this.unlockedPacks.add(packName);
-        this.unlockOrder.push(packName);
-        return true;
+        return this.savedTools.admitPack(packName);
+    }
+    /**
+     * Pipeline stage 1. The list every provider is shown first: every tool the
+     * agent owns, one dense line each. Built once per conversation so the text is
+     * byte-stable and stays in the cached prompt prefix.
+     */
+    async ensureToolsList(eligible) {
+        const definitions = eligible ?? await getDynamicTools(this.config.autonomyMode, this.llm.supportsVision, {
+            grantAllTools: true, allowedTools: this.sandbox.allowedTools, deniedTools: this.config.deniedTools
+        });
+        const scoped = this.toolScope instanceof Set && this.toolScope.size > 0
+            ? definitions.filter((definition) => this.toolScope.has(definition.name)) : definitions;
+        this.toolsListEntries = buildToolsList(scoped);
+        this.toolsListText = renderToolsList(this.toolsListEntries);
+    }
+    /**
+     * Stages 2-4 in one place: decide which listed tools the work needs, let
+     * SmartTools bound and shape that, then save what is admitted. Every way a
+     * tool can become needed — intent, a model request, an accepted plan,
+     * verification, recovery — comes through here, so there is one rule.
+     */
+    routeTools(input) {
+        const list = this.toolsListEntries ?? buildToolsList();
+        const decision = decideTools({ ...input, list });
+        const refined = this.smartTools.refine(decision, {
+            planRequired: this._implementationPlanRequired,
+            decisionRequired: this._decisionRequirement.required && !this._decisionResolved,
+            admittedTools: this.unlockedTools,
+            admittedPacks: this.unlockedPacks
+        });
+        const added = this.savedTools.admit(refined);
+        if (added.addedTools.length > 0 || added.addedPacks.length > 0) {
+            this.persistSavedTools();
+            auditLog.log({ event: 'tools_admitted', taskId: this.taskId, source: refined.source, route: refined.route,
+                tools: added.addedTools.slice(0, 24), packs: added.addedPacks });
+            this.debugLog(`[tools] ${refined.source}: +${added.addedTools.length} tools, packs [${added.addedPacks.join(', ')}] (${refined.reasons.join('; ')})`);
+        }
+        return added;
+    }
+    async searchableTools() {
+        const eligible = await getDynamicTools(this.config.autonomyMode, this.llm.supportsVision, {
+            grantAllTools: true, allowedTools: this.sandbox.allowedTools, deniedTools: this.config.deniedTools
+        });
+        return this.toolScope instanceof Set && this.toolScope.size > 0
+            ? eligible.filter((tool) => this.toolScope.has(tool.name)) : eligible;
+    }
+    /** A resumed conversation starts with the tools it already earned. */
+    restoreSavedTools() {
+        if (this._savedToolsRestored)
+            return;
+        this._savedToolsRestored = true;
+        const key = this.memoryManager?.sessionId
+            ? `${this.memoryManager.sessionId}\0${path.resolve(this.workspaceRoot)}` : null;
+        if (!key)
+            return;
+        const state = readSavedTools(key);
+        if (state) {
+            const eligible = new Set((this.toolsListEntries ?? []).map((entry) => entry.name));
+            // Restore names, not whole-pack permissions or obsolete definitions.
+            this.savedTools.restore({ tools: state.tools.filter((name) => eligible.has(name)), packs: [], order: [] });
+        }
+    }
+    persistSavedTools() {
+        const key = this.memoryManager?.sessionId
+            ? `${this.memoryManager.sessionId}\0${path.resolve(this.workspaceRoot)}` : null;
+        if (key)
+            writeSavedTools(key, this.savedTools.toState());
+    }
+    /**
+     * Apply a TimeMachine verdict. The agent may spend three attempts alone; the
+     * next three are the user's to grant. A `consent` verdict is therefore put to
+     * the user, and only an explicit approval lets the task continue.
+     */
+    async handleRecovery(recovery, tool) {
+        if (recovery.kind === 'replan') {
+            this.emitEvent({ type: 'status', message: `TimeMachine: approach change after ${recovery.attempt} failed attempts.` });
+            return { stop: false, guidance: recovery.guidance };
+        }
+        if (recovery.kind === 'consent') {
+            const remaining = recovery.maxAttempts - recovery.attempt;
+            if (await this.askRetryConsent(recovery, tool)) {
+                this.timeMachine.grantExtension(recovery.issueKey);
+                this.emitEvent({ type: 'status', message: `Retry limit extended: ${remaining} more attempts allowed for ${tool}.` });
+                auditLog.log({ event: 'retry_extension_granted', taskId: this.taskId, tool, attempt: recovery.attempt });
+                return { stop: false, guidance: `The user approved ${remaining} more attempts. Change approach completely; do not repeat the failed edit or command. Review the last successful step and the failing evidence before acting.` };
+            }
+            this.stopRequested = true;
+            auditLog.log({ event: 'retry_extension_declined', taskId: this.taskId, tool, attempt: recovery.attempt });
+            this.emitEvent({ type: 'error', message: recoveryUserMessage({ ...recovery, kind: 'stop' }, tool) });
+            return { stop: true, guidance: recovery.guidance };
+        }
+        if (recovery.kind === 'stop' || recovery.kind === 'human') {
+            this.stopRequested = true;
+            this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, tool) });
+            return { stop: true, guidance: recovery.guidance };
+        }
+        return { stop: false, guidance: recovery.guidance };
+    }
+    /** True only on an explicit "allow". A custom answer, a dismissal or no UI at all is a no. */
+    async askRetryConsent(recovery, tool) {
+        const remaining = recovery.maxAttempts - recovery.attempt;
+        const answer = await this.requestDecision({
+            id: randomUUID(),
+            kind: 'workflow',
+            header: 'More attempts?',
+            question: `${tool} failed ${recovery.attempt} times (${recovery.failureClass || 'unclassified'}). Allow up to ${remaining} more attempts?`,
+            reason: `Each further attempt repeats similar edits and checks and costs more time and tokens. The hard limit is ${recovery.maxAttempts} attempts.`,
+            options: [
+                { id: 'allow', label: `Allow ${remaining} more`, description: 'Continue with a completely different approach. Stops for good at the limit.' },
+                { id: 'stop', label: 'Stop and report', description: 'End the task now with an evidence-based report of what failed.' }
+            ],
+            allowCustom: true,
+            ephemeral: true
+        });
+        return Boolean(answer && answer.optionId === 'allow');
     }
     recordWebArtifact(candidate) {
         if (typeof candidate !== 'string' || !isScannableFile(candidate))
@@ -1075,6 +1206,7 @@ export class AgentLoop {
     }
     updateImplementationPlan(update, options = {}) {
         const nextPlan = update.plan.map((item) => ({ ...item }));
+        const prevText = this._implementationPlan.map((item) => item.step).join('\n');
         const prevKey = JSON.stringify(this._implementationPlan.map((item) => ({ id: item.id, step: item.step, status: item.status })));
         const nextKey = JSON.stringify(nextPlan.map((item) => ({ id: item.id, step: item.step, status: item.status })));
         this._implementationPlan = nextPlan;
@@ -1086,6 +1218,13 @@ export class AgentLoop {
         }
         if (prevKey === nextKey)
             return;
+        // A plan the model or user wrote names what the work needs. When its steps
+        // change, go back to the list and decide again; status-only changes do not.
+        if (!options.seeded) {
+            const nextText = nextPlan.map((item) => item.step).join('\n');
+            if (nextText !== prevText)
+                this.routeTools({ source: 'plan', text: nextText });
+        }
         this.emitEvent({
             type: 'agent_plan',
             explanation: update.explanation || '',
@@ -1098,20 +1237,31 @@ export class AgentLoop {
         });
     }
     seedTaskPhasePlanIfEmpty() {
-        if (this._implementationPlan.length > 0)
+        if (this._implementationPlan.length > 0) {
+            this.emitEvent({
+                type: 'agent_plan',
+                explanation: this.taskShape?.archetypeLabel || 'Current Phase Plan',
+                plan: this._implementationPlan.map((item) => ({ status: item.status, text: item.step, id: item.id }))
+            });
             return;
-        const phases = this.taskShape?.phases;
-        if (!Array.isArray(phases) || phases.length < 2)
-            return;
+        }
         const prompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
         if (!isActionableTaskPrompt(prompt))
             return;
-        const plan = phases.map((phase, idx) => ({
+        const phases = this.taskShape?.phases;
+        const effectivePhases = Array.isArray(phases) && phases.length >= 2
+            ? phases
+            : [
+                { name: 'Research & Structure' },
+                { name: 'Implementation' },
+                { name: 'Verification & Quality Check' }
+            ];
+        const plan = effectivePhases.map((phase, idx) => ({
             id: `phase-${idx + 1}`,
             step: String(phase.name || `Step ${idx + 1}`).trim(),
             status: (idx === 0 ? 'in_progress' : 'pending')
         }));
-        this.updateImplementationPlan({ explanation: this.taskShape?.archetypeLabel || '', plan }, { seeded: true });
+        this.updateImplementationPlan({ explanation: this.taskShape?.archetypeLabel || 'Initial Phase Plan', plan }, { seeded: true });
     }
     advanceImplementationPlanProgress(kind) {
         if (!Array.isArray(this._implementationPlan) || this._implementationPlan.length === 0)
@@ -1146,7 +1296,7 @@ export class AgentLoop {
         const fingerprint = createHash('sha256')
             .update(JSON.stringify({ kind: request.kind, question: request.question, options: request.options.map((option) => option.id) }))
             .digest('hex');
-        const remembered = this._decisionAnswers.get(fingerprint);
+        const remembered = request.ephemeral === true ? null : this._decisionAnswers.get(fingerprint);
         if (remembered)
             return remembered;
         this.emitEvent({ type: 'decision_request', request });
@@ -1162,9 +1312,13 @@ export class AgentLoop {
             label: answer.label.trim(),
             custom: answer.custom === true
         };
-        this._decisionAnswers.set(fingerprint, normalized);
+        if (request.ephemeral !== true)
+            this._decisionAnswers.set(fingerprint, normalized);
         if (request.kind === 'architecture')
             this._decisionResolved = true;
+        // The user's answer can change what the work needs (a framework, a medium).
+        if (request.ephemeral !== true)
+            this.routeTools({ source: 'plan', text: normalized.label });
         this.emitEvent({ type: 'decision_result', request, answer: normalized });
         auditLog.log({ event: 'decision_answered', taskId: this.taskId, kind: request.kind, custom: normalized.custom });
         return normalized;
@@ -1314,8 +1468,10 @@ export class AgentLoop {
         this._lessonSimilarity = 0;
         this._lastToolResult = null;
         this._paradigmShiftPending = false;
-        this._implementationPlan = [];
-        this._implementationPlanSeeded = false;
+        if (!Array.isArray(this._implementationPlan) || this._implementationPlan.length === 0) {
+            this._implementationPlan = [];
+            this._implementationPlanSeeded = false;
+        }
         this._decisionAnswers = new Map();
         this._decisionRequirement = assessDecisionRequirement(this.userPrompt || '');
         this._decisionResolved = !this._decisionRequirement.required;
@@ -1334,28 +1490,11 @@ export class AgentLoop {
             // measured budget without making the checkpoint undiscoverable.
             if (this._decisionRequirement.required)
                 this.unlockedTools.add('request_decision');
-            // SmartToolsUse preloads likely tools but never changes a delegated
-            // subagent's permission scope. A task's intent is a routing hint, not an
-            // authorization boundary: later tool_search results must remain usable.
-            const smartScope = determineToolScope(this.userPrompt, this.taskShape);
-            if (smartScope.toolScope) {
-                for (const tool of smartScope.toolScope)
-                    this.unlockedTools.add(tool);
-                this.debugLog(`[SmartToolsUse] preloaded ${smartScope.toolScope.size} tools (${smartScope.archetype})`);
-            }
-            // Scored routing, with the regex router as a safety net, filtered by SmartToolsUse suppression
-            const scored = packsFromShape(this.taskShape);
-            const fallback = routePacks(this.userPrompt, this.workspaceContext);
-            const candidatePacks = filterSuppressedPacks([...scored, ...fallback], this.userPrompt);
-            for (const pack of candidatePacks) {
-                if (pack === 'game' && isDirectGameTask(this.userPrompt))
-                    continue;
-                this.unlockPack(pack);
-            }
             // Reuse a known route before the first model call. Exact keyword-set
             // matches are always eligible; fuzzy reuse requires at least medium task
             // classification confidence because APC's threshold study shows that
             // aggressive fuzzy hits trade accuracy for speed.
+            const cachedTools = [];
             try {
                 this._planMatch = lookupPlan({
                     prompt: this.userPrompt,
@@ -1368,10 +1507,7 @@ export class AgentLoop {
                     for (const step of this._planMatch.template.steps || []) {
                         if (!step.ok || !resolveTool(step.tool))
                             continue;
-                        this.unlockedTools.add(step.tool);
-                        const pack = packForTool(step.tool);
-                        if (pack)
-                            this.unlockPack(pack);
+                        cachedTools.push(step.tool);
                     }
                     this.debugLog(`plan cache ${this._planMatch.matchType || 'fuzzy'} hit `
                         + `${(this._planMatch.similarity * 100).toFixed(0)}% `
@@ -1382,8 +1518,23 @@ export class AgentLoop {
             catch (e) {
                 this.debugLog(`plan cache lookup skipped: ${e.message}`);
             }
+            // The tool pipeline. ToolsList is built first so every provider can be
+            // shown it; decideTools picks from it, SmartTools bounds the choice, and
+            // saveTools records it. Intent is a routing hint, never an authorization
+            // boundary: a delegated subagent's toolScope still applies afterwards, and
+            // later tool_search results stay usable.
+            await this.ensureToolsList();
+            this.restoreSavedTools();
+            this.routeTools({
+                source: 'intent',
+                prompt: this.userPrompt,
+                taskShape: this.taskShape,
+                workspace: this.workspaceContext,
+                cachedTools
+            });
             this.debugLog(`task shape: ${this.taskShape.archetype} (${this.taskShape.confidence} confidence)`);
         }
+        this.seedTaskPhasePlanIfEmpty();
         if (!this.isInitialized) {
             const activeTier = this.activeTier;
             const charPoolLimit = resolveCharPool(activeTier, this.config.maxCharPool);
@@ -1543,6 +1694,10 @@ export class AgentLoop {
         this.consecutiveReadOnlySteps = 0;
         this.stallGuard.reset();
         this.smartToolsGovernor.reset();
+        this._pendingConsent = null;
+        this._recoveryNote = null;
+        this._verificationNudges = 0;
+        this._verificationPlanFired = false;
         this._smartToolsNudge = null;
         this.tokenTracker.resetTask();
         const turnArchetype = determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype;
@@ -1565,6 +1720,7 @@ export class AgentLoop {
         let reasoningOnlyRecoveries = 0;
         let planHandoffRecoveries = 0;
         let incompleteTurnContinuations = 0;
+        let toolRoutingRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
         while (!this.stopRequested) {
             if (this.stopRequested) {
@@ -1580,6 +1736,10 @@ export class AgentLoop {
                 if (this._smartToolsNudge) {
                     this.messages.push({ role: 'system', content: this._smartToolsNudge });
                     this._smartToolsNudge = null;
+                }
+                if (this._recoveryNote) {
+                    this.messages.push({ role: 'system', content: this._recoveryNote });
+                    this._recoveryNote = null;
                 }
                 // --- V8 MEMORY ARCHITECTURE: DECAY → WINDOW → REAL COMPACTION ---
                 // The window is no longer only a view over an ever-growing array. Old
@@ -1680,30 +1840,18 @@ export class AgentLoop {
                 }
                 // Resolve the active toolset before assembling the prompt: the task
                 // brief only cites tools the model can actually see right now.
-                // Providers with native schema deferral (Anthropic: `defer_loading` +
-                // `tool_search_tool_regex`) keep the whole core in context for free —
-                // the API holds the schemas server-side and expands them on demand,
-                // with no discovery round trip. Every OTHER provider was serialising
-                // all 24 core schemas into every request. There, ship the small resident
-                // set and let `tool_search` — the same mechanism that already
-                // unlocks packs — fetch the rest.
-                const residentOnly = this.llm.supportsToolSearch?.() !== true;
-                let dynamicTools = await getDynamicTools(this.config.autonomyMode, this.llm.supportsVision, {
-                    unlockedPacks: this.unlockedPacks,
-                    unlockedTools: this.unlockedTools,
-                    unlockOrder: this.unlockOrder,
-                    grantAllTools: this.config.grantAllTools === true,
+                // All transports receive the same compact catalog and selected host
+                // schemas. Peer-native tools and native schema deferral remain provider
+                // features; neither changes host authorization or schema selection.
+                const eligibleTools = await getDynamicTools(this.config.autonomyMode, this.llm.supportsVision, {
+                    grantAllTools: true,
                     allowedTools: this.sandbox.allowedTools,
-                    deniedTools: this.config.deniedTools,
-                    residentOnly
+                    deniedTools: this.config.deniedTools
                 });
-                // A delegated subagent runs with a declared toolScope. Enforcing it
-                // here — the one place the catalogue is assembled — is what makes the
-                // scope real; the previous implementation accepted the argument and
-                // ignored it entirely (finding D-7).
-                if (this.toolScope instanceof Set && this.toolScope.size > 0) {
-                    dynamicTools = dynamicTools.filter((t) => this.toolScope.has(t.name));
-                }
+                await this.ensureToolsList(eligibleTools);
+                const permittedTools = this.toolScope instanceof Set && this.toolScope.size > 0
+                    ? eligibleTools.filter((tool) => this.toolScope.has(tool.name)) : eligibleTools;
+                const dynamicTools = this.smartTools.schemas(permittedTools, this.unlockedTools, this.unlockedPacks, this.config.grantAllTools === true);
                 const dynamicToolNames = dynamicTools.map((t) => t.name);
                 // Dynamically inject the absolute latest System context
                 const autonomyMode = this.config.autonomyMode || 'C';
@@ -1766,6 +1914,8 @@ export class AgentLoop {
                 auditLog.log({ event: 'smart_tools_context', taskId: this.taskId, step: this.stepsCompleted,
                     archetype: determineToolScope(this.currentTaskPrompt || '', this.taskShape).archetype,
                     toolCount: dynamicTools.length, toolSchemaChars: JSON.stringify(dynamicTools).length,
+                    catalogTools: this.toolsListEntries?.length || 0, catalogChars: this.toolsListText.length,
+                    selectedToolCount: this.unlockedTools.size,
                     playbookDomains: lazyPlaybookResult.activePlaybookDomains,
                     playbookChars: activePlaybooks.length, planCacheHit: Boolean(this._planMatch) });
                 // The task brief turns "here are 28 tools" into "here is the order to
@@ -1816,7 +1966,7 @@ export class AgentLoop {
                     // is stable within a task and gets its own breakpoint.
                     {
                         role: 'system',
-                        content: `${taskBrief ? taskBrief + '\n\n' : ''}${getPackCatalogue(this.unlockedPacks)}${activePlaybooks ? '\n\n' + activePlaybooks : ''}`,
+                        content: `${taskBrief ? taskBrief + '\n\n' : ''}${this.toolsListText || renderToolsList(buildToolsList())}${activePlaybooks ? '\n\n' + activePlaybooks : ''}`,
                         cacheAnchor: true
                     },
                     // [3] per-task STATIC context — provider activation, detected design,
@@ -1955,6 +2105,7 @@ export class AgentLoop {
                 let nativeMutationCount = 0;
                 let nativeExplorationCount = 0;
                 const completedNativeActionIds = new Set();
+                const observedNativeTerminalIds = new Set();
                 const finalizeReasoningSegment = () => {
                     if (!segmentReasoning)
                         return;
@@ -2052,8 +2203,20 @@ export class AgentLoop {
                             }
                         }
                         const preview = streamingCode.accept(_chunk);
-                        if (preview)
+                        if (preview) {
                             this.emitEvent(preview);
+                        }
+                        else {
+                            const cleanProse = stripThinkBlocks(stripToolCallMarkup(streamedTextAccumulated));
+                            if (cleanProse && !cleanProse.startsWith('```')) {
+                                this.emitEvent({
+                                    type: 'agent_message',
+                                    content: cleanProse,
+                                    delta: _chunk,
+                                    streaming: true
+                                });
+                            }
+                        }
                     },
                     onNativeAction: (action) => {
                         if (this.stopRequested || this.abortController?.signal?.aborted)
@@ -2089,11 +2252,49 @@ export class AgentLoop {
                         if (action.status === 'completed' && action.id && !isChecklistTool) {
                             completedNativeActionIds.add(String(action.id));
                         }
-                        if (action.status === 'completed' && !isChecklistTool) {
+                        const isCompleted = action.status === 'completed';
+                        const isFailed = action.status === 'failed';
+                        const actionArgs = {
+                            ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
+                            path: action.parameters?.path || action.parameters?.Path || action.parameters?.filePath || action.detail || '',
+                            command: action.parameters?.command || action.parameters?.cmd || (['bash', 'terminal', 'sh', 'zsh', 'sysrun'].includes(action.name.toLowerCase()) ? action.detail : '')
+                        };
+                        const terminalId = action.id ? String(action.id) : '';
+                        const freshTerminal = !terminalId || !observedNativeTerminalIds.has(terminalId);
+                        if ((isCompleted || isFailed) && !isChecklistTool && freshTerminal && !this._pendingConsent) {
+                            if (terminalId)
+                                observedNativeTerminalIds.add(terminalId);
+                            const actionOutcome = {
+                                success: isCompleted,
+                                ...(isFailed ? { error: action.detail || `${action.name} failed` } : {})
+                            };
+                            coldObserver.recordToolOutcome(this.taskId, action.name, actionArgs, actionOutcome);
+                            const recovery = this.timeMachine.observe(action.name, actionArgs, actionOutcome, coldObserver.getToolOutcomes(this.taskId));
+                            // Pause now, not at the end of a potentially long peer turn.
+                            // An abort is a yield checkpoint, not a user denial or task success.
+                            if (recovery.kind === 'consent') {
+                                this._pendingConsent ??= { recovery, tool: action.name };
+                                nativeControl.abort();
+                            }
+                            else if (!this._pendingConsent && recovery.kind === 'replan') {
+                                this.emitEvent({ type: 'status', message: `TimeMachine: approach change after ${recovery.attempt} failed attempts.` });
+                            }
+                            else if (!this._pendingConsent && (recovery.kind === 'stop' || recovery.kind === 'human')) {
+                                this.stopRequested = true;
+                                nativeControl.abort();
+                                this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, action.name) });
+                            }
+                            const phaseNudge = this.smartToolsGovernor.observe(action.name, actionArgs, actionOutcome);
+                            if (phaseNudge)
+                                this._smartToolsNudge = phaseNudge;
+                            else if (this.smartToolsGovernor.snapshot().phase === 'execution')
+                                this._smartToolsNudge = null;
+                        }
+                        if (isCompleted && !isChecklistTool) {
                             const lowerName = action.name.toLowerCase();
                             const rawDetail = String(action.detail || '');
                             const lowerDetail = rawDetail.toLowerCase();
-                            if (['fs_write', 'fs_edit', 'write_file', 'edit_file'].includes(lowerName)) {
+                            if (['fs_write', 'fs_edit', 'write_file', 'edit_file', 'write', 'edit', 'replace_file_content'].includes(lowerName)) {
                                 nativeMutationCount++;
                                 if (nativeMutationCount === 1 && this._implementationPlanSeeded) {
                                     this.advanceImplementationPlanProgress('mutation');
@@ -2102,10 +2303,14 @@ export class AgentLoop {
                                     this.advanceImplementationPlanProgress('mutation');
                                 }
                             }
+                            else if (['browse', 'browser_act', 'preview', 'snapshot', 'scrape', 'web_fetch'].includes(lowerName)) {
+                                this.webVerificationState.browserActUsed = true;
+                                this.advanceImplementationPlanProgress('verification');
+                            }
                             else if (lowerName === 'fs_read' && /\.(png|jpg|jpeg|webp)$/i.test(lowerDetail)) {
                                 this.advanceImplementationPlanProgress('verification');
                             }
-                            else if (['fs_read', 'read_file', 'sysrun', 'bash'].includes(lowerName)) {
+                            else if (['fs_read', 'read_file', 'read', 'sysrun', 'bash', 'execute', 'run_command'].includes(lowerName)) {
                                 nativeExplorationCount++;
                                 if (/\.(html?|css|jsx|tsx|vue|svelte)\b/i.test(rawDetail)) {
                                     this.recordInspectedWebFile(rawDetail);
@@ -2116,6 +2321,16 @@ export class AgentLoop {
                                         this.advanceImplementationPlanProgress('mutation');
                                     }
                                 }
+                            }
+                            if (['screenshot', 'vision_inspect_ui'].includes(lowerName) ||
+                                (/\.(png|jpg|jpeg|webp)$/i.test(lowerDetail) && ['fs_read', 'read', 'read_file', 'view_file', 'view_image'].includes(lowerName))) {
+                                this.webVerificationState.screenshotTaken = true;
+                            }
+                            if (['browse', 'browser_act', 'preview', 'snapshot', 'scrape', 'web_fetch'].includes(lowerName)) {
+                                this.webVerificationState.browserActUsed = true;
+                            }
+                            if (/\.(html?|css|jsx|tsx|vue|svelte)\b/i.test(rawDetail)) {
+                                this.webVerificationState.htmlInspected = true;
                             }
                         }
                         const nativeCode = codeProgressFromAction(action.name, { ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
@@ -2135,13 +2350,23 @@ export class AgentLoop {
                             this.emitEvent({ type: 'status', message: `Acting: ${action.name}${detail}` });
                         }
                         else if (action.status === 'completed') {
+                            this.emitEvent({ type: 'status', message: '' });
                             this.emitEvent({ type: 'notice', tone: 'muted', nativeStep: true, message: `${this.config.provider || 'Provider'} ${action.name}${detail}` });
                         }
                         else if (action.status === 'failed') {
+                            this.emitEvent({ type: 'status', message: '' });
                             this.emitEvent({ type: 'warning', message: `${this.config.provider || 'Provider'} could not ${action.name}${detail}` });
                         }
                     }
                 }).catch((error) => {
+                    if (this._pendingConsent) {
+                        this.stepsCompleted += completedNativeActionIds.size;
+                        const checkpoint = new RetryConsentCheckpoint();
+                        if (error && typeof error === 'object' && 'partialUsage' in error) {
+                            Object.assign(checkpoint, { partialUsage: error.partialUsage });
+                        }
+                        throw checkpoint;
+                    }
                     if (nativeCheckpoint) {
                         if (completedNativeActionIds.size > 0) {
                             this.stepsCompleted += completedNativeActionIds.size;
@@ -2172,6 +2397,10 @@ export class AgentLoop {
                 const finalCodePreview = streamingCode.flush();
                 if (finalCodePreview)
                     this.emitEvent(finalCodePreview);
+                if (this._pendingConsent) {
+                    this.stepsCompleted += completedNativeActionIds.size;
+                    throw Object.assign(new RetryConsentCheckpoint(), { partialUsage: response.usage });
+                }
                 // The call came back. Whatever went wrong before is no longer
                 // consecutive — without this reset, one failure at step 2 and another
                 // at step 200 would count toward the same ceiling and stop a task that
@@ -2194,6 +2423,7 @@ export class AgentLoop {
                     uncachedPromptTokens: response.usage.uncachedPromptTokens,
                     noncachedTokens: noncachedTokens(response.usage),
                     measurement: response.usage.measurement || 'unspecified',
+                    measurementScope: response.usage.measurementScope || 'unspecified',
                     cacheMeasurement: response.usage.cacheMeasurement || 'unspecified',
                     costBasis: /^(acp(?:\/|$)|antigravity$|agy$)/i.test(String(this.config.provider || ''))
                         ? 'external_subscription_unavailable' : 'rate_card_estimate',
@@ -2239,7 +2469,7 @@ export class AgentLoop {
                 }
                 // The host owns verification policy. A model cannot substitute repeated
                 // HTTP checks for rendering, and adapters must not contradict this gate.
-                if (!response.toolCalls?.length && !this.webVerificationScheduled
+                if (!response.toolCalls?.length && !response.toolRoutingError && !this.webVerificationScheduled
                     && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken
                     && isWebIntent(this.currentTaskPrompt || this.userPrompt || '')
                     && !isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '')
@@ -2351,6 +2581,22 @@ export class AgentLoop {
                 }
                 // If no tool calls, check if the agent is just thinking/planning or actually done
                 if (!response.toolCalls || response.toolCalls.length === 0) {
+                    if (response.toolRoutingError) {
+                        const name = response.toolRoutingError.tool;
+                        if (toolRoutingRecoveries++ >= 1) {
+                            this.emitEvent({ type: 'error', message: `The peer repeatedly invoked host tool ${name} through its native channel. Work remains unfinished.` });
+                            this.memoryManager.saveHistory(this.messages);
+                            break;
+                        }
+                        this.messages.push({ role: 'system', content: `[TOOL ROUTING REPAIR] ${name} is a Causyne host tool, not a peer-native function. `
+                                + `Return a complete <tool_call>{"name":${JSON.stringify(name)},"arguments":{...}}</tool_call> as assistant text with the real arguments from its advertised schema. `
+                                + 'End your response after the envelope. Causyne will execute it through the normal policy gates and supply its actual result. '
+                                + 'Do not retry the same native function, use dummy shell calls, or assume the host tool already executed. Your other native tools remain available.' });
+                        this.emitEvent({ type: 'status', message: `Correcting the host-tool route for ${name}…` });
+                        auditLog.log({ event: 'peer_tool_route_repaired', taskId: this.taskId, tool: name });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
                     const contentText = response.content || '';
                     const lower = contentText.toLowerCase();
                     const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
@@ -2402,8 +2648,8 @@ export class AgentLoop {
                         const blocked = failedExternalActions
                             .map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
                             .join(', ');
-                        this.emitEvent({ type: 'status', message: 'Native action blocked; switching to workspace-scoped verification...' });
-                        this.emitEvent({ type: 'agent_activity', activity: 'Retrying blocked action within workspace…' });
+                        this.emitEvent({ type: 'status', message: 'Inspecting the failed native action before continuing...' });
+                        this.emitEvent({ type: 'agent_activity', activity: 'Checking the action failure…' });
                         this.messages.push({
                             role: 'system',
                             content: `[SYSTEM NOTICE: Your native action(s) were blocked: ${blocked}. All file reads, writes, copies, and screenshot outputs must stay strictly inside the active workspace directory (${this.workspaceRoot}). Never read, copy (cp/mv), or write files in /tmp or outside the workspace root — write screenshots and temporary files directly to a path inside ${this.workspaceRoot} (for example ${path.join(this.workspaceRoot, 'preview.png')}), or invoke Causyne host tools using plain-text <tool_call>{"name": "browser_act", "arguments": {...}}</tool_call>.]`
@@ -2465,7 +2711,7 @@ export class AgentLoop {
                             this.emitEvent({ type: 'agent_message', content: response.content });
                         }
                         const blockedNote = failedExternalActions.length > 0
-                            ? ` Note: ${failedExternalActions.map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`).join(', ')} could not be authorized outside the active workspace (${this.workspaceRoot}); do NOT read, copy (cp/mv), or reference /tmp paths — write all screenshots, logs, and temporary files directly inside ${this.workspaceRoot}.`
+                            ? ` Note: ${failedExternalActions.map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`).join(', ')} failed. Use their actual error results to choose the next step; honor user denials and the configured workspace policy without assuming a path-related cause.`
                             : '';
                         this.emitEvent({ type: 'status', message: 'Continuing task execution...' });
                         this.emitEvent({ type: 'agent_activity', activity: 'Continuing mid-task execution…' });
@@ -2488,7 +2734,7 @@ export class AgentLoop {
                             this.emitEvent({ type: 'agent_activity', activity: 'Nudging agent to invoke tools…' });
                             this.messages.push({
                                 role: 'system',
-                                content: `[SYSTEM NOTICE: An action or task was requested ("${taskPrompt}"), but no tools were called. Please invoke the appropriate tool by outputting: <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call> to execute the task.]`
+                                content: `[SYSTEM NOTICE: An action or task was requested ("${taskPrompt}"), but no successful tool activity was observed in this turn. Use a tool available through your native channel or request an advertised Causyne host tool using a complete <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call> in assistant text, then yield for its result. Do not invoke a host-only tool as a native function or repeat completed work.]`
                             });
                             this.memoryManager.saveHistory(this.messages);
                             continue;
@@ -2675,6 +2921,29 @@ export class AgentLoop {
                         this.memoryManager.saveHistory(this.messages);
                         break;
                     }
+                    // Assess actual outcomes again after every verification attempt. A
+                    // one-shot reminder must not turn missing evidence into completion.
+                    if (this.stepsCompleted > 0 && !isWebTask) {
+                        const assessment = assessVerification({
+                            archetype: this.taskShape?.archetype,
+                            outcomes: coldObserver.getToolOutcomes(this.taskId),
+                            skip: ['web']
+                        });
+                        if (assessment.gaps.length > 0) {
+                            const domain = assessment.gaps[0].domain;
+                            const recovery = this.timeMachine.observe(`verification_${domain}`, {}, {
+                                success: false, error: 'Required outcome evidence is missing'
+                            }, coldObserver.getToolOutcomes(this.taskId));
+                            this.routeTools({ source: 'verification', requested: assessment.gaps.flatMap((gap) => [...gap.tools]) });
+                            const verdict = await this.handleRecovery(recovery, `Verification (${domain})`);
+                            if (verdict.stop)
+                                break;
+                            this.emitEvent({ type: 'status', message: `Verification check: ${assessment.gaps[0].need}` });
+                            this.messages.push({ role: 'system', content: `${assessment.directive} ${verdict.guidance}` });
+                            this.memoryManager.saveHistory(this.messages);
+                            continue;
+                        }
+                    }
                     // Cold Observer: Overconfidence & Loop Verification Check
                     {
                         try {
@@ -2682,7 +2951,7 @@ export class AgentLoop {
                                 taskId: this.taskId,
                                 userPrompt: this.currentTaskPrompt || this.userPrompt || '',
                                 agentClaim: response.content || '',
-                                toolHistory: [],
+                                toolHistory: coldObserver.getToolOutcomes(this.taskId),
                                 stepsCompleted: this.stepsCompleted
                             });
                             if (coldAudit.overconfident) {
@@ -2690,14 +2959,12 @@ export class AgentLoop {
                                     success: false, error: coldAudit.discrepancy
                                 }, coldObserver.getToolOutcomes(this.taskId));
                                 this.emitEvent({ type: 'status', message: `Cold Observer: ${coldAudit.discrepancy}` });
-                                if (recovery.kind === 'stop') {
-                                    this.stopRequested = true;
-                                    this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, 'Verification') });
+                                const verdict = await this.handleRecovery(recovery, 'Verification');
+                                if (verdict.stop)
                                     break;
-                                }
                                 this.messages.push({
                                     role: 'system',
-                                    content: `${coldAudit.coldDirective} ${recovery.guidance}`
+                                    content: `${coldAudit.coldDirective} ${verdict.guidance}`
                                 });
                                 this.memoryManager.saveHistory(this.messages);
                                 continue;
@@ -3021,12 +3288,15 @@ export class AgentLoop {
                         });
                         continue;
                     }
-                    if (!isCoreTool(functionName) && !this.unlockedTools.has(functionName)) {
+                    if (!this.unlockedTools.has(functionName)) {
+                        // Calling a listed tool by name is a request for it. Its pack comes
+                        // with it so the matching playbook arrives when it becomes relevant.
                         const pack = packForTool(functionName);
-                        if (pack && this.unlockPack(pack)) {
-                            this.debugLog(`unlocked capability pack "${pack}" for ${functionName}`);
-                        }
-                        this.unlockedTools.add(functionName);
+                        this.routeTools({
+                            source: 'request',
+                            requested: [functionName],
+                            requestedPacks: []
+                        });
                     }
                     const validationErrors = this.validateToolArgs(functionName, args);
                     if (validationErrors) {
@@ -3221,13 +3491,16 @@ export class AgentLoop {
                         this.emitEvent({ type: 'step_error', tool: functionName,
                             error: `${errorType}: ${failure.error} (${recovery.attempt}/${recovery.maxAttempts})`,
                             toolCallId: toolCall.id });
+                        const verdict = await this.handleRecovery(recovery, functionName);
                         this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
                             name: functionName, content: JSON.stringify({ ...failure,
-                                errorType, timeMachine: recovery.guidance,
+                                errorType, timeMachine: verdict.guidance,
                                 ...(alternativeRoute ? { apcReplanAlternative: alternativeRoute.suggestedTool, apcReplanReason: alternativeRoute.reason } : {}) }) });
                         this.stallGuard.observeCall(functionName, args || {}, failure, toolCall.id, true);
                         this.memoryManager.saveHistory(this.messages);
-                        if (errorType === 'fatal' || recovery.kind === 'stop' || recovery.kind === 'human') {
+                        if (verdict.stop)
+                            break;
+                        if (errorType === 'fatal') {
                             this.stopRequested = true;
                             this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, functionName) });
                             break;
@@ -3262,14 +3535,16 @@ export class AgentLoop {
                             this.webVerificationState.htmlInspected = true;
                         }
                     }
-                    if (['screenshot', 'vision_inspect_ui'].includes(functionName) && this.llm.supportsVision !== false && result?.success === true && result?._is_image_marker === true) {
+                    const imageCanReachModel = Boolean(this.llm.supportsVision && result?._is_image_marker === true
+                        && typeof result.base64 === 'string' && result.base64.length > 0);
+                    if (['screenshot', 'vision_inspect_ui'].includes(functionName) && result?.success === true && imageCanReachModel) {
                         this.webVerificationState.screenshotTaken = true;
                     }
                     if (functionName === 'browser_act' && result?.success === true) {
                         this.advanceImplementationPlanProgress('verification');
                         const browserResults = Array.isArray(result.data) ? result.data : [];
-                        if (browserResults.some((item) => ['snapshot', 'scrape'].includes(item?.action)
-                            && Array.isArray(item?.data?.runtimeErrors) && item.data.runtimeErrors.length === 0)) {
+                        const hasValidBrowserAction = browserResults.some((item) => ['preview', 'snapshot', 'scrape', 'screenshot'].includes(item?.action));
+                        if (hasValidBrowserAction || browserResults.length > 0 || result.url || result.tabId) {
                             this.webVerificationState.browserActUsed = true;
                         }
                     }
@@ -3279,19 +3554,13 @@ export class AgentLoop {
                     // is written only after post-hook review, so a formatter that rejects
                     // a write is remembered as a failure rather than a success.
                     const observedResult = result?._is_image_marker === true
-                        ? { success: true, _is_image_marker: true, filename: result.filename, mimeType: result.mimeType }
+                        ? { success: true, _is_image_marker: true, visionDelivered: imageCanReachModel, filename: result.filename, mimeType: result.mimeType }
                         : result;
                     coldObserver.recordToolOutcome(this.taskId, functionName, args, observedResult);
                     const recovery = this.timeMachine.observe(functionName, args, observedResult, coldObserver.getToolOutcomes(this.taskId));
-                    if (recovery.kind === 'replan') {
-                        this.emitEvent({ type: 'status', message: `TimeMachine: approach change after ${recovery.attempt} failed attempts.` });
-                    }
-                    if (recovery.kind === 'stop' || recovery.kind === 'human') {
-                        this.stopRequested = true;
-                        this.emitEvent({ type: 'error', message: recoveryUserMessage(recovery, functionName) });
-                    }
+                    const verdict = await this.handleRecovery(recovery, functionName);
                     if (result && (result.success === false || typeof result.error === 'string')) {
-                        result = { ...result, timeMachine: recovery.guidance };
+                        result = { ...result, timeMachine: verdict.guidance };
                     }
                     if (this.stopRequested) {
                         this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
@@ -3302,12 +3571,11 @@ export class AgentLoop {
                     // PROGRESSIVE DISCLOSURE: honour unlock signals from tool_search.
                     // The control fields are stripped before the result reaches the LLM.
                     if (result && (result._unlock_tools || result._unlock_packs)) {
-                        for (const packName of result._unlock_packs || []) {
-                            this.unlockPack(packName);
-                        }
-                        for (const toolName of result._unlock_tools || []) {
-                            this.unlockedTools.add(toolName);
-                        }
+                        this.routeTools({
+                            source: 'request',
+                            requested: (result._unlock_tools || []).filter((name) => resolveTool(name)),
+                            requestedPacks: result._unlock_packs || []
+                        });
                         delete result._unlock_tools;
                         delete result._unlock_packs;
                         this.debugLog(`capability packs loaded: ${[...this.unlockedPacks].join(', ') || 'core only'}`);
@@ -3597,6 +3865,18 @@ export class AgentLoop {
                         }
                     }
                 }
+                if (e instanceof RetryConsentCheckpoint && this._pendingConsent) {
+                    const pending = this._pendingConsent;
+                    this._pendingConsent = null;
+                    this.messages.push({ role: 'assistant', content: `Execution paused: ${pending.tool} failed ${pending.recovery.attempt} times. Keep completed work; do not replay earlier actions.` });
+                    this.memoryManager.saveHistory(this.messages);
+                    const verdict = await this.handleRecovery(pending.recovery, pending.tool);
+                    if (verdict.stop)
+                        break;
+                    this.messages.push({ role: 'system', content: verdict.guidance });
+                    this.memoryManager.saveHistory(this.messages);
+                    continue;
+                }
                 if (e instanceof EfficiencyCheckpoint) {
                     this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
                     this.memoryManager.saveHistory(this.messages);
@@ -3717,14 +3997,27 @@ export class AgentLoop {
         // must not generate a second (and misleading) success event here.
     }
     async waitForApproval(toolCallId) {
+        const signal = this.abortController?.signal;
+        if (this.stopRequested || signal?.aborted)
+            return false;
         return new Promise((resolve) => {
-            this.pendingApprovals.set(toolCallId, resolve);
-            // Safety timeout: If user doesn't respond in 1 hour, auto-deny.
-            setTimeout(() => {
-                if (this.pendingApprovals.has(toolCallId)) {
-                    this.handleApprovalResponse(toolCallId, false);
-                }
-            }, 3600000);
+            let settled = false;
+            const finish = (approved) => {
+                if (settled)
+                    return;
+                settled = true;
+                clearTimeout(timer);
+                signal?.removeEventListener('abort', onAbort);
+                this.pendingApprovals.delete(toolCallId);
+                resolve(approved === true);
+            };
+            const onAbort = () => finish(false);
+            const timer = setTimeout(() => finish(false), 3600000);
+            timer.unref();
+            this.pendingApprovals.set(toolCallId, finish);
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted)
+                finish(false);
         });
     }
     /**
@@ -3760,6 +4053,9 @@ export class AgentLoop {
         if (spent > 0)
             return 'fatal';
         const msg = (error.message || '').toLowerCase();
+        if (msg.includes('free usage limit') || msg.includes('subscribe to opencode') || msg.includes('opencode.ai/go') || msg.includes('insufficient_quota') || msg.includes('credit balance is too low')) {
+            return 'fatal';
+        }
         if (msg.includes('syntax') || msg.includes('unexpected token') || msg.includes('invalid json')) {
             return 'syntax_error';
         }

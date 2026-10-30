@@ -76,12 +76,20 @@ test('ACP keeps one workspace-scoped peer and sends only new context and tool re
     assert.match(text(2), /Current mode C/);
     assert.doesNotMatch(text(2), /Read a\.txt|File contents: one/);
 
+    // In-place compaction of historical tool observations does NOT tear down the stateful ACP session.
+    const compactedToolResult = { role: 'tool', name: 'fs_read', content: 'File contents: [truncated]' };
+    const compacted = [base[0], updated[1], base[2], assistant, compactedToolResult, { role: 'tool', name: 'fs_read', content: 'File contents: two' }];
+    await provider.chat(compacted, opts);
+    assert.equal(sessionCount, 1);
+    assert.match(text(3), /File contents: two/);
+    assert.doesNotMatch(text(3), /File contents: \[truncated\]/);
+
     // A dropped/edited transcript cannot safely be treated as an append-only delta.
     const revised = [base[0], updated[1], { role: 'user', content: 'Read b.txt instead' }];
     await provider.chat(revised, opts);
     assert.equal(sessionCount, 2);
-    assert.match(text(3), /Read b\.txt instead/);
-    assert.match(text(3), /Current Available Tools/);
+    assert.match(text(4), /Read b\.txt instead/);
+    assert.match(text(4), /Current Available Tools/);
 
     await provider.chat(revised, { ...opts, conversationId: 'task-2', workspaceRoot: anotherWorkspace });
     assert.equal(sessionCount, 3);
@@ -93,8 +101,8 @@ test('ACP keeps one workspace-scoped peer and sends only new context and tool re
       ...opts, conversationId: 'task-2', workspaceRoot: anotherWorkspace
     });
     assert.equal(sessionCount, 4);
-    assert.match(text(6), /Read b\.txt instead/);
-    assert.match(text(6), /Current Available Tools/);
+    assert.match(text(7), /Read b\.txt instead/);
+    assert.match(text(7), /Current Available Tools/);
   } finally {
     await provider.close();
     Object.assign(AcpClient.prototype, original);

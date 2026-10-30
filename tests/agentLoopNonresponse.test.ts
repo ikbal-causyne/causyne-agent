@@ -207,6 +207,9 @@ test('isMidTaskProgressText identifies intermediate progress announcements and i
 });
 
 test('AgentLoop auto-continues progress but does not certify a web page without rendered inspection', async () => {
+  const previousHome = process.env.CAUSYNE_HOME;
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-temp-home-'));
+  process.env.CAUSYNE_HOME = tempHome;
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-midtask-continue-'));
   fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
@@ -269,6 +272,9 @@ test('AgentLoop auto-continues progress but does not certify a web page without 
     assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('rendered-page verification did not succeed')), true, JSON.stringify(events));
   } finally {
     process.chdir(previousDirectory);
+    if (previousHome !== undefined) process.env.CAUSYNE_HOME = previousHome;
+    else delete process.env.CAUSYNE_HOME;
+    fs.rmSync(tempHome, { recursive: true, force: true });
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });

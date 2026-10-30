@@ -323,9 +323,16 @@ export function isBrowserRuntimeInstalled() {
         const candidates = configured
             ? [resolveCandidateExecutablePath(path.resolve(configured))]
             : candidateExecutables().map(resolveCandidateExecutablePath);
+        // Match launch-time discovery: Chromium is a supported installed runtime
+        // too. The former Camoufox-only check suppressed host verification even
+        // when resolveBrowserRuntime could launch the installed Chrome browser.
+        if (configured && /(?:chrome|chromium|msedge)(?:\.exe)?$/i.test(path.basename(configured))) {
+            return resolveChromiumRuntime(path.resolve(configured)) !== null;
+        }
         return candidates.some(candidate => {
             try {
-                return existsSync(candidate);
+                assertExecutable(candidate);
+                return Boolean(findResourceDirectory(candidate, realpathSync(candidate)));
             }
             catch {
                 return false;

@@ -22,18 +22,21 @@ export function noncachedTokens(usage: BudgetUsage): number {
 export function actionLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 12;
   if (archetype === 'media_3d_generation') return 25;
+  if (archetype === 'game_development' || archetype === 'game') return 120;
   if (archetype === 'web_engineering') return 120;
   return 35;
 }
 
 export function tokenLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 150_000;
+  if (archetype === 'game_development' || archetype === 'game') return 600_000;
   if (archetype === 'media_3d_generation') return 400_000;
   if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 500_000;
   return 100_000;
 }
 
 export function turnTokenLimitFor(archetype: string): number {
+  if (archetype === 'game_development' || archetype === 'game') return 250_000;
   if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 250_000;
   if (archetype === 'media_3d_generation') return 200_000;
   if (archetype === 'desktop_personalization') return 100_000;

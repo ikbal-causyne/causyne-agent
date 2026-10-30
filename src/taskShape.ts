@@ -18,8 +18,8 @@ interface ArchetypeDefinition {
 
 const PACK_SIGNALS: Record<string, SignalSet> = {
   game: {
-    strong: ['game', 'gamedev', 'godot', 'unity', 'unreal', 'rpg', 'platformer', 'roguelike', 'arcade', 'voxel', 'minecraft', 'tilemap', 'spritesheet', 'boss fight', 'level design'],
-    weak: ['sprite', 'player', 'enemy', 'quest', 'npc', 'gameplay', 'multiplayer', 'leaderboard']
+    strong: ['game', 'gamedev', 'godot', 'unity', 'unreal', 'rpg', 'platformer', 'roguelike', 'arcade', 'voxel', 'minecraft', 'tilemap', 'spritesheet', 'boss fight', 'level design', 'simulator', 'simulation', 'simulasi', 'tinder-3d', '3d'],
+    weak: ['sprite', 'player', 'enemy', 'quest', 'npc', 'gameplay', 'multiplayer', 'leaderboard', 'character']
   },
   web: {
     strong: ['web app', 'webapp', 'website', 'landing page', 'homepage', 'frontend', 'front-end', 'dashboard', 'portfolio', 'react', 'vue', 'svelte', 'angular', 'nextjs', 'next.js', 'nuxt', 'astro', 'tailwind', 'html', 'css'],
@@ -66,8 +66,8 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   build_app: {
     label: 'Build a new application from scratch',
     match: {
-      strong: ['build me', 'create a', 'make me', 'develop a', 'new app', 'from scratch'],
-      weak: ['app', 'project', 'tool', 'system']
+      strong: ['build me', 'create a', 'make me', 'develop a', 'new app', 'from scratch', 'buatkan', 'buat', 'bikin', 'bangun', 'ciptakan'],
+      weak: ['app', 'project', 'tool', 'system', 'game', 'simulator', 'aplikasi']
     },
     phases: [
       { name: 'Plan', tools: ['update_plan'], note: 'Create a visible atomic implementation plan before touching the filesystem.' },
@@ -79,8 +79,8 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   debug: {
     label: 'Diagnose and fix a defect in existing code',
     match: {
-      strong: ['bug', 'error', 'crash', 'fix', 'broken', 'not working', 'failing', 'exception', 'stack trace', 'regression'],
-      weak: ['issue', 'problem', 'wrong', 'debug']
+      strong: ['bug', 'error', 'crash', 'fix', 'broken', 'not working', 'failing', 'exception', 'stack trace', 'regression', 'perbaiki', 'betulkan', 'rusak'],
+      weak: ['issue', 'problem', 'wrong', 'debug', 'masalah']
     },
     phases: [
       { name: 'Reproduce', tools: ['sysRun', 'fs_read'], note: 'Reproduce the failure and capture the exact error before changing anything.' },
@@ -92,7 +92,7 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   research: {
     label: 'Investigate and report, without changing the system',
     match: {
-      strong: ['explain', 'analyse', 'analyze', 'research', 'compare', 'what is', 'how does', 'review', 'audit'],
+      strong: ['explain', 'analyse', 'analyze', 'research', 'compare', 'what is', 'how does', 'review', 'audit', 'analisa', 'jelaskan', 'cek', 'periksa'],
       weak: ['understand', 'find out', 'summarize']
     },
     phases: [

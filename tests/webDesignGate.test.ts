@@ -20,6 +20,9 @@ header { border-bottom: 2px solid #182820; padding: 2rem; }
 <p>A record of the community garden's planting seasons.</p></header></body></html>`;
 
 test('web design audit requires a revision, then blocks completion without rendered inspection', async () => {
+  const previousHome = process.env.CAUSYNE_HOME;
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-isolated-home-'));
+  process.env.CAUSYNE_HOME = tempHome;
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-design-revise-'));
   fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
   const page = path.join(workspace, 'index.html');
@@ -61,6 +64,9 @@ test('web design audit requires a revision, then blocks completion without rende
     assert.equal(events.some(event => event.type === 'error' && event.message?.includes('rendered-page verification did not succeed')), true);
     assert.equal(fs.readFileSync(page, 'utf8'), consideredPage);
   } finally {
+    if (previousHome !== undefined) process.env.CAUSYNE_HOME = previousHome;
+    else delete process.env.CAUSYNE_HOME;
+    fs.rmSync(tempHome, { recursive: true, force: true });
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });

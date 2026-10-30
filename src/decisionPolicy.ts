@@ -50,7 +50,9 @@ const EXPLICIT_CHOICE_PATTERNS = [
 
 const MUTATING_TOOLS = new Set([
   'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move', 'sysRun', 'sysRunBg',
-  'gitOp', 'manage_local_dependencies', 'plugin_manage', 'tool_forge', 'create_skill'
+  'gitOp', 'manage_local_dependencies', 'plugin_manage', 'tool_forge', 'create_skill',
+  'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content',
+  'write', 'edit', 'multiedit', 'bash', 'terminal', 'execute'
 ]);
 
 function containsAny(text: string, terms: readonly string[]): boolean {
@@ -99,8 +101,8 @@ export function isMutatingToolCall(toolName: string, args: Record<string, unknow
   if (toolName === 'creative_apps') return args.action !== 'status';
   if (toolName === 'native_engine') return !['status', 'catalog', 'describe', 'inspect', 'probe'].includes(String(args.action ?? ''));
   if (MUTATING_TOOLS.has(toolName)) {
-    if (toolName === 'sysRun' || toolName === 'sysRunBg') {
-      const command = String(args.command ?? '');
+    if (['sysRun', 'sysRunBg', 'bash', 'terminal', 'execute', 'sh', 'zsh'].includes(toolName)) {
+      const command = String(args.command ?? args.cmd ?? '');
       return !/^\s*(?:pwd|ls|find|rg|grep|cat|sed|head|tail|git\s+(?:status|diff|log|show)|npm\s+(?:view|audit|test)|node\s+--check)\b/i.test(command);
     }
     if (toolName === 'gitOp') {

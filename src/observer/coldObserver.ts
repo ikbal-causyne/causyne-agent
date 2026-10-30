@@ -57,7 +57,7 @@ export interface TurnState {
   taskId?: string;
   userPrompt: string;
   agentClaim: string;
-  toolHistory: TurnToolEvidence[];
+  toolHistory: readonly TurnToolEvidence[] | readonly ToolOutcome[];
   stepsCompleted: number;
 }
 
@@ -97,7 +97,9 @@ const BUILD_CLAIM = /\b(?:build|typecheck|types|lint|compilation)\b[^.\n]{0,40}\
 
 const MUTATING_TOOLS = new Set([
   'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move',
-  'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'gitOp'
+  'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'gitOp',
+  'write_file', 'write_to_file', 'edit_file', 'replace_file_content',
+  'multi_replace_file_content', 'write', 'edit', 'multiedit', 'bash', 'execute'
 ]);
 
 function normalizeMode(value: unknown): ObserverMode | null {
@@ -212,7 +214,7 @@ function hasHonestCaveat(claim: string): boolean {
   return HONEST_CAVEATS.some((pattern) => pattern.test(claim));
 }
 
-function failureSummary(outcomes: ToolOutcome[]): string {
+function failureSummary(outcomes: readonly ToolOutcome[]): string {
   const last = [...outcomes].reverse().find((outcome) => !outcome.success);
   if (!last) return 'a recent tool call failed';
   const detail = last.error || last.command || last.path || 'no error text';
@@ -451,15 +453,18 @@ export class ColdObserver {
     }
 
     const journal = turnState.taskId ? this.journals.get(turnState.taskId) : undefined;
-    const outcomes = journal && journal.length > 0
+    const isToolOutcome = (entry: unknown): entry is ToolOutcome => (
+      entry !== null && typeof entry === 'object' && typeof (entry as ToolOutcome).at === 'number'
+    );
+    const outcomes: readonly ToolOutcome[] = journal && journal.length > 0
       ? journal
-      : turnState.toolHistory.map(normalizeOutcome);
+      : turnState.toolHistory.map((item) => isToolOutcome(item) ? item : normalizeOutcome(item));
     const caveat = hasHonestCaveat(claim);
     const lastFailure = outcomes.findLastIndex((outcome) => !outcome.success);
     const successAfterFailure = lastFailure >= 0
       && outcomes.slice(lastFailure + 1).some((outcome) => outcome.success);
     const isCodeMutation = (outcome: ToolOutcome): boolean => outcome.success
-      && ['fs_write', 'fs_edit', 'MultiEdit'].includes(outcome.tool)
+      && ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content', 'write', 'edit', 'multiedit'].includes(outcome.tool)
       && /\.(?:[cm]?[jt]sx?|py|rb|php|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|fs|sh|sql|html|css|scss|sass|vue|svelte)$/i.test(outcome.path);
     const lastCodeChange = outcomes.findLastIndex(isCodeMutation);
     const checks = outcomes.slice(lastCodeChange + 1);
@@ -470,6 +475,9 @@ export class ColdObserver {
     const modifiedCode = lastCodeChange >= 0;
     const declarativeOnly = modifiedCode && outcomes.filter(isCodeMutation).every(outcome => /\.(?:html|css)$/i.test(outcome.path));
     const hasRenderedCheck = checks.some(outcome => outcome.success && outcome.rendered === true);
+    const hasDeclarativeInspection = checks.some(outcome => outcome.success
+      && ['fs_read', 'read_file', 'view_file', 'read', 'cat'].includes(outcome.tool)
+      && /\.(?:html|css)$/i.test(outcome.path));
 
     let overconfident = false;
     let confidence = 0;
@@ -491,7 +499,7 @@ export class ColdObserver {
       confidence = 0.82;
       discrepancy = 'claimed a passing build or check without a successful verification command';
       coldDirective = '[OBSERVER] You claimed that a build or check passed, but no successful verification command appears in this task. Run the relevant command and report its actual result, or state that it is unverified.';
-    } else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && hasRenderedCheck)) {
+    } else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && (hasRenderedCheck || hasDeclarativeInspection))) {
       overconfident = true;
       confidence = 0.72;
       discrepancy = 'code was modified without a successful test or syntax check';

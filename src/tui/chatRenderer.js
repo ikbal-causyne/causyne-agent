@@ -286,6 +286,8 @@ export class ChatRenderer {
    * stream is identical to what it has always been.
    */
   frame(kind, produce, meta = null) {
+    if (kind !== 'assistant') this._activeAssistant = false;
+    if (kind !== 'reasoning') this._activeReasoning = false;
     if (!this.transcript) { produce(); return; }
     this.transcript.append({
       kind,
@@ -587,16 +589,40 @@ export class ChatRenderer {
 
   onAgentMessage(msg) {
     const content = safeDisplay(msg.content || '');
-    this.frame('assistant', () => {
-      // Prose, not chrome: wrapped to a readable measure even on a wide terminal.
-      const width = this.measure();
-      this.write();
-      this.write(`${paint('agent', GLYPHS.arrow)} ${bold(paint('agent', 'Causyne'))}`);
-      for (const line of renderMarkdown(content, width - 2)) {
-        this.write(line ? '  ' + line : '');
+    const isStreaming = Boolean(msg.streaming);
+
+    const tailIsAssistant = !this.transcript
+      || this.transcript.frames?.at(-1)?.meta?.assistant === true;
+    if (this._activeAssistant && !tailIsAssistant) {
+      this._activeAssistant = false;
+    }
+
+    if (isStreaming) {
+      if (!this._activeAssistant) {
+        this._activeAssistant = true;
+        this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(msg.content || '') });
+      } else {
+        this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(msg.content || '') });
       }
-      this.write();
-    }, { messageText: String(msg.content || '') });
+      return;
+    }
+
+    if (this._activeAssistant) {
+      this._activeAssistant = false;
+      this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(msg.content || '') });
+    } else {
+      this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(msg.content || '') });
+    }
+  }
+
+  formatAssistantMessage(content, { streaming = false } = {}) {
+    const width = this.measure();
+    this.write();
+    this.write(`${paint('agent', GLYPHS.arrow)} ${bold(paint('agent', 'Causyne'))}${streaming ? ' ' + dim('…') : ''}`);
+    for (const line of renderMarkdown(content, width - 2)) {
+      this.write(line ? '  ' + line : '');
+    }
+    this.write();
   }
 
   /**
@@ -630,9 +656,9 @@ export class ChatRenderer {
     if (isStreaming) {
       if (!this._activeReasoning) {
         this._activeReasoning = true;
-        this.frame('reasoning', () => this.renderReasoning(content, { streaming: true }), { reasoning: true });
+        this.frame('reasoning', () => this.renderReasoning(content, { streaming: true, durationText }), { reasoning: true });
       } else {
-        this.updateTailFrame('reasoning', () => this.renderReasoning(content, { streaming: true }), { reasoning: true });
+        this.updateTailFrame('reasoning', () => this.renderReasoning(content, { streaming: true, durationText }), { reasoning: true });
       }
       return;
     }
@@ -659,16 +685,25 @@ export class ChatRenderer {
       this.write(`${paint('muted', GLYPHS.vLine || '│')} ${dim(`thinking${timePart}`)}`);
     }
 
-    const displayRows = rows.slice(0, REASONING_LINES);
+    if (streaming && rows.length > REASONING_LINES) {
+      const hidden = rows.length - REASONING_LINES;
+      this.write(`${paint('rule', GLYPHS.vLine || '│')} ${dim(`${GLYPHS.ellipsis} ${hidden} earlier thinking line${hidden === 1 ? '' : 's'}`)}`);
+    }
+
+    const displayRows = streaming && rows.length > REASONING_LINES
+      ? rows.slice(rows.length - REASONING_LINES)
+      : rows.slice(0, REASONING_LINES);
+
     for (const row of displayRows) {
       this.write(`${paint('rule', GLYPHS.vLine || '│')} ${dim(row)}`);
     }
 
-    if (rows.length > REASONING_LINES) {
+    if (!streaming && rows.length > REASONING_LINES) {
       const hidden = rows.length - REASONING_LINES;
       this.write(`${paint('rule', GLYPHS.corner || '└')} ${dim(`${GLYPHS.ellipsis} ${hidden} more line${hidden === 1 ? '' : 's'} of reasoning`)}`);
     } else if (streaming) {
-      this.write(`${paint('rule', GLYPHS.corner || '└')} ${dim('streaming thoughts…')}`);
+      const timePart = durationText ? ` · ${durationText}` : '';
+      this.write(`${paint('rule', GLYPHS.corner || '└')} ${bold(paint('warn', 'thinking…'))} ${dim(timePart || 'streaming thoughts')}`);
     } else {
       this.write(`${paint('rule', GLYPHS.corner || '└')}`);
     }

@@ -2,10 +2,19 @@ import { createHash } from 'node:crypto';
 import { failureClass } from './planCache.js';
 import { isVerificationCommand } from './observer/evidence.js';
 export const TIME_MACHINE_MAX_ATTEMPTS = 6;
-export const TIME_MACHINE_REPLAN_AT = 3;
+/**
+ * After this many failed attempts at the same issue the agent must stop and ask
+ * the user before trying again. Attempts beyond it are three more rounds of
+ * similar edits and checks, which cost real time and tokens, so they are the
+ * user's call and never the agent's.
+ */
+export const TIME_MACHINE_CONSENT_AT = 3;
 export function recoveryUserMessage(decision, tool) {
     if (decision.kind === 'human') {
         return `${tool} needs approval or authentication. Review the last tool error, then provide the needed access or choose another route. No success is claimed.`;
+    }
+    if (decision.attempt <= TIME_MACHINE_CONSENT_AT && decision.kind === 'stop') {
+        return `${tool} failed ${decision.attempt} times (${decision.failureClass}) and more attempts were not approved. The task stopped without verified success.`;
     }
     return `${tool} still failed after ${decision.attempt} attempts (${decision.failureClass}). The task stopped without verified success.`;
 }
@@ -35,9 +44,12 @@ function operationFamily(args) {
     }
     return (words[0] || '').replace(/^.*[\\/]/, '').toLowerCase().slice(0, 32);
 }
-function issueKey(tool, args, classification) {
+function issueKey(tool, args) {
     const family = operationFamily(args);
-    return createHash('sha256').update(`${tool}\0${family}\0${classification}`).digest('hex');
+    const target = String(args.path ?? args.file_path ?? args.filePath ?? '');
+    // Changing error text/class does not buy another three attempts at the same
+    // operation. Targets are hashed and never included in recovery messages.
+    return createHash('sha256').update(`${tool}\0${family}\0${target}`).digest('hex');
 }
 function lastGoodTool(outcomes) {
     for (let index = outcomes.length - 1; index >= 0; index--) {
@@ -62,28 +74,39 @@ function nextDiagnostic(classification) {
 /** Per-task, deterministic recovery budget. Never replays actions or approvals. */
 export class TimeMachine {
     failures = new Map();
+    extended = new Set();
     reset() {
         this.failures.clear();
+        this.extended.clear();
+    }
+    /** The user approved attempts beyond the consent point for this issue, up to the hard maximum. */
+    grantExtension(issueKeyValue) {
+        const count = this.failures.get(issueKeyValue) ?? 0;
+        if (count >= TIME_MACHINE_CONSENT_AT && count < TIME_MACHINE_MAX_ATTEMPTS)
+            this.extended.add(issueKeyValue);
+    }
+    /** Whether the user already approved further attempts for this issue. */
+    isExtended(issueKeyValue) {
+        return this.extended.has(issueKeyValue);
     }
     observe(tool, args, result, outcomes = []) {
         const value = record(result);
         const failed = value.success === false || typeof value.error === 'string';
         const classification = failed ? failureClass(value) || 'failed' : '';
-        const key = issueKey(tool, args, classification);
+        const key = issueKey(tool, args);
         const good = lastGoodTool(outcomes);
         if (!failed) {
             // A successful check only clears its own failure family. A successful
             // read/write cannot prove that a failing build or test was repaired.
-            const possibleKeys = ['failed', 'exit_nonzero', 'syntax', 'invalid_args',
-                'not_found', 'timeout', 'network', 'rate_limited', 'permission'];
-            const hadFailure = possibleKeys.some((item) => this.failures.has(issueKey(tool, args, item)));
+            const hadFailure = this.failures.has(key);
             if (hadFailure) {
-                for (const item of possibleKeys)
-                    this.failures.delete(issueKey(tool, args, item));
+                this.failures.delete(key);
+                this.extended.delete(key);
             }
             return {
                 kind: hadFailure ? 'resolved' : 'none', attempt: 0,
                 maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, failureClass: '',
+                issueKey: '',
                 lastGoodTool: good,
                 guidance: hadFailure
                     ? isVerificationCommand(String(args.command || args.cmd || ''))
@@ -97,27 +120,39 @@ export class TimeMachine {
         const attempt = (this.failures.get(key) || 0) + 1;
         this.failures.set(key, attempt);
         const checkpoint = good ? ` Last successful tool: ${good}.` : '';
-        if (value.failureKind === 'site_refusal' && attempt < TIME_MACHINE_MAX_ATTEMPTS) {
-            return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,
-                failureClass: classification, lastGoodTool: good,
-                guidance: `The site refused this fetch. Do not repeat the same URL or bypass the site's restriction. Search for another public source or use an already available browser capability.${checkpoint}` };
-        }
         if (needsHuman) {
-            return { kind: 'human', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,
+            return { kind: 'human', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
                 failureClass: classification, lastGoodTool: good,
                 guidance: `Permission or authentication is required. Stop retrying and explain the exact user action needed.${checkpoint}` };
         }
         if (attempt >= TIME_MACHINE_MAX_ATTEMPTS) {
-            return { kind: 'stop', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,
+            return { kind: 'stop', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
                 failureClass: classification, lastGoodTool: good,
                 guidance: `The same failure class persisted through ${TIME_MACHINE_MAX_ATTEMPTS} attempts. Stop this task. Give a brief evidence-based report, state what remains unresolved, and ask for input only if needed. Put a detailed report in a Markdown file only if the user requests one.${checkpoint}` };
         }
-        if (attempt >= TIME_MACHINE_REPLAN_AT) {
-            return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,
+        // The agent may spend three attempts alone. The fourth through sixth belong
+        // to the user: without an explicit grant the budget ends here.
+        if (attempt >= TIME_MACHINE_CONSENT_AT && !this.extended.has(key)) {
+            if (attempt === TIME_MACHINE_CONSENT_AT) {
+                return { kind: 'consent', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
+                    failureClass: classification, lastGoodTool: good,
+                    guidance: `Three attempts failed. Ask the user before trying again. If they allow it, change approach completely: review the last successful step and the failing evidence. ${nextDiagnostic(classification)}${checkpoint}` };
+            }
+            return { kind: 'stop', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
                 failureClass: classification, lastGoodTool: good,
-                guidance: `Review the last successful step and the failing evidence. ${nextDiagnostic(classification)} Change approach before another attempt; do not repeat the same command or claim a fix without a passing check.${checkpoint}` };
+                guidance: `Further attempts were not approved. Stop this task. Give a brief evidence-based report and state what remains unresolved.${checkpoint}` };
         }
-        return { kind: 'continue', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS,
+        if (value.failureKind === 'site_refusal' && attempt < TIME_MACHINE_MAX_ATTEMPTS) {
+            return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
+                failureClass: classification, lastGoodTool: good,
+                guidance: `The site refused this fetch. Do not repeat the same URL or bypass the site's restriction. Search for another public source or use an already available browser capability.${checkpoint}` };
+        }
+        if (attempt >= TIME_MACHINE_CONSENT_AT) {
+            return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
+                failureClass: classification, lastGoodTool: good,
+                guidance: `Review the last successful step and the failing evidence. ${nextDiagnostic(classification)} Change approach before another attempt; do not repeat the same command or claim a fix without a passing check. ${TIME_MACHINE_MAX_ATTEMPTS - attempt} attempt(s) remain.${checkpoint}` };
+        }
+        return { kind: 'continue', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
             failureClass: classification, lastGoodTool: good,
             guidance: `Inspect this failure before retrying. Attempt ${attempt}/${TIME_MACHINE_MAX_ATTEMPTS}.${checkpoint}` };
     }

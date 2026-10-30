@@ -7,6 +7,7 @@ async function toolDefinitions() {
     const { getSearchableToolDefinitions } = await import('./registry.js');
     return getSearchableToolDefinitions();
 }
+import { buildToolsList } from '../toolsList.js';
 import { PACKS, PACK_NAMES, packForTool, isCoreTool, isResidentTool } from '../toolPacks.js';
 /** Max skills returned alongside the tool matches, so one search stays cheap. */
 const MAX_SKILL_HITS = 5;
@@ -115,7 +116,7 @@ function buildPattern(query) {
 export const deferredMcpSearch = {
     schema: {
         name: 'tool.search',
-        description: 'Search your full native tool catalogue and load additional tool schemas on demand. Causyne keeps specialised capability packs (game development, media generation, browser and vision, system control, advanced orchestration) out of your context until you need them. Call this whenever a task needs a capability you cannot currently see — the matching tools become callable immediately on your next turn. Accepts natural language ("generate music", "godot scene", "kill process on port", "read a pdf") or a regular expression.',
+        description: 'Discover tools or skills from the live catalog. Select exact names, describe a capability, or explicitly load a pack. Selected schemas appear next turn; execution permissions still apply.',
         parameters: {
             type: 'object',
             properties: {
@@ -123,6 +124,7 @@ export const deferredMcpSearch = {
                     type: 'string',
                     description: 'What capability you need. Natural language or a regex pattern matched against tool names, descriptions and argument descriptions.'
                 },
+                names: { type: 'array', items: { type: 'string' }, description: 'Exact tool names selected from the compact catalog. Loads only these schemas.' },
                 pack: {
                     type: 'string',
                     enum: [...PACK_NAMES, 'all'],
@@ -132,25 +134,35 @@ export const deferredMcpSearch = {
                     type: 'integer',
                     description: 'Maximum number of tools to return. Defaults to 8.'
                 }
-            },
-            required: ['query']
+            }
         }
     },
-    async execute(args) {
+    async execute(args, context = {}) {
         try {
             const query = String(args.query || '').trim();
             const requestedPack = args.pack ? String(args.pack).toLowerCase() : null;
+            const definitions = context.parentLoop?.searchableTools
+                ? await context.parentLoop.searchableTools() : await toolDefinitions();
+            const hints = new Map(buildToolsList(definitions).map((entry) => [entry.name, entry.hint]));
+            if (Array.isArray(args.names) && args.names.length > 0) {
+                const available = new Map(definitions.map((definition) => [definition.name.toLowerCase(), definition.name]));
+                const chosen = [...new Set(args.names.map((name) => available.get(String(name).toLowerCase())).filter((name) => Boolean(name)))];
+                if (chosen.length !== new Set(args.names.map((name) => String(name).toLowerCase())).size) {
+                    return { success: false, error: 'One or more selected tools are unavailable under the current policy. Select exact names from the current catalog.' };
+                }
+                return { success: true, output: `Selected ${chosen.length} tool schemas for your next turn:\n${chosen.map((name) => `- ${name}: ${hints.get(name) || 'tool'}`).join('\n')}`, _unlock_tools: chosen };
+            }
             if (!query && !requestedPack) {
                 return { success: false, error: 'Provide a "query" describing the capability you need, or a "pack" name to load.' };
             }
             // Whole-pack load. Cheaper than five searches when the agent already
             // knows it is starting a game or a media pipeline.
             if (requestedPack && requestedPack !== 'all' && Object.hasOwn(PACKS, requestedPack)) {
-                const packTools = (await toolDefinitions()).filter(d => packForTool(d.name) === requestedPack);
+                const packTools = definitions.filter(d => packForTool(d.name) === requestedPack);
                 return {
                     success: true,
                     output: `Loaded capability pack "${requestedPack}" (${packTools.length} tools). These are now callable:\n` +
-                        packTools.map(d => `- ${d.name}: ${d.description || ''}`).join('\n'),
+                        packTools.map(d => `- ${d.name}: ${hints.get(d.name) || 'tool'}`).join('\n'),
                     _unlock_packs: [requestedPack],
                     _unlock_tools: packTools.map(d => d.name)
                 };
@@ -159,7 +171,6 @@ export const deferredMcpSearch = {
             const lower = query.toLowerCase();
             const terms = lower.split(/[^a-z0-9_]+/).filter(t => t.length > 2);
             const pattern = buildPattern(query);
-            const definitions = await toolDefinitions();
             const exact = definitions.find(definition => definition.name.toLowerCase() === lower);
             const scored = (exact ? [exact] : definitions)
                 .map(definition => ({ definition, score: scoreTool(definition, terms, pattern) }))
@@ -195,13 +206,10 @@ export const deferredMcpSearch = {
                 // schema deferral only RESIDENT_TOOLS ship, and a non-resident core
                 // tool found here would have been reported as "already loaded" and
                 // then stayed invisible forever.
-                if (!isResidentTool(definition.name)) {
+                if (!isResidentTool(definition.name))
                     unlockTools.push(definition.name);
-                }
-                const state = isResidentTool(definition.name)
-                    ? 'already loaded'
-                    : (isCoreTool(definition.name) ? 'core' : `pack: ${pack || 'custom'}`);
-                lines.push(`- ${definition.name} (${state}): ${definition.description || ''}`);
+                const state = isCoreTool(definition.name) ? 'core' : `pack: ${pack || 'custom'}`;
+                lines.push(`- ${definition.name} (${state}): ${hints.get(definition.name) || 'tool'}`);
             }
             // Skills are searched alongside tools because `tool_search` is the only
             // discovery surface the model always has. The compiled skill catalogue is

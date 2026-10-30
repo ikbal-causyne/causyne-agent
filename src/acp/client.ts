@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {
   ACP_ERROR_CODES,
@@ -38,6 +40,7 @@ export interface AcpClientOptions {
   env?: NodeJS.ProcessEnv;
   clientVersion?: string;
   promptTimeoutMs?: number;
+  inactivityTimeoutMs?: number;
   allowHostTools?: boolean;
   permissionHandler?: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse['outcome']>;
   onUpdate?: (sessionId: string, update: SessionUpdate) => void;
@@ -55,8 +58,11 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  inactivityTimer?: NodeJS.Timeout | undefined;
+  snifferInterval?: NodeJS.Timeout | undefined;
   method: string;
-  cleanup?: () => void;
+  cleanup?: (() => void) | undefined;
+  notifyActivity?: (() => void) | undefined;
 }
 
 function createAbortError(message = 'ACP operation aborted by user'): Error {
@@ -172,11 +178,13 @@ export class AcpClient {
     child.stdout.on('data', (chunk: string) => {
       if (this.closed) return;
       this.buffer += chunk;
+      this.notifyPendingActivity();
       void this.drain();
     });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       this.stderrTail = `${this.stderrTail}${chunk}`.slice(-MAX_STDERR_CHARS);
+      this.notifyPendingActivity();
     });
     child.on('error', (error) => this.failAll(new Error(`agent process failed: ${error.message}`)));
     child.on('exit', (code, exitSignal) => {
@@ -274,6 +282,7 @@ export class AcpClient {
     let collected = '';
     const collector = (update: SessionUpdate): void => {
       if (signal?.aborted) return;
+      this.notifyPendingActivity();
       // handleLine already notifies options.onUpdate for this session. Calling
       // it again here duplicated every live chunk and file-action frame.
       if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
@@ -283,6 +292,7 @@ export class AcpClient {
     const previous = this.updateListener;
     this.updateListener = (sessionIdFromEvent, update) => {
       if (signal?.aborted) return;
+      this.notifyPendingActivity();
       previous?.(sessionIdFromEvent, update);
       if (sessionIdFromEvent === sessionId) collector(update);
     };
@@ -298,7 +308,10 @@ export class AcpClient {
       const response = await this.request<PromptResponse>(ACP_METHODS.PROMPT, {
         sessionId,
         prompt: blocks
-      }, this.options.promptTimeoutMs ?? 15 * 60 * 1000, signal);
+      }, this.options.promptTimeoutMs ?? 15 * 60 * 1000, signal, {
+        sessionId,
+        inactivityTimeoutMs: this.options.inactivityTimeoutMs ?? 120_000
+      });
       return {
         stopReason: response?.stopReason ?? 'end_turn',
         ...(response?.usage ? { usage: response.usage } : {}),
@@ -516,6 +529,8 @@ export class AcpClient {
     const pending = this.pending.get(response.id);
     if (!pending) return;
     clearTimeout(pending.timer);
+    if (pending.inactivityTimer) clearTimeout(pending.inactivityTimer);
+    if (pending.snifferInterval) clearInterval(pending.snifferInterval);
     pending.cleanup?.();
     this.pending.delete(response.id);
     if (response.error) {
@@ -528,14 +543,102 @@ export class AcpClient {
     pending.resolve(response.result);
   }
 
-  private request<T>(method: string, params: unknown, timeoutMs: number, signal?: AbortSignal): Promise<T> {
+  private notifyPendingActivity(): void {
+    for (const pending of this.pending.values()) {
+      pending.notifyActivity?.();
+    }
+  }
+
+  inspectPeerDiagnostics(sessionId?: string): string | null {
+    if (this.exitError) {
+      return this.exitError.message;
+    }
+    if (this.child && this.child.exitCode !== null) {
+      const detail = this.stderrTail.trim() || `exit code ${this.child.exitCode}`;
+      return `agent process exited: ${detail}`;
+    }
+    if (this.stderrTail) {
+      const fatalPatterns = [
+        /free usage limit reached/i,
+        /ai_apicallerror/i,
+        /ai_retryerror/i,
+        /rate limit/i,
+        /quota exceeded/i,
+        /insufficient_quota/i,
+        /unauthorized/i,
+        /authentication failed/i,
+        /invalid api key/i
+      ];
+      for (const pat of fatalPatterns) {
+        if (pat.test(this.stderrTail)) {
+          const match = this.stderrTail.split('\n').find(l => pat.test(l));
+          if (match) return match.trim();
+        }
+      }
+    }
+    const cmd = (this.options.command || '').toLowerCase();
+    const isOpencode = cmd.includes('opencode')
+      || (this.options.args && this.options.args.some(a => String(a).toLowerCase().includes('opencode')));
+    if (isOpencode) {
+      const opencodeErr = this.inspectOpencodeLog(sessionId);
+      if (opencodeErr) return opencodeErr;
+    }
+    return null;
+  }
+
+  private inspectOpencodeLog(sessionId?: string): string | null {
+    try {
+      const logPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'log', 'opencode.log');
+      if (!fsSync.existsSync(logPath)) return null;
+      const stat = fsSync.statSync(logPath);
+      if (stat.size === 0) return null;
+      const readBytes = Math.min(stat.size, 65536);
+      const buffer = Buffer.alloc(readBytes);
+      const fd = fsSync.openSync(logPath, 'r');
+      try {
+        fsSync.readSync(fd, buffer, 0, readBytes, stat.size - readBytes);
+      } finally {
+        fsSync.closeSync(fd);
+      }
+      const text = buffer.toString('utf8');
+      const lines = text.split('\n').filter(Boolean);
+      for (let i = lines.length - 1; i >= Math.max(0, lines.length - 60); i--) {
+        const line = lines[i];
+        if (!line) continue;
+        if (sessionId && !line.includes(sessionId)) continue;
+        if (line.includes('level=ERROR') || line.includes('AI_APICallError') || line.includes('Free usage limit reached') || line.includes('AI_RetryError')) {
+          const match = line.match(/error\.error="([^"]+)"/) || line.match(/message="([^"]+)"/);
+          if (match && match[1]) {
+            return match[1].replace(/\\n/g, ' ').trim();
+          }
+          return line.trim();
+        }
+      }
+    } catch {
+      // ignore log inspection errors
+    }
+    return null;
+  }
+
+  private request<T>(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    options?: { sessionId?: string; inactivityTimeoutMs?: number }
+  ): Promise<T> {
     if (signal?.aborted) return Promise.reject(createAbortError());
     if (!this.child || this.closed) return Promise.reject(new Error('agent process is not running'));
     if (this.exitError) return Promise.reject(this.exitError);
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
+      let inactivityTimer: NodeJS.Timeout | undefined;
+      let snifferInterval: NodeJS.Timeout | undefined;
+
       const cleanup = (): void => {
         signal?.removeEventListener('abort', onAbort);
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        if (snifferInterval) clearInterval(snifferInterval);
       };
       const onAbort = (): void => {
         clearTimeout(timer);
@@ -546,16 +649,58 @@ export class AcpClient {
       const timer = setTimeout(() => {
         cleanup();
         this.pending.delete(id);
-        reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+        const diag = this.inspectPeerDiagnostics(options?.sessionId);
+        if (diag) {
+          reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
+        } else {
+          reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+        }
       }, timeoutMs);
       if (typeof timer.unref === 'function') timer.unref();
+
+      const resetInactivity = (): void => {
+        const timeoutMsInact = options?.inactivityTimeoutMs;
+        if (!timeoutMsInact) return;
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+          cleanup();
+          this.pending.delete(id);
+          const diag = this.inspectPeerDiagnostics(options?.sessionId);
+          if (diag) {
+            reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
+          } else {
+            reject(new Error(`${method} stalled: no activity from peer in ${Math.round(timeoutMsInact / 1000)}s`));
+          }
+        }, timeoutMsInact);
+        if (typeof inactivityTimer.unref === 'function') inactivityTimer.unref();
+      };
+
+      const sid = options?.sessionId;
+      if (sid) {
+        snifferInterval = setInterval(() => {
+          const fatalDiag = this.inspectPeerDiagnostics(sid);
+          if (fatalDiag) {
+            cleanup();
+            clearTimeout(timer);
+            this.pending.delete(id);
+            try { this.notifyCancel(sid); } catch { /* ignore */ }
+            reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${fatalDiag}`));
+          }
+        }, 1500);
+        if (typeof snifferInterval.unref === 'function') snifferInterval.unref();
+      }
+
+      resetInactivity();
       signal?.addEventListener('abort', onAbort, { once: true });
       this.pending.set(id, {
         resolve: (value) => resolve(value as T),
         reject,
         timer,
+        inactivityTimer,
+        snifferInterval,
         method,
-        cleanup
+        cleanup,
+        notifyActivity: resetInactivity
       });
       this.write({ jsonrpc: '2.0', id, method, params });
     });
@@ -565,6 +710,8 @@ export class AcpClient {
     this.exitError = error;
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
+      if (pending.inactivityTimer) clearTimeout(pending.inactivityTimer);
+      if (pending.snifferInterval) clearInterval(pending.snifferInterval);
       pending.cleanup?.();
       pending.reject(error);
       this.pending.delete(id);

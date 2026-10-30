@@ -252,12 +252,20 @@ export function stripToolCallMarkup(text) {
         .replace(/(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+/gi, '')
         .trim();
 }
+export function stripThinkBlocks(text) {
+    if (!text || typeof text !== 'string')
+        return '';
+    return text
+        .replace(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>[\s\S]*?(?:<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>|$)/gi, '')
+        .trim();
+}
 export function extractLivePlanFromText(text, allowTrailing = false) {
     if (!text || typeof text !== 'string')
         return null;
+    const cleanText = text.replace(/\r\n/g, '\n');
     // 1. Check for inline <tool_call>{"name": "update_plan" | "todowrite", ...}</tool_call> (including DSML-closed blocks)
     let latestToolPlan = null;
-    for (const parsed of extractToolCallJsonObjects(text)) {
+    for (const parsed of extractToolCallJsonObjects(cleanText)) {
         try {
             const toolName = String(parsed?.name || parsed?.tool || '').toLowerCase().trim();
             if (toolName === 'update_plan' || toolName === 'todowrite' || toolName === 'todo_write') {
@@ -276,21 +284,20 @@ export function extractLivePlanFromText(text, allowTrailing = false) {
     if (latestToolPlan)
         return latestToolPlan;
     // 2. Check for an explicit Plan: / Implementation Plan: numbered or checkbox list in reasoning/text
-    const planHeaderRegex = /(?:^|\n)[ \t]*(?:#{1,4}[ \t]+|\*{1,2})?(?:implementation[ \t]+)?plan(?:\*{1,2})?[ \t]*:[ \t]*\n((?:[ \t]*(?:\d+[.)]|[-*•][ \t]+\[[ xX✓▸>-]\])[ \t]+[^\n]+\n?){2,12})/gi;
+    const planHeaderRegex = /(?:^|\n)[ \t]*(?:#{1,4}[ \t]+|\*{1,2})?(?:(?:here\s+is\s+(?:the\s+)?|our\s+|my\s+|action\s+|execution\s+|implementation\s+)?(?:plan|rencana|langkah(?:-langkah)?|roadmap|steps))(?:\*{1,2})?[ \t]*:?[ \t]*\n((?:[ \t]*(?:\d+[.)]|[-*•][ \t]+\[[ xX✓▸>-]\])[ \t]+[^\n]+\n?){2,12})/gi;
     let headerMatch;
     let latestBlock = '';
     let latestEndIndex = -1;
-    while ((headerMatch = planHeaderRegex.exec(text)) !== null) {
+    while ((headerMatch = planHeaderRegex.exec(cleanText)) !== null) {
         latestBlock = headerMatch[1] || '';
         latestEndIndex = headerMatch.index + headerMatch[0].length;
     }
     if (!latestBlock)
         return null;
-    // While streaming, wait until the list block is followed by a blank line or another paragraph
-    // so we never capture a half-streamed final bullet.
+    // While streaming, verify that the captured block ended cleanly with a newline
     if (!allowTrailing && latestEndIndex > 0) {
-        const remainder = text.slice(latestEndIndex);
-        if (!/^\s*\n/.test(remainder) && remainder.trim().length === 0) {
+        const remainder = cleanText.slice(latestEndIndex);
+        if (remainder.length === 0 && !latestBlock.endsWith('\n')) {
             return null;
         }
     }

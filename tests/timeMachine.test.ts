@@ -13,7 +13,7 @@ const priorSuccess: ToolOutcome = {
   command: '', path: '', at: 1
 };
 
-test('TimeMachine changes approach at three failed checks and stops at six', () => {
+test('TimeMachine changes approach at three failed checks and stops at six when extended', () => {
   const machine = new TimeMachine();
   const args = { command: 'npm test' };
   const stages = [];
@@ -24,8 +24,24 @@ test('TimeMachine changes approach at three failed checks and stops at six', () 
     stages.push(decision.kind);
     assert.equal(decision.attempt, attempt);
     assert.equal(decision.lastGoodTool, 'fs_read');
+    if (decision.kind === 'consent') {
+      machine.grantExtension(decision.issueKey);
+    }
   }
-  assert.deepEqual(stages, ['continue', 'continue', 'replan', 'replan', 'replan', 'stop']);
+  assert.deepEqual(stages, ['continue', 'continue', 'consent', 'replan', 'replan', 'stop']);
+});
+
+test('TimeMachine stops after consent if extension is not granted', () => {
+  const machine = new TimeMachine();
+  const args = { command: 'npm test' };
+  const stages = [];
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const decision = machine.observe('exec', args, {
+      success: false, error: `test failed at line ${attempt}`, exitCode: 1
+    }, [priorSuccess]);
+    stages.push(decision.kind);
+  }
+  assert.deepEqual(stages, ['continue', 'continue', 'consent', 'stop']);
 });
 
 test('only a successful matching check resolves its failure', () => {
@@ -85,6 +101,7 @@ test('agent loop stops a repeatedly failing returned tool result after six execu
   try {
     const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
       'time-machine-regression', 'inspect a failing check');
+    loop.waitForDecision = async () => ({ optionId: 'allow', label: 'Allow 3 more' } as any);
     const model = {
       supportsVision: false,
       supportsToolSearch: () => false,
@@ -99,6 +116,46 @@ test('agent loop stops a repeatedly failing returned tool result after six execu
 
     assert.equal(executions, 6);
     assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('6 attempts')), true);
+    assert.equal(events.some((event) => event.type === 'status' && event.message === 'Task completed.'), false);
+    assert.equal(events.some((event) => event.type === 'task_complete'), false);
+  } finally {
+    delete toolRegistry[toolName];
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('agent loop stops at three failed attempts when user declines retry consent', async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-time-machine-decline-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  const toolName = 'time_machine_decline_probe';
+  let executions = 0;
+  const events: Array<{ type: string; message?: string }> = [];
+  toolRegistry[toolName] = {
+    schema: { name: toolName, description: 'Test probe', parameters: { type: 'object', properties: {} } },
+    execute: async () => { executions += 1; return { success: false, error: 'exit code 1' }; }
+  };
+
+  try {
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'time-machine-decline', 'inspect a failing check');
+    loop.waitForDecision = async () => ({ optionId: 'stop', label: 'Stop and report' } as any);
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => ({ content: '',
+        toolCalls: [{ id: `probe-${executions}`, type: 'function',
+          function: { name: toolName, arguments: '{}' } }],
+        usage: { promptTokens: 10, completionTokens: 8 } })
+    };
+    loop.initializeProvider = () => model as never;
+
+    await loop.run();
+
+    assert.equal(executions, 3);
+    assert.equal(events.some((event) => event.type === 'error' && event.message?.includes('3 times')), true);
     assert.equal(events.some((event) => event.type === 'status' && event.message === 'Task completed.'), false);
     assert.equal(events.some((event) => event.type === 'task_complete'), false);
   } finally {

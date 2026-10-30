@@ -35,7 +35,9 @@ const TESTS_CLAIM = /\b(?:all\s+)?tests?\b[^.\n]{0,40}\b(?:pass|passed|passing|g
 const BUILD_CLAIM = /\b(?:build|typecheck|types|lint|compilation)\b[^.\n]{0,40}\b(?:pass|passed|passing|clean|succeed|succeeded)\b/i;
 const MUTATING_TOOLS = new Set([
     'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move',
-    'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'gitOp'
+    'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'gitOp',
+    'write_file', 'write_to_file', 'edit_file', 'replace_file_content',
+    'multi_replace_file_content', 'write', 'edit', 'multiedit', 'bash', 'execute'
 ]);
 function normalizeMode(value) {
     if (value === 'deterministic')
@@ -376,15 +378,16 @@ export class ColdObserver {
             return { verified: true, overconfident: false, confidence: 0, discrepancy: '', coldDirective: '' };
         }
         const journal = turnState.taskId ? this.journals.get(turnState.taskId) : undefined;
+        const isToolOutcome = (entry) => (entry !== null && typeof entry === 'object' && typeof entry.at === 'number');
         const outcomes = journal && journal.length > 0
             ? journal
-            : turnState.toolHistory.map(normalizeOutcome);
+            : turnState.toolHistory.map((item) => isToolOutcome(item) ? item : normalizeOutcome(item));
         const caveat = hasHonestCaveat(claim);
         const lastFailure = outcomes.findLastIndex((outcome) => !outcome.success);
         const successAfterFailure = lastFailure >= 0
             && outcomes.slice(lastFailure + 1).some((outcome) => outcome.success);
         const isCodeMutation = (outcome) => outcome.success
-            && ['fs_write', 'fs_edit', 'MultiEdit'].includes(outcome.tool)
+            && ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content', 'write', 'edit', 'multiedit'].includes(outcome.tool)
             && /\.(?:[cm]?[jt]sx?|py|rb|php|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|fs|sh|sql|html|css|scss|sass|vue|svelte)$/i.test(outcome.path);
         const lastCodeChange = outcomes.findLastIndex(isCodeMutation);
         const checks = outcomes.slice(lastCodeChange + 1);
@@ -395,6 +398,9 @@ export class ColdObserver {
         const modifiedCode = lastCodeChange >= 0;
         const declarativeOnly = modifiedCode && outcomes.filter(isCodeMutation).every(outcome => /\.(?:html|css)$/i.test(outcome.path));
         const hasRenderedCheck = checks.some(outcome => outcome.success && outcome.rendered === true);
+        const hasDeclarativeInspection = checks.some(outcome => outcome.success
+            && ['fs_read', 'read_file', 'view_file', 'read', 'cat'].includes(outcome.tool)
+            && /\.(?:html|css)$/i.test(outcome.path));
         let overconfident = false;
         let confidence = 0;
         let discrepancy = '';
@@ -417,7 +423,7 @@ export class ColdObserver {
             discrepancy = 'claimed a passing build or check without a successful verification command';
             coldDirective = '[OBSERVER] You claimed that a build or check passed, but no successful verification command appears in this task. Run the relevant command and report its actual result, or state that it is unverified.';
         }
-        else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && hasRenderedCheck)) {
+        else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && (hasRenderedCheck || hasDeclarativeInspection))) {
             overconfident = true;
             confidence = 0.72;
             discrepancy = 'code was modified without a successful test or syntax check';

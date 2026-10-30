@@ -12,7 +12,8 @@ import { isMutatingToolCall } from './decisionPolicy.js';
 const INSPECTION_TOOLS = new Set([
     'fs_read', 'fs_list', 'fs_find', 'fs_search', 'grep_search', 'code_searcher',
     'codebase_search', 'web_search', 'web_fetch', 'browser_snapshot',
-    'browser_get_dom', 'view_image', 'pdf_read', 'dir_list'
+    'browser_get_dom', 'view_image', 'pdf_read', 'dir_list',
+    'read', 'read_file', 'view_file', 'viewfile', 'cat', 'glob', 'grep', 'search', 'list_dir', 'ls'
 ]);
 const VERIFICATION_TOOLS = new Set([
     'screenshot', 'vision_inspect_ui', 'browser_console', 'ax_snapshot'
@@ -20,18 +21,23 @@ const VERIFICATION_TOOLS = new Set([
 function isInspection(toolName, args) {
     if (INSPECTION_TOOLS.has(toolName))
         return true;
-    if (toolName !== 'sysRun')
+    if (!['sysRun', 'bash', 'terminal', 'execute', 'sh', 'zsh'].includes(toolName))
         return false;
     return /^\s*(?:pwd|ls|find|rg|grep|cat|sed|head|tail|git\s+(?:status|diff|log|show)|npm\s+(?:view|audit))\b/i
-        .test(String(args.command ?? ''));
+        .test(String(args.command ?? args.cmd ?? ''));
 }
 function isVerification(toolName, args) {
     if (VERIFICATION_TOOLS.has(toolName))
         return true;
-    if (toolName !== 'sysRun')
+    if (toolName === 'browser_act') {
+        const actions = Array.isArray(args.actions) ? args.actions : [args];
+        return actions.some((item) => item !== null && typeof item === 'object'
+            && ['preview', 'screenshot', 'inspect', 'snapshot'].includes(String(item.action ?? item.type ?? '')));
+    }
+    if (!['sysRun', 'bash', 'terminal', 'execute', 'sh', 'zsh'].includes(toolName))
         return false;
-    return /^\s*(?:npm\s+(?:test|run\s+(?:test|typecheck|build))|node\s+--check|pytest|cargo\s+test|go\s+test)\b/i
-        .test(String(args.command ?? ''));
+    return /^\s*(?:npm\s+(?:test|run\s+(?:test|typecheck|build))|node\s+--check|pytest|cargo\s+test|go\s+test|python(?:3)?\s+-m\s+unittest|vitest|jest|playwright|cypress)\b/i
+        .test(String(args.command ?? args.cmd ?? ''));
 }
 /**
  * Bound each inspection batch to two calls, then yield to a synthesis step.
@@ -123,7 +129,7 @@ const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render 
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|thre\.?js|3js|webgl)\b/i;
 // Explicit game development intent
-const EXPLICIT_GAME_DEV_PATTERN = /\b(build.*game|create.*game|develop.*game|godot|unity|unreal|platformer 2d|rpg game|arcade game)\b/i;
+const EXPLICIT_GAME_DEV_PATTERN = /(?:\b(build.*game|create.*game|develop.*game|buat\w*.*game|bikin\w*.*game|game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive|3d\s*(?:game|app|simulator))\b|[-_]3d\b|\b3d[-_])/i;
 /**
  * Select tools to preload based on prompt intent. This is never an allowlist:
  * tool_search can add capabilities as the task develops.
@@ -228,6 +234,27 @@ export function determineToolScope(prompt, _taskShape) {
             reason: 'Web engineering intent focuses on filesystem authoring, terminal execution, and browser verification; suppresses unrelated media and game packs.'
         };
     }
+    // Game development and interactive simulation intent
+    if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
+        const tools = new Set([
+            'fs_write',
+            'fs_edit',
+            'fs_read',
+            'fs_list',
+            'sysRun',
+            'browser_act',
+            'screenshot',
+            'vision_inspect_ui',
+            'update_plan',
+            'tool_search'
+        ]);
+        return {
+            toolScope: tools,
+            archetype: 'game_development',
+            suppressedPacks: ['media', 'advanced', 'system'],
+            reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
+        };
+    }
     // 5. Media / 3D generation & creative audio intent
     if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
         const tools = new Set([
@@ -282,14 +309,14 @@ export function resolveLazyPlaybooks(unlockedPacks, observedTools = [], prompt =
     const activeDomains = [];
     let tokenSavings = 0;
     // 1. Web Domain
-    if (packs.has('web')) {
+    const webExplicitDemand = EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)
+        || (isWebIntent(text) && WEB_CONSTRUCTION_EXCLUSION.test(text));
+    if (packs.has('web') || webExplicitDemand || tools.has('ui_forge') || tools.has('astryx_oracle')) {
         const webToolInvoked = tools.has('ui_forge') ||
             tools.has('browser_act') ||
             tools.has('vision_inspect_ui') ||
             tools.has('screenshot') ||
             tools.has('astryx_oracle');
-        const webExplicitDemand = EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)
-            || (isWebIntent(text) && WEB_CONSTRUCTION_EXCLUSION.test(text));
         if ((webToolInvoked || webExplicitDemand) && PACK_PLAYBOOKS.web) {
             activePlaybooks.push(PACK_PLAYBOOKS.web);
             activeDomains.push('web');
@@ -339,4 +366,33 @@ export function resolveLazyPlaybooks(unlockedPacks, observedTools = [], prompt =
         activePlaybookDomains: activeDomains,
         tokenSavingsEstimate: tokenSavings
     };
+}
+/** A mid-task decision may load at most this many schemas at once. */
+export const MAX_ADMIT_PER_STEP = 8;
+/**
+ * The smart part: admit only the delta, bound what one step may load, and say
+ * what the loop owes before it changes anything. A task the user must decide
+ * or plan first keeps the tool for that step reachable, so the checkpoint can
+ * never be demanded of a model that was not given the means to meet it.
+ */
+export function refineToolDecision(decision, context) {
+    const admittedTools = context.admittedTools ?? new Set();
+    const admittedPacks = context.admittedPacks ?? new Set();
+    const fresh = decision.tools.filter((name) => !admittedTools.has(name));
+    const packs = decision.packs.filter((name) => !admittedPacks.has(name));
+    const reasons = [...decision.reasons];
+    let tools = fresh;
+    let deferred = [];
+    if (decision.source !== 'intent' && fresh.length > MAX_ADMIT_PER_STEP) {
+        tools = fresh.slice(0, MAX_ADMIT_PER_STEP);
+        deferred = fresh.slice(MAX_ADMIT_PER_STEP);
+        reasons.push(`deferred ${deferred.length} to protect context`);
+    }
+    const route = context.decisionRequired ? 'decision' : context.planRequired ? 'plan' : 'direct';
+    if (decision.source === 'intent') {
+        const needed = route === 'decision' ? 'request_decision' : route === 'plan' ? 'update_plan' : '';
+        if (needed && !admittedTools.has(needed) && !tools.includes(needed))
+            tools = [...tools, needed];
+    }
+    return { source: decision.source, tools, packs, deferred, route, reasons };
 }

@@ -215,7 +215,7 @@ process.stdin.on('end', () => {
       assert.deepEqual(response.externalActions, [
         { name: 'run_command', status: 'failed', detail: 'pwd' }
       ]);
-      assert.deepEqual(seen, ['running', 'failed']);
+      assert.deepEqual(seen, ['running', 'completed', 'failed']);
     } finally {
       fs.rmSync(fake.dir, { recursive: true, force: true });
     }

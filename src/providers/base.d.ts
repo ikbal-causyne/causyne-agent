@@ -19,6 +19,7 @@ export interface ChatResponseUsage {
   uncachedPromptTokens?: number | undefined;
   measurement?: 'provider_reported' | 'text_estimate' | undefined;
   cacheMeasurement?: 'provider_reported' | 'unavailable' | undefined;
+  measurementScope?: 'last_model_call' | 'peer_reported' | undefined;
   totalTokens?: number | undefined;
   thinkingTokens?: number | undefined;
 }
@@ -47,6 +48,7 @@ export interface ChatResponse {
   reasoningContent?: string | undefined;
   thinkingBlocks?: any[] | undefined;
   externalActions?: ChatResponseAction[] | undefined;
+  toolRoutingError?: { tool: string; message: string } | undefined;
   incompleteTurn?: boolean | undefined;
 }
 

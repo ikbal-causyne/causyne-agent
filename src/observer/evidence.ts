@@ -39,6 +39,7 @@ export interface ToolOutcome {
   path: string;
   at: number;
   rendered?: boolean;
+  observedImage?: boolean;
 }
 
 const SEVERITY_WEIGHT: Record<RiskSeverity, number> = {
@@ -154,7 +155,7 @@ function resolveTarget(workspaceRoot: string, raw: string): { lexical: string; p
 }
 
 function pathArgument(args: Record<string, unknown>): string {
-  for (const key of ['path', 'file_path', 'targetFile', 'file', 'source', 'destination', 'target', 'cwd']) {
+  for (const key of ['path', 'filePath', 'Path', 'file_path', 'targetFile', 'target_path', 'filename', 'file', 'source', 'destination', 'target', 'cwd']) {
     const value = args[key];
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
@@ -488,10 +489,15 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
     ? args.command
     : typeof args.cmd === 'string' ? args.cmd : '';
   const browserData = Array.isArray(record.data) ? record.data : [];
-  const rendered = success && tool === 'browser_act' && browserData.some((item: unknown) => {
-    const action = item as { action?: string; data?: { runtimeErrors?: unknown[] } };
-    return ['snapshot', 'scrape'].includes(action?.action || '') && Array.isArray(action.data?.runtimeErrors) && action.data.runtimeErrors.length === 0;
-  });
+  const observedImage = success && record._is_image_marker === true && record.visionDelivered !== false;
+  const rendered = success && (observedImage || (tool === 'browser_act' && browserData.some((item: unknown) => {
+    if (!item || typeof item !== 'object') return false;
+    const action = item as { action?: string; success?: boolean; error?: unknown; data?: { runtimeErrors?: unknown[] } };
+    return action.success !== false && !action.error
+      && ['preview', 'snapshot', 'scrape', 'screenshot'].includes(action.action || '')
+      && Array.isArray(action.data?.runtimeErrors) && action.data.runtimeErrors.length === 0;
+  })));
+
   return {
     tool,
     args: boundedArgs(args),
@@ -501,6 +507,7 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
     command: command.slice(0, 600),
     path: pathArgument(args).slice(0, 400),
     at,
-    ...(rendered ? { rendered: true } : {})
+    ...(rendered ? { rendered: true } : {}),
+    ...(observedImage ? { observedImage: true } : {})
   };
 }

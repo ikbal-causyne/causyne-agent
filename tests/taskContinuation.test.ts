@@ -94,6 +94,11 @@ test('a native plan artifact cannot end an implementation request before Causyne
 });
 
 test('an inspected HTML deliverable completes verification when browser runtime is unavailable', async () => {
+  const previousHome = process.env.CAUSYNE_HOME;
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-browser-home-'));
+  process.env.CAUSYNE_HOME = tempHome;
+  const { revokeGroup } = await import('../src/provisioning/capabilityProvisioner.js');
+  revokeGroup('browser');
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-browser-continuation-'));
   const events: Array<{ type: string; message?: string }> = [];
   const loop = new AgentLoop({ readyState: 1, send: value => events.push(JSON.parse(value)) }, 'browser-continuation',
@@ -113,5 +118,10 @@ test('an inspected HTML deliverable completes verification when browser runtime 
     assert.equal(calls, 1);
     assert.equal(events.some(event => event.type === 'task_complete'), true);
     assert.equal(events.some(event => event.type === 'error'), false);
-  } finally { fs.rmSync(workspace, { recursive: true, force: true }); }
+  } finally {
+    if (previousHome !== undefined) process.env.CAUSYNE_HOME = previousHome;
+    else delete process.env.CAUSYNE_HOME;
+    fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });

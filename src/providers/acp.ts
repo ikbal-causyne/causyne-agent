@@ -1,4 +1,4 @@
-import { formatToolContracts, toolContractUpdate } from './toolContracts.js';
+import { formatToolContracts, normalizeToolContracts, toolContractUpdate } from './toolContracts.js';
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { saveCachedModels } from '../dynamicCatalogue.js';
@@ -6,7 +6,7 @@ import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, 
 import { AcpClient } from '../acp/client.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
-import type { RequestPermissionRequest, SessionUpdate } from '../acp/protocol.js';
+import type { RequestPermissionRequest, SessionUpdate, ToolKind } from '../acp/protocol.js';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
@@ -17,6 +17,8 @@ interface AcpTransportSnapshot {
   workspaceRoot: string;
   systemHashes: string[];
   historyHashes: string[];
+  historyRoles: string[];
+  userPromptHashes: string[];
   toolHash: string;
   tools: unknown[];
   lastResponse: { content: string; toolCalls: ChatResponseToolCall[] };
@@ -48,6 +50,9 @@ export class AcpProvider extends LLMProvider {
   private readonly liveFileActions = new Map<string, ChatResponseAction>();
   private readonly turnActions = new Map<string, ChatResponseAction>();
   private turnReasoning = '';
+  private turnText = '';
+  private hostHandoff: ChatResponseToolCall[] = [];
+  private toolRoutingError: ChatResponse['toolRoutingError'];
   private transportSnapshot: AcpTransportSnapshot | null = null;
   private peerServices: ChatOptions | null = null;
 
@@ -187,7 +192,7 @@ export class AcpProvider extends LLMProvider {
 
     if (tools && tools.length > 0) {
       const toolSummaries = formatToolContracts(tools);
-      pending.push(`[Current Available Tools — this list replaces earlier tool lists]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
+      pending.push(`[Current Available Tools — replaces earlier host tools only; peer-native tools remain available]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);
     }
 
     if (toolContext) pending.push(toolContext);
@@ -210,7 +215,12 @@ export class AcpProvider extends LLMProvider {
       }
 
       if (text.trim()) {
-        pending.push(`[${role}]\n${text.trim()}`);
+        if (msg.role === 'tool') {
+          flush();
+          blocks.push({ type: 'text', text: `[${role}]\n${text.trim()}` });
+        } else {
+          pending.push(`[${role}]\n${text.trim()}`);
+        }
       }
 
       if (Array.isArray(msg.content)) {
@@ -280,6 +290,61 @@ export class AcpProvider extends LLMProvider {
     return calls;
   }
 
+  /** Yield a complete host request before the peer starts another native loop. */
+  private acceptText(chunk: string, sessionId: string, client: AcpClient): void {
+    if (this.hostHandoff.length > 0) return;
+    this.turnText += chunk;
+    this.currentTurnChunkHandler?.(chunk);
+    // Streaming JSON must never be suffix-repaired into an executable call.
+    // Only complete, explicitly delimited envelopes are eligible for handoff.
+    const envelopes: string[] = [];
+    const opening = /<tool_call>\s*/gi;
+    let match: RegExpExecArray | null;
+    while ((match = opening.exec(this.turnText))) {
+      const start = opening.lastIndex;
+      if (this.turnText[start] !== '{') continue;
+      let depth = 0;
+      let quoted = false;
+      let escaped = false;
+      for (let index = start; index < this.turnText.length; index++) {
+        const char = this.turnText[index];
+        if (quoted) {
+          if (escaped) escaped = false;
+          else if (char === '\\') escaped = true;
+          else if (char === '"') quoted = false;
+        } else if (char === '"') quoted = true;
+        else if (char === '{') depth++;
+        else if (char === '}' && --depth === 0) {
+          const closing = /^\s*<\/tool_call>/i.exec(this.turnText.slice(index + 1));
+          if (closing) {
+            envelopes.push(this.turnText.slice(match.index, index + 1 + closing[0].length));
+            opening.lastIndex = index + 1 + closing[0].length;
+          }
+          break;
+        }
+      }
+    }
+    const available = new Set(normalizeToolContracts(this.peerServices?.tools || []).map(tool => tool.name));
+    const calls = envelopes.flatMap(envelope => {
+      try {
+        const parsed: unknown = JSON.parse(envelope.replace(/^<tool_call>/i, '').replace(/<\/tool_call>$/i, ''));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+        return this.extractToolCalls(`<tool_call>${JSON.stringify(parsed)}</tool_call>`);
+      } catch { return []; }
+    }).filter(call => {
+      if (!available.has(call.function.name)) return false;
+      try {
+        const args: unknown = JSON.parse(call.function.arguments);
+        return args !== null && typeof args === 'object' && !Array.isArray(args);
+      } catch { return false; }
+    });
+    if (calls.length === 0) return;
+    this.hostHandoff = calls;
+    // This is a control handoff, not a user abort. Keep the ACP session alive
+    // so the next prompt delivers the actual host result without replaying work.
+    client.notifyCancel(sessionId);
+  }
+
   private async getOrCreateClient(signal?: AbortSignal, workspaceRoot = process.cwd()): Promise<{ client: AcpClient; sessionId: string }> {
     if (signal?.aborted) {
       const abortErr = new Error('ACP request aborted by user');
@@ -295,12 +360,35 @@ export class AcpProvider extends LLMProvider {
       args: this.args,
       cwd: workspaceRoot,
       promptTimeoutMs: 900_000,
+      inactivityTimeoutMs: 120_000,
       allowHostTools: true,
       permissionHandler: async (req: RequestPermissionRequest) => {
-        if (this.currentTurnAborted || this.peerServices?.signal?.aborted) return { outcome: 'cancelled' };
-        return this.peerServices?.onPeerPermission?.(req) ?? { outcome: 'cancelled' };
+        if (this.currentTurnAborted || this.peerServices?.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError) return { outcome: 'cancelled' };
+        const toolCallId = req.toolCall?.toolCallId;
+        const earlier = toolCallId ? (this.turnActions.get(toolCallId) || this.liveFileActions.get(toolCallId)) : undefined;
+        let effectiveReq = req;
+        if (earlier && req.toolCall) {
+          const mappedKind: ToolKind = earlier.name === 'fs_read' ? 'read'
+            : (earlier.name === 'fs_write' || earlier.name === 'fs_edit') ? 'edit'
+            : earlier.name === 'fs_delete' ? 'delete'
+            : earlier.name === 'fs_move' ? 'move'
+            : earlier.name === 'sysRun' ? 'execute'
+            : earlier.name === 'web_fetch' ? 'fetch'
+            : (req.toolCall.kind || 'other');
+          if (mappedKind !== req.toolCall.kind) {
+            effectiveReq = {
+              ...req,
+              toolCall: {
+                ...req.toolCall,
+                kind: mappedKind
+              }
+            };
+          }
+        }
+        return this.peerServices?.onPeerPermission?.(effectiveReq) ?? { outcome: 'cancelled' };
       },
       fsReadHandler: async (file, options) => {
+        if (this.hostHandoff.length > 0 || this.toolRoutingError) throw new Error('ACP turn yielded to the host');
         if (!this.peerServices?.onPeerFileRead) throw new Error('The ACP client has no file-read service attached');
         const content = await this.peerServices.onPeerFileRead(file, options);
         this.currentTurnSawAction = true;
@@ -320,6 +408,7 @@ export class AcpProvider extends LLMProvider {
         return content;
       },
       fsWriteHandler: async (file, content) => {
+        if (this.hostHandoff.length > 0 || this.toolRoutingError) throw new Error('ACP turn yielded to the host');
         if (!this.peerServices?.onPeerFileWrite) throw new Error('The ACP client has no file-write service attached');
         await this.peerServices.onPeerFileWrite(file, content);
         this.currentTurnSawAction = true;
@@ -337,7 +426,7 @@ export class AcpProvider extends LLMProvider {
           });
         }
       },
-      onUpdate: (_sessionId: string, update: SessionUpdate) => {
+      onUpdate: (sessionId: string, update: SessionUpdate) => {
         if (this.currentTurnAborted) return;
         if (update && typeof update === 'object') {
           const updateObj = update as any;
@@ -351,7 +440,7 @@ export class AcpProvider extends LLMProvider {
             }
           } else if (updateObj.sessionUpdate === 'agent_message_chunk') {
             const text = updateObj.content?.type === 'text' ? updateObj.content.text : '';
-            if (text && this.currentTurnChunkHandler) this.currentTurnChunkHandler(text);
+            if (text) this.acceptText(text, sessionId, client);
           } else if (updateObj.sessionUpdate === 'plan') {
             if (Array.isArray(updateObj.entries) && updateObj.entries.length > 0) {
               this.currentTurnPlanHandler?.({ entries: updateObj.entries });
@@ -396,6 +485,11 @@ export class AcpProvider extends LLMProvider {
                 || earlier?.parameters?.__invalidTool === true
                 || (typeof input.error === 'string' && input.error.length > 0 && typeof input.tool === 'string');
               if (isInvalidPseudoTool) {
+                const requested = typeof input.tool === 'string' ? input.tool : '';
+                if (!this.toolRoutingError && requested && normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === requested)) {
+                  this.toolRoutingError = { tool: requested, message: 'Host tool requested through the peer-native channel' };
+                  client.notifyCancel(sessionId);
+                }
                 this.liveFileActions.delete(id);
                 this.turnActions.delete(id);
                 return;
@@ -484,9 +578,7 @@ export class AcpProvider extends LLMProvider {
             }
           } else if ('textDelta' in updateObj) {
             const delta = updateObj.textDelta;
-            if (delta && typeof delta === 'string' && this.currentTurnChunkHandler) {
-              this.currentTurnChunkHandler(delta);
-            }
+            if (delta && typeof delta === 'string') this.acceptText(delta, sessionId, client);
           }
         }
       }
@@ -598,6 +690,9 @@ export class AcpProvider extends LLMProvider {
     this.liveFileActions.clear();
     this.turnActions.clear();
     this.turnReasoning = '';
+    this.turnText = '';
+    this.hostHandoff = [];
+    this.toolRoutingError = undefined;
     const onAbort = (): void => {
       this.abort();
     };
@@ -615,10 +710,14 @@ export class AcpProvider extends LLMProvider {
       const sessionChanged = previous && (
         previous.workspaceRoot !== workspaceRoot || previous.conversationId !== conversationId
       );
-      const historyDiverged = previous && (
-        historyHashes.length < previous.historyHashes.length ||
-        previous.historyHashes.some((hash, index) => historyHashes[index] !== hash)
-      );
+      const historyShortened = Boolean(previous && historyHashes.length < previous.historyHashes.length);
+      const roleDiverged = Boolean(previous && !historyShortened && previous.historyRoles?.some(
+        (role, index) => historyMessages[index]?.role !== role
+      ));
+      const userPromptDiverged = Boolean(previous && !historyShortened && previous.userPromptHashes?.some(
+        (hash, index) => hash && fingerprint(historyMessages[index]?.content) !== hash
+      ));
+      const historyDiverged = historyShortened || roleDiverged || userPromptDiverged;
       const systemShapeChanged = previous && systemHashes.length < previous.systemHashes.length;
       if (sessionChanged || historyDiverged || systemShapeChanged) {
         await this.close();
@@ -648,9 +747,16 @@ export class AcpProvider extends LLMProvider {
         const filteredNewHistory = newHistory.filter(
           message => !(message?.role === 'assistant' && message?.content === 'No final response was provided.' && (!message.tool_calls || message.tool_calls.length === 0))
         );
+        const toolResultMessages = filteredNewHistory.filter(m => m?.role === 'tool');
+        const otherHistory = filteredNewHistory.filter(m => m?.role !== 'tool');
+        const formattedChangedSystem = changedSystem.map(message => ({
+          ...message,
+          content: `[Context Update]\n${message.content}`
+        }));
         promptMessages = [
-          ...changedSystem.map(message => ({ ...message, content: `[Current system context — replaces the prior version of this section]\n${message.content}` })),
-          ...filteredNewHistory
+          ...toolResultMessages,
+          ...otherHistory,
+          ...formattedChangedSystem
         ];
         toolContext = toolContractUpdate(options.tools || [], previous.tools);
         promptTools = [];
@@ -684,18 +790,23 @@ export class AcpProvider extends LLMProvider {
       }
 
       let rawContent = (result?.text || '').trim();
-      const toolCalls = this.extractToolCalls(rawContent);
+      const toolCalls = this.hostHandoff.length > 0 ? this.hostHandoff : this.extractToolCalls(rawContent);
 
       // Strip tool call XML / DSML from chat content display
       let content = stripToolCallMarkup(rawContent);
-      const externalActions = [...this.turnActions.values()].map(action => (
-        action.status === 'running' ? { ...action, status: 'completed' as const } : action
-      ));
+      const externalActions = [...this.turnActions.values()];
       const incompleteFromActions = !content && toolCalls.length === 0 && externalActions.length > 0;
       const finalContent = content || (toolCalls.length > 0 || incompleteFromActions ? '' : `Turn completed by ${this.peerId} over ACP.`);
 
       this.transportSnapshot = {
-        conversationId, workspaceRoot, systemHashes, historyHashes, toolHash, tools: structuredClone(options.tools || []),
+        conversationId,
+        workspaceRoot,
+        systemHashes,
+        historyHashes,
+        historyRoles: historyMessages.map(m => m.role),
+        userPromptHashes: historyMessages.map(m => m.role === 'user' ? fingerprint(m.content) : ''),
+        toolHash,
+        tools: structuredClone(options.tools || []),
         lastResponse: { content: finalContent, toolCalls }
       };
 
@@ -712,6 +823,7 @@ export class AcpProvider extends LLMProvider {
       if (externalActions.length > 0) {
         response.externalActions = externalActions;
       }
+      if (this.toolRoutingError && toolCalls.length === 0) response.toolRoutingError = this.toolRoutingError;
       if (this.turnReasoning.trim()) {
         response.reasoningContent = this.turnReasoning;
       }
@@ -729,11 +841,16 @@ export class AcpProvider extends LLMProvider {
           measurement: 'provider_reported',
           cacheMeasurement: usage.cachedReadTokens !== undefined ? 'provider_reported' : 'unavailable'
         };
+        // OpenCode's ACP service builds usage from its final assistant message,
+        // not all internal inference/tool turns. Do not label it a task total.
+        response.usage.measurementScope = this.peerId === 'opencode' ? 'last_model_call' : 'peer_reported';
       }
       if (toolCalls.length > 0) {
         response.toolCalls = toolCalls;
       }
-      if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || incompleteFromActions) {
+      if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || incompleteFromActions
+        || externalActions.some(action => action.status === 'running')
+        || (result?.stopReason === 'cancelled' && toolCalls.length === 0)) {
         response.incompleteTurn = true;
       }
       return response;
@@ -745,6 +862,9 @@ export class AcpProvider extends LLMProvider {
         throw abortErr;
       }
       const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith('ACP Peer Agent') || msg.includes('Free usage limit reached') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('stalled')) {
+        throw (err instanceof Error ? err : new Error(msg));
+      }
       throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
     } finally {
       options.signal?.removeEventListener('abort', onAbort);

@@ -103,7 +103,8 @@ export class CodeStreamRenderer extends ChatRenderer {
       }
       this._activeReasoning = false;
       this.lastReasoning = '';
-      if (['agent_message', 'step_start', 'task_complete', 'error'].includes(message?.type || '')) {
+      if (['step_start', 'task_complete', 'error'].includes(message?.type || '')
+        || (message?.type === 'agent_message' && message.streaming !== true)) {
         this.activeCode = null;
         this.modelNote = '';
       }

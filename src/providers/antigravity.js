@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider } from './base.js';
-import { extractToolCallJsonObjects, stripToolCallMarkup } from '../implementationPlan.js';
+import { extractToolCallJsonObjects, stripToolCallMarkup, stripThinkBlocks } from '../implementationPlan.js';
 /**
  * Baseline fallback models for instant offline availability.
  * Live models are autodetected dynamically from `agy models`
@@ -895,6 +895,7 @@ export class AntigravityProvider extends LLMProvider {
             let sawToolAfterLastText = false;
             let sawProviderProgress = false;
             let reasoningChars = 0;
+            let inInlineThinkBlock = false;
             let usageBaselineCommitted = false;
             const nativeActions = [];
             const attemptedNativeTools = [];
@@ -1064,8 +1065,14 @@ export class AntigravityProvider extends LLMProvider {
                                     }
                                 }
                             }
-                            const delta = stepUpdate?.text_delta;
-                            const stepType = stepUpdate?.step_type;
+                            const delta = stepUpdate?.text_delta
+                                ?? stepUpdate?.delta
+                                ?? stepUpdate?.thought_delta
+                                ?? stepUpdate?.thought
+                                ?? (typeof stepUpdate?.content === 'string' ? stepUpdate.content : undefined)
+                                ?? event?.text_delta
+                                ?? event?.delta;
+                            const stepType = stepUpdate?.step_type || event?.step_type || event?.type;
                             if (stepType === 'tool') {
                                 const state = stepUpdate?.state;
                                 const stepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
@@ -1153,36 +1160,79 @@ export class AntigravityProvider extends LLMProvider {
                                         else
                                             nativeActions.push(action);
                                     }
-                                    // Stream the start; completion is reported only after the
-                                    // final result has checked for denied actions.
-                                    if (status === 'running' && typeof options.onNativeAction === 'function') {
+                                    // Stream the action lifecycle immediately (running, completed, failed)
+                                    // so the caller receives real-time progress and does not appear frozen.
+                                    if (typeof options.onNativeAction === 'function') {
                                         const parameters = rawParams && typeof rawParams === 'object'
                                             ? rawParams
                                             : {};
-                                        options.onNativeAction({ ...action, parameters });
+                                        options.onNativeAction({ ...action, status, parameters });
                                     }
                                 }
                             }
+                            const isExplicitThought = stepType === 'thought'
+                                || stepType === 'agent_thought'
+                                || stepType === 'thinking'
+                                || stepType === 'reasoning'
+                                || stepType === 'agent_reasoning'
+                                || Boolean(stepUpdate?.thought_delta || stepUpdate?.thought);
                             if (delta && typeof delta === 'string') {
-                                if (stepType === 'thought' || stepType === 'agent_thought') {
+                                if (isExplicitThought) {
                                     reasoningChars += delta.length;
                                     if (typeof options.onReasoningChunk === 'function') {
                                         options.onReasoningChunk(delta);
                                     }
                                 }
                                 else {
-                                    if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(delta)) {
-                                        streamedResponse += '\n';
-                                        if (typeof options.onChunk === 'function') {
-                                            options.onChunk('\n');
+                                    // Progressive inline think block filtering (<think>...</think>, <thought>...</thought>, etc.)
+                                    let remaining = delta;
+                                    while (remaining.length > 0) {
+                                        if (inInlineThinkBlock) {
+                                            const closeMatch = remaining.match(/<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>/i);
+                                            if (closeMatch && closeMatch.index !== undefined) {
+                                                const thinkPart = remaining.slice(0, closeMatch.index);
+                                                if (thinkPart) {
+                                                    reasoningChars += thinkPart.length;
+                                                    options.onReasoningChunk?.(thinkPart);
+                                                }
+                                                inInlineThinkBlock = false;
+                                                remaining = remaining.slice(closeMatch.index + closeMatch[0].length);
+                                            }
+                                            else {
+                                                reasoningChars += remaining.length;
+                                                options.onReasoningChunk?.(remaining);
+                                                remaining = '';
+                                            }
                                         }
-                                    }
-                                    if (delta.trim().length > 0) {
-                                        sawToolAfterLastText = false;
-                                    }
-                                    streamedResponse += delta;
-                                    if (typeof options.onChunk === 'function') {
-                                        options.onChunk(delta);
+                                        else {
+                                            const openMatch = remaining.match(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>/i);
+                                            if (openMatch && openMatch.index !== undefined) {
+                                                const textPart = remaining.slice(0, openMatch.index);
+                                                if (textPart) {
+                                                    if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(textPart)) {
+                                                        streamedResponse += '\n';
+                                                        options.onChunk?.('\n');
+                                                    }
+                                                    if (textPart.trim().length > 0)
+                                                        sawToolAfterLastText = false;
+                                                    streamedResponse += textPart;
+                                                    options.onChunk?.(textPart);
+                                                }
+                                                inInlineThinkBlock = true;
+                                                remaining = remaining.slice(openMatch.index + openMatch[0].length);
+                                            }
+                                            else {
+                                                if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(remaining)) {
+                                                    streamedResponse += '\n';
+                                                    options.onChunk?.('\n');
+                                                }
+                                                if (remaining.trim().length > 0)
+                                                    sawToolAfterLastText = false;
+                                                streamedResponse += remaining;
+                                                options.onChunk?.(remaining);
+                                                remaining = '';
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1258,20 +1308,24 @@ export class AntigravityProvider extends LLMProvider {
                     rawContent = rawContent.replace(/<(?:thought|thinking)>[\s\S]*?<\/(?:thought|thinking)>/gi, '').trim();
                 }
                 const toolCalls = this.extractToolCalls(rawContent);
-                // Strip tool call tags from prose so raw XML/DSML does not leak into chat display
-                let content = stripToolCallMarkup(rawContent);
+                // Strip tool call tags and think tags from prose so raw XML/DSML/think does not leak into chat display
+                let content = stripThinkBlocks(stripToolCallMarkup(rawContent));
                 const deniedActions = Array.isArray(finalResultObj?.denied_actions)
                     ? finalResultObj.denied_actions : [];
                 const normalizeAction = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                 const deniedNames = new Set(deniedActions.flatMap(action => [normalizeAction(action?.action), normalizeAction(action?.display_name)]).filter(Boolean));
                 for (const action of nativeActions) {
-                    if (deniedNames.has(normalizeAction(action.name)))
+                    const wasDenied = deniedNames.has(normalizeAction(action.name));
+                    if (wasDenied)
                         action.status = 'failed';
-                    if (typeof options.onNativeAction === 'function') {
+                    else if (action.status === 'running')
+                        action.status = 'failed';
+                    // Only re-emit on terminal close if the action was denied or left unfinished
+                    if (wasDenied && typeof options.onNativeAction === 'function') {
                         const attempt = [...attemptedNativeTools].reverse().find(candidate => action.id
                             ? candidate.id === action.id
                             : normalizeAction(candidate.name) === normalizeAction(action.name) && candidate.detail === action.detail);
-                        options.onNativeAction({ ...action, parameters: attempt?.parameters || {} });
+                        options.onNativeAction({ ...action, status: 'failed', parameters: attempt?.parameters || {} });
                     }
                 }
                 if (deniedActions.length > 0) {

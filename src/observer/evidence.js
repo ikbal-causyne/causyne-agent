@@ -101,7 +101,7 @@ function resolveTarget(workspaceRoot, raw) {
     return { lexical, physical, inside };
 }
 function pathArgument(args) {
-    for (const key of ['path', 'file_path', 'targetFile', 'file', 'source', 'destination', 'target', 'cwd']) {
+    for (const key of ['path', 'filePath', 'Path', 'file_path', 'targetFile', 'target_path', 'filename', 'file', 'source', 'destination', 'target', 'cwd']) {
         const value = args[key];
         if (typeof value === 'string' && value.trim())
             return value.trim();
@@ -423,10 +423,15 @@ export function outcomeFromResult(tool, args, result, at) {
         ? args.command
         : typeof args.cmd === 'string' ? args.cmd : '';
     const browserData = Array.isArray(record.data) ? record.data : [];
-    const rendered = success && tool === 'browser_act' && browserData.some((item) => {
+    const observedImage = success && record._is_image_marker === true && record.visionDelivered !== false;
+    const rendered = success && (observedImage || (tool === 'browser_act' && browserData.some((item) => {
+        if (!item || typeof item !== 'object')
+            return false;
         const action = item;
-        return ['snapshot', 'scrape'].includes(action?.action || '') && Array.isArray(action.data?.runtimeErrors) && action.data.runtimeErrors.length === 0;
-    });
+        return action.success !== false && !action.error
+            && ['preview', 'snapshot', 'scrape', 'screenshot'].includes(action.action || '')
+            && Array.isArray(action.data?.runtimeErrors) && action.data.runtimeErrors.length === 0;
+    })));
     return {
         tool,
         args: boundedArgs(args),
@@ -436,6 +441,7 @@ export function outcomeFromResult(tool, args, result, at) {
         command: command.slice(0, 600),
         path: pathArgument(args).slice(0, 400),
         at,
-        ...(rendered ? { rendered: true } : {})
+        ...(rendered ? { rendered: true } : {}),
+        ...(observedImage ? { observedImage: true } : {})
     };
 }

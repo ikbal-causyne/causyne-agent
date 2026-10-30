@@ -10,7 +10,9 @@ import { isGroupGranted, isGroupDeclined } from './capabilityConsent.js';
 import { causyneHome } from '../utils/paths.js';
 import { currentToolAutonomyMode } from '../approvalPolicy.js';
 
-const CAPABILITY_DIR = path.join(causyneHome(), 'capabilities');
+function capabilityDir() {
+  return path.join(causyneHome(), 'capabilities');
+}
 
 // Groups exist so consent is asked once per capability a human recognises
 // ("let it see the screen"), not once per npm package. Names stay in value
@@ -109,7 +111,7 @@ export function revokeGroup(group) {
 
 /** True when the package is already on disk in the sovereign directory. */
 export function isPackageInstalled(packageName) {
-  return fs.existsSync(path.join(CAPABILITY_DIR, 'node_modules', packageName));
+  return fs.existsSync(path.join(capabilityDir(), 'node_modules', packageName));
 }
 
 export function isGroupInstalled(group) {
@@ -149,11 +151,12 @@ export async function provisionCapabilities(groups = []) {
   const target = [...new Set([...grantedGroups(), ...groups])].filter(g => GROUP_PACKAGES[g]);
   if (target.length === 0) return { installed: [], skipped: true };
 
-  if (!fs.existsSync(CAPABILITY_DIR)) {
-    fs.mkdirSync(CAPABILITY_DIR, { recursive: true, mode: 0o700 });
+  const dir = capabilityDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
-  const manifestPath = path.join(CAPABILITY_DIR, 'package.json');
+  const manifestPath = path.join(dir, 'package.json');
   const desired = JSON.stringify(manifestFor(target), null, 2);
 
   let needsInstall = true;
@@ -162,14 +165,14 @@ export async function provisionCapabilities(groups = []) {
   }
   if (needsInstall) fs.writeFileSync(manifestPath, desired);
 
-  if (!fs.existsSync(path.join(CAPABILITY_DIR, 'package-lock.json'))) needsInstall = true;
+  if (!fs.existsSync(path.join(dir, 'package-lock.json'))) needsInstall = true;
   for (const group of target) {
     if (!isGroupInstalled(group)) { needsInstall = true; break; }
   }
 
   if (!needsInstall) return { installed: target, skipped: true };
 
-  installCapabilityManifest(CAPABILITY_DIR);
+  installCapabilityManifest(dir);
   return { installed: target, skipped: false };
 }
 
@@ -233,12 +236,13 @@ export async function ensureCapability(group) {
  * which is the bug that silently disabled the entire V5 Cortex once already.
  */
 export async function requireCapabilityModule(packageName) {
-  const modulePath = path.join(CAPABILITY_DIR, 'node_modules', packageName);
+  const dir = capabilityDir();
+  const modulePath = path.join(dir, 'node_modules', packageName);
   if (!fs.existsSync(modulePath)) {
     throw new Error(`Capability module ${packageName} is not provisioned.`);
   }
 
-  const capabilityRequire = createRequire(path.join(CAPABILITY_DIR, 'package.json'));
+  const capabilityRequire = createRequire(path.join(dir, 'package.json'));
   let entryPoint;
   try {
     entryPoint = capabilityRequire.resolve(packageName);
@@ -284,5 +288,5 @@ export async function loadCapabilityPackage(packageName) {
 }
 
 export function capabilityDirectory() {
-  return CAPABILITY_DIR;
+  return capabilityDir();
 }
