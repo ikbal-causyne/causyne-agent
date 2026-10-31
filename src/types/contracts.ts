@@ -298,6 +298,11 @@ export interface WorkspaceContext {
   projectType?: string;
   designSystem?: string;
   keyFiles?: string[];
+  applicationRoot?: string;
+  workspaceRoot?: string;
+  allowedReadRoots?: string[];
+  allowedWriteRoots?: string[];
+  capabilities?: string[];
 }
 
 export interface TaskShape {
@@ -315,3 +320,101 @@ export type AgentEvent =
   | { type: 'tool.completed'; callId?: string; result: ToolResult }
   | { type: 'approval.required'; toolName: string; risk: RiskLevel; reason?: string }
   | { type: 'session.notice'; message: string };
+
+export type RunMode = 'direct' | 'plan' | 'plan-execute';
+
+export type RunStatus =
+  | 'created'
+  | 'preparing'
+  | 'running'
+  | 'planning'
+  | 'awaiting-user'
+  | 'awaiting-approval'
+  | 'executing'
+  | 'verifying'
+  | 'recovering'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'cancelled';
+
+export type ToolAvailability = 'available' | 'disabled' | 'unimplemented' | 'unavailable';
+
+export type EffectClass =
+  | 'read'
+  | 'workspace-write'
+  | 'external-write'
+  | 'privileged'
+  | 'destructive';
+
+export type RetryDisposition = 'safe' | 'reconcile-first' | 'never-auto';
+
+export interface ToolDescriptor {
+  id: string;
+  version: string;
+  summary: string;
+  category: string;
+  availability: ToolAvailability;
+  effect: EffectClass;
+  requiredCapabilities: string[];
+  schemaId: string;
+  retryDisposition: RetryDisposition;
+  source: 'builtin' | 'mcp' | 'plugin';
+  sourceId?: string;
+}
+
+export interface RunBudget {
+  maxModelCalls: number;
+  maxToolCalls: number;
+  maxElapsedMs: number;
+  maxOutputTokens?: number;
+  maxEstimatedCost?: number;
+}
+
+export interface AgentSession {
+  runId: string;
+  sessionId: string;
+  userGoal: string;
+  mode: RunMode;
+  workspace: WorkspaceContext | string;
+  providerId: string;
+  modelId: string;
+  state: RunStatus;
+  activeStepId?: string;
+  planVersion?: number;
+  selectedTools: Array<{ id: string; version: string }>;
+  catalogRevision: string;
+  budgets: RunBudget;
+  repairAttemptsByFailureKey: Record<string, number>;
+  pendingApprovalId?: string;
+  checkpointId?: string;
+  eventSeq: number;
+}
+
+export type RunEventType =
+  | 'run.created'
+  | 'plan.created'
+  | 'plan.step.started'
+  | 'tool.discovered'
+  | 'tool.selected'
+  | 'approval.requested'
+  | 'approval.granted'
+  | 'tool.started'
+  | 'tool.finished'
+  | 'verification.started'
+  | 'verification.finished'
+  | 'checkpoint.created'
+  | 'repair.started'
+  | 'repair.finished'
+  | 'run.completed'
+  | 'run.blocked'
+  | 'run.cancelled';
+
+export interface RunEvent {
+  type: RunEventType;
+  runId: string;
+  seq: number;
+  timestamp: number;
+  payload?: JsonObject;
+}
+

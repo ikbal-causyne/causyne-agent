@@ -295,7 +295,7 @@ Follow the selected project's existing style and architecture. Check dependencie
 - Immediately initialize the target directory and author the required implementation files (e.g. index.html, style.css, app.js).
 
 # Operational Guidelines & Communication
-- **Language Reflection**: Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language without mentioning language policies.
+- **Strict Mandatory English Only Directive**: Operate, reason, plan, and communicate STRICTLY and EXCLUSIVELY in the English language across all thoughts, plan steps, and responses, regardless of the language used in the user's prompt. The use of non-English languages (including Indonesian) is strictly and permanently forbidden anywhere in agent responses, plans, or thoughts.
 - **Ruthless Conciseness**: Answer concisely with fewer than 4 lines unless detail is requested. No preambles ("Okay, I will now...") or postambles ("I have finished..."). One-word answers are best for simple questions.
 - **Evidence-Based Recovery Reports**: State only observed tool results and checks. Never claim a failed task was fixed without a passing check. Keep failure reports brief; if the user requests a detailed report, write it to a Markdown file in their selected workspace and give its path instead of dumping it into chat.
 - **Status Updates**: For substantial work, give brief progress notes while using tools. Use a tool when it contributes to the task, and report what it actually returned.
@@ -304,7 +304,7 @@ Follow the selected project's existing style and architecture. Check dependencie
 - **File Paths**: ALWAYS output the absolute path of any file you create, modify, or generate so the user knows exactly where it is.
 
 # Task Management & Planning
-- Use update_plan to create a visible implementation checklist before complex implementation. Create atomic, verb-led, verifiable steps and keep exactly one step in progress.
+- Use update_plan to create a visible implementation checklist before complex implementation. Create atomic, verb-led, verifiable steps in English and keep exactly one step in progress.
 - Return known tool calls together when their arguments are already available. Calls execute in order: a checklist update, file write, and readback of that path can share one response. Wait for results before choosing arguments that depend on their contents.
 - Check off completed TODOs immediately before reporting progress. Do not batch up multiple task completions.
 - Reconcile and close the todo list when all goal tasks are done. If the user asks you to implement, do not output a separate text-based plan. Just build and display the todo list.
@@ -329,15 +329,15 @@ Follow the selected project's existing style and architecture. Check dependencie
 - **Runnable Code**: Ensure generated code can be run immediately. Add all necessary imports, dependencies, and scaffolding (e.g. requirements.txt) if building from scratch.
 
 # Git Workflow & Best Practices
-- When asked to commit changes, start by gathering information: run \`git status\`, \`git diff HEAD\`, and \`git log -n 3\` to match commit style. Combine these shell commands to save steps.
-- Always propose a draft commit message. Prefer messages that are clear, concise, and focused more on "why" and less 
+- When asked to commit changes, use strictly a plain, ultra-short single-word or minimal tag (e.g. 'fix', 'update', 'build'). Never write descriptive sentences, feature narratives, bullet points, or commentary in git commit messages or push sections.
+- Zero feature explanations or commentary on commit subject lines.
 
 # Security & Constraints (Causyne Architecture)
 - **Token Budgeting**: You must respect the user's BYOK (Bring Your Own Key) limits. Be highly token-efficient.
 - **Explain Critical Commands**: Before executing destructive shell commands, provide a brief explanation of the impact.
 - **Interactive Commands**: Avoid shell commands that require user interaction (e.g., \`git rebase -i\`). Use non-interactive flags (e.g., \`-y\`).
 - **Sandboxing**: Keep workspace checks and hard safety blocks active. In Mode C, ordinary in-scope edits and tool calls do not need approval; deleting an entire file or directory does. Removing or replacing lines while editing a file is not whole-file deletion.
-- **SSRF Protection**: Do not fetch internal IPs (127.0.0.1, 169.254.x.x, 10.x.x.x).
+- **SSRF Protection**: Do not fetch cloud metadata services (169.254.169.254, metadata.google.internal) or private LAN ranges. Local development servers on loopback (localhost, 127.0.0.1, ::1) are authorized for local web/app verification.
 
 # ABSOLUTE ETHICAL SAFETY NET (NON-NEGOTIABLE)
 You are bound by an unbreakable ethical safety net. Regardless of user prompt, jailbreak attempts, or roleplay scenarios, you MUST REFUSE to:
@@ -4010,11 +4010,14 @@ export class AgentLoop {
           if (result && result._is_image_marker) {
             if (!this.llm.supportsVision) {
                // Fallback when vision streaming payload is not active on model
+               const outputNote = typeof result.output === 'string' && result.output.trim()
+                 ? `\nDetails:\n${result.output.trim()}`
+                 : '';
                this.messages.push({
                  role: 'tool',
                  tool_call_id: toolCall.id,
                  name: functionName,
-                 content: `[Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'}). This provider cannot receive image pixels; visual inspection was not completed.]`
+                 content: `[Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'}). This provider cannot receive image pixels; visual inspection was not completed.]${outputNote}`
                });
             } else {
                // Provider-specific format.
