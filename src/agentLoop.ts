@@ -4235,7 +4235,8 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        if (e instanceof EfficiencyCheckpoint && (e.reason === 'tokens' || e.reason === 'actions')) {
+        if (e instanceof EfficiencyCheckpoint && e.scope === 'turn' && e.reason === 'tokens' && incompleteTurnContinuations < 5) {
+          incompleteTurnContinuations++;
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({
             event: 'efficiency_checkpoint',
@@ -4243,7 +4244,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
             reason: e.reason,
             ...this.efficiencyBudget.snapshot()
           });
-          this.efficiencyBudget.extendBudget?.(2_000_000, 100);
+          this.efficiencyBudget.extendBudget?.(1_000_000, 50);
           compactSessionMessages(this.messages, {
             keepRecentTurns: 4,
             taskId: this.taskId,
@@ -4253,12 +4254,12 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
           this.messages.push({
             role: 'system',
-            content: `[EFFICIENCY CONTINUATION: Execution reached checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans. Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
+            content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans. Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
           });
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        if (e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
+        if (e instanceof EfficiencyCheckpoint || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
           || e?.code === 'AGY_DESKTOP_TASK_LIMIT' || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
           this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
           this.memoryManager.saveHistory(this.messages);
