@@ -188,7 +188,7 @@ test('runInteractiveSessionPicker: selecting existing session switches and resto
   assert.equal(loop.messages.length, 3, 'Should restore messages from session Alpha');
   assert.equal(memory.sessionId, session1.id);
   assert.equal(renderedHistory.messages.length, 3, 'History is not truncated for rendering');
-  assert.equal(renderedHistory.meta.messagesCount, 2, 'Divider counts visible turns, not tool results');
+  assert.equal(renderedHistory.meta.messagesCount, 3, 'Divider counts all conversation turns including tool executions');
 
   // Cleanup
   deleteSession(session1.id);
@@ -272,4 +272,82 @@ test('ChatRenderer: renderSessionHistory populates frames and clears prior sessi
   renderer.renderSessionHistory([], { id: 'sess_new_456', title: 'Fresh Session', messagesCount: 0 });
   assert.equal(transcript.frames.filter(f => f.kind === 'user').length, 0);
   assert.equal(transcript.frames.filter(f => f.kind === 'assistant').length, 0);
+});
+
+test('ChatRenderer: renderSessionHistory faithfully replays full 14-message tool execution history and plan', async () => {
+  const { ChatRenderer } = await import('../src/tui/chatRenderer.js');
+  const { Transcript } = await import('../src/tui/transcript.js');
+
+  const transcript = new Transcript();
+  let planChanged = null;
+  const renderer = new ChatRenderer({ transcript });
+  renderer.onPlanChange = (plan) => { planChanged = plan; };
+
+  const fullSessionMessages = [
+    { role: 'user', content: 'build me a 3d body that based on scient so the humanity in this world can learning more about their body in3d' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'call_1',
+        type: 'function',
+        function: {
+          name: 'update_plan',
+          arguments: JSON.stringify({
+            explanation: 'Plan anatomy scaffold',
+            plan: [
+              { id: '1', step: 'Design anatomy spec', status: 'in_progress' },
+              { id: '2', step: 'Write 3d engine', status: 'pending' }
+            ]
+          })
+        }
+      }]
+    },
+    { role: 'tool', tool_call_id: 'call_1', name: 'update_plan', content: '{"success":true,"output":"Plan updated"}' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{
+        id: 'call_2',
+        type: 'function',
+        function: {
+          name: 'fs_write',
+          arguments: JSON.stringify({ path: '/tmp/anatomy.js', content: 'console.log("3d");' })
+        }
+      }]
+    },
+    { role: 'tool', tool_call_id: 'call_2', name: 'fs_write', content: '{"success":true,"output":"Wrote 22637 bytes"}' },
+    { role: 'assistant', content: '[Action initiated and completed]' },
+    { role: 'tool', tool_call_id: 'call_compacted_sysrun', name: 'sysRun', content: '{"success":true,"output":"total 0\n"}' }
+  ];
+
+  renderer.renderSessionHistory(fullSessionMessages, {
+    id: 's_mvwcx33m_99f2e6',
+    title: 'build me a 3d body that based on scient so the humanity i…'
+  });
+
+  // Verify all 7 conversation turns / messages are fully populated in transcript frames
+  const kinds = transcript.frames.map(f => f.kind);
+  assert.ok(kinds.includes('session'), 'Must render session divider');
+  assert.ok(kinds.includes('user'), 'Must render user prompt frame');
+  assert.ok(kinds.includes('assistant'), 'Must render assistant text frame');
+  assert.ok(kinds.includes('step'), 'Must render tool step start frames');
+  assert.ok(kinds.includes('result'), 'Must render tool result completion frames');
+
+  // Verify step count and result count match executions
+  const steps = transcript.frames.filter(f => f.kind === 'step');
+  const results = transcript.frames.filter(f => f.kind === 'result');
+  assert.equal(steps.length, 3, 'Must render 3 tool steps (update_plan, fs_write, sysRun)');
+  assert.equal(results.length, 3, 'Must render 3 tool results');
+
+  // Verify plan restoration
+  assert.ok(Array.isArray(renderer.latestPlan), 'latestPlan must be restored');
+  assert.equal(renderer.latestPlan.length, 2, 'latestPlan should have 2 steps');
+  assert.equal(renderer.latestPlan[0].step, 'Design anatomy spec');
+  assert.ok(planChanged, 'onPlanChange must be notified');
+
+  // Verify session divider message count
+  const flat = transcript.flatten(100);
+  const dividerRow = flat.rows.find(r => r.includes('s_mvwcx33m_99f2e6') || r.includes('7 messages'));
+  assert.ok(dividerRow, 'Session divider row must report total conversation messages');
 });

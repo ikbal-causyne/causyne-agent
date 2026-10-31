@@ -52,18 +52,11 @@ export interface InteractiveSessionPickerOptions {
   workspace?: string | undefined;
 }
 
-/** The divider counts conversation turns that the history renderer can show. */
+/** The divider counts conversation messages that the history renderer displays. */
 function visibleHistoryCount(messages: Array<{ role: string; content?: unknown }>): number {
   return messages.filter((message) => {
-    if (message.role !== 'user' && message.role !== 'assistant') return false;
-    if (typeof message.content === 'string') return message.content.trim().length > 0;
-    if (Array.isArray(message.content)) {
-      return message.content.some((part: unknown) =>
-        typeof part === 'string' && part.trim().length > 0
-        || !!part && typeof part === 'object' && 'text' in part
-          && typeof part.text === 'string' && part.text.trim().length > 0);
-    }
-    return false;
+    if (!message || message.role === 'system') return false;
+    return true;
   }).length;
 }
 

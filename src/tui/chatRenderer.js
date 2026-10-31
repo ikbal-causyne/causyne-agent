@@ -409,7 +409,7 @@ export class ChatRenderer {
       const parts = [];
       if (model) parts.push(paint('ink', model));
       parts.push(`${steps} step${steps === 1 ? '' : 's'}`);
-      parts.push(formatDuration(durationMs));
+      if (durationMs > 0) parts.push(formatDuration(durationMs));
 
       const separator = dim(`  ${GLYPHS.dot}  `);
       this.write();
@@ -557,18 +557,117 @@ export class ChatRenderer {
     this.clearTranscript();
     this.latestPlan = [];
     this.onPlanChange?.([]);
+    this.resetTurn();
 
-    if (sessionInfo && (sessionInfo.title || sessionInfo.id)) {
-      this.renderSessionDivider(sessionInfo);
+    const info = sessionInfo ? { ...sessionInfo } : {};
+    if (info.messagesCount === undefined || info.messagesCount === null) {
+      info.messagesCount = messages.filter(m => m && m.role !== 'system').length;
     }
 
-    for (const msg of messages) {
+    if (info.title || info.id) {
+      this.renderSessionDivider(info);
+    }
+
+    // Index tool results by tool_call_id to pair them with assistant tool_calls
+    const toolResultsById = new Map();
+    for (const m of messages) {
+      if (m && m.role === 'tool' && m.tool_call_id) {
+        toolResultsById.set(m.tool_call_id, m);
+      }
+    }
+
+    const renderedToolMessages = new Set();
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
       if (!msg) continue;
       const role = String(msg.role || '').toLowerCase();
+
       if (role === 'user') {
+        this.resetTurn();
         this.renderUserMessage(msg.content);
       } else if (role === 'assistant') {
-        this.renderAssistantMessage(msg.content);
+        // If assistant has textual content, render it
+        const text = typeof msg.content === 'string'
+          ? msg.content
+          : (Array.isArray(msg.content)
+              ? msg.content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+              : String(msg.content || ''));
+        if (text.trim()) {
+          this.renderAssistantMessage(text);
+        }
+
+        // If assistant invoked tool calls, render each tool step and pair with its result
+        if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+          for (const call of msg.tool_calls) {
+            const toolName = call.function?.name || call.name || 'tool';
+            let args = {};
+            try {
+              args = typeof call.function?.arguments === 'string'
+                ? JSON.parse(call.function.arguments)
+                : (call.function?.arguments || {});
+            } catch {
+              args = {};
+            }
+
+            // Restore active implementation plan if update_plan was called
+            if (toolName === 'update_plan' && args && Array.isArray(args.plan)) {
+              this.onAgentPlan({ plan: args.plan });
+            }
+
+            this.onStepStart({ tool: toolName, args });
+
+            // Look up corresponding tool result
+            const toolMsg = call.id ? toolResultsById.get(call.id) : null;
+            if (toolMsg) {
+              renderedToolMessages.add(toolMsg);
+              let result = null;
+              if (typeof toolMsg.content === 'object' && toolMsg.content !== null) {
+                result = toolMsg.content;
+              } else if (typeof toolMsg.content === 'string') {
+                try {
+                  result = JSON.parse(toolMsg.content);
+                } catch {
+                  result = {
+                    success: !toolMsg.content.toLowerCase().startsWith('error') && !toolMsg.content.toLowerCase().includes('failed'),
+                    output: toolMsg.content
+                  };
+                }
+              } else {
+                result = { success: true, output: '' };
+              }
+              if (result.success === undefined) result.success = true;
+              if (toolMsg.spillPath && !result.spillPath) result.spillPath = toolMsg.spillPath;
+              this.onStepComplete({ result, elapsed: '' });
+            }
+          }
+        }
+      } else if (role === 'tool') {
+        // Standalone or un-paired tool message (e.g. from compacted session turns)
+        if (!renderedToolMessages.has(msg)) {
+          renderedToolMessages.add(msg);
+          const toolName = msg.name || 'tool';
+          let result = null;
+          if (typeof msg.content === 'object' && msg.content !== null) {
+            result = msg.content;
+          } else if (typeof msg.content === 'string') {
+            try {
+              result = JSON.parse(msg.content);
+            } catch {
+              result = {
+                success: !msg.content.toLowerCase().startsWith('error') && !msg.content.toLowerCase().includes('failed'),
+                output: msg.content
+              };
+            }
+          } else {
+            result = { success: true, output: '' };
+          }
+          if (result.success === undefined) result.success = true;
+          if (msg.spillPath && !result.spillPath) result.spillPath = msg.spillPath;
+
+          this.onStepStart({ tool: toolName, args: {} });
+          this.onStepComplete({ result, elapsed: '' });
+        }
       } else if (role === 'system') {
         const text = typeof msg.content === 'string' ? msg.content : '';
         if (text.startsWith('[Continuum Context')) {
@@ -791,7 +890,9 @@ export class ChatRenderer {
   }
 
   onStepComplete(msg) {
-    const elapsed = this.stepStartedAt ? formatDuration(Date.now() - this.stepStartedAt) : '';
+    const elapsed = typeof msg?.elapsed === 'string'
+      ? msg.elapsed
+      : (this.stepStartedAt ? formatDuration(Date.now() - this.stepStartedAt) : '');
     const result = msg.result || {};
 
     // Kept so Ctrl+O can show the whole thing, and set here rather than inside
@@ -801,7 +902,8 @@ export class ChatRenderer {
 
     this.frame('result', () => {
       if (result.success) {
-        this.write(`     ${paint('success', GLYPHS.check)} ${dim(elapsed)}`);
+        const elapsedText = elapsed ? ` ${dim(elapsed)}` : '';
+        this.write(`     ${paint('success', GLYPHS.check)}${elapsedText}`);
         this.renderOutputPreview(result);
         return;
       }

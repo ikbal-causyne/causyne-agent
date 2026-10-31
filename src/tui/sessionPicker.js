@@ -7,19 +7,12 @@ import { SelectLayer } from './dialogs.js';
 import { GLYPHS } from './theme.js';
 import { listSessions, getActiveSessionId, switchSession, createSession, forkSession } from '../sessionJournal.js';
 import { revokeAllAlways } from '../approvalGrants.js';
-/** The divider counts conversation turns that the history renderer can show. */
+/** The divider counts conversation messages that the history renderer displays. */
 function visibleHistoryCount(messages) {
     return messages.filter((message) => {
-        if (message.role !== 'user' && message.role !== 'assistant')
+        if (!message || message.role === 'system')
             return false;
-        if (typeof message.content === 'string')
-            return message.content.trim().length > 0;
-        if (Array.isArray(message.content)) {
-            return message.content.some((part) => typeof part === 'string' && part.trim().length > 0
-                || !!part && typeof part === 'object' && 'text' in part
-                    && typeof part.text === 'string' && part.text.trim().length > 0);
-        }
-        return false;
+        return true;
     }).length;
 }
 function formatTimeAgo(timestamp) {
