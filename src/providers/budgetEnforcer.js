@@ -16,6 +16,8 @@ export function actionLimitFor(archetype) {
         return 25;
     if (archetype === 'game_development' || archetype === 'game')
         return 250;
+    if (archetype === 'software_engineering' || archetype === 'backend_engineering')
+        return 200;
     if (archetype === 'web_engineering')
         return 120;
     return 35;
@@ -25,6 +27,8 @@ export function tokenLimitFor(archetype) {
         return 150_000;
     if (archetype === 'game_development' || archetype === 'game')
         return 3_000_000;
+    if (archetype === 'software_engineering' || archetype === 'backend_engineering')
+        return 2_500_000;
     if (archetype === 'media_3d_generation')
         return 400_000;
     if (archetype === 'web_engineering' || archetype === 'web_fullstack')
@@ -33,6 +37,8 @@ export function tokenLimitFor(archetype) {
 }
 export function turnTokenLimitFor(archetype) {
     if (archetype === 'game_development' || archetype === 'game')
+        return 1_000_000;
+    if (archetype === 'software_engineering' || archetype === 'backend_engineering')
         return 1_000_000;
     if (archetype === 'web_engineering' || archetype === 'web_fullstack')
         return 250_000;
@@ -50,8 +56,10 @@ export class EfficiencyCheckpoint extends Error {
     scope;
     constructor(reason, used, limit, scope = 'task') {
         const scopeLabel = scope === 'turn' ? 'single-turn' : 'task';
-        super(`Efficiency checkpoint: ${used.toLocaleString()} ${reason} reached the ${limit.toLocaleString()} ${scopeLabel} limit. `
-            + 'Work is unfinished. Session history is retained; continue from this checkpoint without repeating completed actions.');
+        const guidance = scope === 'turn'
+            ? 'Auto-compacting context and continuing task execution.'
+            : 'Session history is retained; continue from this checkpoint without repeating completed actions.';
+        super(`Efficiency checkpoint: ${used.toLocaleString()} ${reason} reached the ${limit.toLocaleString()} ${scopeLabel} limit. ${guidance}`);
         this.name = 'EfficiencyCheckpoint';
         this.reason = reason;
         this.used = used;

@@ -160,9 +160,9 @@ const WEB_CONSTRUCTION_EXCLUSION =
 const SYSTEM_ADMIN_PATTERN =
   /\b(kill process|kill port|check port|port \d+|lsof|ps aux|terminate process|zip folder|unzip file|extract archive|compress folder)\b/i;
 
-// Simple file management operations
+// Simple file management operations (reading small notes, listing/deleting/moving files)
 const SIMPLE_FILE_OP_PATTERN =
-  /\b(list (the )?files|show files|count files|rename file(s)?|delete file(s)?|move file(s)?|clean (up )?folder)\b/i;
+  /\b(list (the )?files|show files|count files|rename file(s)?|delete file(s)?|move file(s)?|clean (up )?folder|read (the )?(?:note|file)|summarize (?:its )?content)\b/i;
 
 // Media generation intent (explicit creation of 3D, video, audio, or synthesized speech)
 const EXPLICIT_MEDIA_GENERATION_PATTERN =
@@ -175,6 +175,10 @@ const EXPLICIT_WEB_ENGINEERING_PATTERN =
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN =
   /(?:\b(?:build|create|make|design|develop|scaffold|render|animate|code|program|buat\w*|bikin\w*)[\s\S]*(?:game|simulation|simulator|simulasi|interactive|3d|three\.?js|threejs|webgl|canvas3d|babylonjs|godot|unity|unreal|platformer|rpg|arcade)\b|\b(?:game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive)\b|\b3d\s*(?:game|app|simulator|simulation|scene|city|world|view|body|human|anatomy|model|mesh|character|rendering|visualization|experience|space|environment)\b|\bin 3d\b|[-_]3d\b|\b3d[-_]|\b(?:threejs|three\.js|webgl|canvas3d|babylonjs)\b)/i;
+
+// Explicit software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools)
+const EXPLICIT_SOFTWARE_ENGINEERING_PATTERN =
+  /(?:\b(?:build|create|code|program|develop|refactor|debug|fix|implement|test|optimize|write|add|modify|migrate|architect|engineer|benchmark|profile|audit)\b[\s\S]*\b(?:api|backend|service|microservice|server|database|schema|endpoint|controller|auth|test|spec|algorithm|function|module|class|feature|script|pipeline|codebase|repo|repository|bug|issue|engine|tool|cli|library|sdk|migration|handler|worker|queue|stream)\b|\b(?:python|rust|golang|c\+\+|cpp|java|typescript|javascript|ruby|php|sql|bash|shell|docker|k8s|kubernetes)\b)/i;
 
 /**
  * Select tools to preload based on prompt intent. This is never an allowlist:
@@ -249,7 +253,7 @@ export function determineToolScope(
   }
 
   // 4. Simple local file manipulation
-  if (SIMPLE_FILE_OP_PATTERN.test(text) && !EXPLICIT_WEB_ENGINEERING_PATTERN.test(text) && !EXPLICIT_GAME_DEV_PATTERN.test(text)) {
+  if (SIMPLE_FILE_OP_PATTERN.test(text) && !EXPLICIT_WEB_ENGINEERING_PATTERN.test(text) && !EXPLICIT_GAME_DEV_PATTERN.test(text) && !EXPLICIT_SOFTWARE_ENGINEERING_PATTERN.test(text)) {
     const tools = new Set([
       'fs_read',
       'fs_write',
@@ -330,6 +334,29 @@ export function determineToolScope(
       archetype: 'game_development',
       suppressedPacks: ['media', 'advanced', 'system'],
       reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
+    };
+  }
+
+  // 8. Software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools)
+  if (EXPLICIT_SOFTWARE_ENGINEERING_PATTERN.test(text)) {
+    const tools = new Set([
+      'fs_write',
+      'fs_edit',
+      'fs_read',
+      'fs_list',
+      'fs_search',
+      'sysRun',
+      'browser_act',
+      'screenshot',
+      'vision_inspect_ui',
+      'update_plan',
+      'tool_search'
+    ]);
+    return {
+      toolScope: tools,
+      archetype: 'software_engineering',
+      suppressedPacks: ['media', 'game'],
+      reason: 'Software engineering intent focuses on code authoring, search, terminal execution, and verification; suppresses creative media and game packs.'
     };
   }
 

@@ -23,6 +23,7 @@ export function actionLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 12;
   if (archetype === 'media_3d_generation') return 25;
   if (archetype === 'game_development' || archetype === 'game') return 250;
+  if (archetype === 'software_engineering' || archetype === 'backend_engineering') return 200;
   if (archetype === 'web_engineering') return 120;
   return 35;
 }
@@ -30,6 +31,7 @@ export function actionLimitFor(archetype: string): number {
 export function tokenLimitFor(archetype: string): number {
   if (archetype === 'desktop_personalization') return 150_000;
   if (archetype === 'game_development' || archetype === 'game') return 3_000_000;
+  if (archetype === 'software_engineering' || archetype === 'backend_engineering') return 2_500_000;
   if (archetype === 'media_3d_generation') return 400_000;
   if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 500_000;
   return 100_000;
@@ -37,6 +39,7 @@ export function tokenLimitFor(archetype: string): number {
 
 export function turnTokenLimitFor(archetype: string): number {
   if (archetype === 'game_development' || archetype === 'game') return 1_000_000;
+  if (archetype === 'software_engineering' || archetype === 'backend_engineering') return 1_000_000;
   if (archetype === 'web_engineering' || archetype === 'web_fullstack') return 250_000;
   if (archetype === 'media_3d_generation') return 200_000;
   if (archetype === 'desktop_personalization') return 100_000;
@@ -52,8 +55,10 @@ export class EfficiencyCheckpoint extends Error {
 
   constructor(reason: 'tokens' | 'actions', used: number, limit: number, scope: 'turn' | 'task' = 'task') {
     const scopeLabel = scope === 'turn' ? 'single-turn' : 'task';
-    super(`Efficiency checkpoint: ${used.toLocaleString()} ${reason} reached the ${limit.toLocaleString()} ${scopeLabel} limit. `
-      + 'Work is unfinished. Session history is retained; continue from this checkpoint without repeating completed actions.');
+    const guidance = scope === 'turn'
+      ? 'Auto-compacting context and continuing task execution.'
+      : 'Session history is retained; continue from this checkpoint without repeating completed actions.';
+    super(`Efficiency checkpoint: ${used.toLocaleString()} ${reason} reached the ${limit.toLocaleString()} ${scopeLabel} limit. ${guidance}`);
     this.name = 'EfficiencyCheckpoint';
     this.reason = reason;
     this.used = used;
