@@ -23,13 +23,19 @@ export function actionLimitFor(archetype) {
 export function tokenLimitFor(archetype) {
     if (archetype === 'desktop_personalization')
         return 150_000;
-    if (archetype === 'game_development' || archetype === 'game')
-        return 3_000_000;
+    if (archetype === 'simple_file_op')
+        return 250_000;
+    if (archetype === 'web_research_only')
+        return 350_000;
+    if (archetype === 'system_admin')
+        return 350_000;
     if (archetype === 'media_3d_generation')
         return 400_000;
     if (archetype === 'web_engineering' || archetype === 'web_fullstack')
         return 500_000;
-    return 100_000;
+    if (archetype === 'game_development' || archetype === 'game')
+        return 3_000_000;
+    return 1_500_000;
 }
 export function turnTokenLimitFor(archetype) {
     if (archetype === 'game_development' || archetype === 'game')

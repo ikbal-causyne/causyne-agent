@@ -22,6 +22,7 @@ import { getMemoryContextString } from './memory.js';
 import { MemoryManager } from './memoryManager.js';
 import { cortexDb } from './cortex/vectorDb.js';
 import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
+import { buildCodexStyleSummary, compactSessionMessages, autoCompactIfUnderPressure } from './core/contextCompactor.js';
 import { analyzeTask, buildTaskBrief } from './taskShape.js';
 import {
   lookupPlan,
@@ -1824,11 +1825,9 @@ export class AgentLoop {
       ? (this.taskTokenLimit as number)
       : this.tokenTracker.budget?.enabled && Number.isFinite(this.tokenTracker.budget?.maxTokensPerTask) && (this.tokenTracker.budget.maxTokensPerTask as number) > 0
         ? (this.tokenTracker.budget.maxTokensPerTask as number)
-        : Number.isFinite(efficiency.maxTaskTokens) && efficiency.maxTaskTokens > 0
-          ? efficiency.maxTaskTokens
-          : Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
-            ? efficiency.maxTurnTokens
-            : tokenLimitFor(turnArchetype);
+        : Number.isFinite(efficiency.maxTaskTokens) && (efficiency.maxTaskTokens as number) > 0
+          ? (efficiency.maxTaskTokens as number)
+          : tokenLimitFor(turnArchetype);
     this.efficiencyBudget = new UnifiedBudgetEnforcer(
       Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
         ? efficiency.maxTurnTokens
@@ -1942,7 +1941,9 @@ export class AgentLoop {
           if (dropped.length > 0) {
             const compactSummary = buildRecoverableDroppedSummary(
               dropped,
-              buildStructuralSummary(dropped) || describeDroppedMessages(dropped)
+              buildCodexStyleSummary(dropped, this.currentTaskPrompt || this.userPrompt)
+                || buildStructuralSummary(dropped)
+                || describeDroppedMessages(dropped)
             );
             const removed = compactInPlace(this.messages, splitIndex, compactSummary);
             this._lastCompactionIndex = null;
@@ -4234,8 +4235,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        if (e instanceof EfficiencyCheckpoint && e.scope === 'turn' && e.reason === 'tokens' && incompleteTurnContinuations < 5) {
-          incompleteTurnContinuations++;
+        if (e instanceof EfficiencyCheckpoint && (e.reason === 'tokens' || e.reason === 'actions')) {
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({
             event: 'efficiency_checkpoint',
@@ -4243,20 +4243,22 @@ You are operating in a text-and-code modality without direct image pixel renderi
             reason: e.reason,
             ...this.efficiencyBudget.snapshot()
           });
-          this.efficiencyBudget.extendBudget?.(1_000_000, 50);
-          pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
-          shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
-          pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
+          this.efficiencyBudget.extendBudget?.(2_000_000, 100);
+          compactSessionMessages(this.messages, {
+            keepRecentTurns: 4,
+            taskId: this.taskId,
+            originalPrompt: this.currentTaskPrompt || this.userPrompt
+          });
           this.emitEvent({ type: 'status', message: 'Continuing task execution from efficiency checkpoint…' });
           this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
           this.messages.push({
             role: 'system',
-            content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans. Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
+            content: `[EFFICIENCY CONTINUATION: Execution reached checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans. Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
           });
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        if (e instanceof EfficiencyCheckpoint || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
+        if (e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
           || e?.code === 'AGY_DESKTOP_TASK_LIMIT' || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
           this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
           this.memoryManager.saveHistory(this.messages);

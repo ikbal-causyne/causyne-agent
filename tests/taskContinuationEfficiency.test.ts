@@ -73,3 +73,72 @@ test('AgentLoop does not abort on turn efficiency checkpoint: compacts and compl
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('AgentLoop does not abort on task-level cumulative efficiency checkpoint: compacts context, extends budget, and completes deliverable', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-task-budget-continuation-'));
+  const events: any[] = [];
+  const ws = {
+    readyState: 1,
+    send: (raw: string) => {
+      try { events.push(JSON.parse(raw)); } catch {}
+    }
+  };
+
+  let callCount = 0;
+
+  try {
+    const loop = new AgentLoop(ws as any, 'task-task-eff-cont', 'Create deliverable.txt with SUCCESS', {
+      workspaceRoot: workspace
+    });
+    loop.config.provider = 'antigravity';
+    loop.config.autonomyMode = 'C';
+    loop.autonomyOverride = 'C';
+
+    (loop as any).initializeProvider = () => {
+      loop.config.autonomyMode = 'C';
+      loop.autonomyOverride = 'C';
+      return {
+        supportsVision: false,
+        supportsToolSearch: () => false,
+        chat: async () => {
+          callCount++;
+          if (callCount === 1) {
+            // Emulate task-level limit reached (113,076 tokens reached the 100,000 task limit)
+            throw new EfficiencyCheckpoint('tokens', 113_076, 100_000, 'task');
+          }
+          if (callCount === 2) {
+            return {
+              content: '',
+              toolCalls: [{
+                id: 'write-deliverable',
+                type: 'function',
+                function: {
+                  name: 'fs_write',
+                  arguments: JSON.stringify({ path: path.join(workspace, 'deliverable.txt'), content: 'SUCCESS' })
+                }
+              }],
+              usage: { promptTokens: 40, completionTokens: 20 }
+            };
+          }
+          return {
+            content: 'Created deliverable.txt.',
+            usage: { promptTokens: 30, completionTokens: 20 }
+          };
+        }
+      };
+    };
+
+    await loop.run();
+
+    // Verify it continued past the task-level efficiency checkpoint
+    assert.equal(callCount, 3, 'Expected exactly 3 turns');
+    assert.ok(events.some(e => e.type === 'budget_warning'), 'Expected budget warning emitted');
+    assert.ok(events.some(e => e.type === 'status' && e.message?.includes('efficiency checkpoint')), 'Expected status notice emitted');
+    assert.equal(events.some(e => e.type === 'task_complete'), true, 'Expected task to complete successfully');
+    assert.ok(fs.existsSync(path.join(workspace, 'deliverable.txt')), 'Deliverable must exist on disk');
+    assert.equal(fs.readFileSync(path.join(workspace, 'deliverable.txt'), 'utf8'), 'SUCCESS');
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+

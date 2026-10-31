@@ -8,3 +8,4 @@ export function describeDroppedMessages(...args: any[]): any;
 export function sanitizeSequences(...args: any[]): any;
 export function applyProgressiveCompaction(...args: any[]): any;
 export function snipOversizedToolOutputs(...args: any[]): any;
+export const CHARS_PER_TOKEN: number;

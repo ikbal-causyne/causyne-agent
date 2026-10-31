@@ -993,6 +993,20 @@ export const COMMANDS = [
   },
 
   {
+    name: 'compact',
+    aliases: ['compress', 'summarize'],
+    scope: 'local',
+    usage: '/compact',
+    description: 'Condense earlier conversation turns into a structured state checkpoint to reclaim tokens',
+    dialogTitle: 'Context Compaction',
+    run: async (argv, ctx) => {
+      const { runCompactSlashCommand } = await import('./core/contextCompactor.js');
+      const res = await runCompactSlashCommand(argv, ctx);
+      return res.ok ? ok(res.output) : fail(res.output);
+    }
+  },
+
+  {
     name: 'copy',
     aliases: ['cp', 'clip'],
     scope: 'local',

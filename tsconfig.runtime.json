@@ -45,6 +45,7 @@
     "src/taskContinuation.ts",
     "src/outputRecovery.ts",
     "src/core/planCache.ts",
+    "src/core/contextCompactor.ts",
     "src/infra/atomicWriter.ts",
     "src/infra/telemetry.ts",
     "src/session/sidechainEvents.ts",
