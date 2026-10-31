@@ -636,6 +636,7 @@ export class StageSurface {
    * keeps the rail in one column instead of ragged against the text.
    */
   attachRail(rows, contentWidth) {
+    const turns = collectSessionTurns(this.transcript, contentWidth);
     const isAtBottom = typeof this.viewport?.atBottom === 'function' ? this.viewport.atBottom() : false;
     const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, this.viewport.state().scrollTop, rows.length, isAtBottom);
     const railResult = turns.length > 0
