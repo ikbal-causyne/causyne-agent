@@ -137,7 +137,9 @@ export function sliceFromColumn(source, startCol) {
 }
 /**
  * Build the vertical column of turn rail cells.
- * Distributes dots proportionally along the available viewport height.
+ * Matches the canonical Turn Rail UX from Screen Recording 2026-10-30 at 02.42.17:
+ * - Consecutive vertical pillar when turns fit within viewport height.
+ * - Proportional scaling when turn count exceeds available height.
  */
 export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex) {
     const cells = new Array(Math.max(0, height)).fill(' ');
@@ -147,28 +149,18 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         return { cells, layout: { dotRows, rowToTurn } };
     }
     const count = turns.length;
-    if (count === 1) {
-        const rowIdx = Math.max(0, Math.min(height - 1, Math.floor(height / 2)));
-        dotRows.set(1, rowIdx);
-        rowToTurn.set(rowIdx, 1);
-        const isHovered = hoveredTurnIndex === 1;
-        cells[rowIdx] = isHovered
-            ? '\x1b[1m\x1b[38;2;230;235;245m●\x1b[0m'
-            : '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
-        return { cells, layout: { dotRows, rowToTurn } };
-    }
-    // When count fits with breathing room, distribute evenly from top to bottom
-    const topMargin = height >= 6 ? 1 : 0;
-    const bottomMargin = height >= 6 ? 1 : 0;
-    const usableSpan = Math.max(1, height - 1 - topMargin - bottomMargin);
+    // If count fits comfortably, stack consecutive dots centered or upper-aligned
+    const startRow = count <= height
+        ? Math.max(0, Math.floor((height - count) / 3))
+        : 0;
     for (let i = 0; i < count; i++) {
         const turn = turns[i];
         if (!turn)
             continue;
         const turnNum = turn.turnIndex;
         let rowIdx;
-        if (count - 1 <= usableSpan) {
-            rowIdx = topMargin + Math.round((i / (count - 1)) * usableSpan);
+        if (count <= height) {
+            rowIdx = startRow + i;
         }
         else {
             rowIdx = Math.round((i / (count - 1)) * (height - 1));

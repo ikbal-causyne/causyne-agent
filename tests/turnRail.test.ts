@@ -253,7 +253,7 @@ test('left-margin turn rail hit testing and rightward preview card overlay', () 
   assert.equal(overlaid[4]?.slice(0, 3), '   ');
 });
 
-test('buildTurnRailCells distributes dots proportionally across vertical height instead of clumping', () => {
+test('buildTurnRailCells renders consecutive compact vertical pill track when count <= height', () => {
   const turns = Array.from({ length: 8 }, (_, idx) => ({
     turnIndex: idx + 1,
     totalTurns: 8,
@@ -269,17 +269,12 @@ test('buildTurnRailCells distributes dots proportionally across vertical height 
   assert.equal(result.cells.length, 35);
   assert.equal(result.layout.dotRows.size, 8);
 
-  // Dots should span across rows rather than being squished into adjacent rows
-  const dotRows = Array.from(result.layout.dotRows.values()).sort((a, b) => a - b);
-  const minRow = dotRows[0]!;
-  const maxRow = dotRows[dotRows.length - 1]!;
-  assert.ok(minRow <= 2, `Expected first dot near top, got row ${minRow}`);
-  assert.ok(maxRow >= 30, `Expected last dot near bottom, got row ${maxRow}`);
-
-  // Distinct spacing between consecutive dots
-  for (let i = 1; i < dotRows.length; i++) {
-    const gap = dotRows[i]! - dotRows[i - 1]!;
-    assert.ok(gap >= 2, `Expected gap between dot ${i} and ${i + 1} to be at least 2 rows, got ${gap}`);
+  // Consecutive vertical track centered or upper-aligned matching canonical design
+  const startRow = Math.max(0, Math.floor((35 - 8) / 3));
+  for (let i = 0; i < 8; i++) {
+    const expectedRow = startRow + i;
+    assert.equal(result.layout.dotRows.get(i + 1), expectedRow);
+    assert.equal(result.layout.rowToTurn.get(expectedRow), i + 1);
   }
 });
 
