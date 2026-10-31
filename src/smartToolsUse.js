@@ -216,8 +216,8 @@ export function determineToolScope(prompt, _taskShape) {
             reason: 'Simple filesystem operation; suppresses external domain packs.'
         };
     }
-    // 5. Game development and interactive simulation intent (simulators, 3D worlds, games)
-    if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
+    // 5. Web engineering intent (websites, web applications, landing pages, Three.js web scenes)
+    if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
         const tools = new Set([
             'fs_write',
             'fs_edit',
@@ -232,9 +232,9 @@ export function determineToolScope(prompt, _taskShape) {
         ]);
         return {
             toolScope: tools,
-            archetype: 'game_development',
-            suppressedPacks: ['media', 'advanced', 'system'],
-            reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
+            archetype: 'web_engineering',
+            suppressedPacks: ['media', 'game', 'advanced', 'system'],
+            reason: 'Web engineering intent focuses on filesystem authoring, terminal execution, and browser verification; suppresses unrelated media and game packs.'
         };
     }
     // 6. Media / 3D generation & creative audio intent
@@ -257,8 +257,8 @@ export function determineToolScope(prompt, _taskShape) {
             reason: 'Media generation intent prioritizes 3D studio, procedural media, and image inspection; suppresses web and game packs.'
         };
     }
-    // 7. Web engineering intent (websites, web applications, landing pages, dashboards, UI)
-    if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
+    // 7. Game development and interactive simulation intent (simulators, 3D worlds, games)
+    if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
         const tools = new Set([
             'fs_write',
             'fs_edit',
@@ -273,9 +273,9 @@ export function determineToolScope(prompt, _taskShape) {
         ]);
         return {
             toolScope: tools,
-            archetype: 'web_engineering',
-            suppressedPacks: ['media', 'game', 'advanced', 'system'],
-            reason: 'Web engineering intent focuses on filesystem authoring, terminal execution, and browser verification; suppresses unrelated media and game packs.'
+            archetype: 'game_development',
+            suppressedPacks: ['media', 'advanced', 'system'],
+            reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
         };
     }
     // 8. Software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools)

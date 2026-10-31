@@ -272,8 +272,8 @@ export function determineToolScope(
     };
   }
 
-  // 5. Game development and interactive simulation intent (simulators, 3D worlds, games)
-  if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
+  // 5. Web engineering intent (websites, web applications, landing pages, Three.js web scenes)
+  if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
     const tools = new Set([
       'fs_write',
       'fs_edit',
@@ -288,9 +288,9 @@ export function determineToolScope(
     ]);
     return {
       toolScope: tools,
-      archetype: 'game_development',
-      suppressedPacks: ['media', 'advanced', 'system'],
-      reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
+      archetype: 'web_engineering',
+      suppressedPacks: ['media', 'game', 'advanced', 'system'],
+      reason: 'Web engineering intent focuses on filesystem authoring, terminal execution, and browser verification; suppresses unrelated media and game packs.'
     };
   }
 
@@ -315,8 +315,8 @@ export function determineToolScope(
     };
   }
 
-  // 7. Web engineering intent (websites, web applications, landing pages, dashboards, UI)
-  if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
+  // 7. Game development and interactive simulation intent (simulators, 3D worlds, games)
+  if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
     const tools = new Set([
       'fs_write',
       'fs_edit',
@@ -331,9 +331,9 @@ export function determineToolScope(
     ]);
     return {
       toolScope: tools,
-      archetype: 'web_engineering',
-      suppressedPacks: ['media', 'game', 'advanced', 'system'],
-      reason: 'Web engineering intent focuses on filesystem authoring, terminal execution, and browser verification; suppresses unrelated media and game packs.'
+      archetype: 'game_development',
+      suppressedPacks: ['media', 'advanced', 'system'],
+      reason: 'Game development and simulation intent focuses on game code, assets, terminal execution, and browser/screen verification.'
     };
   }
 
