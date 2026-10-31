@@ -290,7 +290,7 @@ export class Sandbox {
       return validateBrowserActSandbox(
         args,
         this.workspacePaths[0],
-        url => this.isInternalUrl(url),
+        url => this.isInternalUrl(url, { allowLoopback: true }),
         targetPath => this.isPathAllowed(targetPath)
       );
     }
@@ -415,11 +415,13 @@ export class Sandbox {
     });
   }
 
-  isInternalUrl(urlString) {
+  isInternalUrl(urlString, { allowLoopback = false } = {}) {
     try {
       const url = new URL(urlString);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return true;
       const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+      const isLoopback = host === 'localhost' || host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(host) || host === '::1';
+      if (allowLoopback && isLoopback) return false;
       if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
       
       // Block localhost, private IPs, cloud metadata

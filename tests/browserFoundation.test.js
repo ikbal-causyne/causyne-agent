@@ -20,7 +20,7 @@ import {
   validateExtractSchema,
   visibleSelectorCandidate
 } from '../src/browser/causyneBrowser.js';
-import { isPrivateAddress, assertPublicWebUrl } from '../src/browser/urlPolicy.js';
+import { isPrivateAddress, assertPublicWebUrl, assertBrowserNavigableUrl, isLoopbackHost } from '../src/browser/urlPolicy.js';
 import { MAX_SNAPSHOT_CHARS, windowSnapshot } from '../src/browser/snapshotWindow.js';
 import { parseBingRss, parseDuckDuckGoHtml, searchPublicWeb } from '../src/browser/searchProviders.js';
 import { resolveBrowserRuntime } from '../src/browser/browserRuntime.js';
@@ -238,15 +238,19 @@ describe('web boundaries', () => {
   test('sandbox blocks browser SSRF and escalates browser downloads', () => {
     const workspace = process.cwd();
     const sandbox = new Sandbox({ workspaceRoot: workspace });
-    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://127.0.0.1:8080' }] }).risk, 'forbidden');
-    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://[::1]/' }] }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://169.254.169.254/latest/meta-data/' }] }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://metadata.google.internal/' }] }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://10.0.0.1/admin' }] }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://192.168.1.1/' }] }).risk, 'forbidden');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://localhost:5173/' }] }).risk, 'safe');
+    assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'http://127.0.0.1:8080' }] }).risk, 'safe');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'goto', url: 'file:///etc/passwd' }] }).risk, 'forbidden');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'preview', filePath: 'index.html' }] }).risk, 'safe');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'preview', filePath: '../outside.html' }] }).risk, 'forbidden');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'download', outputFile: 'file.bin' }] }).risk, 'extreme');
     assert.equal(sandbox.validate('browser_act', { actions: [
       { type: 'download', outputFile: 'file.bin' },
-      { type: 'goto', url: 'http://127.0.0.1/private' }
+      { type: 'goto', url: 'http://169.254.169.254/private' }
     ] }).risk, 'forbidden');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'click', ref: 'e1' }] }).risk, 'dangerous');
     assert.equal(sandbox.validate('browser_act', { actions: [{ type: 'snapshot' }] }).risk, 'safe');
@@ -533,6 +537,16 @@ describe('Enterprise Causyne Browser capabilities', () => {
       actions: [{ type: 'fill', ref: 'e1', text: 'hello' }]
     }).risk, 'dangerous');
 
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'goto', url: 'http://localhost:5173/' }]
+    }).risk, 'safe');
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'goto', url: 'http://127.0.0.1:3000/' }]
+    }).risk, 'safe');
+    assert.equal(sandbox.validate('browser_act', {
+      actions: [{ type: 'goto', url: 'http://169.254.169.254/latest/meta-data/' }]
+    }).risk, 'forbidden');
+
     assert.equal(canonicalizeToolName('camofox'), 'browser_act');
     assert.equal(canonicalizeToolName('camoufox'), 'browser_act');
     assert.equal(canonicalizeToolName('causyne_browser'), 'browser_act');
@@ -544,5 +558,33 @@ describe('Enterprise Causyne Browser capabilities', () => {
     assert.deepEqual(repaired.args, {
       actions: [{ type: 'goto', url: 'https://example.com' }]
     });
+  });
+
+  test('assertBrowserNavigableUrl allows local development servers while blocking cloud metadata and private subnets', async () => {
+    assert.equal(isLoopbackHost('localhost'), true);
+    assert.equal(isLoopbackHost('sub.localhost'), true);
+    assert.equal(isLoopbackHost('127.0.0.1'), true);
+    assert.equal(isLoopbackHost('127.0.1.1'), true);
+    assert.equal(isLoopbackHost('::1'), true);
+    assert.equal(isLoopbackHost('[::1]'), true);
+    assert.equal(isLoopbackHost('169.254.169.254'), false);
+    assert.equal(isLoopbackHost('metadata.google.internal'), false);
+    assert.equal(isLoopbackHost('192.168.1.1'), false);
+
+    const localUrl = await assertBrowserNavigableUrl('http://localhost:5173/');
+    assert.equal(localUrl.origin, 'http://localhost:5173');
+
+    const ipLocalUrl = await assertBrowserNavigableUrl('http://127.0.0.1:3000/app');
+    assert.equal(ipLocalUrl.origin, 'http://127.0.0.1:3000');
+
+    await assert.rejects(
+      async () => await assertBrowserNavigableUrl('http://169.254.169.254/latest/meta-data/'),
+      /Local, private, link-local, multicast, and reserved network addresses are not allowed/
+    );
+
+    await assert.rejects(
+      async () => await assertBrowserNavigableUrl('http://metadata.google.internal/computeMetadata/v1/'),
+      /Local and internal hostnames are not allowed/
+    );
   });
 });

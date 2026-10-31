@@ -11,7 +11,10 @@ test('Archetype & Budget Sizing for 3D City and Game Simulation Tasks', () => {
     'build city simulation in nyc-3d',
     'buatkan city simulation 3d di folder nyc-3d',
     '3d city simulation',
-    'interactive webgl simulation'
+    'interactive webgl simulation',
+    'nyc-ride-simulator',
+    'build 3d ride simulator in nyc-ride-simulator',
+    'NYC Ultra-Realistic 3D Ride Simulator'
   ];
 
   for (const prompt of prompts) {

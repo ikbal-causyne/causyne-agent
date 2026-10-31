@@ -268,6 +268,7 @@ export function determineToolScope(
     };
   }
 
+  // 5. Web engineering intent (websites, web applications, landing pages, Three.js web scenes)
   if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
     const tools = new Set([
       'fs_write',
@@ -289,7 +290,7 @@ export function determineToolScope(
     };
   }
 
-  // 5. Media / 3D generation & creative audio intent
+  // 6. Media / 3D generation & creative audio intent
   if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
     const tools = new Set([
       'blender_act',
@@ -310,7 +311,7 @@ export function determineToolScope(
     };
   }
 
-  // Game development and interactive simulation intent
+  // 7. Game development and interactive simulation intent (simulators, 3D worlds, games)
   if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
     const tools = new Set([
       'fs_write',

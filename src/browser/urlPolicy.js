@@ -62,6 +62,16 @@ async function resolvedAddresses(hostname) {
     hostCache.set(hostname, { expiresAt: Date.now() + DNS_CACHE_MS, addresses });
     return addresses;
 }
+export function isLoopbackHost(hostname) {
+    const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    if (host === 'localhost' || host.endsWith('.localhost'))
+        return true;
+    if (/^127(?:\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)){3}$/.test(host))
+        return true;
+    if (host === '::1' || host === '0:0:0:0:0:0:0:1')
+        return true;
+    return false;
+}
 export async function assertPublicWebUrl(value) {
     let url;
     try {
@@ -75,6 +85,31 @@ export async function assertPublicWebUrl(value) {
     }
     if (url.username || url.password)
         throw new Error('URLs containing credentials are not allowed');
+    if (blockedHostname(url.hostname))
+        throw new Error('Local and internal hostnames are not allowed');
+    const literalVersion = isIP(url.hostname);
+    const addresses = literalVersion ? [url.hostname] : await resolvedAddresses(url.hostname);
+    if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
+        throw new Error('Local, private, link-local, multicast, and reserved network addresses are not allowed');
+    }
+    return url;
+}
+export async function assertBrowserNavigableUrl(value) {
+    let url;
+    try {
+        url = new URL(value);
+    }
+    catch {
+        throw new Error('URL must be absolute and valid');
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('Only http and https URLs are allowed');
+    }
+    if (url.username || url.password)
+        throw new Error('URLs containing credentials are not allowed');
+    if (isLoopbackHost(url.hostname)) {
+        return url;
+    }
     if (blockedHostname(url.hostname))
         throw new Error('Local and internal hostnames are not allowed');
     const literalVersion = isIP(url.hostname);

@@ -10,7 +10,7 @@ import {
   loadCapabilityPackage
 } from '../provisioning/capabilityProvisioner.js';
 import { resolveBrowserRuntime, type PreparedBrowserRuntime } from './browserRuntime.js';
-import { assertPublicWebUrl } from './urlPolicy.js';
+import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
 import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
 
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -944,7 +944,7 @@ export class CausyneBrowser {
     this.resolveRuntime = options.resolveRuntime ?? resolveBrowserRuntime;
     this.profileDirectory = path.resolve(options.profileDirectory ?? path.join(capabilityDirectory(), 'browser-profile'));
     this.visible = options.visible ?? process.env.CAUSYNE_BROWSER_VISIBLE === '1';
-    this.validateUrl = options.validateUrl ?? assertPublicWebUrl;
+    this.validateUrl = options.validateUrl ?? assertBrowserNavigableUrl;
   }
 
   setWorkspace(workspace: string): void {

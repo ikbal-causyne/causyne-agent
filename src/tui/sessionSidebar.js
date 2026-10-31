@@ -6,6 +6,11 @@ export const SIDEBAR_WIDTH = 42;
 export const SIDEBAR_THRESHOLD = 120;
 /** A side panel is useful only when a readable conversation column remains. */
 export function sidebarVisible(columns, home = false) {
+    if (typeof process !== 'undefined' && process.env) {
+        const setting = String(process.env.CAUSYNE_SIDEBAR ?? '').trim().toLowerCase();
+        if (setting === 'off' || setting === '0' || setting === 'false')
+            return false;
+    }
     return !home && Number.isFinite(columns) && columns > SIDEBAR_THRESHOLD;
 }
 /** Reserve the last terminal column so a wide row cannot wrap the stage. */

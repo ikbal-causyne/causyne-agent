@@ -23,6 +23,9 @@ test('the sidebar appears only when its conversation column can remain readable'
   assert.equal(sidebarVisible(120), false);
   assert.equal(sidebarVisible(121), true);
   assert.equal(sidebarVisible(154, true), false);
+  process.env.CAUSYNE_SIDEBAR = 'off';
+  assert.equal(sidebarVisible(154), false);
+  delete process.env.CAUSYNE_SIDEBAR;
   assert.equal(sessionMainWidth(154), 111);
   assert.equal(sessionMainWidth(100), 100);
   assert.equal(sessionComposerWidth(sessionMainWidth(154)), 108);

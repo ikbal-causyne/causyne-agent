@@ -19,6 +19,10 @@ export interface SidebarFacts {
 
 /** A side panel is useful only when a readable conversation column remains. */
 export function sidebarVisible(columns: number, home = false): boolean {
+  if (typeof process !== 'undefined' && process.env) {
+    const setting = String(process.env.CAUSYNE_SIDEBAR ?? '').trim().toLowerCase();
+    if (setting === 'off' || setting === '0' || setting === 'false') return false;
+  }
   return !home && Number.isFinite(columns) && columns > SIDEBAR_THRESHOLD;
 }
 

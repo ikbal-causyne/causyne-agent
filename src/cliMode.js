@@ -346,8 +346,8 @@ export async function chatMode({ home = false } = {}) {
   let surface = home && isInteractive() ? createStageSurface({ config }) : null;
   const openedHome = Boolean(surface);
   const bannerWidth = openedHome ? 0 : conn.renderer.sessionHeader(headerInfo);
+  conn.renderer.status.setSession(headerInfo);
   if (openedHome) {
-    conn.renderer.status.setSession(headerInfo);
     surface.enterHome(headerInfo);
   }
   const homeTransition = new HomeTransition(openedHome, surface);
@@ -374,7 +374,10 @@ export async function chatMode({ home = false } = {}) {
       // The header reports the companion composer width. The Stage keeps that
       // readable width throughout the session, including after history clears.
       if (!surface) surface = createStageSurface({ config, openingWidth: bannerWidth });
-      if (surface) conn.renderer.transcript = surface.transcript;
+      if (surface) {
+        surface.setSessionInfo(headerInfo);
+        conn.renderer.transcript = surface.transcript;
+      }
 
       prompt = new ChatPrompt({
         root: process.cwd(),
