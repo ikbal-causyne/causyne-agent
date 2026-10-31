@@ -92,10 +92,10 @@ export class UnifiedBudgetEnforcer {
     }
     recordUsage(usage) {
         const fresh = noncachedTokens(usage);
+        this.tokens += fresh;
         if (fresh >= this.maxTurnTokens) {
             throw new EfficiencyCheckpoint('tokens', fresh, this.maxTurnTokens, 'turn');
         }
-        this.tokens += fresh;
         if (this.tokens >= this.maxTaskTokens) {
             throw new EfficiencyCheckpoint('tokens', this.tokens, this.maxTaskTokens, 'task');
         }

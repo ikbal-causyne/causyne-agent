@@ -14,7 +14,9 @@ test('Archetype & Budget Sizing for 3D City and Game Simulation Tasks', () => {
     'interactive webgl simulation',
     'nyc-ride-simulator',
     'build 3d ride simulator in nyc-ride-simulator',
-    'NYC Ultra-Realistic 3D Ride Simulator'
+    'NYC Ultra-Realistic 3D Ride Simulator',
+    'i want you to build human anatomy in 3d using three.js based on scientificly prooved so al humanity on eart can learning on it',
+    'buatakan aku aku mobil balap mobil 3d in three.js mobilny aharus mobil tesla roadster terbatru yang bisa terbang altarnya di swiss bersalju'
   ];
 
   for (const prompt of prompts) {
@@ -24,6 +26,10 @@ test('Archetype & Budget Sizing for 3D City and Game Simulation Tasks', () => {
     assert.equal(actionLimitFor(scope.archetype), 250, `Action limit for "${prompt}" must be 250`);
     assert.equal(tokenLimitFor(scope.archetype), 3_000_000, `Task token limit for "${prompt}" must be 3,000,000`);
   }
+
+  // Standard web engineering without 3D/simulations still maps to web_engineering
+  const webScope = determineToolScope('build a modern landing page for my product');
+  assert.equal(webScope.archetype, 'web_engineering');
 });
 
 test('AgentLoop initializes efficiency budget with correct limits when userPrompt is set without currentTaskPrompt', () => {
