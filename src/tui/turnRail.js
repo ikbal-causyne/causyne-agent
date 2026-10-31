@@ -77,9 +77,15 @@ export function collectSessionTurns(transcript, contentWidth = 80) {
 /**
  * Resolve which turn is currently active based on viewport scroll position.
  */
-export function resolveActiveTurnIndex(turns, scrollTop, viewportHeight = 20) {
+export function resolveActiveTurnIndex(turns, scrollTop, viewportHeight = 20, isAtBottom = false) {
     if (!turns || turns.length === 0)
         return 0;
+    if (isAtBottom) {
+        return turns[turns.length - 1].turnIndex;
+    }
+    if (scrollTop <= 0) {
+        return turns[0].turnIndex;
+    }
     let active = turns[turns.length - 1].turnIndex;
     const targetRow = Math.max(0, scrollTop + Math.floor(viewportHeight / 3));
     for (let i = turns.length - 1; i >= 0; i--) {
@@ -131,6 +137,7 @@ export function sliceFromColumn(source, startCol) {
 }
 /**
  * Build the vertical column of turn rail cells.
+ * Distributes dots proportionally along the available viewport height.
  */
 export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex) {
     const cells = new Array(Math.max(0, height)).fill(' ');
@@ -140,18 +147,28 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         return { cells, layout: { dotRows, rowToTurn } };
     }
     const count = turns.length;
-    // If count fits comfortably, stack consecutive dots centered or top-aligned
-    const startRow = count <= height
-        ? Math.max(0, Math.floor((height - count) / 3))
-        : 0;
+    if (count === 1) {
+        const rowIdx = Math.max(0, Math.min(height - 1, Math.floor(height / 2)));
+        dotRows.set(1, rowIdx);
+        rowToTurn.set(rowIdx, 1);
+        const isHovered = hoveredTurnIndex === 1;
+        cells[rowIdx] = isHovered
+            ? '\x1b[1m\x1b[38;2;230;235;245m●\x1b[0m'
+            : '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
+        return { cells, layout: { dotRows, rowToTurn } };
+    }
+    // When count fits with breathing room, distribute evenly from top to bottom
+    const topMargin = height >= 6 ? 1 : 0;
+    const bottomMargin = height >= 6 ? 1 : 0;
+    const usableSpan = Math.max(1, height - 1 - topMargin - bottomMargin);
     for (let i = 0; i < count; i++) {
         const turn = turns[i];
         if (!turn)
             continue;
         const turnNum = turn.turnIndex;
         let rowIdx;
-        if (count <= height) {
-            rowIdx = startRow + i;
+        if (count - 1 <= usableSpan) {
+            rowIdx = topMargin + Math.round((i / (count - 1)) * usableSpan);
         }
         else {
             rowIdx = Math.round((i / (count - 1)) * (height - 1));
@@ -160,7 +177,7 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         dotRows.set(turnNum, rowIdx);
         rowToTurn.set(rowIdx, turnNum);
         const isHovered = hoveredTurnIndex === turnNum;
-        const isActive = activeTurnIndex === turnNum || (turnNum === count && !hoveredTurnIndex);
+        const isActive = activeTurnIndex === turnNum;
         if (isHovered) {
             // Hovered dot: bright silver highlighted circle
             cells[rowIdx] = '\x1b[1m\x1b[38;2;230;235;245m●\x1b[0m';
@@ -283,6 +300,7 @@ export function handleTurnRailMouse(event, surface, host) {
         ? (mouseX >= 0 && mouseX <= Math.max(3, layout.railX + 2))
         : (mouseX >= layout.railX - 1 && mouseX <= layout.railX + 2);
     if (!isRail || relY < 0 || relY >= layout.viewportHeight) {
+        surface.turnRailHoverSuppressed = false;
         if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
             surface.hoveredTurnIndex = null;
             surface.hoveredTurnAnchorY = null;
@@ -293,12 +311,35 @@ export function handleTurnRailMouse(event, surface, host) {
         }
         return false;
     }
-    const turnNum = layout.rowToTurn?.get(relY);
+    // If hover is temporarily suppressed after a click, swallow rail mouse events until suppression ends
+    if (surface.turnRailHoverSuppressed) {
+        return true;
+    }
+    let turnNum = layout.rowToTurn?.get(relY);
+    let anchorY = relY;
+    // If not an exact row hit, resolve closest dot within proximity
+    if (!turnNum && layout.dotRows && layout.dotRows.size > 0) {
+        let minDistance = Infinity;
+        let closestTurn;
+        let closestRow;
+        for (const [tNum, row] of layout.dotRows.entries()) {
+            const dist = Math.abs(relY - row);
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestTurn = tNum;
+                closestRow = row;
+            }
+        }
+        if (minDistance <= 2 && closestTurn !== undefined && closestRow !== undefined) {
+            turnNum = closestTurn;
+            anchorY = closestRow;
+        }
+    }
     if (turnNum) {
         if (isMouseMotion(event.sequence)) {
             if (surface.hoveredTurnIndex !== turnNum) {
                 surface.hoveredTurnIndex = turnNum;
-                surface.hoveredTurnAnchorY = relY;
+                surface.hoveredTurnAnchorY = anchorY;
                 if (typeof host?.scheduleDraw === 'function')
                     host.scheduleDraw();
                 else if (typeof host?.draw === 'function')
@@ -307,13 +348,26 @@ export function handleTurnRailMouse(event, surface, host) {
             return true;
         }
         if (event.mouse.button === 0 && event.mouse.pressed) {
-            const turn = layout.turns?.find((t) => t.turnIndex === turnNum);
-            if (turn && surface.viewport && typeof surface.viewport.scrollTo === 'function') {
-                surface.viewport.scrollTo(turn.startRow);
-                surface.activeTurnIndex = turnNum;
+            const turns = layout.turns || [];
+            const turn = turns.find((t) => t.turnIndex === turnNum);
+            const isLatestTurn = turnNum === turns.length || (turn && turns.length > 0 && turn.turnIndex === turns[turns.length - 1].turnIndex);
+            if (isLatestTurn && surface.viewport && typeof surface.viewport.toBottom === 'function') {
+                surface.viewport.toBottom();
             }
+            else if (turn && surface.viewport && typeof surface.viewport.scrollTo === 'function') {
+                surface.viewport.scrollTo(turn.startRow);
+            }
+            surface.activeTurnIndex = turnNum;
+            // Immediately dismiss preview card and activate temporary suppression cooldown
             surface.hoveredTurnIndex = null;
             surface.hoveredTurnAnchorY = null;
+            surface.turnRailHoverSuppressed = true;
+            if (surface._turnRailSuppressTimer) {
+                clearTimeout(surface._turnRailSuppressTimer);
+            }
+            surface._turnRailSuppressTimer = setTimeout(() => {
+                surface.turnRailHoverSuppressed = false;
+            }, 400);
             if (typeof host?.draw === 'function')
                 host.draw();
             else if (typeof host?.scheduleDraw === 'function')

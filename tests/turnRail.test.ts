@@ -253,4 +253,100 @@ test('left-margin turn rail hit testing and rightward preview card overlay', () 
   assert.equal(overlaid[4]?.slice(0, 3), '   ');
 });
 
+test('buildTurnRailCells distributes dots proportionally across vertical height instead of clumping', () => {
+  const turns = Array.from({ length: 8 }, (_, idx) => ({
+    turnIndex: idx + 1,
+    totalTurns: 8,
+    userPrompt: `Prompt ${idx + 1}`,
+    assistantSummary: `Summary ${idx + 1}`,
+    timestamp: 1000 + idx * 1000,
+    formattedDate: '10:00 AM',
+    frameId: idx + 1,
+    startRow: idx * 10
+  }));
+
+  const result = buildTurnRailCells(turns, 35, 8, null);
+  assert.equal(result.cells.length, 35);
+  assert.equal(result.layout.dotRows.size, 8);
+
+  // Dots should span across rows rather than being squished into adjacent rows
+  const dotRows = Array.from(result.layout.dotRows.values()).sort((a, b) => a - b);
+  const minRow = dotRows[0]!;
+  const maxRow = dotRows[dotRows.length - 1]!;
+  assert.ok(minRow <= 2, `Expected first dot near top, got row ${minRow}`);
+  assert.ok(maxRow >= 30, `Expected last dot near bottom, got row ${maxRow}`);
+
+  // Distinct spacing between consecutive dots
+  for (let i = 1; i < dotRows.length; i++) {
+    const gap = dotRows[i]! - dotRows[i - 1]!;
+    assert.ok(gap >= 2, `Expected gap between dot ${i} and ${i + 1} to be at least 2 rows, got ${gap}`);
+  }
+});
+
+test('resolveActiveTurnIndex prioritizes latest turn when isAtBottom is true', () => {
+  const mockTurns = [
+    { turnIndex: 1, totalTurns: 8, userPrompt: 'turn 1', assistantSummary: '', timestamp: 1000, formattedDate: '10:00 AM', frameId: 1, startRow: 0 },
+    { turnIndex: 7, totalTurns: 8, userPrompt: 'turn 7', assistantSummary: '', timestamp: 2000, formattedDate: '10:05 AM', frameId: 7, startRow: 120 },
+    { turnIndex: 8, totalTurns: 8, userPrompt: 'turn 8', assistantSummary: '', timestamp: 3000, formattedDate: '10:10 AM', frameId: 8, startRow: 135 }
+  ];
+
+  // When viewport is at bottom, it must return turn 8 even if scrollTop is 122
+  assert.equal(resolveActiveTurnIndex(mockTurns, 122, 20, true), 8);
+  // When at top, returns turn 1
+  assert.equal(resolveActiveTurnIndex(mockTurns, 0, 20, false), 1);
+});
+
+test('handleTurnRailMouse suppresses hover re-arming immediately following click and calls toBottom for latest turn', () => {
+  let bottomCalled = false;
+  let drawCalled = false;
+
+  const mockSurface: any = {
+    turnRailLayout: {
+      railX: 1,
+      stageTop: 0,
+      viewportHeight: 30,
+      dotRows: new Map([[1, 2], [2, 15], [3, 28]]),
+      rowToTurn: new Map([[2, 1], [15, 2], [28, 3]]),
+      turns: [
+        { turnIndex: 1, totalTurns: 3, userPrompt: 'P1', assistantSummary: 'A1', timestamp: 1, formattedDate: '10:00', frameId: 1, startRow: 0 },
+        { turnIndex: 2, totalTurns: 3, userPrompt: 'P2', assistantSummary: 'A2', timestamp: 2, formattedDate: '10:05', frameId: 2, startRow: 50 },
+        { turnIndex: 3, totalTurns: 3, userPrompt: 'P3', assistantSummary: 'A3', timestamp: 3, formattedDate: '10:10', frameId: 3, startRow: 100 }
+      ]
+    },
+    hoveredTurnIndex: 3,
+    hoveredTurnAnchorY: 28,
+    turnRailHoverSuppressed: false,
+    viewport: {
+      scrollTo: () => {},
+      toBottom: () => { bottomCalled = true; }
+    }
+  };
+
+  const mockHost = {
+    scheduleDraw: () => {},
+    draw: () => { drawCalled = true; }
+  };
+
+  // Click on dot 3 (the latest turn)
+  const clickEvent = {
+    mouse: { x: 1, y: 28, button: 0, pressed: true },
+    sequence: '\x1b[<0;2;29M'
+  };
+  const clickResult = handleTurnRailMouse(clickEvent, mockSurface, mockHost);
+  assert.equal(clickResult, true);
+  assert.equal(bottomCalled, true, 'toBottom should be called when navigating to the latest turn');
+  assert.equal(mockSurface.hoveredTurnIndex, null, 'hover card should be dismissed on click');
+  assert.equal(mockSurface.turnRailHoverSuppressed, true, 'hover suppression should be active');
+
+  // Immediately following mouse motion over the exact same dot should NOT resurrect hover
+  const postClickMotionEvent = {
+    mouse: { x: 1, y: 28, button: 0, pressed: false },
+    sequence: '\x1b[<35;2;29M'
+  };
+  const motionResult = handleTurnRailMouse(postClickMotionEvent, mockSurface, mockHost);
+  assert.equal(motionResult, true);
+  assert.equal(mockSurface.hoveredTurnIndex, null, 'hover card must remain dismissed while suppressed');
+});
+
+
 

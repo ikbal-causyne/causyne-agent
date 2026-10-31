@@ -100,6 +100,11 @@ export function handleViewportWheel(
     }
   }
 
+  // Clear manual turn override on wheel scroll so active indicator syncs with viewport
+  if (surface) {
+    (surface as any).activeTurnIndex = null;
+  }
+
   // Pure isolated scrolling: clamp strictly inside [0, maxScrollTop]
   viewport.wheel(key.wheel.direction === 'down' ? 'down' : 'up');
 
@@ -120,6 +125,10 @@ export function handleScrollbarMouse(
 ): boolean {
   if (!viewport || !surface || !key.mouse || !key.mouse.pressed) return false;
   if (key.mouse.button !== 0) return false; // Left click only
+
+  if (surface) {
+    (surface as any).activeTurnIndex = null;
+  }
 
   // If completion picker is active, check if click was on the picker
   if (host.pickerLayout && Number.isFinite(key.mouse.y)) {

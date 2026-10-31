@@ -689,10 +689,13 @@ export class ChatPrompt {
       if (this.surface && typeof this.surface.captureMouse === 'function') {
         if (this.surface.captureMouse() && this.notice.startsWith('top of this view')) this.notice = '';
       }
-      if (this.surface && this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
-        this.surface.hoveredTurnIndex = null;
-        this.surface.hoveredTurnAnchorY = null;
-        this.scheduleDraw();
+      if (this.surface) {
+        this.surface.turnRailHoverSuppressed = false;
+        if (this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
+          this.surface.hoveredTurnIndex = null;
+          this.surface.hoveredTurnAnchorY = null;
+          this.scheduleDraw();
+        }
       }
     }
 
@@ -924,10 +927,12 @@ export class ChatPrompt {
     if (!viewport) return false;
 
     if (key.name === 'pageup') {
+      if (this.surface) this.surface.activeTurnIndex = null;
       if (key.shift) viewport.toTop(); else viewport.pageUp();
       return true;
     }
     if (key.name === 'pagedown') {
+      if (this.surface) this.surface.activeTurnIndex = null;
       // Shift+PgDn is the way back to following, and it is spelled out in the
       // affordance the surface draws while the view is held away.
       if (key.shift) viewport.toBottom(); else viewport.pageDown();
@@ -935,16 +940,26 @@ export class ChatPrompt {
     }
     if (key.shift && key.name === 'up') {
       if (!this.editor.isEmpty) return false;
+      if (this.surface) this.surface.activeTurnIndex = null;
       viewport.lineUp();
       return true;
     }
     if (key.shift && key.name === 'down') {
       if (!this.editor.isEmpty) return false;
+      if (this.surface) this.surface.activeTurnIndex = null;
       viewport.lineDown();
       return true;
     }
-    if (key.alt && key.ctrl && key.name === 'u') { viewport.halfPageUp(); return true; }
-    if (key.alt && key.ctrl && key.name === 'd') { viewport.halfPageDown(); return true; }
+    if (key.alt && key.ctrl && key.name === 'u') {
+      if (this.surface) this.surface.activeTurnIndex = null;
+      viewport.halfPageUp();
+      return true;
+    }
+    if (key.alt && key.ctrl && key.name === 'd') {
+      if (this.surface) this.surface.activeTurnIndex = null;
+      viewport.halfPageDown();
+      return true;
+    }
 
     // Jump by structure, not by rows. The transcript knows where each frame
     // starts, so `,`/`.` step through tool calls and the shifted `<`/`>` on the
