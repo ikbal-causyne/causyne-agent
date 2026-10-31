@@ -34,7 +34,7 @@ import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
-import { collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard } from './turnRail.js';
+import { collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -395,7 +395,9 @@ export class StageSurface {
     const sidebar = sidebarVisible(width);
     const mainWidth = sessionMainWidth(width);
     const rail = this.railEnabled(mainWidth);
-    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
+    const hasTurns = this.transcript && collectSessionTurns(this.transcript, mainWidth).length > 0;
+    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
+    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
 
     let block = promptRows;
     let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
@@ -439,7 +441,7 @@ export class StageSurface {
         if (hoveredTurn) {
           const card = renderTurnPreviewCard(hoveredTurn, 52);
           const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
-          rows = overlayTurnPreviewCard(rows, card, anchorY, contentWidth + 1, mainWidth);
+          rows = overlayTurnPreviewCard(rows, card, anchorY, this.turnRailLayout?.railX ?? 1, mainWidth);
         }
       }
       if (this.messageActionOverlay) {
@@ -635,12 +637,14 @@ export class StageSurface {
    */
   attachRail(rows, contentWidth) {
     const turns = collectSessionTurns(this.transcript, contentWidth);
+    const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, this.viewport.state().scrollTop, rows.length);
     const railResult = turns.length > 0
-      ? buildTurnRailCells(turns, rows.length, this.activeTurnIndex || turns.length, this.hoveredTurnIndex)
+      ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex)
       : null;
 
+    const hasTurns = turns.length > 0;
     this.turnRailLayout = {
-      railX: contentWidth + 1,
+      railX: hasTurns ? 1 : contentWidth + 1,
       stageTop: (this.out.rows || this.stage.height) - this.stage.height,
       viewportHeight: rows.length,
       dotRows: railResult?.layout?.dotRows || new Map(),
@@ -650,10 +654,13 @@ export class StageSurface {
 
     const rail = this.buildRail(rows.length, contentWidth);
     for (let i = 0; i < rows.length; i++) {
-      const cell = railResult?.cells[i] && railResult.cells[i] !== ' '
-        ? railResult.cells[i]
-        : rail[i];
-      rows[i] = `${padEnd(rows[i], contentWidth)} ${cell}`;
+      const rightCell = rail[i] || ' ';
+      if (hasTurns) {
+        const leftCell = railResult?.cells[i] || ' ';
+        rows[i] = ` ${leftCell} ${padEnd(rows[i], contentWidth)} ${rightCell}`;
+      } else {
+        rows[i] = `${padEnd(rows[i], contentWidth)} ${rightCell}`;
+      }
     }
     return rows;
   }
@@ -702,7 +709,11 @@ export function createStageSurface({ out = process.stdout, env = process.env, co
   if (env.CAUSYNE_SIMPLE_INPUT === '1') return null;
   if (stageHeight(out, env) < 1) return null;
 
-  const surface = new StageSurface({ out, env, config, speed, openingWidth });
+  const effectiveEnv = env.CAUSYNE_MOUSE_HOVER === undefined
+    ? { ...env, CAUSYNE_MOUSE_HOVER: '1' }
+    : env;
+
+  const surface = new StageSurface({ out, env: effectiveEnv, config, speed, openingWidth });
   if (!surface.open()) return null;
   return surface;
 }

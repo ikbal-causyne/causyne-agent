@@ -102,6 +102,64 @@ export function collectSessionTurns(transcript: any, contentWidth = 80): Session
 }
 
 /**
+ * Resolve which turn is currently active based on viewport scroll position.
+ */
+export function resolveActiveTurnIndex(turns: SessionTurn[], scrollTop: number, viewportHeight = 20): number {
+  if (!turns || turns.length === 0) return 0;
+  let active = turns[turns.length - 1]!.turnIndex;
+  const targetRow = Math.max(0, scrollTop + Math.floor(viewportHeight / 3));
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const t = turns[i]!;
+    if (t.startRow <= targetRow) {
+      active = t.turnIndex;
+      break;
+    }
+  }
+  return active;
+}
+
+/**
+ * ANSI-safe column slicing: skips the first startCol visible columns while preserving active styles.
+ */
+export function sliceFromColumn(source: string, startCol: number): string {
+  let col = 0;
+  let index = 0;
+  let activeStyles = '';
+
+  while (index < source.length) {
+    if (source[index] === '\x1b') {
+      const rest = source.slice(index);
+      const match = rest.match(/^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/)
+        || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
+        || rest.match(/^\x1b[@-Z\\-_]/);
+      if (match) {
+        if (col < startCol) {
+          if (match[0] === '\x1b[0m' || match[0] === '\x1b[m') {
+            activeStyles = '';
+          } else if (match[0].startsWith('\x1b[')) {
+            activeStyles += match[0];
+          }
+        }
+        index += match[0].length;
+        continue;
+      }
+    }
+
+    if (col >= startCol) {
+      return activeStyles + source.slice(index);
+    }
+
+    const code = source.codePointAt(index);
+    if (code === undefined) break;
+    const char = String.fromCodePoint(code);
+    col += visibleWidth(char);
+    index += char.length;
+  }
+
+  return '';
+}
+
+/**
  * Build the vertical column of turn rail cells.
  */
 export function buildTurnRailCells(
@@ -146,10 +204,10 @@ export function buildTurnRailCells(
     if (isHovered) {
       // Hovered dot: bright silver highlighted circle
       cells[rowIdx] = '\x1b[1m\x1b[38;2;230;235;245m●\x1b[0m';
-    } else if (isActive) {
+    } else if (isActive && !cells[rowIdx]?.includes('230;235;245m')) {
       // Active / current turn: bright white circle
       cells[rowIdx] = '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
-    } else {
+    } else if (!cells[rowIdx]?.includes('●')) {
       // Muted inactive turns: subtle gray dot
       cells[rowIdx] = '\x1b[38;2;115;115;120m•\x1b[0m';
     }
@@ -244,8 +302,8 @@ export function overlayTurnPreviewCard(
   const cardWidth = visibleWidth(cardRows[0] || '');
   // Clamp card placement horizontally: preferably to the left of the rail, or to the right
   let x = railX - cardWidth - 1;
-  if (x < 0 || (railX <= 4 && railX + 2 + cardWidth <= screenWidth)) {
-    x = Math.max(0, Math.min(screenWidth - cardWidth - 1, railX + 2));
+  if (x < 0 || (railX <= 4 && railX + 3 + cardWidth <= screenWidth)) {
+    x = Math.max(0, Math.min(screenWidth - cardWidth - 1, railX + 3));
   }
 
   // Center vertically around anchorY
@@ -263,7 +321,7 @@ export function overlayTurnPreviewCard(
 
     // Composite cardRow onto baseRow at column x
     const beforePart = padEnd(truncate(baseRow, x, ''), x);
-    const afterPart = baseRow.length > x + cardWidth ? baseRow.slice(x + cardWidth) : '';
+    const afterPart = sliceFromColumn(baseRow, x + cardWidth);
     out[targetY] = `${beforePart}${cardRow}${afterPart}`;
   }
 
@@ -290,7 +348,11 @@ export function handleTurnRailMouse(
   const stageTop = layout.stageTop ?? 0;
   const relY = mouseY - stageTop;
 
-  const isRail = mouseX >= layout.railX - 1 && mouseX <= layout.railX + 1;
+  // Rail hit box: if railX <= 2, check columns 0..3 (left margin); otherwise check [railX - 1, railX + 2]
+  const isRail = layout.railX <= 2
+    ? (mouseX >= 0 && mouseX <= Math.max(3, layout.railX + 2))
+    : (mouseX >= layout.railX - 1 && mouseX <= layout.railX + 2);
+
   if (!isRail || relY < 0 || relY >= layout.viewportHeight) {
     if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
       surface.hoveredTurnIndex = null;
@@ -303,7 +365,7 @@ export function handleTurnRailMouse(
 
   const turnNum = layout.rowToTurn?.get(relY);
   if (turnNum) {
-    if (isMouseMotion(event.sequence)) {
+    if (isMouseMotion(event.sequence) || (event.mouse.button === 0 && !event.mouse.pressed)) {
       if (surface.hoveredTurnIndex !== turnNum) {
         surface.hoveredTurnIndex = turnNum;
         surface.hoveredTurnAnchorY = relY;
@@ -316,6 +378,7 @@ export function handleTurnRailMouse(
       const turn = layout.turns?.find((t: SessionTurn) => t.turnIndex === turnNum);
       if (turn && surface.viewport && typeof surface.viewport.scrollTo === 'function') {
         surface.viewport.scrollTo(turn.startRow);
+        surface.activeTurnIndex = turnNum;
         surface.hoveredTurnIndex = null;
         surface.hoveredTurnAnchorY = null;
         if (typeof host?.draw === 'function') host.draw();
@@ -332,3 +395,4 @@ export function handleTurnRailMouse(
 
   return false;
 }
+

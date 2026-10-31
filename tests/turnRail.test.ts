@@ -7,7 +7,9 @@ import {
   buildTurnRailCells,
   renderTurnPreviewCard,
   overlayTurnPreviewCard,
-  handleTurnRailMouse
+  handleTurnRailMouse,
+  resolveActiveTurnIndex,
+  sliceFromColumn
 } from '../src/tui/turnRail.js';
 
 test('collectSessionTurns extracts user prompts, assistant summaries, and timestamps', () => {
@@ -171,5 +173,84 @@ test('handleTurnRailMouse updates hovered turn and handles click navigation', ()
   const clickHandled = handleTurnRailMouse(clickEvent, mockSurface, mockHost);
   assert.equal(clickHandled, true);
   assert.equal(scrolledTo, 25);
+  assert.equal(mockSurface.activeTurnIndex, 2);
 });
+
+test('resolveActiveTurnIndex correctly resolves active turn from viewport scroll', () => {
+  const mockTurns = [
+    { turnIndex: 1, totalTurns: 3, userPrompt: 'turn 1', assistantSummary: '', timestamp: 1000, formattedDate: '10:00 AM', frameId: 1, startRow: 0 },
+    { turnIndex: 2, totalTurns: 3, userPrompt: 'turn 2', assistantSummary: '', timestamp: 2000, formattedDate: '10:05 AM', frameId: 2, startRow: 20 },
+    { turnIndex: 3, totalTurns: 3, userPrompt: 'turn 3', assistantSummary: '', timestamp: 3000, formattedDate: '10:10 AM', frameId: 3, startRow: 45 }
+  ];
+
+  assert.equal(resolveActiveTurnIndex([], 0), 0);
+  assert.equal(resolveActiveTurnIndex(mockTurns, 0, 10), 1);
+  assert.equal(resolveActiveTurnIndex(mockTurns, 18, 10), 2);
+  assert.equal(resolveActiveTurnIndex(mockTurns, 50, 10), 3);
+});
+
+test('sliceFromColumn safely slices terminal columns while preserving ANSI escapes', () => {
+  const plain = 'Hello world, this is a test';
+  assert.equal(sliceFromColumn(plain, 6), 'world, this is a test');
+
+  const colored = '\x1b[32mHello \x1b[34mWorld\x1b[0m';
+  const sliced = sliceFromColumn(colored, 6);
+  assert.ok(sliced.includes('World'));
+});
+
+test('left-margin turn rail hit testing and rightward preview card overlay', () => {
+  let scheduled = false;
+  let scrolledTo: number | null = null;
+
+  const mockSurface = {
+    turnRailLayout: {
+      railX: 1, // Left margin (dots in col 1)
+      stageTop: 0,
+      viewportHeight: 12,
+      dotRows: new Map([[1, 1], [2, 4], [3, 8]]),
+      rowToTurn: new Map([[1, 1], [4, 2], [8, 3]]),
+      turns: [
+        { turnIndex: 1, totalTurns: 3, userPrompt: 'T1', assistantSummary: 'A1', timestamp: 1, formattedDate: '10:00', frameId: 1, startRow: 0 },
+        { turnIndex: 2, totalTurns: 3, userPrompt: 'T2', assistantSummary: 'A2', timestamp: 2, formattedDate: '10:05', frameId: 2, startRow: 20 },
+        { turnIndex: 3, totalTurns: 3, userPrompt: 'T3', assistantSummary: 'A3', timestamp: 3, formattedDate: '10:10', frameId: 3, startRow: 40 }
+      ]
+    },
+    hoveredTurnIndex: null,
+    hoveredTurnAnchorY: null,
+    activeTurnIndex: 3,
+    viewport: {
+      scrollTo: (row: number) => { scrolledTo = row; }
+    }
+  };
+
+  const mockHost = {
+    scheduleDraw: () => { scheduled = true; },
+    draw: () => {}
+  };
+
+  // Hover over left margin dot 2 (x = 1, y = 4)
+  const hoverEvent = {
+    mouse: { x: 1, y: 4, button: 0, pressed: false },
+    sequence: '\x1b[<35;2;5M'
+  };
+  const handled = handleTurnRailMouse(hoverEvent, mockSurface, mockHost);
+  assert.equal(handled, true);
+  assert.equal(mockSurface.hoveredTurnIndex, 2);
+  assert.equal(mockSurface.hoveredTurnAnchorY, 4);
+
+  // Overlay card for left margin rail: card must start to the right of the rail (x = 4)
+  const baseRows = new Array(10).fill(' '.repeat(80));
+  const card = [
+    '╭──────────╮',
+    '│ Popover  │',
+    '╰──────────╯'
+  ];
+  const overlaid = overlayTurnPreviewCard(baseRows, card, 4, 1, 80);
+  assert.equal(overlaid.length, 10);
+  // Row 4 should contain the card text
+  assert.ok(overlaid[4]?.includes('Popover'));
+  // Left 3 columns should be preserved
+  assert.equal(overlaid[4]?.slice(0, 3), '   ');
+});
+
 
