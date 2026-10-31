@@ -177,6 +177,12 @@ export function handlePromptEscape(
   prompt: InterruptiblePrompt,
   formatInterruptedRow: () => string[]
 ): void {
+  if ((prompt as any).surface?.hoveredTurnIndex !== null && (prompt as any).surface?.hoveredTurnIndex !== undefined) {
+    (prompt as any).surface.hoveredTurnIndex = null;
+    (prompt as any).surface.hoveredTurnAnchorY = null;
+    prompt.scheduleDraw();
+    return;
+  }
   if (prompt.completion) {
     prompt.completion = null;
     if (prompt.editor.getText().startsWith('/')) {

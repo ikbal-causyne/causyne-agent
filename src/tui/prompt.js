@@ -685,9 +685,15 @@ export class ChatPrompt {
   handleKey(key) {
     // The wheel was handed to the terminal at the top of the band; the moment
     // the user types again they are driving this prompt, so take it back.
-    if (key.name !== 'wheel' && key.name !== 'mouse'
-        && this.surface && typeof this.surface.captureMouse === 'function') {
-      if (this.surface.captureMouse() && this.notice.startsWith('top of this view')) this.notice = '';
+    if (key.name !== 'wheel' && key.name !== 'mouse') {
+      if (this.surface && typeof this.surface.captureMouse === 'function') {
+        if (this.surface.captureMouse() && this.notice.startsWith('top of this view')) this.notice = '';
+      }
+      if (this.surface && this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
+        this.surface.hoveredTurnIndex = null;
+        this.surface.hoveredTurnAnchorY = null;
+        this.scheduleDraw();
+      }
     }
 
     if (key.ctrl && key.name === 'c') {

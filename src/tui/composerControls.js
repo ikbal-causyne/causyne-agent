@@ -124,6 +124,12 @@ export function handlePromptCtrlC(prompt, formatInterruptedRow, windowMs = 2000,
     prompt.notice = 'press Ctrl+C again to exit';
 }
 export function handlePromptEscape(prompt, formatInterruptedRow) {
+    if (prompt.surface?.hoveredTurnIndex !== null && prompt.surface?.hoveredTurnIndex !== undefined) {
+        prompt.surface.hoveredTurnIndex = null;
+        prompt.surface.hoveredTurnAnchorY = null;
+        prompt.scheduleDraw();
+        return;
+    }
     if (prompt.completion) {
         prompt.completion = null;
         if (prompt.editor.getText().startsWith('/')) {

@@ -23,6 +23,7 @@ interface MessageSurface {
   viewport: { height: number; width: number; scrollTop: number; toBottom?: () => void };
   transcript: { flatten(width: number): { rows: string[]; markers: MessageMarker[] } };
   hoveredMessageFrameId?: number | null;
+  turnRailLayout?: { turns?: unknown[] } | null;
 }
 
 interface MessageHost {
@@ -92,6 +93,12 @@ export class MessageActionsLayer extends Layer {
       this.onPick(this.items[this.list.selected] ?? null);
       return 'close';
     }
+    const e = event as { name: string; ctrl?: boolean; alt?: boolean };
+    if (!e.ctrl && !e.alt && (e.name.length === 1 || e.name === 'space' || e.name === 'backspace')) {
+      this.settled = true;
+      this.onPick(null);
+      return 'dismiss';
+    }
     return 'handled';
   }
 
@@ -146,7 +153,8 @@ const isMessage = (marker: MessageMarker): boolean =>
 export function messageAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
   if (!surface?.stage.reserved || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
   const mainWidth = sidebarVisible(surface.width) ? sessionMainWidth(surface.width) : surface.width;
-  if (point.x < 0 || point.x >= Math.min(mainWidth, surface.viewport.width)) return null;
+  const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
+  if (point.x < leftGutter || point.x >= Math.min(mainWidth, surface.viewport.width)) return null;
   const top = Math.max(0, (surface.out.rows || surface.stage.height) - surface.stage.height);
   const viewRow = point.y - top;
   if (viewRow < 0 || viewRow >= surface.viewport.height) return null;
@@ -268,7 +276,9 @@ export function handleMessageActionMenuMouse(
   const { x, y, width, count } = layer.actionLayout;
   const { mouse } = event;
   const index = mouse.y - (y + 1); // only the frame precedes the two action rows
-  if (mouse.x < x || mouse.x >= x + width || index < 0 || index >= count) return 'handled';
+  if (mouse.x < x || mouse.x >= x + width || index < 0 || index >= count) {
+    return mouse.button === 0 && mouse.pressed ? 'close' : 'handled';
+  }
   layer.list?.moveTo(index);
   if (isMouseMotion(event.sequence)) return 'handled';
   return mouse.button === 0 && mouse.pressed ? layer.key({ name: 'enter' }) : 'handled';

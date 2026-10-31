@@ -101,7 +101,7 @@ test('hover tracking is disabled by default for terminal text selection and opt-
   assert.equal(mouseHoverTracking(true, { CAUSYNE_MOUSE_HOVER: '0' }), '');
 });
 
-test('message action menu selects the clicked row and keeps clicks outside inert', () => {
+test('message action menu selects the clicked row and closes on outside clicks or typing', () => {
   let selected = -1;
   let activated = 0;
   const layer = {
@@ -117,8 +117,15 @@ test('message action menu selects the clicked row and keeps clicks outside inert
   assert.equal(activated, 1);
   assert.equal(handleMessageActionMenuMouse(layer, {
     mouse: { x: 70, y: 14, button: 0, pressed: true }, sequence: '\x1b[<0;71;15M'
-  }), 'handled');
+  }), 'close');
   assert.equal(activated, 1);
+
+  // Verify MessageActionsLayer dismisses on typing so user can immediately type in prompt
+  const menu = new MessageActionsLayer([{ label: 'Option 1', description: 'test', value: '1' }], () => {});
+  assert.equal(menu.key({ name: 'a' }), 'dismiss');
+  assert.equal(menu.key({ name: 'space' }), 'dismiss');
+  assert.equal(menu.key({ name: 'backspace' }), 'dismiss');
+  assert.equal(menu.key({ name: 'escape' }), 'close');
 });
 
 test('forking a clicked message copies only prior turns and resets grants', () => {

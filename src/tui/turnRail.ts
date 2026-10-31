@@ -365,7 +365,7 @@ export function handleTurnRailMouse(
 
   const turnNum = layout.rowToTurn?.get(relY);
   if (turnNum) {
-    if (isMouseMotion(event.sequence) || (event.mouse.button === 0 && !event.mouse.pressed)) {
+    if (isMouseMotion(event.sequence)) {
       if (surface.hoveredTurnIndex !== turnNum) {
         surface.hoveredTurnIndex = turnNum;
         surface.hoveredTurnAnchorY = relY;
@@ -379,12 +379,12 @@ export function handleTurnRailMouse(
       if (turn && surface.viewport && typeof surface.viewport.scrollTo === 'function') {
         surface.viewport.scrollTo(turn.startRow);
         surface.activeTurnIndex = turnNum;
-        surface.hoveredTurnIndex = null;
-        surface.hoveredTurnAnchorY = null;
-        if (typeof host?.draw === 'function') host.draw();
-        else if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
-        return true;
       }
+      surface.hoveredTurnIndex = null;
+      surface.hoveredTurnAnchorY = null;
+      if (typeof host?.draw === 'function') host.draw();
+      else if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
+      return true;
     }
   } else if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
     surface.hoveredTurnIndex = null;
