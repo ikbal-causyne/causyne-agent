@@ -355,6 +355,12 @@ You are Kimi — a model powered by KDA (Kimi Delta Attention) with a massive co
 - You excel at end-to-end programming and agentic task decomposition.
 - When reading large files, synthesize the global context. Do not lose track of the big picture.`;
     }
+    if (p === 'antigravity') {
+        return `ANTIGRAVITY PEER COLLABORATION:
+You are collaborating through the Antigravity high-performance local peer environment.
+- Formulate precise, atomic actions and avoid repetitive back-and-forth chatter.
+- Maintain rigorous execution standards: verify code syntax, inspect file changes, and avoid claiming completion without verified evidence.`;
+    }
     return "";
 }
 /**
@@ -1871,7 +1877,21 @@ export class AgentLoop {
                 const allowedPaths = this.sandbox.grantAllAccess
                     ? "/ (ALL ACCESS GRANTED - You can read/write anywhere EXCEPT system protected folders like /etc or /System)"
                     : (this.sandbox.workspacePaths ? this.sandbox.workspacePaths.join(', ') : this.workspaceRoot);
-                const providerPrompt = getProviderSpecificPrompt(this.config.provider);
+                const baseProviderPrompt = getProviderSpecificPrompt(this.config.provider);
+                const sensoryAwareness = this.llm.supportsVision
+                    ? `\n# SENSORY PROFILE: MULTIMODAL VISION ACTIVE
+You have native multimodal vision perception. You can perceive rendered images, screenshots, and visual outputs directly.
+- For Web, UI, 3D, and visual design tasks: You MUST visually verify your work (using browser_act snapshot/screenshot or view_image) and actively cross-reference visual output against the codebase.
+- If visual rendering reveals visual bugs, layout misalignment, or runtime glitches, you must fix the code and re-verify before claiming completion.`
+                    : `\n# SENSORY PROFILE: TEXT & CODE ENGINE (VISION INACTIVE)
+You are operating in a text-and-code modality without direct image pixel rendering.
+- For Web, UI, 3D, and visual tasks: Do NOT attempt raw visual inspection expecting image perception. Instead, verify programmatically:
+  1. Inspect the rendered DOM structure, computed hierarchy, and elements via browser_act (scrape / snapshot).
+  2. Check for JavaScript console and runtime errors (browser_act runtimeErrors).
+  3. Validate syntax and runtime integrity with code_verify_syntax and unit tests.
+  4. Perform thorough code inspection of generated math, physics, and canvas render loops to ensure zero defects.
+- For non-visual tasks (backend, CLI, algorithms): Verify using standard test suites and execution logs.`;
+                const providerPrompt = `${baseProviderPrompt}${sensoryAwareness}`;
                 const memoryContext = getMemoryContextString();
                 // --- PER-TASK STATIC CONTEXT (computed once, not once per step) ---
                 // Cortex retrieval, design detection, creative-pattern lookup and the
@@ -2344,8 +2364,9 @@ export class AgentLoop {
                                     }
                                 }
                             }
-                            if (['screenshot', 'vision_inspect_ui'].includes(lowerName) ||
-                                (/\.(png|jpg|jpeg|webp)$/i.test(lowerDetail) && ['fs_read', 'read', 'read_file', 'view_file', 'view_image'].includes(lowerName))) {
+                            if ((['screenshot', 'vision_inspect_ui'].includes(lowerName) ||
+                                (/\.(png|jpg|jpeg|webp)$/i.test(lowerDetail) && ['fs_read', 'read', 'read_file', 'view_file', 'view_image'].includes(lowerName))) &&
+                                this.llm.supportsVision) {
                                 this.webVerificationState.screenshotTaken = true;
                             }
                             if (['browse', 'browser_act', 'preview', 'snapshot', 'scrape', 'web_fetch'].includes(lowerName)) {
@@ -3605,15 +3626,27 @@ export class AgentLoop {
                     }
                     const imageCanReachModel = Boolean(this.llm.supportsVision && result?._is_image_marker === true
                         && typeof result.base64 === 'string' && result.base64.length > 0);
-                    if (['screenshot', 'vision_inspect_ui'].includes(functionName) && result?.success === true && imageCanReachModel) {
+                    if (['screenshot', 'vision_inspect_ui', 'view_image'].includes(functionName) && result?.success === true && imageCanReachModel) {
                         this.webVerificationState.screenshotTaken = true;
                     }
                     if (functionName === 'browser_act' && result?.success === true) {
                         this.advanceImplementationPlanProgress('verification');
                         const browserResults = Array.isArray(result.data) ? result.data : [];
+                        const allRuntimeErrors = browserResults.flatMap((item) => Array.isArray(item?.data?.runtimeErrors) ? item.data.runtimeErrors : []);
                         const hasValidBrowserAction = browserResults.some((item) => ['preview', 'snapshot', 'scrape', 'screenshot'].includes(item?.action));
-                        if (hasValidBrowserAction || browserResults.length > 0 || result.url || result.tabId) {
+                        if (allRuntimeErrors.length === 0 && (hasValidBrowserAction || result.url || result.tabId)) {
                             this.webVerificationState.browserActUsed = true;
+                        }
+                        else if (allRuntimeErrors.length > 0) {
+                            this.webVerificationState.browserActUsed = false;
+                            this.emitEvent({
+                                type: 'status',
+                                message: `⚠️ Browser runtime error(s) detected: ${allRuntimeErrors[0]}`
+                            });
+                            this.messages.push({
+                                role: 'system',
+                                content: `[BROWSER RUNTIME ERRORS DETECTED: The page encountered runtime error(s) during preview:\n${allRuntimeErrors.slice(0, 5).join('\n')}\nYou MUST inspect your code, fix these runtime bugs, and re-verify before the task can be completed.]`
+                            });
                         }
                     }
                     if (result?.success === true && ['fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit'].includes(functionName))
@@ -3653,8 +3686,11 @@ export class AgentLoop {
                     if (codeAction)
                         this.emitEvent({ ...codeAction,
                             phase: result?.success === false || typeof result?.error === 'string' ? 'failed' : 'done' });
+                    const eventResult = result?._is_image_marker
+                        ? { success: result.success !== false && !result.error, output: result.output || `Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'})` }
+                        : result;
                     this.emitEvent({ type: result?.success === false || typeof result?.error === 'string' ? 'step_error' : 'step_complete',
-                        tool: functionName, result: result._is_image_marker ? '[IMAGE DATA]' : result, toolCallId: toolCall.id });
+                        tool: functionName, result: eventResult, toolCallId: toolCall.id });
                     this.stepsCompleted++;
                     // The procedure, as it actually ran. Tool name plus a whitelisted
                     // action token only — planCache.toStep() reads no paths, arguments or
