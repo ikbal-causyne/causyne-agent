@@ -229,9 +229,13 @@ export function parseToolName(name) {
         return null;
     const rest = name.slice(NAMESPACE.length);
     const separator = rest.indexOf('__');
-    if (separator <= 0 || separator === rest.length - 2)
+    if (separator <= 0)
         return null;
-    return { server: rest.slice(0, separator), tool: rest.slice(separator + 2) };
+    const server = rest.slice(0, separator);
+    const tool = rest.slice(separator + 2);
+    if (!server || !tool)
+        return null;
+    return { server, tool };
 }
 export async function connectServer(name) {
     const definition = configuredServers().find(server => server.name === name);

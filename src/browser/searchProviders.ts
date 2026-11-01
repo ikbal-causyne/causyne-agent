@@ -64,7 +64,7 @@ export function parseDuckDuckGoHtml(html: string): SearchResult[] {
     let href = decodeEntities(anchor[1] ?? '');
     try {
       const candidate = new URL(href, 'https://html.duckduckgo.com/');
-      if (candidate.hostname.endsWith('duckduckgo.com') && candidate.pathname.startsWith('/l/')) {
+      if ((candidate.hostname === 'duckduckgo.com' || candidate.hostname.endsWith('.duckduckgo.com')) && candidate.pathname.startsWith('/l/')) {
         href = candidate.searchParams.get('uddg') ?? href;
       }
     } catch {

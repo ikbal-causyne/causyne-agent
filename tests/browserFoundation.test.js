@@ -74,10 +74,13 @@ class FakePage {
   locator(selector) { return new FakeLocator(this, selector); }
   getByRole(role, options = {}) { return new FakeLocator(this, `${role}:${options.name ?? ''}`); }
   async evaluate() {
-    if (this.currentUrl.includes('google.com')) return [];
-    if (this.currentUrl.includes('duckduckgo.com')) {
-      return [{ title: 'Causyne result', url: 'https://example.com/result', snippet: 'Result snippet' }];
-    }
+    try {
+      const parsed = new URL(this.currentUrl, 'https://localhost');
+      if (parsed.hostname === 'google.com' || parsed.hostname.endsWith('.google.com')) return [];
+      if (parsed.hostname === 'duckduckgo.com' || parsed.hostname.endsWith('.duckduckgo.com')) {
+        return [{ title: 'Causyne result', url: 'https://example.com/result', snippet: 'Result snippet' }];
+      }
+    } catch {}
     return [];
   }
   async route() {}

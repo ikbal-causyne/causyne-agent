@@ -1248,7 +1248,7 @@ export class CausyneBrowser {
         for (const frame of childFrames.slice(0, MAX_IFRAMES_TO_PROCESS)) {
           if (nextCounter > MAX_SNAPSHOT_NODES) break;
           const frameUrl = frame.url();
-          if (!frameUrl || frameUrl === 'about:blank' || frameUrl.startsWith('javascript:') || frameUrl.startsWith('data:')) {
+          if (!frameUrl || frameUrl === 'about:blank' || frameUrl.startsWith('javascript:') || frameUrl.startsWith('data:') || frameUrl.startsWith('vbscript:')) {
             continue;
           }
           if (IFRAME_SKIP_PATTERNS.some(pattern => pattern.test(frameUrl))) continue;

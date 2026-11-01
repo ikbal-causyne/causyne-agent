@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { TokenTracker } from '../tokenTracker.js';
 import { listAgentProfiles, loadAgentProfile } from '../agentProfiles.js';
 import {
@@ -241,8 +242,8 @@ export const subagentOrchestrator = {
         };
       }
 
-      const name = args.name || profile?.name || `Worker_${Math.random().toString(36).slice(2, 7)}`;
-      const subagentId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const name = args.name || profile?.name || `Worker_${crypto.randomBytes(3).toString('hex')}`;
+      const subagentId = `sub_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
       let requestedScope = Array.isArray(args.toolScope) && args.toolScope.length > 0
         ? args.toolScope
         : profile?.toolScope || DEFAULT_TOOL_SCOPE;

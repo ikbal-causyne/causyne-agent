@@ -3,7 +3,7 @@ const CHANGE_VERBS = /\b(create|build|make|write|edit|fix|modify|change|update|i
 const SERVER_COMMAND = /^\s*(?:python(?:3(?:\.\d+)?)?\s+(?:-u\s+)?(?:\S*\/)?server\.py\b|python(?:3(?:\.\d+)?)?\s+-m\s+http\.server\b|(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b|(?:npx|bunx)\s+(?:vite|next\s+dev|http-server)\b|uvicorn\b|gunicorn\b|flask\s+run\b)/i;
 const READ_ONLY_COMMAND = /^\s*(?:pwd|ls|rg|grep|cat|head|tail|find|which|where|ps|pgrep|lsof|netstat|ss|git\s+(?:status|diff|log|show)|node\s+(?:-v|--version)|python(?:3(?:\.\d+)?)?\s+(?:-V|--version))\b/i;
 const OPEN_COMMAND = /^\s*(?:open|xdg-open|start)\s+\S+/i;
-const LOCAL_HEALTH_CHECK = /^\s*curl\s+(?:(?:-I|-s|-S|-f|--head|--silent|--show-error|--fail|--max-time\s+\d+)\s+)*https?:\/\/(?:localhost|127\.0\.0\.1):\d+(?:\/\S*)?\s*$/i;
+const LOCAL_HEALTH_CHECK = /^\s*curl\b[^;&|><`$()]*https?:\/\/(?:localhost|127\.0\.0\.1):\d+(?:\/\S*)?\s*$/i;
 const PORT_CLEANUP_COMMAND = /^\s*(?:pkill|kill|fuser)\b/i;
 const MUTATION_TOOLS = new Set([
     'fs_write', 'fs_edit', 'fs_delete', 'fs_move',

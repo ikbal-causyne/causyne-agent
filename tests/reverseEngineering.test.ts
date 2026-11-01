@@ -125,8 +125,8 @@ test('reverseEngineering: deobfuscates script and extracts endpoints', async () 
     assert.equal(result.success, true);
     assert.equal(result.sourcemapDetected, true);
     assert.ok(Array.isArray(result.extractedRoutes));
-    assert.ok(result.extractedRoutes.includes('https://api.example.com/v1/auth/login'));
-    assert.ok(result.extractedRoutes.includes('/admin/dashboard/users'));
+    assert.ok(result.extractedRoutes.some((route: string) => route === 'https://api.example.com/v1/auth/login'));
+    assert.ok(result.extractedRoutes.some((route: string) => route === '/admin/dashboard/users'));
   } finally {
     await fsp.rm(tmpDir, { recursive: true, force: true });
   }
