@@ -60,7 +60,17 @@ import { StallGuardController } from './stallGuard.js';
 import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
 import { isOutputRecoveryRead } from './outputRecovery.js';
 import { isPlanReviewHandoff, isPlanningOnlyRequest } from './taskContinuation.js';
-import { UnifiedBudgetEnforcer, EfficiencyCheckpoint, actionLimitFor, tokenLimitFor, turnTokenLimitFor, noncachedTokens } from './providers/budgetEnforcer.js';
+export function noncachedTokens(usage) {
+    if (!usage)
+        return 0;
+    const finite = (value) => Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
+    const input = usage.uncachedPromptTokens !== undefined
+        ? finite(usage.uncachedPromptTokens)
+        : finite(usage.cachedPromptTokens) > finite(usage.promptTokens)
+            ? finite(usage.promptTokens)
+            : Math.max(0, finite(usage.promptTokens) - finite(usage.cachedPromptTokens));
+    return input + finite(usage.completionTokens);
+}
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -982,7 +992,7 @@ export class AgentLoop {
             return prefetched;
         const eligible = [];
         for (const toolCall of toolCalls) {
-            const capacity = Math.min(this.smartToolsGovernor?.inspectionCapacity ?? 2, this.efficiencyBudget?.getRemainingActions() ?? 35);
+            const capacity = this.smartToolsGovernor?.inspectionCapacity ?? 2;
             if (eligible.length >= capacity)
                 break;
             const functionName = canonicalToolName(toolCall.function.name);
@@ -1162,9 +1172,6 @@ export class AgentLoop {
             throw new Error('The requested ACP file operation was not authorized');
         if (tool === 'fs_write')
             captureBeforeMutation(tool, args, { taskId: this.taskId, step: this.stepsCompleted });
-        if (!this._inModelCall) {
-            this.efficiencyBudget?.recordAction(`peer-file:${tool}:${target}`);
-        }
         let result;
         if (tool === 'fs_read') {
             // ACP expects the actual requested text, not the host tool's paging
@@ -1729,23 +1736,7 @@ export class AgentLoop {
         if (!this.currentTaskPrompt && this.userPrompt) {
             this.currentTaskPrompt = this.userPrompt;
         }
-        const turnArchetype = determineToolScope(effectivePrompt, this.taskShape).archetype;
-        const efficiency = this.config.efficiency || {};
-        const isBudgetDisabled = process.env.CAUSYNE_DISABLE_BUDGET === '1';
-        const isAutonomousMode = this.mode === 'C';
-        const defaultTurnActions = isAutonomousMode ? 1000 : actionLimitFor(turnArchetype);
-        const defaultTurnTokens = isAutonomousMode ? 5_000_000 : turnTokenLimitFor(turnArchetype);
-        const defaultTaskTokens = isAutonomousMode ? 20_000_000 : tokenLimitFor(turnArchetype);
-        const taskTokenCeiling = Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0
-            ? this.taskTokenLimit
-            : this.tokenTracker.budget?.enabled && Number.isFinite(this.tokenTracker.budget?.maxTokensPerTask) && this.tokenTracker.budget.maxTokensPerTask > 0
-                ? this.tokenTracker.budget.maxTokensPerTask
-                : Number.isFinite(efficiency.maxTaskTokens) && efficiency.maxTaskTokens > 0
-                    ? efficiency.maxTaskTokens
-                    : defaultTaskTokens;
-        this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
-            ? efficiency.maxTurnTokens
-            : defaultTurnTokens, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : defaultTurnActions, taskTokenCeiling, isBudgetDisabled);
+        const isAutonomousMode = (this.config.autonomyMode || 'C') === 'C';
         const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
@@ -2112,7 +2103,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 const configuredRemainingBudget = hardBudget
                     ? Math.min(taskLimit > 0 ? taskLimit - this.tokenTracker.taskTokens : Infinity, dailyLimit > 0 ? dailyLimit - dailyUsed : Infinity) : Infinity;
                 const remainingBudget = hardBudget
-                    ? Math.min(configuredRemainingBudget, this.efficiencyBudget.getRemainingTokens())
+                    ? configuredRemainingBudget
                     : Infinity;
                 if (hardBudget && remainingBudget <= 0) {
                     this.emitEvent({ type: 'budget_warning', message: 'Token budget reached before the next model call.' });
@@ -2147,9 +2138,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
                         const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
                         const extraTokens = Math.max(stepScale * 10, 1_000_000);
-                        const extraActions = Math.max(Math.ceil((this.efficiencyBudget?.getRemainingActions() ?? 50) + 100), 100);
                         this.tokenTracker.extendBudget(extraTokens);
-                        this.efficiencyBudget?.extendBudget?.(extraTokens, extraActions);
                     }
                 }
                 // 2. PLAN (Call LLM). dynamicTools was resolved above so the task brief
@@ -2190,7 +2179,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 this.emitEvent({ type: 'agent_activity', activity: 'Thinking…' });
                 const planStepStart = performance.now();
                 const nativeControl = new AbortController();
-                let nativeCheckpoint = null;
                 const invocation = ++modelCallIndex;
                 this._inModelCall = true;
                 const response = await this.llm.chat(prunedMessages, {
@@ -2202,8 +2190,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     maxTokensThisCall: Number.isFinite(configuredRemainingBudget) && hardBudget ? configuredRemainingBudget : undefined,
                     tokenBudgetBasis: Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
                     tokenLimit: hardBudget && Number.isFinite(remainingBudget) && remainingBudget > 0
-                        ? Math.min(this.efficiencyBudget.maxTurnTokens, remainingBudget) : this.efficiencyBudget.maxTurnTokens,
-                    maxNativeActions: this.efficiencyBudget.getRemainingActions(),
+                        ? remainingBudget : undefined,
                     workspaceRoot: this.workspaceRoot,
                     onPeerPermission: (request) => this.requestPeerPermission(request),
                     onPeerFileRead: (file, options) => this.executePeerFile('fs_read', file, undefined, options),
@@ -2297,19 +2284,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         auditLog.log({ event: 'native_action', taskId: this.taskId,
                             provider: this.config.provider || 'unknown', tool: action.name, status: action.status,
                             ...(action.id ? { actionId: action.id } : {}) });
-                        if (action.status === 'running' && !isChecklistTool) {
-                            try {
-                                this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
-                            }
-                            catch (error) {
-                                if (error instanceof EfficiencyCheckpoint) {
-                                    finalizeReasoningSegment();
-                                    nativeCheckpoint = error;
-                                    nativeControl.abort();
-                                }
-                                return;
-                            }
-                        }
                         if (action.status === 'completed' && action.id && !isChecklistTool) {
                             completedNativeActionIds.add(String(action.id));
                         }
@@ -2429,22 +2403,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         }
                         throw checkpoint;
                     }
-                    if (nativeCheckpoint) {
-                        if (completedNativeActionIds.size > 0) {
-                            this.stepsCompleted += completedNativeActionIds.size;
-                        }
-                        if (reasoningAccumulated) {
-                            this.messages.push({
-                                role: 'assistant',
-                                content: 'Turn paused at efficiency checkpoint.',
-                                reasoning_content: reasoningAccumulated
-                            });
-                        }
-                        if (error && typeof error === 'object' && 'partialUsage' in error) {
-                            Object.assign(nativeCheckpoint, { partialUsage: error.partialUsage });
-                        }
-                    }
-                    throw nativeCheckpoint || error;
+                    throw error;
                 })
                     .finally(() => {
                     finalizeReasoningSegment();
@@ -2491,10 +2450,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         ? 'external_subscription_unavailable' : 'rate_card_estimate',
                     callEstimatedCostUsd: this.tokenTracker.calculateCost(response.usage.promptTokens, response.usage.completionTokens, response.usage)
                 });
-                this.efficiencyBudget.recordUsage(response.usage);
-                for (const action of response.externalActions || []) {
-                    this.efficiencyBudget.recordAction(`${invocation}:${action.id || `${action.name}:${action.detail || ''}`}`);
-                }
                 const cachedTokens = response.usage.cachedPromptTokens || 0;
                 if (cachedTokens > 0) {
                     this.debugLog(`prompt cache hit: ${cachedTokens.toLocaleString()} of ${response.usage.promptTokens.toLocaleString()} input tokens served from cache`);
@@ -3586,7 +3541,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     // errors. It only rewinds reasoning; it never replays side effects.
                     let result;
                     let duration;
-                    this.efficiencyBudget.recordAction();
                     try {
                         const startTime = Date.now();
                         const actStart = performance.now();
@@ -4005,15 +3959,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             cachedPromptTokens: usage.cachedPromptTokens || 0,
                             measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
                         });
-                        try {
-                            this.efficiencyBudget.recordUsage(usage);
-                        }
-                        catch (checkpoint) {
-                            if (checkpoint instanceof EfficiencyCheckpoint)
-                                e = checkpoint;
-                            else
-                                throw checkpoint;
-                        }
                     }
                 }
                 if (e instanceof RetryConsentCheckpoint && this._pendingConsent) {
@@ -4028,40 +3973,26 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     this.memoryManager.saveHistory(this.messages);
                     continue;
                 }
-                const isEfficiencyCheckpoint = e instanceof EfficiencyCheckpoint;
-                const isHardBudget = (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0)
-                    || (this.tokenTracker.budget?.enabled === true && this.tokenTracker.budget?.hardStop === true);
-                const isDesktopLimit = e?.code === 'AGY_DESKTOP_TASK_LIMIT';
-                if (isEfficiencyCheckpoint && !isHardBudget && !isDesktopLimit && incompleteTurnContinuations < 10) {
-                    incompleteTurnContinuations++;
-                    this.emitEvent({ type: 'budget_warning', message: e.message });
-                    auditLog.log({
-                        event: 'efficiency_checkpoint',
-                        taskId: this.taskId,
-                        reason: e?.reason || e?.code || 'budget',
-                        ...this.efficiencyBudget.snapshot()
-                    });
-                    const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
-                    const extraTokens = Math.max(stepScale * 10, 1_000_000);
-                    const extraActions = Math.max(Math.ceil((this.efficiencyBudget?.getRemainingActions() ?? 50) + 150), 150);
-                    this.tokenTracker.extendBudget(extraTokens);
-                    this.efficiencyBudget.extendBudget?.(extraTokens, extraActions);
-                    compactSessionMessages(this.messages, {
-                        keepRecentTurns: 4,
-                        taskId: this.taskId,
-                        originalPrompt: this.currentTaskPrompt || this.userPrompt
-                    });
-                    this.emitEvent({ type: 'status', message: `Continuing task execution from efficiency checkpoint (runway extended +${extraActions} actions)…` });
-                    this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
-                    this.messages.push({
-                        role: 'system',
-                        content: `[EFFICIENCY CONTINUATION: Previous turn reached checkpoint (${e.message}). Autonomous runway extended (+${extraActions} actions). Session history and disk modifications are preserved. Do NOT replay prior actions. Continue executing the task directly.]`
-                    });
-                    this.memoryManager.saveHistory(this.messages);
-                    continue;
-                }
-                if (e instanceof EfficiencyCheckpoint || e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
+                if (e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
                     || e?.code === 'AGY_DESKTOP_TASK_LIMIT' || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
+                    const isExplicitHardBudget = (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0)
+                        || (this.tokenTracker.budget?.enabled === true && this.tokenTracker.budget?.hardStop === true);
+                    if (this.config.autonomyMode === 'C' && !isExplicitHardBudget) {
+                        this.emitEvent({ type: 'budget_warning', message: e.message });
+                        pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
+                        shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
+                        pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
+                        const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
+                        const extraTokens = Math.max(stepScale * 10, 1_000_000);
+                        this.tokenTracker.extendBudget(extraTokens);
+                        this.emitEvent({ type: 'status', message: 'Continuing autonomous task execution without artificial interruption…' });
+                        this.messages.push({
+                            role: 'system',
+                            content: '[Autonomous task continuation: Do not repeat prior actions. Proceed with executing next concrete steps.]'
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
                     this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
                     this.memoryManager.saveHistory(this.messages);
                     this.emitEvent({ type: 'budget_warning', message: e.message });
@@ -4069,7 +4000,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         event: 'efficiency_checkpoint',
                         taskId: this.taskId,
                         reason: e?.reason || e?.code,
-                        ...this.efficiencyBudget.snapshot()
+                        tokenUsage: this.tokenTracker.taskTokens
                     });
                     break;
                 }

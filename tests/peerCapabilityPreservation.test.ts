@@ -6,7 +6,6 @@ import path from 'node:path';
 import { AgentLoop } from '../src/agentLoop.js';
 import { AcpProvider } from '../src/providers/acp.js';
 import { saveConfig } from '../src/config.js';
-import { UnifiedBudgetEnforcer } from '../src/providers/budgetEnforcer.js';
 import type { RequestPermissionRequest } from '../src/acp/protocol.js';
 
 const request = (target: string): RequestPermissionRequest => ({
@@ -17,7 +16,6 @@ const request = (target: string): RequestPermissionRequest => ({
 function host(root: string): AgentLoop {
   saveConfig({ autonomyMode: 'C' });
   const loop = new AgentLoop({ readyState: 1, send() {} }, 'peer-capabilities', 'Write the requested note in this workspace', { workspaceRoot: root });
-  loop.efficiencyBudget = new UnifiedBudgetEnforcer();
   return loop;
 }
 

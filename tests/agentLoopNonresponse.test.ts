@@ -6,7 +6,6 @@ import path from 'node:path';
 import { AgentLoop, isDesktopWallpaperChangePrompt, isGenericHandoffResponse, isMidTaskProgressText, isProviderPlanOrQuotaRefusal } from '../src/agentLoop.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { AcpProvider } from '../src/providers/acp.js';
-import { actionLimitFor } from '../src/providers/budgetEnforcer.js';
 import { extractLivePlanFromText, normalizePeerPlanEntries } from '../src/implementationPlan.js';
 import { isWebIntent } from '../src/toolPacks.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
@@ -511,10 +510,7 @@ test('AcpProvider formatPromptBlocks includes ACP tool-routing rules and strips 
   assert.equal(formatted.includes('NEVER write to, read from, or `cp`/`mv` paths in `/tmp`'), true);
 });
 
-test('AgentLoop extracts reasoning Plan checklists and todowrite updates into sidebar Plan and allows 120 actions for web_engineering', async () => {
-  assert.equal(actionLimitFor('web_engineering'), 120);
-  assert.equal(actionLimitFor('general'), 35);
-
+test('AgentLoop extracts reasoning Plan checklists and todowrite updates into sidebar Plan', async () => {
   const reasoningSample = [
     'Greenfield: create `horse-simulator/` at workspace root. Use CDN three.js via importmap.',
     '',

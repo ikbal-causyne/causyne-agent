@@ -1,5 +1,15 @@
 import { formatToolContracts, toolContractUpdate, contractFingerprint } from './toolContracts.js';
-import { noncachedTokens, turnTokenLimitFor } from './budgetEnforcer.js';
+export function noncachedTokens(usage) {
+    if (!usage)
+        return 0;
+    const finite = (value) => Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
+    const input = usage.uncachedPromptTokens !== undefined
+        ? finite(usage.uncachedPromptTokens)
+        : finite(usage.cachedPromptTokens) > finite(usage.promptTokens)
+            ? finite(usage.promptTokens)
+            : Math.max(0, finite(usage.promptTokens) - finite(usage.cachedPromptTokens));
+    return input + finite(usage.completionTokens);
+}
 import { determineToolScope } from '../smartToolsUse.js';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { spawn } from 'node:child_process';
@@ -966,9 +976,9 @@ export class AntigravityProvider extends LLMProvider {
                 }
             };
             const configuredActions = Number(options.maxNativeActions);
-            const isAutonomous = options.hardBudget === false || (!desktopTask && options.hardBudget !== true);
+            const isAutonomous = options.hardBudget === false;
             let maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions >= 0
-                ? configuredActions : desktopTask ? 12 : 35;
+                ? configuredActions : desktopTask ? 12 : isAutonomous ? Infinity : 35;
             let nativeActionStarts = 0;
             let lastMutationActionIndex = 0;
             let progressiveActionsCount = 0;
@@ -995,7 +1005,7 @@ export class AntigravityProvider extends LLMProvider {
             const hasExplicitLimit = (Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0)
                 || (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0);
             const countReportedTotal = options.tokenBudgetBasis !== 'noncached';
-            const defaultTokenLimit = turnTokenLimitFor(taskArchetype);
+            const defaultTokenLimit = 100_000;
             const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
                 ? remainingTaskBudget
                 : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
@@ -1203,19 +1213,9 @@ export class AntigravityProvider extends LLMProvider {
                                         }
                                     }
                                 }
-                                if (newNativeAction && ++nativeActionStarts > maxNativeActions) {
-                                    // In autonomous mode, if the agent has made genuine progress recently
-                                    // (e.g. edits/mutations or productive steps within last 25 actions),
-                                    // dynamically expand the autonomous runway so serious tasks are not interrupted!
-                                    const hasRecentProgress = (nativeActionStarts - lastMutationActionIndex) <= 25 || progressiveActionsCount > 0;
-                                    if (isAutonomous && hasRecentProgress && maxNativeActions < 500) {
-                                        const extension = 50;
-                                        maxNativeActions += extension;
-                                        if (process.env.CAUSYNE_DEBUG === '1') {
-                                            console.log(`[AUTONOMY] Dynamically extended native action runway (+${extension} -> ${maxNativeActions} actions) due to active progress.`);
-                                        }
-                                    }
-                                    else {
+                                if (newNativeAction) {
+                                    nativeActionStarts++;
+                                    if (!isAutonomous && Number.isFinite(maxNativeActions) && nativeActionStarts > maxNativeActions) {
                                         const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`);
                                         error.code = 'AGY_NATIVE_ACTION_BUDGET';
                                         safeReject(error);

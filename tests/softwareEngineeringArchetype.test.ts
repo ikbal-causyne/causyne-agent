@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { determineToolScope } from '../src/smartToolsUse.js';
-import { turnTokenLimitFor, actionLimitFor, tokenLimitFor } from '../src/providers/budgetEnforcer.js';
 
 test('Software Engineering archetype classifies all backend, API, systems, and refactoring tasks', () => {
   const prompts = [
@@ -18,9 +17,6 @@ test('Software Engineering archetype classifies all backend, API, systems, and r
   for (const prompt of prompts) {
     const scope = determineToolScope(prompt);
     assert.equal(scope.archetype, 'software_engineering', `Prompt "${prompt}" must resolve to software_engineering`);
-    assert.equal(turnTokenLimitFor(scope.archetype), 1_000_000, `Single-turn token limit for "${prompt}" must be 1,000,000`);
-    assert.equal(actionLimitFor(scope.archetype), 200, `Action limit for "${prompt}" must be 200`);
-    assert.equal(tokenLimitFor(scope.archetype), 2_500_000, `Task token ceiling for "${prompt}" must be 2,500,000`);
     assert.ok(scope.toolScope?.has('fs_write'), 'Must preload fs_write');
     assert.ok(scope.toolScope?.has('fs_edit'), 'Must preload fs_edit');
     assert.ok(scope.toolScope?.has('sysRun'), 'Must preload sysRun');

@@ -9,7 +9,6 @@ import {
   nativeToolSignature,
   detectNativeCycle
 } from '../src/providers/antigravity.js';
-import { UnifiedBudgetEnforcer, EfficiencyCheckpoint } from '../src/providers/budgetEnforcer.js';
 
 test('isNativeMutation classifies file modifications and commands with high fidelity', () => {
   // Direct file modifications
@@ -64,21 +63,6 @@ test('detectNativeCycle detects repeating patterns', () => {
   assert.equal(detectNativeCycle(nonCycleHistory), null);
 });
 
-test('UnifiedBudgetEnforcer recordAction throws action-scoped checkpoint', () => {
-  const enforcer = new UnifiedBudgetEnforcer(100_000, 5);
-  for (let i = 0; i < 5; i++) {
-    enforcer.recordAction(`act-${i}`);
-  }
-  assert.throws(
-    () => enforcer.recordAction('act-6'),
-    (error: unknown) => {
-      assert.ok(error instanceof EfficiencyCheckpoint);
-      assert.equal((error as EfficiencyCheckpoint).reason, 'actions');
-      assert.equal((error as EfficiencyCheckpoint).scope, 'task');
-      return true;
-    }
-  );
-});
 
 test('AntigravityProvider dynamically extends runway during active code edits in autonomous mode', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-runway-'));
@@ -239,9 +223,8 @@ process.stdin.on('end', () => {
   }
 });
 
-test('autonomous runway: TokenTracker and UnifiedBudgetEnforcer dynamically expand runways', async () => {
+test('autonomous runway: TokenTracker dynamically expands runways', async () => {
   const { TokenTracker } = await import('../src/tokenTracker.js');
-  const { UnifiedBudgetEnforcer } = await import('../src/providers/budgetEnforcer.js');
 
   const tracker = new TokenTracker();
   tracker.budget = { enabled: true, hardStop: true, maxTokensPerTask: 100_000 };
@@ -257,18 +240,4 @@ test('autonomous runway: TokenTracker and UnifiedBudgetEnforcer dynamically expa
   assert.equal(tracker.budget.maxTokensPerTask, 300_000);
   const after = tracker.canAffordAnotherStep();
   assert.equal(after.allowed, true);
-
-  // Test UnifiedBudgetEnforcer dynamic momentum extension
-  const enforcer = new UnifiedBudgetEnforcer(100_000, 35);
-  for (let i = 0; i < 35; i++) {
-    enforcer.recordAction(`action_${i}`);
-  }
-  assert.equal(enforcer.getRemainingActions(), 0);
-
-  // Extend for autonomous momentum (+50 actions)
-  enforcer.extendForAutonomousMomentum(50, 500_000);
-  assert.equal(enforcer.getRemainingActions(), 50);
-  // Can now record further actions without throwing
-  enforcer.recordAction('action_36');
-  assert.equal(enforcer.getRemainingActions(), 49);
 });
