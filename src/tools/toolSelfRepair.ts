@@ -436,7 +436,10 @@ function sanitizeUnescapedStringLiterals(input: string): string {
  */
 function convertSingleQuotesToJson(input: string): string {
   return input.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner) => {
-    const escaped = (inner as string).replace(/"/g, '\\"');
+    const escaped = (inner as string)
+      .replace(/\\'/g, "'")
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"');
     return `"${escaped}"`;
   });
 }

@@ -197,7 +197,9 @@ export function computeProviderAuthFingerprint(provider, config = {}) {
     }
     else {
         const key = config.apiKey || (config.providerKeys && config.providerKeys[norm]) || '';
-        const keyDigest = key ? crypto.createHash('sha256').update(key).digest('hex').slice(0, 12) : 'nokey';
+        const keyDigest = key
+            ? crypto.scryptSync(key, 'causyne-catalog-cache-salt', 16).toString('hex').slice(0, 12)
+            : 'nokey';
         parts.push(keyDigest, config.baseUrl || '');
     }
     return crypto.createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);

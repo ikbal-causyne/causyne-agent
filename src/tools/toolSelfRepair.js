@@ -382,7 +382,10 @@ function sanitizeUnescapedStringLiterals(input) {
  */
 function convertSingleQuotesToJson(input) {
     return input.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner) => {
-        const escaped = inner.replace(/"/g, '\\"');
+        const escaped = inner
+            .replace(/\\'/g, "'")
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"');
         return `"${escaped}"`;
     });
 }
