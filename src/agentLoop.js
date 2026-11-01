@@ -4046,7 +4046,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         taskId: this.taskId,
                         originalPrompt: this.currentTaskPrompt || this.userPrompt
                     });
-                    this.emitEvent({ type: 'status', message: `Autonomous runway extended (+${extraActions} actions). Continuing task execution…` });
+                    this.emitEvent({ type: 'status', message: `Continuing task execution from efficiency checkpoint (runway extended +${extraActions} actions)…` });
                     this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
                     this.messages.push({
                         role: 'system',
