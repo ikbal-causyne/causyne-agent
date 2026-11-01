@@ -1731,16 +1731,21 @@ export class AgentLoop {
         }
         const turnArchetype = determineToolScope(effectivePrompt, this.taskShape).archetype;
         const efficiency = this.config.efficiency || {};
+        const isBudgetDisabled = process.env.CAUSYNE_DISABLE_BUDGET === '1';
+        const isAutonomousMode = this.mode === 'C';
+        const defaultTurnActions = isAutonomousMode ? 1000 : actionLimitFor(turnArchetype);
+        const defaultTurnTokens = isAutonomousMode ? 5_000_000 : turnTokenLimitFor(turnArchetype);
+        const defaultTaskTokens = isAutonomousMode ? 20_000_000 : tokenLimitFor(turnArchetype);
         const taskTokenCeiling = Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0
             ? this.taskTokenLimit
             : this.tokenTracker.budget?.enabled && Number.isFinite(this.tokenTracker.budget?.maxTokensPerTask) && this.tokenTracker.budget.maxTokensPerTask > 0
                 ? this.tokenTracker.budget.maxTokensPerTask
                 : Number.isFinite(efficiency.maxTaskTokens) && efficiency.maxTaskTokens > 0
                     ? efficiency.maxTaskTokens
-                    : tokenLimitFor(turnArchetype);
+                    : defaultTaskTokens;
         this.efficiencyBudget = new UnifiedBudgetEnforcer(Number.isFinite(efficiency.maxTurnTokens) && efficiency.maxTurnTokens > 0
             ? efficiency.maxTurnTokens
-            : turnTokenLimitFor(turnArchetype), Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : actionLimitFor(turnArchetype), taskTokenCeiling);
+            : defaultTurnTokens, Number.isSafeInteger(efficiency.maxTurnActions) && efficiency.maxTurnActions > 0 ? efficiency.maxTurnActions : defaultTurnActions, taskTokenCeiling, isBudgetDisabled);
         const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
@@ -4023,11 +4028,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     this.memoryManager.saveHistory(this.messages);
                     continue;
                 }
-                const isTokenCheckpoint = e instanceof EfficiencyCheckpoint && e.scope === 'turn' && e.reason === 'tokens';
+                const isEfficiencyCheckpoint = e instanceof EfficiencyCheckpoint;
                 const isHardBudget = (Number.isInteger(this.taskTokenLimit) && this.taskTokenLimit > 0)
                     || (this.tokenTracker.budget?.enabled === true && this.tokenTracker.budget?.hardStop === true);
                 const isDesktopLimit = e?.code === 'AGY_DESKTOP_TASK_LIMIT';
-                if (isTokenCheckpoint && !isHardBudget && !isDesktopLimit && incompleteTurnContinuations < 5) {
+                if (isEfficiencyCheckpoint && !isHardBudget && !isDesktopLimit && incompleteTurnContinuations < 10) {
                     incompleteTurnContinuations++;
                     this.emitEvent({ type: 'budget_warning', message: e.message });
                     auditLog.log({
@@ -4038,7 +4043,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     });
                     const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
                     const extraTokens = Math.max(stepScale * 10, 1_000_000);
-                    const extraActions = Math.max(Math.ceil((this.efficiencyBudget?.getRemainingActions() ?? 50) + 100), 100);
+                    const extraActions = Math.max(Math.ceil((this.efficiencyBudget?.getRemainingActions() ?? 50) + 150), 150);
                     this.tokenTracker.extendBudget(extraTokens);
                     this.efficiencyBudget.extendBudget?.(extraTokens, extraActions);
                     compactSessionMessages(this.messages, {
@@ -4050,7 +4055,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
                     this.messages.push({
                         role: 'system',
-                        content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Autonomous runway extended (+${extraActions} actions). Session history and disk modifications are preserved. Do NOT replay prior actions. Continue executing the task directly.]`
+                        content: `[EFFICIENCY CONTINUATION: Previous turn reached checkpoint (${e.message}). Autonomous runway extended (+${extraActions} actions). Session history and disk modifications are preserved. Do NOT replay prior actions. Continue executing the task directly.]`
                     });
                     this.memoryManager.saveHistory(this.messages);
                     continue;

@@ -105,3 +105,24 @@ test('UnifiedBudgetEnforcer halts when cumulative task limit is reached', () => 
   );
 });
 
+test('UnifiedBudgetEnforcer supports disabled mode without throwing on usage or actions', () => {
+  const enforcer = new UnifiedBudgetEnforcer(1_000, 2, 2_000, true);
+  assert.equal(enforcer.disabled, true);
+  assert.equal(enforcer.getRemainingActions(), Number.MAX_SAFE_INTEGER);
+  assert.equal(enforcer.getRemainingTokens(), Number.MAX_SAFE_INTEGER);
+
+  // Exceeds limits by 10x; must not throw
+  enforcer.recordUsage({ promptTokens: 50_000, completionTokens: 50_000 });
+  for (let i = 0; i < 50; i++) {
+    enforcer.recordAction(`action-${i}`);
+  }
+  assert.equal(enforcer.snapshot().actions, 50);
+});
+
+test('budget limits for reverse_engineering archetype provide high developer runways', () => {
+  assert.equal(actionLimitFor('reverse_engineering'), 500);
+  assert.equal(tokenLimitFor('reverse_engineering'), 5_000_000);
+  assert.equal(turnTokenLimitFor('reverse_engineering'), 1_500_000);
+});
+
+

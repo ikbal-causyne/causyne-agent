@@ -208,7 +208,80 @@ test('reverseEngineering: engine_tool executes specialized tool through harness'
   assert.equal(result.toolName, 'inspect_analysis_settings');
 });
 
+test('reverseEngineering: inspects standalone DEX binary', async () => {
+  const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'causyne_re_dex_'));
+
+  try {
+    const dexPath = path.join(tmpDir, 'test_sample.dex');
+    const dexBuf = Buffer.alloc(128);
+    // Magic: dex\n035\0
+    dexBuf.write('dex\n035\0', 0, 8, 'utf8');
+    // Endian tag: 0x12345678 at offset 40
+    dexBuf.writeUInt32LE(0x12345678, 40);
+    // fileSize: 128 at offset 32
+    dexBuf.writeUInt32LE(128, 32);
+    // headerSize: 112 at offset 36
+    dexBuf.writeUInt32LE(112, 36);
+    // stringIdsSize: 42 at offset 56
+    dexBuf.writeUInt32LE(42, 56);
+    // classDefsSize: 15 at offset 96
+    dexBuf.writeUInt32LE(15, 96);
+    // methodIdsSize: 88 at offset 88
+    dexBuf.writeUInt32LE(88, 88);
+
+    await fsp.writeFile(dexPath, dexBuf);
+
+    const result = await reverseEngineering.execute({ action: 'inspect', filePath: dexPath });
+    assert.equal(result.success, true);
+    assert.equal(result.format, 'DEX');
+    assert.equal(result.architecture, 'Dalvik / ART Bytecode');
+
+    const preview = JSON.parse(String(result.preview));
+    assert.equal(preview.metadata?.classDefinitionsCount, 15);
+    assert.equal(preview.metadata?.methodIdsCount, 88);
+  } finally {
+    await fsp.rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('reverseEngineering: performs deep APK architecture inspection if available', async () => {
+  const sampleApk = path.join(os.homedir(), 'Downloads', 'cn.wps.moffice_eng_26.10.0.apk');
+  if (!fs.existsSync(sampleApk)) return;
+
+  const result = await reverseEngineering.execute({ action: 'inspect', filePath: sampleApk });
+  assert.equal(result.success, true);
+  assert.equal(result.format, 'APK/ZIP');
+  assert.equal(result.architecture, 'arm64-v8a');
+
+  assert.ok(result.preview);
+  const metadata = (result.metadata || (result.diskPath ? JSON.parse(fs.readFileSync(result.diskPath as string, 'utf8')).metadata : {})) as any;
+  assert.equal(metadata?.packageName, 'cn.wps.moffice_eng');
+  assert.equal(metadata?.versionName, '26.10.0');
+  assert.ok((metadata?.dexFileCount as number) >= 15);
+  assert.ok((metadata?.nativeLibraryCount as number) >= 20);
+  assert.ok((metadata?.permissionsCount as number) >= 30);
+  assert.ok(Array.isArray(metadata?.detectedFrameworks));
+});
+
+test('reverseEngineering: searches classes natively without external JADX dependencies', async () => {
+  const sampleApk = path.join(os.homedir(), 'Downloads', 'cn.wps.moffice_eng_26.10.0.apk');
+  if (!fs.existsSync(sampleApk)) return;
+
+  const result = await reverseEngineering.execute({
+    action: 'search_classes',
+    filePath: sampleApk,
+    query: 'StartActivity'
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.action, 'search_classes');
+  assert.ok(result.preview);
+  const preview = JSON.parse(String(result.preview));
+  assert.ok(Array.isArray(preview.matchedClasses));
+  assert.ok(preview.matchedClasses.length > 0);
+});
+
 test.after(async () => {
   await sovereignReverseHarness.disconnect();
 });
+
 

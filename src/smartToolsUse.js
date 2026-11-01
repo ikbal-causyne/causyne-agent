@@ -130,6 +130,8 @@ const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render 
 const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|thre\.?js|3js|webgl|canvas)\b/i;
 // Explicit game development intent
 const EXPLICIT_GAME_DEV_PATTERN = /(?:\b(?:build|create|make|design|develop|scaffold|render|animate|code|program|buat\w*|bikin\w*)[\s\S]*(?:game|simulation|simulator|simulasi|interactive|3d|three\.?js|threejs|webgl|canvas3d|babylonjs|godot|unity|unreal|platformer|rpg|arcade)\b|\b(?:game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive)\b|\b3d\s*(?:game|app|simulator|simulation|scene|city|world|view|body|human|anatomy|model|mesh|character|rendering|visualization|experience|space|environment)\b|\bin 3d\b|[-_]3d\b|\b3d[-_]|\b(?:threejs|three\.js|webgl|canvas3d|babylonjs)\b)/i;
+// Explicit reverse engineering and binary analysis intent
+const EXPLICIT_REVERSE_ENGINEERING_PATTERN = /\b(reverse[-_ ]?engineering|decompile|disassemble|disasm|apk|aab|dex|radare|rizin|ghidra|jadx|apktool|mach-o|elf binary|portable executable|\.apk\b|\.aab\b|\.dex\b|\.so\b|\.dylib\b|\.wasm\b|\.asar\b)\b/i;
 // Explicit software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools)
 const EXPLICIT_SOFTWARE_ENGINEERING_PATTERN = /(?:\b(?:build|create|code|program|develop|refactor|debug|fix|implement|test|optimize|write|add|modify|migrate|architect|engineer|benchmark|profile|audit)\b[\s\S]*\b(?:api|backend|service|microservice|server|database|schema|endpoint|controller|auth|test|spec|algorithm|function|module|class|feature|script|pipeline|codebase|repo|repository|bug|issue|engine|tool|cli|library|sdk|migration|handler|worker|queue|stream)\b|\b(?:python|rust|golang|c\+\+|cpp|java|typescript|javascript|ruby|php|sql|bash|shell|docker|k8s|kubernetes)\b)/i;
 /**
@@ -141,7 +143,28 @@ export function determineToolScope(prompt, _taskShape) {
     if (!text) {
         return { toolScope: null, archetype: 'empty', suppressedPacks: [] };
     }
-    // 1. Desktop personalization (e.g. wallpaper / desktop background)
+    // 1. Reverse engineering & binary analysis intent
+    if (EXPLICIT_REVERSE_ENGINEERING_PATTERN.test(text)) {
+        const tools = new Set([
+            'reverse_engineering',
+            'fs_read',
+            'fs_write',
+            'fs_edit',
+            'fs_list',
+            'fs_search',
+            'sysRun',
+            'view_image',
+            'update_plan',
+            'tool_search'
+        ]);
+        return {
+            toolScope: tools,
+            archetype: 'reverse_engineering',
+            suppressedPacks: ['media', 'game', 'web'],
+            reason: 'Reverse engineering intent prioritizes binary triage, decompilation, filesystem exploration, and terminal verification; suppresses creative packs.'
+        };
+    }
+    // 2. Desktop personalization (e.g. wallpaper / desktop background)
     if (DESKTOP_PERSONALIZATION_PATTERN.test(text)) {
         const tools = new Set([
             'sysRun',

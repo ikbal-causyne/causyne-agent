@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { execFile } from 'node:child_process';
 import util from 'node:util';
 import { resolveUserPath } from '../utils/paths.js';
@@ -310,6 +311,440 @@ async function deobfuscateScript(filePath: string): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DALVIK EXECUTABLE (DEX) ZERO-DEPENDENCY PARSER
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseDex(buffer: Buffer): Partial<BinaryInspectionResult> {
+  if (buffer.length < 112) return { format: 'DEX' };
+  const magic = buffer.toString('utf8', 0, 8);
+  if (!magic.startsWith('dex\n')) return { format: 'DEX' };
+
+  const endianTag = buffer.readUInt32LE(40);
+  const isLe = endianTag === 0x12345678;
+  const readU32 = (off: number) => isLe ? buffer.readUInt32LE(off) : buffer.readUInt32BE(off);
+
+  const fileSize = readU32(32);
+  const headerSize = readU32(36);
+  const stringIdsSize = readU32(56);
+  const typeIdsSize = readU32(64);
+  const protoIdsSize = readU32(72);
+  const fieldIdsSize = readU32(80);
+  const methodIdsSize = readU32(88);
+  const classDefsSize = readU32(96);
+
+  return {
+    format: 'DEX',
+    architecture: 'Dalvik / ART Bytecode',
+    is64Bit: false,
+    byteOrder: isLe ? 'little-endian' : 'big-endian',
+    fileType: 'Dalvik Executable (DEX)',
+    metadata: {
+      dexMagic: magic.trim(),
+      fileSize,
+      headerSize,
+      classDefinitionsCount: classDefsSize,
+      methodIdsCount: methodIdsSize,
+      fieldIdsCount: fieldIdsSize,
+      typeIdsCount: typeIdsSize,
+      stringIdsCount: stringIdsSize
+    }
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ANDROID SDK AAPT DISCOVERY & BADGING PARSER
+// ─────────────────────────────────────────────────────────────────────────────
+
+function findAaptExecutable(): string | null {
+  const home = process.env.HOME || '';
+  const searchDirs = [
+    path.join(home, 'Library/Android/sdk/build-tools'),
+    path.join(home, 'Android/Sdk/build-tools'),
+    '/opt/android-sdk/build-tools'
+  ];
+
+  if (process.env.ANDROID_HOME) {
+    searchDirs.unshift(path.join(process.env.ANDROID_HOME, 'build-tools'));
+  }
+  if (process.env.ANDROID_SDK_ROOT) {
+    searchDirs.unshift(path.join(process.env.ANDROID_SDK_ROOT, 'build-tools'));
+  }
+
+  for (const dir of searchDirs) {
+    if (fs.existsSync(dir)) {
+      try {
+        const versions = fs.readdirSync(dir).sort().reverse();
+        for (const v of versions) {
+          const aaptPath = path.join(dir, v, 'aapt');
+          if (fs.existsSync(aaptPath)) return aaptPath;
+          const aapt2Path = path.join(dir, v, 'aapt2');
+          if (fs.existsSync(aapt2Path)) return aapt2Path;
+        }
+      } catch {
+        // safe continuation
+      }
+    }
+  }
+
+  return null;
+}
+
+async function parseApkBadging(aaptPath: string, apkPath: string): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await execFileAsync(aaptPath, ['dump', 'badging', apkPath], {
+      timeout: 20000,
+      maxBuffer: 25 * 1024 * 1024
+    });
+    const stdout = res.stdout;
+    const pkgMatch = stdout.match(/package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'/);
+    const sdkMatch = stdout.match(/sdkVersion:'([^']+)'/);
+    const targetSdkMatch = stdout.match(/targetSdkVersion:'([^']+)'/);
+    const labelMatch = stdout.match(/application-label:'([^']+)'/);
+    const launchMatch = stdout.match(/launchable-activity: name='([^']+)'/);
+    const permissions = [...stdout.matchAll(/uses-permission: name='([^']+)'/g)].map(m => m[1]);
+    const nativeCodes = [...stdout.matchAll(/native-code: '([^']+)'/g)].map(m => m[1]);
+    const features = [...stdout.matchAll(/uses-feature: name='([^']+)'/g)].map(m => m[1]);
+
+    return {
+      packageName: pkgMatch?.[1],
+      versionCode: pkgMatch?.[2],
+      versionName: pkgMatch?.[3],
+      minSdkVersion: sdkMatch?.[1],
+      targetSdkVersion: targetSdkMatch?.[1],
+      applicationLabel: labelMatch?.[1],
+      launchableActivity: launchMatch?.[1],
+      nativeArchitectures: nativeCodes.length > 0 ? nativeCodes : undefined,
+      permissionsCount: permissions.length,
+      permissions: permissions.slice(0, 100),
+      featuresCount: features.length,
+      features: features.slice(0, 30)
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BINARY XML (AXML) STRING POOL & COMPONENT EXTRACTOR
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseAxmlStrings(buf: Buffer): string[] {
+  if (buf.length < 36) return [];
+  const chunkType = buf.readUInt16LE(8);
+  if (chunkType !== 0x0001) return []; // RES_STRING_POOL_TYPE
+  const stringCount = buf.readUInt32LE(16);
+  const flags = buf.readUInt32LE(24);
+  const isUtf8 = (flags & (1 << 8)) !== 0;
+  const stringsStart = 8 + buf.readUInt32LE(28);
+
+  const strings: string[] = [];
+  for (let i = 0; i < stringCount; i++) {
+    const offPos = 36 + i * 4;
+    if (offPos + 4 > buf.length) break;
+    const strOffset = stringsStart + buf.readUInt32LE(offPos);
+    if (strOffset >= buf.length) continue;
+
+    try {
+      if (isUtf8) {
+        let off = strOffset;
+        const b0 = buf[off];
+        if (b0 === undefined) continue;
+        if ((b0 & 0x80) !== 0) off += 2; else off += 1;
+        if (off >= buf.length) continue;
+        const b1 = buf[off];
+        if (b1 === undefined) continue;
+        let byteLen = b1;
+        if ((byteLen & 0x80) !== 0) {
+          const b2 = buf[off + 1];
+          if (b2 === undefined) continue;
+          byteLen = ((byteLen & 0x7f) << 8) | b2;
+          off += 2;
+        } else {
+          off += 1;
+        }
+        if (off + byteLen <= buf.length) {
+          strings.push(buf.toString('utf8', off, off + byteLen));
+        }
+      } else {
+        let off = strOffset;
+        let len = buf.readUInt16LE(off);
+        if ((len & 0x8000) !== 0) {
+          len = ((len & 0x7fff) << 16) | buf.readUInt16LE(off + 2);
+          off += 4;
+        } else {
+          off += 2;
+        }
+        if (off + len * 2 <= buf.length) {
+          strings.push(buf.toString('utf16le', off, off + len * 2));
+        }
+      }
+    } catch {
+      // safe ignore individual string decode error
+    }
+  }
+  return strings;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SOVEREIGN ZERO-DEPENDENCY APK & MANIFEST PARSER
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ZipEntryInfo {
+  name: string;
+  method: number;
+  compSize: number;
+  uncompSize: number;
+  localHeaderOffset: number;
+}
+
+async function inspectApkZipAndManifest(apkPath: string): Promise<Partial<BinaryInspectionResult>> {
+  let fd: fs.promises.FileHandle | null = null;
+  try {
+    const stat = await fsp.stat(apkPath);
+    fd = await fsp.open(apkPath, 'r');
+
+    const endSize = Math.min(65536, stat.size);
+    const endBuf = Buffer.alloc(endSize);
+    await fd.read(endBuf, 0, endSize, stat.size - endSize);
+
+    let eocdOffset = -1;
+    for (let i = endBuf.length - 22; i >= 0; i--) {
+      if (endBuf.readUInt32LE(i) === 0x06054b50) {
+        eocdOffset = stat.size - endSize + i;
+        break;
+      }
+    }
+
+    if (eocdOffset === -1) {
+      return { format: 'APK/ZIP', fileType: 'Android Application Package (APK)' };
+    }
+
+    const cdSize = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 12);
+    const cdOffset = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 16);
+    const cdBuf = Buffer.alloc(cdSize);
+    await fd.read(cdBuf, 0, cdSize, cdOffset);
+
+    let ptr = 0;
+    let manifestEntry: ZipEntryInfo | null = null;
+    const dexFiles: string[] = [];
+    let totalDexUncompressed = 0;
+    const nativeLibs: string[] = [];
+    const abis = new Set<string>();
+    const frameworks = new Set<string>();
+
+    while (ptr + 46 <= cdBuf.length) {
+      if (cdBuf.readUInt32LE(ptr) !== 0x02014b50) break;
+      const method = cdBuf.readUInt16LE(ptr + 10);
+      const compSize = cdBuf.readUInt32LE(ptr + 20);
+      const uncompSize = cdBuf.readUInt32LE(ptr + 24);
+      const nameLen = cdBuf.readUInt16LE(ptr + 28);
+      const extraLen = cdBuf.readUInt16LE(ptr + 30);
+      const commentLen = cdBuf.readUInt16LE(ptr + 32);
+      const localHeaderOffset = cdBuf.readUInt32LE(ptr + 42);
+      const name = cdBuf.toString('utf8', ptr + 46, ptr + 46 + nameLen);
+
+      if (name === 'AndroidManifest.xml') {
+        manifestEntry = { name, method, compSize, uncompSize, localHeaderOffset };
+      } else if (name.endsWith('.dex')) {
+        dexFiles.push(name);
+        totalDexUncompressed += uncompSize;
+      } else if (name.startsWith('lib/')) {
+        nativeLibs.push(name);
+        const parts = name.split('/');
+        const abiName = parts[1];
+        if (parts.length > 2 && abiName) abis.add(abiName);
+        if (name.includes('libflutter.so') || name.includes('libapp.so')) frameworks.add('Flutter');
+        if (name.includes('libreactnativejni.so') || name.includes('libhermes.so')) frameworks.add('React Native');
+        if (name.includes('libunity.so')) frameworks.add('Unity');
+        if (name.includes('libkwopdf.so') || name.includes('libksoedit.so')) frameworks.add('Kingsoft Office Native C++ Engine');
+        if (name.includes('libUE4.so') || name.includes('libUnreal.so')) frameworks.add('Unreal Engine');
+        if (name.includes('libcocos2djs.so')) frameworks.add('Cocos2d-x');
+      }
+      ptr += 46 + nameLen + extraLen + commentLen;
+    }
+
+    let manifestStrings: string[] = [];
+    if (manifestEntry) {
+      const localHdr = Buffer.alloc(30);
+      await fd.read(localHdr, 0, 30, manifestEntry.localHeaderOffset);
+      const fnLen = localHdr.readUInt16LE(26);
+      const extraLen = localHdr.readUInt16LE(28);
+      const dataOffset = manifestEntry.localHeaderOffset + 30 + fnLen + extraLen;
+      const compData = Buffer.alloc(manifestEntry.compSize);
+      await fd.read(compData, 0, manifestEntry.compSize, dataOffset);
+      const xmlBuf = manifestEntry.method === 8 ? zlib.inflateRawSync(compData) : compData;
+      manifestStrings = parseAxmlStrings(xmlBuf);
+    }
+
+    const permissions = manifestStrings.filter(s => s.includes('permission.') || s.startsWith('android.permission'));
+    const activities = manifestStrings.filter(s => s.endsWith('Activity') || s.includes('Activity$'));
+    const services = manifestStrings.filter(s => s.endsWith('Service') || s.includes('Service$') || s.startsWith(':'));
+    const receivers = manifestStrings.filter(s => s.endsWith('Receiver') || s.includes('Receiver$'));
+    const providers = manifestStrings.filter(s => s.endsWith('Provider') || s.includes('Provider$'));
+
+    // Discover package name candidate from strings
+    const pkgCandidate = manifestStrings.find(s => s.includes('.') && !s.includes('/') && !s.startsWith('android.') && !s.startsWith('androidx.') && s.split('.').length >= 3 && !s.includes('Activity') && !s.includes('Service'));
+
+    const primaryAbi = Array.from(abis)[0] || 'arm64-v8a';
+
+    let badging: Record<string, unknown> | null = null;
+    const aaptPath = findAaptExecutable();
+    if (aaptPath) {
+      badging = await parseApkBadging(aaptPath, apkPath);
+    }
+
+    const metadata: Record<string, unknown> = {
+      packageName: badging?.packageName || pkgCandidate,
+      versionCode: badging?.versionCode,
+      versionName: badging?.versionName,
+      minSdkVersion: badging?.minSdkVersion,
+      targetSdkVersion: badging?.targetSdkVersion,
+      applicationLabel: badging?.applicationLabel,
+      launchableActivity: badging?.launchableActivity,
+      dexFileCount: dexFiles.length,
+      dexFiles: dexFiles.slice(0, 15),
+      totalDexSizeMb: (totalDexUncompressed / (1024 * 1024)).toFixed(1),
+      nativeArchitectures: badging?.nativeArchitectures || Array.from(abis),
+      nativeLibraryCount: nativeLibs.length,
+      sampleNativeLibraries: nativeLibs.slice(0, 10),
+      detectedFrameworks: Array.from(frameworks),
+      permissionsCount: badging?.permissionsCount || permissions.length,
+      permissions: (badging?.permissions as string[]) || permissions.slice(0, 50),
+      activitiesCount: activities.length,
+      sampleActivities: activities.slice(0, 10),
+      servicesCount: services.length,
+      sampleServices: services.slice(0, 10),
+      receiversCount: receivers.length,
+      providersCount: providers.length
+    };
+
+    return {
+      format: 'APK/ZIP',
+      architecture: primaryAbi,
+      is64Bit: primaryAbi.includes('64'),
+      byteOrder: 'little-endian',
+      fileType: 'Android Application Package (APK)',
+      metadata
+    };
+  } finally {
+    if (fd) await fd.close();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SEARCH CLASSES DIRECTLY IN APK DEX & MANIFEST
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function searchClassesInApk(apkPath: string, query: string): Promise<{ matchedClasses: string[]; totalInspected: number }> {
+  let fd: fs.promises.FileHandle | null = null;
+  const matches = new Set<string>();
+  let totalInspected = 0;
+  const qLower = query.toLowerCase();
+
+  try {
+    const stat = await fsp.stat(apkPath);
+    fd = await fsp.open(apkPath, 'r');
+
+    const endSize = Math.min(65536, stat.size);
+    const endBuf = Buffer.alloc(endSize);
+    await fd.read(endBuf, 0, endSize, stat.size - endSize);
+
+    let eocdOffset = -1;
+    for (let i = endBuf.length - 22; i >= 0; i--) {
+      if (endBuf.readUInt32LE(i) === 0x06054b50) {
+        eocdOffset = stat.size - endSize + i;
+        break;
+      }
+    }
+
+    if (eocdOffset === -1) return { matchedClasses: [], totalInspected: 0 };
+
+    const cdSize = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 12);
+    const cdOffset = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 16);
+    const cdBuf = Buffer.alloc(cdSize);
+    await fd.read(cdBuf, 0, cdSize, cdOffset);
+
+    let ptr = 0;
+    const dexEntries: ZipEntryInfo[] = [];
+
+    while (ptr + 46 <= cdBuf.length) {
+      if (cdBuf.readUInt32LE(ptr) !== 0x02014b50) break;
+      const method = cdBuf.readUInt16LE(ptr + 10);
+      const compSize = cdBuf.readUInt32LE(ptr + 20);
+      const uncompSize = cdBuf.readUInt32LE(ptr + 24);
+      const nameLen = cdBuf.readUInt16LE(ptr + 28);
+      const extraLen = cdBuf.readUInt16LE(ptr + 30);
+      const commentLen = cdBuf.readUInt16LE(ptr + 32);
+      const localHeaderOffset = cdBuf.readUInt32LE(ptr + 42);
+      const name = cdBuf.toString('utf8', ptr + 46, ptr + 46 + nameLen);
+
+      if (name.endsWith('.dex')) {
+        dexEntries.push({ name, method, compSize, uncompSize, localHeaderOffset });
+      }
+      ptr += 46 + nameLen + extraLen + commentLen;
+    }
+
+    for (const dexEntry of dexEntries.slice(0, 5)) {
+      try {
+        const localHdr = Buffer.alloc(30);
+        await fd.read(localHdr, 0, 30, dexEntry.localHeaderOffset);
+        const fnLen = localHdr.readUInt16LE(26);
+        const extraLen = localHdr.readUInt16LE(28);
+        const dataOffset = dexEntry.localHeaderOffset + 30 + fnLen + extraLen;
+        const compData = Buffer.alloc(dexEntry.compSize);
+        await fd.read(compData, 0, dexEntry.compSize, dataOffset);
+        const dexBuf = dexEntry.method === 8 ? zlib.inflateRawSync(compData) : compData;
+
+        if (dexBuf.length >= 112 && dexBuf.toString('utf8', 0, 4) === 'dex\n') {
+          const stringIdsOff = dexBuf.readUInt32LE(60);
+          const typeIdsOff = dexBuf.readUInt32LE(68);
+          const classDefsSize = dexBuf.readUInt32LE(96);
+          const classDefsOff = dexBuf.readUInt32LE(100);
+
+          totalInspected += classDefsSize;
+          for (let i = 0; i < classDefsSize; i++) {
+            const classDefOffset = classDefsOff + i * 32;
+            if (classDefOffset + 4 > dexBuf.length) break;
+            const classIdx = dexBuf.readUInt32LE(classDefOffset);
+            const typeOff = typeIdsOff + classIdx * 4;
+            if (typeOff + 4 > dexBuf.length) continue;
+            const descriptorIdx = dexBuf.readUInt32LE(typeOff);
+            const strOffPos = stringIdsOff + descriptorIdx * 4;
+            if (strOffPos + 4 > dexBuf.length) continue;
+            const stringDataOff = dexBuf.readUInt32LE(strOffPos);
+            let off = stringDataOff;
+            while (off < dexBuf.length) {
+              const b = dexBuf[off];
+              if (b === undefined || (b & 0x80) === 0) break;
+              off++;
+            }
+            off++;
+            let end = off;
+            while (end < dexBuf.length && dexBuf[end] !== 0) end++;
+            const rawDesc = dexBuf.toString('utf8', off, end);
+            if (!qLower || rawDesc.toLowerCase().includes(qLower)) {
+              const cleanName = rawDesc.replace(/^L/, '').replace(/;$/, '').replace(/\//g, '.');
+              matches.add(cleanName);
+              if (matches.size >= 100) break;
+            }
+          }
+        }
+      } catch {
+        // continue
+      }
+      if (matches.size >= 100) break;
+    }
+  } finally {
+    if (fd) await fd.close();
+  }
+
+  return {
+    matchedClasses: Array.from(matches),
+    totalInspected
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CANONICAL TOOL DEFINITION
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -507,8 +942,19 @@ export const reverseEngineering = {
 
     // ── ACTION: DECODE_RESOURCES ──────────────────────────────────────────
     if (action === 'decode_resources') {
-      const res = await sovereignReverseHarness.decodeAndroidResources(resolvedFile, outputDir, context.signal);
-      const textOutput = res.output || (res.structuredContent ? JSON.stringify(res.structuredContent, null, 2) : res.error || '');
+      let res = await sovereignReverseHarness.decodeAndroidResources(resolvedFile, outputDir, context.signal);
+      let textOutput = '';
+      if (res.success && res.output && !res.output.includes('apktool launcher was not found')) {
+        textOutput = res.output;
+      } else {
+        const targetDir = outputDir ? resolveUserPath(outputDir) : path.join(workspaceDir, `${path.basename(resolvedFile)}_resources`);
+        await fsp.mkdir(targetDir, { recursive: true });
+        const apkInfo = await inspectApkZipAndManifest(resolvedFile);
+        const manifestSummaryPath = path.join(targetDir, 'manifest_summary.json');
+        await fsp.writeFile(manifestSummaryPath, JSON.stringify(apkInfo.metadata || {}, null, 2), 'utf8');
+        textOutput = `Extracted Android package architecture to ${targetDir}:\n- Manifest summary: ${manifestSummaryPath}\n- Package: ${(apkInfo.metadata as any)?.packageName || 'unknown'}\n- Activities: ${(apkInfo.metadata as any)?.activitiesCount || 0}\n- Services: ${(apkInfo.metadata as any)?.servicesCount || 0}\n- Permissions: ${(apkInfo.metadata as any)?.permissionsCount || 0}`;
+        res = { success: true, toolName: 'decode_resources', output: textOutput, source: 'fallback' };
+      }
       const stored = outputStore.processToolOutput(sessionId, `${callId}_decode_resources`, textOutput);
       return {
         success: res.success,
@@ -524,8 +970,20 @@ export const reverseEngineering = {
     // ── ACTION: SEARCH_CLASSES ───────────────────────────────────────────
     if (action === 'search_classes') {
       const query = String(args['query'] || '');
-      const res = await sovereignReverseHarness.searchAndroidClasses(resolvedFile, query, context.signal);
-      const textOutput = res.output || (res.structuredContent ? JSON.stringify(res.structuredContent, null, 2) : res.error || '');
+      let res = await sovereignReverseHarness.searchAndroidClasses(resolvedFile, query, context.signal);
+      let textOutput = '';
+      if (res.success && res.output && !res.output.includes('capability_unavailable') && !res.output.includes('REA_JADX_MCP_JAR')) {
+        textOutput = res.output;
+      } else {
+        const nativeSearch = await searchClassesInApk(resolvedFile, query);
+        textOutput = JSON.stringify({
+          query,
+          totalInspectedDexClasses: nativeSearch.totalInspected,
+          matchedClassesCount: nativeSearch.matchedClasses.length,
+          matchedClasses: nativeSearch.matchedClasses
+        }, null, 2);
+        res = { success: true, toolName: 'search_classes', output: textOutput, source: 'fallback' };
+      }
       const stored = outputStore.processToolOutput(sessionId, `${callId}_search_classes`, textOutput);
       return {
         success: res.success,
@@ -581,6 +1039,11 @@ export const reverseEngineering = {
 
         const magic32Be = headerBuf.length >= 4 ? headerBuf.readUInt32BE(0) : 0;
         const magic32Le = headerBuf.length >= 4 ? headerBuf.readUInt32LE(0) : 0;
+        const isDex = (headerBuf.length >= 4 && headerBuf[0] === 0x64 && headerBuf[1] === 0x65 && headerBuf[2] === 0x78 && headerBuf[3] === 0x0a)
+          || resolvedFile.toLowerCase().endsWith('.dex');
+        const isApkOrZip = (headerBuf.length >= 4 && headerBuf[0] === 0x50 && headerBuf[1] === 0x4b && headerBuf[2] === 0x03 && headerBuf[3] === 0x04)
+          || resolvedFile.toLowerCase().endsWith('.apk')
+          || resolvedFile.toLowerCase().endsWith('.aab');
 
         if (
           magic32Be === 0xfeedface || magic32Be === 0xfeedfacf ||
@@ -595,27 +1058,11 @@ export const reverseEngineering = {
         } else if (headerBuf[0] === 0x00 && headerBuf[1] === 0x61 && headerBuf[2] === 0x73 && headerBuf[3] === 0x6d) {
           result.format = 'WebAssembly';
           result.architecture = 'wasm32 / wasm64';
-        } else if (
-          (headerBuf[0] === 0x50 && headerBuf[1] === 0x4b && headerBuf[2] === 0x03 && headerBuf[3] === 0x04) ||
-          resolvedFile.toLowerCase().endsWith('.apk')
-        ) {
-          result.format = 'APK/ZIP';
-          result.fileType = 'Android Application Package (APK)';
-          try {
-            const unzipList = await execFileAsync('unzip', ['-l', resolvedFile], { timeout: 15000 });
-            const lines = unzipList.stdout.split('\n');
-            const dexFiles = lines.filter(l => l.includes('.dex')).map(l => l.trim().split(/\s+/).pop());
-            const hasManifest = lines.some(l => l.includes('AndroidManifest.xml'));
-            const nativeLibs = lines.filter(l => l.includes('lib/')).slice(0, 15).map(l => l.trim().split(/\s+/).pop());
-            result.metadata = {
-              dexFiles,
-              hasManifest,
-              totalEntries: lines.length,
-              sampleNativeLibraries: nativeLibs
-            };
-          } catch {
-            // unzip fallback
-          }
+        } else if (isDex) {
+          result = { ...result, ...parseDex(headerBuf) } as BinaryInspectionResult;
+        } else if (isApkOrZip) {
+          const apkResult = await inspectApkZipAndManifest(resolvedFile);
+          result = { ...result, ...apkResult } as BinaryInspectionResult;
         } else {
           const asar = parseAsarHeader(headerBuf);
           if (asar) {
@@ -648,6 +1095,7 @@ export const reverseEngineering = {
           action: 'inspect',
           format: result.format,
           architecture: result.architecture || 'unknown',
+          metadata: result.metadata,
           mitigations: result.mitigations,
           preview: stored.contentForModel,
           isTruncated: stored.isTruncated,

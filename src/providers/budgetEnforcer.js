@@ -10,21 +10,31 @@ export function noncachedTokens(usage) {
     return input + finite(usage.completionTokens);
 }
 export function actionLimitFor(archetype) {
+    if (process.env.CAUSYNE_DISABLE_BUDGET === '1')
+        return 1_000_000;
     if (archetype === 'desktop_personalization')
         return 12;
     if (archetype === 'media_3d_generation')
         return 25;
+    if (archetype === 'web_fullstack' || archetype === 'system_admin')
+        return 35;
+    if (archetype === 'reverse_engineering' || archetype === 'binary_analysis')
+        return 500;
     if (archetype === 'game_development' || archetype === 'game')
         return 250;
     if (archetype === 'software_engineering' || archetype === 'backend_engineering')
         return 200;
     if (archetype === 'web_engineering')
         return 120;
-    return 35;
+    return 250;
 }
 export function tokenLimitFor(archetype) {
+    if (process.env.CAUSYNE_DISABLE_BUDGET === '1')
+        return 100_000_000;
     if (archetype === 'desktop_personalization')
         return 150_000;
+    if (archetype === 'reverse_engineering' || archetype === 'binary_analysis')
+        return 5_000_000;
     if (archetype === 'game_development' || archetype === 'game')
         return 3_000_000;
     if (archetype === 'software_engineering' || archetype === 'backend_engineering')
@@ -33,9 +43,13 @@ export function tokenLimitFor(archetype) {
         return 400_000;
     if (archetype === 'web_engineering' || archetype === 'web_fullstack')
         return 500_000;
-    return 100_000;
+    return 2_500_000;
 }
 export function turnTokenLimitFor(archetype) {
+    if (process.env.CAUSYNE_DISABLE_BUDGET === '1')
+        return 10_000_000;
+    if (archetype === 'reverse_engineering' || archetype === 'binary_analysis')
+        return 1_500_000;
     if (archetype === 'game_development' || archetype === 'game')
         return 1_000_000;
     if (archetype === 'software_engineering' || archetype === 'backend_engineering')
@@ -46,7 +60,7 @@ export function turnTokenLimitFor(archetype) {
         return 200_000;
     if (archetype === 'desktop_personalization')
         return 100_000;
-    return 100_000;
+    return 1_000_000;
 }
 export class EfficiencyCheckpoint extends Error {
     code = 'CAUSYNE_EFFICIENCY_CHECKPOINT';
@@ -71,10 +85,12 @@ export class UnifiedBudgetEnforcer {
     maxTurnTokens;
     maxTurnActions;
     maxTaskTokens;
+    disabled;
     tokens = 0;
     actions = 0;
     nativeIds = new Set();
-    constructor(maxTurnTokens = 100_000, maxTurnActions = 35, maxTaskTokens) {
+    constructor(maxTurnTokens = 100_000, maxTurnActions = 35, maxTaskTokens, disabled) {
+        this.disabled = disabled ?? (process.env.CAUSYNE_DISABLE_BUDGET === '1');
         if (!Number.isFinite(maxTurnTokens) || maxTurnTokens <= 0
             || !Number.isSafeInteger(maxTurnActions) || maxTurnActions <= 0) {
             throw new Error('Invalid efficiency limits');
@@ -98,6 +114,8 @@ export class UnifiedBudgetEnforcer {
     recordUsage(usage) {
         const fresh = noncachedTokens(usage);
         this.tokens += fresh;
+        if (this.disabled)
+            return;
         if (fresh >= this.maxTurnTokens) {
             throw new EfficiencyCheckpoint('tokens', fresh, this.maxTurnTokens, 'turn');
         }
@@ -108,7 +126,7 @@ export class UnifiedBudgetEnforcer {
     recordAction(nativeId) {
         if (nativeId && this.nativeIds.has(nativeId))
             return;
-        if (this.actions >= this.maxTurnActions) {
+        if (!this.disabled && this.actions >= this.maxTurnActions) {
             throw new EfficiencyCheckpoint('actions', this.actions, this.maxTurnActions, 'task');
         }
         if (nativeId)
@@ -116,12 +134,18 @@ export class UnifiedBudgetEnforcer {
         this.actions++;
     }
     getRemainingTokens() {
+        if (this.disabled)
+            return Number.MAX_SAFE_INTEGER;
         return Math.max(0, this.maxTaskTokens - this.tokens);
     }
     getRemainingTurnTokens() {
+        if (this.disabled)
+            return Number.MAX_SAFE_INTEGER;
         return this.maxTurnTokens;
     }
     getRemainingActions() {
+        if (this.disabled)
+            return Number.MAX_SAFE_INTEGER;
         return Math.max(0, this.maxTurnActions - this.actions);
     }
     snapshot() {

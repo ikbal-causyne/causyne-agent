@@ -80,10 +80,26 @@ export class SovereignReverseHarness {
           }
         }
 
+        const nodeDir = path.dirname(process.execPath);
+        const homeDir = process.env.HOME || '';
+        const buildToolsDirs = [
+          path.join(homeDir, 'Library/Android/sdk/build-tools/36.1.0'),
+          path.join(homeDir, 'Library/Android/sdk/build-tools/35.0.0'),
+          path.join(homeDir, 'Library/Android/sdk/platform-tools'),
+          '/opt/homebrew/bin',
+          '/usr/local/bin'
+        ].filter(d => fs.existsSync(d));
+
+        const augmentedPath = [nodeDir, ...buildToolsDirs, process.env.PATH || ''].join(':');
+
         const mcpClient = new McpClient({
           name: 'causyne_reverse_engineering',
           command,
           args,
+          env: {
+            ...process.env,
+            PATH: augmentedPath
+          },
           timeoutMs: 60_000
         });
 
@@ -186,15 +202,26 @@ export class SovereignReverseHarness {
     const ext = path.extname(resolved).toLowerCase();
     if (ext === '.apk' || ext === '.aab') {
       const pkg = await this.callEngineTool('inspect_android_package', { path: resolved }, signal);
-      if (pkg.success) return pkg;
+      if (pkg.success && pkg.output && !pkg.output.includes('capability_unavailable') && !pkg.output.includes('REA_JADX_MCP_JAR')) {
+        return pkg;
+      }
 
       const dec = await this.callEngineTool('decode_android_resources', { path: resolved }, signal);
-      if (dec.success) return dec;
+      if (dec.success && dec.output && !dec.output.includes('capability_unavailable') && !dec.output.includes('apktool launcher was not found')) {
+        return dec;
+      }
+
+      return {
+        success: false,
+        toolName: 'inspect_android_package',
+        error: 'Engine APK tools unavailable; delegating to sovereign native inspector.',
+        source: 'fallback'
+      };
     }
 
     // Try primary session / overview tools
     const open = await this.callEngineTool('open_binary', { path: resolved }, signal);
-    if (open.success) return open;
+    if (open.success && open.output && !open.output.includes('"architecture":null')) return open;
 
     const layout = await this.callEngineTool('inspect_binary_layout', { path: resolved }, signal);
     if (layout.success) return layout;
