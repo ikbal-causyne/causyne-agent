@@ -115,7 +115,9 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
 
   // 2. Build enriched PATH including dev tools, package managers, and Android toolchains
-  const currentPath = env.PATH || '';
+  // Find case-insensitive PATH key (on Windows it is often 'Path')
+  const pathKey = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'PATH';
+  const currentPath = env[pathKey] || process.env[pathKey] || process.env.PATH || process.env.Path || '';
   const pathParts = currentPath.split(path.delimiter).filter(Boolean);
   const addIfMissing = (dir: string, checkExists = true) => {
     if (dir && (!checkExists || fs.existsSync(dir)) && !pathParts.includes(dir)) {
@@ -126,6 +128,13 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   // Node runtime directory
   if (process.execPath) {
     addIfMissing(path.dirname(process.execPath));
+  }
+
+  // Windows system binaries (guarantee cmd.exe and powershell resolve)
+  if (process.platform === 'win32') {
+    const sysRoot = env.SystemRoot || env.SYSTEMROOT || process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+    addIfMissing(path.join(sysRoot, 'System32'));
+    addIfMissing(sysRoot);
   }
 
   // Local user binaries (where Google's official android CLI lives)
@@ -158,7 +167,14 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     }
   }
 
-  env.PATH = pathParts.join(path.delimiter);
+  const enrichedPath = pathParts.join(path.delimiter);
+  env[pathKey] = enrichedPath;
+  if (process.platform === 'win32') {
+    env.PATH = enrichedPath;
+    env.Path = enrichedPath;
+  } else {
+    env.PATH = enrichedPath;
+  }
   return env;
 }
 
