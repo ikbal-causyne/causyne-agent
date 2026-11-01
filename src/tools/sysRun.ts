@@ -117,8 +117,8 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   // 2. Build enriched PATH including dev tools, package managers, and Android toolchains
   const currentPath = env.PATH || '';
   const pathParts = currentPath.split(path.delimiter).filter(Boolean);
-  const addIfMissing = (dir: string) => {
-    if (dir && fs.existsSync(dir) && !pathParts.includes(dir)) {
+  const addIfMissing = (dir: string, checkExists = true) => {
+    if (dir && (!checkExists || fs.existsSync(dir)) && !pathParts.includes(dir)) {
       pathParts.unshift(dir);
     }
   };
@@ -129,7 +129,7 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
 
   // Local user binaries (where Google's official android CLI lives)
-  addIfMissing(path.join(os.homedir(), '.local', 'bin'));
+  addIfMissing(path.join(os.homedir(), '.local', 'bin'), false);
 
   // Package managers and developer toolchains
   addIfMissing('/opt/homebrew/bin');
@@ -139,12 +139,12 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
   // Android SDK binaries
   const androidHome = env.ANDROID_HOME;
-  if (androidHome && fs.existsSync(androidHome)) {
-    addIfMissing(path.join(androidHome, 'platform-tools'));
-    addIfMissing(path.join(androidHome, 'cmdline-tools', 'latest', 'bin'));
-    addIfMissing(path.join(androidHome, 'emulator'));
-    addIfMissing(path.join(androidHome, 'tools', 'bin'));
-    addIfMissing(path.join(androidHome, 'tools'));
+  if (androidHome) {
+    addIfMissing(path.join(androidHome, 'platform-tools'), false);
+    addIfMissing(path.join(androidHome, 'cmdline-tools', 'latest', 'bin'), false);
+    addIfMissing(path.join(androidHome, 'emulator'), false);
+    addIfMissing(path.join(androidHome, 'tools', 'bin'), false);
+    addIfMissing(path.join(androidHome, 'tools'), false);
 
     const buildToolsDir = path.join(androidHome, 'build-tools');
     if (fs.existsSync(buildToolsDir)) {

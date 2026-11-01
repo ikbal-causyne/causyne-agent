@@ -15,6 +15,13 @@ test('getEnhancedEnv discovers Android SDK and injects platform-tools and local 
   // Local binaries (where Google Android CLI lives)
   assert.ok(env.PATH.includes(path.join(os.homedir(), '.local', 'bin')), 'PATH must include ~/.local/bin');
 
+  // Verify explicit ANDROID_HOME environment injection
+  const mockSdk = path.join('/opt', 'mock-android-sdk');
+  const envWithSdk = getEnhancedEnv({ PATH: '/usr/bin:/bin', ANDROID_HOME: mockSdk });
+  assert.equal(envWithSdk.ANDROID_SDK_ROOT, mockSdk, 'ANDROID_SDK_ROOT must mirror ANDROID_HOME');
+  assert.ok(envWithSdk.PATH?.includes(path.join(mockSdk, 'platform-tools')), 'PATH must include platform-tools');
+  assert.ok(envWithSdk.PATH?.includes(path.join(mockSdk, 'emulator')), 'PATH must include emulator');
+
   // If local machine has Android SDK installed, verify automatic environment exposure
   const sdkCandidate = path.join(os.homedir(), 'Library', 'Android', 'sdk');
   if (fs.existsSync(sdkCandidate)) {
