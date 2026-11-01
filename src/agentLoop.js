@@ -2131,7 +2131,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
                         shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
                         pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
-                        this.efficiencyBudget?.extendBudget?.(1_000_000, 50);
+                        this.efficiencyBudget?.extendBudget?.(1_000_000, 100);
                     }
                 }
                 // 2. PLAN (Call LLM). dynamicTools was resolved above so the task brief
@@ -3991,10 +3991,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     auditLog.log({
                         event: 'efficiency_checkpoint',
                         taskId: this.taskId,
-                        reason: e.reason,
+                        reason: e?.reason || e?.code || 'budget',
                         ...this.efficiencyBudget.snapshot()
                     });
-                    this.efficiencyBudget.extendBudget?.(1_000_000, 50);
+                    this.efficiencyBudget.extendBudget?.(1_000_000, 100);
                     compactSessionMessages(this.messages, {
                         keepRecentTurns: 4,
                         taskId: this.taskId,

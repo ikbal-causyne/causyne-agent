@@ -357,17 +357,60 @@ function nativeInspectionTarget(name, parameters) {
     }
     return null;
 }
-function isNativeMutation(name, parameters) {
+export function isNativeMutation(name, parameters = {}) {
+    if (!name || typeof name !== 'string')
+        return false;
     const action = name.toLowerCase().replace(/[_\s-]/g, '');
-    if (/^(writefile|editfile|deletefile|applypatch|createfile|replaceinfile)$/.test(action))
+    if (/^(writefile|writetofile|editfile|replacefilecontent|multireplacefilecontent|deletefile|applypatch|createfile|replaceinfile|fswrite|fsedit|generatemedia|generateimage)$/.test(action)) {
         return true;
+    }
     if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(action))
         return false;
     const command = cleanCommandString(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '');
     if (!command)
         return false;
     return /\b(?:save_as_mainfile|save_mainfile|write_text|write_bytes|tee)\b/.test(command)
-        || /(?:^|[;&|]\s*)(?:cp|mv|rm|install|patch)\s/.test(command);
+        || /(?:^|[;&|]\s*)(?:cp|mv|rm|install|patch|touch|mkdir|chmod|sed)\s/.test(command)
+        || /(?:>|>>)/.test(command)
+        || /\b(?:npm|yarn|pnpm|cargo|gradle|gradlew|mvn|dotnet|pip|pip3|pytest|vitest|jest|tsc|make|docker|git\s+(?:add|commit|checkout|merge|rebase|stash|pull|push))\b/i.test(command);
+}
+export function nativeToolSignature(name, parameters = {}) {
+    const normName = name.toLowerCase().replace(/[_\s-]/g, '');
+    const sortedKeys = Object.keys(parameters).sort();
+    const sortedObj = {};
+    for (const k of sortedKeys) {
+        const val = parameters[k];
+        if (val !== undefined && typeof val !== 'function') {
+            sortedObj[k] = val;
+        }
+    }
+    return `${normName}:${JSON.stringify(sortedObj)}`;
+}
+export function detectNativeCycle(signatures) {
+    for (let period = 2; period <= 4; period++) {
+        if (signatures.length < period * 3)
+            continue;
+        let laps = 1;
+        while (true) {
+            const base = signatures.length - period * (laps + 1);
+            if (base < 0)
+                break;
+            let lapEqual = true;
+            for (let i = 0; i < period; i++) {
+                if (signatures[base + i] !== signatures[signatures.length - period + i]) {
+                    lapEqual = false;
+                    break;
+                }
+            }
+            if (!lapEqual)
+                break;
+            laps++;
+        }
+        if (laps >= 3) {
+            return { period, laps };
+        }
+    }
+    return null;
 }
 export function mapNativeToolToCausyne(name, rawParams, index) {
     if (!name || typeof name !== 'string')
@@ -923,9 +966,16 @@ export class AntigravityProvider extends LLMProvider {
                 }
             };
             const configuredActions = Number(options.maxNativeActions);
-            const maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions >= 0
+            const isAutonomous = options.hardBudget === false || (!desktopTask && options.hardBudget !== true);
+            let maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions >= 0
                 ? configuredActions : desktopTask ? 12 : 35;
             let nativeActionStarts = 0;
+            let lastMutationActionIndex = 0;
+            let progressiveActionsCount = 0;
+            let consecutiveIdenticalCount = 0;
+            let consecutiveInspections = 0;
+            let lastToolSignature = '';
+            const recentSignatures = [];
             const seenNativeActionSteps = new Set();
             const mediaInspectionCounts = new Map();
             const pendingMediaMutations = new Set();
@@ -1098,13 +1148,6 @@ export class AntigravityProvider extends LLMProvider {
                                     && (!Number.isFinite(stepIndex) || !seenNativeActionSteps.has(stepIndex));
                                 if (newNativeAction && Number.isFinite(stepIndex))
                                     seenNativeActionSteps.add(stepIndex);
-                                if (newNativeAction && ++nativeActionStarts > maxNativeActions) {
-                                    const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`);
-                                    error.code = 'AGY_NATIVE_ACTION_BUDGET';
-                                    safeReject(error);
-                                    terminateChild();
-                                    return;
-                                }
                                 const toolInfo = stepUpdate?.tool_info || {};
                                 const name = stepUpdate?.tool_name || toolInfo?.name;
                                 const status = state === 'DONE' || state === 'ERROR'
@@ -1114,6 +1157,72 @@ export class AntigravityProvider extends LLMProvider {
                                     (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
                                     (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
                                     {};
+                                if (name && newNativeAction) {
+                                    const mutating = isNativeMutation(name, rawParams);
+                                    if (mutating) {
+                                        lastMutationActionIndex = nativeActionStarts + 1;
+                                        progressiveActionsCount++;
+                                        consecutiveIdenticalCount = 0;
+                                        consecutiveInspections = 0;
+                                        lastToolSignature = '';
+                                    }
+                                    else if (!desktopTask && options.taskArchetype !== 'media_3d_generation') {
+                                        consecutiveInspections++;
+                                        const sig = nativeToolSignature(name, rawParams);
+                                        if (sig === lastToolSignature) {
+                                            consecutiveIdenticalCount++;
+                                        }
+                                        else {
+                                            consecutiveIdenticalCount = 1;
+                                            lastToolSignature = sig;
+                                        }
+                                        recentSignatures.push(sig);
+                                        if (recentSignatures.length > 24)
+                                            recentSignatures.shift();
+                                        // 1. Aimless identical streak detection: 4 identical consecutive non-mutating calls
+                                        if (consecutiveIdenticalCount >= 4) {
+                                            const error = Object.assign(new Error(`Antigravity repeated identical call to '${name}' ${consecutiveIdenticalCount} times without progress. Halting circular loop.`), { code: 'AGY_EXPLORATION_LOOP', toolName: name, count: consecutiveIdenticalCount });
+                                            safeReject(error);
+                                            terminateChild();
+                                            return;
+                                        }
+                                        // 2. Aimless circular cycle detection: period 2-4 repeating 3 laps without mutation
+                                        const cycle = detectNativeCycle(recentSignatures);
+                                        if (cycle && (nativeActionStarts - lastMutationActionIndex) > (cycle.period * 2)) {
+                                            const error = Object.assign(new Error(`Antigravity repeated circular cycle of ${cycle.period} tool calls without forward progress. Halting circular loop.`), { code: 'AGY_EXPLORATION_LOOP', period: cycle.period, laps: cycle.laps });
+                                            safeReject(error);
+                                            terminateChild();
+                                            return;
+                                        }
+                                        // 3. Stagnant read-only inspection runaway without mutations on an editing task
+                                        if (consecutiveInspections >= 30 && options.taskArchetype !== 'web_research_only') {
+                                            const error = Object.assign(new Error(`Antigravity performed ${consecutiveInspections} consecutive read-only inspections without writing or modifying code. Halting exploration loop.`), { code: 'AGY_EXPLORATION_LOOP', inspectionCount: consecutiveInspections });
+                                            safeReject(error);
+                                            terminateChild();
+                                            return;
+                                        }
+                                    }
+                                }
+                                if (newNativeAction && ++nativeActionStarts > maxNativeActions) {
+                                    // In autonomous mode, if the agent has made genuine progress recently
+                                    // (e.g. edits/mutations or productive steps within last 25 actions),
+                                    // dynamically expand the autonomous runway so serious tasks are not interrupted!
+                                    const hasRecentProgress = (nativeActionStarts - lastMutationActionIndex) <= 25 || progressiveActionsCount > 0;
+                                    if (isAutonomous && hasRecentProgress && maxNativeActions < 500) {
+                                        const extension = 50;
+                                        maxNativeActions += extension;
+                                        if (process.env.CAUSYNE_DEBUG === '1') {
+                                            console.log(`[AUTONOMY] Dynamically extended native action runway (+${extension} -> ${maxNativeActions} actions) due to active progress.`);
+                                        }
+                                    }
+                                    else {
+                                        const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`);
+                                        error.code = 'AGY_NATIVE_ACTION_BUDGET';
+                                        safeReject(error);
+                                        terminateChild();
+                                        return;
+                                    }
+                                }
                                 if (options.taskArchetype === 'media_3d_generation' && name) {
                                     if (newNativeAction) {
                                         const target = isReadOnlyNativeInspection(name, rawParams)
