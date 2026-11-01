@@ -447,6 +447,15 @@ export class TokenTracker {
     return { allowed: true, used: this.taskTokens, limit, projected };
   }
 
+  extendBudget(extraTokens: number): void {
+    if (this.budget && typeof this.budget === 'object') {
+      const current = Number(this.budget.maxTokensPerTask || 0);
+      if (current > 0) {
+        this.budget.maxTokensPerTask = Math.max(current + extraTokens, this.taskTokens + extraTokens);
+      }
+    }
+  }
+
   resetTask(): void {
     this.taskTokens = 0;
     this.taskCostUsd = 0;

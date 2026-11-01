@@ -238,3 +238,37 @@ process.stdin.on('end', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('autonomous runway: TokenTracker and UnifiedBudgetEnforcer dynamically expand runways', async () => {
+  const { TokenTracker } = await import('../src/tokenTracker.js');
+  const { UnifiedBudgetEnforcer } = await import('../src/providers/budgetEnforcer.js');
+
+  const tracker = new TokenTracker();
+  tracker.budget = { enabled: true, hardStop: true, maxTokensPerTask: 100_000 };
+  tracker.taskTokens = 90_000;
+  tracker.largestStepTokens = 20_000;
+
+  // 90k + 20k = 110k > 100k -> should be rejected before extension
+  const before = tracker.canAffordAnotherStep();
+  assert.equal(before.allowed, false);
+
+  // Extend budget dynamically
+  tracker.extendBudget(200_000);
+  assert.equal(tracker.budget.maxTokensPerTask, 300_000);
+  const after = tracker.canAffordAnotherStep();
+  assert.equal(after.allowed, true);
+
+  // Test UnifiedBudgetEnforcer dynamic momentum extension
+  const enforcer = new UnifiedBudgetEnforcer(100_000, 35);
+  for (let i = 0; i < 35; i++) {
+    enforcer.recordAction(`action_${i}`);
+  }
+  assert.equal(enforcer.getRemainingActions(), 0);
+
+  // Extend for autonomous momentum (+50 actions)
+  enforcer.extendForAutonomousMomentum(50, 500_000);
+  assert.equal(enforcer.getRemainingActions(), 50);
+  // Can now record further actions without throwing
+  enforcer.recordAction('action_36');
+  assert.equal(enforcer.getRemainingActions(), 49);
+});

@@ -150,6 +150,13 @@ test('toolPacks: reverse_engineering is registered in PACKS and routes on intent
   const unlocked = routePacks('Can you decompile this Mach-O binary and analyze its security mitigations?');
   assert.ok(unlocked.includes('reverse_engineering'));
 
+  // Must trigger when user explicitly mentions rea or an APK file
+  const reaPromptUnlocked = routePacks('/Users/example/Downloads/cn.wps.moffice_eng_26.10.0.apk using rea i want make applicattion similar like this analyze using rea');
+  assert.ok(reaPromptUnlocked.includes('reverse_engineering'), 'Must activate reverse_engineering pack on rea / .apk prompt');
+
+  const cleanRoomUnlocked = routePacks('build clean-room android app from this package');
+  assert.ok(cleanRoomUnlocked.includes('reverse_engineering'), 'Must activate reverse_engineering pack on clean-room');
+
   // Should NOT trigger on ordinary coding or web tasks
   const webUnlocked = routePacks('Create a modern React landing page with smooth animations');
   assert.ok(!webUnlocked.includes('reverse_engineering'));

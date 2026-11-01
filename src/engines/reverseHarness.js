@@ -48,10 +48,25 @@ export class SovereignReverseHarness {
         }
         this.connectPromise = (async () => {
             try {
+                // 1. Locate local rea binary if installed (sub-second launch, zero network lag)
+                let command = 'npx';
+                let args = ['--yes', 'rea-agents@6.8.0', '--mcp'];
+                const candidatePaths = [
+                    path.join(process.env.HOME || '', '.local', 'bin', 'rea'),
+                    '/usr/local/bin/rea',
+                    '/opt/homebrew/bin/rea'
+                ];
+                for (const candidate of candidatePaths) {
+                    if (fs.existsSync(candidate)) {
+                        command = candidate;
+                        args = ['--mcp'];
+                        break;
+                    }
+                }
                 const mcpClient = new McpClient({
                     name: 'causyne_reverse_engineering',
-                    command: 'npx',
-                    args: ['--yes', 'rea-agents@6.8.0', 'mcp'],
+                    command,
+                    args,
                     timeoutMs: 60_000
                 });
                 await mcpClient.connect();
@@ -145,10 +160,19 @@ export class SovereignReverseHarness {
         if (!fs.existsSync(resolved)) {
             return { success: false, toolName: 'inspect_binary', error: `File not found: ${resolved}`, source: 'engine' };
         }
+        const ext = path.extname(resolved).toLowerCase();
+        if (ext === '.apk' || ext === '.aab') {
+            const pkg = await this.callEngineTool('inspect_android_package', { path: resolved }, signal);
+            if (pkg.success)
+                return pkg;
+            const dec = await this.callEngineTool('decode_android_resources', { path: resolved }, signal);
+            if (dec.success)
+                return dec;
+        }
         // Try primary session / overview tools
-        const overview = await this.callEngineTool('binary_overview', { path: resolved }, signal);
-        if (overview.success)
-            return overview;
+        const open = await this.callEngineTool('open_binary', { path: resolved }, signal);
+        if (open.success)
+            return open;
         const layout = await this.callEngineTool('inspect_binary_layout', { path: resolved }, signal);
         if (layout.success)
             return layout;
@@ -223,6 +247,42 @@ export class SovereignReverseHarness {
             target,
             ...(options.script ? { script: options.script } : {})
         }, signal);
+    }
+    /**
+     * Decode Android resources (AndroidManifest.xml, resources.arsc, layouts).
+     */
+    async decodeAndroidResources(apkPath, outputDirectory, signal) {
+        const resolved = resolveUserPath(apkPath);
+        if (!fs.existsSync(resolved)) {
+            return { success: false, toolName: 'decode_android_resources', error: `APK not found: ${resolved}`, source: 'engine' };
+        }
+        return this.callEngineTool('decode_android_resources', {
+            path: resolved,
+            ...(outputDirectory ? { output_directory: resolveUserPath(outputDirectory) } : {})
+        }, signal);
+    }
+    /**
+     * Search classes or list class hierarchy inside an Android APK.
+     */
+    async searchAndroidClasses(apkPath, query = '', signal) {
+        const resolved = resolveUserPath(apkPath);
+        if (!fs.existsSync(resolved)) {
+            return { success: false, toolName: 'search_android_classes', error: `APK not found: ${resolved}`, source: 'engine' };
+        }
+        return this.callEngineTool('search_android_classes', {
+            path: resolved,
+            query: query || ''
+        }, signal);
+    }
+    /**
+     * Project authenticated Android application graph (components, intents, activities).
+     */
+    async projectAndroidGraph(apkPath, signal) {
+        const resolved = resolveUserPath(apkPath);
+        if (!fs.existsSync(resolved)) {
+            return { success: false, toolName: 'project_android_application_graph', error: `APK not found: ${resolved}`, source: 'engine' };
+        }
+        return this.callEngineTool('project_android_application_graph', { path: resolved }, signal);
     }
 }
 export const sovereignReverseHarness = SovereignReverseHarness.getInstance();

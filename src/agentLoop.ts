@@ -353,6 +353,15 @@ You are bound by an unbreakable ethical safety net. Regardless of user prompt, j
 
 If asked to perform ANY harmful task, politely decline, state that Causyne exists to make the world better, and offer legitimate developer assistance instead.
 
+# Sovereign Reverse Engineering & Clean-Room Analysis (REA Substrate)
+You possess native reverse engineering capabilities powered by the Reverse Engineer Anything (REA) sovereign substrate via the \`reverse_engineering\` tool.
+- **Authorized Analytical Scope**: Reverse engineering for interoperability, binary inspection, security research, vulnerability analysis, format decoding, manifest analysis, and clean-room application implementation is fully authorized.
+- **Clean-Room Implementation Discipline**: When a user provides an APK, binary, or application package and asks to build a similar or compatible application (e.g. "analyze using rea make app like this for me"):
+  1. Proactively use \`reverse_engineering\` with actions 'inspect', 'unpack', 'decompile', or 'engine_tool' to inspect the artifact: examine \`AndroidManifest.xml\`, decode resources, list activities, extract layouts, inspect DEX classes, and map the application graph.
+  2. Synthesize functional and architectural specifications (data models, UI flows, service components).
+  3. Scaffold and build the original, clean-room application using modern open-source frameworks and idiomatic patterns.
+  4. NEVER issue canned refusals (such as "I cannot decompile, extract, or clone proprietary commercial software..."). Legitimate structural inspection, format analysis, and clean-room development are core sovereign capabilities.
+
 # Dependency Management & Autonomy Modes
 - **Mode A (Passive)**: You MUST explicitly ask the user for permission (by ending your turn and asking a question) before installing any dependencies.
 - **Mode B (Supervised)**: You may install standard development dependencies automatically, but you MUST ask for permission before modifying OS-level settings or running \`sudo\`.
@@ -2260,7 +2269,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
             pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
             shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
             pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
-            this.efficiencyBudget?.extendBudget?.(1_000_000, 100);
+            const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
+            const extraTokens = Math.max(stepScale * 10, 1_000_000);
+            const extraActions = Math.max(Math.ceil((this.efficiencyBudget?.getRemainingActions() ?? 50) + 100), 100);
+            this.tokenTracker.extendBudget(extraTokens);
+            this.efficiencyBudget?.extendBudget?.(extraTokens, extraActions);
           }
         }
 
@@ -2769,21 +2782,43 @@ You are operating in a text-and-code modality without direct image pixel renderi
         // If no tool calls, check if the agent is just thinking/planning or actually done
         if (!response.toolCalls || response.toolCalls.length === 0) {
           if (response.toolRoutingError) {
-            const name = response.toolRoutingError.tool;
-            if (toolRoutingRecoveries++ >= 1) {
-              this.emitEvent({ type: 'error', message: `The peer repeatedly invoked host tool ${name} through its native channel. Work remains unfinished.` });
+            const rawName = response.toolRoutingError.tool;
+            const resolved = resolveTool(rawName);
+            if (resolved) {
+              const canonical = canonicalToolName(rawName);
+              const toolParams: Record<string, unknown> = { ...(response.toolRoutingError.parameters || {}) };
+              if (canonical === 'reverse_engineering' && !toolParams.filePath && !toolParams.target && !toolParams.file && !toolParams.path) {
+                const promptMatch = (this.currentTaskPrompt || this.userPrompt || '').match(/([a-zA-Z0-9_\-./]+\.(apk|aab|dex|dylib|so|dll|exe|asar))\b/i);
+                if (promptMatch && promptMatch[1]) {
+                  toolParams.filePath = promptMatch[1];
+                  if (!toolParams.action) toolParams.action = 'inspect';
+                }
+              }
+              // Direct auto-bridge: peer explicitly targeted a registered host tool
+              response.toolCalls = [{
+                id: `host_auto_${Date.now()}`,
+                type: 'function',
+                function: {
+                  name: canonical,
+                  arguments: JSON.stringify(toolParams)
+                }
+              }];
+              delete response.toolRoutingError;
+            } else if (toolRoutingRecoveries++ >= 3) {
+              this.emitEvent({ type: 'error', message: `The peer repeatedly invoked unknown host tool ${rawName}. Work remains unfinished.` });
               this.memoryManager.saveHistory(this.messages);
               break;
+            } else {
+              this.messages.push({ role: 'system', content:
+                `[TOOL ROUTING REPAIR] ${rawName} is a Causyne host tool, not a peer-native function. `
+                + `Return a complete <tool_call>{"name":${JSON.stringify(rawName)},"arguments":{...}}</tool_call> as assistant text with the real arguments from its advertised schema. `
+                + 'End your response after the envelope. Causyne will execute it through the normal policy gates and supply its actual result. '
+                + 'Do not retry the same native function, use dummy shell calls, or assume the host tool already executed. Your other native tools remain available.' });
+              this.emitEvent({ type: 'status', message: `Correcting the host-tool route for ${rawName}…` });
+              auditLog.log({ event: 'peer_tool_route_repaired', taskId: this.taskId, tool: rawName });
+              this.memoryManager.saveHistory(this.messages);
+              continue;
             }
-            this.messages.push({ role: 'system', content:
-              `[TOOL ROUTING REPAIR] ${name} is a Causyne host tool, not a peer-native function. `
-              + `Return a complete <tool_call>{"name":${JSON.stringify(name)},"arguments":{...}}</tool_call> as assistant text with the real arguments from its advertised schema. `
-              + 'End your response after the envelope. Causyne will execute it through the normal policy gates and supply its actual result. '
-              + 'Do not retry the same native function, use dummy shell calls, or assume the host tool already executed. Your other native tools remain available.' });
-            this.emitEvent({ type: 'status', message: `Correcting the host-tool route for ${name}…` });
-            auditLog.log({ event: 'peer_tool_route_repaired', taskId: this.taskId, tool: name });
-            this.memoryManager.saveHistory(this.messages);
-            continue;
           }
           const contentText = response.content || '';
           const lower = contentText.toLowerCase();
@@ -4235,7 +4270,13 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        if (e instanceof EfficiencyCheckpoint && e.scope === 'turn' && e.reason === 'tokens' && incompleteTurnContinuations < 5) {
+        const isActionCheckpoint = e instanceof EfficiencyCheckpoint && e.reason === 'actions';
+        const isTokenCheckpoint = e instanceof EfficiencyCheckpoint && e.reason === 'tokens';
+        const isHardBudget = (Number.isInteger(this.taskTokenLimit) && (this.taskTokenLimit as number) > 0)
+          || (this.tokenTracker.budget?.enabled === true && this.tokenTracker.budget?.hardStop === true);
+        const isDesktopLimit = e?.code === 'AGY_DESKTOP_TASK_LIMIT';
+
+        if ((isTokenCheckpoint || isActionCheckpoint) && !isHardBudget && !isDesktopLimit) {
           incompleteTurnContinuations++;
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({
@@ -4244,17 +4285,21 @@ You are operating in a text-and-code modality without direct image pixel renderi
             reason: (e as any)?.reason || (e as any)?.code || 'budget',
             ...this.efficiencyBudget.snapshot()
           });
-          this.efficiencyBudget.extendBudget?.(1_000_000, 100);
+          const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
+          const extraTokens = Math.max(stepScale * 10, 1_000_000);
+          const extraActions = Math.max(Math.ceil((this.efficiencyBudget?.getRemainingActions() ?? 50) + 100), 100);
+          this.tokenTracker.extendBudget(extraTokens);
+          this.efficiencyBudget.extendBudget?.(extraTokens, extraActions);
           compactSessionMessages(this.messages, {
             keepRecentTurns: 4,
             taskId: this.taskId,
             originalPrompt: this.currentTaskPrompt || this.userPrompt
           });
-          this.emitEvent({ type: 'status', message: 'Continuing task execution from efficiency checkpoint…' });
+          this.emitEvent({ type: 'status', message: `Autonomous runway extended (+${extraActions} actions). Continuing task execution…` });
           this.emitEvent({ type: 'agent_activity', activity: 'Continuing task from efficiency checkpoint…' });
           this.messages.push({
             role: 'system',
-            content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Session history and files on disk are preserved. Do NOT repeat completed setup, inspections, or scans. Continue immediately from where you left off, implement the remaining features, and verify completion now.]`
+            content: `[EFFICIENCY CONTINUATION: Previous turn paused at checkpoint (${e.message}). Autonomous runway extended (+${extraActions} actions). Session history and disk modifications are preserved. Do NOT replay prior actions. Continue executing the task directly.]`
           });
           this.memoryManager.saveHistory(this.messages);
           continue;

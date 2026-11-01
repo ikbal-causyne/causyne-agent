@@ -30,7 +30,10 @@ export type ReverseEngineeringAction =
   | 'trace'
   | 'status'
   | 'engine_tool'
-  | 'list_tools';
+  | 'list_tools'
+  | 'decode_resources'
+  | 'search_classes'
+  | 'graph';
 
 export interface BinaryMitigations {
   pie?: boolean | undefined;
@@ -69,6 +72,7 @@ export interface ReverseEngineeringParams {
   script?: string | undefined;
   toolName?: string | undefined;
   toolArgs?: Record<string, unknown> | undefined;
+  query?: string | undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,7 +322,7 @@ export const reverseEngineering = {
       properties: {
         action: {
           type: 'string',
-          enum: ['inspect', 'decompile', 'unpack', 'deobfuscate', 'trace', 'status', 'engine_tool', 'list_tools'],
+          enum: ['inspect', 'decompile', 'unpack', 'deobfuscate', 'trace', 'status', 'engine_tool', 'list_tools', 'decode_resources', 'search_classes', 'graph'],
           description: 'Reverse engineering action to perform.'
         },
         filePath: {
@@ -366,6 +370,10 @@ export const reverseEngineering = {
         toolArgs: {
           type: 'object',
           description: 'Arguments payload for engine_tool.'
+        },
+        query: {
+          type: 'string',
+          description: 'Class, method, or string search query for reverse engineering.'
         }
       },
       required: ['action']
@@ -373,8 +381,29 @@ export const reverseEngineering = {
   },
 
   async execute(args: Record<string, unknown>, context: { workspaceDir?: string; sessionId?: string; signal?: AbortSignal } = {}): Promise<Record<string, unknown>> {
-    const action = String(args['action'] || 'status') as ReverseEngineeringAction;
-    const rawPath = typeof args['filePath'] === 'string' ? args['filePath'] : undefined;
+    const rawPath = typeof args['filePath'] === 'string' ? args['filePath']
+      : typeof args['file'] === 'string' ? args['file']
+      : typeof args['path'] === 'string' ? args['path']
+      : typeof args['apk'] === 'string' ? args['apk']
+      : typeof args['binary'] === 'string' ? args['binary']
+      : (typeof args['target'] === 'string' && args['action'] !== 'trace' ? args['target'] : undefined);
+
+    let rawAction = typeof args['action'] === 'string' ? args['action']
+      : typeof args['operation'] === 'string' ? args['operation']
+      : typeof args['mode'] === 'string' ? args['mode']
+      : '';
+
+    if (!rawAction && (typeof args['toolName'] === 'string' || typeof args['engineTool'] === 'string')) {
+      rawAction = 'engine_tool';
+    }
+
+    if (['analyze', 'info', 'check', 'probe', 'inspect_package'].includes(rawAction)) rawAction = 'inspect';
+    if (['disassemble', 'disasm'].includes(rawAction)) rawAction = 'decompile';
+    if (['decode_resources', 'resources', 'decode'].includes(rawAction)) rawAction = 'decode_resources';
+    if (['search_classes', 'classes'].includes(rawAction)) rawAction = 'search_classes';
+    if (['graph', 'application_graph'].includes(rawAction)) rawAction = 'graph';
+
+    const action = (rawAction || (rawPath ? 'inspect' : 'status')) as ReverseEngineeringAction;
     const outputDir = typeof args['outputDir'] === 'string' ? args['outputDir'] : undefined;
     const functionName = typeof args['functionName'] === 'string' ? args['functionName'] : undefined;
     const address = typeof args['address'] === 'string' ? args['address'] : undefined;
@@ -424,7 +453,8 @@ export const reverseEngineering = {
           'Electron ASAR pickle header inspection & extraction',
           'JavaScript sourcemap recovery and route harvesting',
           'Dynamic runtime tracing and API observation',
-          'Headless MCP engine with 229 specialized reverse engineering tools'
+          'Headless MCP engine with 170+ specialized reverse engineering tools',
+          'Android APK resource decoding, class hierarchy & graph projection'
         ]
       };
     }
@@ -442,7 +472,7 @@ export const reverseEngineering = {
 
     // ── ACTION: ENGINE_TOOL ───────────────────────────────────────────────
     if (action === 'engine_tool') {
-      const toolName = typeof args['toolName'] === 'string' ? args['toolName'] : '';
+      const toolName = typeof args['toolName'] === 'string' ? args['toolName'] : typeof args['engineTool'] === 'string' ? args['engineTool'] : '';
       if (!toolName) {
         return { success: false, error: 'toolName parameter is required for action "engine_tool".' };
       }
@@ -465,7 +495,7 @@ export const reverseEngineering = {
       };
     }
 
-    // Require filePath for inspect, decompile, unpack, deobfuscate
+    // Require filePath for inspect, decompile, unpack, deobfuscate, decode_resources, search_classes, graph
     if (!rawPath && action !== 'trace') {
       return { success: false, error: `Action "${action}" requires a valid "filePath" parameter.` };
     }
@@ -473,6 +503,56 @@ export const reverseEngineering = {
     const resolvedFile = rawPath ? resolveUserPath(rawPath) : '';
     if (resolvedFile && !fs.existsSync(resolvedFile)) {
       return { success: false, error: `File not found: ${resolvedFile}` };
+    }
+
+    // ── ACTION: DECODE_RESOURCES ──────────────────────────────────────────
+    if (action === 'decode_resources') {
+      const res = await sovereignReverseHarness.decodeAndroidResources(resolvedFile, outputDir, context.signal);
+      const textOutput = res.output || (res.structuredContent ? JSON.stringify(res.structuredContent, null, 2) : res.error || '');
+      const stored = outputStore.processToolOutput(sessionId, `${callId}_decode_resources`, textOutput);
+      return {
+        success: res.success,
+        action: 'decode_resources',
+        filePath: resolvedFile,
+        preview: stored.contentForModel,
+        isTruncated: stored.isTruncated,
+        diskPath: stored.diskPath,
+        error: res.error
+      };
+    }
+
+    // ── ACTION: SEARCH_CLASSES ───────────────────────────────────────────
+    if (action === 'search_classes') {
+      const query = String(args['query'] || '');
+      const res = await sovereignReverseHarness.searchAndroidClasses(resolvedFile, query, context.signal);
+      const textOutput = res.output || (res.structuredContent ? JSON.stringify(res.structuredContent, null, 2) : res.error || '');
+      const stored = outputStore.processToolOutput(sessionId, `${callId}_search_classes`, textOutput);
+      return {
+        success: res.success,
+        action: 'search_classes',
+        filePath: resolvedFile,
+        query,
+        preview: stored.contentForModel,
+        isTruncated: stored.isTruncated,
+        diskPath: stored.diskPath,
+        error: res.error
+      };
+    }
+
+    // ── ACTION: GRAPH ─────────────────────────────────────────────────────
+    if (action === 'graph') {
+      const res = await sovereignReverseHarness.projectAndroidGraph(resolvedFile, context.signal);
+      const textOutput = res.output || (res.structuredContent ? JSON.stringify(res.structuredContent, null, 2) : res.error || '');
+      const stored = outputStore.processToolOutput(sessionId, `${callId}_graph`, textOutput);
+      return {
+        success: res.success,
+        action: 'graph',
+        filePath: resolvedFile,
+        preview: stored.contentForModel,
+        isTruncated: stored.isTruncated,
+        diskPath: stored.diskPath,
+        error: res.error
+      };
     }
 
     // ── ACTION: INSPECT ───────────────────────────────────────────────────
@@ -515,9 +595,27 @@ export const reverseEngineering = {
         } else if (headerBuf[0] === 0x00 && headerBuf[1] === 0x61 && headerBuf[2] === 0x73 && headerBuf[3] === 0x6d) {
           result.format = 'WebAssembly';
           result.architecture = 'wasm32 / wasm64';
-        } else if (headerBuf[0] === 0x50 && headerBuf[1] === 0x4b && headerBuf[2] === 0x03 && headerBuf[3] === 0x04) {
+        } else if (
+          (headerBuf[0] === 0x50 && headerBuf[1] === 0x4b && headerBuf[2] === 0x03 && headerBuf[3] === 0x04) ||
+          resolvedFile.toLowerCase().endsWith('.apk')
+        ) {
           result.format = 'APK/ZIP';
-          result.fileType = 'Compressed Archive / Package';
+          result.fileType = 'Android Application Package (APK)';
+          try {
+            const unzipList = await execFileAsync('unzip', ['-l', resolvedFile], { timeout: 15000 });
+            const lines = unzipList.stdout.split('\n');
+            const dexFiles = lines.filter(l => l.includes('.dex')).map(l => l.trim().split(/\s+/).pop());
+            const hasManifest = lines.some(l => l.includes('AndroidManifest.xml'));
+            const nativeLibs = lines.filter(l => l.includes('lib/')).slice(0, 15).map(l => l.trim().split(/\s+/).pop());
+            result.metadata = {
+              dexFiles,
+              hasManifest,
+              totalEntries: lines.length,
+              sampleNativeLibraries: nativeLibs
+            };
+          } catch {
+            // unzip fallback
+          }
         } else {
           const asar = parseAsarHeader(headerBuf);
           if (asar) {

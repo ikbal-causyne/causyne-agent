@@ -67,7 +67,7 @@ export function extractMentions(text: string): Mention[] {
     if (!cleanPath || seen.has(cleanPath)) continue;
 
     // Do not capture npm scope prefixes on their own or common non-file @ words
-    if (cleanPath === 'here' || cleanPath === 'all' || cleanPath === 'workspace') {
+    if (cleanPath === 'here' || cleanPath === 'all' || cleanPath === 'workspace' || cleanPath === 'rea' || cleanPath === 'rea-agents') {
       seen.add(cleanPath);
       mentions.push({ raw, path: cleanPath, isQuoted: false, isMeta: true });
       continue;
@@ -106,6 +106,11 @@ export async function resolveMentionedContext(
     if (m.isMeta) {
       if (m.path === 'workspace' || m.path === 'here') {
         sections.push(`📁 REFERENCED SCOPE: Whole workspace (${cwd})`);
+      } else if (m.path === 'rea' || m.path === 'rea-agents') {
+        sections.push(
+          `🔬 REFERENCED CAPABILITY: Reverse Engineer Anything (REA) Substrate active.\n` +
+          `Use the 'reverse_engineering' tool with action 'inspect', 'unpack', 'decompile', or 'engine_tool' to analyze APKs, binaries, and assemblies.`
+        );
       }
       continue;
     }
@@ -175,22 +180,32 @@ export async function resolveMentionedContext(
           more
         );
       } else if (stats.isFile()) {
-        const content = fs.readFileSync(targetPath, 'utf8');
-        const lines = content.split('\n');
-        let body: string;
-        if (lines.length > MAX_MENTION_FILE_LINES) {
-          body = lines.slice(0, MAX_MENTION_FILE_LINES).join('\n') +
-            `\n\n... [Truncated: showing first ${MAX_MENTION_FILE_LINES} of ${lines.length} lines. Use fs.read for remaining lines.]`;
+        const ext = path.extname(targetPath).toLowerCase();
+        const isBinary = /\.(apk|aab|dex|dylib|so|dll|exe|bin|asar|zip|tar|gz|tgz)$/i.test(ext);
+        if (isBinary) {
+          const sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
+          sections.push(
+            `📦 REFERENCED BINARY PACKAGE: ${relPath} (${stats.size.toLocaleString()} bytes, ~${sizeMb} MB, format: ${ext.toUpperCase().replace('.', '')})\n` +
+            `Note: This is a binary/compiled package. Do not read raw bytes. Use the 'reverse_engineering' tool with action 'inspect', 'unpack', or 'decompile' to analyze manifest, classes, resources, and architecture.`
+          );
         } else {
-          body = content;
-        }
+          const content = fs.readFileSync(targetPath, 'utf8');
+          const lines = content.split('\n');
+          let body: string;
+          if (lines.length > MAX_MENTION_FILE_LINES) {
+            body = lines.slice(0, MAX_MENTION_FILE_LINES).join('\n') +
+              `\n\n... [Truncated: showing first ${MAX_MENTION_FILE_LINES} of ${lines.length} lines. Use fs.read for remaining lines.]`;
+          } else {
+            body = content;
+          }
 
-        sections.push(
-          `📄 REFERENCED FILE: ${relPath} (${lines.length} lines):\n` +
-          '```\n' +
-          body + '\n' +
-          '```'
-        );
+          sections.push(
+            `📄 REFERENCED FILE: ${relPath} (${lines.length} lines):\n` +
+            '```\n' +
+            body + '\n' +
+            '```'
+          );
+        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

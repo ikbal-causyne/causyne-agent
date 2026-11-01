@@ -93,6 +93,12 @@ export class UnifiedBudgetEnforcer {
     this.maxTurnActions = Math.max(this.maxTurnActions, this.actions + extraActions);
   }
 
+  extendForAutonomousMomentum(actionCount = 50, tokenCount = 500_000): void {
+    this.maxTurnActions = Math.max(this.maxTurnActions, this.actions + actionCount);
+    this.maxTurnTokens = Math.max(this.maxTurnTokens, tokenCount);
+    this.maxTaskTokens = Math.max(this.maxTaskTokens, this.tokens + tokenCount);
+  }
+
   recordUsage(usage: BudgetUsage): void {
     const fresh = noncachedTokens(usage);
     this.tokens += fresh;

@@ -487,7 +487,15 @@ export class AcpProvider extends LLMProvider {
               if (isInvalidPseudoTool) {
                 const requested = typeof input.tool === 'string' ? input.tool : '';
                 if (!this.toolRoutingError && requested && normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === requested)) {
-                  this.toolRoutingError = { tool: requested, message: 'Host tool requested through the peer-native channel' };
+                  const rawArgs = (input.args && typeof input.args === 'object') ? input.args
+                    : (input.parameters && typeof input.parameters === 'object') ? input.parameters
+                    : (earlier?.parameters && typeof earlier.parameters === 'object') ? earlier.parameters
+                    : undefined;
+                  this.toolRoutingError = {
+                    tool: requested,
+                    message: typeof input.error === 'string' ? input.error : 'Host tool requested through the peer-native channel',
+                    parameters: rawArgs
+                  };
                   client.notifyCancel(sessionId);
                 }
                 this.liveFileActions.delete(id);

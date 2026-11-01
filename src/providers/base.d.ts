@@ -48,7 +48,7 @@ export interface ChatResponse {
   reasoningContent?: string | undefined;
   thinkingBlocks?: any[] | undefined;
   externalActions?: ChatResponseAction[] | undefined;
-  toolRoutingError?: { tool: string; message: string } | undefined;
+  toolRoutingError?: { tool: string; message: string; parameters?: Record<string, unknown> | undefined } | undefined;
   incompleteTurn?: boolean | undefined;
 }
 
