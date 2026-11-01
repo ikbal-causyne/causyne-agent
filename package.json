@@ -54,14 +54,14 @@
     "url": "https://github.com/ikbal-causyne/causyne-agent/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/client": "^2.4.0",
     "acorn-walk": "^8.3.5",
     "commander": "^11.1.0"
   },
   "devDependencies": {
     "@babel/parser": "^8.0.7",
-    "@modelcontextprotocol/node": "2.1.1",
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "@types/node": "^22.20.2",
     "acorn": "^8.18.0",
     "typescript": "^7.0.2",
