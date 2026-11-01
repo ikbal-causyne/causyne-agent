@@ -291,9 +291,13 @@ if [ -x "\$HOME/.causyne/runtime/node/bin/node" ]; then
 elif [ -d "${active_node_dir}" ]; then
   export PATH="${active_node_dir}:\$PATH"
 fi
+for nvm_node in "\$HOME/.nvm/versions/node"/v*/bin; do
+  if [ -d "\$nvm_node" ]; then
+    export PATH="\$nvm_node:\$PATH"
+  fi
+done
 export PATH="\$PATH:/opt/homebrew/bin:/usr/local/bin"
 export CAUSYNE_INSTALL_ROOT="\$INSTALL_ROOT"
-export CAUSYNE_NPM_COMMAND="npm"
 if [ -f "\$INSTALL_ROOT/lib/node_modules/@causyne/agent/bin/causyne.js" ]; then
   exec node "\$INSTALL_ROOT/lib/node_modules/@causyne/agent/bin/causyne.js" "\$@"
 elif [ -f "\$INSTALL_ROOT/node_modules/@causyne/agent/bin/causyne.js" ]; then

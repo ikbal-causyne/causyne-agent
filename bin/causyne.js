@@ -8,7 +8,13 @@ try {
   const { startUpdateChecker } = await import('../src/autoUpdate.js');
   const update = await startUpdateChecker();
   if (update && update.updated) {
-    process.stderr.write(`Causyne updated to ${update.latest}. Starting the new version.\n`);
+    process.stderr.write(`Causyne Agent updated to ${update.latest}. Restarting...\n`);
+    const { spawnSync } = await import('node:child_process');
+    const child = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: 'inherit',
+      env: process.env
+    });
+    process.exit(child.status ?? 0);
   }
   await import('../src/entrypoint.js');
 } catch (error) {

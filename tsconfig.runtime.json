@@ -185,7 +185,8 @@
     "src/tokenTracker.ts",
     "src/tools/generateMediaViaApi.ts",
     "src/tools/deferredMcpSearch.ts",
-    "src/browser/workspacePreview.ts"
+    "src/browser/workspacePreview.ts",
+    "src/autoUpdate.ts"
   ],
   "exclude": [
     "node_modules",
