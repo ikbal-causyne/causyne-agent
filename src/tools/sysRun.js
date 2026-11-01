@@ -41,7 +41,7 @@ export function cleanSubprocessOutput(str) {
  * Commands whose exit code 1 indicates a normal query result (e.g. no matches found,
  * differences found, or condition evaluated to false) rather than a system error.
  */
-export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test|which|cmp|find|pidof|pgrep)(\s|$)/;
+export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test|which|where|cmp|find|pidof|pgrep)(\s|$)/;
 /**
  * Resolves an enriched environment for subprocess execution with full toolchain
  * awareness. Automatically discovers Android SDK, Homebrew, local user binaries,
@@ -338,7 +338,7 @@ export const sysRun = {
                     resolve(res);
                 }
                 else if (exitCode === 1 && !/[;&<>`$\r\n]/.test(rawCommand) && !rawCommand.includes('||')
-                    && /(?:^|\s)(grep|egrep|fgrep|diff|test|which|cmp|pidof|pgrep)\b/.test(rawCommand.split('|').at(-1)?.trim() || '')) {
+                    && /(?:^|\s)(grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep)\b/.test(rawCommand.split('|').at(-1)?.trim() || '')) {
                     // Semantic Exit Code Normalization: POSIX search tool found 0 matching lines.
                     const res = {
                         success: true,
