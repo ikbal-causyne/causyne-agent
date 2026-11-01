@@ -1539,10 +1539,19 @@ export class AntigravityProvider extends LLMProvider {
 
         const completedNativeActions = nativeActions.filter((a: ChatResponseAction) => a.status === 'completed');
 
-        if (!content && completedNativeActions.length > 0) {
-          content = `Antigravity completed: ${completedNativeActions
-            .map((a: ChatResponseAction) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
-            .join(', ')}`;
+        if (!content && toolCalls.length === 0 && deniedActions.length === 0) {
+          const anyActions = completedNativeActions.length > 0
+            ? completedNativeActions
+            : nativeActions.length > 0
+              ? nativeActions
+              : attemptedNativeTools;
+          if (anyActions.length > 0) {
+            content = `Antigravity executed: ${anyActions
+              .map((a: any) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`)
+              .join(', ')}`;
+          } else if (rawContent.trim()) {
+            content = rawContent.trim();
+          }
         }
 
         const usageIsReported = finalResultObj?.usage?.input_tokens != null
@@ -1663,17 +1672,25 @@ export class AntigravityProvider extends LLMProvider {
         if (options.signal?.aborted || err?.name === 'AbortError') {
           throw err;
         }
-        if (err?.code === 'PROVIDER_NO_PROGRESS') throw err;
-        if (err?.partialUsage?.promptTokens + err?.partialUsage?.completionTokens > 0) {
+        if (err?.code === 'AGY_NATIVE_ACTION_DENIED' || err?.code === 'AGY_TOKEN_BUDGET' || err?.code === 'PROVIDER_NO_PROGRESS') {
           throw err;
         }
+        const msg = String(err?.message || '').toLowerCase();
+        const isTransient = this._isTransientError(msg)
+          || err?.code === 'PROVIDER_EMPTY_RESPONSE'
+          || msg.includes('returned no response')
+          || msg.includes('connection reset')
+          || msg.includes('econnreset')
+          || msg.includes('socket hang up')
+          || msg.includes('streamgeneratecontent');
         const canRetryResetConversation =
           hadConversation && !this.currentConversationId
           && (err as any)?.code !== 'AGY_NATIVE_ACTION_DENIED'
           && (err as any)?.code !== 'AGY_TOKEN_BUDGET';
-        if (attempt < maxRetries && (this._isTransientError(err.message) || canRetryResetConversation)) {
+        if (attempt < maxRetries && (isTransient || canRetryResetConversation)) {
           attempt++;
-          const delay = attempt * 1200;
+          this.currentConversationId = null;
+          const delay = Math.min(attempt * 1200, 3000);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }

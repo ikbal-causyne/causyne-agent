@@ -1744,6 +1744,7 @@ export class AgentLoop {
         let planHandoffRecoveries = 0;
         let incompleteTurnContinuations = 0;
         let toolRoutingRecoveries = 0;
+        let emptyResponseRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
         while (!this.stopRequested) {
             if (this.stopRequested) {
@@ -4032,6 +4033,26 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     }
                     this.emitEvent({ type: 'error', message: 'The provider continued read-only inspection after a corrective checkpoint. The task remains unfinished; no edit was verified.' });
                     break;
+                }
+                if (e?.code === 'PROVIDER_EMPTY_RESPONSE'
+                    || (typeof e?.message === 'string' && e.message.includes('returned no response'))) {
+                    if (emptyResponseRecoveries++ < 5) {
+                        this.emitEvent({
+                            type: 'notice',
+                            message: `Peer connection was interrupted or returned no response (${emptyResponseRecoveries}/5). Auto-reconnecting session and resuming task…`
+                        });
+                        auditLog.log({ event: 'peer_empty_response_recovery', taskId: this.taskId, attempt: emptyResponseRecoveries, error: e.message });
+                        const planNotice = this._implementationPlan?.length > 0
+                            ? ` Active plan has ${this._implementationPlan.filter((s) => s.status === 'completed' || s.completed).length}/${this._implementationPlan.length} steps completed.`
+                            : '';
+                        this.messages.push({
+                            role: 'system',
+                            content: `[RECONNECTION RECOVERY: The previous peer turn disconnected or returned no response.${planNotice} Disk files and modifications are preserved. Do NOT repeat completed work. Continue executing the next unfinished step of the task directly.]`
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        await this.backoff(emptyResponseRecoveries);
+                        continue;
+                    }
                 }
                 if (this.stopRequested || this.abortController?.signal?.aborted || e?.name === 'AbortError') {
                     this.debugLog(`agent loop interrupted: ${e?.message || 'aborted'}`);

@@ -630,3 +630,64 @@ test('AgentLoop extracts reasoning Plan checklists and todowrite updates into si
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('AgentLoop automatically reconnects and continues when peer returns empty response mid-task', async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-reconnect-test-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: Array<{ type: string; message?: string }> = [];
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'reconnect-test-id',
+      'Build Android Theme',
+      { workspaceRoot: workspace, autonomyMode: 'C' }
+    );
+    let calls = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async (messages: any[]) => {
+        calls++;
+        if (calls === 1) {
+          return {
+            content: 'Created plan for theme files.',
+            usage: { promptTokens: 50, completionTokens: 25 },
+            toolCalls: [{
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'update_plan', arguments: JSON.stringify({ steps: [{ step: 'Create Theme.kt', status: 'completed' }] }) }
+            }]
+          };
+        }
+        if (calls === 2) {
+          // Simulate transient peer disconnection / empty response mid-task (the exact user bug)
+          throw Object.assign(new Error('Antigravity returned no response.'), {
+            code: 'PROVIDER_EMPTY_RESPONSE',
+            partialUsage: { promptTokens: 60, completionTokens: 10 }
+          });
+        }
+        // Call 3: After auto-reconnection, finishes the task cleanly
+        return {
+          content: 'I have finished writing the Theme.kt and verified all plan steps.',
+          usage: { promptTokens: 70, completionTokens: 30 }
+        };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+    loop.backoff = () => Promise.resolve();
+
+    await loop.run();
+
+    assert.equal(calls, 3, 'loop must auto-reconnect and continue rather than dying on empty response');
+    assert.equal(events.some((e) => e.type === 'notice' && e.message?.includes('Auto-reconnecting session and resuming task')), true);
+    assert.equal(events.some((e) => e.type === 'task_complete'), true);
+    assert.equal(events.some((e) => e.type === 'error' && e.message === 'Antigravity returned no response.'), false);
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
