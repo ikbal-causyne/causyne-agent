@@ -167,6 +167,44 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     }
   }
 
+  // 3. Discover JAVA_HOME across Homebrew, macOS JVMs, Linux, and Windows
+  if (!env.JAVA_HOME) {
+    const javaCandidates = [
+      '/opt/homebrew/opt/openjdk@17',
+      '/opt/homebrew/opt/openjdk@21',
+      '/opt/homebrew/opt/openjdk',
+      '/usr/local/opt/openjdk@17',
+      '/usr/local/opt/openjdk@21',
+      '/usr/local/opt/openjdk',
+      '/usr/lib/jvm/java-17-openjdk-amd64',
+      '/usr/lib/jvm/java-17-openjdk',
+      '/usr/lib/jvm/java-21-openjdk-amd64',
+      '/usr/lib/jvm/default-java',
+      'C:\\Program Files\\Java\\jdk-17',
+      'C:\\Program Files\\Java\\jdk-21'
+    ];
+    const macJvmRoot = '/Library/Java/JavaVirtualMachines';
+    if (fs.existsSync(macJvmRoot)) {
+      try {
+        const jvms = fs.readdirSync(macJvmRoot).filter(d => !d.startsWith('.')).sort().reverse();
+        for (const jvm of jvms) {
+          javaCandidates.unshift(path.join(macJvmRoot, jvm, 'Contents', 'Home'));
+        }
+      } catch {}
+    }
+
+    for (const jDir of javaCandidates) {
+      if (jDir && fs.existsSync(jDir)) {
+        env.JAVA_HOME = jDir;
+        break;
+      }
+    }
+  }
+
+  if (env.JAVA_HOME) {
+    addIfMissing(path.join(env.JAVA_HOME, 'bin'), false);
+  }
+
   const enrichedPath = pathParts.join(path.delimiter);
   env[pathKey] = enrichedPath;
   if (process.platform === 'win32') {
@@ -176,6 +214,28 @@ export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     env.PATH = enrichedPath;
   }
   return env;
+}
+
+/**
+ * Determines whether the terminal command in a pipeline, compound statement,
+ * or shell wrapper is a search/inspection tool whose exit code 1 represents
+ * zero matches rather than a failure.
+ */
+export function isFinalCommandSearch(rawCommand: string): boolean {
+  if (rawCommand.includes('||')) return false;
+
+  const statements = rawCommand.split(/&&|;/);
+  let lastStmt = statements.at(-1)?.trim() || '';
+
+  const subshellMatch = lastStmt.match(/(?:(?:adb\s+(?:-s\s+\S+\s+)?shell|ssh\s+\S+|sh\s+-c|bash\s+-c)\s+["'])(.+?)(?:["']\s*[\)]*\s*$)/);
+  if (subshellMatch && subshellMatch[1]) {
+    lastStmt = subshellMatch[1].trim();
+  }
+
+  const pipeParts = lastStmt.split('|');
+  const finalCmd = pipeParts.at(-1)?.trim().replace(/["'\)\s]+$/, '') || '';
+
+  return /(?:^|\s)(grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep|find)\b/.test(finalCmd);
 }
 
 /**
@@ -231,7 +291,7 @@ export const sysRun = {
   schema: {
     name: 'sysRun',
     description:
-      'Execute a shell command. CRITICAL CONSTRAINTS: 1. NEVER use interactive flags (like git rebase -i). 2. Always use non-interactive flags (--yes, -y). 3. If running git commit, always run git status, git diff, and git log first.',
+      'Execute a shell command. Environment is automatically enriched with PATH for Android SDK (adb, emulator), Java (JAVA_HOME), and local developer tools (no manual export needed). CRITICAL CONSTRAINTS: 1. NEVER use interactive flags (like git rebase -i). 2. Always use non-interactive flags (--yes, -y). 3. If running git commit, always run git status, git diff, and git log first.',
     parameters: {
       type: 'object',
       properties: {
@@ -402,9 +462,8 @@ export const sysRun = {
             });
           }
           resolve(res);
-        } else if (exitCode === 1 && !/[;&<>`$\r\n]/.test(rawCommand) && !rawCommand.includes('||')
-          && /(?:^|\s)(grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep)\b/.test(rawCommand.split('|').at(-1)?.trim() || '')) {
-          // Semantic Exit Code Normalization: POSIX search tool found 0 matching lines.
+        } else if (exitCode === 1 && isFinalCommandSearch(rawCommand)) {
+          // Semantic Exit Code Normalization: Search tool found 0 matching lines.
           const res: SysRunResult = {
             success: true,
             output: cleanOutput || '(no matches found)',

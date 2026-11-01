@@ -21,7 +21,7 @@ Diagnose runtime issues, stream-install APKs, launch activities, and capture cra
    - **Done when:** `adb install` output explicitly returns `Performing Streamed Install` and `Success`.
 
 3. Launch and verify foreground Activity lifecycle.
-   - Run `adb -s <serial> shell am start -n <package>/<activity>`.
+   - Run `adb -s <serial> shell am start -W -n <package>/<activity>`. The `-W` flag forces the ActivityManager to wait until launch and foreground resume are complete before returning, eliminating timing race conditions.
    - Do not rely on chaining `sleep && pidof` in compound expressions, as timing differences cause exit code 1. Instead, query the activity manager directly:
      `adb -s <serial> shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity"`
    - Confirm the target activity matches the resumed activity record.
