@@ -967,6 +967,10 @@ export class AgentLoop {
     let universalSkillsContext = '';
     try {
       const detectedDomains = detectWorkspaceDomains(this.workspaceRoot);
+      const promptText = (this.taskPrompt || '').toLowerCase();
+      if (!detectedDomains.includes('android') && /\b(android|apk|adb|emulator|gradle|gradlew|compose|kotlin)\b/i.test(promptText)) {
+        detectedDomains.push('android');
+      }
       if (detectedDomains.length > 0) {
         this.debugLog(`detected workspace domains: ${detectedDomains.join(', ')}`);
         for (const domain of detectedDomains) {

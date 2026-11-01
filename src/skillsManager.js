@@ -120,6 +120,27 @@ export function detectWorkspaceDomains(workspaceRoot) {
     }
   }
 
+  // Shallow check of immediate subdirectories for Android projects located in subfolders
+  if (!detectedDomains.includes('android')) {
+    try {
+      const entries = fs.readdirSync(workspaceRoot, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules' && entry.name !== 'Library') {
+          const subDir = path.join(workspaceRoot, entry.name);
+          if (fs.existsSync(path.join(subDir, 'build.gradle')) ||
+              fs.existsSync(path.join(subDir, 'build.gradle.kts')) ||
+              fs.existsSync(path.join(subDir, 'gradlew')) ||
+              fs.existsSync(path.join(subDir, 'app/build.gradle')) ||
+              fs.existsSync(path.join(subDir, 'app/build.gradle.kts')) ||
+              fs.existsSync(path.join(subDir, 'app/src/main/AndroidManifest.xml'))) {
+            detectedDomains.push('android');
+            break;
+          }
+        }
+      }
+    } catch (e) { /* unreadable directory is simply skipped */ }
+  }
+
   for (const domain of UNIVERSAL_DOMAINS) {
     if (!detectedDomains.includes(domain)) detectedDomains.push(domain);
   }

@@ -11,7 +11,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { isLaunchOnlyPrompt, isServerLaunchCommand } from '../launchIntent.js';
 
 export interface SysRunArgs {
@@ -81,7 +83,84 @@ export function cleanSubprocessOutput(str: string): string {
  * Commands whose exit code 1 indicates a normal query result (e.g. no matches found,
  * differences found, or condition evaluated to false) rather than a system error.
  */
-export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test|which|cmp|find)(\s|$)/;
+export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test|which|cmp|find|pidof|pgrep)(\s|$)/;
+
+/**
+ * Resolves an enriched environment for subprocess execution with full toolchain
+ * awareness. Automatically discovers Android SDK, Homebrew, local user binaries,
+ * and language runtimes so ADB, emulator, and build tools function out-of-the-box.
+ */
+export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...(baseEnv || process.env) };
+
+  // 1. Discover ANDROID_HOME / ANDROID_SDK_ROOT across standard platform locations
+  if (!env.ANDROID_HOME && !env.ANDROID_SDK_ROOT) {
+    const candidateDirs = [
+      path.join(os.homedir(), 'Library', 'Android', 'sdk'), // macOS
+      path.join(os.homedir(), 'Android', 'Sdk'),           // Linux
+      '/usr/lib/android-sdk',                              // Linux package
+      path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk') // Windows
+    ];
+    for (const dir of candidateDirs) {
+      if (dir && fs.existsSync(dir)) {
+        env.ANDROID_HOME = dir;
+        env.ANDROID_SDK_ROOT = dir;
+        break;
+      }
+    }
+  } else if (!env.ANDROID_HOME && env.ANDROID_SDK_ROOT) {
+    env.ANDROID_HOME = env.ANDROID_SDK_ROOT;
+  } else if (env.ANDROID_HOME && !env.ANDROID_SDK_ROOT) {
+    env.ANDROID_SDK_ROOT = env.ANDROID_HOME;
+  }
+
+  // 2. Build enriched PATH including dev tools, package managers, and Android toolchains
+  const currentPath = env.PATH || '';
+  const pathParts = currentPath.split(path.delimiter).filter(Boolean);
+  const addIfMissing = (dir: string) => {
+    if (dir && fs.existsSync(dir) && !pathParts.includes(dir)) {
+      pathParts.unshift(dir);
+    }
+  };
+
+  // Node runtime directory
+  if (process.execPath) {
+    addIfMissing(path.dirname(process.execPath));
+  }
+
+  // Local user binaries (where Google's official android CLI lives)
+  addIfMissing(path.join(os.homedir(), '.local', 'bin'));
+
+  // Package managers and developer toolchains
+  addIfMissing('/opt/homebrew/bin');
+  addIfMissing('/opt/homebrew/sbin');
+  addIfMissing('/usr/local/bin');
+  addIfMissing(path.join(os.homedir(), '.cargo', 'bin'));
+
+  // Android SDK binaries
+  const androidHome = env.ANDROID_HOME;
+  if (androidHome && fs.existsSync(androidHome)) {
+    addIfMissing(path.join(androidHome, 'platform-tools'));
+    addIfMissing(path.join(androidHome, 'cmdline-tools', 'latest', 'bin'));
+    addIfMissing(path.join(androidHome, 'emulator'));
+    addIfMissing(path.join(androidHome, 'tools', 'bin'));
+    addIfMissing(path.join(androidHome, 'tools'));
+
+    const buildToolsDir = path.join(androidHome, 'build-tools');
+    if (fs.existsSync(buildToolsDir)) {
+      try {
+        const versions = fs.readdirSync(buildToolsDir).filter(v => !v.startsWith('.')).sort();
+        const latest = versions.at(-1);
+        if (latest) {
+          addIfMissing(path.join(buildToolsDir, latest));
+        }
+      } catch {}
+    }
+  }
+
+  env.PATH = pathParts.join(path.delimiter);
+  return env;
+}
 
 /**
  * Commands that are strictly read-only and idempotent.
@@ -197,6 +276,7 @@ export const sysRun = {
         child = spawn(shell, shellArgs, {
           cwd,
           signal,
+          env: getEnhancedEnv(),
           ...(os.platform() === 'win32' ? { windowsVerbatimArguments: true } : {})
         });
       } catch (err: unknown) {
@@ -307,7 +387,7 @@ export const sysRun = {
           }
           resolve(res);
         } else if (exitCode === 1 && !/[;&<>`$\r\n]/.test(rawCommand) && !rawCommand.includes('||')
-          && /^(grep|egrep|fgrep|diff|test|which|cmp)\b/.test(rawCommand.split('|').at(-1)?.trim() || '')) {
+          && /(?:^|\s)(grep|egrep|fgrep|diff|test|which|cmp|pidof|pgrep)\b/.test(rawCommand.split('|').at(-1)?.trim() || '')) {
           // Semantic Exit Code Normalization: POSIX search tool found 0 matching lines.
           const res: SysRunResult = {
             success: true,
@@ -326,10 +406,14 @@ export const sysRun = {
           }
           resolve(res);
         } else {
+          let errorMsg = `Command exited with code ${exitCode}`;
+          if (cleanOutput.includes('more than one device/emulator')) {
+            errorMsg = 'adb failed: multiple devices/emulators connected. Pass `-s <serial>` (e.g. `adb -s emulator-5554 ...`) or set `export ANDROID_SERIAL=<serial>`.';
+          }
           if (signal && signal.aborted) {
             resolve({ success: false, output: cleanOutput, error: 'Process killed by user.', exitCode: 1 });
           } else {
-            resolve({ success: false, output: cleanOutput, error: `Command exited with code ${exitCode}`, exitCode });
+            resolve({ success: false, output: cleanOutput, error: errorMsg, exitCode });
           }
         }
       });
@@ -363,6 +447,7 @@ export const sysRunBg = {
           cwd,
           detached: true,
           stdio: 'ignore',
+          env: getEnhancedEnv(),
           ...(os.platform() === 'win32' ? { windowsVerbatimArguments: true } : {})
         });
         child.once('error', error => resolve({ success: false, error: error.message }));
