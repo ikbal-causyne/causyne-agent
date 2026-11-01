@@ -4270,13 +4270,12 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        const isActionCheckpoint = e instanceof EfficiencyCheckpoint && e.reason === 'actions';
-        const isTokenCheckpoint = e instanceof EfficiencyCheckpoint && e.reason === 'tokens';
+        const isTokenCheckpoint = e instanceof EfficiencyCheckpoint && e.scope === 'turn' && e.reason === 'tokens';
         const isHardBudget = (Number.isInteger(this.taskTokenLimit) && (this.taskTokenLimit as number) > 0)
           || (this.tokenTracker.budget?.enabled === true && this.tokenTracker.budget?.hardStop === true);
         const isDesktopLimit = e?.code === 'AGY_DESKTOP_TASK_LIMIT';
 
-        if ((isTokenCheckpoint || isActionCheckpoint) && !isHardBudget && !isDesktopLimit) {
+        if (isTokenCheckpoint && !isHardBudget && !isDesktopLimit && incompleteTurnContinuations < 5) {
           incompleteTurnContinuations++;
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({
