@@ -111,9 +111,12 @@ const CATALOGUE = {
         game_data_forge: 'item and enemy data JSON',
         game_web_runtime_inspector: 'headless runtime error gate',
         game_canvas_audit: 'canvas render audit'
+    },
+    reverse_engineering: {
+        reverse_engineering: 'binary inspection, decompile, ASAR/bundle unpack, deobfuscate'
     }
 };
-const GROUP_ORDER = ['core', 'system', 'web', 'media', 'advanced', 'game'];
+const GROUP_ORDER = ['core', 'system', 'web', 'media', 'advanced', 'game', 'reverse_engineering'];
 const CURATED_NAMES = new Set(GROUP_ORDER.flatMap((group) => Object.keys(CATALOGUE[group])));
 /** All registered plugin and MCP IDs remain discoverable; only their hints are shortened. */
 export const MAX_CUSTOM_TOOLS = Number.POSITIVE_INFINITY;

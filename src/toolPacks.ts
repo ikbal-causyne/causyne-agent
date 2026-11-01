@@ -17,7 +17,7 @@
 // already normalised to underscores (see tools/registry.js TOOL_DEFINITIONS).
 // ---------------------------------------------------------------------------
 
-export type PackName = 'game' | 'web' | 'media' | 'system' | 'advanced';
+export type PackName = 'game' | 'web' | 'media' | 'system' | 'advanced' | 'reverse_engineering';
 
 export interface WorkspaceRoutingContext {
   framework?: string | null | undefined;
@@ -138,6 +138,9 @@ export const PACKS: Record<PackName, string[]> = {
     'code_search_ast',
     'code_list_symbols',
     'pdf_read'
+  ],
+  reverse_engineering: [
+    'reverse_engineering'
   ]
 };
 
@@ -373,12 +376,15 @@ const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|
 
 const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 
+const REVERSE_ENGINEERING_INTENT = /\b(decompile|disassemble|binary|binaries|apk|dex|elf|mach-o|pe|coff|reverse engineer|reverse-engineering|reverse_engineering|sourcemap|deobfuscate|asar|symbols|ghidra|rizin|radare|hopper|frida|hook script|mitigations|pie|canary)\b/i;
+
 const INTENT_MATCHERS: Record<PackName, RegExp> = {
   game: GAME_INTENT,
   web: WEB_INTENT,
   media: MEDIA_INTENT,
   system: SYSTEM_INTENT,
-  advanced: ADVANCED_INTENT
+  advanced: ADVANCED_INTENT,
+  reverse_engineering: REVERSE_ENGINEERING_INTENT
 };
 
 /** True when the prompt genuinely describes game development work. */

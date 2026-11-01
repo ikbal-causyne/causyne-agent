@@ -112,6 +112,9 @@ export const PACKS = {
         'code_search_ast',
         'code_list_symbols',
         'pdf_read'
+    ],
+    reverse_engineering: [
+        'reverse_engineering'
     ]
 };
 export const PACK_NAMES = Object.keys(PACKS);
@@ -328,12 +331,14 @@ const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homep
 const MEDIA_INTENT = /\b(image|images|picture|photo|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
 const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
 const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
+const REVERSE_ENGINEERING_INTENT = /\b(decompile|disassemble|binary|binaries|apk|dex|elf|mach-o|pe|coff|reverse engineer|reverse-engineering|reverse_engineering|sourcemap|deobfuscate|asar|symbols|ghidra|rizin|radare|hopper|frida|hook script|mitigations|pie|canary)\b/i;
 const INTENT_MATCHERS = {
     game: GAME_INTENT,
     web: WEB_INTENT,
     media: MEDIA_INTENT,
     system: SYSTEM_INTENT,
-    advanced: ADVANCED_INTENT
+    advanced: ADVANCED_INTENT,
+    reverse_engineering: REVERSE_ENGINEERING_INTENT
 };
 /** True when the prompt genuinely describes game development work. */
 export function isGameIntent(prompt) {

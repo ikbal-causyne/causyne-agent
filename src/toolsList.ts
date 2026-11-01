@@ -15,7 +15,7 @@
  * Authorship: Strict TypeScript (Causyne Agent).
  */
 
-export type ToolGroup = 'core' | 'system' | 'web' | 'media' | 'advanced' | 'game' | 'custom';
+export type ToolGroup = 'core' | 'system' | 'web' | 'media' | 'advanced' | 'game' | 'reverse_engineering' | 'custom';
 
 export interface ToolListEntry {
   readonly name: string;
@@ -125,10 +125,13 @@ const CATALOGUE: Readonly<Record<Exclude<ToolGroup, 'custom'>, Readonly<Record<s
     game_data_forge: 'item and enemy data JSON',
     game_web_runtime_inspector: 'headless runtime error gate',
     game_canvas_audit: 'canvas render audit'
+  },
+  reverse_engineering: {
+    reverse_engineering: 'binary inspection, decompile, ASAR/bundle unpack, deobfuscate'
   }
 };
 
-const GROUP_ORDER: readonly Exclude<ToolGroup, 'custom'>[] = ['core', 'system', 'web', 'media', 'advanced', 'game'];
+const GROUP_ORDER: readonly Exclude<ToolGroup, 'custom'>[] = ['core', 'system', 'web', 'media', 'advanced', 'game', 'reverse_engineering'];
 
 const CURATED_NAMES: ReadonlySet<string> = new Set(
   GROUP_ORDER.flatMap((group) => Object.keys(CATALOGUE[group]))

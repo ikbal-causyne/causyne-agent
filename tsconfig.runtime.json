@@ -164,6 +164,7 @@
     "src/acp/client.ts",
     "src/tools/peerAgent.ts",
     "src/tools/openSourceToolProvisioner.ts",
+    "src/tools/reverseEngineering.ts",
     "src/tools/toolScanner.ts",
     "src/tools/toolSelfRepair.ts",
     "src/agentLoop.ts",

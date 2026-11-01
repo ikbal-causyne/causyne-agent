@@ -5,6 +5,7 @@ import { documentForgeTool } from './documentForge.js';
 import { nativeEngineTool } from './nativeEngine.js';
 import { peerAgentTool } from './peerAgent.js';
 import { openSourceToolProvisioner } from './openSourceToolProvisioner.js';
+import { reverseEngineering } from './reverseEngineering.js';
 import { sysRun, sysRunBg } from './sysRun.js';
 import { fsRead } from './fsRead.js';
 import { fsWrite } from './fsWrite.js';
@@ -129,7 +130,7 @@ const TOOL_MODULES = [
   gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
   gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
   computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
-  openSourceToolProvisioner
+  openSourceToolProvisioner, reverseEngineering
 ];
 
 // Base static definitions (backwards compatible). Order is preserved from the
@@ -160,6 +161,13 @@ const TOOL_ALIASES = {
   procTerm: 'proc_term',
   gitExec: 'gitOp',
   tool_deferred_mcp_search: 'tool_search',
+
+  // Sovereign Reverse Engineering aliases
+  re_inspect_binary: 'reverse_engineering',
+  re_decompile: 'reverse_engineering',
+  re_unpack_bundle: 'reverse_engineering',
+  re_deobfuscate_script: 'reverse_engineering',
+  re_trace_runtime: 'reverse_engineering',
 
   // Core filesystem aliases
   read_file: 'fs_read',
