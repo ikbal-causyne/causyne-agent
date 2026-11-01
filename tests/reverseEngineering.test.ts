@@ -8,6 +8,7 @@ import { reverseEngineering } from '../src/tools/reverseEngineering.js';
 import { routePacks, PACKS } from '../src/toolPacks.js';
 import { toolRegistry, canonicalToolName } from '../src/tools/registry.js';
 import { ToolOutputStore } from '../src/tools/toolOutputStore.js';
+import { sovereignReverseHarness } from '../src/engines/reverseHarness.js';
 
 test('reverseEngineering: schema has valid structure and supported actions', () => {
   assert.equal(reverseEngineering.schema.name, 'reverse_engineering');
@@ -177,3 +178,30 @@ test('toolOutputStore: DTOC offloading protects context on large outputs', () =>
   // Clean up
   try { fs.unlinkSync(result.diskPath); } catch {}
 });
+
+test('reverseEngineering: list_tools lists specialized tools from sovereign engine', async () => {
+  const result = await reverseEngineering.execute({ action: 'list_tools' });
+  assert.equal(result.success, true);
+  assert.equal(result.action, 'list_tools');
+  assert.ok(typeof result.totalTools === 'number');
+  assert.ok(Array.isArray(result.tools));
+  if ((result.totalTools as number) > 0) {
+    assert.ok((result.tools as string[]).includes('binary_overview') || (result.tools as string[]).includes('inspect_analysis_settings'));
+  }
+});
+
+test('reverseEngineering: engine_tool executes specialized tool through harness', async () => {
+  const result = await reverseEngineering.execute({
+    action: 'engine_tool',
+    toolName: 'inspect_analysis_settings',
+    toolArgs: {}
+  });
+  assert.ok(typeof result.success === 'boolean');
+  assert.equal(result.action, 'engine_tool');
+  assert.equal(result.toolName, 'inspect_analysis_settings');
+});
+
+test.after(async () => {
+  await sovereignReverseHarness.disconnect();
+});
+

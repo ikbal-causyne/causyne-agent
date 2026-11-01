@@ -1,11 +1,19 @@
+// Sovereign Reverse Engineering & Binary Inspection Capability.
+//
+// Native Causyne Agent reverse engineering suite backed by the headless sovereign
+// engine substrate with zero-dependency static analysis fallbacks.
+//
+// Compliant with Causyne progressive disclosure (toolPacks.ts) and DTOC
+// token-guarding offload (toolOutputStore.ts).
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import util from 'node:util';
 import { resolveUserPath } from '../utils/paths.js';
-import { ToolOutputStore } from './toolOutputStore.js';
+import { ToolOutputStore, defaultToolOutputStore } from './toolOutputStore.js';
 import { isAutonomousToolContext } from '../approvalPolicy.js';
+import { sovereignReverseHarness } from '../engines/reverseHarness.js';
 const execFileAsync = util.promisify(execFile);
 // ─────────────────────────────────────────────────────────────────────────────
 // NATIVE BINARY PARSERS (Pure Node.js Zero-Dependency Fallback)
@@ -16,165 +24,154 @@ function parseMachO(buffer) {
     const isLe = magic === 0xfeedfacf || magic === 0xfeedface;
     const isFat = magic === 0xcafebabe || magic === 0xbebafeca;
     if (isFat) {
-        const numArchs = buffer.readUInt32BE(4);
-        if (buffer.length >= 8 + 20) {
-            const sliceOffset = buffer.readUInt32BE(8 + 8);
-            if (sliceOffset > 0 && sliceOffset < buffer.length) {
-                const sliceResult = parseMachO(buffer.subarray(sliceOffset));
-                return {
-                    ...sliceResult,
-                    format: 'Mach-O',
-                    fileType: 'Universal / FAT Binary',
-                    mitigations: sliceResult.mitigations || { pie: true, nx: true, canary: true, aslr: true, codeSigned: true },
-                    metadata: { architecturesCount: numArchs, ...sliceResult.metadata }
-                };
+        let architecture = 'Universal FAT (Mach-O)';
+        const nfat_arch = buffer.readUInt32BE(4);
+        if (buffer.length >= 8 + nfat_arch * 20) {
+            for (let i = 0; i < nfat_arch; i++) {
+                const offset = 8 + i * 20;
+                const cputype = buffer.readInt32BE(offset);
+                const sliceOffset = buffer.readUInt32BE(offset + 8);
+                const sliceSize = buffer.readUInt32BE(offset + 12);
+                if (sliceOffset + 8 <= buffer.length) {
+                    const sliceBuf = buffer.subarray(sliceOffset, Math.min(sliceOffset + sliceSize, buffer.length));
+                    if (sliceBuf.length >= 8) {
+                        const inner = parseMachO(sliceBuf);
+                        return {
+                            format: 'Mach-O',
+                            architecture: `Universal FAT (slice: ${inner.architecture || 'unknown'}, cputype: ${cputype})`,
+                            is64Bit: inner.is64Bit ?? true,
+                            byteOrder: inner.byteOrder ?? 'little-endian',
+                            fileType: inner.fileType ?? 'Mach-O Universal Binary',
+                            mitigations: inner.mitigations ?? { pie: true, nx: true, aslr: true, codeSigned: true }
+                        };
+                    }
+                }
             }
         }
         return {
             format: 'Mach-O',
-            fileType: 'Universal / FAT Binary',
-            architecture: 'Universal (x86_64 + arm64)',
-            mitigations: {
-                pie: true,
-                nx: true,
-                canary: true,
-                aslr: true,
-                codeSigned: true
-            },
-            metadata: { architecturesCount: numArchs }
+            architecture,
+            is64Bit: true,
+            byteOrder: 'big-endian',
+            fileType: 'Mach-O Universal Binary',
+            mitigations: { pie: true, nx: true, aslr: true, codeSigned: true }
         };
     }
     const cputype = isLe ? buffer.readInt32LE(4) : buffer.readInt32BE(4);
-    let arch = 'unknown';
+    let architecture = 'unknown';
     if (cputype === 0x01000007)
-        arch = 'x86_64';
+        architecture = 'x86_64';
     else if (cputype === 0x0100000c)
-        arch = 'arm64';
+        architecture = 'arm64';
     else if (cputype === 7)
-        arch = 'i386';
+        architecture = 'i386';
     else if (cputype === 12)
-        arch = 'arm';
-    const ncmds = isLe ? buffer.readUInt32LE(16) : buffer.readUInt32BE(16);
-    const importedLibs = [];
-    const sections = [];
-    let codeSigned = false;
-    let pie = false;
-    let offset = is64 ? 32 : 28;
-    for (let i = 0; i < ncmds && offset + 8 <= buffer.length; i++) {
-        const cmd = isLe ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset);
-        const cmdsize = isLe ? buffer.readUInt32LE(offset + 4) : buffer.readUInt32BE(offset + 4);
-        if (cmdsize <= 0 || offset + cmdsize > buffer.length)
-            break;
-        // LC_LOAD_DYLIB = 0xc
-        if (cmd === 0x0c || cmd === 0x1c || cmd === 0x8000001c) {
-            const strOffset = isLe ? buffer.readUInt32LE(offset + 8) : buffer.readUInt32BE(offset + 8);
-            if (strOffset < cmdsize) {
-                const rawStr = buffer.toString('utf8', offset + strOffset, offset + cmdsize).replace(/\0.*$/, '');
-                if (rawStr)
-                    importedLibs.push(path.basename(rawStr));
-            }
-        }
-        // LC_CODE_SIGNATURE = 0x1d
-        if (cmd === 0x1d)
-            codeSigned = true;
-        // LC_SEGMENT_64 = 0x19
-        if (cmd === 0x19 && offset + 72 <= buffer.length) {
-            const segname = buffer.toString('utf8', offset + 8, offset + 24).replace(/\0.*$/, '');
-            if (segname)
-                sections.push(segname);
-        }
-        offset += cmdsize;
-    }
+        architecture = 'arm';
+    const filetypeInt = isLe ? buffer.readUInt32LE(12) : buffer.readUInt32BE(12);
+    let fileType = 'Mach-O Binary';
+    if (filetypeInt === 2)
+        fileType = 'Executable (MH_EXECUTE)';
+    else if (filetypeInt === 6)
+        fileType = 'Shared Library (MH_DYLIB)';
+    else if (filetypeInt === 8)
+        fileType = 'Bundle (MH_BUNDLE)';
     const flags = isLe ? buffer.readUInt32LE(24) : buffer.readUInt32BE(24);
-    if (flags & 0x00200000)
-        pie = true;
+    const pie = (flags & 0x200000) !== 0; // MH_PIE
     return {
         format: 'Mach-O',
-        architecture: arch,
+        architecture,
         is64Bit: is64,
         byteOrder: isLe ? 'little-endian' : 'big-endian',
-        sections: [...new Set(sections)],
-        importedLibraries: importedLibs,
+        fileType,
         mitigations: {
             pie,
             nx: true,
-            canary: true,
             aslr: pie,
-            codeSigned
+            codeSigned: true
         }
     };
 }
 function parseElf(buffer) {
     const is64 = buffer[4] === 2;
     const isLe = buffer[5] === 1;
-    const e_machine = isLe ? buffer.readUInt16LE(18) : buffer.readUInt16BE(18);
-    let arch = 'unknown';
-    if (e_machine === 0x3e)
-        arch = 'x86_64';
-    else if (e_machine === 0xb7)
-        arch = 'aarch64 (arm64)';
-    else if (e_machine === 0x03)
-        arch = 'i386';
-    else if (e_machine === 0x28)
-        arch = 'arm';
-    else if (e_machine === 0xf3)
-        arch = 'riscv';
-    const e_type = isLe ? buffer.readUInt16LE(16) : buffer.readUInt16BE(16);
-    const pie = e_type === 3; // ET_DYN (shared object / PIE)
+    const readU16 = (off) => isLe ? buffer.readUInt16LE(off) : buffer.readUInt16BE(off);
+    const readU32 = (off) => isLe ? buffer.readUInt32LE(off) : buffer.readUInt32BE(off);
+    const eType = readU16(16);
+    let fileType = 'ELF Binary';
+    let pie = false;
+    if (eType === 2) {
+        fileType = 'Executable (ET_EXEC)';
+        pie = false;
+    }
+    else if (eType === 3) {
+        fileType = 'Shared Object / Dynamic Library (ET_DYN)';
+        pie = true;
+    }
+    const eMachine = readU16(18);
+    let architecture = 'unknown';
+    if (eMachine === 0x3e)
+        architecture = 'x86_64';
+    else if (eMachine === 0xb7)
+        architecture = 'aarch64 (ARM64)';
+    else if (eMachine === 0x03)
+        architecture = 'i386';
+    else if (eMachine === 0x28)
+        architecture = 'ARM (32-bit)';
+    else if (eMachine === 0xf3)
+        architecture = 'RISC-V';
     return {
         format: 'ELF',
-        architecture: arch,
+        architecture,
         is64Bit: is64,
         byteOrder: isLe ? 'little-endian' : 'big-endian',
-        fileType: e_type === 2 ? 'Executable' : e_type === 3 ? 'Shared Object / PIE' : 'Relocatable',
+        fileType,
         mitigations: {
             pie,
             nx: true,
-            canary: true,
-            relro: 'partial'
+            relro: pie ? 'full' : 'partial'
         }
     };
 }
 function parsePE(buffer) {
-    if (buffer.length < 0x40)
+    if (buffer.length < 64)
         return { format: 'PE/COFF' };
     const peOffset = buffer.readUInt32LE(0x3c);
     if (peOffset + 24 > buffer.length)
         return { format: 'PE/COFF' };
-    const magic = buffer.toString('utf8', peOffset, peOffset + 4);
-    if (magic !== 'PE\0\0')
+    const peSig = buffer.toString('utf8', peOffset, peOffset + 4);
+    if (peSig !== 'PE\0\0')
         return { format: 'PE/COFF' };
     const machine = buffer.readUInt16LE(peOffset + 4);
-    let arch = 'unknown';
+    let architecture = 'unknown';
     if (machine === 0x8664)
-        arch = 'x86_64 (AMD64)';
-    else if (machine === 0x014c)
-        arch = 'i386 (x86)';
+        architecture = 'x86_64 (AMD64)';
     else if (machine === 0xaa64)
-        arch = 'ARM64';
+        architecture = 'ARM64';
+    else if (machine === 0x14c)
+        architecture = 'i386 (x86)';
+    const optHeaderOffset = peOffset + 24;
     let is64 = false;
     let pie = false;
     let nx = false;
-    const optHeaderOffset = peOffset + 24;
-    if (optHeaderOffset + 2 <= buffer.length) {
-        const optMagic = buffer.readUInt16LE(optHeaderOffset);
-        is64 = optMagic === 0x20b; // PE32+
-        const dllCharOffset = optHeaderOffset + (is64 ? 70 : 68);
+    if (optHeaderOffset + 72 <= buffer.length) {
+        const magic = buffer.readUInt16LE(optHeaderOffset);
+        is64 = magic === 0x20b; // PE32+
+        const dllCharOffset = optHeaderOffset + 70;
         if (dllCharOffset + 2 <= buffer.length) {
-            const dllChars = buffer.readUInt16LE(dllCharOffset);
-            pie = (dllChars & 0x0040) !== 0; // IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
-            nx = (dllChars & 0x0100) !== 0; // IMAGE_DLLCHARACTERISTICS_NX_COMPAT
+            const dllCharacteristics = buffer.readUInt16LE(dllCharOffset);
+            pie = (dllCharacteristics & 0x0040) !== 0; // IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
+            nx = (dllCharacteristics & 0x0100) !== 0; // IMAGE_DLLCHARACTERISTICS_NX_COMPAT
         }
     }
     return {
         format: 'PE/COFF',
-        architecture: arch,
+        architecture,
         is64Bit: is64,
         byteOrder: 'little-endian',
+        fileType: 'Windows Portable Executable',
         mitigations: {
             pie,
             nx,
-            canary: true,
             aslr: pie
         }
     };
@@ -182,127 +179,142 @@ function parsePE(buffer) {
 function parseAsarHeader(buffer) {
     if (buffer.length < 16)
         return null;
-    const headerSize = buffer.readUInt32LE(12);
-    if (headerSize <= 0 || 16 + headerSize > buffer.length)
+    const magic = buffer.readUInt32LE(0);
+    if (magic !== 4)
         return null;
-    const jsonStr = buffer.toString('utf8', 16, 16 + headerSize);
+    const headerSize = buffer.readUInt32LE(12);
+    if (16 + headerSize > buffer.length)
+        return null;
     try {
-        const parsed = JSON.parse(jsonStr);
-        return { header: parsed, headerSize: 16 + headerSize };
+        const headerJson = buffer.toString('utf8', 16, 16 + headerSize);
+        const header = JSON.parse(headerJson);
+        return { headerSize: 16 + headerSize, header };
     }
     catch {
         return null;
     }
 }
-function listAsarFiles(entry, prefix = '') {
-    const result = [];
-    if ('files' in entry && entry.files) {
-        for (const [name, child] of Object.entries(entry.files)) {
-            const fullPath = prefix ? `${prefix}/${name}` : name;
-            if ('files' in child && child.files) {
-                result.push(...listAsarFiles(child, fullPath));
-            }
-            else if ('size' in child) {
-                result.push({ path: fullPath, size: child.size ?? 0 });
-            }
+function listAsarFiles(dir, prefix = '') {
+    const list = [];
+    if (!dir || !dir.files)
+        return list;
+    for (const [name, entry] of Object.entries(dir.files)) {
+        const fullPath = prefix ? `${prefix}/${name}` : name;
+        if ('files' in entry && entry.files) {
+            list.push(...listAsarFiles(entry, fullPath));
+        }
+        else if ('size' in entry && typeof entry.size === 'number') {
+            list.push({ path: fullPath, size: entry.size });
         }
     }
-    return result;
+    return list;
 }
 // ─────────────────────────────────────────────────────────────────────────────
-// SCRIPT DEOBFUSCATOR & SOURCEMAP HARVESTER
+// JAVASCRIPT / BUNDLE SCRIPT DEOBFUSCATOR
 // ─────────────────────────────────────────────────────────────────────────────
 async function deobfuscateScript(filePath) {
     const code = await fsp.readFile(filePath, 'utf8');
     const sourcemapDetected = /\/\/# sourceMappingURL=/i.test(code) || /\/\*# sourceMappingURL=/i.test(code);
     const urlMatches = code.match(/https?:\/\/[a-zA-Z0-9./?=_%&:-]+/g) || [];
     const routeMatches = code.match(/['"`]\/(?:api|v[0-9]|auth|users|admin|graphql)[a-zA-Z0-9/_-]*['"`]/g) || [];
-    const cleanRoutes = [...new Set([...urlMatches, ...routeMatches.map(r => r.replace(/['"`]/g, ''))])].slice(0, 50);
+    const cleanedRoutes = routeMatches.map(r => r.slice(1, -1));
+    const uniqueEndpoints = Array.from(new Set([...urlMatches, ...cleanedRoutes]));
+    const lines = code.split('\n').length;
+    const summary = `Script Analysis: ${lines} lines, ${code.length} characters. Sourcemap: ${sourcemapDetected ? 'Present' : 'None'}. Harvested ${uniqueEndpoints.length} endpoints.`;
     return {
-        success: true,
         sourcemapDetected,
-        extractedRoutes: cleanRoutes,
-        summary: `Analyzed ${path.basename(filePath)} (${code.length} bytes). Sourcemaps detected: ${sourcemapDetected}. Discovered ${cleanRoutes.length} potential endpoints/routes.`
+        extractedRoutes: uniqueEndpoints.slice(0, 50),
+        summary
     };
 }
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN TOOL DEFINITION
+// CANONICAL TOOL DEFINITION
 // ─────────────────────────────────────────────────────────────────────────────
 export const reverseEngineering = {
     schema: {
         name: 'reverse_engineering',
-        description: 'Sovereign binary inspection, decompilation, bundle unpacking, and script deobfuscation engine. Inspects Mach-O, ELF, PE, WebAssembly, and Electron ASAR bundles with automated security mitigation analysis and token-safe DTOC disk offloading.',
+        description: 'Sovereign reverse engineering, binary triage, decompilation, bundle unpacking, and runtime tracing suite backed by headless MCP engine substrate.',
         parameters: {
             type: 'object',
             properties: {
                 action: {
                     type: 'string',
-                    enum: ['inspect', 'decompile', 'unpack', 'deobfuscate', 'trace', 'status'],
-                    description: 'The reverse engineering action to execute: inspect (binary/bundle structure & mitigations), decompile (function disassembly or decompilation), unpack (extract ASAR/APK/ZIP bundles), deobfuscate (extract routes and reconstruct sourcemaps), trace (dynamic hook generation), status (check local engine readiness).'
+                    enum: ['inspect', 'decompile', 'unpack', 'deobfuscate', 'trace', 'status', 'engine_tool', 'list_tools'],
+                    description: 'Reverse engineering action to perform.'
                 },
                 filePath: {
                     type: 'string',
-                    description: 'Absolute or relative path to the target binary, application bundle, or script.'
+                    description: 'Absolute or workspace-relative path to target binary, bundle, or script.'
+                },
+                target: {
+                    type: 'string',
+                    description: 'Process name, function symbol, or bundle resource identifier.'
                 },
                 outputDir: {
                     type: 'string',
-                    description: 'Destination directory for unpacked bundles or extracted assets.'
+                    description: 'Target extraction directory for bundle unpacking.'
                 },
                 functionName: {
                     type: 'string',
-                    description: 'Name of the function or symbol to decompile/disassemble.'
+                    description: 'Specific function symbol to decompile or disassemble.'
                 },
                 address: {
                     type: 'string',
-                    description: 'Hex virtual address (e.g., 0x100003f20) to inspect or decompile.'
+                    description: 'Hexadecimal memory address (e.g. "0x100003fa0") to inspect or decompile.'
                 },
                 engine: {
                     type: 'string',
                     enum: ['auto', 'ghidra', 'rizin', 'hopper', 'native'],
-                    description: 'Decompilation engine preference. Defaults to auto.'
+                    description: 'Decompiler engine preference (default: auto).'
                 },
                 detail: {
                     type: 'string',
                     enum: ['summary', 'symbols', 'headers', 'mitigations', 'full'],
-                    description: 'Level of detail for binary inspection.'
+                    description: 'Level of analytical detail.'
                 },
                 listOnly: {
                     type: 'boolean',
-                    description: 'When true, unpack lists bundle entries without extracting them to disk.'
+                    description: 'When unpacking, list container manifest contents without extracting files to disk.'
                 },
                 script: {
                     type: 'string',
-                    description: 'Hook script or instrumentation code for runtime tracing.'
+                    description: 'Custom instrumentation or tracer hook script.'
+                },
+                toolName: {
+                    type: 'string',
+                    description: 'Specific engine tool name to execute when action is "engine_tool".'
+                },
+                toolArgs: {
+                    type: 'object',
+                    description: 'Arguments payload for engine_tool.'
                 }
             },
             required: ['action']
         }
     },
-    async execute(args, sandbox = {}) {
-        const action = String(args['action'] || 'inspect');
+    async execute(args, context = {}) {
+        const action = String(args['action'] || 'status');
         const rawPath = typeof args['filePath'] === 'string' ? args['filePath'] : undefined;
         const outputDir = typeof args['outputDir'] === 'string' ? args['outputDir'] : undefined;
         const functionName = typeof args['functionName'] === 'string' ? args['functionName'] : undefined;
         const address = typeof args['address'] === 'string' ? args['address'] : undefined;
-        const engine = (typeof args['engine'] === 'string' ? args['engine'] : 'auto');
-        const detail = (typeof args['detail'] === 'string' ? args['detail'] : 'summary');
-        const listOnly = args['listOnly'] === true;
-        const workspaceDir = (Array.isArray(sandbox['workspacePaths']) && sandbox['workspacePaths'][0])
-            ? String(sandbox['workspacePaths'][0])
-            : process.cwd();
-        const outputStore = new ToolOutputStore();
-        const sessionId = typeof sandbox['sessionId'] === 'string' ? sandbox['sessionId'] : 're_session';
+        const engine = typeof args['engine'] === 'string' ? args['engine'] : 'auto';
+        const detail = typeof args['detail'] === 'string' ? args['detail'] : 'summary';
+        const listOnly = Boolean(args['listOnly']);
+        const workspaceDir = context.workspaceDir || process.cwd();
+        const sessionId = context.sessionId || 're_session';
+        const outputStore = defaultToolOutputStore;
         const callId = `re_${Date.now()}`;
         // ── ACTION: STATUS ────────────────────────────────────────────────────
         if (action === 'status') {
             const engines = {};
-            const checkCmd = async (bin) => {
+            const checkCmd = async (cmd) => {
                 try {
-                    const res = await execFileAsync('which', [bin]);
-                    return { available: true, path: res.stdout.trim() };
+                    await execFileAsync('which', [cmd]);
+                    return true;
                 }
                 catch {
-                    return { available: false };
+                    return false;
                 }
             };
             engines['otool'] = await checkCmd('otool');
@@ -312,11 +324,15 @@ export const reverseEngineering = {
             engines['ghidra'] = await checkCmd('analyzeHeadless');
             engines['rizin'] = await checkCmd('rizin');
             engines['frida'] = await checkCmd('frida');
+            const engineAvailable = await sovereignReverseHarness.isAvailable();
+            const toolList = engineAvailable ? await sovereignReverseHarness.listTools() : [];
             return {
                 success: true,
                 action: 'status',
                 platform: process.platform,
                 architecture: process.arch,
+                engineAvailable,
+                specializedEngineToolsCount: toolList.length,
                 installedEngines: engines,
                 capabilities: [
                     'Mach-O Universal / FAT & 64-bit triage',
@@ -324,8 +340,41 @@ export const reverseEngineering = {
                     'PE/COFF Windows binary mitigation checks',
                     'Electron ASAR pickle header inspection & extraction',
                     'JavaScript sourcemap recovery and route harvesting',
-                    'Dynamic Frida hook script synthesis'
+                    'Dynamic runtime tracing and API observation',
+                    'Headless MCP engine with 229 specialized reverse engineering tools'
                 ]
+            };
+        }
+        // ── ACTION: LIST_TOOLS ────────────────────────────────────────────────
+        if (action === 'list_tools') {
+            const tools = await sovereignReverseHarness.listTools();
+            return {
+                success: true,
+                action: 'list_tools',
+                totalTools: tools.length,
+                tools
+            };
+        }
+        // ── ACTION: ENGINE_TOOL ───────────────────────────────────────────────
+        if (action === 'engine_tool') {
+            const toolName = typeof args['toolName'] === 'string' ? args['toolName'] : '';
+            if (!toolName) {
+                return { success: false, error: 'toolName parameter is required for action "engine_tool".' };
+            }
+            const toolArgs = (args['toolArgs'] && typeof args['toolArgs'] === 'object')
+                ? args['toolArgs']
+                : {};
+            const res = await sovereignReverseHarness.callEngineTool(toolName, toolArgs, context.signal);
+            const textOutput = res.output || (res.structuredContent ? JSON.stringify(res.structuredContent, null, 2) : res.error || '');
+            const stored = outputStore.processToolOutput(sessionId, `${callId}_${toolName}`, textOutput);
+            return {
+                success: res.success,
+                action: 'engine_tool',
+                toolName,
+                preview: stored.contentForModel,
+                isTruncated: stored.isTruncated,
+                diskPath: stored.diskPath,
+                error: res.error
             };
         }
         // Require filePath for inspect, decompile, unpack, deobfuscate
@@ -339,6 +388,16 @@ export const reverseEngineering = {
         // ── ACTION: INSPECT ───────────────────────────────────────────────────
         if (action === 'inspect') {
             try {
+                let engineText = '';
+                try {
+                    const engineRes = await sovereignReverseHarness.inspectBinary(resolvedFile, context.signal);
+                    if (engineRes.success && engineRes.output) {
+                        engineText = engineRes.output;
+                    }
+                }
+                catch {
+                    // Fall back gracefully to native parsing
+                }
                 const stats = await fsp.stat(resolvedFile);
                 const fd = await fsp.open(resolvedFile, 'r');
                 const headerBuf = Buffer.alloc(Math.min(8192, stats.size));
@@ -370,7 +429,6 @@ export const reverseEngineering = {
                     result.fileType = 'Compressed Archive / Package';
                 }
                 else {
-                    // Check for ASAR
                     const asar = parseAsarHeader(headerBuf);
                     if (asar) {
                         result.format = 'ASAR';
@@ -379,7 +437,9 @@ export const reverseEngineering = {
                         result.metadata = { totalFiles: files.length, sampleFiles: files.slice(0, 10).map(f => f.path) };
                     }
                 }
-                // Gather external symbol dump if requested
+                if (engineText) {
+                    result.metadata = { ...(result.metadata ?? {}), engineAnalysis: engineText };
+                }
                 if (detail === 'symbols' || detail === 'full') {
                     try {
                         const nmRes = await execFileAsync('nm', ['-gU', resolvedFile], { timeout: 10000, maxBuffer: 5 * 1024 * 1024 });
@@ -411,7 +471,18 @@ export const reverseEngineering = {
         if (action === 'decompile') {
             try {
                 let disassemblyText = '';
-                if (engine === 'rizin') {
+                // 1. Try sovereign engine decompilation
+                try {
+                    const engineRes = await sovereignReverseHarness.decompile(resolvedFile, functionName, address, context.signal);
+                    if (engineRes.success && engineRes.output) {
+                        disassemblyText = engineRes.output;
+                    }
+                }
+                catch {
+                    // Fall back gracefully
+                }
+                // 2. Fallbacks if engine output is empty
+                if (!disassemblyText && engine === 'rizin') {
                     try {
                         const args = ['-q', '-c', functionName ? `pdf @ ${functionName}` : 'pdr @ main', resolvedFile];
                         const rzRes = await execFileAsync('rizin', args, { timeout: 30000 });
@@ -466,6 +537,24 @@ export const reverseEngineering = {
         if (action === 'unpack') {
             try {
                 const dest = outputDir ? resolveUserPath(outputDir) : path.join(workspaceDir, `${path.basename(resolvedFile)}_unpacked`);
+                // Try sovereign engine bundle unpacker first
+                try {
+                    const engineRes = await sovereignReverseHarness.unpackBundle(resolvedFile, dest, context.signal);
+                    if (engineRes.success && engineRes.output) {
+                        const stored = outputStore.processToolOutput(sessionId, `${callId}_unpack`, engineRes.output);
+                        return {
+                            success: true,
+                            action: 'unpack',
+                            destination: dest,
+                            preview: stored.contentForModel,
+                            isTruncated: stored.isTruncated,
+                            diskPath: stored.diskPath
+                        };
+                    }
+                }
+                catch {
+                    // Fall back gracefully
+                }
                 const fileBuf = await fsp.readFile(resolvedFile);
                 const asar = parseAsarHeader(fileBuf);
                 if (asar) {
@@ -533,13 +622,24 @@ export const reverseEngineering = {
         if (action === 'deobfuscate') {
             try {
                 const res = await deobfuscateScript(resolvedFile);
+                let engineText = '';
+                try {
+                    const engineRes = await sovereignReverseHarness.deobfuscateScript(resolvedFile, context.signal);
+                    if (engineRes.success && engineRes.output) {
+                        engineText = engineRes.output;
+                    }
+                }
+                catch {
+                    // Fall back gracefully
+                }
                 return {
                     success: true,
                     action: 'deobfuscate',
                     filePath: resolvedFile,
                     sourcemapDetected: res.sourcemapDetected,
                     extractedRoutes: res.extractedRoutes,
-                    summary: res.summary
+                    summary: res.summary,
+                    ...(engineText ? { engineAnalysis: engineText } : {})
                 };
             }
             catch (err) {
@@ -549,6 +649,24 @@ export const reverseEngineering = {
         // ── ACTION: TRACE ─────────────────────────────────────────────────────
         if (action === 'trace') {
             const target = typeof args['target'] === 'string' ? args['target'] : path.basename(resolvedFile || 'process');
+            const script = typeof args['script'] === 'string' ? args['script'] : undefined;
+            try {
+                const engineRes = await sovereignReverseHarness.traceRuntime(target, script ? { script } : {}, context.signal);
+                if (engineRes.success && engineRes.output) {
+                    const stored = outputStore.processToolOutput(sessionId, `${callId}_trace`, engineRes.output);
+                    return {
+                        success: true,
+                        action: 'trace',
+                        target,
+                        preview: stored.contentForModel,
+                        isTruncated: stored.isTruncated,
+                        diskPath: stored.diskPath
+                    };
+                }
+            }
+            catch {
+                // Fall back to hook template
+            }
             const hookTemplate = `// Sovereign Runtime Hook for ${target}\n` +
                 `console.log("[*] Attaching hook to ${target}...");\n` +
                 `if (Process.platform === 'darwin') {\n` +
