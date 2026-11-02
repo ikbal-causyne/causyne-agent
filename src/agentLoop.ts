@@ -3084,7 +3084,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
 
           // Web Visual Validation Guard (Anti-Slop / Transcendence)
-          const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && !isPlanningOnlyRequest(taskPrompt) && isWebIntent(taskPrompt);
+          const outcomes = coldObserver.getToolOutcomes(this.taskId);
+          const hasWebOrCodeMutation = this.webArtifacts.size > 0 || outcomes.some((o) =>
+            o.success !== false && ['fs_write', 'fs_edit', 'MultiEdit', 'ui_forge', 'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content'].includes(String(o.tool || ''))
+          );
+          const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && !isPlanningOnlyRequest(taskPrompt) && isWebIntent(taskPrompt) && hasWebOrCodeMutation;
           let browserReady = false;
           let browserDeclined = false;
           let browserRuntimeError = '';
@@ -3141,7 +3145,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
           // Tool availability and a completed plan are not evidence of visual
           // inspection. A failed browser/capture attempt must not become a
           // successful task merely because the provider says "verified".
-          const outcomes = coldObserver.getToolOutcomes(this.taskId);
           const hasBrowserActOutcome = outcomes.some(
             (o) => o.tool === 'browser_act' && o.success !== false
           );
@@ -3978,6 +3981,9 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.emitEvent({ type: result?.success === false || typeof result?.error === 'string' ? 'step_error' : 'step_complete',
             tool: functionName, result: eventResult, toolCallId: toolCall.id });
           this.stepsCompleted++;
+          if (this._implementationPlanSeeded && result?.success !== false && !result?.error && functionName !== 'update_plan') {
+            this.advanceImplementationPlanProgress('mutation');
+          }
 
           // The procedure, as it actually ran. Tool name plus a whitelisted
           // action token only — planCache.toStep() reads no paths, arguments or

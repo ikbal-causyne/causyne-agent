@@ -10,6 +10,7 @@ import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError } from '../
 import { assessVerification } from '../src/verificationPlan.js';
 import { outcomeFromResult } from '../src/observer/evidence.js';
 import { stripToolCallMarkup, extractLivePlanFromText } from '../src/implementationPlan.js';
+import { isWebIntent } from '../src/toolPacks.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { sysRun, sysRunBg } from '../src/tools/sysRun.js';
 import { AgentLoop } from '../src/agentLoop.js';
@@ -221,5 +222,56 @@ test('stripToolCallMarkup strips trailing partial <t and <to tags and extractLiv
   const completeStream = '<tool_call>{"name":"update_plan","arguments":{"plan":[{"id":"s1","step":"Inspecting","status":"in_progress"}]}}</tool_call>';
   assert.equal(extractLivePlanFromText(completeStream, false)?.plan.length, 1);
 });
+
+test('creative bridge DOM/Python simulator prompt does not trigger false web rendered-page verification failure', async () => {
+  const prompt = 'Run creative_apps with action="verify_bridge" to execute the full cross-platform (macOS/Windows/Linux) and DOM/Python simulator verification across Adobe Photoshop, Premiere Pro, After Effects, DaVinci Resolve, Unreal Engine 5, Unity, and Godot, then run resolve_act with action="inspectActive" and simulate=true, and report all verification results.';
+  assert.equal(isWebIntent(prompt), false, 'Adobe DOM/Python simulator must not be misclassified as web frontend intent');
+
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-creative-bridge-loop-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  const events: Array<{ type: string; message?: string; content?: string; plan?: Array<{ status: string }> }> = [];
+
+  try {
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'creative-bridge-e2e',
+      prompt,
+      { workspaceRoot: workspace }
+    );
+    let turn = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        turn++;
+        if (turn === 1) {
+          return {
+            content: '',
+            toolCalls: [
+              { id: 'tc1', type: 'function', function: { name: 'creative_apps', arguments: JSON.stringify({ action: 'verify_bridge' }) } },
+              { id: 'tc2', type: 'function', function: { name: 'resolve_act', arguments: JSON.stringify({ action: 'inspectActive', simulate: true }) } }
+            ],
+            usage: { promptTokens: 20, completionTokens: 15 }
+          };
+        }
+        return {
+          content: 'Both passed: creative_apps verify_bridge and resolve_act inspectActive (simulate=true) verified.',
+          usage: { promptTokens: 30, completionTokens: 20 }
+        };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+
+    await loop.run();
+
+    assert.equal(turn, 2, 'must complete in 2 turns without web guard retry');
+    assert.equal(events.some((e) => e.type === 'error'), false, `unexpected error: ${JSON.stringify(events.filter((e) => e.type === 'error'))}`);
+    assert.equal(events.some((e) => e.type === 'task_complete'), true, 'must emit task_complete');
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 
 

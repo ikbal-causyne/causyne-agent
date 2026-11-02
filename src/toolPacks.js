@@ -349,7 +349,13 @@ export function isGameIntent(prompt) {
 }
 /** True when the prompt genuinely describes web/UI work. */
 export function isWebIntent(prompt) {
-    return WEB_INTENT.test(prompt || '');
+    if (!prompt)
+        return false;
+    const sanitized = prompt
+        .replace(/\b(?:adobe|photoshop|premiere|after\s*effects|illustrator|indesign|extendscript|uxp)\s+dom\b/gi, '')
+        .replace(/\bdom\s*\/\s*python\b/gi, '')
+        .replace(/\bdom\s+simulat(?:or|ion)\b/gi, '');
+    return WEB_INTENT.test(sanitized);
 }
 /**
  * Decide which packs to unlock before the first LLM call, so the common case
