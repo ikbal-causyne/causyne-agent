@@ -296,7 +296,11 @@ export class Sandbox {
     }
 
     if (toolName === 'creative_apps') {
-      return { allowed: true, risk: args.action === 'status' ? 'safe' : 'dangerous' };
+      const isReadOnly =
+        args.action === 'status' ||
+        args.action === 'verify_bridge' ||
+        (args.action === 'live_bridge' && args.liveOperation === 'inspect_active');
+      return { allowed: true, risk: isReadOnly ? 'safe' : 'dangerous' };
     }
 
     if (toolName === 'native_engine') {

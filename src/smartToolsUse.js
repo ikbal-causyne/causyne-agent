@@ -125,7 +125,7 @@ const SYSTEM_ADMIN_PATTERN = /\b(kill process|kill port|check port|port \d+|lsof
 // Simple file management operations (reading small notes, listing/deleting/moving files)
 const SIMPLE_FILE_OP_PATTERN = /\b(list (the )?files|show files|count files|rename file(s)?|delete file(s)?|move file(s)?|clean (up )?folder|read (the )?(?:note|file)|summarize (?:its )?content)\b/i;
 // Media generation intent (explicit creation of 3D, video, audio, or synthesized speech)
-const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.blend\d*\b/i;
+const EXPLICIT_MEDIA_GENERATION_PATTERN = /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|photoshop|premiere|after\s*effects|illustrator|indesign|media\s*encoder|uxp|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.(blend\d*|psd|prproj|aep|ai|indd|ccx)\b/i;
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN = /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|threejs|three\.js|thre\.?js|3js|webgl|canvas)\b/i;
 // Explicit game development intent
@@ -283,6 +283,7 @@ export function determineToolScope(prompt, _taskShape) {
     // 7. Game development and interactive simulation intent (simulators, 3D worlds, games)
     if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
         const tools = new Set([
+            'creative_apps',
             'fs_write',
             'fs_edit',
             'fs_read',

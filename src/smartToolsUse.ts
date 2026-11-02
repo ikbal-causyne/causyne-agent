@@ -166,7 +166,7 @@ const SIMPLE_FILE_OP_PATTERN =
 
 // Media generation intent (explicit creation of 3D, video, audio, or synthesized speech)
 const EXPLICIT_MEDIA_GENERATION_PATTERN =
-  /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.blend\d*\b/i;
+  /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|photoshop|premiere|after\s*effects|illustrator|indesign|media\s*encoder|uxp|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.(blend\d*|psd|prproj|aep|ai|indd|ccx)\b/i;
 
 // Explicit web engineering intent
 const EXPLICIT_WEB_ENGINEERING_PATTERN =
@@ -344,6 +344,7 @@ export function determineToolScope(
   // 7. Game development and interactive simulation intent (simulators, 3D worlds, games)
   if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
     const tools = new Set([
+      'creative_apps',
       'fs_write',
       'fs_edit',
       'fs_read',

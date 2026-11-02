@@ -98,7 +98,13 @@ export function requiresImplementationPlan(prompt: string, archetype = '', confi
 }
 
 export function isMutatingToolCall(toolName: string, args: Record<string, unknown> = {}): boolean {
-  if (toolName === 'creative_apps') return args.action !== 'status';
+  if (toolName === 'creative_apps') {
+    return (
+      args.action !== 'status' &&
+      args.action !== 'verify_bridge' &&
+      !(args.action === 'live_bridge' && args.liveOperation === 'inspect_active')
+    );
+  }
   if (toolName === 'native_engine') return !['status', 'catalog', 'describe', 'inspect', 'probe'].includes(String(args.action ?? ''));
   if (MUTATING_TOOLS.has(toolName)) {
     if (['sysRun', 'sysRunBg', 'bash', 'terminal', 'execute', 'sh', 'zsh'].includes(toolName)) {

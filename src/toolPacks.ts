@@ -69,6 +69,7 @@ export const PACKS: Record<PackName, string[]> = {
     // Stage 1 of the game cascade calls check_system_specs to verify the
     // engine, so it must travel with this pack as well as with media.
     'check_system_specs',
+    'creative_apps',
     'godot_act',
     'game_build_html5',
     'game_asset_fetch',
@@ -357,7 +358,8 @@ download on your own initiative.
 When the user asks you to build, create, test, expand, or develop a game, follow these rules:
 
 - **Browser / Three.js / WebGL / Python Games**: If the user explicitly requests a Three.js, WebGL, Canvas, HTML5, or Python game (or mentions libraries like Three.js, 3js, NumPy, Pygame), you do NOT need Godot. Build the game directly in HTML/JS/CSS or Python using \`fs_write\` (or \`file_write\`) and run/verify using \`sysRun\` or \`game_build_html5\`.
-- **Godot / Full Engine Games**: When building a full engine game (Godot), follow the 7-stage production methodology using \`godot_act\`, \`game_lore_forge\`, \`game_asset_harvest\`, \`game_scene_build\`, and verify with \`game_web_runtime_inspector\` and \`game_canvas_audit\`.`
+- **Godot / Full Engine Games**: When building a full engine game (Godot), follow the 7-stage production methodology using \`godot_act\`, \`game_lore_forge\`, \`game_asset_harvest\`, \`game_scene_build\`, and verify with \`game_web_runtime_inspector\` and \`game_canvas_audit\`.
+- **Unreal Engine 5 / Unity / Native Engine Bridge**: When working with Unreal Engine 5 (\`.uproject\`, Remote Control HTTP port 30010, Python editor scripts) or Unity (\`Assets/\`, C# Editor \`-batchmode\`), use \`creative_apps\` with \`action: "engine_bridge"\` (\`engine: "unreal" | "unity" | "godot"\`).`
 };
 
 // ---------------------------------------------------------------------------
@@ -367,11 +369,11 @@ When the user asks you to build, create, test, expand, or develop a game, follow
 // raw prompt only.
 // ---------------------------------------------------------------------------
 
-const GAME_INTENT = /\b(game|games|gamedev|godot|unity|unreal|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight|simulator|simulation|simulasi)\b|\.(tscn|gd)\b|[-_]3d\b|\b3d[-_]/i;
+const GAME_INTENT = /\b(game|games|gamedev|godot|unity|unreal|ue5|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight|simulator|simulation|simulasi)\b|\.(tscn|gd|uproject|umap)\b|[-_]3d\b|\b3d[-_]/i;
 
 const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component|three?\.?js|three?js|webgl|canvas|babylon)\b/i;
 
-const MEDIA_INTENT = /\b(image|images|picture|photo|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b/i;
+const MEDIA_INTENT = /\b(image|images|picture|photo|photoshop|premiere|after\s*effects|illustrator|indesign|media\s*encoder|uxp|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b|\.(psd|prproj|aep|ai|indd|ccx)\b/i;
 
 const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
 

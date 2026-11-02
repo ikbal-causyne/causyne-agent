@@ -88,7 +88,7 @@ const CATALOGUE: Readonly<Record<Exclude<ToolGroup, 'custom'>, Readonly<Record<s
     check_system_specs: 'RAM, CPU, GPU, disk',
     manage_local_dependencies: 'request capabilities, local dependencies',
     blender_act: 'Blender 3D scene and render',
-    creative_apps: 'drive installed creative apps',
+    creative_apps: 'Adobe Suite (PS/PR/AE/AI/ID) live canvas/timeline & Unreal/Unity/Blender bridge',
     native_engine: 'headless film, photo, sound, CAD, deck engines',
     resolve_act: 'DaVinci Resolve',
     palmier_act: 'Palmier automation',

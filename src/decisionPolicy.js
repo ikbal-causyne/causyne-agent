@@ -60,8 +60,11 @@ export function requiresImplementationPlan(prompt, archetype = '', confidence = 
     return containsAny(text, ARCHITECTURE_TERMS) && containsAny(text, CHANGE_TERMS);
 }
 export function isMutatingToolCall(toolName, args = {}) {
-    if (toolName === 'creative_apps')
-        return args.action !== 'status';
+    if (toolName === 'creative_apps') {
+        return (args.action !== 'status' &&
+            args.action !== 'verify_bridge' &&
+            !(args.action === 'live_bridge' && args.liveOperation === 'inspect_active'));
+    }
     if (toolName === 'native_engine')
         return !['status', 'catalog', 'describe', 'inspect', 'probe'].includes(String(args.action ?? ''));
     if (MUTATING_TOOLS.has(toolName)) {

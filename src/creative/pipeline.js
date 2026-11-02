@@ -1,5 +1,7 @@
 import { runBlenderBatch } from './blenderBatch.js';
 import { runStudioEdit } from './studioScripts.js';
+import { runAdobeLiveBridge, runGameEngineBridge } from './liveBridge.js';
+const VALID_STAGE_TYPES = ['3d_batch', 'studio_batch', 'live_bridge', 'engine_bridge'];
 export function validatePipeline(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error('Pipeline must be an object');
@@ -14,8 +16,8 @@ export function validatePipeline(value) {
         }
         const s = raw;
         const id = typeof s.id === 'string' && s.id.trim() ? s.id.trim() : `stage_${index + 1}`;
-        if (s.type !== '3d_batch' && s.type !== 'studio_batch') {
-            throw new Error(`Stage "${id}" must have type "3d_batch" or "studio_batch"`);
+        if (!VALID_STAGE_TYPES.includes(s.type)) {
+            throw new Error(`Stage "${id}" must have type "3d_batch", "studio_batch", "live_bridge", or "engine_bridge"`);
         }
         const type = s.type;
         if (!s.config || typeof s.config !== 'object' || Array.isArray(s.config)) {
@@ -37,13 +39,39 @@ export async function runStudioPipeline(value, workspace = process.cwd(), signal
                 const res = await runBlenderBatch(stage.config, workspace, signal);
                 stageResults.push({ id: stage.id, success: true, output: res.output });
             }
-            else {
+            else if (stage.type === 'studio_batch') {
                 const res = await runStudioEdit(stage.config, workspace, signal);
                 if (!res.success) {
                     stageResults.push({ id: stage.id, success: false, error: res.error });
                     return { success: false, stagesCompleted: i, stageResults, error: `Stage "${stage.id}" failed: ${res.error}` };
                 }
                 stageResults.push({ id: stage.id, success: true, output: res.output });
+            }
+            else if (stage.type === 'live_bridge') {
+                const res = await runAdobeLiveBridge(stage.config, workspace, signal);
+                if (!res.success) {
+                    const errStr = String(res.error ?? 'Adobe live bridge failed');
+                    stageResults.push({ id: stage.id, success: false, error: errStr });
+                    return { success: false, stagesCompleted: i, stageResults, error: `Stage "${stage.id}" failed: ${errStr}` };
+                }
+                stageResults.push({
+                    id: stage.id,
+                    success: true,
+                    output: typeof res.output === 'string' ? res.output : typeof res.scriptPath === 'string' ? res.scriptPath : 'live_bridge_ok'
+                });
+            }
+            else {
+                const res = await runGameEngineBridge(stage.config, workspace, signal);
+                if (!res.success) {
+                    const errStr = String(res.error ?? 'Game engine bridge failed');
+                    stageResults.push({ id: stage.id, success: false, error: errStr });
+                    return { success: false, stagesCompleted: i, stageResults, error: `Stage "${stage.id}" failed: ${errStr}` };
+                }
+                stageResults.push({
+                    id: stage.id,
+                    success: true,
+                    output: typeof res.scriptPath === 'string' ? res.scriptPath : typeof res.editorScriptPath === 'string' ? res.editorScriptPath : 'engine_bridge_ok'
+                });
             }
         }
         catch (err) {
