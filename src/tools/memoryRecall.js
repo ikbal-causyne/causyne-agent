@@ -7,10 +7,11 @@
  *   2. `timeline` — Layer 2 chronological window (`depthBefore`, `depthAfter`) around an `anchorId`.
  *   3. `get`      — Layer 3 full observation details (`narrative`, `facts`, `filesModified`) for `ids`, capped at 64 KB.
  *   4. `outline`  — Folded structural symbol outline (`[lineStart-lineEnd]`) of a source file before targeted `fs_read`.
- *   5. `stats`    — Episodic memory store telemetry and external bridge status.
+ *   5. `stats`    — Episodic memory store telemetry and archive bridge status.
  *
  * Authorship: Strict TypeScript (Causyne Agent).
  */
+import os from 'node:os';
 import path from 'node:path';
 import { episodicStore } from '../memory/episodicStore.js';
 import { foldSourceFileOutline } from '../memory/symbolFolder.js';
@@ -76,7 +77,13 @@ export const memoryRecall = {
         const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
             ? rawArgs
             : {});
-        const action = args.action ?? 'search';
+        const rawFileCandidate = String(args.filePath ?? args.path ?? args.file_path ?? args.filepath ?? args.target ?? '').trim();
+        const inferredAction = args.action
+            ?? (rawFileCandidate ? 'outline' : undefined)
+            ?? (args.anchorId !== undefined ? 'timeline' : undefined)
+            ?? (Array.isArray(args.ids) && args.ids.length > 0 ? 'get' : undefined)
+            ?? 'search';
+        const action = inferredAction;
         const workspace = context.parentLoop?.workspaceRoot ?? context.workspaceRoot ?? process.cwd();
         try {
             if (action === 'search') {
@@ -163,17 +170,23 @@ export const memoryRecall = {
                 };
             }
             if (action === 'outline') {
-                if (!args.filePath || !String(args.filePath).trim()) {
+                if (!rawFileCandidate) {
                     return { success: false, error: 'Missing required parameter "filePath" for action="outline".' };
                 }
-                const targetPath = path.isAbsolute(args.filePath)
-                    ? args.filePath
-                    : path.resolve(workspace, args.filePath);
+                const expanded = rawFileCandidate.startsWith('~/')
+                    ? path.join(os.homedir(), rawFileCandidate.slice(2))
+                    : rawFileCandidate;
+                const targetPath = path.isAbsolute(expanded)
+                    ? expanded
+                    : path.resolve(workspace, expanded);
                 const outline = foldSourceFileOutline(targetPath, args.query);
                 return {
                     success: true,
                     action: 'outline',
-                    outline,
+                    filePath: outline.filePath,
+                    language: outline.language,
+                    totalLines: outline.totalLines,
+                    symbolCount: outline.symbols.length,
                     output: outline.renderedOutline
                 };
             }

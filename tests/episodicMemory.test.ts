@@ -314,6 +314,24 @@ test('compileToolObservation filters low-signal reads and captures mutations & v
   });
   assert.equal(ignoredLs, null);
 
+  const ignoredGrep = compileToolObservation({
+    taskId: 't1',
+    workspace: '/workspace/app',
+    toolName: 'sysRun',
+    args: { command: 'grep -n "compileToolObservation" src/memory/episodicStore.ts' },
+    result: { success: true, output: '108:export function compileToolObservation' }
+  });
+  assert.equal(ignoredGrep, null);
+
+  const ignoredNodeOneLiner = compileToolObservation({
+    taskId: 't1',
+    workspace: '/workspace/app',
+    toolName: 'sysRun',
+    args: { command: 'node -e "console.log(1)"' },
+    result: { success: true, output: '1' }
+  });
+  assert.equal(ignoredNodeOneLiner, null);
+
   const writeObs = compileToolObservation({
     taskId: 't1',
     workspace: '/workspace/app',
@@ -384,6 +402,31 @@ test('foldSourceContentOutline and memory_recall tool execute end-to-end', async
   );
   assert.equal(toolRes.success, true);
   assert.ok(String(toolRes.output).includes('[6-9] export function computeFibonacci'));
+
+  // Verify multi-line function signature extraction on real src/memory/episodicStore.ts
+  const realOutlineRes = await memoryRecall.execute(
+    { path: 'src/memory/episodicStore.ts' },
+    { workspaceRoot: process.cwd() }
+  );
+  assert.equal(realOutlineRes.success, true);
+  assert.equal(realOutlineRes.action, 'outline');
+  assert.ok(
+    String(realOutlineRes.output).includes('export function compileToolObservation'),
+    'Multi-line function compileToolObservation must be included in outline'
+  );
+  assert.ok(
+    JSON.stringify(realOutlineRes).length < 2500,
+    `Expected serialized outline response (${JSON.stringify(realOutlineRes).length} chars) to stay under 2500-char spill limit`
+  );
+
+  // Verify intent-stage pre-admission in decideTools
+  const intentDecision = decideTools({
+    source: 'intent',
+    list,
+    prompt: 'Call memory_recall with action="outline" and memory_write to test episodic memory'
+  });
+  assert.ok(intentDecision.tools.includes('memory_recall'));
+  assert.ok(intentDecision.tools.includes('memory_write'));
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });

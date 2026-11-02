@@ -3135,6 +3135,22 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     catch (e) {
                         this.debugLog(`plan cache write skipped: ${e.message}`);
                     }
+                    try {
+                        const reqText = String(this.currentTaskPrompt || this.userPrompt || '').trim();
+                        const completedText = String(response.content || 'Completed task execution.').replace(/\s+/g, ' ').trim();
+                        if (reqText && (this.stepsCompleted > 0 || completedNativeActionIds.size > 0)) {
+                            episodicStore.recordSessionSummary({
+                                taskId: this.taskId,
+                                workspace: this.workspaceRoot,
+                                request: reqText.slice(0, 260),
+                                completed: completedText.slice(0, 320),
+                                learned: Array.isArray(this._implementationPlan) && this._implementationPlan.length > 0
+                                    ? `Completed ${this._implementationPlan.length}-step plan.`
+                                    : ''
+                            });
+                        }
+                    }
+                    catch { /* never block completion on session summary recording */ }
                     auditLog.log({ event: 'task_complete', taskId: this.taskId, steps: this.stepsCompleted });
                     this.emitEvent({ type: 'task_complete', taskId: this.taskId });
                     break;

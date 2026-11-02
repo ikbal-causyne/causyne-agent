@@ -106,11 +106,18 @@ export function compileToolObservation(params) {
         const command = redactPrivateAndSecrets(String(args.command ?? args.cmd ?? '').trim());
         if (!command)
             return null;
-        // Skip noisy ls/cat/head/tail/echo shell probes
-        if (/^(?:ls|pwd|cd|cat|head|tail|echo|which|true)\b/i.test(command)) {
+        // Skip read-only shell probes and ad-hoc inspection one-liners so episodic memory stays high-signal
+        if (/^(?:ls|pwd|cd|cat|head|tail|echo|which|true|find|wc|grep|egrep|fgrep|rg|sed|awk|jq|stat|file|nl|sort|uniq|cut|tr)\b/i.test(command)) {
             return null;
         }
-        const isVerify = /\b(test|build|tsc|typecheck|lint|pytest|cargo|go\s+test|check)\b/i.test(command);
+        if (/^(?:node\s+-e|python3?\s+-c|git\s+(?:status|log|diff|show|branch|rev-parse))\b/i.test(command)) {
+            return null;
+        }
+        const isVerify = /\b(test|build|tsc|typecheck|lint|pytest|cargo|go\s+test|check|vitest|jest|gradle)\b/i.test(command);
+        const isHighSignalAction = isVerify || /\b(install|commit|deploy|migrate|publish|docker|rsync|cmake|make)\b/i.test(command);
+        if (!isHighSignalAction) {
+            return null;
+        }
         const type = isVerify ? 'verification' : 'discovery';
         const statusWord = isSuccess ? 'Succeeded' : 'Failed';
         const outputPreview = redactPrivateAndSecrets(String(result?.output ?? result?.stdout ?? result?.error ?? '').slice(0, 240)).replace(/\s+/g, ' ').trim();
@@ -194,13 +201,21 @@ export class EpisodicMemoryStore {
             if (fs.existsSync(this.storePath)) {
                 const raw = JSON.parse(fs.readFileSync(this.storePath, 'utf8'));
                 if (raw && Array.isArray(raw.observations) && Array.isArray(raw.summaries)) {
+                    const cleanedObservations = raw.observations.filter((obs) => {
+                        if (obs.type !== 'discovery')
+                            return true;
+                        return !/^(?:Succeeded|Failed):\s*(?:find|wc|grep|egrep|fgrep|rg|sed|awk|jq|stat|file|ls|cat|head|tail|node\s+-e|python3?\s+-c)\b/i.test(obs.title);
+                    });
                     this.data = {
                         schemaVersion: 1,
                         nextObservationId: typeof raw.nextObservationId === 'number' ? raw.nextObservationId : (raw.observations.length + 1),
                         nextSummaryId: typeof raw.nextSummaryId === 'number' ? raw.nextSummaryId : (raw.summaries.length + 1),
-                        observations: raw.observations,
+                        observations: cleanedObservations,
                         summaries: raw.summaries
                     };
+                    if (cleanedObservations.length !== raw.observations.length) {
+                        this.save();
+                    }
                     return this.data;
                 }
             }
