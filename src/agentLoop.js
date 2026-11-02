@@ -1735,6 +1735,14 @@ export class AgentLoop {
             }
             this.userPrompt = null; // Clear so we don't push it again
             this.attachments = null; // Clear attachments
+            if (this.memoryManager && typeof this.memoryManager.saveHistory === 'function') {
+                try {
+                    this.memoryManager.saveHistory(this.messages);
+                }
+                catch {
+                    // Best-effort early persistence so active turns are immediately forkable/revertable.
+                }
+            }
         }
         this.stepsCompleted = 0;
         // Fresh per task. A digest from a previous task would point at a step

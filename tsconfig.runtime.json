@@ -91,6 +91,8 @@
     "src/tui/sessionPicker.ts",
     "src/tui/clipboardSync.ts",
     "src/tui/chatboxClipboard.ts",
+    "src/tui/consoleGuard.ts",
+    "src/tui/smartLinkClick.ts",
     "src/tui/messageInteraction.ts",
     "src/tui/messageActionPlacement.ts",
     "src/tui/mouseHover.ts",
@@ -195,7 +197,8 @@
     "src/memory/contextBudget.ts",
     "src/memory/symbolFolder.ts",
     "src/memory/episodicStore.ts",
-    "src/tools/memoryRecall.ts"
+    "src/tools/memoryRecall.ts",
+    "src/tools/memoryWrite.ts"
   ],
   "exclude": [
     "node_modules",

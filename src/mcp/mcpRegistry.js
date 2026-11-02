@@ -331,7 +331,9 @@ export async function discoverTools() {
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            console.warn(`[MCP] ${server.name} unavailable: ${message}`);
+            if (process.env.CAUSYNE_DEBUG === '1') {
+                console.warn(`[MCP] ${server.name} unavailable: ${message}`);
+            }
             return [];
         }
     }));

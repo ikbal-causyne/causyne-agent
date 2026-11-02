@@ -5,15 +5,21 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   messageAt, persistedMessageIndex, isMouseMotion, handleMessageMouse,
-  handleMessageActionMenuMouse, openMessageActions, MessageActionsLayer,
+  handleMessageActionMenuMouse, openMessageActions, markHoveredMessage, MessageActionsLayer,
   type MessageMarker
 } from '../src/tui/messageInteraction.js';
 import { placeMessageActionPanel } from '../src/tui/messageActionPlacement.js';
+import {
+  extractRowLinks, detectLinkAtPoint, openDetectedLink, resetLinkOpenDebounceForTests
+} from '../src/tui/smartLinkClick.js';
+import { registerStageConsoleGuard, setTransientNotice } from '../src/tui/consoleGuard.js';
 import { mouseHoverTracking } from '../src/tui/mouseHover.js';
 import { panelRows } from '../src/tui/overlay.js';
+import { stripAnsi } from '../src/tui/text.js';
 import { createSession, saveSessionMessages, getSession, deleteSession } from '../src/sessionStore.js';
 import { MemoryManager } from '../src/memoryManager.js';
 import { grantAlways, isAlwaysAllowed, revokeAllAlways } from '../src/approvalGrants.js';
+import { memoryWrite } from '../src/tools/memoryWrite.js';
 
 const markers: MessageMarker[] = [
   { id: 1, kind: 'user', row: 0, meta: { messageText: 'first' } },
@@ -76,7 +82,7 @@ test('motion reports are separate from clicks', () => {
   assert.equal(isMouseMotion('\x1b[<0;10;5M'), false);
 });
 
-test('message actions fit exactly and are placed near the clicked row', () => {
+test('message actions fit exactly, are placed near the clicked row, and preserve left/right background text', () => {
   const layer = new MessageActionsLayer([
     { label: 'Copy message', description: 'to clipboard', value: 'copy' },
     { label: 'Fork from here', description: 'fresh permissions', value: 'fork' }
@@ -85,13 +91,44 @@ test('message actions fit exactly and are placed near the clicked row', () => {
   assert.equal(panel.length, 4);
   assert.match(panel[1]!, /Copy message/);
   assert.match(panel[2]!, /Fork from here/);
-  const base = Array<string>(20).fill('conversation');
+  const baseLine = 'LEFT_RAIL_TEXT_' + 'x'.repeat(60) + '_RIGHT_RAIL_END';
+  const base = Array<string>(20).fill(baseLine);
   const placed = placeMessageActionPanel(base, panel, 90, 10, 24, 2);
   assert.equal(placed.layout?.y, 22);
   assert.equal(placed.layout?.count, 2);
   assert.match(placed.rows[14]!, /Fork from here/);
-  assert.equal(base[13], 'conversation');
+  // Verify left and right sides of the underlying row are preserved rather than erased
+  assert.match(stripAnsi(placed.rows[14]!), /^LEFT_RAIL_TEXT_/);
+  assert.match(stripAnsi(placed.rows[14]!), /_RIGHT_RAIL_END$/);
+  assert.equal(base[13], baseLine);
   assert.equal(placeMessageActionPanel(base.slice(0, 2), panel, 90, 10, 24, 2).layout, null);
+});
+
+test('markHoveredMessage skips leading/trailing blank rows and avoids duplicate arrows', () => {
+  const frameRows = [
+    '',
+    '  ▸ Causyne',
+    '  Hello world',
+    ''
+  ];
+  const frameMarkers: MessageMarker[] = [
+    { id: 10, kind: 'assistant', row: 0, meta: { messageText: 'Hello world' } }
+  ];
+  const surface = {
+    width: 80,
+    out: { rows: 20 },
+    stage: { height: 10, reserved: false },
+    viewport: { height: 4, width: 80, scrollTop: 0 },
+    transcript: { flatten: () => ({ rows: frameRows, markers: frameMarkers }) },
+    hoveredMessageFrameId: 10
+  };
+  const rows = frameRows.slice();
+  markHoveredMessage(rows, surface, 80);
+  // Blank spacing rows at index 0 and 3 must stay untouched
+  assert.equal(rows[0], '');
+  assert.equal(rows[3], '');
+  // Row 1 already has '▸ Causyne', so it must not get a second '▸' prepended
+  assert.equal((stripAnsi(rows[1]!).match(/▸/g) || []).length, 1);
 });
 
 test('hover tracking is disabled by default for terminal text selection and opt-in with CAUSYNE_MOUSE_HOVER=1', () => {
@@ -128,7 +165,7 @@ test('message action menu selects the clicked row and closes on outside clicks o
   assert.equal(menu.key({ name: 'escape' }), 'close');
 });
 
-test('forking a clicked message copies only prior turns and resets grants', () => {
+test('forking a clicked message presents Copy/Fork/Revert, copies only prior turns, names fork (#1), and resets grants', () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-message-fork-'));
   let forkId: string | null = null;
   let sourceId: string | null = null;
@@ -164,11 +201,13 @@ test('forking a clicked message copies only prior turns and resets grants', () =
     grantAlways('fs_write');
     openMessageActions(host, loop, markers[1]!);
     assert.ok(layer?.messageActions);
-    assert.equal(layer.list.filtered.length, 2);
-    layer.list.moveTo(1, 2);
+    assert.equal(layer.list.filtered.length, 3);
+    assert.deepEqual(layer.list.filtered.map((i: any) => i.value), ['copy', 'fork', 'revert']);
+    layer.list.moveTo(1, 3);
     assert.equal(layer.key({ name: 'enter' }), 'close');
     forkId = memory.sessionId;
     assert.notEqual(forkId, source.id);
+    assert.match(getSession(forkId)?.title || '', /Test conversation \(fork #1\)/);
     assert.deepEqual(getSession(forkId)?.messages.map(message => message.role), ['user', 'tool', 'assistant']);
     assert.equal(getSession(source.id)?.messages.length, 4);
     assert.equal(rendered.length, 3);
@@ -179,5 +218,171 @@ test('forking a clicked message copies only prior turns and resets grants', () =
     if (forkId) deleteSession(forkId);
     if (sourceId) deleteSession(sourceId);
     fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('forking and reverting work during an active turn with in-memory loop.messages', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-busy-fork-revert-'));
+  let sourceId: string | null = null;
+  let forkId: string | null = null;
+  try {
+    const source = createSession(workspace, 'In-flight Session', true);
+    sourceId = source.id;
+    const memory = new MemoryManager(workspace, source.id);
+    let interrupted = 0;
+    const loop = {
+      memoryManager: memory,
+      // Simulate an active turn where loop.messages has the user prompt before turn completion
+      messages: [
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'answer' }
+      ],
+      abort() { interrupted++; },
+      resetApprovalScope() {},
+      tokenTracker: { reset() {} }
+    };
+    let layer: any = null;
+    let composerRestored = '';
+    const host = {
+      busy: true,
+      notice: '',
+      interrupt() { interrupted++; this.busy = false; },
+      setText(val: string) { composerRestored = val; },
+      surface: {
+        width: 100, out: { rows: 40 }, stage: { height: 30, reserved: true },
+        viewport: { height: 20, width: 100, scrollTop: 0, toBottom() {} },
+        transcript: { flatten: () => ({ rows: ['first', 'answer'], markers: markers.slice(0, 2) }) }
+      },
+      renderer: { renderSessionHistory() {}, setSessionInfo() {} },
+      openLayer(next: unknown) { layer = next; },
+      scheduleDraw() {}
+    };
+
+    // Even while busy=true and before saveSessionMessages was called manually, Fork & Revert appear
+    openMessageActions(host, loop, markers[0]!);
+    assert.equal(layer.list.filtered.length, 3);
+    // Select Revert (index 2) on user message 'first'
+    layer.list.moveTo(2);
+    assert.equal(layer.key({ name: 'enter' }), 'close');
+    assert.ok(interrupted >= 1);
+    assert.equal(composerRestored, 'first');
+    assert.equal(loop.messages.length, 0);
+  } finally {
+    if (forkId) deleteSession(forkId);
+    if (sourceId) deleteSession(sourceId);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('smart link detection extracts OSC 8 links, recovers truncated URLs, and ignores code filenames', () => {
+  const fullInspectUrl = 'https://vercel.com/ikbals-projects-ab6da137/suika-game/Aph3W57X2wU7gG6q1rK7p8nL9vB2';
+  const rawMessageText = [
+    'Live Production URL: https://suika-game-lyart.vercel.app',
+    `Inspect URL: ${fullInspectUrl}`,
+    'Modified files: index.html, style.css, fruit.js, physics_tables.json'
+  ].join('\n');
+
+  // 1. OSC 8 hyperlink
+  const osc8Row = '  • Live URL: \x1b]8;;https://suika-game-lyart.vercel.app\x07suika-game-lyart.vercel.app\x1b]8;;\x07';
+  const osc8Links = extractRowLinks(osc8Row, 0, rawMessageText);
+  assert.equal(osc8Links.length, 1);
+  assert.equal(osc8Links[0]!.url, 'https://suika-game-lyart.vercel.app');
+  assert.equal(osc8Links[0]!.startCol, 14);
+  assert.equal(osc8Links[0]!.endCol, 40);
+
+  // 2. Truncated inspect URL recovers full URL from rawMessageText
+  const truncatedRow = '  • Inspect: vercel.com/ikbals-projects-ab6da137/suika-game/…';
+  const truncLinks = extractRowLinks(truncatedRow, 1, rawMessageText);
+  assert.equal(truncLinks.length, 1);
+  assert.equal(truncLinks[0]!.url, fullInspectUrl);
+
+  // 3. Code filenames are NOT falsely detected as web links
+  const codeRow = '  • Files: index.html, style.css, fruit.js, physics_tables.json';
+  const codeLinks = extractRowLinks(codeRow, 2, rawMessageText);
+  assert.equal(codeLinks.length, 0);
+});
+
+test('clicking a link in a message opens the URL instead of popping up Message Actions', () => {
+  resetLinkOpenDebounceForTests();
+  const rowWithLink = '  Live: https://suika-game-lyart.vercel.app/ ready';
+  const linkMarker: MessageMarker = {
+    id: 5,
+    kind: 'assistant',
+    row: 0,
+    meta: { messageText: 'Live: https://suika-game-lyart.vercel.app/ ready' }
+  };
+  const surface = {
+    width: 100,
+    out: { rows: 20 },
+    stage: { height: 10, reserved: true },
+    viewport: { height: 5, width: 97, scrollTop: 0 },
+    transcript: { flatten: () => ({ rows: [rowWithLink], markers: [linkMarker] }) },
+    hoveredMessageFrameId: null as number | null
+  };
+  // Single transcript row sits at bottom of 5-row viewport (viewRow = 4, stageTop = 10 -> y = 14)
+  const detected = detectLinkAtPoint(surface, { x: 15, y: 14 }, linkMarker);
+  assert.ok(detected);
+  assert.equal(detected?.url, 'https://suika-game-lyart.vercel.app/');
+
+  const spawned: Array<{ cmd: string; args: string[] }> = [];
+  assert.equal(
+    openDetectedLink('https://suika-game-lyart.vercel.app/', {
+      platform: 'darwin',
+      now: 1000,
+      spawnImpl: ((cmd: string, args: string[]) => {
+        spawned.push({ cmd, args });
+        return { on() {}, unref() {} };
+      }) as never
+    }),
+    true
+  );
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0]!.cmd, 'open');
+  assert.deepEqual(spawned[0]!.args, ['https://suika-game-lyart.vercel.app/']);
+
+  // Clicking on the link via handleMessageMouse must NOT open the MessageActions modal
+  let layerOpened = 0;
+  const host = {
+    surface,
+    busy: false,
+    notice: '',
+    openLayer() { layerOpened++; },
+    scheduleDraw() {}
+  };
+  handleMessageMouse(host, {}, {
+    mouse: { x: 15, y: 14, button: 0, pressed: true },
+    sequence: '\x1b[<0;16;15M'
+  });
+  assert.equal(layerOpened, 0);
+  assert.match(host.notice, /Opened https:\/\/suika-game-lyart\.vercel\.app\//);
+  setTransientNotice(host, '', 0);
+});
+
+test('memoryWrite never writes Cortex failure stack/errors to console.error and stage console guard blocks raw writes', async () => {
+  let errorCalled = 0;
+  const origError = console.error;
+  try {
+    const unregister = registerStageConsoleGuard({
+      out: process.stdout,
+      stage: { reserved: true }
+    });
+    // Even if a component calls console.error while the stage is reserved, it is suppressed
+    console.error('SHOULD_BE_SUPPRESSED');
+    unregister();
+
+    console.error = () => { errorCalled++; };
+    const res = await memoryWrite.execute({
+      fact: 'Test fact for TUI composer integrity',
+      creativePattern: {
+        project: 'suika-game',
+        designApproach: 'Playful tactile arcade',
+        colorPalette: 'warm cream',
+        fonts: 'Fredoka'
+      }
+    });
+    assert.equal(res.success, true);
+    assert.equal(errorCalled, 0);
+  } finally {
+    console.error = origError;
   }
 });

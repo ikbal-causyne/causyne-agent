@@ -355,7 +355,9 @@ export async function discoverTools(): Promise<DynamicToolDefinition[]> {
         .concat(utilityDefinitions(server, client));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`[MCP] ${server.name} unavailable: ${message}`);
+      if (process.env.CAUSYNE_DEBUG === '1') {
+        console.warn(`[MCP] ${server.name} unavailable: ${message}`);
+      }
       return [];
     }
   }));

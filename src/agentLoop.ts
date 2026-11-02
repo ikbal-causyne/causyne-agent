@@ -1831,6 +1831,13 @@ export class AgentLoop {
       
       this.userPrompt = null; // Clear so we don't push it again
       this.attachments = null; // Clear attachments
+      if (this.memoryManager && typeof (this.memoryManager as any).saveHistory === 'function') {
+        try {
+          (this.memoryManager as any).saveHistory(this.messages);
+        } catch {
+          // Best-effort early persistence so active turns are immediately forkable/revertable.
+        }
+      }
     }
 
     this.stepsCompleted = 0;

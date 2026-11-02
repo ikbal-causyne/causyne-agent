@@ -1,5 +1,6 @@
-import { truncate, visibleWidth } from './text.js';
-/** Overlay a compact menu in the transcript viewport, near the selected message. */
+import { padEnd, truncate, visibleWidth } from './text.js';
+import { sliceFromColumn } from './turnRail.js';
+/** Overlay a compact menu in the transcript viewport, near the selected message, without erasing left/right columns. */
 export function placeMessageActionPanel(viewportRows, panel, contentWidth, stageTop, anchorY, count) {
     if (!panel.length || viewportRows.length < panel.length || contentWidth < 8) {
         return { rows: viewportRows, layout: null };
@@ -10,7 +11,11 @@ export function placeMessageActionPanel(viewportRows, panel, contentWidth, stage
     const y = Math.max(0, Math.min(viewportRows.length - panel.length, anchor - Math.floor(panel.length / 2)));
     const rows = viewportRows.slice();
     for (let i = 0; i < panel.length; i++) {
-        rows[y + i] = `${' '.repeat(x)}${truncate(panel[i] ?? '', width, '')}`;
+        const baseRow = rows[y + i] ?? '';
+        const leftPrefix = padEnd(truncate(baseRow, x, ''), x);
+        const cardChunk = padEnd(truncate(panel[i] ?? '', width, ''), width);
+        const rightSuffix = sliceFromColumn(baseRow, x + width);
+        rows[y + i] = `${leftPrefix}${cardChunk}${rightSuffix}`;
     }
     return { rows, layout: { x, y: stageTop + y, width, count } };
 }
