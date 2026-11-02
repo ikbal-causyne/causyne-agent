@@ -133,9 +133,10 @@ export function compileToolObservation(params: {
   const rawPath = String(
     args.path ?? args.file_path ?? args.filePath ?? args.target ?? ''
   ).trim();
-  const relPath = rawPath && workspace
+  const rawRel = rawPath && workspace
     ? (path.isAbsolute(rawPath) ? path.relative(workspace, rawPath) : rawPath)
     : rawPath;
+  const relPath = rawRel ? rawRel.replace(/\\/g, '/') : '';
 
   const lowerTool = normalizedTool.toLowerCase();
 

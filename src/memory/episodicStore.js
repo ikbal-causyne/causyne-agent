@@ -67,9 +67,10 @@ export function compileToolObservation(params) {
         }
     }
     const rawPath = String(args.path ?? args.file_path ?? args.filePath ?? args.target ?? '').trim();
-    const relPath = rawPath && workspace
+    const rawRel = rawPath && workspace
         ? (path.isAbsolute(rawPath) ? path.relative(workspace, rawPath) : rawPath)
         : rawPath;
+    const relPath = rawRel ? rawRel.replace(/\\/g, '/') : '';
     const lowerTool = normalizedTool.toLowerCase();
     // 1. File mutations (fs_write, fs_edit, MultiEdit, write_file, edit_file)
     if (['fs_write', 'fs_edit', 'multiedit', 'write_file', 'edit_file', 'replace_file_content', 'write', 'edit'].includes(lowerTool)) {
