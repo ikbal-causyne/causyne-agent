@@ -98,7 +98,7 @@ export const memoryRecall = {
                     ? 'No matching episodic observations found.'
                     : [
                         `Found ${res.totalMatches} match(es) (showing ${res.results.length}):`,
-                        ...res.results.map((r) => `${r.id} [${r.type}] (${r.project}) ${r.title}${r.reinforcementCount > 0 ? ` [x${r.reinforcementCount + 1}]` : ''} — score ${r.score}`),
+                        ...res.results.map((r) => `${r.id} [${r.type}] (${r.project}) ${r.title}${r.reinforcementCount > 0 ? ` [reinforced: ${r.reinforcementCount}]` : ''} — score ${r.score}`),
                         'Next step: call memory_recall with action="timeline" (anchorId) or action="get" (ids) for full details.'
                     ].join('\n');
                 return {

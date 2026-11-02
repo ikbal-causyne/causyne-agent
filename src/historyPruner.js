@@ -218,7 +218,10 @@ export function pruneStaleToolObservations(messages, options = {}) {
         }
         if (seen <= keepRecent && !isDuplicateInspection)
             continue;
-        if (original.length < minChars)
+        const effectiveMinChars = message.name === 'memory_recall'
+            ? Math.max(minChars, 4000)
+            : minChars;
+        if (original.length < effectiveMinChars)
             continue;
         let spillPath = message.spillPath;
         if (!spillPath) {

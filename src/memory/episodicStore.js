@@ -212,6 +212,8 @@ export class EpisodicMemoryStore {
                     const cleanedObservations = raw.observations.filter((obs) => {
                         if (obs.taskId === 'native-recovery-false')
                             return false;
+                        if (obs.title.includes('.causyne_verify_placeholder'))
+                            return false;
                         if (obs.type !== 'discovery')
                             return true;
                         return !/^(?:Succeeded|Failed):\s*(?:find|wc|grep|egrep|fgrep|rg|sed|awk|jq|stat|file|ls|cat|head|tail|node\s+-e|python3?\s+-c)\b/i.test(obs.title);
@@ -533,14 +535,15 @@ export class EpisodicMemoryStore {
                 continue;
             }
             totalBytes += byteLen;
-            observations.push(obs);
-            // Reinforce retrieved memory in ACT-R
+            // Reinforce retrieved memory in ACT-R and return the updated observation
             const reinforced = [...obs.reinforcedAtEpochsMs, nowMs].slice(-MAX_REINFORCEMENT_TIMESTAMPS);
-            store.observations[idx] = {
+            const updatedObs = {
                 ...obs,
                 reinforcedAtEpochsMs: reinforced,
                 reinforcementCount: obs.reinforcementCount + 1
             };
+            store.observations[idx] = updatedObs;
+            observations.push(updatedObs);
             dirty = true;
         }
         if (dirty) {

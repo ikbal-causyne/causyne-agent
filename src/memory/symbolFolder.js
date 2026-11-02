@@ -115,11 +115,11 @@ function extractPrecedingDocComment(lines, lineIndex) {
             idx--;
         }
         const summary = docLines.join(' ').trim();
-        return summary ? summary.slice(0, 110) : undefined;
+        return summary ? summary.slice(0, 65) : undefined;
     }
     if (line.startsWith('//') || line.startsWith('#')) {
         const cleaned = line.replace(/^(?:\/\/+|#+)\s*/, '').trim();
-        return cleaned ? cleaned.slice(0, 110) : undefined;
+        return cleaned ? cleaned.slice(0, 65) : undefined;
     }
     return undefined;
 }
@@ -327,6 +327,9 @@ export function foldSourceContentOutline(content, filePath, queryFilter) {
     const ext = path.extname(filePath).toLowerCase();
     const language = LANGUAGE_BY_EXT[ext] ?? 'text';
     const lines = content.split(/\r?\n/);
+    if (lines.length > 1 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
     const totalLines = lines.length;
     let importCount = 0;
     for (const line of lines) {

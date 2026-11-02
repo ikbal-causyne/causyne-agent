@@ -485,7 +485,7 @@ export class AcpClient {
             pending.notifyActivity?.();
         }
     }
-    inspectPeerDiagnostics(sessionId) {
+    inspectPeerDiagnostics(sessionId, sinceEpochMs) {
         if (this.exitError) {
             return this.exitError.message;
         }
@@ -517,13 +517,13 @@ export class AcpClient {
         const isOpencode = cmd.includes('opencode')
             || (this.options.args && this.options.args.some(a => String(a).toLowerCase().includes('opencode')));
         if (isOpencode) {
-            const opencodeErr = this.inspectOpencodeLog(sessionId);
+            const opencodeErr = this.inspectOpencodeLog(sessionId, sinceEpochMs);
             if (opencodeErr)
                 return opencodeErr;
         }
         return null;
     }
-    inspectOpencodeLog(sessionId) {
+    inspectOpencodeLog(sessionId, sinceEpochMs) {
         try {
             const logPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'log', 'opencode.log');
             if (!fsSync.existsSync(logPath))
@@ -548,6 +548,19 @@ export class AcpClient {
                     continue;
                 if (sessionId && !line.includes(sessionId))
                     continue;
+                // Ignore normal stream cancellations triggered by session/cancel after <tool_call> detection
+                if (/\berror=Aborted\b|\bAbortError\b|\bMessageAbortedError\b/i.test(line)) {
+                    continue;
+                }
+                if (sinceEpochMs !== undefined) {
+                    const tsMatch = line.match(/timestamp=([^\s]+)/);
+                    if (tsMatch?.[1]) {
+                        const lineEpochMs = Date.parse(tsMatch[1]);
+                        if (Number.isFinite(lineEpochMs) && lineEpochMs < sinceEpochMs - 250) {
+                            continue;
+                        }
+                    }
+                }
                 if (line.includes('level=ERROR') || line.includes('AI_APICallError') || line.includes('Free usage limit reached') || line.includes('AI_RetryError')) {
                     const match = line.match(/error\.error="([^"]+)"/) || line.match(/message="([^"]+)"/);
                     if (match && match[1]) {
@@ -570,6 +583,7 @@ export class AcpClient {
         if (this.exitError)
             return Promise.reject(this.exitError);
         const id = this.nextId++;
+        const requestStartMs = Date.now();
         return new Promise((resolve, reject) => {
             let inactivityTimer;
             let snifferInterval;
@@ -589,7 +603,7 @@ export class AcpClient {
             const timer = setTimeout(() => {
                 cleanup();
                 this.pending.delete(id);
-                const diag = this.inspectPeerDiagnostics(options?.sessionId);
+                const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
                 if (diag) {
                     reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
                 }
@@ -608,7 +622,7 @@ export class AcpClient {
                 inactivityTimer = setTimeout(() => {
                     cleanup();
                     this.pending.delete(id);
-                    const diag = this.inspectPeerDiagnostics(options?.sessionId);
+                    const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
                     if (diag) {
                         reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
                     }
@@ -622,7 +636,7 @@ export class AcpClient {
             const sid = options?.sessionId;
             if (sid) {
                 snifferInterval = setInterval(() => {
-                    const fatalDiag = this.inspectPeerDiagnostics(sid);
+                    const fatalDiag = this.inspectPeerDiagnostics(sid, requestStartMs);
                     if (fatalDiag) {
                         cleanup();
                         clearTimeout(timer);
