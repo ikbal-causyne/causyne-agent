@@ -397,7 +397,7 @@ export function scanMutation(toolName, args, context) {
 }
 export function boundedArgs(args) {
     const result = {};
-    for (const key of ['command', 'cmd', 'path', 'file_path', 'source', 'destination', 'action', 'url', 'query', 'pattern']) {
+    for (const key of ['command', 'cmd', 'path', 'file_path', 'source', 'destination', 'action', 'operation', 'engine', 'host', 'mode', 'url', 'query', 'pattern']) {
         const value = args[key];
         if (typeof value === 'string')
             result[key] = value.slice(0, 400);
@@ -406,6 +406,12 @@ export function boundedArgs(args) {
         result.recursive = args.recursive;
     if (typeof args.overwrite === 'boolean')
         result.overwrite = args.overwrite;
+    if (typeof args.simulate === 'boolean')
+        result.simulate = args.simulate;
+    if (typeof args.dryRun === 'boolean')
+        result.dryRun = args.dryRun;
+    if (typeof args.extractTextOnly === 'boolean')
+        result.extractTextOnly = args.extractTextOnly;
     if (typeof args.content === 'string')
         result.contentBytes = Buffer.byteLength(args.content, 'utf8');
     if (Array.isArray(args.edits))
@@ -423,7 +429,8 @@ export function outcomeFromResult(tool, args, result, at) {
         ? args.command
         : typeof args.cmd === 'string' ? args.cmd : '';
     const browserData = Array.isArray(record.data) ? record.data : [];
-    const observedImage = success && record._is_image_marker === true && record.visionDelivered !== false;
+    const imageCaptured = success && record._is_image_marker === true;
+    const observedImage = imageCaptured && record.visionDelivered !== false;
     const rendered = success && (observedImage || (tool === 'browser_act' && browserData.some((item) => {
         if (!item || typeof item !== 'object')
             return false;
@@ -442,6 +449,7 @@ export function outcomeFromResult(tool, args, result, at) {
         path: pathArgument(args).slice(0, 400),
         at,
         ...(rendered ? { rendered: true } : {}),
-        ...(observedImage ? { observedImage: true } : {})
+        ...(observedImage ? { observedImage: true } : {}),
+        ...(imageCaptured ? { imageCaptured: true } : {})
     };
 }

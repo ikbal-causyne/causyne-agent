@@ -13,7 +13,8 @@ const MUTATION_TOOLS = new Set([
 ]);
 
 export function isLaunchOnlyPrompt(prompt: string): boolean {
-  if (/\brun\s+(?:the\s+)?(?:tests?|checks?|lint|benchmarks?|scripts?|commands?)\b/i.test(prompt)) return false;
+  if (/\b(?:run|execute)\s+(?:the\s+)?(?:tests?|checks?|lint|benchmarks?|scripts?|commands?|tools?|creative_apps|resolve_act|memory_recall|native_engine|browser_act|fs_read|sysRun)\b/i.test(prompt)) return false;
+  if (/\b(?:verify|verification|verify_bridge|inspectActive|simulate|probe|audit|analyze|diagnose)\b/i.test(prompt)) return false;
   return LAUNCH_VERBS.test(prompt) && !CHANGE_VERBS.test(prompt);
 }
 

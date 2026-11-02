@@ -7,6 +7,9 @@ import childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError } from '../src/launchIntent.js';
+import { assessVerification } from '../src/verificationPlan.js';
+import { outcomeFromResult } from '../src/observer/evidence.js';
+import { stripToolCallMarkup, extractLivePlanFromText } from '../src/implementationPlan.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { sysRun, sysRunBg } from '../src/tools/sysRun.js';
 import { AgentLoop } from '../src/agentLoop.js';
@@ -16,6 +19,14 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.equal(isLaunchOnlyPrompt('preview this project'), true);
   assert.equal(isLaunchOnlyPrompt('open it and edit server.py'), false);
   assert.equal(isLaunchOnlyPrompt('run tests'), false);
+  assert.equal(
+    isLaunchOnlyPrompt('Run creative_apps with action="verify_bridge" to execute the full cross-platform verification, then run resolve_act with action="inspectActive" and simulate=true'),
+    false
+  );
+  assert.equal(
+    isLaunchOnlyPrompt('Execute a strict 5-point verification of the memory_recall and episodicStore pipeline'),
+    false
+  );
   assert.match(launchScopeError('fs_edit', { path: 'server.py' }), /not change/);
   assert.match(launchScopeError('sysRun', { command: 'python3 -c "open(\"server.py\",\"w\")"' }), /does not authorize/);
   assert.match(launchScopeError('sysRun', { command: 'ls -la && rm server.py' }), /chained shell commands/);
@@ -151,4 +162,64 @@ test('updatePlan heals non-standard parameters and status casing', async () => {
   assert.equal(captured.plan[0].status, 'in_progress');
   assert.equal(captured.plan[1].status, 'pending');
 });
+
+test('assessVerification treats read-only creative bridge/inspection and probes as non-mutating and accepts probe/capture evidence', () => {
+  const verifyBridgeOutcome = outcomeFromResult(
+    'creative_apps',
+    { action: 'verify_bridge' },
+    { success: true },
+    100
+  );
+  const inspectResolveOutcome = outcomeFromResult(
+    'resolve_act',
+    { action: 'inspectActive', simulate: true },
+    { success: true },
+    200
+  );
+  // Read-only creative verification calls must NOT trigger a false Verification (creative) gap
+  const readOnlyAssessment = assessVerification({
+    outcomes: [verifyBridgeOutcome, inspectResolveOutcome]
+  });
+  assert.equal(readOnlyAssessment.gaps.length, 0);
+  assert.equal(readOnlyAssessment.directive, '');
+
+  // When a real creative mutation occurs, native_engine probe + view_image capture satisfy it without resetting after()
+  const realCreativeRender = outcomeFromResult(
+    'blender_act',
+    { action: 'render', path: '/tmp/scene.png' },
+    { success: true },
+    300
+  );
+  const viewImageTextOnly = outcomeFromResult(
+    'view_image',
+    { path: '/tmp/scene.png' },
+    { success: true, _is_image_marker: true, visionDelivered: false },
+    400
+  );
+  const nativeSoundProbe = outcomeFromResult(
+    'native_engine',
+    { engine: 'sound', action: 'probe', query: '/tmp/audio.wav' },
+    { success: true },
+    500
+  );
+  const satisfiedAssessment = assessVerification({
+    outcomes: [realCreativeRender, viewImageTextOnly, nativeSoundProbe]
+  });
+  assert.equal(satisfiedAssessment.gaps.length, 0);
+});
+
+test('stripToolCallMarkup strips trailing partial <t and <to tags and extractLivePlanFromText ignores mid-stream unclosed JSON', () => {
+  assert.equal(stripToolCallMarkup('<t'), '');
+  assert.equal(stripToolCallMarkup('<to'), '');
+  assert.equal(stripToolCallMarkup('<tool_call'), '');
+  assert.equal(stripToolCallMarkup('Hello world\n<to'), 'Hello world');
+
+  // Unclosed mid-stream <tool_call> must not fire during live streaming (allowTrailing = false)
+  const partialStream = '<tool_call>{"name":"update_plan","arguments":{"plan":[{"id":"s1","step":"Inspecting';
+  assert.equal(extractLivePlanFromText(partialStream, false), null);
+  // Once closed, it extracts cleanly
+  const completeStream = '<tool_call>{"name":"update_plan","arguments":{"plan":[{"id":"s1","step":"Inspecting","status":"in_progress"}]}}</tool_call>';
+  assert.equal(extractLivePlanFromText(completeStream, false)?.plan.length, 1);
+});
+
 

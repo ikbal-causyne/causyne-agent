@@ -127,7 +127,7 @@ export function normalizePeerPlanEntries(value: unknown): PlanUpdate | null {
   return { explanation, plan: steps };
 }
 
-export function extractToolCallJsonObjects(text: string): Array<Record<string, unknown>> {
+export function extractToolCallJsonObjects(text: string, allowUnclosedHealing = true): Array<Record<string, unknown>> {
   const results: Array<Record<string, unknown>> = [];
   if (!text || typeof text !== 'string') return results;
 
@@ -182,6 +182,8 @@ export function extractToolCallJsonObjects(text: string): Array<Record<string, u
         // Fall through to suffix healing below
       }
     }
+
+    if (!allowUnclosedHealing) continue;
 
     // Unclosed or truncated JSON after <tool_call>: strip trailing XML/DSML closing tags and heal
     const nextTagIndex = text.indexOf('<tool_call>', braceStart + 1);
@@ -245,12 +247,16 @@ export function extractToolCallJsonObjects(text: string): Array<Record<string, u
   return results;
 }
 
+const TRAILING_PARTIAL_TOOL_TAG = /<\/?(?:t(?:o(?:o(?:l(?:_(?:c(?:a(?:l(?:l)?)?)?)?)?)?)?)?|f(?:u(?:n(?:c(?:t(?:i(?:o(?:n(?:_(?:c(?:a(?:l(?:l(?:s)?)?)?)?)?)?)?)?)?)?)?)?)?|i(?:n(?:v(?:o(?:k(?:e)?)?)?)?)?|[｜|][^\n>]*)$/i;
+const TRAILING_PARTIAL_THINK_TAG = /<\/?(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?|o(?:u(?:g(?:h(?:t)?)?)?)?)?)?)?|r(?:e(?:a(?:s(?:o(?:n(?:i(?:n(?:g(?:_(?:s(?:c(?:r(?:a(?:t(?:c(?:h(?:p(?:a(?:d)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)?)$/i;
+
 export function stripToolCallMarkup(text: string): string {
   if (!text || typeof text !== 'string') return '';
   return text
     .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+|$)/gi, '')
     .replace(/<[｜|]DSML[｜|][\s\S]*?(?:<\/[｜|]DSML[｜|]\s*calls>|$)/gi, '')
     .replace(/(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+/gi, '')
+    .replace(TRAILING_PARTIAL_TOOL_TAG, '')
     .trim();
 }
 
@@ -258,6 +264,7 @@ export function stripThinkBlocks(text: string): string {
   if (!text || typeof text !== 'string') return '';
   return text
     .replace(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>[\s\S]*?(?:<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>|$)/gi, '')
+    .replace(TRAILING_PARTIAL_THINK_TAG, '')
     .trim();
 }
 
@@ -267,7 +274,7 @@ export function extractLivePlanFromText(text: string, allowTrailing = false): Pl
 
   // 1. Check for inline <tool_call>{"name": "update_plan" | "todowrite", ...}</tool_call> (including DSML-closed blocks)
   let latestToolPlan: PlanUpdate | null = null;
-  for (const parsed of extractToolCallJsonObjects(cleanText)) {
+  for (const parsed of extractToolCallJsonObjects(cleanText, allowTrailing)) {
     try {
       const toolName = String(parsed?.name || parsed?.tool || '').toLowerCase().trim();
       if (toolName === 'update_plan' || toolName === 'todowrite' || toolName === 'todo_write') {

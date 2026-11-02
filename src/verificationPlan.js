@@ -24,6 +24,10 @@ const CREATIVE_MUTATORS = new Set([
     'blender_act', 'creative_apps', 'execute_procedural_media', 'generate_media_via_api',
     'native_engine', 'resolve_act', 'palmier_act', 'game_audio_synth'
 ]);
+const READ_ONLY_CREATIVE_ACTIONS = new Set([
+    'discover', 'status', 'inspect', 'inspectactive', 'verify', 'verify_bridge',
+    'pipeline_plan', 'probe', 'list', 'info', 'check', 'ping', 'health'
+]);
 const WEB_PATH = /\.(?:html?|css|scss|jsx|tsx|vue|svelte)$/i;
 const CODE_PATH = /\.(?:[cm]?[jt]s|py|rb|php|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|sh|sql)$/i;
 const DOCUMENT_PATH = /\.(?:pdf|docx?|pptx?|odt|rtf|epub)$/i;
@@ -32,11 +36,21 @@ const RUN_COMMAND = /^\s*(?:node|python3?|ruby|php|deno|bun|go\s+run|cargo\s+run
 const MEDIA_PROBE = /\b(?:ffprobe|afinfo|soxi|identify|mediainfo|exiftool)\b/i;
 const READBACK_TOOLS = new Set(['pdf_read', 'fs_read', 'view_image', 'vision_inspect_ui', 'screenshot']);
 const LOOK_TOOLS = new Set(['view_image', 'vision_inspect_ui', 'screenshot']);
+function isCreativeMutation(outcome) {
+    if (!CREATIVE_MUTATORS.has(outcome.tool))
+        return false;
+    if (outcome.args?.simulate === true || outcome.args?.dryRun === true)
+        return false;
+    const action = String(outcome.args?.action ?? outcome.args?.operation ?? '').toLowerCase().trim();
+    if (action && READ_ONLY_CREATIVE_ACTIONS.has(action))
+        return false;
+    return true;
+}
 function isMutation(outcome) {
     if (!outcome.success)
         return false;
     const tool = outcome.tool;
-    if (CODE_MUTATORS.has(tool) || CREATIVE_MUTATORS.has(tool))
+    if (CODE_MUTATORS.has(tool) || isCreativeMutation(outcome))
         return true;
     if (tool === 'document_forge')
         return true;
@@ -47,7 +61,7 @@ function domainsOf(input, mutations) {
     for (const outcome of mutations) {
         const tool = outcome.tool;
         const target = outcome.path || '';
-        if (CREATIVE_MUTATORS.has(tool))
+        if (isCreativeMutation(outcome))
             found.add('creative');
         else if (tool === 'document_forge' || DOCUMENT_PATH.test(target))
             found.add('document');
@@ -68,7 +82,7 @@ function after(outcomes, domain) {
             return false;
         const target = outcome.path || '';
         switch (domain) {
-            case 'creative': return CREATIVE_MUTATORS.has(outcome.tool);
+            case 'creative': return isCreativeMutation(outcome);
             case 'document': return outcome.tool === 'document_forge' || DOCUMENT_PATH.test(target);
             case 'web': return CODE_MUTATORS.has(outcome.tool) && WEB_PATH.test(target);
             case 'code': return CODE_MUTATORS.has(outcome.tool) && CODE_PATH.test(target);
@@ -87,7 +101,8 @@ function satisfied(domain, evidence) {
             return ok.some((outcome) => outcome.rendered === true);
         case 'creative':
             return ok.some((outcome) => outcome.observedImage === true
-                || MEDIA_PROBE.test(outcome.command));
+                || MEDIA_PROBE.test(outcome.command)
+                || (outcome.tool === 'native_engine' && ['probe', 'inspect', 'verify', 'status'].includes(String(outcome.args?.action ?? '').toLowerCase())));
         case 'document':
             return ok.some((outcome) => outcome.observedImage === true
                 || (['pdf_read', 'fs_read'].includes(outcome.tool) && DOCUMENT_PATH.test(outcome.path)));

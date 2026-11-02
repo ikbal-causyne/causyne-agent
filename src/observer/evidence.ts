@@ -40,6 +40,7 @@ export interface ToolOutcome {
   at: number;
   rendered?: boolean;
   observedImage?: boolean;
+  imageCaptured?: boolean;
 }
 
 const SEVERITY_WEIGHT: Record<RiskSeverity, number> = {
@@ -467,12 +468,15 @@ export function scanMutation(toolName: string, args: Record<string, unknown>, co
 
 export function boundedArgs(args: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
-  for (const key of ['command', 'cmd', 'path', 'file_path', 'source', 'destination', 'action', 'url', 'query', 'pattern']) {
+  for (const key of ['command', 'cmd', 'path', 'file_path', 'source', 'destination', 'action', 'operation', 'engine', 'host', 'mode', 'url', 'query', 'pattern']) {
     const value = args[key];
     if (typeof value === 'string') result[key] = value.slice(0, 400);
   }
   if (typeof args.recursive === 'boolean') result.recursive = args.recursive;
   if (typeof args.overwrite === 'boolean') result.overwrite = args.overwrite;
+  if (typeof args.simulate === 'boolean') result.simulate = args.simulate;
+  if (typeof args.dryRun === 'boolean') result.dryRun = args.dryRun;
+  if (typeof args.extractTextOnly === 'boolean') result.extractTextOnly = args.extractTextOnly;
   if (typeof args.content === 'string') result.contentBytes = Buffer.byteLength(args.content, 'utf8');
   if (Array.isArray(args.edits)) result.editCount = args.edits.length;
   return result;
@@ -489,7 +493,8 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
     ? args.command
     : typeof args.cmd === 'string' ? args.cmd : '';
   const browserData = Array.isArray(record.data) ? record.data : [];
-  const observedImage = success && record._is_image_marker === true && record.visionDelivered !== false;
+  const imageCaptured = success && record._is_image_marker === true;
+  const observedImage = imageCaptured && record.visionDelivered !== false;
   const rendered = success && (observedImage || (tool === 'browser_act' && browserData.some((item: unknown) => {
     if (!item || typeof item !== 'object') return false;
     const action = item as { action?: string; success?: boolean; error?: unknown; data?: { runtimeErrors?: unknown[] } };
@@ -508,6 +513,7 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
     path: pathArgument(args).slice(0, 400),
     at,
     ...(rendered ? { rendered: true } : {}),
-    ...(observedImage ? { observedImage: true } : {})
+    ...(observedImage ? { observedImage: true } : {}),
+    ...(imageCaptured ? { imageCaptured: true } : {})
   };
 }
