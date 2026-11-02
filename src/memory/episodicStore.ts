@@ -262,8 +262,16 @@ export class EpisodicMemoryStore {
   private static defaultInstance: EpisodicMemoryStore | null = null;
 
   constructor(customStorePath?: string) {
-    this.storePath = customStorePath
-      ? path.resolve(customStorePath)
+    if (customStorePath) {
+      this.storePath = path.resolve(customStorePath);
+      return;
+    }
+    const isTestRunner =
+      Boolean(process.env.NODE_TEST_CONTEXT) ||
+      process.execArgv.includes('--test') ||
+      process.argv.includes('--test');
+    this.storePath = isTestRunner
+      ? path.join(os.tmpdir(), `causyne-test-episodic-${process.pid}.json`)
       : path.join(causyneHome(), 'episodic-memory.json');
   }
 
@@ -281,6 +289,7 @@ export class EpisodicMemoryStore {
         const raw = JSON.parse(fs.readFileSync(this.storePath, 'utf8')) as Partial<PersistedEpisodicData>;
         if (raw && Array.isArray(raw.observations) && Array.isArray(raw.summaries)) {
           const cleanedObservations = raw.observations.filter((obs) => {
+            if (obs.taskId === 'native-recovery-false') return false;
             if (obs.type !== 'discovery') return true;
             return !/^(?:Succeeded|Failed):\s*(?:find|wc|grep|egrep|fgrep|rg|sed|awk|jq|stat|file|ls|cat|head|tail|node\s+-e|python3?\s+-c)\b/i.test(obs.title);
           });

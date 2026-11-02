@@ -171,25 +171,143 @@ function extractCollapsedSignature(lines: readonly string[], startIndex: number,
     .slice(0, 110);
 }
 
-function findBraceBlockEnd(lines: readonly string[], startIndex: number): number {
-  let depth = 0;
-  let opened = false;
+function findBraceBlockEnd(lines: readonly string[], startIndex: number, kind: FoldedSymbolKind): number {
+  const isCallable = kind === 'function' || kind === 'method';
+  let inBlockComment = false;
+  let parenDepth = 0;
+  let seenParamsOpen = false;
+  let seenParamsClose = !isCallable;
+  let typeBraceDepth = 0;
+  let bodyDepth = 0;
+  let bodyOpened = false;
+  let lastNonWs = '';
+
   for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i] ?? '';
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inTemplate = false;
+
     for (let c = 0; c < line.length; c++) {
-      const ch = line[c];
-      if (ch === '{') {
-        depth += 1;
-        opened = true;
-      } else if (ch === '}') {
-        depth -= 1;
-        if (opened && depth <= 0) {
+      const ch = line[c] ?? '';
+      const next = line[c + 1] ?? '';
+
+      if (inBlockComment) {
+        if (ch === '*' && next === '/') {
+          inBlockComment = false;
+          c += 1;
+        }
+        continue;
+      }
+
+      if (ch === '\\') {
+        c += 1;
+        continue;
+      }
+
+      if (inSingleQuote) {
+        if (ch === '\'') inSingleQuote = false;
+        continue;
+      }
+      if (inDoubleQuote) {
+        if (ch === '"') inDoubleQuote = false;
+        continue;
+      }
+      if (inTemplate) {
+        if (ch === '`') inTemplate = false;
+        continue;
+      }
+
+      if (ch === '/' && next === '/') {
+        break;
+      }
+      if (ch === '/' && next === '*') {
+        inBlockComment = true;
+        c += 1;
+        continue;
+      }
+      if (ch === '\'') {
+        inSingleQuote = true;
+        if (seenParamsClose && !bodyOpened && typeBraceDepth === 0) lastNonWs = ch;
+        continue;
+      }
+      if (ch === '"') {
+        inDoubleQuote = true;
+        if (seenParamsClose && !bodyOpened && typeBraceDepth === 0) lastNonWs = ch;
+        continue;
+      }
+      if (ch === '`') {
+        inTemplate = true;
+        if (seenParamsClose && !bodyOpened && typeBraceDepth === 0) lastNonWs = ch;
+        continue;
+      }
+
+      if (!seenParamsClose) {
+        if (ch === '(') {
+          parenDepth += 1;
+          seenParamsOpen = true;
+        } else if (ch === ')') {
+          parenDepth -= 1;
+          if (seenParamsOpen && parenDepth <= 0) {
+            seenParamsClose = true;
+            parenDepth = 0;
+            lastNonWs = ')';
+          }
+        }
+        continue;
+      }
+
+      if (!bodyOpened) {
+        if (typeBraceDepth > 0) {
+          if (ch === '{') {
+            typeBraceDepth += 1;
+          } else if (ch === '}') {
+            typeBraceDepth -= 1;
+            if (typeBraceDepth <= 0) {
+              typeBraceDepth = 0;
+              lastNonWs = '}';
+            }
+          }
+          continue;
+        }
+
+        if (ch === '(') {
+          parenDepth += 1;
+          lastNonWs = '(';
+        } else if (ch === ')') {
+          parenDepth = Math.max(0, parenDepth - 1);
+          lastNonWs = ')';
+        } else if (ch === '{') {
+          if (
+            isCallable &&
+            (parenDepth > 0 ||
+              lastNonWs === ':' ||
+              lastNonWs === '|' ||
+              lastNonWs === '&' ||
+              lastNonWs === '<' ||
+              lastNonWs === ',' ||
+              lastNonWs === '=')
+          ) {
+            typeBraceDepth = 1;
+          } else {
+            bodyOpened = true;
+            bodyDepth = 1;
+          }
+        } else if (ch === ';' && parenDepth === 0) {
           return i + 1;
+        } else if (!/\s/.test(ch)) {
+          lastNonWs = ch;
+        }
+      } else {
+        if (ch === '{') {
+          bodyDepth += 1;
+        } else if (ch === '}') {
+          bodyDepth -= 1;
+          if (bodyDepth <= 0) {
+            return i + 1;
+          }
         }
       }
-    }
-    if (!opened && line.trim().endsWith(';')) {
-      return i + 1;
     }
   }
   return Math.min(lines.length, startIndex + 1);
@@ -255,19 +373,24 @@ export function foldSourceContentOutline(
       const rawName = m[pat.nameGroup] || m[3] || '';
       if (!rawName || RESERVED_METHOD_NAMES.has(rawName)) continue;
 
-      // For class method pattern, ensure it is either followed by `{` on this/next lines (not a function call ending in `);`)
+      // For class method pattern, ensure it is not a bodyless call ending in `;`
       if (pat.kind === 'method') {
         const sigCheck = extractCollapsedSignature(lines, i, 'method');
-        if (sigCheck.endsWith(';') || /=/.test(line)) continue;
+        if (sigCheck.endsWith(';')) continue;
       }
 
       const exported = /\bexport\b|\bpub\b/.test(line);
       const lineStart = i + 1;
       const lineEnd = language === 'python'
         ? findIndentBlockEnd(lines, i)
-        : findBraceBlockEnd(lines, i);
+        : findBraceBlockEnd(lines, i, pat.kind);
       const signature = extractCollapsedSignature(lines, i, pat.kind);
       const docComment = extractPrecedingDocComment(lines, i);
+
+      // Advance past non-class symbol bodies so statements inside functions/methods aren't misread as methods
+      if (pat.kind !== 'class') {
+        i = Math.max(i, lineEnd - 1);
+      }
 
       if (lowerQuery) {
         const hay = `${rawName} ${signature} ${docComment ?? ''}`.toLowerCase();
@@ -283,10 +406,6 @@ export function foldSourceContentOutline(
         exported,
         ...(docComment ? { docComment } : {})
       });
-      // Advance past multi-line parameter list header if applicable so inner lines aren't misread as methods
-      if (pat.kind === 'function') {
-        i = Math.max(i, lineEnd - 1);
-      }
       break;
     }
   }

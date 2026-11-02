@@ -403,7 +403,7 @@ test('foldSourceContentOutline and memory_recall tool execute end-to-end', async
   assert.equal(toolRes.success, true);
   assert.ok(String(toolRes.output).includes('[6-9] export function computeFibonacci'));
 
-  // Verify multi-line function signature extraction on real src/memory/episodicStore.ts
+  // Verify multi-line function signature and full body span extraction on real src/memory/episodicStore.ts
   const realOutlineRes = await memoryRecall.execute(
     { path: 'src/memory/episodicStore.ts' },
     { workspaceRoot: process.cwd() }
@@ -411,8 +411,12 @@ test('foldSourceContentOutline and memory_recall tool execute end-to-end', async
   assert.equal(realOutlineRes.success, true);
   assert.equal(realOutlineRes.action, 'outline');
   assert.ok(
-    String(realOutlineRes.output).includes('export function compileToolObservation'),
-    'Multi-line function compileToolObservation must be included in outline'
+    String(realOutlineRes.output).includes('[110-256] export function compileToolObservation'),
+    `Expected compileToolObservation span to be [110-256] (full body, not parameter header), got:\n${String(realOutlineRes.output)}`
+  );
+  assert.ok(
+    /\[3\d\d-4\d\d\] method recordObservation/.test(String(realOutlineRes.output)),
+    `Expected recordObservation span to cover its full method body (not stop at return type brace), got:\n${String(realOutlineRes.output)}`
   );
   assert.ok(
     JSON.stringify(realOutlineRes).length < 2500,
