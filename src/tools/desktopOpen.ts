@@ -68,8 +68,14 @@ export async function openWithNativeOS(target: string, app?: string): Promise<{ 
       command = '/usr/bin/open';
       cliArgs = app ? ['-a', app, target] : [target];
     } else if (platform === 'win32') {
-      command = 'cmd.exe';
-      cliArgs = app ? ['/c', 'start', '""', '/d', app, target] : ['/c', 'start', '""', target];
+      if (app) {
+        command = app;
+        cliArgs = [target];
+      } else {
+        const sysRoot = process.env.SYSTEMROOT || process.env.windir || 'C:\\Windows';
+        command = path.join(sysRoot, 'explorer.exe');
+        cliArgs = [target];
+      }
     } else {
       command = 'xdg-open';
       cliArgs = [target];

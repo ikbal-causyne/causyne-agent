@@ -273,8 +273,22 @@ function parseOutput(action: NativeEngineAction, stdout: string): { data?: unkno
 
 function reveal(file: string): Promise<boolean> {
   return new Promise(resolve => {
-    const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd.exe' : 'xdg-open';
-    const args = process.platform === 'win32' ? ['/c', 'start', '', file] : [file];
+    const resolvedPath = path.resolve(file);
+    let command: string;
+    let args: string[];
+
+    if (process.platform === 'darwin') {
+      command = '/usr/bin/open';
+      args = [resolvedPath];
+    } else if (process.platform === 'win32') {
+      const sysRoot = process.env.SYSTEMROOT || process.env.windir || 'C:\\Windows';
+      command = path.join(sysRoot, 'explorer.exe');
+      args = [resolvedPath];
+    } else {
+      command = 'xdg-open';
+      args = [resolvedPath];
+    }
+
     const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
     child.once('error', () => resolve(false));
     child.once('spawn', () => {
