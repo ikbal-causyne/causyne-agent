@@ -139,18 +139,18 @@ export function compileToolObservation(params) {
             ...(params.nowMs !== undefined ? { createdAtEpochMs: params.nowMs } : {})
         };
     }
-    // 3. Browser / Visual Verification
-    if (['browser_act', 'screenshot', 'vision_inspect_ui'].includes(lowerTool)) {
+    // 3. Browser / Visual / Creative Bridge Verification
+    if (['browser_act', 'screenshot', 'vision_inspect_ui', 'creative_apps', 'resolve_act', 'blender_act', 'godot_act'].includes(lowerTool)) {
         const action = String(args.action ?? 'verify').trim();
         return {
             taskId,
             workspace,
             type: 'verification',
-            title: `Verified UI via ${normalizedTool} (${action})`,
+            title: `Verified via ${normalizedTool} (${action})`,
             subtitle: `${normalizedTool} ${action}`,
-            narrative: `Executed UI/browser verification step using ${normalizedTool} (${action}).`,
-            facts: [`Verified UI with ${normalizedTool}`],
-            concepts: ['verification', 'ui'],
+            narrative: `Executed verification/bridge step using ${normalizedTool} (${action}).`,
+            facts: [`Verified with ${normalizedTool} (${action})`],
+            concepts: ['verification', ['creative_apps', 'resolve_act', 'blender_act', 'godot_act'].includes(lowerTool) ? 'creative' : 'ui'],
             filesRead: relPath ? [relPath] : [],
             filesModified: [],
             toolName: normalizedTool,

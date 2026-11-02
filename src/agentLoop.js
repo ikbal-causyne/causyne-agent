@@ -2562,6 +2562,37 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         }
                     }
                 }
+                // If the peer attempted to call a registered Causyne host tool through its
+                // native channel and provided complete, valid arguments (or we can infer
+                // the target for reverse_engineering), auto-bridge it into response.toolCalls
+                // BEFORE recording assistantMsg so it executes immediately in this turn.
+                if ((!response.toolCalls || response.toolCalls.length === 0) && response.toolRoutingError) {
+                    const rawName = response.toolRoutingError.tool;
+                    const resolved = resolveTool(rawName);
+                    if (resolved) {
+                        const canonical = canonicalToolName(rawName);
+                        const toolParams = { ...(response.toolRoutingError.parameters || {}) };
+                        if (canonical === 'reverse_engineering' && !toolParams.filePath && !toolParams.target && !toolParams.file && !toolParams.path) {
+                            const promptMatch = (this.currentTaskPrompt || this.userPrompt || '').match(/([a-zA-Z0-9_\-./]+\.(apk|aab|dex|dylib|so|dll|exe|asar))\b/i);
+                            if (promptMatch && promptMatch[1]) {
+                                toolParams.filePath = promptMatch[1];
+                                if (!toolParams.action)
+                                    toolParams.action = 'inspect';
+                            }
+                        }
+                        if (Object.keys(toolParams).length > 0 && !this.validateToolArgs(canonical, toolParams)) {
+                            response.toolCalls = [{
+                                    id: `host_auto_${Date.now()}`,
+                                    type: 'function',
+                                    function: {
+                                        name: canonical,
+                                        arguments: JSON.stringify(toolParams)
+                                    }
+                                }];
+                            delete response.toolRoutingError;
+                        }
+                    }
+                }
                 // Add assistant response to history. This is the ONLY place the turn is
                 // recorded — the completion and guard branches below used to push it a
                 // second time, duplicating every finished turn in the history.
@@ -2641,31 +2672,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 if (!response.toolCalls || response.toolCalls.length === 0) {
                     if (response.toolRoutingError) {
                         const rawName = response.toolRoutingError.tool;
-                        const resolved = resolveTool(rawName);
-                        if (resolved) {
-                            const canonical = canonicalToolName(rawName);
-                            const toolParams = { ...(response.toolRoutingError.parameters || {}) };
-                            if (canonical === 'reverse_engineering' && !toolParams.filePath && !toolParams.target && !toolParams.file && !toolParams.path) {
-                                const promptMatch = (this.currentTaskPrompt || this.userPrompt || '').match(/([a-zA-Z0-9_\-./]+\.(apk|aab|dex|dylib|so|dll|exe|asar))\b/i);
-                                if (promptMatch && promptMatch[1]) {
-                                    toolParams.filePath = promptMatch[1];
-                                    if (!toolParams.action)
-                                        toolParams.action = 'inspect';
-                                }
-                            }
-                            // Direct auto-bridge: peer explicitly targeted a registered host tool
-                            response.toolCalls = [{
-                                    id: `host_auto_${Date.now()}`,
-                                    type: 'function',
-                                    function: {
-                                        name: canonical,
-                                        arguments: JSON.stringify(toolParams)
-                                    }
-                                }];
-                            delete response.toolRoutingError;
+                        if (typeof assistantMsg.content === 'string' && /^Turn completed by .+ over ACP\.$/i.test(assistantMsg.content.trim())) {
+                            this.messages.pop();
                         }
-                        else if (toolRoutingRecoveries++ >= 3) {
-                            this.emitEvent({ type: 'error', message: `The peer repeatedly invoked unknown host tool ${rawName}. Work remains unfinished.` });
+                        if (toolRoutingRecoveries++ >= 3) {
+                            this.emitEvent({ type: 'error', message: `The peer repeatedly invoked host tool ${rawName} through the native channel instead of <tool_call>. Work remains unfinished.` });
                             this.memoryManager.saveHistory(this.messages);
                             break;
                         }
