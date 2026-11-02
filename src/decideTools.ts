@@ -87,7 +87,8 @@ const TRIGGERS: readonly Trigger[] = [
   { pattern: /\b(kill|terminate|port \d+|processes?)\b/i, tools: ['process_list', 'proc_term'], why: 'process control' },
   { pattern: /\b(zip|unzip|archive|extract|tarball)\b/i, tools: ['archive'], why: 'archive handling' },
   { pattern: /\b(sub-?agents?|in parallel|delegate)\b/i, tools: ['agent_subagent_orchestrate'], why: 'delegation' },
-  { pattern: /\b(symbols?|definitions?|ast)\b/i, tools: ['code_list_symbols', 'code_search_ast'], why: 'structural code search' },
+  { pattern: /\b(symbols?|definitions?|ast|outline|fold)\b/i, tools: ['code_list_symbols', 'code_search_ast', 'memory_recall'], why: 'structural code search' },
+  { pattern: /\b(past session|previous session|episodic|remember|recall|history|earlier fix|memory_recall|memory_write)\b/i, tools: ['memory_recall', 'memory_write'], why: 'episodic memory recall' },
   { pattern: /\b(syntax|compile|typecheck|lint)\b/i, tools: ['code_verify_syntax'], why: 'static check' },
   { pattern: /\b(godot|\.tscn|gdscript)\b/i, tools: ['godot_act', 'game_scene_build'], why: 'Godot work' },
   { pattern: /\b(clipboard)\b/i, tools: ['clipboard'], why: 'clipboard' },
@@ -176,6 +177,11 @@ export function decideTools(input: DecideToolsInput): ToolDecision {
       // A cached route admits IDs only, never an entire domain or permissions.
     }
     if ((input.cachedTools?.length ?? 0) > 0) reasons.push('proven route');
+    if (/\b(memory_recall|memory_write|episodic|past session|previous session|symbol outline|folded? symbol)\b/i.test(prompt)) {
+      const intentMemory = toolsForText(prompt, input.list);
+      for (const name of intentMemory.tools) tools.push(name);
+      for (const why of intentMemory.reasons) reasons.push(why);
+    }
   }
 
   if (input.text) {

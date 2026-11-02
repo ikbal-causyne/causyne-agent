@@ -40,6 +40,7 @@ import { executeProceduralMedia } from './executeProceduralMedia.js';
 import { manageLocalAiDependencies } from './manageLocalAiDependencies.js';
 import { generateMediaViaApi } from './generateMediaViaApi.js';
 import { memoryWrite } from './memoryWrite.js';
+import { memoryRecall } from './memoryRecall.js';
 import { printerPrint, printerList, printerStatus } from './printer.js';
 import { toolForgeTool } from './toolForge.js';
 import { pluginManagerTool } from './pluginManager.js';
@@ -119,7 +120,7 @@ const TOOL_MODULES = [
   codebaseSearch, browserAct, viewImage, webSearch,
   updatePlan, requestDecision, clipboard, screenshot, axSnapshot, desktopAct, archive,
   checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
-  generateMediaViaApi, memoryWrite, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool,
+  generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool,
   astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
   codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
   godotAutomator, gameBuilder, gameAssetFetcher,

@@ -20,6 +20,7 @@ import { getMemoryContextString } from './memory.js';
 import { MemoryManager } from './memoryManager.js';
 import { cortexDb } from './cortex/vectorDb.js';
 import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
+import { episodicStore, compileToolObservation } from './memory/episodicStore.js';
 import { buildCodexStyleSummary, compactSessionMessages, autoCompactIfUnderPressure } from './core/contextCompactor.js';
 import { analyzeTask, buildTaskBrief } from './taskShape.js';
 import { lookupPlan, recordPlan, recordPlanAsync, recordMiss, renderPlanHint, toStep, recordAPCPipelineLatency, lookupAlternativeStep, failureClass } from './planCache.js';
@@ -890,7 +891,14 @@ export class AgentLoop {
         catch (e) {
             this.debugLog(`plan cache hint skipped: ${e.message}`);
         }
-        return { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint };
+        let episodicContext = '';
+        try {
+            episodicContext = episodicStore.buildStartupEpisodicContext(this.workspaceRoot);
+        }
+        catch (e) {
+            this.debugLog(`episodic context build skipped: ${e.message}`);
+        }
+        return { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext };
     }
     rearmAbortController() {
         this.abortController = new AbortController();
@@ -982,7 +990,7 @@ export class AgentLoop {
         'fs_read', 'fs_list', 'fs_find', 'fs_search',
         'code_search_ast', 'code_list_symbols', 'code_search_ripgrep', 'codebase_search',
         'web_fetch', 'web_search', 'pdf_read', 'fs_read_skill',
-        'check_system_specs', 'process_list', 'view_image'
+        'check_system_specs', 'process_list', 'view_image', 'memory_recall'
     ]);
     /** How many reads may be in flight at once. */
     static PREFETCH_CONCURRENCY = 6;
@@ -1921,7 +1929,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 if (!this.staticContext) {
                     this.staticContext = await this.buildStaticContext();
                 }
-                const { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint } = this.staticContext;
+                const { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext } = this.staticContext;
                 // --- WORKSPACE AWARENESS ---
                 // perception.buildContext() output used to be computed and discarded,
                 // leaving the agent blind and forcing it to rediscover the project with
@@ -2027,7 +2035,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     // is byte-identical every step; cached.
                     {
                         role: 'system',
-                        content: `${providerPrompt}${designContext}${workspaceSummary}${lessonsLearned}${planHint ? '\n' + planHint + '\n' : ''}${antiRepeatDirective}\n${universalSkillsContext}`,
+                        content: `${providerPrompt}${designContext}${workspaceSummary}${lessonsLearned}${episodicContext ? '\n\n' + episodicContext : ''}${planHint ? '\n' + planHint + '\n' : ''}${antiRepeatDirective}\n${universalSkillsContext}`,
                         cacheAnchor: true
                     },
                     // [4] THE INVOKED SKILL, when the user named one.
@@ -2317,6 +2325,18 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 ...(isFailed ? { error: action.detail || `${action.name} failed` } : {})
                             };
                             coldObserver.recordToolOutcome(this.taskId, action.name, actionArgs, actionOutcome);
+                            try {
+                                const compiledObs = compileToolObservation({
+                                    taskId: this.taskId,
+                                    workspace: this.workspaceRoot,
+                                    toolName: action.name,
+                                    args: actionArgs,
+                                    result: actionOutcome
+                                });
+                                if (compiledObs)
+                                    episodicStore.recordObservation(compiledObs);
+                            }
+                            catch { /* never block peer action on episodic recording */ }
                             const recovery = this.timeMachine.observe(action.name, actionArgs, actionOutcome, coldObserver.getToolOutcomes(this.taskId));
                             // Pause now, not at the end of a potentially long peer turn.
                             // An abort is a yield checkpoint, not a user denial or task success.
@@ -3669,6 +3689,18 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         ? { success: true, _is_image_marker: true, visionDelivered: imageCanReachModel, filename: result.filename, mimeType: result.mimeType }
                         : result;
                     coldObserver.recordToolOutcome(this.taskId, functionName, args, observedResult);
+                    try {
+                        const compiledObs = compileToolObservation({
+                            taskId: this.taskId,
+                            workspace: this.workspaceRoot,
+                            toolName: functionName,
+                            args: args || {},
+                            result: observedResult && typeof observedResult === 'object' ? observedResult : { success: true }
+                        });
+                        if (compiledObs)
+                            episodicStore.recordObservation(compiledObs);
+                    }
+                    catch { /* never block tool execution on episodic recording */ }
                     const recovery = this.timeMachine.observe(functionName, args, observedResult, coldObserver.getToolOutcomes(this.taskId));
                     const verdict = await this.handleRecovery(recovery, functionName);
                     if (result && (result.success === false || typeof result.error === 'string')) {

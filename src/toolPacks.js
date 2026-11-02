@@ -33,6 +33,7 @@ export const CORE_TOOLS = [
     'update_plan',
     'request_decision',
     'memory_write',
+    'memory_recall',
     'fs_read_skill',
     'skill_create',
     'tool_search'

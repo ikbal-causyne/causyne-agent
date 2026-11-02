@@ -185,7 +185,14 @@
     "src/tools/generateMediaViaApi.ts",
     "src/tools/deferredMcpSearch.ts",
     "src/browser/workspacePreview.ts",
-    "src/autoUpdate.ts"
+    "src/autoUpdate.ts",
+    "src/memory/episodicTypes.ts",
+    "src/memory/actrRanker.ts",
+    "src/memory/nearDuplicate.ts",
+    "src/memory/contextBudget.ts",
+    "src/memory/symbolFolder.ts",
+    "src/memory/episodicStore.ts",
+    "src/tools/memoryRecall.ts"
   ],
   "exclude": [
     "node_modules",

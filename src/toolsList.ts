@@ -56,6 +56,7 @@ const CATALOGUE: Readonly<Record<Exclude<ToolGroup, 'custom'>, Readonly<Record<s
     update_plan: 'visible checklist, one active step',
     request_decision: 'ask the user to pick a direction',
     memory_write: 'save durable user fact or design pattern',
+    memory_recall: 'progressive 3-layer memory search, timeline, and file symbol outline',
     fs_read_skill: 'read a bundled skill by id',
     skill_create: 'save a reusable skill',
     tool_search: 'find and load any tool on this list'

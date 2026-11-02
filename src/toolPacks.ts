@@ -58,6 +58,7 @@ export const CORE_TOOLS: string[] = [
   'update_plan',
   'request_decision',
   'memory_write',
+  'memory_recall',
   'fs_read_skill',
   'skill_create',
   'tool_search'
