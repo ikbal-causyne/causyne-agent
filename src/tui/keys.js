@@ -113,6 +113,24 @@ export class KeyDecoder {
 
     if (byte === 0x1b) return this.stepEscape(buffer, offset, events);
 
+    // Orphaned SGR mouse sequence: [ < b ; x ; y M|m
+    // Occurs when \x1b is consumed on a chunk boundary or dropped over PTY.
+    // Intercepting here prevents raw sequence strings like `[<64;119;43M` from
+    // leaking into the prompt input box as literal character keystrokes.
+    if (byte === 0x5b && buffer.length - offset >= 3 && buffer[offset + 1] === 0x3c) {
+      const text = buffer.toString('utf8', offset);
+      if (!/[Mm]/.test(text)) return 0; // Incomplete sequence; wait for subsequent bytes in this.pending
+      const match = /^\[<(\d+);(\d+);(\d+)([Mm])/.exec(text);
+      if (match) {
+        const code = parseInt(match[1], 10);
+        const col = parseInt(match[2], 10);
+        const row = parseInt(match[3], 10);
+        const pressed = match[4] === 'M';
+        this.emitMouse([code, col, row], pressed, match[0], events);
+        return match[0].length;
+      }
+    }
+
     if (byte === 0x0d || byte === 0x0a) {
       events.push(makeKey('enter', { sequence: String.fromCharCode(byte) }));
       return 1;

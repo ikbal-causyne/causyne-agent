@@ -103,13 +103,31 @@ describe('decoding a mouse report', () => {
   test('a report split across chunks is held, not half-decoded', () => {
     // stdin does not respect sequence boundaries. Without the partial buffer,
     // the tail of a split report is read as characters the user never typed.
-    for (const cut of [3, 5, 7, 9, 11]) {
+    for (const cut of [1, 3, 5, 7, 9, 11]) {
       const whole = '\x1b[<65;12;34M';
       const events = decode(whole.slice(0, cut), whole.slice(cut));
-      assert.equal(events.length, 1, `split at ${cut} produced ${events.length} events`);
-      assert.equal(events[0].name, 'wheel');
-      assert.deepEqual(events[0].wheel, { direction: 'down', x: 11, y: 33 });
+      const wheel = events.find((e) => e.name === 'wheel');
+      assert.ok(wheel, `split at ${cut} must produce a wheel event`);
+      assert.deepEqual(wheel.wheel, { direction: 'down', x: 11, y: 33 });
+      const chars = events.filter((e) => e.name === 'char');
+      assert.equal(chars.length, 0, `split at ${cut} must never leak char events`);
     }
+  });
+
+  test('orphaned SGR report without leading ESC is decoded as mouse and never leaks to char', () => {
+    // When ESC is consumed at a chunk boundary or dropped over PTY, `[<64;119;43M`
+    // arrives as raw bytes. It must be decoded as a wheel event rather than 13 individual characters.
+    const events = decode('[<64;119;43M');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, 'wheel');
+    assert.deepEqual(events[0].wheel, { direction: 'up', x: 118, y: 42 });
+  });
+
+  test('split orphaned SGR report waits for completion before decoding', () => {
+    const events = decode('[<64;11', '9;43M');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].name, 'wheel');
+    assert.deepEqual(events[0].wheel, { direction: 'up', x: 118, y: 42 });
   });
 
   test('several reports in one chunk all come out', () => {

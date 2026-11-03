@@ -293,5 +293,18 @@ describe('thinkingBox component', () => {
       wheel: { direction: 'down', x: 10, y: 22 } // below viewport viewHeight (18)
     }, surface as any);
     assert.equal(handledOutside, false);
+
+    // 5. Wide terminal with sidebar (e.g. 155x78)
+    const wideSurface = {
+      out: { rows: 78 },
+      width: 155,
+      stage: { height: 74 },
+      viewport: { viewWidth: 109, viewHeight: 70, width: 109, height: 70, scrollTop: 0 }
+    };
+    const handledWide = renderer.scrollThinkingPanel({
+      name: 'wheel',
+      wheel: { direction: 'down', x: 80, y: 60 }
+    }, wideSurface as any);
+    assert.equal(handledWide, true, 'wheel over thinking box in wide terminal must succeed');
   });
 });

@@ -239,16 +239,22 @@ const isMessage = (marker: MessageMarker): boolean =>
 
 /** Resolve screen coordinates against the painted viewport to find any frame marker. */
 export function markerAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
-  if (!surface?.stage.reserved || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
-  const mainWidth = sidebarVisible(surface.width) ? sessionMainWidth(surface.width) : surface.width;
+  if (!surface || surface.stage?.reserved === false || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  const surfWidth = surface.width || (surface.viewport as any)?.viewWidth || surface.viewport?.width || 80;
+  const mainWidth = sidebarVisible(surfWidth) ? sessionMainWidth(surfWidth) : surfWidth;
   const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
-  if (point.x < leftGutter || point.x >= Math.min(mainWidth, surface.viewport.width)) return null;
-  const top = Math.max(0, (surface.out.rows || surface.stage.height) - surface.stage.height);
+  const viewWidth = (surface.viewport as any)?.viewWidth || surface.viewport?.width || surfWidth;
+  if (point.x < leftGutter || point.x >= Math.min(mainWidth, viewWidth + leftGutter)) return null;
+  const stageHeight = surface.stage?.height ?? 24;
+  const top = Math.max(0, ((surface.out?.rows as number) || stageHeight) - stageHeight);
   const viewRow = point.y - top;
-  if (viewRow < 0 || viewRow >= surface.viewport.height) return null;
-  const flat = surface.transcript.flatten(surface.viewport.width);
-  const visible = Math.max(0, Math.min(surface.viewport.height, flat.rows.length - surface.viewport.scrollTop));
-  const padding = surface.viewport.height - visible;
+  const viewHeight = (surface.viewport as any)?.viewHeight || surface.viewport?.height || stageHeight;
+  if (viewRow < 0 || viewRow >= viewHeight) return null;
+  const transcript = surface.transcript || (surface as any).renderer?.transcript;
+  if (!transcript) return null;
+  const flat = transcript.flatten(viewWidth);
+  const visible = Math.max(0, Math.min(viewHeight, flat.rows.length - surface.viewport.scrollTop));
+  const padding = viewHeight - visible;
   if (viewRow < padding) return null;
   const row = surface.viewport.scrollTop + viewRow - padding;
   for (let i = flat.markers.length - 1; i >= 0; i--) {
