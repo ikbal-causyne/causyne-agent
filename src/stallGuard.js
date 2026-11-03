@@ -50,6 +50,7 @@ export const MUTATING_TOOL_NAMES = new Set([
     'archive_extract',
     'game_build_html5',
     'tool_forge',
+    'plugins_factory',
     'create_skill',
     'manage_local_dependencies',
     'creative_batch',

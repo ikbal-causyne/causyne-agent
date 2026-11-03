@@ -44,6 +44,7 @@ import { memoryRecall } from './memoryRecall.js';
 import { printerPrint, printerList, printerStatus } from './printer.js';
 import { toolForgeTool } from './toolForge.js';
 import { pluginManagerTool } from './pluginManager.js';
+import { pluginsFactoryTool } from './pluginsFactory.js';
 import { astryxOracle } from './astryxOracle.js';
 import { pdfRead } from './pdfReader.js';
 import { codeVerifySyntax, codeListSymbols } from './codeTools.js';
@@ -120,7 +121,7 @@ const TOOL_MODULES = [
   codebaseSearch, browserAct, viewImage, webSearch,
   updatePlan, requestDecision, clipboard, screenshot, axSnapshot, desktopAct, archive,
   checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
-  generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool,
+  generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool, pluginsFactoryTool,
   astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
   codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
   godotAutomator, gameBuilder, gameAssetFetcher,

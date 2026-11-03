@@ -50,7 +50,7 @@ const EXPLICIT_CHOICE_PATTERNS = [
 
 const MUTATING_TOOLS = new Set([
   'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move', 'sysRun', 'sysRunBg',
-  'gitOp', 'manage_local_dependencies', 'plugin_manage', 'tool_forge', 'create_skill',
+  'gitOp', 'manage_local_dependencies', 'plugin_manage', 'tool_forge', 'plugins_factory', 'create_skill',
   'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content',
   'write', 'edit', 'multiedit', 'bash', 'terminal', 'execute'
 ]);

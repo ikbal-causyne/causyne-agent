@@ -1,0 +1,246 @@
+/**
+ * plugins_factory Tool for Causyne Agent.
+ *
+ * Implements autonomous custom integration evaluation and scaffolding.
+ * Recommends token-lean native plugins or Python bridges, while fully respecting
+ * user choices if MCP is preferred.
+ */
+
+import {
+  PluginsFactory,
+  type FactoryRouteProposal,
+  type RouteKind,
+  type ScaffoldOptions,
+  type ScaffoldResult,
+  type ServiceDescriptor,
+  type ServiceKind,
+  type ServiceToolDescriptor
+} from '../pluginsFactory/index.js';
+
+export interface PluginsFactoryArgs {
+  action: 'assess' | 'estimate_cost' | 'scaffold';
+  serviceName: string;
+  serviceDescription?: string | undefined;
+  serviceKind?: ServiceKind | undefined;
+  endpoint?: string | undefined;
+  authType?: 'none' | 'bearer' | 'apiKey' | 'basic' | 'env' | undefined;
+  authEnvVar?: string | undefined;
+  cliBinary?: string | undefined;
+  pythonModule?: string | undefined;
+  tools?: Array<{
+    name: string;
+    description: string;
+    parameters?: Record<string, unknown> | undefined;
+    httpMethod?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | undefined;
+    httpPath?: string | undefined;
+    cliSubcommand?: string | undefined;
+    pythonMethod?: string | undefined;
+  }> | undefined;
+  capabilities?: Array<'workspace:read' | 'workspace:write' | 'network' | 'subprocess'> | undefined;
+  userPreferredRoute?: RouteKind | undefined;
+  force?: boolean | undefined;
+  dryRun?: boolean | undefined;
+}
+
+export interface PluginsFactoryToolResult {
+  success: boolean;
+  action: string;
+  proposal?: FactoryRouteProposal | undefined;
+  scaffoldResult?: ScaffoldResult | undefined;
+  message?: string | undefined;
+  error?: string | undefined;
+}
+
+function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor {
+  const tools: ServiceToolDescriptor[] = (args.tools || []).map((t, idx) => {
+    const tool: ServiceToolDescriptor = {
+      name: t.name || `tool_${idx + 1}`,
+      description: t.description || `Tool ${t.name || idx + 1}`,
+      parameters: (t.parameters && typeof t.parameters === 'object' && t.parameters.type === 'object')
+        ? (t.parameters as ServiceToolDescriptor['parameters'])
+        : { type: 'object', properties: {} }
+    };
+    if (t.httpMethod !== undefined) tool.httpMethod = t.httpMethod;
+    if (t.httpPath !== undefined) tool.httpPath = t.httpPath;
+    if (t.cliSubcommand !== undefined) tool.cliSubcommand = t.cliSubcommand;
+    if (t.pythonMethod !== undefined) tool.pythonMethod = t.pythonMethod;
+    return tool;
+  });
+
+  if (tools.length === 0) {
+    tools.push({
+      name: 'execute',
+      description: `Default execution method for ${args.serviceName}`,
+      parameters: { type: 'object', properties: {} }
+    });
+  }
+
+  const desc: ServiceDescriptor = {
+    name: args.serviceName,
+    description: args.serviceDescription || `Custom integration for ${args.serviceName}`,
+    serviceKind: args.serviceKind || 'custom',
+    tools
+  };
+
+  if (args.endpoint !== undefined) desc.endpoint = args.endpoint;
+  if (args.authType !== undefined) desc.authType = args.authType;
+  if (args.authEnvVar !== undefined) desc.authEnvVar = args.authEnvVar;
+  if (args.cliBinary !== undefined) desc.cliBinary = args.cliBinary;
+  if (args.pythonModule !== undefined) desc.pythonModule = args.pythonModule;
+  if (args.capabilities !== undefined) desc.capabilities = args.capabilities;
+  if (args.userPreferredRoute !== undefined) desc.userPreferredRoute = args.userPreferredRoute;
+
+  return desc;
+}
+
+export const pluginsFactoryTool = {
+  schema: {
+    name: 'plugins_factory',
+    description:
+      'Assess, compare token costs, and scaffold custom plugins, Python bridges, or MCP servers for external services or APIs that are not yet integrated into Causyne. Recommends the leanest, most economical route (Native Plugin or Python Bridge) while honoring user choice if MCP is preferred.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['assess', 'estimate_cost', 'scaffold'],
+          description:
+            'Action: "assess" evaluates routes and returns proposal with token costs; "estimate_cost" returns detailed token footprint; "scaffold" creates the files in ~/.causyne/.'
+        },
+        serviceName: {
+          type: 'string',
+          description: 'Name of the service or plugin (lowercase alphanumeric and hyphens, e.g. "notion-api", "blender-cycles").'
+        },
+        serviceDescription: {
+          type: 'string',
+          description: 'Overview of what the external service does and why the integration is needed.'
+        },
+        serviceKind: {
+          type: 'string',
+          enum: ['http_api', 'cli', 'python_sdk', 'mcp_only', 'custom'],
+          description: 'Nature of the target service.'
+        },
+        endpoint: {
+          type: 'string',
+          description: 'Base URL for HTTP APIs (e.g. "https://api.github.com").'
+        },
+        authType: {
+          type: 'string',
+          enum: ['none', 'bearer', 'apiKey', 'basic', 'env'],
+          description: 'Authentication scheme.'
+        },
+        authEnvVar: {
+          type: 'string',
+          description: 'Environment variable name holding the API token (e.g. "NOTION_API_KEY").'
+        },
+        cliBinary: {
+          type: 'string',
+          description: 'Binary executable name for CLI plugins (e.g. "ffmpeg", "yt-dlp").'
+        },
+        pythonModule: {
+          type: 'string',
+          description: 'Python package/module name for Python bridges (e.g. "bpy", "torch").'
+        },
+        tools: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Tool name' },
+              description: { type: 'string', description: 'What the tool does' },
+              parameters: { type: 'object', description: 'JSON schema for tool parameters' },
+              httpMethod: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
+              httpPath: { type: 'string', description: 'HTTP relative path' },
+              cliSubcommand: { type: 'string', description: 'Subcommand for CLI tools' },
+              pythonMethod: { type: 'string', description: 'Method name in Python bridge' }
+            },
+            required: ['name', 'description']
+          },
+          description: 'List of tools to expose to the agent.'
+        },
+        capabilities: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['workspace:read', 'workspace:write', 'network', 'subprocess']
+          },
+          description: 'Host sandbox permissions required.'
+        },
+        userPreferredRoute: {
+          type: 'string',
+          enum: ['native_plugin', 'python_bridge', 'mcp_server'],
+          description: 'Explicit user route preference (e.g. user insists on MCP).'
+        },
+        force: {
+          type: 'boolean',
+          description: 'Overwrite existing directory if present.'
+        },
+        dryRun: {
+          type: 'boolean',
+          description: 'Simulate scaffolding without writing files.'
+        }
+      },
+      required: ['action', 'serviceName']
+    }
+  },
+
+  async execute(args: PluginsFactoryArgs): Promise<PluginsFactoryToolResult> {
+    try {
+      if (!args || !args.action || !args.serviceName) {
+        return {
+          success: false,
+          action: args?.action || 'unknown',
+          error: 'Missing required arguments: "action" and "serviceName" are required.'
+        };
+      }
+
+      const factory = new PluginsFactory();
+      const service = normalizeServiceDescriptor(args);
+      const proposal = factory.assess(service, args.userPreferredRoute);
+
+      if (args.action === 'assess' || args.action === 'estimate_cost') {
+        const res: PluginsFactoryToolResult = {
+          success: true,
+          action: args.action,
+          proposal,
+          message: [
+            `Assessment complete for service '${service.name}'.`,
+            `Recommended Route: ${proposal.recommendedRoute} (${proposal.reason})`,
+            proposal.mcpDisclosure ? `\n${proposal.mcpDisclosure}` : ''
+          ].filter(Boolean).join('\n')
+        };
+        return res;
+      }
+
+      if (args.action === 'scaffold') {
+        const scaffoldOpts: ScaffoldOptions = {};
+        if (args.force !== undefined) scaffoldOpts.force = args.force;
+        if (args.dryRun !== undefined) scaffoldOpts.dryRun = args.dryRun;
+
+        const scaffoldResult = await factory.scaffold(proposal, scaffoldOpts);
+
+        const res: PluginsFactoryToolResult = {
+          success: scaffoldResult.success,
+          action: 'scaffold',
+          proposal,
+          scaffoldResult,
+          message: scaffoldResult.instructions
+        };
+        if (scaffoldResult.error !== undefined) res.error = scaffoldResult.error;
+        return res;
+      }
+
+      return {
+        success: false,
+        action: args.action,
+        error: `Unrecognized action: "${args.action}". Allowed: assess, estimate_cost, scaffold`
+      };
+    } catch (err) {
+      return {
+        success: false,
+        action: args?.action || 'execute',
+        error: err instanceof Error ? err.message : String(err)
+      };
+    }
+  }
+};

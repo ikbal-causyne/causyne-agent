@@ -108,6 +108,7 @@ export const PACKS = {
     advanced: [
         'tool_forge',
         'plugin_manager',
+        'plugins_factory',
         'document_forge',
         'agent_subagent_orchestrate',
         'peer_agent_delegate',

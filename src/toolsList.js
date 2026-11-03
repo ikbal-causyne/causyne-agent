@@ -84,6 +84,7 @@ const CATALOGUE = {
     advanced: {
         tool_forge: 'create a custom tool',
         plugin_manager: 'manage plugins',
+        plugins_factory: 'assess and scaffold custom plugins or Python bridges',
         pdf_read: 'read PDF text',
         code_list_symbols: 'list symbols in a file',
         code_search_ast: 'AST definition search',
