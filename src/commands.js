@@ -962,6 +962,47 @@ export const COMMANDS = [
   },
 
   {
+    name: 'thinking',
+    aliases: ['thought', 'thoughts'],
+    scope: 'local',
+    usage: '/thinking [toggle|expand|collapse]',
+    description: 'Toggle or fold thinking process chunks in the conversation transcript',
+    run: (argv, ctx) => {
+      const surface = ctx?.prompt?.surface;
+      const transcript = surface?.transcript;
+      if (!transcript || !Array.isArray(transcript.frames)) {
+        return ok('No active interactive transcript available.');
+      }
+      const reasoningFrames = transcript.frames.filter((f) => f.kind === 'reasoning');
+      if (reasoningFrames.length === 0) {
+        return ok('No thinking process frames found in the current conversation.');
+      }
+      const sub = (argv[0] || 'toggle').toLowerCase();
+      let newCollapsed;
+      if (sub === 'expand') {
+        newCollapsed = false;
+      } else if (sub === 'collapse') {
+        newCollapsed = true;
+      } else {
+        const last = reasoningFrames[reasoningFrames.length - 1];
+        newCollapsed = !Boolean(last?.meta?.collapsed);
+      }
+      for (const frame of reasoningFrames) {
+        if (frame.meta) {
+          frame.meta.collapsed = newCollapsed;
+          frame.rows = null;
+          frame.renderedWidth = -1;
+        }
+      }
+      transcript.cache = null;
+      transcript.revision++;
+      transcript.changed?.();
+      if (ctx.prompt?.scheduleDraw) ctx.prompt.scheduleDraw();
+      return ok(`${newCollapsed ? 'Collapsed' : 'Expanded'} ${reasoningFrames.length} thinking frame${reasoningFrames.length === 1 ? '' : 's'}.`);
+    }
+  },
+
+  {
     name: 'clear',
     aliases: ['reset'],
     scope: 'local',

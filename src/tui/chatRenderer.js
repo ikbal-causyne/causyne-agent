@@ -27,6 +27,7 @@ import { chatProseWidth, wrappedChatRows } from './textLayout.js';
 import { activityRows } from './activityLayout.js';
 import { cleanToolOutputPreview, normalizeHistoricalToolResult } from './toolOutputNormalizer.js';
 import { formatMarkdownMath } from './markdownMath.js';
+import { renderThinkingFrame } from './thinkingBox.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -737,8 +738,9 @@ export class ChatRenderer {
     const elapsedMs = Number(msg.elapsedMs) || 0;
     const durationText = elapsedMs > 0 ? formatDuration(elapsedMs) : '';
 
+    const tailFrame = this.transcript?.frames?.at(-1);
     const tailIsReasoning = !this.transcript
-      || this.transcript.frames?.at(-1)?.meta?.reasoning === true;
+      || tailFrame?.meta?.reasoning === true;
     if (this._activeReasoning && !tailIsReasoning) {
       this._activeReasoning = false;
     }
@@ -746,56 +748,77 @@ export class ChatRenderer {
     if (isStreaming) {
       if (!this._activeReasoning) {
         this._activeReasoning = true;
-        this.frame('reasoning', () => this.renderReasoning(content, { streaming: true, durationText }), { reasoning: true });
+        const meta = {
+          reasoning: true,
+          collapsed: false,
+          streaming: true,
+          durationText,
+          content
+        };
+        this.frame('reasoning', () => this.renderReasoning(meta.content, {
+          streaming: true,
+          durationText: meta.durationText,
+          collapsed: Boolean(meta.collapsed)
+        }), meta);
       } else {
-        this.updateTailFrame('reasoning', () => this.renderReasoning(content, { streaming: true, durationText }), { reasoning: true });
+        const meta = tailFrame?.meta || { reasoning: true };
+        meta.streaming = true;
+        meta.durationText = durationText;
+        meta.content = content;
+        if (meta.collapsed === undefined) meta.collapsed = false;
+        this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
+          streaming: true,
+          durationText: meta.durationText,
+          collapsed: Boolean(meta.collapsed)
+        }), meta);
       }
       return;
     }
 
     if (this._activeReasoning) {
       this._activeReasoning = false;
-      this.updateTailFrame('reasoning', () => this.renderReasoning(content, { streaming: false, durationText }), { reasoning: true, done: true });
+      const meta = tailFrame?.meta || { reasoning: true };
+      meta.streaming = false;
+      meta.done = true;
+      meta.durationText = durationText;
+      meta.content = content;
+      if (meta.collapsed === undefined) meta.collapsed = false;
+      this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
+        streaming: false,
+        durationText: meta.durationText,
+        collapsed: Boolean(meta.collapsed)
+      }), meta);
     } else if (content.trim()) {
-      this.frame('reasoning', () => this.renderReasoning(content, { streaming: false, durationText }), { reasoning: true, done: true });
+      const meta = {
+        reasoning: true,
+        done: true,
+        streaming: false,
+        durationText,
+        content,
+        collapsed: false
+      };
+      this.frame('reasoning', () => this.renderReasoning(meta.content, {
+        streaming: false,
+        durationText: meta.durationText,
+        collapsed: Boolean(meta.collapsed)
+      }), meta);
     }
   }
 
-  renderReasoning(content, { streaming = false, durationText = '' } = {}) {
+  renderReasoning(content, { streaming = false, durationText = '', collapsed = false } = {}) {
     const width = this.measure();
-    const rows = content.trim()
-      ? wrapBlock(content, Math.max(20, width - 4))
-      : ['Contemplating task and formulating approach…'];
+    const rows = renderThinkingFrame(content, {
+      width,
+      streaming,
+      durationText,
+      collapsed
+    });
+
+    if (rows.length === 0) return;
 
     this.write();
-    if (streaming) {
-      this.write(`${paint('warn', GLYPHS.vLine || '│')} ${bold(paint('warn', 'thinking…'))}`);
-    } else {
-      const timePart = durationText ? ` · ${durationText}` : '';
-      this.write(`${paint('muted', GLYPHS.vLine || '│')} ${dim(`thinking${timePart}`)}`);
-    }
-
-    if (streaming && rows.length > REASONING_LINES) {
-      const hidden = rows.length - REASONING_LINES;
-      this.write(`${paint('rule', GLYPHS.vLine || '│')} ${dim(`${GLYPHS.ellipsis} ${hidden} earlier thinking line${hidden === 1 ? '' : 's'}`)}`);
-    }
-
-    const displayRows = streaming && rows.length > REASONING_LINES
-      ? rows.slice(rows.length - REASONING_LINES)
-      : rows.slice(0, REASONING_LINES);
-
-    for (const row of displayRows) {
-      this.write(`${paint('rule', GLYPHS.vLine || '│')} ${dim(row)}`);
-    }
-
-    if (!streaming && rows.length > REASONING_LINES) {
-      const hidden = rows.length - REASONING_LINES;
-      this.write(`${paint('rule', GLYPHS.corner || '└')} ${dim(`${GLYPHS.ellipsis} ${hidden} more line${hidden === 1 ? '' : 's'} of reasoning`)}`);
-    } else if (streaming) {
-      const timePart = durationText ? ` · ${durationText}` : '';
-      this.write(`${paint('rule', GLYPHS.corner || '└')} ${bold(paint('warn', 'thinking…'))} ${dim(timePart || 'streaming thoughts')}`);
-    } else {
-      this.write(`${paint('rule', GLYPHS.corner || '└')}`);
+    for (const row of rows) {
+      this.write(row);
     }
     this.write();
   }

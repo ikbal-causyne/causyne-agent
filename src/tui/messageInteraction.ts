@@ -22,7 +22,7 @@ export interface MessageMarker {
   id: number;
   kind: string;
   row: number;
-  meta?: { messageText?: string } | null;
+  meta?: { messageText?: string; reasoning?: boolean; collapsed?: boolean } | null;
 }
 
 interface MousePoint { x: number; y: number }
@@ -183,6 +183,35 @@ export function handleMessageMouse(
   if (isMouseMotion(event.sequence)) return true;
 
   if (mouse.button === 0 && mouse.pressed) {
+    const rawMarker = markerAt(surface, mouse);
+    if (rawMarker && rawMarker.kind === 'reasoning') {
+      const transcript = surface.transcript as unknown as {
+        frames?: Array<{
+          id: number;
+          meta?: { reasoning?: boolean; collapsed?: boolean } | null;
+          rows?: unknown;
+          renderedWidth?: number;
+        }>;
+        cache?: unknown;
+        revision?: number;
+        changed?: () => void;
+      };
+      const frames = transcript?.frames;
+      const frame = Array.isArray(frames) ? frames.find(f => f.id === rawMarker.id) : null;
+      if (frame && frame.meta && frame.meta.reasoning) {
+        frame.meta.collapsed = !frame.meta.collapsed;
+        frame.rows = null;
+        frame.renderedWidth = -1;
+        if (transcript) {
+          transcript.cache = null;
+          transcript.revision = (transcript.revision || 0) + 1;
+          transcript.changed?.();
+        }
+        host.scheduleDraw();
+        return true;
+      }
+    }
+
     // Smart link detection: if the user clicked (or Cmd/Ctrl+Clicked) on a URL or OSC 8 hyperlink,
     // open the link directly in the system browser instead of popping up the Message Actions modal.
     const hitLink = detectLinkAtPoint(surface, mouse, marker);
@@ -208,8 +237,8 @@ const isMessage = (marker: MessageMarker): boolean =>
   (marker.kind === 'user' || marker.kind === 'assistant')
   && typeof marker.meta?.messageText === 'string';
 
-/** Resolve screen coordinates against the painted viewport, including top padding. */
-export function messageAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
+/** Resolve screen coordinates against the painted viewport to find any frame marker. */
+export function markerAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
   if (!surface?.stage.reserved || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
   const mainWidth = sidebarVisible(surface.width) ? sessionMainWidth(surface.width) : surface.width;
   const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
@@ -226,10 +255,16 @@ export function messageAt(surface: MessageSurface | null, point: MousePoint): Me
     const marker = flat.markers[i];
     if (!marker || marker.row > row) continue;
     const next = flat.markers[i + 1];
-    if (isMessage(marker) && row < (next?.row ?? flat.rows.length)) return marker;
+    if (row < (next?.row ?? flat.rows.length)) return marker;
     return null;
   }
   return null;
+}
+
+/** Resolve screen coordinates against the painted viewport, including top padding. */
+export function messageAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
+  const marker = markerAt(surface, point);
+  return marker && isMessage(marker) ? marker : null;
 }
 
 /** Highlight only the visible non-empty rows of the hovered message, without altering transcript data. */
