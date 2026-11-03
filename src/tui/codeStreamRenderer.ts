@@ -1,5 +1,6 @@
 import { ChatRenderer } from './chatRenderer.js';
 import { CODE_PANEL_LINES, codePreviewLineCount, defaultPreviewStart, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
+import { calculateThinkingLineCount, DEFAULT_MAX_EXPANDED_LINES } from './thinkingBox.js';
 
 type RendererEvent = { type: string; [key: string]: unknown };
 type CodePanelState = { event: CodeProgressEvent; modelNote: string; start: number; followTail: boolean };
@@ -54,6 +55,44 @@ export class CodeStreamRenderer extends ChatRenderer {
     if (next === state.start) return false;
     state.start = next;
     state.followTail = next === limit;
+    frame.rows = null;
+    frame.renderedWidth = -1;
+    transcript.cache = null;
+    transcript.revision++;
+    transcript.changed();
+    return true;
+  }
+
+  /** Scroll only the thinking panel beneath the pointer; leave the chat viewport alone. */
+  override scrollThinkingPanel(key: CodeWheel, surface: CodeSurface | null): boolean {
+    const wheel = key.wheel;
+    if (key.name !== 'wheel' || !wheel || !surface || !['up', 'down'].includes(wheel.direction)) return false;
+    const transcript = this.transcript as unknown as CodeTranscript | null;
+    if (!transcript || !Number.isFinite(surface.out.rows) || !Number.isFinite(wheel.x) || !Number.isFinite(wheel.y)) return false;
+    const viewport = surface.viewport;
+    const screenTop = (surface.out.rows as number) - surface.stage.height;
+    const localY = wheel.y - screenTop;
+    if (localY < 0 || localY >= viewport.viewHeight || wheel.x < 0 || wheel.x >= Math.min(viewport.viewWidth, this.measure())) return false;
+    const { markers } = transcript.flatten(viewport.viewWidth);
+    const absoluteY = viewport.scrollTop + localY;
+    const markerIndex = markers.findIndex((marker, index) => marker.row <= absoluteY
+      && (index + 1 === markers.length || absoluteY < markers[index + 1]!.row));
+    if (markerIndex < 0) return false;
+    const marker = markers[markerIndex]!;
+    const frame = transcript.frames.find(item => item.id === marker.id);
+    if (!frame || frame.meta?.reasoning !== true || frame.meta?.collapsed) return false;
+    if (absoluteY >= marker.row + (frame.rows?.length || 0)) return false;
+
+    const content = typeof frame.meta.content === 'string' ? frame.meta.content : '';
+    const totalLines = calculateThinkingLineCount(content, viewport.viewWidth);
+    const limit = Math.max(0, totalLines - DEFAULT_MAX_EXPANDED_LINES);
+    if (limit === 0) return false;
+
+    const currentStart = Number(frame.meta.scrollStart) || 0;
+    const next = Math.max(0, Math.min(limit, currentStart + (wheel.direction === 'up' ? -3 : 3)));
+    if (next === currentStart) return true;
+
+    frame.meta.scrollStart = next;
     frame.rows = null;
     frame.renderedWidth = -1;
     transcript.cache = null;

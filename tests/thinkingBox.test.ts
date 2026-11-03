@@ -83,25 +83,56 @@ describe('thinkingBox component', () => {
     }
   });
 
-  test('completed expanded view shows capped head and footer indicator', () => {
+  test('completed expanded view shows capped head and scroll indicator with interactive offset', () => {
     const width = 84;
     const lines = Array.from({ length: 25 }, (_, i) => `Completed step ${i + 1}`);
     const content = lines.join('\n');
 
-    const rows = renderThinkingFrame(content, {
+    // 1. Initial view at start = 0
+    const rowsInitial = renderThinkingFrame(content, {
       width,
       streaming: false,
       durationText: '2.2s',
-      maxVisibleLines: DEFAULT_MAX_EXPANDED_LINES
+      maxVisibleLines: DEFAULT_MAX_EXPANDED_LINES,
+      startLine: 0
     });
 
-    const plainText = rows.map(r => stripAnsi(r)).join('\n');
-    assert.match(plainText, /Completed step 1/);
-    assert.match(plainText, /more lines of reasoning/);
+    const plainInitial = rowsInitial.map(r => stripAnsi(r)).join('\n');
+    assert.match(plainInitial, /Completed step 1/);
+    assert.match(plainInitial, /Completed step 12/);
+    assert.match(plainInitial, /lines 1–12 of 25.*scroll over thinking/);
 
-    for (let i = 0; i < rows.length; i++) {
-      assert.equal(visibleWidth(rows[i] ?? ''), width, `Row ${i} must have exact width ${width}`);
+    for (let i = 0; i < rowsInitial.length; i++) {
+      assert.equal(visibleWidth(rowsInitial[i] ?? ''), width, `Row ${i} must have exact width ${width}`);
     }
+
+    // 2. Scrolled down view at start = 10
+    const rowsScrolled = renderThinkingFrame(content, {
+      width,
+      streaming: false,
+      durationText: '2.2s',
+      maxVisibleLines: DEFAULT_MAX_EXPANDED_LINES,
+      startLine: 10
+    });
+
+    const plainScrolled = rowsScrolled.map(r => stripAnsi(r)).join('\n');
+    assert.match(plainScrolled, /Completed step 11/);
+    assert.match(plainScrolled, /Completed step 22/);
+    assert.match(plainScrolled, /lines 11–22 of 25.*scroll over thinking/);
+
+    // 3. Scrolled to the bottom boundary at start = 13 (limit = 25 - 12 = 13)
+    const rowsBottom = renderThinkingFrame(content, {
+      width,
+      streaming: false,
+      durationText: '2.2s',
+      maxVisibleLines: DEFAULT_MAX_EXPANDED_LINES,
+      startLine: 999 // clamped to limit
+    });
+
+    const plainBottom = rowsBottom.map(r => stripAnsi(r)).join('\n');
+    assert.match(plainBottom, /Completed step 14/);
+    assert.match(plainBottom, /Completed step 25/);
+    assert.match(plainBottom, /lines 14–25 of 25/);
   });
 
   test('buildThinkingBoxBorders guarantees exact column width', () => {
@@ -207,5 +238,60 @@ describe('thinkingBox component', () => {
     const res3 = thinkingCmd.run(['collapse'], ctx);
     assert.match(res3.output, /Collapsed 2 thinking frames/);
     assert.equal(transcript.frames[0]?.meta?.collapsed, true);
+  });
+
+  test('scrollThinkingPanel handles mouse wheel up/down over reasoning frames', async () => {
+    const { CodeStreamRenderer } = await import('../src/tui/codeStreamRenderer.js');
+    const { Transcript } = await import('../src/tui/transcript.js');
+
+    const renderer = new CodeStreamRenderer();
+    const transcript = new Transcript();
+    renderer.transcript = transcript as any;
+
+    const longReasoning = Array.from({ length: 30 }, (_, i) => `Reasoning line ${i + 1}`).join('\n');
+    renderer.onAgentReasoning({ content: longReasoning, streaming: false, elapsedMs: 1200 });
+
+    const frame = transcript.frames[0];
+    assert.ok(frame, 'reasoning frame must be created');
+    assert.equal(frame.meta?.reasoning, true);
+    assert.equal(frame.meta?.scrollStart, 0);
+
+    const surface = {
+      out: { rows: 24 },
+      stage: { height: 20 },
+      viewport: { viewWidth: 80, viewHeight: 18, scrollTop: 0 }
+    };
+
+    // 1. Wheel down over thinking frame -> increases scrollStart by 3
+    const handledDown1 = renderer.scrollThinkingPanel({
+      name: 'wheel',
+      wheel: { direction: 'down', x: 10, y: 5 } // y=5 is screenTop(4) + localY(1) = inside frame
+    }, surface as any);
+
+    assert.equal(handledDown1, true);
+    assert.equal(frame.meta?.scrollStart, 3);
+
+    // 2. Wheel down again -> scrollStart becomes 6
+    const handledDown2 = renderer.scrollThinkingPanel({
+      name: 'wheel',
+      wheel: { direction: 'down', x: 10, y: 5 }
+    }, surface as any);
+    assert.equal(handledDown2, true);
+    assert.equal(frame.meta?.scrollStart, 6);
+
+    // 3. Wheel up -> scrollStart decreases back to 3
+    const handledUp = renderer.scrollThinkingPanel({
+      name: 'wheel',
+      wheel: { direction: 'up', x: 10, y: 5 }
+    }, surface as any);
+    assert.equal(handledUp, true);
+    assert.equal(frame.meta?.scrollStart, 3);
+
+    // 4. Pointer outside thinking box -> returns false so viewport handles it
+    const handledOutside = renderer.scrollThinkingPanel({
+      name: 'wheel',
+      wheel: { direction: 'down', x: 10, y: 22 } // below viewport viewHeight (18)
+    }, surface as any);
+    assert.equal(handledOutside, false);
   });
 });

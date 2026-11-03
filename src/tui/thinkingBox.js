@@ -11,6 +11,17 @@ import { padEnd, truncate, visibleWidth, wrapBlock } from './text.js';
 export const DEFAULT_MAX_STREAMING_LINES = 8;
 export const DEFAULT_MAX_EXPANDED_LINES = 12;
 /**
+ * Calculates total wrapped lines for reasoning content under the thinking box budget.
+ */
+export function calculateThinkingLineCount(content, width) {
+    const text = String(content ?? '').trim();
+    if (!text)
+        return 0;
+    const safeWidth = Math.max(20, Math.floor(width));
+    const contentBudget = Math.max(10, safeWidth - 4);
+    return wrapBlock(text, contentBudget).length;
+}
+/**
  * Single-line compact badge for collapsed reasoning frames.
  */
 export function renderCollapsedThinkingBadge(options, totalLines) {
@@ -123,13 +134,25 @@ export function renderThinkingFrame(content, options = {}) {
     const { top, bottom, wrapRow } = buildThinkingBoxBorders(title, collapseHint, width, 'rule');
     const rows = [top];
     if (totalLines > maxLines) {
-        const hiddenCount = totalLines - maxLines;
-        const displayRows = allRows.slice(0, maxLines);
-        for (const row of displayRows) {
+        const limit = Math.max(0, totalLines - maxLines);
+        const start = Math.max(0, Math.min(limit, Math.floor(options.startLine ?? 0)));
+        const visible = allRows.slice(start, start + maxLines);
+        for (const row of visible) {
             rows.push(wrapRow(dim(row)));
         }
-        const moreNotice = `${GLYPHS.ellipsis || '…'} ${hiddenCount} more line${hiddenCount === 1 ? '' : 's'} of reasoning`;
-        rows.push(wrapRow(dim(moreNotice)));
+        const hiddenBelow = totalLines - (start + visible.length);
+        if (hiddenBelow > 0) {
+            const moreNotice = `${GLYPHS.ellipsis || '…'} ${hiddenBelow} more line${hiddenBelow === 1 ? '' : 's'} of reasoning`;
+            rows.push(wrapRow(dim(moreNotice)));
+        }
+        else if (start > 0) {
+            const earlierNotice = `${HAS_UNICODE ? '↑' : '^'} ${start} earlier line${start === 1 ? '' : 's'} scrolled above`;
+            rows.push(wrapRow(dim(earlierNotice)));
+        }
+        const upArrow = start > 0 ? (HAS_UNICODE ? '↑ ' : '^ ') : '';
+        const downArrow = start + visible.length < totalLines ? (HAS_UNICODE ? ' ↓' : ' v') : '';
+        const scrollInfo = `${upArrow}lines ${start + 1}–${start + visible.length} of ${totalLines}${downArrow} · scroll over thinking`;
+        rows.push(wrapRow(dim(scrollInfo)));
     }
     else {
         for (const row of allRows) {

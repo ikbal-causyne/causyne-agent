@@ -920,6 +920,7 @@ export class ChatPrompt {
     if (key.name === 'wheel') {
       if (!viewport || !key.wheel) return true;
       if (this.renderer?.scrollCodePanel?.(key, this.surface)) return true;
+      if (this.renderer?.scrollThinkingPanel?.(key, this.surface)) return true;
 
       return handleViewportWheel(key, viewport, this.surface, this);
     }

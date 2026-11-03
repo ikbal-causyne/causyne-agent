@@ -753,12 +753,14 @@ export class ChatRenderer {
           collapsed: false,
           streaming: true,
           durationText,
-          content
+          content,
+          scrollStart: 0
         };
         this.frame('reasoning', () => this.renderReasoning(meta.content, {
           streaming: true,
           durationText: meta.durationText,
-          collapsed: Boolean(meta.collapsed)
+          collapsed: Boolean(meta.collapsed),
+          startLine: Number(meta.scrollStart) || 0
         }), meta);
       } else {
         const meta = tailFrame?.meta || { reasoning: true };
@@ -766,10 +768,12 @@ export class ChatRenderer {
         meta.durationText = durationText;
         meta.content = content;
         if (meta.collapsed === undefined) meta.collapsed = false;
+        if (meta.scrollStart === undefined) meta.scrollStart = 0;
         this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
           streaming: true,
           durationText: meta.durationText,
-          collapsed: Boolean(meta.collapsed)
+          collapsed: Boolean(meta.collapsed),
+          startLine: Number(meta.scrollStart) || 0
         }), meta);
       }
       return;
@@ -783,10 +787,12 @@ export class ChatRenderer {
       meta.durationText = durationText;
       meta.content = content;
       if (meta.collapsed === undefined) meta.collapsed = false;
+      if (meta.scrollStart === undefined) meta.scrollStart = 0;
       this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
         streaming: false,
         durationText: meta.durationText,
-        collapsed: Boolean(meta.collapsed)
+        collapsed: Boolean(meta.collapsed),
+        startLine: Number(meta.scrollStart) || 0
       }), meta);
     } else if (content.trim()) {
       const meta = {
@@ -795,23 +801,26 @@ export class ChatRenderer {
         streaming: false,
         durationText,
         content,
-        collapsed: false
+        collapsed: false,
+        scrollStart: 0
       };
       this.frame('reasoning', () => this.renderReasoning(meta.content, {
         streaming: false,
         durationText: meta.durationText,
-        collapsed: Boolean(meta.collapsed)
+        collapsed: Boolean(meta.collapsed),
+        startLine: Number(meta.scrollStart) || 0
       }), meta);
     }
   }
 
-  renderReasoning(content, { streaming = false, durationText = '', collapsed = false } = {}) {
+  renderReasoning(content, { streaming = false, durationText = '', collapsed = false, startLine = 0 } = {}) {
     const width = this.measure();
     const rows = renderThinkingFrame(content, {
       width,
       streaming,
       durationText,
-      collapsed
+      collapsed,
+      startLine: Number(startLine) || 0
     });
 
     if (rows.length === 0) return;
@@ -821,6 +830,10 @@ export class ChatRenderer {
       this.write(row);
     }
     this.write();
+  }
+
+  scrollThinkingPanel(key, surface) {
+    return false;
   }
 
   onAgentActivity(msg) {

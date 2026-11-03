@@ -15,7 +15,8 @@ export class ChatRenderer {
   handle(message: { type: string; [key: string]: unknown }): boolean;
   resetTurn(): void;
   onAgentReasoning(message: { content?: string; streaming?: boolean; elapsedMs?: number }): void;
-  renderReasoning(content: string, options?: { streaming?: boolean; durationText?: string; collapsed?: boolean }): void;
+  renderReasoning(content: string, options?: { streaming?: boolean; durationText?: string; collapsed?: boolean; startLine?: number }): void;
+  scrollThinkingPanel?(key: unknown, surface: unknown): boolean;
   stopSpinner(): void;
   frame(kind: string, produce: () => void, meta?: Record<string, unknown> | null): void;
   updateTailFrame(kind: string, produce: () => void, meta?: Record<string, unknown> | null): void;
