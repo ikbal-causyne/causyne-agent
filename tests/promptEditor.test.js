@@ -203,6 +203,33 @@ describe('completion — suggestions that cannot lie or inject', () => {
     }
   });
 
+  test('bare slash menu contains zero duplicate commands or aliases', () => {
+    const result = suggest('/', 1);
+    assert.ok(result && result.items.length > 0);
+    const seen = new Set();
+    for (const item of result.items) {
+      assert.ok(!seen.has(item.label), `duplicate slash item encountered: ${item.label}`);
+      seen.add(item.label);
+    }
+    // Verify high-frequency commands appear once without their aliases duplicating them
+    const labels = result.items.map((i) => i.label);
+    assert.ok(labels.includes('/model') && !labels.includes('/models'));
+    assert.ok(labels.includes('/sessions') && !labels.includes('/session'));
+    assert.ok(labels.includes('/new') && !labels.includes('/new-session'));
+    assert.ok(labels.includes('/clear') && !labels.includes('/reset'));
+
+    // Searching by alias finds the canonical command with alias annotation
+    const aliasResult = suggest('/reset', 6);
+    assert.ok(aliasResult && aliasResult.items.length > 0);
+    assert.equal(aliasResult.items[0].value, '/clear');
+    assert.match(aliasResult.items[0].description, /alias: \/reset/);
+
+    const modelAliasResult = suggest('/models', 7);
+    assert.ok(modelAliasResult && modelAliasResult.items.length > 0);
+    assert.equal(modelAliasResult.items[0].value, '/model');
+    assert.match(modelAliasResult.items[0].description, /alias: \/models/);
+  });
+
   test('the skill library is reachable from the slash menu', () => {
     // claude-code surfaces a skill as a command you simply type. With a hundred
     // of them, requiring the user to know both `/skills` and the domain is the

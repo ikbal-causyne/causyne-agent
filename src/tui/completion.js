@@ -93,11 +93,26 @@ function rank(items, query, limit = 50, focusDir = null) {
   for (const item of items) {
     const val = item.match !== undefined ? item.match : item.value;
     let value = score(val, query);
+    let matchedAlias = null;
+
+    if (Array.isArray(item.aliases) && query) {
+      for (const alias of item.aliases) {
+        const aliasScore = score(alias, query);
+        if (aliasScore > value) {
+          value = aliasScore;
+          matchedAlias = alias;
+        }
+      }
+    }
+
     if (value >= 0) {
       if (focusPrefix && val.toLowerCase().startsWith(focusPrefix)) {
         value += 3000;
       }
-      scored.push({ item, value });
+      const resultItem = matchedAlias
+        ? { ...item, description: `(alias: /${matchedAlias}) ${item.description}` }
+        : item;
+      scored.push({ item: resultItem, value });
     }
   }
   scored.sort((a, b) => b.value - a.value);
@@ -140,26 +155,10 @@ function commandItems() {
       commands.push({
         value: primaryLabel,
         match: command.name,
+        aliases: Array.isArray(command.aliases) ? command.aliases.filter(isTerminalSafe) : [],
         label: primaryLabel,
         description: sanitize(command.description || '')
       });
-    }
-
-    // Include aliases (e.g. /models, /session, /reset) so they match cleanly and resolve to canonical command
-    if (Array.isArray(command.aliases)) {
-      for (const alias of command.aliases) {
-        if (!isTerminalSafe(alias)) continue;
-        const aliasLabel = '/' + alias;
-        if (!seenLabels.has(aliasLabel)) {
-          seenLabels.add(aliasLabel);
-          commands.push({
-            value: primaryLabel,
-            match: alias,
-            label: aliasLabel,
-            description: sanitize(command.description || '')
-          });
-        }
-      }
     }
   }
 
@@ -188,7 +187,7 @@ function commandItems() {
  */
 function argumentItems(name) {
   const command = listCommands('terminal')
-    .find((candidate) => candidate.name === name && isTerminalSafe(candidate.name));
+    .find((candidate) => (candidate.name === name || (Array.isArray(candidate.aliases) && candidate.aliases.includes(name))) && isTerminalSafe(candidate.name));
   if (!command || typeof command.complete !== 'function') return [];
 
   let produced;
