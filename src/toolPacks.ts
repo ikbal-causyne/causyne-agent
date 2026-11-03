@@ -378,7 +378,7 @@ const MEDIA_INTENT = /\b(image|images|picture|photo|photoshop|premiere|after\s*e
 
 const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|compress|extract|clipboard|copy to clipboard|print|printer|open in browser|launch app|computer use|vision grounding|desktop vision|gui agent|coordinate click|desktop control)\b/i;
 
-const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
+const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|plugins? factory|python bridge|mcp|mcp server|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 
 const REVERSE_ENGINEERING_INTENT = /\b(rea|rea-agents|decompile|decompiling|decompilation|disassemble|disassembly|disassembling|binary|binaries|apk|aab|dex|elf|mach-o|pe|coff|reverse[\s_-]?engineer(ing)?|sourcemap|deobfuscate|asar|symbols|ghidra|rizin|radare|hopper|frida|hook script|mitigations|pie|canary|clean[- ]?room)\b|\.(apk|aab|dex|dylib|so|dll|exe|asar)\b/i;
 

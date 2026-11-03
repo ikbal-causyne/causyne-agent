@@ -215,7 +215,8 @@ export class PluginsFactory {
         `Security Status: DISABLED (Review source files before enabling)`,
         '',
         `To activate after review:`,
-        `  causyne plugins enable ${normalizedName}`
+        `  causyne plugins enable ${normalizedName}`,
+        `  (or in chat: /plugins enable ${normalizedName})`
       ].join('\n');
     } else {
       instructions = [
@@ -225,7 +226,8 @@ export class PluginsFactory {
         '',
         `To register and grant:`,
         `  causyne mcp add ${normalizedName} node ${path.join(targetDir, 'server.js')}`,
-        `  causyne mcp grant ${normalizedName}`
+        `  causyne mcp grant ${normalizedName}`,
+        `  (or in chat: /mcp grant ${normalizedName})`
       ].join('\n');
     }
 
