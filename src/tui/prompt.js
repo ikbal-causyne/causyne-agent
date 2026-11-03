@@ -1473,7 +1473,10 @@ export class ChatPrompt {
   drawLayer(width) {
     if (this.layer.messageActions && this.surface?.presentMessageActions) {
       const availableWidth = sessionMainWidth(this.surface.width);
-      const panelWidth = dialogWidth(Math.max(8, availableWidth - 3), this.layer.width || 68);
+      const requestedWidth = typeof this.layer.preferredWidth === 'function'
+        ? this.layer.preferredWidth(Math.max(8, availableWidth - 3))
+        : (this.layer.width || 64);
+      const panelWidth = dialogWidth(Math.max(8, availableWidth - 3), requestedWidth);
       const panel = panelRows(this.layer, panelWidth, this.layer.preferredHeight());
       this.surface.presentMessageActions(panel, this.layer);
       return;

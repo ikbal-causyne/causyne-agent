@@ -14,6 +14,7 @@ import { detectLinkAtPoint, openDetectedLink } from './smartLinkClick.js';
 import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
 import { Layer } from './overlay.js';
+import { type MessageBounds } from './messageActionPlacement.js';
 // @ts-expect-error Legacy theme has no declaration yet.
 import { paint, bold, dim, fill } from './theme.js';
 
@@ -60,6 +61,9 @@ export class MessageActionsLayer extends Layer {
   readonly messageActions = true;
   actionLayout: { x: number; y: number; width: number; count: number } | null = null;
   anchorY: number | null;
+  messageBounds: MessageBounds | null = null;
+  override readonly borderRole = 'muted';
+  override readonly surfaceRole = 'surfaceHi';
   readonly items: MessageAction[];
   readonly list: { filtered: MessageAction[]; selected: number; moveTo: (index: number, rows?: number) => void };
   private readonly onPick: (choice: MessageAction | null) => void;
@@ -78,6 +82,16 @@ export class MessageActionsLayer extends Layer {
   }
 
   override preferredHeight(): number { return this.items.length + 2; }
+
+  preferredWidth(maxWidth: number): number {
+    const maxItemContent = this.items.reduce((max, item) => {
+      const labelW = visibleWidth(`▸ ${item.label}`);
+      const descW = item.description ? visibleWidth(item.description) + 4 : 0;
+      return Math.max(max, labelW + descW);
+    }, 0);
+    const wanted = Math.max(48, maxItemContent + 6);
+    return Math.max(36, Math.min(maxWidth, wanted));
+  }
 
   override body(width: number): string[] {
     const labelWidth = this.items.reduce(
@@ -367,6 +381,22 @@ export function openMessageActions(host: MessageHost, loop: MessageLoop, marker:
       : [])
   ];
 
+  let messageBounds: MessageBounds | null = null;
+  if (host.surface?.viewport && host.surface?.transcript) {
+    const flat = host.surface.transcript.flatten(host.surface.viewport.width);
+    const mIdx = flat.markers.findIndex(m => m.id === marker.id);
+    if (mIdx >= 0) {
+      const nextM = flat.markers[mIdx + 1];
+      const rawStart = marker.row;
+      const rawEnd = nextM ? nextM.row - 1 : flat.rows.length - 1;
+      const visible = Math.max(0, Math.min(host.surface.viewport.height, flat.rows.length - host.surface.viewport.scrollTop));
+      const padding = host.surface.viewport.height - visible;
+      const startRow = rawStart - host.surface.viewport.scrollTop + padding;
+      const endRow = rawEnd - host.surface.viewport.scrollTop + padding;
+      messageBounds = { startRow, endRow, textLength: text.length };
+    }
+  }
+
   const layer = new MessageActionsLayer(options, (choice) => {
     if (host.surface) {
       host.surface.hoveredMessageFrameId = null;
@@ -442,6 +472,7 @@ export function openMessageActions(host: MessageHost, loop: MessageLoop, marker:
 
     host.scheduleDraw();
   }, anchorY);
+  layer.messageBounds = messageBounds;
   host.openLayer(layer);
 }
 

@@ -448,7 +448,10 @@ export class StageSurface {
         const overlay = this.messageActionOverlay;
         const placed = placeMessageActionPanel(rows, overlay.panel, contentWidth,
           (this.out.rows || height) - height, overlay.layer.anchorY,
-          overlay.layer.items.length);
+          overlay.layer.items.length, {
+            messageBounds: overlay.layer.messageBounds,
+            dimBackdrop: true
+          });
         rows = placed.rows;
         overlay.layer.actionLayout = placed.layout;
       }

@@ -51,6 +51,8 @@ export interface LayerOptions {
 export interface PanelRenderableLayer {
   title?: string | undefined;
   footer?: string | undefined;
+  borderRole?: string | undefined;
+  surfaceRole?: string | undefined;
   preferredHeight(): number;
   body(width: number, height: number): string[];
 }
@@ -149,6 +151,8 @@ export class Layer {
   footer: string;
   width: number;
   height: number;
+  borderRole?: string | undefined;
+  surfaceRole?: string | undefined;
   onClose: (() => void) | null;
   onSelect: ((item: unknown) => void) | null;
   cursor: { x: number; y: number } | null;
@@ -276,30 +280,32 @@ export function panelRows(layer: PanelRenderableLayer, width: number, maxHeight:
   const bodyHeight = Math.max(1, Math.min(layer.preferredHeight(), maxHeight) - 2);
   const body = layer.body(inner, bodyHeight);
 
+  const borderRole = layer.borderRole || 'rule';
+  const surfaceRole = layer.surfaceRole || 'surface';
   const line = FRAME.h.repeat(frameWidth - 2);
 
-  let top = paint('rule', FRAME.tl + line + FRAME.tr);
+  let top = paint(borderRole, FRAME.tl + line + FRAME.tr);
   if (layer.title) {
     const label = ` ${truncate(layer.title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
     const trail = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
-    top = paint('rule', FRAME.tl + FRAME.h) + bold(paint('ink', label)) + paint('rule', trail + FRAME.tr);
+    top = paint(borderRole, FRAME.tl + FRAME.h) + bold(paint('ink', label)) + paint(borderRole, trail + FRAME.tr);
   }
 
-  let bottom = paint('rule', FRAME.bl + line + FRAME.br);
+  let bottom = paint(borderRole, FRAME.bl + line + FRAME.br);
   if (layer.footer) {
     const label = ` ${truncate(layer.footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
     const lead = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
-    bottom = paint('rule', FRAME.bl + lead) + dim(label) + paint('rule', FRAME.h + FRAME.br);
+    bottom = paint(borderRole, FRAME.bl + lead) + dim(label) + paint(borderRole, FRAME.h + FRAME.br);
   }
 
-  const edge = paint('rule', FRAME.v);
-  const rows: string[] = [fill('surface', top)];
+  const edge = paint(borderRole, FRAME.v);
+  const rows: string[] = [fill(surfaceRole, top)];
   for (let index = 0; index < bodyHeight; index++) {
     const content = truncate(body[index] || '', inner, GLYPHS.ellipsis);
     const pad = ' '.repeat(Math.max(0, inner - visibleWidth(content)));
-    rows.push(fill('surface', `${edge} ${content}${pad} ${edge}`));
+    rows.push(fill(surfaceRole, `${edge} ${content}${pad} ${edge}`));
   }
-  rows.push(fill('surface', bottom));
+  rows.push(fill(surfaceRole, bottom));
   return rows;
 }
 

@@ -422,3 +422,41 @@ test('memoryWrite never writes Cortex failure stack/errors to console.error and 
     console.error = origError;
   }
 });
+
+test('placeMessageActionPanel adaptively floats upward when clicking bottom message and dims backdrop', () => {
+  const layer = new MessageActionsLayer([
+    { label: 'Copy message', description: 'to clipboard', value: 'copy' },
+    { label: 'Fork from here', description: 'fresh session', value: 'fork' },
+    { label: 'Revert to here', description: 'undo changes', value: 'revert' }
+  ], () => {}, 19);
+
+  // Preferred width adapts to items and terminal width
+  const adaptWidth = layer.preferredWidth(80);
+  assert.ok(adaptWidth >= 40 && adaptWidth <= 65);
+
+  const panel = panelRows(layer, adaptWidth, layer.preferredHeight());
+  assert.equal(panel.length, 5);
+
+  // Viewport of 20 rows, message is located at the very bottom: rows 17..19
+  const base = Array<string>(20).fill('Some message content line in viewport');
+  const placedBottom = placeMessageActionPanel(base, panel, 80, 0, 19, 3, {
+    messageBounds: { startRow: 17, endRow: 19 },
+    dimBackdrop: true
+  });
+
+  // Must NOT stick to the bottom row (15); must float upward into the clear reading area
+  assert.ok(placedBottom.layout !== null);
+  assert.ok(
+    placedBottom.layout.y < 15,
+    `Panel at bottom message should float upward away from bottom edge (got y=${placedBottom.layout.y}, expected < 15)`
+  );
+  assert.ok(placedBottom.layout.y >= 1);
+
+  // Background rows above and below panel should have dim styling applied
+  const rowAbove = placedBottom.rows[0]!;
+  assert.match(rowAbove, /\x1b\[2m/);
+
+  // Left and right sides of spliced row should also be dimmed
+  const splicedRow = placedBottom.rows[placedBottom.layout.y]!;
+  assert.match(splicedRow, /\x1b\[2m/);
+});
