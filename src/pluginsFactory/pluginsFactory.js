@@ -204,6 +204,9 @@ export class PluginsFactory {
      */
     recordPluginState(pluginName, digest) {
         try {
+            if (!fs.existsSync(this.pluginsRoot)) {
+                fs.mkdirSync(this.pluginsRoot, { recursive: true, mode: 0o700 });
+            }
             const stateFile = path.join(this.pluginsRoot, 'state.json');
             let state = {
                 version: 1,

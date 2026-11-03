@@ -2,10 +2,10 @@
  * Code and Manifest Templates for PluginsFactory.
  *
  * Scaffolds production-grade, secure implementations for:
- * 1. Native HTTP Plugin (Leanest, zero daemon overhead)
- * 2. Native CLI Plugin (Subprocess wrapper)
+ * 1. Native HTTP Plugin (Leanest, zero daemon overhead, full query param support)
+ * 2. Native CLI Plugin (Subprocess wrapper with robust stderr reporting)
  * 3. Python Bridge Plugin (Lightweight JSON stdio bridge for Python libraries)
- * 4. Stdio MCP Server (Zero-dependency JSON-RPC 2.0 stdio daemon)
+ * 4. Stdio MCP Server (Zero-dependency JSON-RPC 2.0 stdio daemon compliant with MCP spec)
  */
 
 import type { ServiceDescriptor, ServiceToolDescriptor } from './types.js';
@@ -15,8 +15,23 @@ export interface ScaffoldingPayload {
   entryPoint: string;
 }
 
-function sanitizeIdentifier(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_]/g, '_');
+/**
+ * Sanitizes an arbitrary tool or parameter name into a valid JavaScript identifier.
+ * Prevents syntax errors when tools contain hyphens (e.g. "get-weather" -> "get_weather").
+ */
+export function sanitizeIdentifier(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9_]/g, '_');
+  return /^[0-9]/.test(cleaned) ? `_${cleaned}` : (cleaned || 'fn');
+}
+
+/**
+ * Computes the canonical export name for a tool within an index.js ES module.
+ * The primary tool is always exported as "execute" (the default runner contract).
+ * Additional tools are exported with their sanitized identifier.
+ */
+function getExportName(tool: ServiceToolDescriptor, index: number): string {
+  if (index === 0) return 'execute';
+  return sanitizeIdentifier(tool.name);
 }
 
 /**
@@ -36,18 +51,18 @@ export function generateHttpPluginScaffold(service: ServiceDescriptor): Scaffold
     version: '1.0.0',
     description: service.description || `Native HTTP plugin for ${service.name}`,
     capabilities,
-    tools: service.tools.map(tool => ({
+    tools: service.tools.map((tool, idx) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
       entry: 'index.js',
-      export: tool.name === primaryTool.name ? 'execute' : tool.name,
+      export: getExportName(tool, idx),
       timeoutMs: 30000
     }))
   };
 
-  const toolExecutors = service.tools.map(tool => {
-    const fnName = tool.name === primaryTool.name ? 'execute' : tool.name;
+  const toolExecutors = service.tools.map((tool, idx) => {
+    const fnName = getExportName(tool, idx);
     const httpMethod = tool.httpMethod || 'POST';
     const httpPath = tool.httpPath || '/';
     return `
@@ -56,7 +71,16 @@ export function generateHttpPluginScaffold(service: ServiceDescriptor): Scaffold
  */
 export async function ${fnName}(args = {}, context = {}) {
   const endpoint = ${JSON.stringify(service.endpoint || 'https://api.example.com')};
-  const url = new URL(${JSON.stringify(httpPath)}, endpoint).toString();
+  const base = endpoint.endsWith('/') ? endpoint : endpoint + '/';
+  const rel = ${JSON.stringify(httpPath)}.startsWith('/') ? ${JSON.stringify(httpPath)}.slice(1) : ${JSON.stringify(httpPath)};
+  const url = new URL(rel, base);
+
+  if (${JSON.stringify(httpMethod)} === 'GET' && args && typeof args === 'object') {
+    for (const [k, v] of Object.entries(args)) {
+      if (v !== undefined && v !== null) url.searchParams.append(k, String(v));
+    }
+  }
+
   const authHeader = ${
     service.authEnvVar
       ? `process.env[${JSON.stringify(service.authEnvVar)}] ? \`Bearer \${process.env[${JSON.stringify(service.authEnvVar)}]}\` : undefined`
@@ -70,7 +94,7 @@ export async function ${fnName}(args = {}, context = {}) {
   if (authHeader) headers['Authorization'] = authHeader;
 
   try {
-    const response = await fetch(url, {
+    const response = await fetch(url.toString(), {
       method: ${JSON.stringify(httpMethod)},
       headers,
       body: ${httpMethod !== 'GET' ? 'JSON.stringify(args)' : 'undefined'}
@@ -150,20 +174,19 @@ export function generateCliPluginScaffold(service: ServiceDescriptor): Scaffoldi
     version: '1.0.0',
     description: service.description || `Native CLI plugin for ${service.name}`,
     capabilities,
-    tools: service.tools.map(tool => ({
+    tools: service.tools.map((tool, idx) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
       entry: 'index.js',
-      export: tool.name === primaryTool.name ? 'execute' : tool.name,
+      export: getExportName(tool, idx),
       timeoutMs: 45000
     }))
   };
 
-  const toolExecutors = service.tools.map(tool => {
-    const fnName = tool.name === primaryTool.name ? 'execute' : tool.name;
+  const toolExecutors = service.tools.map((tool, idx) => {
+    const fnName = getExportName(tool, idx);
     const binary = service.cliBinary || service.name;
-    const subcommand = tool.cliSubcommand ? ` ${tool.cliSubcommand}` : '';
     return `
 /**
  * ${tool.description}
@@ -177,7 +200,7 @@ export async function ${fnName}(args = {}, context = {}) {
   const cliArgs = [];
   ${tool.cliSubcommand ? `cliArgs.push(${JSON.stringify(tool.cliSubcommand)});` : ''}
 
-  for (const [key, val] of Object.entries(args)) {
+  for (const [key, val] of Object.entries(args || {})) {
     if (val === true) cliArgs.push(\`--\${key}\`);
     else if (val !== false && val !== null && val !== undefined) {
       cliArgs.push(\`--\${key}\`, String(val));
@@ -197,9 +220,12 @@ export async function ${fnName}(args = {}, context = {}) {
       stderr: stderr.trim()
     };
   } catch (err) {
+    const errObj = err && typeof err === 'object' ? err : {};
+    const stderrMsg = typeof errObj.stderr === 'string' ? errObj.stderr.trim() : '';
+    const mainMsg = err instanceof Error ? err.message : String(err);
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err)
+      error: [mainMsg, stderrMsg].filter(Boolean).join(': ')
     };
   }
 }
@@ -256,18 +282,18 @@ export function generatePythonBridgeScaffold(service: ServiceDescriptor): Scaffo
     version: '1.0.0',
     description: service.description || `Python bridge plugin for ${service.name}`,
     capabilities,
-    tools: service.tools.map(tool => ({
+    tools: service.tools.map((tool, idx) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
       entry: 'index.js',
-      export: tool.name === primaryTool.name ? 'execute' : tool.name,
+      export: getExportName(tool, idx),
       timeoutMs: 60000
     }))
   };
 
-  const toolExecutors = service.tools.map(tool => {
-    const fnName = tool.name === primaryTool.name ? 'execute' : tool.name;
+  const toolExecutors = service.tools.map((tool, idx) => {
+    const fnName = getExportName(tool, idx);
     const pythonMethod = tool.pythonMethod || tool.name;
     return `
 /**
@@ -381,16 +407,15 @@ def handle_request(payload):
     args = payload.get("args", {})
     context = payload.get("context", {})
 
-    # Dispatched action handler
     try:
-        # Example: Import target python library safely
+        # Dynamically reference target python module
         # import ${pythonModule}
         
         result = {
             "action": action,
             "processed": True,
             "args_echo": args,
-            "message": f"Successfully executed {action} via Python bridge."
+            "message": f"Successfully executed action '{action}' via Python bridge."
         }
         return {"success": True, "result": result}
     except Exception as exc:
@@ -522,6 +547,7 @@ function handleRequest(request) {
       };
 
     case 'notifications/initialized':
+    case 'initialized':
       return null;
 
     case 'ping':
@@ -533,6 +559,12 @@ function handleRequest(request) {
         jsonrpc: '2.0',
         result: { tools: TOOLS }
       };
+
+    case 'resources/list':
+      return { id, jsonrpc: '2.0', result: { resources: [] } };
+
+    case 'prompts/list':
+      return { id, jsonrpc: '2.0', result: { prompts: [] } };
 
     case 'tools/call': {
       const toolName = params?.name;
@@ -628,4 +660,3 @@ causyne mcp grant ${service.name}
     ]
   };
 }
-

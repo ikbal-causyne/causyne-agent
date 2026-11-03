@@ -8,12 +8,19 @@
 import { PluginsFactory } from '../pluginsFactory/index.js';
 function normalizeServiceDescriptor(args) {
     const tools = (args.tools || []).map((t, idx) => {
+        const rawParams = (t.parameters && typeof t.parameters === 'object') ? t.parameters : {};
+        const { type: _discardType, ...restParams } = rawParams;
+        const parameters = {
+            ...restParams,
+            type: 'object',
+            properties: (rawParams['properties'] && typeof rawParams['properties'] === 'object')
+                ? rawParams['properties']
+                : {}
+        };
         const tool = {
             name: t.name || `tool_${idx + 1}`,
             description: t.description || `Tool ${t.name || idx + 1}`,
-            parameters: (t.parameters && typeof t.parameters === 'object' && t.parameters.type === 'object')
-                ? t.parameters
-                : { type: 'object', properties: {} }
+            parameters
         };
         if (t.httpMethod !== undefined)
             tool.httpMethod = t.httpMethod;

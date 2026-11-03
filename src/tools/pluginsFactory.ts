@@ -14,7 +14,8 @@ import {
   type ScaffoldResult,
   type ServiceDescriptor,
   type ServiceKind,
-  type ServiceToolDescriptor
+  type ServiceToolDescriptor,
+  type ToolParameterSchema
 } from '../pluginsFactory/index.js';
 
 export interface PluginsFactoryArgs {
@@ -53,12 +54,19 @@ export interface PluginsFactoryToolResult {
 
 function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor {
   const tools: ServiceToolDescriptor[] = (args.tools || []).map((t, idx) => {
+    const rawParams = (t.parameters && typeof t.parameters === 'object') ? (t.parameters as Record<string, unknown>) : {};
+    const { type: _discardType, ...restParams } = rawParams;
+    const parameters: ToolParameterSchema = {
+      ...restParams,
+      type: 'object',
+      properties: (rawParams['properties'] && typeof rawParams['properties'] === 'object')
+        ? (rawParams['properties'] as ToolParameterSchema['properties'])
+        : {}
+    };
     const tool: ServiceToolDescriptor = {
       name: t.name || `tool_${idx + 1}`,
       description: t.description || `Tool ${t.name || idx + 1}`,
-      parameters: (t.parameters && typeof t.parameters === 'object' && t.parameters.type === 'object')
-        ? (t.parameters as ServiceToolDescriptor['parameters'])
-        : { type: 'object', properties: {} }
+      parameters
     };
     if (t.httpMethod !== undefined) tool.httpMethod = t.httpMethod;
     if (t.httpPath !== undefined) tool.httpPath = t.httpPath;
