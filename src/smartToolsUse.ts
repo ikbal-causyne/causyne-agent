@@ -61,8 +61,13 @@ export class SmartToolsGovernor {
   private mutationAttempted = false;
   private verificationObserved = false;
   private nudgeIssued = false;
+  private readonly batchLimit: number;
 
-  get inspectionCapacity(): number { return Math.max(0, 2 - this.consecutiveInspections); }
+  constructor(batchLimit = 2) {
+    this.batchLimit = Math.max(1, batchLimit);
+  }
+
+  get inspectionCapacity(): number { return Math.max(0, this.batchLimit - this.consecutiveInspections); }
 
   beginModelStep(): void {
     // A synthesis checkpoint yields to the planner; it does not prohibit
@@ -76,9 +81,9 @@ export class SmartToolsGovernor {
 
   interceptAction(toolName: string, args: Record<string, unknown>): { allowed: boolean; reason?: string } {
     if (!isInspection(toolName, args) || isVerification(toolName, args)) return { allowed: true };
-    if (this.consecutiveInspections < 2) return { allowed: true };
+    if (this.consecutiveInspections < this.batchLimit) return { allowed: true };
     this.phase = 'synthesis';
-    return { allowed: false, reason: 'Inspection batch complete (2 actions). Synthesize the observations before another batch. '
+    return { allowed: false, reason: `Inspection batch complete (${this.batchLimit} actions). Synthesize the observations before another batch. `
       + 'Continue with a targeted edit or verification when evidence is sufficient; further research remains available in the next planning step.' };
   }
 
@@ -118,8 +123,8 @@ export class SmartToolsGovernor {
     }
     if (!isInspection(toolName, args)) return null;
     this.consecutiveInspections++;
-    this.phase = this.consecutiveInspections >= 2 ? 'synthesis' : 'inspection';
-    if (this.consecutiveInspections === 2 && !this.nudgeIssued) {
+    this.phase = this.consecutiveInspections >= this.batchLimit ? 'synthesis' : 'inspection';
+    if (this.consecutiveInspections === this.batchLimit && !this.nudgeIssued) {
       this.nudgeIssued = true;
       return 'Inspection batch complete. Synthesize what is known and choose the next useful step. Continue inspecting if the task still needs evidence; avoid repeating unchanged probes.';
     }

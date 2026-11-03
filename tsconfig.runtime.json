@@ -198,7 +198,8 @@
     "src/memory/symbolFolder.ts",
     "src/memory/episodicStore.ts",
     "src/tools/memoryRecall.ts",
-    "src/tools/memoryWrite.ts"
+    "src/tools/memoryWrite.ts",
+    "src/tui/toolOutputNormalizer.ts"
   ],
   "exclude": [
     "node_modules",

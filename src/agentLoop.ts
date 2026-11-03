@@ -651,7 +651,7 @@ export class AgentLoop {
     this.recentActionSignatures = [];
     this.consecutiveReadOnlySteps = 0;
     this.stallGuard = new StallGuardController();
-    this.smartToolsGovernor = new SmartToolsGovernor();
+    this.smartToolsGovernor = new SmartToolsGovernor(4);
     this._smartToolsNudge = null;
 
     // Sovereign Progressive Disclosure: which capability packs have entered the
@@ -1405,18 +1405,26 @@ export class AgentLoop {
     if (!Array.isArray(this._implementationPlan) || this._implementationPlan.length === 0) return;
     const keepSeeded = Boolean(this._implementationPlanSeeded);
     if (kind === 'complete') {
-      if (this._implementationPlan.every((item: any) => item.status === 'completed')) return;
-      this.updateImplementationPlan({
-        explanation: 'Task completed.',
-        plan: this._implementationPlan.map((item: any) => ({ ...item, status: 'completed' }))
-      }, { seeded: keepSeeded });
+      const completedPlan = this._implementationPlan.map((item: any) => ({ ...item, status: 'completed' }));
+      if (!this._implementationPlan.every((item: any) => item.status === 'completed')) {
+        this.updateImplementationPlan({
+          explanation: 'Task completed.',
+          plan: completedPlan
+        }, { seeded: keepSeeded });
+      }
+      this.syncCompletedPlanToLatestTurnMessages(completedPlan);
       return;
     }
     if (this._implementationPlan.length < 2) return;
     const activeIndex = this._implementationPlan.findIndex((item: any) => item.status === 'in_progress');
     const currentIndex = activeIndex >= 0 ? activeIndex : 0;
     const lastIndex = this._implementationPlan.length - 1;
-    const targetIndex = kind === 'verification'
+    const isInitialPreMutationInspection = kind === 'verification'
+      && !this.smartToolsGovernor.snapshot().mutationAttempted
+      && currentIndex === 0;
+    if (isInitialPreMutationInspection && !keepSeeded) return;
+    const effectiveKind = isInitialPreMutationInspection ? 'mutation' : kind;
+    const targetIndex = effectiveKind === 'verification'
       ? lastIndex
       : Math.min(currentIndex + 1, Math.max(0, lastIndex - 1));
     if (targetIndex <= currentIndex) return;
@@ -1425,6 +1433,50 @@ export class AgentLoop {
       status: idx < targetIndex ? 'completed' : idx === targetIndex ? 'in_progress' : 'pending'
     }));
     this.updateImplementationPlan({ explanation: '', plan: nextPlan }, { seeded: keepSeeded });
+  }
+
+  private syncCompletedPlanToLatestTurnMessages(completedPlan: Array<{ id: string; step: string; status: string }>): void {
+    if (!Array.isArray(this.messages) || this.messages.length === 0) return;
+    let updatedCallId: string | null = null;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const msg = this.messages[i];
+      if (!msg) continue;
+      if (msg.role === 'user') break;
+      if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+        for (let j = msg.tool_calls.length - 1; j >= 0; j--) {
+          const call = msg.tool_calls[j];
+          if (call?.function?.name === 'update_plan' && typeof call.function.arguments === 'string') {
+            try {
+              const parsed = JSON.parse(call.function.arguments);
+              if (parsed && typeof parsed === 'object' && Array.isArray(parsed.plan)) {
+                parsed.plan = completedPlan;
+                call.function.arguments = JSON.stringify(parsed);
+                updatedCallId = call.id || null;
+                break;
+              }
+            } catch { /* ignore non-JSON arguments */ }
+          }
+        }
+        if (updatedCallId) break;
+      }
+    }
+    if (!updatedCallId) return;
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const msg = this.messages[i];
+      if (!msg) continue;
+      if (msg.role === 'user') break;
+      if (msg.role === 'tool' && msg.tool_call_id === updatedCallId && typeof msg.content === 'string' && !msg.content.startsWith('[decayed]')) {
+        try {
+          const parsed = JSON.parse(msg.content);
+          if (parsed && typeof parsed === 'object') {
+            parsed.plan = completedPlan;
+            parsed.output = `${completedPlan.length}/${completedPlan.length} completed`;
+            msg.content = JSON.stringify(parsed);
+          }
+        } catch { /* ignore */ }
+        break;
+      }
+    }
   }
 
   async requestDecision(request: any) {
@@ -3370,6 +3422,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
         //     makes, so a denied path is never read behind the guard's back.
         //   * Only a SUCCESSFUL prefetch is consumed. A failure is discarded and
         //     the serial path executes normally, so TimeMachine sees its outcome.
+        // If native peer actions inside llm.chat() reached the synthesis checkpoint,
+        // start a fresh host inspection batch for the returned toolCalls so the
+        // first host inspection in this turn is not rejected on arrival.
+        this.smartToolsGovernor.beginModelStep();
         const prefetched = this.prefetchReadOnlyCalls(response.toolCalls);
 
         // 3. ACT (Execute tool calls)
@@ -3913,7 +3969,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
             this.webVerificationState.screenshotTaken = true;
           }
           if (functionName === 'browser_act' && result?.success === true) {
-            this.advanceImplementationPlanProgress('verification');
+            const hasExplicitPlanInBatch = Array.isArray(response.toolCalls)
+              && response.toolCalls.some((c: any) => canonicalToolName(c?.function?.name || '') === 'update_plan');
+            if (!hasExplicitPlanInBatch) {
+              this.advanceImplementationPlanProgress('verification');
+            }
             const browserResults = Array.isArray(result.data) ? result.data : [];
             const allRuntimeErrors = browserResults.flatMap((item: any) =>
               Array.isArray(item?.data?.runtimeErrors) ? item.data.runtimeErrors : []

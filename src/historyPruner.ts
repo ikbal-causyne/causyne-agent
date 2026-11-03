@@ -92,10 +92,41 @@ export function shortenOversizedToolObservations(
     }
     const headLen = Math.min(3000, Math.max(200, Math.floor(threshold * 0.45)));
     const tailLen = Math.min(1500, Math.max(200, Math.floor(threshold * 0.35)));
-    const head = original.slice(0, headLen);
-    const tail = original.slice(-tailLen);
-    const omitted = original.length - head.length - tail.length;
-    const shortened = `${head}\n[${omitted} middle characters omitted from active context. Full output saved${buildDecayPointer({ path: spillPath })}]\n${tail}`;
+    let shortened: string;
+    try {
+      const parsed: unknown = JSON.parse(original);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const record = { ...(parsed as Record<string, unknown>) };
+        const rawOut = typeof record.output === 'string' ? record.output
+          : typeof record.log === 'string' ? record.log
+          : null;
+        const fieldKey = typeof record.output === 'string' ? 'output'
+          : typeof record.log === 'string' ? 'log'
+          : null;
+        if (rawOut && fieldKey && rawOut.length > headLen + tailLen) {
+          const outHead = rawOut.slice(0, headLen);
+          const outTail = rawOut.slice(-tailLen);
+          const outOmitted = rawOut.length - outHead.length - outTail.length;
+          record[fieldKey] = `${outHead}\n[${outOmitted} middle characters omitted from active context.${buildDecayPointer({ path: spillPath })}]\n${outTail}`;
+          shortened = JSON.stringify(record);
+        } else {
+          const head = original.slice(0, headLen);
+          const tail = original.slice(-tailLen);
+          const omitted = original.length - head.length - tail.length;
+          shortened = `${head}\n[${omitted} middle characters omitted from active context.${buildDecayPointer({ path: spillPath })}]\n${tail}`;
+        }
+      } else {
+        const head = original.slice(0, headLen);
+        const tail = original.slice(-tailLen);
+        const omitted = original.length - head.length - tail.length;
+        shortened = `${head}\n[${omitted} middle characters omitted from active context.${buildDecayPointer({ path: spillPath })}]\n${tail}`;
+      }
+    } catch {
+      const head = original.slice(0, headLen);
+      const tail = original.slice(-tailLen);
+      const omitted = original.length - head.length - tail.length;
+      shortened = `${head}\n[${omitted} middle characters omitted from active context.${buildDecayPointer({ path: spillPath })}]\n${tail}`;
+    }
     if (shortened.length >= original.length) continue;
     message.content = shortened;
     if (spillPath) message.spillPath = spillPath;
@@ -158,7 +189,9 @@ function verdictFor(content: string): string {
       if (record.success === false) return 'reported failure';
     }
   } catch {
-    // Plain text and provider-specific results have no machine-verifiable verdict.
+    const prefixMatch = /^\s*\{\s*"success"\s*:\s*(true|false)\b/.exec(content);
+    if (prefixMatch?.[1] === 'true') return 'reported success';
+    if (prefixMatch?.[1] === 'false') return 'reported failure';
   }
   return 'outcome unverified';
 }

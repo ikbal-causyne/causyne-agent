@@ -345,16 +345,30 @@ export function sanitizeSequences(messages) {
   }
 
   let validToolBlock = false;
+  let activeToolIds = new Set();
+  let positionalRemaining = 0;
   const clean = [];
   for (const msg of messages) {
     if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
       validToolBlock = true;
+      activeToolIds = new Set(msg.tool_calls.map(tc => tc && tc.id).filter(Boolean));
+      positionalRemaining = activeToolIds.size === 0 ? msg.tool_calls.length : 0;
       clean.push(msg);
     } else if (msg.role === 'tool') {
-      if (validToolBlock) clean.push(msg);
+      if (validToolBlock) {
+        if (msg.tool_call_id && activeToolIds.has(msg.tool_call_id)) {
+          activeToolIds.delete(msg.tool_call_id);
+          clean.push(msg);
+        } else if (!msg.tool_call_id && positionalRemaining > 0) {
+          positionalRemaining--;
+          clean.push(msg);
+        }
+      }
       // otherwise drop the orphan rather than let the provider 400
     } else {
       validToolBlock = false;
+      activeToolIds.clear();
+      positionalRemaining = 0;
       clean.push(msg);
     }
   }

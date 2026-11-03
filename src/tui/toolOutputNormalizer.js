@@ -1,0 +1,208 @@
+import fs from 'node:fs';
+const DECAY_MARKER = '[decayed]';
+const SPILL_HEADER_PREFIX = '=== CAUSYNE TOOL OUTPUT';
+/**
+ * Strip internal context-compaction markers, ToolOutputStore spill headers,
+ * and middle-omission notices so the TUI only displays real tool output.
+ */
+export function cleanToolOutputPreview(payload, toolName = '') {
+    if (!payload || typeof payload !== 'string')
+        return '';
+    if (toolName === 'update_plan')
+        return '';
+    const trimmed = payload.trim();
+    if (!trimmed || trimmed.startsWith(DECAY_MARKER))
+        return '';
+    let text = payload;
+    // Strip renderSpillDocument metadata header up to the first `--- field: ... ---` marker
+    if (text.startsWith(SPILL_HEADER_PREFIX)) {
+        const fieldHeaderMatch = /\n--- field: [^\n]+ ---\n/.exec(text);
+        if (fieldHeaderMatch && fieldHeaderMatch.index !== undefined) {
+            text = text.slice(fieldHeaderMatch.index + fieldHeaderMatch[0].length);
+        }
+        else {
+            const blankLineIndex = text.indexOf('\n\n');
+            if (blankLineIndex !== -1) {
+                text = text.slice(blankLineIndex + 2);
+            }
+        }
+    }
+    // Strip internal ToolOutputStore and historyPruner middle-omission lines
+    const filteredLines = text
+        .split('\n')
+        .filter(line => {
+        const t = line.trim();
+        if (t.startsWith('[... Causyne ToolOutputStore:'))
+            return false;
+        if (t.startsWith('[... Full log persisted to:'))
+            return false;
+        if (t.startsWith('[... Read or search a relevant range'))
+            return false;
+        if (/^\[\d+\s+middle characters omitted from active context/i.test(t))
+            return false;
+        return true;
+    });
+    return filteredLines.join('\n').trim();
+}
+function readSpillPreview(spillPath, maxBytes = 4096) {
+    if (!spillPath || typeof spillPath !== 'string')
+        return '';
+    try {
+        if (!fs.existsSync(spillPath))
+            return '';
+        const stat = fs.statSync(spillPath);
+        if (!stat.isFile() || stat.size <= 0)
+            return '';
+        const bytesToRead = Math.min(stat.size, maxBytes);
+        const fd = fs.openSync(spillPath, 'r');
+        try {
+            const buf = Buffer.alloc(bytesToRead);
+            const read = fs.readSync(fd, buf, 0, bytesToRead, 0);
+            return buf.subarray(0, read).toString('utf8');
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+    }
+    catch {
+        return '';
+    }
+}
+function extractSpillPathFromDecay(content) {
+    const match = /\bat (\/[^\s]+)\s+—\s+read or search\b/.exec(content);
+    return match?.[1];
+}
+function recoverBrokenJsonOutput(raw, spillPath) {
+    const prefixMatch = /^\s*\{\s*"success"\s*:\s*(true|false)\b/.exec(raw);
+    if (!prefixMatch)
+        return null;
+    const success = prefixMatch[1] === 'true';
+    if (spillPath) {
+        const fromSpill = readSpillPreview(spillPath);
+        if (fromSpill) {
+            return { success, output: fromSpill, spillPath };
+        }
+    }
+    const outputMatch = /"output"\s*:\s*"([\s\S]*)/.exec(raw);
+    if (outputMatch?.[1]) {
+        const body = outputMatch[1]
+            .replace(/"\s*\}\s*$/, '')
+            .replace(/\\n/g, '\n')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\');
+        return {
+            success,
+            output: body,
+            ...(spillPath ? { spillPath } : {})
+        };
+    }
+    return {
+        success,
+        output: '',
+        ...(spillPath ? { spillPath } : {})
+    };
+}
+/**
+ * Normalize a historical `role: 'tool'` message for TUI session replay.
+ * Suppresses internal `checkpoint: 'synthesis'` governor intercepts (which are
+ * never emitted during live execution) and recovers clean output previews for
+ * `[decayed]` or shortened tool observations.
+ */
+export function normalizeHistoricalToolResult(toolName, toolMsg, options = {}) {
+    const explicitSpill = typeof toolMsg.spillPath === 'string' && toolMsg.spillPath.trim()
+        ? toolMsg.spillPath.trim()
+        : undefined;
+    if (typeof toolMsg.content === 'string') {
+        const raw = toolMsg.content;
+        if (raw.startsWith(DECAY_MARKER)) {
+            const spillPath = explicitSpill ?? extractSpillPathFromDecay(raw);
+            const isFailure = /^\[decayed\] [^:]+: reported failure\b/i.test(raw);
+            const success = !isFailure;
+            if (toolName === 'update_plan') {
+                return {
+                    skipStep: Boolean(options.unpaired),
+                    result: { success: true, output: '' }
+                };
+            }
+            const recoveredRaw = spillPath ? readSpillPreview(spillPath) : '';
+            const cleaned = cleanToolOutputPreview(recoveredRaw, toolName);
+            return {
+                skipStep: false,
+                result: {
+                    success,
+                    output: cleaned,
+                    ...(spillPath ? { spillPath } : {})
+                }
+            };
+        }
+        let parsed = null;
+        try {
+            const candidate = JSON.parse(raw);
+            if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                parsed = { ...candidate };
+            }
+        }
+        catch {
+            parsed = recoverBrokenJsonOutput(raw, explicitSpill);
+        }
+        if (parsed) {
+            if (parsed.checkpoint === 'synthesis') {
+                return { skipStep: true, result: parsed };
+            }
+            if (parsed.success === undefined) {
+                parsed.success = !parsed.error;
+            }
+            if (explicitSpill && typeof parsed.spillPath !== 'string') {
+                parsed.spillPath = explicitSpill;
+            }
+            if (typeof parsed.output === 'string') {
+                parsed.output = cleanToolOutputPreview(parsed.output, toolName);
+            }
+            if (typeof parsed.log === 'string') {
+                parsed.log = cleanToolOutputPreview(parsed.log, toolName);
+            }
+            const plan = Array.isArray(parsed.plan)
+                ? parsed.plan
+                : undefined;
+            return { skipStep: false, result: parsed, plan };
+        }
+        const lowered = raw.toLowerCase();
+        return {
+            skipStep: false,
+            result: {
+                success: !lowered.startsWith('error') && !lowered.includes('failed'),
+                output: cleanToolOutputPreview(raw, toolName),
+                ...(explicitSpill ? { spillPath: explicitSpill } : {})
+            }
+        };
+    }
+    if (toolMsg.content && typeof toolMsg.content === 'object' && !Array.isArray(toolMsg.content)) {
+        const copy = { ...toolMsg.content };
+        if (copy.checkpoint === 'synthesis') {
+            return { skipStep: true, result: copy };
+        }
+        if (copy.success === undefined)
+            copy.success = !copy.error;
+        if (explicitSpill && typeof copy.spillPath !== 'string') {
+            copy.spillPath = explicitSpill;
+        }
+        if (typeof copy.output === 'string') {
+            copy.output = cleanToolOutputPreview(copy.output, toolName);
+        }
+        if (typeof copy.log === 'string') {
+            copy.log = cleanToolOutputPreview(copy.log, toolName);
+        }
+        const plan = Array.isArray(copy.plan)
+            ? copy.plan
+            : undefined;
+        return { skipStep: false, result: copy, plan };
+    }
+    return {
+        skipStep: false,
+        result: {
+            success: true,
+            output: '',
+            ...(explicitSpill ? { spillPath: explicitSpill } : {})
+        }
+    };
+}

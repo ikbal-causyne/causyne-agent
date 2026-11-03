@@ -25,6 +25,7 @@ import { composerWidth, openingRows, sessionRows } from './layout.js';
 import { sessionComposerWidth } from './sessionSidebar.js';
 import { chatProseWidth, wrappedChatRows } from './textLayout.js';
 import { activityRows } from './activityLayout.js';
+import { cleanToolOutputPreview, normalizeHistoricalToolResult } from './toolOutputNormalizer.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -612,33 +613,35 @@ export class ChatRenderer {
 
             // Restore active implementation plan if update_plan was called
             if (toolName === 'update_plan' && args && Array.isArray(args.plan)) {
-              this.onAgentPlan({ plan: args.plan });
+              this.onAgentPlan({
+                plan: args.plan.map(item => ({
+                  ...item,
+                  text: item.text || item.step || item.content || ''
+                }))
+              });
             }
 
-            this.onStepStart({ tool: toolName, args });
-
-            // Look up corresponding tool result
+            // Look up corresponding tool result before emitting step start so
+            // internal synthesis checkpoints (which never emit steps live) can be skipped.
             const toolMsg = call.id ? toolResultsById.get(call.id) : null;
             if (toolMsg) {
               renderedToolMessages.add(toolMsg);
-              let result = null;
-              if (typeof toolMsg.content === 'object' && toolMsg.content !== null) {
-                result = toolMsg.content;
-              } else if (typeof toolMsg.content === 'string') {
-                try {
-                  result = JSON.parse(toolMsg.content);
-                } catch {
-                  result = {
-                    success: !toolMsg.content.toLowerCase().startsWith('error') && !toolMsg.content.toLowerCase().includes('failed'),
-                    output: toolMsg.content
-                  };
-                }
-              } else {
-                result = { success: true, output: '' };
+              const normalized = normalizeHistoricalToolResult(toolName, toolMsg);
+              if (normalized.skipStep) {
+                continue;
               }
-              if (result.success === undefined) result.success = true;
-              if (toolMsg.spillPath && !result.spillPath) result.spillPath = toolMsg.spillPath;
-              this.onStepComplete({ result, elapsed: '' });
+              if (toolName === 'update_plan' && Array.isArray(normalized.plan)) {
+                this.onAgentPlan({
+                  plan: normalized.plan.map(item => ({
+                    ...item,
+                    text: item.text || item.step || item.content || ''
+                  }))
+                });
+              }
+              this.onStepStart({ tool: toolName, args });
+              this.onStepComplete({ tool: toolName, result: normalized.result, elapsed: '' });
+            } else {
+              this.onStepStart({ tool: toolName, args });
             }
           }
         }
@@ -647,26 +650,13 @@ export class ChatRenderer {
         if (!renderedToolMessages.has(msg)) {
           renderedToolMessages.add(msg);
           const toolName = msg.name || 'tool';
-          let result = null;
-          if (typeof msg.content === 'object' && msg.content !== null) {
-            result = msg.content;
-          } else if (typeof msg.content === 'string') {
-            try {
-              result = JSON.parse(msg.content);
-            } catch {
-              result = {
-                success: !msg.content.toLowerCase().startsWith('error') && !msg.content.toLowerCase().includes('failed'),
-                output: msg.content
-              };
-            }
-          } else {
-            result = { success: true, output: '' };
+          const normalized = normalizeHistoricalToolResult(toolName, msg, { unpaired: true });
+          if (normalized.skipStep) {
+            continue;
           }
-          if (result.success === undefined) result.success = true;
-          if (msg.spillPath && !result.spillPath) result.spillPath = msg.spillPath;
 
           this.onStepStart({ tool: toolName, args: {} });
-          this.onStepComplete({ result, elapsed: '' });
+          this.onStepComplete({ tool: toolName, result: normalized.result, elapsed: '' });
         }
       } else if (role === 'system') {
         const text = typeof msg.content === 'string' ? msg.content : '';
@@ -864,7 +854,8 @@ export class ChatRenderer {
       const mark = done ? paint('success', GLYPHS.check)
         : active ? paint('accent', GLYPHS.arrow)
         : paint('muted', GLYPHS.dot);
-      const label = done ? dim(safeDisplay(item.text)) : paint('ink', safeDisplay(item.text));
+      const text = item.text || item.step || item.content || '';
+      const label = done ? dim(safeDisplay(text)) : paint('ink', safeDisplay(text));
       this.write(`  ${mark} ${truncate(label, width - 5, GLYPHS.ellipsis)}`);
     }
     this.write();
@@ -904,7 +895,7 @@ export class ChatRenderer {
       if (result.success) {
         const elapsedText = elapsed ? ` ${dim(elapsed)}` : '';
         this.write(`     ${paint('success', GLYPHS.check)}${elapsedText}`);
-        this.renderOutputPreview(result);
+        this.renderOutputPreview(result, msg?.tool || '');
         return;
       }
       const detail = `${safeDisplay(result.error || 'failed')}${elapsed ? ` · ${elapsed}` : ''}`;
@@ -961,10 +952,11 @@ export class ChatRenderer {
     this.lastOutput = { text: payload, spillPath: result.spillPath || null };
   }
 
-  renderOutputPreview(result) {
-    const payload = typeof result.output === 'string' ? result.output
+  renderOutputPreview(result, toolName = '') {
+    const rawPayload = typeof result.output === 'string' ? result.output
       : typeof result.log === 'string' ? result.log
       : '';
+    const payload = cleanToolOutputPreview(rawPayload, toolName);
     if (!payload) return;
 
     const source = payload.length > PREVIEW_SOURCE_BUDGET
