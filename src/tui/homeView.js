@@ -1,6 +1,5 @@
 import { sessionBanner } from './banner.js';
 import { centerRows } from './layout.js';
-// @ts-expect-error overlay.js is awaiting TypeScript migration.
 import { panelRows } from './overlay.js';
 /** A modal before the first conversation belongs to the centered home view. */
 export function isStartupDialog(surface) {

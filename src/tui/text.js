@@ -9,24 +9,21 @@
 //  * Tool output was printed raw — see sanitize() below, which is a security
 //    fix, not a cosmetic one.
 //
-// Pure JS. No dependency, no shell.
-
-import os from 'os';
-
+// Pure TypeScript. No dependency, no shell.
+import os from 'node:os';
 // CSI sequences (colour, cursor movement, erase) and OSC sequences (window
 // title, hyperlinks — terminated by BEL or ST).
 const CSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const OTHER_ESCAPE_PATTERN = /\x1b[@-Z\\-_]/g;
-
+const OSC8_SEQUENCE = /^\x1b\]8;[^;]*;([^\x07\x1b]*)(\x07|\x1b\\)/;
 /** Everything that is an escape sequence rather than visible text. */
 export function stripAnsi(text) {
-  return String(text == null ? '' : text)
-    .replace(OSC_PATTERN, '')
-    .replace(CSI_PATTERN, '')
-    .replace(OTHER_ESCAPE_PATTERN, '');
+    return String(text == null ? '' : text)
+        .replace(OSC_PATTERN, '')
+        .replace(CSI_PATTERN, '')
+        .replace(OTHER_ESCAPE_PATTERN, '');
 }
-
 /**
  * Does this code point occupy two terminal columns?
  *
@@ -34,19 +31,16 @@ export function stripAnsi(text) {
  * makes a table of Indonesian and Chinese filenames drift apart.
  */
 function isWideCodePoint(code) {
-  return (
-    (code >= 0x1100 && code <= 0x115f) ||   // Hangul Jamo
-    (code >= 0x2e80 && code <= 0xa4cf) ||   // CJK radicals … Yi
-    (code >= 0xac00 && code <= 0xd7a3) ||   // Hangul syllables
-    (code >= 0xf900 && code <= 0xfaff) ||   // CJK compatibility ideographs
-    (code >= 0xfe30 && code <= 0xfe6f) ||   // CJK compatibility forms
-    (code >= 0xff00 && code <= 0xff60) ||   // Fullwidth forms
-    (code >= 0xffe0 && code <= 0xffe6) ||
-    (code >= 0x1f300 && code <= 0x1f64f) || // emoji
-    (code >= 0x1f900 && code <= 0x1f9ff)
-  );
+    return ((code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+        (code >= 0x2e80 && code <= 0xa4cf) || // CJK radicals … Yi
+        (code >= 0xac00 && code <= 0xd7a3) || // Hangul syllables
+        (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+        (code >= 0xfe30 && code <= 0xfe6f) || // CJK compatibility forms
+        (code >= 0xff00 && code <= 0xff60) || // Fullwidth forms
+        (code >= 0xffe0 && code <= 0xffe6) ||
+        (code >= 0x1f300 && code <= 0x1f64f) || // emoji
+        (code >= 0x1f900 && code <= 0x1f9ff));
 }
-
 /**
  * The East Asian AMBIGUOUS class (UAX #11).
  *
@@ -62,21 +56,19 @@ function isWideCodePoint(code) {
  * that must not be wrong get the wide reading via the environment.
  */
 function isAmbiguousCodePoint(code) {
-  return (
-    (code >= 0x00a1 && code <= 0x00ff && code !== 0x00ad) ||
-    (code >= 0x2010 && code <= 0x2027) ||
-    code === 0x2022 || code === 0x2026 ||
-    (code >= 0x2190 && code <= 0x21ff) ||   // arrows
-    (code >= 0x2200 && code <= 0x22ff) ||   // mathematical operators
-    (code >= 0x2460 && code <= 0x24ff) ||   // enclosed alphanumerics
-    (code >= 0x2500 && code <= 0x257f) ||   // box drawing
-    (code >= 0x2580 && code <= 0x259f) ||   // block elements
-    (code >= 0x25a0 && code <= 0x25ff) ||   // geometric shapes
-    (code >= 0x2600 && code <= 0x26ff) ||   // miscellaneous symbols
-    (code >= 0x2700 && code <= 0x27bf)      // dingbats (✓ ✕)
-  );
+    return ((code >= 0x00a1 && code <= 0x00ff && code !== 0x00ad) ||
+        (code >= 0x2010 && code <= 0x2027) ||
+        code === 0x2022 || code === 0x2026 ||
+        (code >= 0x2190 && code <= 0x21ff) || // arrows
+        (code >= 0x2200 && code <= 0x22ff) || // mathematical operators
+        (code >= 0x2460 && code <= 0x24ff) || // enclosed alphanumerics
+        (code >= 0x2500 && code <= 0x257f) || // box drawing
+        (code >= 0x2580 && code <= 0x259f) || // block elements
+        (code >= 0x25a0 && code <= 0x25ff) || // geometric shapes
+        (code >= 0x2600 && code <= 0x26ff) || // miscellaneous symbols
+        (code >= 0x2700 && code <= 0x27bf) // dingbats (✓ ✕)
+    );
 }
-
 /**
  * Should ambiguous-width code points be measured as two columns?
  *
@@ -85,135 +77,141 @@ function isAmbiguousCodePoint(code) {
  * renders these glyphs wide.
  */
 function detectAmbiguousWide() {
-  const explicit = process.env.CAUSYNE_AMBIGUOUS_WIDE;
-  if (explicit === '1') return true;
-  if (explicit === '0') return false;
-  const locale = String(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || '');
-  return /^(ja|ko|zh)([_.-]|$)/i.test(locale);
+    const explicit = process.env.CAUSYNE_AMBIGUOUS_WIDE;
+    if (explicit === '1')
+        return true;
+    if (explicit === '0')
+        return false;
+    const locale = String(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || '');
+    return /^(ja|ko|zh)([_.-]|$)/i.test(locale);
 }
-
 export const AMBIGUOUS_IS_WIDE = detectAmbiguousWide();
-
 /** Columns one code point occupies, under the active ambiguous-width policy. */
 function columnsFor(code) {
-  if (isWideCodePoint(code)) return 2;
-  if (AMBIGUOUS_IS_WIDE && isAmbiguousCodePoint(code)) return 2;
-  return 1;
+    if (isWideCodePoint(code))
+        return 2;
+    if (AMBIGUOUS_IS_WIDE && isAmbiguousCodePoint(code))
+        return 2;
+    return 1;
 }
-
 /** Columns this string will occupy once printed. Escapes count for nothing. */
 export function visibleWidth(text) {
-  const plain = stripAnsi(text);
-  let width = 0;
-  for (const character of plain) {
-    const code = character.codePointAt(0);
-    if (code === 0x200d) continue;          // zero-width joiner
-    if (code >= 0xfe00 && code <= 0xfe0f) continue; // variation selectors
-    width += columnsFor(code);
-  }
-  return width;
+    const plain = stripAnsi(text);
+    let width = 0;
+    for (const character of plain) {
+        const code = character.codePointAt(0);
+        if (code === undefined)
+            continue;
+        if (code === 0x200d)
+            continue; // zero-width joiner
+        if (code >= 0xfe00 && code <= 0xfe0f)
+            continue; // variation selectors
+        width += columnsFor(code);
+    }
+    return width;
 }
-
 const RESET = '\x1b[0m';
-
 /**
  * Cut to `width` columns without ever splitting an escape sequence.
  *
  * Walks the string escape-aware rather than slicing by index, and closes any
- * style that was still open at the cut so the colour does not bleed into the
- * next line.
+ * style or OSC 8 hyperlink that was still open at the cut so neither colour nor
+ * link underline bleeds into the rest of the row or subsequent rows.
  */
 export function truncate(text, width, ellipsis = '…') {
-  const source = String(text == null ? '' : text);
-  if (width <= 0) return '';
-  if (visibleWidth(source) <= width) return source;
-
-  const ellipsisWidth = visibleWidth(ellipsis);
-  const budget = Math.max(0, width - ellipsisWidth);
-
-  let out = '';
-  let used = 0;
-  let sawEscape = false;
-  let index = 0;
-
-  while (index < source.length) {
-    if (source[index] === '\x1b') {
-      // Copy the whole sequence verbatim; it costs no columns.
-      const rest = source.slice(index);
-      const match = rest.match(/^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/)
-        || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
-        || rest.match(/^\x1b[@-Z\\-_]/);
-      if (match) {
-        out += match[0];
-        sawEscape = true;
-        index += match[0].length;
-        continue;
-      }
+    const source = String(text == null ? '' : text);
+    if (width <= 0)
+        return '';
+    if (visibleWidth(source) <= width)
+        return source;
+    const ellipsisWidth = visibleWidth(ellipsis);
+    const budget = Math.max(0, width - ellipsisWidth);
+    let out = '';
+    let used = 0;
+    let sawEscape = false;
+    let openOsc8Term = '';
+    let index = 0;
+    while (index < source.length) {
+        if (source[index] === '\x1b') {
+            // Copy the whole sequence verbatim; it costs no columns.
+            const rest = source.slice(index);
+            const match = rest.match(/^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/)
+                || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
+                || rest.match(/^\x1b[@-Z\\-_]/);
+            if (match) {
+                const osc8 = OSC8_SEQUENCE.exec(match[0]);
+                if (osc8) {
+                    const uri = osc8[1] ?? '';
+                    const term = osc8[2] ?? '\x1b\\';
+                    openOsc8Term = uri.length > 0 ? term : '';
+                }
+                out += match[0];
+                sawEscape = true;
+                index += match[0].length;
+                continue;
+            }
+        }
+        const code = source.codePointAt(index);
+        if (code === undefined)
+            break;
+        const character = String.fromCodePoint(code);
+        const charWidth = columnsFor(code);
+        if (used + charWidth > budget)
+            break;
+        out += character;
+        used += charWidth;
+        index += character.length;
     }
-
-    const character = String.fromCodePoint(source.codePointAt(index));
-    const charWidth = columnsFor(source.codePointAt(index));
-    if (used + charWidth > budget) break;
-
-    out += character;
-    used += charWidth;
-    index += character.length;
-  }
-
-  return out + (sawEscape ? RESET : '') + ellipsis;
+    const osc8Reset = openOsc8Term ? `\x1b]8;;${openOsc8Term}` : '';
+    return out + osc8Reset + (sawEscape ? RESET : '') + ellipsis;
 }
-
 /** Pad to an exact column count, measuring visible width rather than bytes. */
 export function padEnd(text, width) {
-  const gap = width - visibleWidth(text);
-  return gap > 0 ? String(text) + ' '.repeat(gap) : String(text);
+    const gap = width - visibleWidth(text);
+    return gap > 0 ? String(text) + ' '.repeat(gap) : String(text);
 }
-
-
-export function wrap(text, width) {
-  if (width <= 0) return [String(text)];
-  const lines = [];
-
-  for (const paragraph of String(text == null ? '' : text).split('\n')) {
-    if (visibleWidth(paragraph) <= width) {
-      lines.push(paragraph);
-      continue;
-    }
-
-    let current = '';
-    for (const word of paragraph.split(' ')) {
-      const candidate = current ? `${current} ${word}` : word;
-
-      if (visibleWidth(candidate) <= width) {
-        current = candidate;
-        continue;
-      }
-      if (current) {
-        lines.push(current);
-        current = '';
-      }
-
-      let remainder = word;
-      while (visibleWidth(remainder) > width) {
-        lines.push(truncate(remainder, width, ''));
-        // truncate() gives us the head; drop the same number of characters.
-        let consumed = 0;
-        let cut = 0;
-        while (cut < remainder.length && consumed < width) {
-          const code = remainder.codePointAt(cut);
-          consumed += columnsFor(code);
-          cut += String.fromCodePoint(code).length;
+export function wrap(text, width, _options) {
+    if (width <= 0)
+        return [String(text)];
+    const lines = [];
+    for (const paragraph of String(text == null ? '' : text).split('\n')) {
+        if (visibleWidth(paragraph) <= width) {
+            lines.push(paragraph);
+            continue;
         }
-        remainder = remainder.slice(cut);
-      }
-      current = remainder;
+        let current = '';
+        for (const word of paragraph.split(' ')) {
+            const candidate = current ? `${current} ${word}` : word;
+            if (visibleWidth(candidate) <= width) {
+                current = candidate;
+                continue;
+            }
+            if (current) {
+                lines.push(current);
+                current = '';
+            }
+            let remainder = word;
+            while (visibleWidth(remainder) > width) {
+                lines.push(truncate(remainder, width, ''));
+                // truncate() gives us the head; drop the same number of characters.
+                let consumed = 0;
+                let cut = 0;
+                while (cut < remainder.length && consumed < width) {
+                    const code = remainder.codePointAt(cut);
+                    if (code === undefined)
+                        break;
+                    consumed += columnsFor(code);
+                    cut += String.fromCodePoint(code).length;
+                }
+                remainder = remainder.slice(cut);
+            }
+            current = remainder;
+        }
+        if (current)
+            lines.push(current);
     }
-    if (current) lines.push(current);
-  }
-
-  return lines;
+    return lines;
 }
-
 /**
  * Word-wrap a block of text while preserving each line's own indentation.
  *
@@ -226,23 +224,25 @@ export function wrap(text, width) {
  * terminal broke it at the right edge, mid-word, at column 0.
  */
 export function wrapBlock(text, width, { hang = 2 } = {}) {
-  const rows = [];
-  for (const line of String(text == null ? '' : text).split('\n')) {
-    const indent = (line.match(/^[ \t]*/) || [''])[0];
-    const body = line.slice(indent.length);
-    if (!body) { rows.push(''); continue; }
-
-    const continuation = indent + ' '.repeat(hang);
-    // Wrap at the NARROWER of the two budgets so neither the first row nor a
-    // continuation row can exceed `width`.
-    const budget = Math.max(8, width - visibleWidth(continuation));
-    const parts = wrap(body, budget);
-    rows.push(indent + parts[0]);
-    for (const part of parts.slice(1)) rows.push(continuation + part);
-  }
-  return rows;
+    const rows = [];
+    for (const line of String(text == null ? '' : text).split('\n')) {
+        const indent = (line.match(/^[ \t]*/) || [''])[0];
+        const body = line.slice(indent.length);
+        if (!body) {
+            rows.push('');
+            continue;
+        }
+        const continuation = indent + ' '.repeat(hang);
+        // Wrap at the NARROWER of the two budgets so neither the first row nor a
+        // continuation row can exceed `width`.
+        const budget = Math.max(8, width - visibleWidth(continuation));
+        const parts = wrap(body, budget);
+        rows.push(indent + (parts[0] ?? ''));
+        for (const part of parts.slice(1))
+            rows.push(continuation + part);
+    }
+    return rows;
 }
-
 /**
  * Make untrusted text safe to print.
  *
@@ -257,7 +257,6 @@ export function wrapBlock(text, width, { hang = 2 } = {}) {
  */
 /** Columns between terminal tab stops. Eight is the POSIX default everywhere. */
 const TAB_WIDTH = 8;
-
 /**
  * Replace tabs with the spaces the terminal would have moved over.
  *
@@ -283,66 +282,63 @@ const TAB_WIDTH = 8;
  * columnar output actually lining up.
  */
 export function expandTabs(text, tabWidth = TAB_WIDTH) {
-  const source = String(text == null ? '' : text);
-  if (!source.includes('\t')) return source;
-
-  let out = '';
-  let column = 0;
-  for (const char of source) {
-    if (char === '\t') {
-      const advance = tabWidth - (column % tabWidth);
-      out += ' '.repeat(advance);
-      column += advance;
-    } else if (char === '\n') {
-      out += char;
-      column = 0;
-    } else {
-      out += char;
-      column += 1;
+    const source = String(text == null ? '' : text);
+    if (!source.includes('\t'))
+        return source;
+    let out = '';
+    let column = 0;
+    for (const char of source) {
+        if (char === '\t') {
+            const advance = tabWidth - (column % tabWidth);
+            out += ' '.repeat(advance);
+            column += advance;
+        }
+        else if (char === '\n') {
+            out += char;
+            column = 0;
+        }
+        else {
+            out += char;
+            column += 1;
+        }
     }
-  }
-  return out;
+    return out;
 }
-
 export function sanitize(text) {
-  // Tabs are expanded rather than stripped: removing them would collapse
-  // columnar output into an unreadable run, and leaving them corrupts the
-  // frame. Expansion is the only option that preserves what the user meant to
-  // see. Everything else in this class is genuinely unwanted and is removed.
-  const normalized = String(text == null ? '' : text)
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n');
-  return expandTabs(stripAnsi(normalized))
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+    // Tabs are expanded rather than stripped: removing them would collapse
+    // columnar output into an unreadable run, and leaving them corrupts the
+    // frame. Expansion is the only option that preserves what the user meant to
+    // see. Everything else in this class is genuinely unwanted and is removed.
+    const normalized = String(text == null ? '' : text)
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n');
+    return expandTabs(stripAnsi(normalized))
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
-
 /** `/Users/example/Projects/x` → `~/Projects/x`. Long paths dominate a tool row. */
 export function shortenHome(value) {
-  const home = os.homedir();
-  const text = String(value == null ? '' : value);
-  if (home && text.startsWith(home)) return '~' + text.slice(home.length);
-  return text;
+    const home = os.homedir();
+    const text = String(value == null ? '' : value);
+    if (home && text.startsWith(home))
+        return '~' + text.slice(home.length);
+    return text;
 }
-
-
 const SECRET_PATTERNS = [
-  [/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}/g, (m) => `${m.slice(0, 5)}…${m.slice(-4)}`],
-  [/\b(gh[pousr]|xox[baprs])_[A-Za-z0-9]{12,}/g, (m) => `${m.slice(0, 7)}…`],
-  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, (m) => `${m.split(/\s+/)[0]} …`],
-  [/\b(api[_-]?key|token|secret|password|passwd)\s*[=:]\s*["']?[^\s"']{6,}/gi,
-    (m) => `${m.split(/[=:]/)[0]}=…`]
+    [/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}/g, (m) => `${m.slice(0, 5)}…${m.slice(-4)}`],
+    [/\b(gh[pousr]|xox[baprs])_[A-Za-z0-9]{12,}/g, (m) => `${m.slice(0, 7)}…`],
+    [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, (m) => `${m.split(/\s+/)[0]} …`],
+    [/\b(api[_-]?key|token|secret|password|passwd)\s*[=:]\s*["']?[^\s"']{6,}/gi,
+        (m) => `${m.split(/[=:]/)[0]}=…`]
 ];
-
 export function redactSecrets(text) {
-  let out = String(text == null ? '' : text);
-  for (const [pattern, replace] of SECRET_PATTERNS) {
-    out = out.replace(pattern, replace);
-  }
-  return out;
+    let out = String(text == null ? '' : text);
+    for (const [pattern, replace] of SECRET_PATTERNS) {
+        out = out.replace(pattern, replace);
+    }
+    return out;
 }
-
 /** sanitize + redact — the pipeline every untrusted string goes through. */
 export function safeDisplay(text) {
-  return redactSecrets(sanitize(text));
+    return redactSecrets(sanitize(text));
 }

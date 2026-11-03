@@ -124,7 +124,17 @@ export function sliceFromColumn(source, startCol) {
             }
         }
         if (col >= startCol) {
-            return activeStyles + source.slice(index);
+            const tail = source.slice(index);
+            // Ensure any OSC 8 hyperlink opened inside `tail` is closed at the end of the slice
+            let openOsc8Term = '';
+            const osc8Re = /\x1b\]8;[^;]*;([^\x07\x1b]*)(\x07|\x1b\\)/g;
+            let oscMatch;
+            while ((oscMatch = osc8Re.exec(tail)) !== null) {
+                const uri = oscMatch[1] ?? '';
+                const term = oscMatch[2] ?? '\x1b\\';
+                openOsc8Term = uri.length > 0 ? term : '';
+            }
+            return activeStyles + tail + (openOsc8Term ? `\x1b]8;;${openOsc8Term}` : '');
         }
         const code = source.codePointAt(index);
         if (code === undefined)

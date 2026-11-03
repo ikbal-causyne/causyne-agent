@@ -6,11 +6,10 @@ import { writeClipboardSync } from './clipboardSync.js';
 import { registerStageConsoleGuard, setTransientNotice } from './consoleGuard.js';
 import { detectLinkAtPoint, openDetectedLink } from './smartLinkClick.js';
 import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
-import { stripAnsi, truncate, padEnd } from './text.js';
-// @ts-expect-error Legacy overlay has no declaration yet.
+import { stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
 import { Layer } from './overlay.js';
 // @ts-expect-error Legacy theme has no declaration yet.
-import { paint, bold, fill } from './theme.js';
+import { paint, bold, dim, fill } from './theme.js';
 /** Multi-action message menu overlay supporting Copy, Fork, and Revert. */
 export class MessageActionsLayer extends Layer {
     messageActions = true;
@@ -21,7 +20,7 @@ export class MessageActionsLayer extends Layer {
     onPick;
     settled = false;
     constructor(items, onPick, anchorY = null) {
-        super({ title: 'Message Actions', width: 68, height: items.length + 2, footer: '↑↓ move  ·  enter select  ·  esc close' });
+        super({ title: 'Message Actions', width: 64, height: items.length + 2, footer: '↑↓ move  ·  enter select  ·  esc close' });
         this.items = items;
         this.onPick = onPick;
         this.anchorY = anchorY;
@@ -33,13 +32,19 @@ export class MessageActionsLayer extends Layer {
     }
     preferredHeight() { return this.items.length + 2; }
     body(width) {
+        const labelWidth = this.items.reduce((max, item) => Math.max(max, visibleWidth(`▸ ${item.label}`)), 0);
         return this.items.map((item, index) => {
             const selected = index === this.list.selected;
-            const label = `${selected ? '▸' : ' '} ${item.label}`;
-            const description = `  ${item.description}`;
-            const room = Math.max(0, width - description.length);
-            const content = `${truncate(label, room, '…')}${description}`;
-            return selected ? paint('accent', bold(truncate(content, width, '…'))) : paint('ink', truncate(content, width, '…'));
+            const rawLabel = `${selected ? '▸' : ' '} ${item.label}`;
+            const pad = ' '.repeat(Math.max(0, labelWidth - visibleWidth(rawLabel)));
+            const styledLabel = selected
+                ? `${paint('accent', bold(rawLabel))}${pad}`
+                : `${paint('ink', rawLabel)}${pad}`;
+            const descBudget = Math.max(0, width - labelWidth - 2);
+            const description = item.description && descBudget > 3
+                ? `  ${dim(truncate(item.description, descBudget, '…'))}`
+                : '';
+            return truncate(`${styledLabel}${description}`, width, '…');
         });
     }
     key(event) {

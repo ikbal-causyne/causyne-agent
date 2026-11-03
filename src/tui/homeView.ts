@@ -1,6 +1,5 @@
 import { sessionBanner, type BannerInfo } from './banner.js';
 import { centerRows } from './layout.js';
-// @ts-expect-error overlay.js is awaiting TypeScript migration.
 import { panelRows } from './overlay.js';
 
 export interface PlacedView {

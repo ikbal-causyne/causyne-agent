@@ -29,9 +29,11 @@ export function stripAnsi(str) {
  * transient progress meters (curl, wget) so agent history and split-panes never glitch.
  */
 export function cleanSubprocessOutput(str) {
-    const normalized = stripAnsi(str)
+    const preSplit = str.replace(/\x1b\[(?:[12]K|\d*G)/g, '\n');
+    const normalized = stripAnsi(preSplit)
         .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n');
+        .replace(/\r/g, '\n')
+        .replace(/(https?:\/\/[^\s"'<>]+?\.[a-z]{2,10})([A-Z][a-z]{2,15}:\s)/g, '$1\n$2');
     return normalized
         .split('\n')
         .filter(line => !/^\s*(?:%\s+Total\b|Dload\s+Upload\b|\d+\s+\d+(?:\.[0-9kKmM]+)?\s+\d+\s+.*--:--:--)/i.test(line))
@@ -314,15 +316,29 @@ export const sysRun = {
                     }
                 }
             };
-            const appendToBuffer = (data) => {
-                outputBuffer += data.toString();
+            let lastStream = null;
+            const appendToBuffer = (stream, data) => {
+                const chunk = data.toString();
+                if (!chunk)
+                    return;
+                if (lastStream !== null &&
+                    lastStream !== stream &&
+                    outputBuffer.length > 0 &&
+                    !outputBuffer.endsWith('\n') &&
+                    !outputBuffer.endsWith('\r') &&
+                    !chunk.startsWith('\n') &&
+                    !chunk.startsWith('\r')) {
+                    outputBuffer += '\n';
+                }
+                lastStream = stream;
+                outputBuffer += chunk;
                 if (outputBuffer.length > MAX_LENGTH) {
                     outputBuffer = '...[OUTPUT TRUNCATED]...\n' + outputBuffer.slice(outputBuffer.length - MAX_LENGTH);
                 }
                 checkServerDetach();
             };
-            child.stdout?.on('data', appendToBuffer);
-            child.stderr?.on('data', appendToBuffer);
+            child.stdout?.on('data', (d) => appendToBuffer('stdout', d));
+            child.stderr?.on('data', (d) => appendToBuffer('stderr', d));
             let serverGraceTimer;
             if (isPersistentServerCommand(rawCommand)) {
                 serverGraceTimer = setTimeout(() => {

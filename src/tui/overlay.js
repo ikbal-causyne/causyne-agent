@@ -13,15 +13,13 @@
 // the conversation legible underneath.
 //
 // Pure Node over ./screen.js, ./theme.js and ./text.js. No dependency, no shell.
-
-import { paint, bold, dim, GLYPHS, HAS_COLOR, HAS_UNICODE } from './theme.js';
+// @ts-expect-error theme.js has no TypeScript declaration yet.
+import { paint, bold, dim, fill, GLYPHS, HAS_COLOR, HAS_UNICODE } from './theme.js';
 import { truncate, visibleWidth } from './text.js';
-
 // Box-drawing set, degrading with the rest of the glyphs.
 export const FRAME = HAS_UNICODE
-  ? { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' }
-  : { tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|' };
-
+    ? { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' }
+    : { tl: '+', tr: '+', bl: '+', br: '+', h: '-', v: '|' };
 /**
  * Add the SGR dim attribute to every cell in a region.
  *
@@ -29,24 +27,30 @@ export const FRAME = HAS_UNICODE
  * conversation stays readable behind a dialog instead of being erased.
  */
 export function dimBackdrop(screen, viewport, hole) {
-  if (!HAS_COLOR) return;
-  for (let row = viewport.y; row < viewport.y + viewport.height; row++) {
-    if (row < 0 || row >= screen.height) continue;
-    for (let column = viewport.x; column < viewport.x + viewport.width; column++) {
-      if (column < 0 || column >= screen.width) continue;
-      if (hole
-        && row >= hole.y && row < hole.y + hole.height
-        && column >= hole.x && column < hole.x + hole.width) continue;
-
-      const cell = screen.cells[row * screen.width + column];
-      if (cell.ch === ' ' && !cell.style) continue;
-      const parts = cell.style ? cell.style.split(';') : [];
-      if (!parts.includes('2')) parts.push('2');
-      cell.style = parts.join(';');
+    if (!HAS_COLOR)
+        return;
+    for (let row = viewport.y; row < viewport.y + viewport.height; row++) {
+        if (row < 0 || row >= screen.height)
+            continue;
+        for (let column = viewport.x; column < viewport.x + viewport.width; column++) {
+            if (column < 0 || column >= screen.width)
+                continue;
+            if (hole
+                && row >= hole.y && row < hole.y + hole.height
+                && column >= hole.x && column < hole.x + hole.width)
+                continue;
+            const cell = screen.cells[row * screen.width + column];
+            if (!cell)
+                continue;
+            if (cell.ch === ' ' && !cell.style)
+                continue;
+            const parts = cell.style ? cell.style.split(';') : [];
+            if (!parts.includes('2'))
+                parts.push('2');
+            cell.style = parts.join(';');
+        }
     }
-  }
 }
-
 /**
  * Draw a framed panel and return the rect available INSIDE it.
  *
@@ -54,44 +58,37 @@ export function dimBackdrop(screen, viewport, hole) {
  * the transcript bleeding through the gaps between its rows.
  */
 export function drawPanel(screen, rect, { title = '', footer = '' } = {}) {
-  if (rect.width < 4 || rect.height < 3) return { x: rect.x, y: rect.y, width: 0, height: 0 };
-
-  screen.fill(rect.x, rect.y, rect.width, rect.height, '');
-
-  const inner = rect.width - 2;
-  const line = FRAME.h.repeat(inner);
-
-  // Title sits in the top border, the way every terminal dialog has since curses.
-  let top = FRAME.tl + line + FRAME.tr;
-  if (title) {
-    const label = ` ${truncate(title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
-    const width = visibleWidth(label);
-    top = FRAME.tl + FRAME.h + label + FRAME.h.repeat(Math.max(0, inner - width - 1)) + FRAME.tr;
-  }
-
-  let bottom = FRAME.bl + line + FRAME.br;
-  if (footer) {
-    const label = ` ${truncate(footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
-    const width = visibleWidth(label);
-    bottom = FRAME.bl + FRAME.h.repeat(Math.max(0, inner - width - 1)) + label + FRAME.h + FRAME.br;
-  }
-
-  screen.put(rect.x, rect.y, paint('rule', top), rect.width);
-  screen.put(rect.x, rect.y + rect.height - 1, paint('rule', bottom), rect.width);
-
-  for (let row = rect.y + 1; row < rect.y + rect.height - 1; row++) {
-    screen.put(rect.x, row, paint('rule', FRAME.v), 1);
-    screen.put(rect.x + rect.width - 1, row, paint('rule', FRAME.v), 1);
-  }
-
-  return {
-    x: rect.x + 2,
-    y: rect.y + 1,
-    width: Math.max(0, rect.width - 4),
-    height: Math.max(0, rect.height - 2)
-  };
+    if (rect.width < 4 || rect.height < 3)
+        return { x: rect.x, y: rect.y, width: 0, height: 0 };
+    screen.fill(rect.x, rect.y, rect.width, rect.height, '');
+    const inner = rect.width - 2;
+    const line = FRAME.h.repeat(inner);
+    // Title sits in the top border, the way every terminal dialog has since curses.
+    let top = FRAME.tl + line + FRAME.tr;
+    if (title) {
+        const label = ` ${truncate(title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+        const width = visibleWidth(label);
+        top = FRAME.tl + FRAME.h + label + FRAME.h.repeat(Math.max(0, inner - width - 1)) + FRAME.tr;
+    }
+    let bottom = FRAME.bl + line + FRAME.br;
+    if (footer) {
+        const label = ` ${truncate(footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+        const width = visibleWidth(label);
+        bottom = FRAME.bl + FRAME.h.repeat(Math.max(0, inner - width - 1)) + label + FRAME.h + FRAME.br;
+    }
+    screen.put(rect.x, rect.y, paint('rule', top), rect.width);
+    screen.put(rect.x, rect.y + rect.height - 1, paint('rule', bottom), rect.width);
+    for (let row = rect.y + 1; row < rect.y + rect.height - 1; row++) {
+        screen.put(rect.x, row, paint('rule', FRAME.v), 1);
+        screen.put(rect.x + rect.width - 1, row, paint('rule', FRAME.v), 1);
+    }
+    return {
+        x: rect.x + 2,
+        y: rect.y + 1,
+        width: Math.max(0, rect.width - 4),
+        height: Math.max(0, rect.height - 2)
+    };
 }
-
 /**
  * A layer on the stack.
  *
@@ -102,108 +99,107 @@ export function drawPanel(screen, rect, { title = '', footer = '' } = {}) {
  * the layer chose to ignore it.
  */
 export class Layer {
-  constructor(options = {}) {
-    this.title = options.title || '';
-    this.footer = options.footer || '';
-    this.width = options.width || 64;
-    this.height = options.height || 16;
-    this.onClose = options.onClose || null;
-    this.onSelect = options.onSelect || null;
-    this.cursor = null;
-  }
-
-  /**
-   * Rows this layer would like, given its content.
-   *
-   * A dialog padded out to a fixed height with blank rows looks unfinished —
-   * it is the single clearest tell between a prototype and a shipped tool. Every
-   * layer reports what it actually needs and the frame shrinks to it.
-   */
-  preferredHeight() { return this.height; }
-
-  /** Panel rect, centred and clamped to the viewport. */
-  rect(viewport) {
-    const width = Math.min(this.width, Math.max(20, viewport.width - 4));
-    const wanted = Math.max(5, Math.min(this.preferredHeight(), this.height));
-    const height = Math.min(wanted, Math.max(5, viewport.height - 4));
-    return {
-      x: viewport.x + Math.floor((viewport.width - width) / 2),
-      // A quarter down reads as centred; dead centre sits visually too low.
-      y: viewport.y + Math.max(1, Math.floor((viewport.height - height) / 4)),
-      width,
-      height
-    };
-  }
-
-  body() { return []; }
-  key() { return null; }
-}
-
-export class OverlayStack {
-  constructor() {
-    this.layers = [];
-  }
-
-  get top() { return this.layers.length > 0 ? this.layers[this.layers.length - 1] : null; }
-  get active() { return this.layers.length > 0; }
-  get depth() { return this.layers.length; }
-
-  push(layer) {
-    this.layers.push(layer);
-    return layer;
-  }
-
-  /** Pop exactly one layer. Nested dialogs unwind one esc at a time. */
-  pop() {
-    const layer = this.layers.pop();
-    if (layer && layer.onClose) layer.onClose();
-    return layer || null;
-  }
-
-  clear() {
-    while (this.layers.length > 0) this.pop();
-  }
-
-  /**
-   * Route a key.
-   *
-   * Returns true when a modal consumed it — which is ALWAYS, while one is open.
-   * The caller uses that to decide whether the prompt beneath ever sees the key,
-   * and the answer while a dialog is up must be no.
-   */
-  handleKey(key) {
-    const layer = this.top;
-    if (!layer) return false;
-
-    const result = layer.key(key);
-    if (result === 'close') this.pop();
-    return true;
-  }
-
-  /** Paint every layer bottom to top, dimming what is behind the topmost. */
-  paint(screen, viewport) {
-    for (let index = 0; index < this.layers.length; index++) {
-      const layer = this.layers[index];
-      const rect = layer.rect(viewport);
-
-      dimBackdrop(screen, viewport, rect);
-      const inner = drawPanel(screen, rect, { title: layer.title, footer: layer.footer });
-      if (inner.height <= 0) continue;
-
-      const rows = layer.body(inner.width, inner.height) || [];
-      for (let row = 0; row < Math.min(rows.length, inner.height); row++) {
-        screen.put(inner.x, inner.y + row, rows[row], inner.width);
-      }
-
-      // Only the topmost layer may own the caret.
-      if (index === this.layers.length - 1 && layer.cursor) {
-        screen.setCursor(inner.x + layer.cursor.x, inner.y + layer.cursor.y);
-      }
+    title;
+    footer;
+    width;
+    height;
+    onClose;
+    onSelect;
+    cursor;
+    constructor(options = {}) {
+        this.title = options.title || '';
+        this.footer = options.footer || '';
+        this.width = options.width || 64;
+        this.height = options.height || 16;
+        this.onClose = options.onClose || null;
+        this.onSelect = options.onSelect || null;
+        this.cursor = null;
     }
-  }
+    /**
+     * Rows this layer would like, given its content.
+     *
+     * A dialog padded out to a fixed height with blank rows looks unfinished —
+     * it is the single clearest tell between a prototype and a shipped tool. Every
+     * layer reports what it actually needs and the frame shrinks to it.
+     */
+    preferredHeight() { return this.height; }
+    /** Panel rect, centred and clamped to the viewport. */
+    rect(viewport) {
+        const width = Math.min(this.width, Math.max(20, viewport.width - 4));
+        const wanted = Math.max(5, Math.min(this.preferredHeight(), this.height));
+        const height = Math.min(wanted, Math.max(5, viewport.height - 4));
+        return {
+            x: viewport.x + Math.floor((viewport.width - width) / 2),
+            // A quarter down reads as centred; dead centre sits visually too low.
+            y: viewport.y + Math.max(1, Math.floor((viewport.height - height) / 4)),
+            width,
+            height
+        };
+    }
+    body(_width, _height) { return []; }
+    key(_event) { return null; }
 }
-
-/** Shared footer text so every dialog teaches the same keys. */
+export class OverlayStack {
+    layers;
+    constructor() {
+        this.layers = [];
+    }
+    get top() { return this.layers.length > 0 ? (this.layers[this.layers.length - 1] ?? null) : null; }
+    get active() { return this.layers.length > 0; }
+    get depth() { return this.layers.length; }
+    push(layer) {
+        this.layers.push(layer);
+        return layer;
+    }
+    /** Pop exactly one layer. Nested dialogs unwind one esc at a time. */
+    pop() {
+        const layer = this.layers.pop();
+        if (layer && layer.onClose)
+            layer.onClose();
+        return layer || null;
+    }
+    clear() {
+        while (this.layers.length > 0)
+            this.pop();
+    }
+    /**
+     * Route a key.
+     *
+     * Returns true when a modal consumed it — which is ALWAYS, while one is open.
+     * The caller uses that to decide whether the prompt beneath ever sees the key,
+     * and the answer while a dialog is up must be no.
+     */
+    handleKey(key) {
+        const layer = this.top;
+        if (!layer)
+            return false;
+        const result = layer.key(key);
+        if (result === 'close')
+            this.pop();
+        return true;
+    }
+    /** Paint every layer bottom to top, dimming what is behind the topmost. */
+    paint(screen, viewport) {
+        for (let index = 0; index < this.layers.length; index++) {
+            const layer = this.layers[index];
+            if (!layer)
+                continue;
+            const rect = layer.rect(viewport);
+            dimBackdrop(screen, viewport, rect);
+            const inner = drawPanel(screen, rect, { title: layer.title, footer: layer.footer });
+            if (inner.height <= 0)
+                continue;
+            const rows = layer.body(inner.width, inner.height) || [];
+            for (let row = 0; row < Math.min(rows.length, inner.height); row++) {
+                screen.put(inner.x, inner.y + row, rows[row] ?? '', inner.width);
+            }
+            // Only the topmost layer may own the caret.
+            if (index === this.layers.length - 1 && layer.cursor) {
+                screen.setCursor(inner.x + layer.cursor.x, inner.y + layer.cursor.y);
+            }
+        }
+    }
+}
 /**
  * A layer as framed rows, for a normal-buffer live region.
  *
@@ -213,44 +209,43 @@ export class OverlayStack {
  * append. It is the shape openclaw draws its pickers in: extra lines in the
  * composed frame, not a floating window.
  *
- * There is deliberately no backdrop dim: a line already committed to the user's
- * scrollback cannot be restyled, and pretending otherwise would corrupt it.
+ * Every row is wrapped with `fill('surface', ...)` so that when a panel (such as
+ * Message Actions) is overlaid onto the transcript viewport, its interior has an
+ * opaque surface background and legible header/footer typography.
  */
 export function panelRows(layer, width, maxHeight) {
-  const frameWidth = Math.max(8, width);
-  const inner = frameWidth - 4;                    // two borders, one pad each side
-  const bodyHeight = Math.max(1, Math.min(layer.preferredHeight(), maxHeight) - 2);
-  const body = layer.body(inner, bodyHeight);
-
-  const line = FRAME.h.repeat(frameWidth - 2);
-
-  let top = FRAME.tl + line + FRAME.tr;
-  if (layer.title) {
-    const label = ` ${truncate(layer.title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
-    top = FRAME.tl + FRAME.h + label + FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label))) + FRAME.tr;
-  }
-
-  let bottom = FRAME.bl + line + FRAME.br;
-  if (layer.footer) {
-    const label = ` ${truncate(layer.footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
-    bottom = FRAME.bl + FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label))) + label + FRAME.h + FRAME.br;
-  }
-
-  const edge = paint('rule', FRAME.v);
-  const rows = [paint('rule', top)];
-  for (let index = 0; index < bodyHeight; index++) {
-    const content = truncate(body[index] || '', inner, GLYPHS.ellipsis);
-    const pad = ' '.repeat(Math.max(0, inner - visibleWidth(content)));
-    rows.push(`${edge} ${content}${pad} ${edge}`);
-  }
-  rows.push(paint('rule', bottom));
-  return rows;
+    const frameWidth = Math.max(8, width);
+    const inner = frameWidth - 4; // two borders, one pad each side
+    const bodyHeight = Math.max(1, Math.min(layer.preferredHeight(), maxHeight) - 2);
+    const body = layer.body(inner, bodyHeight);
+    const line = FRAME.h.repeat(frameWidth - 2);
+    let top = paint('rule', FRAME.tl + line + FRAME.tr);
+    if (layer.title) {
+        const label = ` ${truncate(layer.title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+        const trail = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
+        top = paint('rule', FRAME.tl + FRAME.h) + bold(paint('ink', label)) + paint('rule', trail + FRAME.tr);
+    }
+    let bottom = paint('rule', FRAME.bl + line + FRAME.br);
+    if (layer.footer) {
+        const label = ` ${truncate(layer.footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+        const lead = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
+        bottom = paint('rule', FRAME.bl + lead) + dim(label) + paint('rule', FRAME.h + FRAME.br);
+    }
+    const edge = paint('rule', FRAME.v);
+    const rows = [fill('surface', top)];
+    for (let index = 0; index < bodyHeight; index++) {
+        const content = truncate(body[index] || '', inner, GLYPHS.ellipsis);
+        const pad = ' '.repeat(Math.max(0, inner - visibleWidth(content)));
+        rows.push(fill('surface', `${edge} ${content}${pad} ${edge}`));
+    }
+    rows.push(fill('surface', bottom));
+    return rows;
 }
-
+/** Shared footer text so every dialog teaches the same keys. */
 export function dialogHint(extra = '') {
-  const parts = ['↑↓ move', 'enter select', 'esc close'];
-  if (extra) parts.push(extra);
-  return parts.join(`  ${GLYPHS.dot}  `);
+    const parts = ['↑↓ move', 'enter select', 'esc close'];
+    if (extra)
+        parts.push(extra);
+    return parts.join(`  ${GLYPHS.dot}  `);
 }
-
 export { bold, dim };

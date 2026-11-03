@@ -199,7 +199,10 @@
     "src/memory/episodicStore.ts",
     "src/tools/memoryRecall.ts",
     "src/tools/memoryWrite.ts",
-    "src/tui/toolOutputNormalizer.ts"
+    "src/tui/toolOutputNormalizer.ts",
+    "src/tui/text.ts",
+    "src/tui/overlay.ts",
+    "src/tui/markdownMath.ts"
   ],
   "exclude": [
     "node_modules",

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { cleanToolOutputPreview, normalizeHistoricalToolResult } from '../src/tui/toolOutputNormalizer.ts';
+import { formatMarkdownMath } from '../src/tui/markdownMath.ts';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { Transcript } from '../src/tui/transcript.js';
 import { stripAnsi } from '../src/tui/text.js';
@@ -34,6 +35,42 @@ test('cleanToolOutputPreview strips ToolOutputStore headers, decay markers, and 
   assert.equal(cleaned, '<!DOCTYPE html>\n<html lang="en">\n</html>');
   assert.equal(cleanToolOutputPreview('[decayed] fs_read: reported success.', 'fs_read'), '');
   assert.equal(cleanToolOutputPreview('0/4 completed; in progress: step 1', 'update_plan'), '');
+
+  // Glued stdout URL + stderr status label (e.g. vercel --prod) and CSI line-erase overwrites
+  const vercelRaw = [
+    'Production: https://suika-game-oyk8x07kj-ikbals-projects-ab6da137.vercel.app [952ms]',
+    'Building...',
+    'https://suika-game-oyk8x07kj-ikbals-projects-ab6da137.vercel.appProduction: https://suika-game-oyk8x07kj-ikbals-projects-ab6da137.vercel.app [5s]',
+    'Completing...'
+  ].join('\n');
+  const vercelCleaned = cleanToolOutputPreview(vercelRaw, 'sysRun');
+  assert.equal(
+    vercelCleaned.includes('vercel.appProduction:'),
+    false,
+    'Glued stdout URL and stderr Production: status must be split onto separate lines'
+  );
+  assert.match(
+    vercelCleaned,
+    /https:\/\/suika-game-oyk8x07kj-ikbals-projects-ab6da137\.vercel\.app\nProduction: https:\/\/suika-game-oyk8x07kj-ikbals-projects-ab6da137\.vercel\.app \[5s\]/
+  );
+});
+
+test('formatMarkdownMath and ChatRenderer convert LaTeX math to readable Unicode while preserving prices and code spans', () => {
+  const sample = 'slack variables ($\\sigma_i \\in [0, 1]$), isotropic scaling $s = \\min(W_{\\text{avail}} / W_0, H_{\\text{avail}} / H_0)$, and Fitts Law ($ID < 1.15\\text{ bits}$) costing $100 with `$HOME` intact.';
+  const formatted = formatMarkdownMath(sample);
+  assert.match(formatted, /σ_i ∈ \[0, 1\]/);
+  assert.match(formatted, /s = min\(W_avail \/ W_0, H_avail \/ H_0\)/);
+  assert.match(formatted, /\(ID < 1\.15 bits\)/);
+  assert.match(formatted, /\$100/);
+
+  const transcript = new Transcript();
+  const renderer = new ChatRenderer({ transcript });
+  renderer.onAgentMessage({ content: sample, streaming: false });
+  const flat = transcript.flatten(120).rows.map((r: string) => stripAnsi(r)).join('\n');
+  assert.equal(flat.includes('\\sigma_i'), false);
+  assert.equal(flat.includes('\\text{avail}'), false);
+  assert.equal(flat.includes('σ_i ∈ [0, 1]'), true);
+  assert.equal(flat.includes('$HOME'), true);
 });
 
 test('renderSessionHistory suppresses [decayed] prompt strings, synthesis checkpoints, and orphan update_plan steps', () => {

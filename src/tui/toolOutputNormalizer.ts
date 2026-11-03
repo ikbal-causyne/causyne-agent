@@ -28,7 +28,9 @@ export function cleanToolOutputPreview(payload: string, toolName = ''): string {
   const trimmed = payload.trim();
   if (!trimmed || trimmed.startsWith(DECAY_MARKER)) return '';
 
-  let text = payload;
+  let text = payload
+    .replace(/\x1b\[(?:[12]K|\d*G)/g, '\n')
+    .replace(/(https?:\/\/[^\s"'<>]+?\.[a-z]{2,10})([A-Z][a-z]{2,15}:\s)/g, '$1\n$2');
 
   // Strip renderSpillDocument metadata header up to the first `--- field: ... ---` marker
   if (text.startsWith(SPILL_HEADER_PREFIX)) {

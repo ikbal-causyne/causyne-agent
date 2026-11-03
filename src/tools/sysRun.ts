@@ -69,9 +69,11 @@ export function stripAnsi(str: string): string {
  * transient progress meters (curl, wget) so agent history and split-panes never glitch.
  */
 export function cleanSubprocessOutput(str: string): string {
-  const normalized = stripAnsi(str)
+  const preSplit = str.replace(/\x1b\[(?:[12]K|\d*G)/g, '\n');
+  const normalized = stripAnsi(preSplit)
     .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n');
+    .replace(/\r/g, '\n')
+    .replace(/(https?:\/\/[^\s"'<>]+?\.[a-z]{2,10})([A-Z][a-z]{2,15}:\s)/g, '$1\n$2');
 
   return normalized
     .split('\n')
@@ -389,16 +391,31 @@ export const sysRun = {
         }
       };
 
-      const appendToBuffer = (data: Buffer | string): void => {
-        outputBuffer += data.toString();
+      let lastStream: 'stdout' | 'stderr' | null = null;
+      const appendToBuffer = (stream: 'stdout' | 'stderr', data: Buffer | string): void => {
+        const chunk = data.toString();
+        if (!chunk) return;
+        if (
+          lastStream !== null &&
+          lastStream !== stream &&
+          outputBuffer.length > 0 &&
+          !outputBuffer.endsWith('\n') &&
+          !outputBuffer.endsWith('\r') &&
+          !chunk.startsWith('\n') &&
+          !chunk.startsWith('\r')
+        ) {
+          outputBuffer += '\n';
+        }
+        lastStream = stream;
+        outputBuffer += chunk;
         if (outputBuffer.length > MAX_LENGTH) {
           outputBuffer = '...[OUTPUT TRUNCATED]...\n' + outputBuffer.slice(outputBuffer.length - MAX_LENGTH);
         }
         checkServerDetach();
       };
 
-      child.stdout?.on('data', appendToBuffer);
-      child.stderr?.on('data', appendToBuffer);
+      child.stdout?.on('data', (d: Buffer | string) => appendToBuffer('stdout', d));
+      child.stderr?.on('data', (d: Buffer | string) => appendToBuffer('stderr', d));
 
       let serverGraceTimer: NodeJS.Timeout | undefined;
       if (isPersistentServerCommand(rawCommand)) {

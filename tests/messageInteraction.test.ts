@@ -15,7 +15,7 @@ import {
 import { registerStageConsoleGuard, setTransientNotice } from '../src/tui/consoleGuard.js';
 import { mouseHoverTracking } from '../src/tui/mouseHover.js';
 import { panelRows } from '../src/tui/overlay.js';
-import { stripAnsi } from '../src/tui/text.js';
+import { stripAnsi, truncate } from '../src/tui/text.js';
 import { createSession, saveSessionMessages, getSession, deleteSession } from '../src/sessionStore.js';
 import { MemoryManager } from '../src/memoryManager.js';
 import { grantAlways, isAlwaysAllowed, revokeAllAlways } from '../src/approvalGrants.js';
@@ -102,6 +102,42 @@ test('message actions fit exactly, are placed near the clicked row, and preserve
   assert.match(stripAnsi(placed.rows[14]!), /_RIGHT_RAIL_END$/);
   assert.equal(base[13], baseLine);
   assert.equal(placeMessageActionPanel(base.slice(0, 2), panel, 90, 10, 24, 2).layout, null);
+});
+
+test('truncate and placeMessageActionPanel close open OSC 8 hyperlinks so link hover never tears across modal rows', () => {
+  const osc8Row = '    \x1b]8;;file:///workspace/suika-game/physics.js\x1b\\physics.js\x1b]8;;\x1b\\): slack variables';
+  // Cut at column 11 ("    physics") right in the middle of the OSC 8 hyperlink
+  const cut = truncate(osc8Row, 11, '');
+  assert.equal(stripAnsi(cut), '    physics');
+  assert.equal(
+    cut.includes('\x1b]8;;\x1b\\'),
+    true,
+    'truncate must close open ST-terminated OSC 8 hyperlink when slicing mid-link'
+  );
+
+  // Also verify BEL-terminated OSC 8 hyperlinks are closed cleanly
+  const belOsc8Row = '    \x1b]8;;https://example.com\x07example.com\x1b]8;;\x07 tail';
+  const belCut = truncate(belOsc8Row, 11, '');
+  assert.equal(belCut.includes('\x1b]8;;\x07'), true);
+
+  // Place MessageActionsLayer over a row containing an OSC 8 link at the left splice boundary
+  const layer = new MessageActionsLayer([
+    { label: 'Copy message', description: 'to clipboard', value: 'copy' },
+    { label: 'Fork from here', description: 'create a new session · fresh permissions', value: 'fork' },
+    { label: 'Revert to here', description: 'undo messages and file changes', value: 'revert' }
+  ], () => {}, 5);
+  const panel = panelRows(layer, 60, layer.preferredHeight());
+  const base = Array<string>(12).fill(osc8Row + ' '.repeat(60));
+  const placed = placeMessageActionPanel(base, panel, 90, 0, 5, 3);
+  const topOverlayRow = placed.rows[placed.layout!.y]!;
+  const beforeModal = topOverlayRow.slice(0, topOverlayRow.indexOf('╭'));
+  const opensBeforeModal = (beforeModal.match(/\x1b\]8;;[^\x07\x1b]+(?:\x07|\x1b\\)/g) || []).length;
+  const closesBeforeModal = (beforeModal.match(/\x1b\]8;;(?:\x07|\x1b\\)/g) || []).length;
+  assert.equal(
+    opensBeforeModal,
+    closesBeforeModal,
+    'Every OSC 8 hyperlink opened before the modal border must be closed before the modal border begins'
+  );
 });
 
 test('markHoveredMessage skips leading/trailing blank rows and avoids duplicate arrows', () => {

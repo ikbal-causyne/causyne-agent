@@ -26,6 +26,7 @@ import { sessionComposerWidth } from './sessionSidebar.js';
 import { chatProseWidth, wrappedChatRows } from './textLayout.js';
 import { activityRows } from './activityLayout.js';
 import { cleanToolOutputPreview, normalizeHistoricalToolResult } from './toolOutputNormalizer.js';
+import { formatMarkdownMath } from './markdownMath.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -200,11 +201,11 @@ function inline(text) {
     });
   }
 
+  out = out.replace(/`([^`]+)`/g, (_m, code) => stash(HAS_COLOR ? paint('accent', code) : code));
+  out = formatMarkdownMath(out);
   out = HAS_COLOR
-    ? out
-        .replace(/`([^`]+)`/g, (m, code) => paint('accent', code))
-        .replace(/\*\*([^*]+)\*\*/g, (m, strong) => bold(strong))
-    : out.replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1');
+    ? out.replace(/\*\*([^*]+)\*\*/g, (m, strong) => bold(strong))
+    : out.replace(/\*\*([^*]+)\*\*/g, '$1');
 
   if (stashed.length > 0) {
     out = out.replace(/\u0000(\d+)\u0000/g, (m, index) => stashed[Number(index)] || '');
