@@ -81,25 +81,32 @@ export class CodeStreamRenderer extends ChatRenderer {
         this.activeCode = null;
         this.modelNote = '';
         this.lastReasoning = '';
-        this.collapseFinishedReasoningFrames();
+        this.collapseFinishedReasoningFrames(true);
         super.resetTurn();
     }
     turnFooter(durationMs) {
-        this.collapseFinishedReasoningFrames();
+        this.collapseFinishedReasoningFrames(true);
         super.turnFooter(durationMs);
+    }
+    onAgentReasoning(message) {
+        super.onAgentReasoning(message);
+        if (message?.streaming === false) {
+            this.collapseFinishedReasoningFrames();
+        }
     }
     /**
      * Auto-collapses completed thinking box frames when a session turn finishes,
      * keeping the conversation viewport clean while preserving interactive click-to-expand.
      */
-    collapseFinishedReasoningFrames() {
+    collapseFinishedReasoningFrames(forceAll = false) {
         const transcript = this.transcript;
         if (!transcript || !Array.isArray(transcript.frames))
             return;
         let changed = false;
         for (const frame of transcript.frames) {
-            if (frame?.meta?.reasoning === true && frame.meta.userInteracted !== true && frame.meta.collapsed !== true) {
+            if (frame?.meta?.reasoning === true && (forceAll || frame.meta.userInteracted !== true) && frame.meta.collapsed !== true) {
                 frame.meta.collapsed = true;
+                frame.meta.streaming = false;
                 frame.rows = null;
                 frame.renderedWidth = -1;
                 changed = true;
@@ -132,13 +139,17 @@ export class CodeStreamRenderer extends ChatRenderer {
                 const note = content.trim().split('\n').at(-1) || '';
                 this.modelNote = note.slice(-140);
                 this.paintCodePanel(this.activeCode);
-                if (message.streaming === false)
+                if (message.streaming === false) {
                     this.lastReasoning = '';
+                    this.collapseFinishedReasoningFrames();
+                }
                 return true;
             }
             const handled = super.handle(message);
-            if (message.streaming === false)
+            if (message.streaming === false) {
                 this.lastReasoning = '';
+                this.collapseFinishedReasoningFrames();
+            }
             return handled;
         }
         if (['agent_message', 'agent_activity', 'notice', 'budget_warning', 'step_start', 'task_complete', 'error', 'agent_plan'].includes(message?.type || '')) {
@@ -147,9 +158,7 @@ export class CodeStreamRenderer extends ChatRenderer {
             }
             this._activeReasoning = false;
             this.lastReasoning = '';
-            if (message?.type === 'task_complete' || (message?.type === 'agent_message' && message.streaming !== true)) {
-                this.collapseFinishedReasoningFrames();
-            }
+            this.collapseFinishedReasoningFrames(message?.type === 'task_complete');
             if (['step_start', 'task_complete', 'error'].includes(message?.type || '')
                 || (message?.type === 'agent_message' && message.streaming !== true)) {
                 this.activeCode = null;
@@ -171,6 +180,7 @@ export class CodeStreamRenderer extends ChatRenderer {
             super.onAgentReasoning({ content: this.lastReasoning, streaming: false });
         }
         this.lastReasoning = '';
+        this.collapseFinishedReasoningFrames();
         this.activeCode = event;
         this.paintCodePanel(event);
         if (event.phase === 'done' || event.phase === 'failed') {

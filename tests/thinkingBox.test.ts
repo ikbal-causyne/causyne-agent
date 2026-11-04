@@ -254,6 +254,9 @@ describe('thinkingBox component', () => {
     const frame = transcript.frames[0];
     assert.ok(frame, 'reasoning frame must be created');
     assert.equal(frame.meta?.reasoning, true);
+    // User expanded the thinking box to scroll inside it
+    frame.meta!.collapsed = false;
+    frame.meta!.userInteracted = true;
     assert.equal(frame.meta?.scrollStart, 0);
 
     const surface = {
@@ -408,7 +411,7 @@ describe('thinkingBox component', () => {
     assert.equal(frame.meta?.done, true);
   });
 
-  test('auto-collapses reasoning frames when task completes via turnFooter', async () => {
+  test('auto-collapses reasoning frames when task completes via turnFooter and force-minimizes all frames', async () => {
     const { CodeStreamRenderer } = await import('../src/tui/codeStreamRenderer.js');
     const { Transcript } = await import('../src/tui/transcript.js');
 
@@ -419,13 +422,101 @@ describe('thinkingBox component', () => {
     renderer.onAgentReasoning({ content: 'First thought', streaming: false, elapsedMs: 300 });
     renderer.onAgentReasoning({ content: 'Second thought', streaming: false, elapsedMs: 600 });
     assert.equal(transcript.frames.length, 2);
+    assert.equal(transcript.frames[0]?.meta?.collapsed, true, 'completed reasoning frame must be auto-collapsed');
+    assert.equal(transcript.frames[1]?.meta?.collapsed, true);
+
+    // If user previously interacted/expanded a frame, turnFooter still auto-minimizes everything at turn end
+    transcript.frames[0]!.meta!.collapsed = false;
+    transcript.frames[0]!.meta!.userInteracted = true;
     assert.equal(transcript.frames[0]?.meta?.collapsed, false);
-    assert.equal(transcript.frames[1]?.meta?.collapsed, false);
 
     // End of task in cliMode invokes turnFooter
     renderer.turnFooter(1200);
 
     assert.equal(transcript.frames[0]?.meta?.collapsed, true, 'all completed thinking frames must auto-collapse on turnFooter');
     assert.equal(transcript.frames[1]?.meta?.collapsed, true);
+  });
+
+  test('renderSessionHistory restores auto-minimized thinking boxes and native tool actions', async () => {
+    const { CodeStreamRenderer } = await import('../src/tui/codeStreamRenderer.js');
+    const { Transcript } = await import('../src/tui/transcript.js');
+    const { handleMessageMouse } = await import('../src/tui/messageInteraction.js');
+
+    const renderer = new CodeStreamRenderer();
+    const transcript = new Transcript();
+    renderer.transcript = transcript as any;
+
+    const historicalMessages = [
+      { role: 'user', content: 'Write a novel chapter' },
+      {
+        role: 'assistant',
+        content: 'Written: /tmp/novel.md',
+        reasoning_content: 'User wants a novel chapter. I need to write it cleanly with vivid prose.\nPlanning steps and scenes.',
+        external_actions: [
+          { name: 'fs_write', parameters: { path: '/tmp/novel.md' }, status: 'completed', detail: 'Written 800 words' }
+        ]
+      }
+    ];
+
+    renderer.renderSessionHistory(historicalMessages, { id: 's_test_123', title: 'Test Session', messagesCount: 2 });
+
+    // Frames should have:
+    // 1. Session divider / header
+    // 2. User message
+    // 3. Auto-minimized reasoning frame
+    // 4. Step start & complete for external action (fs_write)
+    // 5. Assistant message
+    const reasoningFrame = transcript.frames.find(f => f.kind === 'reasoning');
+    assert.ok(reasoningFrame, 'must restore reasoning frame from reasoning_content');
+    assert.equal(reasoningFrame.meta?.collapsed, true, 'restored reasoning frame must be auto-minimized');
+    assert.equal(reasoningFrame.meta?.streaming, false);
+
+    const renderedRows = transcript.renderFrame(reasoningFrame, 80);
+    const text = stripAnsi(renderedRows.join('\n'));
+    assert.match(text, /Thought/);
+    assert.match(text, /click to expand/);
+
+    // Step frames for native action
+    const stepFrames = transcript.frames.filter(f => f.kind === 'step' || f.kind === 'result');
+    assert.ok(stepFrames.length > 0, 'must restore step frames for native tool action');
+
+    // Clicking the restored thinking box expands it
+    let scheduled = false;
+    const surface = {
+      width: 80,
+      out: { rows: 24 },
+      stage: { height: 20, reserved: true },
+      viewport: { height: 18, width: 80, scrollTop: 0 },
+      transcript,
+      hoveredMessageFrameId: null,
+      turnRailLayout: null
+    };
+    const host = {
+      surface,
+      busy: false,
+      notice: '',
+      openLayer: () => {},
+      scheduleDraw: () => { scheduled = true; }
+    };
+
+    const flat = transcript.flatten(80);
+    const reasoningMarker = flat.markers.find(m => m.id === reasoningFrame.id);
+    assert.ok(reasoningMarker);
+
+    const viewHeight = 18;
+    const padding = Math.max(0, viewHeight - flat.rows.length);
+    const top = 24 - 20;
+    const mouseY = top + padding + reasoningMarker.row;
+
+    const clicked = handleMessageMouse(host as any, { memoryManager: { loadHistory: () => [] } } as any, {
+      mouse: { x: 10, y: mouseY, button: 0, pressed: true }
+    });
+    assert.equal(clicked, true);
+    assert.equal(reasoningFrame.meta?.collapsed, false, 'clicking restored thinking box must expand it');
+
+    const expandedRows = transcript.renderFrame(reasoningFrame, 80);
+    const expandedText = stripAnsi(expandedRows.join('\n'));
+    assert.match(expandedText, /User wants a novel chapter/);
+    assert.match(expandedText, /click to collapse/);
   });
 });

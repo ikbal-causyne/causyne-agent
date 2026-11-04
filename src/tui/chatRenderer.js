@@ -590,17 +590,42 @@ export class ChatRenderer {
         this.resetTurn();
         this.renderUserMessage(msg.content);
       } else if (role === 'assistant') {
-        // If assistant has textual content, render it
-        const text = typeof msg.content === 'string'
-          ? msg.content
-          : (Array.isArray(msg.content)
-              ? msg.content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
-              : String(msg.content || ''));
-        if (text.trim()) {
-          this.renderAssistantMessage(text);
+        // 1. Restore reasoning content as an auto-minimized thinking box
+        const reasoning = typeof msg.reasoning_content === 'string'
+          ? msg.reasoning_content.trim()
+          : (Array.isArray(msg.thinking_blocks)
+              ? msg.thinking_blocks.map(b => (typeof b === 'string' ? b : b?.thinking || b?.text || '')).filter(Boolean).join('\n').trim()
+              : '');
+        if (reasoning) {
+          const meta = {
+            reasoning: true,
+            done: true,
+            streaming: false,
+            collapsed: true,
+            durationText: '',
+            content: reasoning,
+            scrollStart: 0
+          };
+          this.frame('reasoning', () => this.renderReasoning(meta.content, {
+            streaming: false,
+            durationText: '',
+            collapsed: Boolean(meta.collapsed),
+            startLine: 0
+          }), meta);
         }
 
-        // If assistant invoked tool calls, render each tool step and pair with its result
+        // 2. Restore external / native ACP tool executions
+        if (Array.isArray(msg.external_actions) && msg.external_actions.length > 0) {
+          for (const ext of msg.external_actions) {
+            const toolName = ext.name || 'tool';
+            const args = ext.parameters || {};
+            const result = ext.detail || (ext.status === 'completed' ? 'Done' : ext.status || '');
+            this.onStepStart({ tool: toolName, args });
+            this.onStepComplete({ tool: toolName, result, elapsed: '' });
+          }
+        }
+
+        // 3. If assistant invoked tool calls, render each tool step and pair with its result
         if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
           for (const call of msg.tool_calls) {
             const toolName = call.function?.name || call.name || 'tool';
@@ -646,6 +671,16 @@ export class ChatRenderer {
               this.onStepStart({ tool: toolName, args });
             }
           }
+        }
+
+        // 4. If assistant has textual content, render it
+        const text = typeof msg.content === 'string'
+          ? msg.content
+          : (Array.isArray(msg.content)
+              ? msg.content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+              : String(msg.content || ''));
+        if (text.trim()) {
+          this.renderAssistantMessage(text);
         }
       } else if (role === 'tool') {
         // Standalone or un-paired tool message (e.g. from compacted session turns)
@@ -757,7 +792,7 @@ export class ChatRenderer {
           scrollStart: 0
         };
         this.frame('reasoning', () => this.renderReasoning(meta.content, {
-          streaming: true,
+          streaming: Boolean(meta.streaming),
           durationText: meta.durationText,
           collapsed: Boolean(meta.collapsed),
           startLine: Number(meta.scrollStart) || 0
@@ -770,7 +805,7 @@ export class ChatRenderer {
         if (meta.collapsed === undefined) meta.collapsed = false;
         if (meta.scrollStart === undefined) meta.scrollStart = 0;
         this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
-          streaming: true,
+          streaming: Boolean(meta.streaming),
           durationText: meta.durationText,
           collapsed: Boolean(meta.collapsed),
           startLine: Number(meta.scrollStart) || 0
@@ -786,10 +821,10 @@ export class ChatRenderer {
       meta.done = true;
       meta.durationText = durationText;
       meta.content = content;
-      if (meta.collapsed === undefined) meta.collapsed = false;
+      if (meta.collapsed === undefined) meta.collapsed = Boolean(msg.collapsed);
       if (meta.scrollStart === undefined) meta.scrollStart = 0;
       this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
-        streaming: false,
+        streaming: Boolean(meta.streaming),
         durationText: meta.durationText,
         collapsed: Boolean(meta.collapsed),
         startLine: Number(meta.scrollStart) || 0
@@ -801,11 +836,11 @@ export class ChatRenderer {
         streaming: false,
         durationText,
         content,
-        collapsed: false,
+        collapsed: Boolean(msg.collapsed),
         scrollStart: 0
       };
       this.frame('reasoning', () => this.renderReasoning(meta.content, {
-        streaming: false,
+        streaming: Boolean(meta.streaming),
         durationText: meta.durationText,
         collapsed: Boolean(meta.collapsed),
         startLine: Number(meta.scrollStart) || 0

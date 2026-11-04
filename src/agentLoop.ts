@@ -2816,14 +2816,19 @@ You are operating in a text-and-code modality without direct image pixel renderi
         if (response.thinkingBlocks) {
           assistantMsg.thinking_blocks = response.thinkingBlocks;
         }
+
+        const externalActions = Array.isArray((response as any).externalActions)
+          ? (response as any).externalActions
+          : [];
+        if (externalActions.length > 0) {
+          assistantMsg.external_actions = externalActions;
+        }
+
         this.messages.push(assistantMsg);
         
         // Prose accompanying pending actions is not an execution result.
         // Tool events provide progress; terminal claims pass completion gates below.
 
-        const externalActions = Array.isArray((response as any).externalActions)
-          ? (response as any).externalActions
-          : [];
         const completedExternalActions = externalActions.filter((a: any) => a && a.status === 'completed');
         const failedExternalActions = externalActions.filter((a: any) => a && a.status === 'failed');
         const hasExternalActions = completedExternalActions.length > 0;
