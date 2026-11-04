@@ -28,6 +28,30 @@ test('opening an existing project excludes file mutation and unrelated commands'
     isLaunchOnlyPrompt('Execute a strict 5-point verification of the memory_recall and episodicStore pipeline'),
     false
   );
+  assert.equal(
+    isLaunchOnlyPrompt('sekarang aku ingin ceritanya berlanjut setelah dia membaut bumi milik dia sendiri kemudian dia mulai membawa bebrapa istri dari beberapa dunia pararel masa lalu masa depan mauphun penat dan another galaxy/universe sekitar 20rb istri dan dia masing masing mempunyai anak dari sana dan mulai menananmkan chip pada naka nakanya tersebut agar sellau menjadi baik di buminya tersebut untuk pentingan dan kedamaian manusia yang dari awalnya menghancurkan bumi saling membunuh membuly manusia lain dia sekarnag maembuat sistem dimana bumi yangs anatg damai semua porang sanagt kaya raya semua orang bias berlkeliling dunia semua orang makan enak semuaa orang bersahabt semua orang tidak berselisih semua orang selalu bahagiaa semua orang sudah tidak punya lagi energi maupun emosi negatif karena chip tersebut dan semua kegiatan semua hospitality run by ai yaang di buat oleh pahlawna kita inih'),
+    false
+  );
+  assert.equal(
+    isLaunchOnlyPrompt('write a sci-fi novel about a galactic empire where hospitality is run by ai'),
+    false
+  );
+  assert.equal(
+    isLaunchOnlyPrompt('explain why the service is run by background processes'),
+    false
+  );
+  assert.equal(
+    isLaunchOnlyPrompt('buatkan novel kelanjutan cerita'),
+    false
+  );
+  assert.equal(
+    isLaunchOnlyPrompt('launch the app'),
+    true
+  );
+  assert.equal(
+    isLaunchOnlyPrompt('play the game'),
+    true
+  );
   assert.match(launchScopeError('fs_edit', { path: 'server.py' }), /not change/);
   assert.match(launchScopeError('sysRun', { command: 'python3 -c "open(\"server.py\",\"w\")"' }), /does not authorize/);
   assert.match(launchScopeError('sysRun', { command: 'ls -la && rm server.py' }), /chained shell commands/);

@@ -2881,6 +2881,28 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         this.memoryManager.saveHistory(this.messages);
                         continue;
                     }
+                    if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress) && incompleteTurnContinuations === 3) {
+                        incompleteTurnContinuations++;
+                        if (response.content) {
+                            this.emitEvent({ type: 'agent_message', content: response.content });
+                        }
+                        this.emitEvent({ type: 'status', message: 'Requesting final deliverable and response...' });
+                        this.emitEvent({ type: 'agent_activity', activity: 'Synthesizing final deliverable…' });
+                        this.messages.push({
+                            role: 'system',
+                            content: `[TASK COMPLETION MANDATE: You have completed your tool execution steps (${this.stepsCompleted} steps performed). Provide your complete final response, deliverables, and conclusions directly to the user now. Do not run any more background commands.]`
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
+                    if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress || (typeof contentText === 'string' && (contentText.startsWith('Antigravity executed:') || /^Turn completed by .+ over ACP\.$/i.test(contentText.trim()))))) {
+                        this.emitEvent({
+                            type: 'error',
+                            message: 'The task stopped before completion after repeated incomplete turns without a final response. Work remains unfinished.'
+                        });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
                     if (hasExternalActions && !isIncompleteTurn && !isMidTaskProgress) {
                         incompleteTurnContinuations = 0;
                     }
