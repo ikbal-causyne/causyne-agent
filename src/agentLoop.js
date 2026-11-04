@@ -1290,6 +1290,28 @@ export class AgentLoop {
             completed: this._implementationPlan.filter((item) => item.status === 'completed').length
         });
     }
+    inferCurrentActivity() {
+        if (this._implementationPlan && this._implementationPlan.length > 0) {
+            const activeStep = this._implementationPlan.find((s) => s && (s.status === 'in_progress' || s.status === 'running'));
+            const text = activeStep ? (activeStep.step || activeStep.text || activeStep.title || '') : '';
+            if (text && typeof text === 'string') {
+                const lower = text.toLowerCase();
+                if (lower.includes('verify') || lower.includes('test'))
+                    return 'Verifying';
+                if (lower.includes('implement') || lower.includes('build') || lower.includes('code'))
+                    return 'Implementing';
+                if (lower.includes('scaffold') || lower.includes('setup'))
+                    return 'Scaffolding';
+                if (lower.includes('plan'))
+                    return 'Planning';
+                return text.slice(0, 30);
+            }
+        }
+        if (this.stepsCompleted > 0) {
+            return 'Analyzing & executing';
+        }
+        return 'Analyzing & planning';
+    }
     seedTaskPhasePlanIfEmpty() {
         if (this._implementationPlan.length > 0) {
             this.emitEvent({
@@ -1840,7 +1862,8 @@ export class AgentLoop {
                 auditLog.log({ event: 'task_killed', taskId: this.taskId });
                 break;
             }
-            this.emitEvent({ type: 'status', message: 'Thinking...' });
+            const currentActivity = this.inferCurrentActivity();
+            this.emitEvent({ type: 'status', message: `${currentActivity}…` });
             try {
                 this.smartToolsGovernor.beginModelStep();
                 // Insert at the model boundary, never between one assistant tool-call
@@ -2264,8 +2287,9 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         elapsedMs
                     });
                 };
-                this.emitEvent({ type: 'status', message: 'Thinking…' });
-                this.emitEvent({ type: 'agent_activity', activity: 'Thinking…' });
+                const currentActivity = this.inferCurrentActivity();
+                this.emitEvent({ type: 'status', message: `${currentActivity}…` });
+                this.emitEvent({ type: 'agent_activity', activity: `${currentActivity}…` });
                 const planStepStart = performance.now();
                 const nativeControl = new AbortController();
                 const invocation = ++modelCallIndex;
@@ -2488,7 +2512,14 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         }
                         else if (action.status === 'completed') {
                             this.emitEvent({ type: 'status', message: '' });
-                            this.emitEvent({ type: 'notice', tone: 'muted', nativeStep: true, message: `${this.config.provider || 'Provider'} ${action.name}${detail}` });
+                            this.emitEvent({
+                                type: 'notice',
+                                tone: 'muted',
+                                nativeStep: true,
+                                actionName: action.name,
+                                detail: action.detail,
+                                message: `${this.config.provider || 'Provider'} ${action.name}${detail}`
+                            });
                         }
                         else if (action.status === 'failed') {
                             this.emitEvent({ type: 'status', message: '' });

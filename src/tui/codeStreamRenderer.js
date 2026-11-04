@@ -10,6 +10,7 @@ export class CodeStreamRenderer extends ChatRenderer {
     activeCode = null;
     modelNote = '';
     lastReasoning = '';
+    currentActivity = 'thinking';
     codePanels = new WeakMap();
     /** Scroll only the code beneath the pointer; leave the chat viewport alone. */
     scrollCodePanel(key, surface) {
@@ -113,8 +114,53 @@ export class CodeStreamRenderer extends ChatRenderer {
         }
     }
     handle(message) {
+        if (message?.type === 'agent_activity') {
+            const rawActivity = String(message.activity || message.message || '').trim();
+            if (rawActivity) {
+                this.currentActivity = rawActivity.replace(/…|\.\.\.$/, '').trim();
+                if (this._activeReasoning && this.lastReasoning) {
+                    super.onAgentReasoning({
+                        content: this.lastReasoning,
+                        streaming: true,
+                        activity: this.currentActivity,
+                        title: rawActivity
+                    });
+                    return true;
+                }
+            }
+        }
         if (message?.type === 'notice' && message.nativeStep === true) {
             this.stepCount = (this.stepCount || 0) + 1;
+            const stepLine = String(message.message || '').trim();
+            if (stepLine) {
+                const actionName = String(message.actionName || stepLine).toLowerCase();
+                let activity = this.currentActivity || 'processing';
+                if (['read_file', 'fs_read', 'view_file', 'cat', 'grep', 'find', 'ls'].some(k => actionName.includes(k))) {
+                    activity = 'analyzing';
+                }
+                else if (['run_command', 'sysrun', 'bash', 'terminal', 'sh', 'exec'].some(k => actionName.includes(k))) {
+                    activity = 'executing';
+                }
+                else if (['write_file', 'edit_file', 'multiedit', 'replace_file_content', 'fs_write'].some(k => actionName.includes(k))) {
+                    activity = 'editing';
+                }
+                else if (['web_search', 'web_fetch', 'browse'].some(k => actionName.includes(k))) {
+                    activity = 'researching';
+                }
+                else if (['plan', 'todo'].some(k => actionName.includes(k))) {
+                    activity = 'planning';
+                }
+                this.currentActivity = activity;
+                const currentContent = this.lastReasoning ? `${this.lastReasoning}\n${stepLine}` : stepLine;
+                this.lastReasoning = currentContent;
+                super.onAgentReasoning({
+                    content: currentContent,
+                    streaming: true,
+                    activity,
+                    title: `${activity}…`
+                });
+                return true;
+            }
         }
         if (message?.type === 'code_progress') {
             this.onCodeProgress(message);
@@ -138,15 +184,23 @@ export class CodeStreamRenderer extends ChatRenderer {
                 }
                 return true;
             }
-            const handled = super.handle(message);
+            const handled = super.handle({
+                ...message,
+                activity: message.activity || this.currentActivity
+            });
             if (message.streaming === false) {
                 this.lastReasoning = '';
             }
             return handled;
         }
-        if (['agent_message', 'agent_activity', 'notice', 'budget_warning', 'step_start', 'task_complete', 'error', 'agent_plan'].includes(message?.type || '')) {
+        if (['agent_message', 'budget_warning', 'step_start', 'task_complete', 'error', 'agent_plan'].includes(message?.type || '')
+            || (message?.type === 'notice' && !message.nativeStep)) {
             if (this._activeReasoning && this.lastReasoning) {
-                super.onAgentReasoning({ content: this.lastReasoning, streaming: false });
+                super.onAgentReasoning({
+                    content: this.lastReasoning,
+                    streaming: false,
+                    activity: this.currentActivity
+                });
             }
             this._activeReasoning = false;
             this.lastReasoning = '';

@@ -523,4 +523,112 @@ describe('thinkingBox component', () => {
     assert.match(expandedText, /User wants a novel chapter/);
     assert.match(expandedText, /click to collapse/);
   });
+
+  test('dynamic contextual activities format correctly in streaming and collapsed badges', () => {
+    // 1. Analyzing
+    const analyzingStreaming = stripAnsi(renderCollapsedThinkingBadge({ streaming: true, activity: 'analyzing', durationText: '1.2s' }, 10));
+    assert.match(analyzingStreaming, /analyzing…/);
+    assert.match(analyzingStreaming, /1\.2s/);
+
+    const analyzingDone = stripAnsi(renderCollapsedThinkingBadge({ streaming: false, activity: 'analyzing', durationText: '2.5s' }, 14));
+    assert.match(analyzingDone, /Analyzed for 2\.5s/);
+    assert.match(analyzingDone, /\(14 lines\)/);
+
+    // 2. Executing
+    const executingDone = stripAnsi(renderCollapsedThinkingBadge({ streaming: false, activity: 'executing' }, 5));
+    assert.match(executingDone, /Executed/);
+    assert.match(executingDone, /\(5 lines\)/);
+
+    // 3. Editing
+    const editingDone = stripAnsi(renderCollapsedThinkingBadge({ streaming: false, activity: 'editing' }, 8));
+    assert.match(editingDone, /Edited/);
+    assert.match(editingDone, /\(8 lines\)/);
+
+    // 4. Planning
+    const planningDone = stripAnsi(renderCollapsedThinkingBadge({ streaming: false, activity: 'planning' }, 12));
+    assert.match(planningDone, /Planned/);
+    assert.match(planningDone, /\(12 lines\)/);
+
+    // 5. Researching
+    const researchingDone = stripAnsi(renderCollapsedThinkingBadge({ streaming: false, activity: 'researching' }, 15));
+    assert.match(researchingDone, /Researched/);
+    assert.match(researchingDone, /\(15 lines\)/);
+
+    // 6. Expanded box with dynamic activity
+    const expandedRows = renderThinkingFrame('Reading files\nChecking syntax', {
+      width: 80,
+      streaming: false,
+      activity: 'analyzing',
+      durationText: '1.1s'
+    });
+    const expandedText = stripAnsi(expandedRows.join('\n'));
+    assert.match(expandedText, /analyzing/);
+    assert.match(expandedText, /Reading files/);
+  });
+
+  test('CodeStreamRenderer encapsulates nativeStep notices into the active thinking/activity box instead of dumping loose lines', async () => {
+    const { CodeStreamRenderer } = await import('../src/tui/codeStreamRenderer.js');
+    const { Transcript } = await import('../src/tui/transcript.js');
+
+    const transcript = new Transcript();
+    const renderer = new CodeStreamRenderer();
+    renderer.transcript = transcript as any;
+
+    // 1. Send nativeStep notice (e.g. antigravity read_file)
+    const handled1 = renderer.handle({
+      type: 'notice',
+      tone: 'muted',
+      nativeStep: true,
+      actionName: 'read_file',
+      message: 'antigravity read_file /workspace/novel-isekai-bumi.md'
+    } as any);
+    assert.equal(handled1, true);
+
+    // Verify: NO loose notice frames were added to the transcript
+    const noticeFrames = transcript.frames.filter(f => f.kind === 'notice');
+    assert.equal(noticeFrames.length, 0, 'must not dump loose notice frames into the transcript');
+
+    // Verify: Reasoning/activity frame was created with dynamic activity 'analyzing'
+    const reasoningFrames = transcript.frames.filter(f => f.kind === 'reasoning');
+    assert.equal(reasoningFrames.length, 1, 'must encapsulate action inside reasoning/activity frame');
+    assert.equal(reasoningFrames[0]?.meta?.activity, 'analyzing');
+
+    const frameRows1 = transcript.renderFrame(reasoningFrames[0]!, 80);
+    const frameText1 = stripAnsi(frameRows1.join('\n'));
+    assert.match(frameText1, /analyzing…/);
+    assert.match(frameText1, /antigravity read_file/);
+
+    // 2. Send second nativeStep notice (run_command)
+    const handled2 = renderer.handle({
+      type: 'notice',
+      tone: 'muted',
+      nativeStep: true,
+      actionName: 'run_command',
+      message: 'antigravity run_command grep -rn "pdf" /workspace'
+    } as any);
+    assert.equal(handled2, true);
+
+    // Still only 1 reasoning frame (accumulated inside the box!)
+    assert.equal(transcript.frames.filter(f => f.kind === 'reasoning').length, 1);
+    assert.equal(reasoningFrames[0]?.meta?.activity, 'executing');
+
+    const frameRows2 = transcript.renderFrame(reasoningFrames[0]!, 80);
+    const frameText2 = stripAnsi(frameRows2.join('\n'));
+    assert.match(frameText2, /antigravity read_file/);
+    assert.match(frameText2, /antigravity run_command/);
+
+    // 3. Complete turn with agent_message
+    renderer.handle({
+      type: 'agent_message',
+      content: 'Here is the summary of the novel.',
+      streaming: false
+    } as any);
+
+    // The box must now be auto-collapsed!
+    assert.equal(reasoningFrames[0]?.meta?.collapsed, true);
+    const collapsedRows = transcript.renderFrame(reasoningFrames[0]!, 80);
+    const collapsedText = stripAnsi(collapsedRows.join('\n'));
+    assert.match(collapsedText, /Executed/);
+    assert.match(collapsedText, /click to expand/);
+  });
 });

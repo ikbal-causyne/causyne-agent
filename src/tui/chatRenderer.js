@@ -770,6 +770,9 @@ export class ChatRenderer {
     const isStreaming = Boolean(msg.streaming);
     const elapsedMs = Number(msg.elapsedMs) || 0;
     const durationText = elapsedMs > 0 ? formatDuration(elapsedMs) : '';
+    const activity = typeof msg.activity === 'string' ? msg.activity : '';
+    const title = typeof msg.title === 'string' ? msg.title : '';
+    const completedTitle = typeof msg.completedTitle === 'string' ? msg.completedTitle : '';
 
     const tailFrame = this.transcript?.frames?.at(-1);
     const tailIsReasoning = !this.transcript
@@ -787,26 +790,38 @@ export class ChatRenderer {
           streaming: true,
           durationText,
           content,
+          activity,
+          title,
+          completedTitle,
           scrollStart: 0
         };
         this.frame('reasoning', () => this.renderReasoning(meta.content, {
           streaming: Boolean(meta.streaming),
           durationText: meta.durationText,
           collapsed: Boolean(meta.collapsed),
-          startLine: Number(meta.scrollStart) || 0
+          startLine: Number(meta.scrollStart) || 0,
+          activity: meta.activity,
+          title: meta.title,
+          completedTitle: meta.completedTitle
         }), meta);
       } else {
         const meta = tailFrame?.meta || { reasoning: true };
         meta.streaming = true;
         meta.durationText = durationText;
         meta.content = content;
+        if (activity) meta.activity = activity;
+        if (title) meta.title = title;
+        if (completedTitle) meta.completedTitle = completedTitle;
         if (meta.collapsed === undefined) meta.collapsed = false;
         if (meta.scrollStart === undefined) meta.scrollStart = 0;
         this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
           streaming: Boolean(meta.streaming),
           durationText: meta.durationText,
           collapsed: Boolean(meta.collapsed),
-          startLine: Number(meta.scrollStart) || 0
+          startLine: Number(meta.scrollStart) || 0,
+          activity: meta.activity,
+          title: meta.title,
+          completedTitle: meta.completedTitle
         }), meta);
       }
       return;
@@ -819,13 +834,19 @@ export class ChatRenderer {
       meta.done = true;
       meta.durationText = durationText;
       meta.content = content;
+      if (activity) meta.activity = activity;
+      if (title) meta.title = title;
+      if (completedTitle) meta.completedTitle = completedTitle;
       if (meta.collapsed === undefined) meta.collapsed = Boolean(msg.collapsed);
       if (meta.scrollStart === undefined) meta.scrollStart = 0;
       this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
         streaming: Boolean(meta.streaming),
         durationText: meta.durationText,
         collapsed: Boolean(meta.collapsed),
-        startLine: Number(meta.scrollStart) || 0
+        startLine: Number(meta.scrollStart) || 0,
+        activity: meta.activity,
+        title: meta.title,
+        completedTitle: meta.completedTitle
       }), meta);
     } else if (content.trim()) {
       const meta = {
@@ -834,6 +855,9 @@ export class ChatRenderer {
         streaming: false,
         durationText,
         content,
+        activity,
+        title,
+        completedTitle,
         collapsed: Boolean(msg.collapsed),
         scrollStart: 0
       };
@@ -841,19 +865,25 @@ export class ChatRenderer {
         streaming: Boolean(meta.streaming),
         durationText: meta.durationText,
         collapsed: Boolean(meta.collapsed),
-        startLine: Number(meta.scrollStart) || 0
+        startLine: Number(meta.scrollStart) || 0,
+        activity: meta.activity,
+        title: meta.title,
+        completedTitle: meta.completedTitle
       }), meta);
     }
   }
 
-  renderReasoning(content, { streaming = false, durationText = '', collapsed = false, startLine = 0 } = {}) {
+  renderReasoning(content, { streaming = false, durationText = '', collapsed = false, startLine = 0, activity = '', title = '', completedTitle = '' } = {}) {
     const width = this.measure();
     const rows = renderThinkingFrame(content, {
       width,
       streaming,
       durationText,
       collapsed,
-      startLine: Number(startLine) || 0
+      startLine: Number(startLine) || 0,
+      activity,
+      title,
+      completedTitle
     });
 
     if (rows.length === 0) return;

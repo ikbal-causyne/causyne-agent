@@ -18,6 +18,9 @@ export interface ThinkingFrameOptions {
   maxVisibleLines?: number;
   role?: string;
   startLine?: number;
+  activity?: string;
+  title?: string;
+  completedTitle?: string;
 }
 
 export const DEFAULT_MAX_STREAMING_LINES = 8;
@@ -35,6 +38,47 @@ export function calculateThinkingLineCount(content: string, width: number): numb
 }
 
 /**
+ * Resolves dynamic contextual activity labels for streaming and completed badges.
+ */
+export function resolveActivityLabels(options: ThinkingFrameOptions): {
+  activeLabel: string;
+  completedLabel: string;
+} {
+  const raw = (options.activity || options.title || 'thinking')
+    .replace(/…|\.\.\.$/, '')
+    .trim()
+    .toLowerCase();
+
+  let active = options.title ? options.title.trim() : `${raw}…`;
+  if (!options.title) {
+    if (raw === 'thinking') active = 'thinking…';
+    else if (raw === 'analyzing') active = 'analyzing…';
+    else if (raw === 'executing') active = 'executing…';
+    else if (raw === 'editing') active = 'editing…';
+    else if (raw === 'planning') active = 'planning…';
+    else if (raw === 'researching') active = 'researching…';
+    else if (raw === 'synthesizing') active = 'synthesizing…';
+    else if (raw === 'processing') active = 'processing…';
+    else active = `${raw}…`;
+  }
+
+  let completed = options.completedTitle ? options.completedTitle.trim() : '';
+  if (!completed) {
+    if (raw === 'thinking') completed = 'Thought';
+    else if (raw === 'analyzing') completed = 'Analyzed';
+    else if (raw === 'executing') completed = 'Executed';
+    else if (raw === 'editing') completed = 'Edited';
+    else if (raw === 'planning') completed = 'Planned';
+    else if (raw === 'researching') completed = 'Researched';
+    else if (raw === 'synthesizing') completed = 'Synthesized';
+    else if (raw === 'processing') completed = 'Processed';
+    else completed = raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+
+  return { activeLabel: active, completedLabel: completed };
+}
+
+/**
  * Single-line compact badge for collapsed reasoning frames.
  */
 export function renderCollapsedThinkingBadge(
@@ -44,15 +88,16 @@ export function renderCollapsedThinkingBadge(
   const isStreaming = Boolean(options.streaming);
   const durationText = options.durationText ? String(options.durationText).trim() : '';
   const arrow = HAS_UNICODE ? '▸' : '>';
+  const { activeLabel, completedLabel } = resolveActivityLabels(options);
 
   if (isStreaming) {
     const timePart = durationText ? ` · ${durationText}` : '';
-    return `  ${paint('warn', arrow)} ${bold(paint('warn', 'thinking…'))}${dim(timePart)} ${dim('· click to expand')}`;
+    return `  ${paint('warn', arrow)} ${bold(paint('warn', activeLabel))}${dim(timePart)} ${dim('· click to expand')}`;
   }
 
   const timePart = durationText ? ` for ${durationText}` : '';
   const lineWord = totalLines === 1 ? 'line' : 'lines';
-  return `  ${paint('muted', arrow)} ${dim(`Thought${timePart}`)} ${dim(`(${totalLines} ${lineWord})`)} ${dim('· click to expand')}`;
+  return `  ${paint('muted', arrow)} ${dim(`${completedLabel}${timePart}`)} ${dim(`(${totalLines} ${lineWord})`)} ${dim('· click to expand')}`;
 }
 
 /**
@@ -149,7 +194,8 @@ export function renderThinkingFrame(
   if (isStreaming) {
     const maxLines = options.maxVisibleLines ?? DEFAULT_MAX_STREAMING_LINES;
     const timePart = durationText ? ` · ${durationText}` : '';
-    const title = `${bold(paint('warn', 'thinking…'))}${dim(timePart)}`;
+    const { activeLabel } = resolveActivityLabels(options);
+    const title = `${bold(paint('warn', activeLabel))}${dim(timePart)}`;
     const footer = collapseHint;
 
     const { top, bottom, wrapRow } = buildThinkingBoxBorders(title, footer, width, role);
@@ -158,7 +204,8 @@ export function renderThinkingFrame(
     if (totalLines > maxLines) {
       const hiddenCount = totalLines - (maxLines - 1);
       const scrollIndicator = HAS_UNICODE ? '↑' : '^';
-      const hiddenNotice = `${paint('rule', scrollIndicator)} ${dim(`${hiddenCount} earlier thinking line${hiddenCount === 1 ? '' : 's'} scrolled`)}`;
+      const activityWord = options.activity || options.title ? `${(options.activity || options.title || '').replace(/…|\.\.\.$/, '').trim()} ` : 'thinking ';
+      const hiddenNotice = `${paint('rule', scrollIndicator)} ${dim(`${hiddenCount} earlier ${activityWord}line${hiddenCount === 1 ? '' : 's'} scrolled`)}`;
       rows.push(wrapRow(hiddenNotice));
 
       const tailRows = allRows.slice(totalLines - (maxLines - 1));
@@ -178,7 +225,14 @@ export function renderThinkingFrame(
   // Completed Expanded Mode
   const maxLines = options.maxVisibleLines ?? DEFAULT_MAX_EXPANDED_LINES;
   const timePart = durationText ? ` · ${durationText}` : '';
-  const title = `${paint('muted', 'thinking')}${dim(timePart)} ${dim(`(${totalLines} line${totalLines === 1 ? '' : 's'})`)}`;
+  const raw = (options.activity || options.title || 'thinking')
+    .replace(/…|\.\.\.$/, '')
+    .trim()
+    .toLowerCase();
+  const expandedTitleLabel = options.completedTitle
+    ? options.completedTitle.toLowerCase()
+    : (raw === 'thinking' ? 'thinking' : raw);
+  const title = `${paint('muted', expandedTitleLabel)}${dim(timePart)} ${dim(`(${totalLines} line${totalLines === 1 ? '' : 's'})`)}`;
 
   const { top, bottom, wrapRow } = buildThinkingBoxBorders(title, collapseHint, width, 'rule');
   const rows: string[] = [top];
