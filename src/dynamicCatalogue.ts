@@ -1024,6 +1024,48 @@ export async function fetchLiveModels(
       }
     }
 
+    if (norm === 'xai') {
+      if (!apiKey) return [];
+      const host = (baseUrl || 'https://api.x.ai/v1').replace(/\/+$/, '');
+      const res = await fetch(`${host}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
+      if (!res.ok) return [];
+      const data = await res.json() as { data?: Array<{ id?: string }> };
+      if (Array.isArray(data.data)) {
+        return data.data.map((m) => m.id || '').filter((id) => /^(grok)/i.test(id)).sort();
+      }
+    }
+
+    if (norm === 'moonshot') {
+      if (!apiKey) return [];
+      const host = (baseUrl || 'https://api.moonshot.cn/v1').replace(/\/+$/, '');
+      const res = await fetch(`${host}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
+      if (!res.ok) return [];
+      const data = await res.json() as { data?: Array<{ id?: string }> };
+      if (Array.isArray(data.data)) {
+        return data.data.map((m) => m.id || '').filter((id) => /^(kimi|moonshot)/i.test(id)).sort();
+      }
+    }
+
+    if (norm === 'dashscope-byok' || norm === 'qwen') {
+      if (!apiKey) return [];
+      const host = (baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
+      const res = await fetch(`${host}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
+      if (!res.ok) return [];
+      const data = await res.json() as { data?: Array<{ id?: string }> };
+      if (Array.isArray(data.data)) {
+        return data.data.map((m) => m.id || '').filter((id) => /^(qwen)/i.test(id)).sort();
+      }
+    }
+
     if (norm === 'openai-compatible') {
       if (!baseUrl) return [];
       const host = baseUrl.replace(/\/+$/, '');
@@ -1050,11 +1092,39 @@ export interface ModelResolutionResult {
   source: 'live' | 'cache' | 'catalogue';
 }
 
+function resolveEffectiveApiKey(
+  norm: string,
+  config: { apiKey?: string; providerKeys?: Record<string, string> } = {}
+): string {
+  if (config.apiKey) return config.apiKey;
+  const pKeys = config.providerKeys;
+  if (pKeys) {
+    if (pKeys[norm]) return pKeys[norm]!;
+    if (norm === 'qwen' && pKeys['dashscope-byok']) return pKeys['dashscope-byok']!;
+    if (norm === 'dashscope-byok' && pKeys['qwen']) return pKeys['qwen']!;
+  }
+  const envMap: Record<string, string> = {
+    anthropic: 'ANTHROPIC_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    gemini: 'GEMINI_API_KEY',
+    deepseek: 'DEEPSEEK_API_KEY',
+    qwen: 'DASHSCOPE_API_KEY',
+    'dashscope-byok': 'DASHSCOPE_API_KEY',
+    xai: 'XAI_API_KEY',
+    moonshot: 'MOONSHOT_API_KEY'
+  };
+  const envVar = envMap[norm];
+  if (envVar && process.env[envVar]) {
+    return process.env[envVar]!;
+  }
+  return '';
+}
+
 /**
  * Resolve available models using dual-layer architecture:
  * 1. Checks live query if forceRefresh is true.
  * 2. Checks local cache if available and fresh.
- * 3. Falls back to static curated catalogue merged with any cached items.
+ * 3. Falls back to static curated catalogue when unconfigured or offline.
  */
 export async function resolveAvailableModels(
   provider: string,
@@ -1064,30 +1134,36 @@ export async function resolveAvailableModels(
   const norm = normalizeProviderKey(provider);
   const curated = getCuratedModels(norm);
   const localAgent = isLocalOrAcpProvider(norm);
+  const effectiveKey = resolveEffectiveApiKey(norm, config);
+  const queryConfig: { apiKey?: string; baseUrl?: string; providerKeys?: Record<string, string> } = {};
+  if (config.baseUrl) queryConfig.baseUrl = config.baseUrl;
+  if (config.providerKeys) queryConfig.providerKeys = config.providerKeys;
+  const keyToUse = effectiveKey || config.apiKey;
+  if (keyToUse) queryConfig.apiKey = keyToUse;
 
   if (forceRefresh) {
-    const live = await fetchLiveModels(norm, config);
+    const live = await fetchLiveModels(norm, queryConfig);
     if (live.length > 0) {
-      const models = localAgent ? [...new Set(live)] : [...new Set([...live, ...curated])];
-      saveCachedModels(norm, models, { config });
+      const models = [...new Set(live)];
+      saveCachedModels(norm, models, { config: queryConfig });
       return { models, source: 'live' };
     }
   }
 
-  const cached = getCachedModels(norm, config);
+  const cached = getCachedModels(norm, queryConfig);
   if (cached && cached.length > 0) {
-    const models = localAgent ? [...new Set(cached)] : [...new Set([...cached, ...curated])];
+    const models = [...new Set(cached)];
     return { models, source: 'cache' };
   }
 
   // Attempt lazy background discovery if credentials exist. Peer agents and
   // Antigravity are credentialed by their own CLI login, so they qualify even
   // with no apiKey in Causyne's vault.
-  if (config.apiKey || norm === 'ollama' || localAgent) {
-    const live = await fetchLiveModels(norm, config);
+  if (effectiveKey || norm === 'ollama' || localAgent) {
+    const live = await fetchLiveModels(norm, queryConfig);
     if (live.length > 0) {
-      const models = localAgent ? [...new Set(live)] : [...new Set([...live, ...curated])];
-      saveCachedModels(norm, models, { config });
+      const models = [...new Set(live)];
+      saveCachedModels(norm, models, { config: queryConfig });
       return { models, source: 'live' };
     }
   }

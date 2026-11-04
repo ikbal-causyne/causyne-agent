@@ -131,6 +131,9 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
         else
             delete saved.baseUrl;
         store.saveConfig(saved);
+        if (apiKey || provider.id === 'ollama' || isLocalAgent(provider.id)) {
+            void resolveAvailableModels(provider.id, saved, true).catch(() => { });
+        }
         return { provider: provider.id, model };
     }
 }

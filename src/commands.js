@@ -1274,6 +1274,52 @@ export const COMMANDS = [
         return ok(`Refreshed ${providerToRefresh} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
       }
 
+      if (first === 'test') {
+        const targetProvider = argv[1] || config.provider;
+        const targetModel = argv[2] || (targetProvider === config.provider ? config.model : undefined);
+        if (!targetProvider) return fail('No provider specified or configured. Run /setup first.');
+
+        const testConfig = { ...config, provider: targetProvider };
+        if (targetModel) {
+          testConfig.model = targetModel;
+        } else if (targetProvider !== config.provider) {
+          delete testConfig.model;
+        }
+        if (config.providerKeys && config.providerKeys[targetProvider]) {
+          testConfig.apiKey = config.providerKeys[targetProvider];
+        }
+
+        try {
+          const { createProvider } = await import('./providers/factory.js');
+          const providerInstance = createProvider(testConfig);
+          const t0 = performance.now();
+          const response = await providerInstance.chat([
+            { role: 'user', content: 'Respond with exactly: OK' }
+          ], { maxTokens: 16 });
+          const latencyMs = Math.round(performance.now() - t0);
+
+          const outputLines = [
+            `✅ API Call Test Succeeded: "${targetProvider}" / "${providerInstance.model || targetModel || 'default'}"`,
+            '',
+            `  • Round-trip Latency : ${latencyMs} ms`,
+            `  • Response Content   : ${JSON.stringify(response.content || '').slice(0, 80)}`,
+            `  • Tokens Used        : ${response.usage ? `${response.usage.promptTokens} in / ${response.usage.completionTokens} out` : 'unreported'}`,
+            '',
+            'Wire format, credentials, and model endpoint are verified and accurate.'
+          ];
+          return ok(outputLines.join('\n'));
+        } catch (err) {
+          return fail(
+            `❌ API Call Test Failed for "${targetProvider}" / "${targetModel || config.model || 'default'}":\n\n`
+            + `  Error: ${err.message || err}\n\n`
+            + `Checks:\n`
+            + `  - Verify the API key in /setup.\n`
+            + `  - Check if the model is active with "/model list ${targetProvider}".\n`
+            + `  - Ensure the provider endpoint or account has sufficient quota.`
+          );
+        }
+      }
+
       const rawRequested = argv.join(' ').trim().replace(/^\/model\s+/i, '');
 
       // Helper to cleanly activate a provider + model, persist config, update live loop & prompt

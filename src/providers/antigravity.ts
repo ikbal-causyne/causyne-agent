@@ -246,6 +246,29 @@ export function isAntigravityProvider(provider?: string | null): boolean {
   return p === 'antigravity' || p === 'agy' || p.startsWith('antigravity/') || p.startsWith('agy/');
 }
 
+export function isAntigravityModel(input?: string | null): boolean {
+  if (typeof input !== 'string' || !input.trim()) return false;
+  const trimmed = input.trim();
+  if (ANTIGRAVITY_MODEL_IDS[trimmed]) return true;
+  const lower = trimmed.toLowerCase();
+  for (const [key, slug] of Object.entries(ANTIGRAVITY_MODEL_IDS)) {
+    if (key.toLowerCase() === lower || slug.toLowerCase() === lower) return true;
+  }
+  if (
+    trimmed.includes('/') ||
+    trimmed.startsWith('deepseek') ||
+    trimmed.startsWith('qwen') ||
+    trimmed.startsWith('kimi') ||
+    trimmed.startsWith('gpt-4') ||
+    trimmed.startsWith('gpt-5') ||
+    trimmed.startsWith('o1') ||
+    trimmed.startsWith('o3')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function resolveAgyBinary(): string {
   const envPath = process.env.PATH || '';
   const searchDirs = [
@@ -694,7 +717,8 @@ export class AntigravityProvider extends LLMProvider {
 
   constructor(config: ProviderConfig = {}) {
     super(config);
-    this.model = config.model || 'Gemini 3.8 Flash (Low)';
+    const candidate = config.model;
+    this.model = (candidate && isAntigravityModel(candidate)) ? candidate : 'Gemini 3.8 Flash (Low)';
     this.command = config.command || resolveAgyBinary();
     this.printTimeout = typeof config.printTimeout === 'string' && config.printTimeout.trim()
       ? config.printTimeout.trim()
@@ -969,10 +993,12 @@ export class AntigravityProvider extends LLMProvider {
       '--print-timeout',
       launchOnly ? '90s' : this.printTimeout,
       '--model',
-      modelSlug,
-      '--effort',
-      effort
+      modelSlug
     ];
+
+    if (effort && (modelSlug.endsWith(`-${effort}`) || /-(low|medium|high|xhigh|max)$/i.test(modelSlug))) {
+      args.push('--effort', effort);
+    }
 
     if (useConversation && this.currentConversationId) {
       args.push('--conversation', this.currentConversationId);

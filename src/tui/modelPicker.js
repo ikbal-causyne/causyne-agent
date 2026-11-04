@@ -9,7 +9,7 @@ import { paint, bold, dim, GLYPHS } from './theme.js';
 // @ts-expect-error untyped local TUI selectList
 import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
-import { getAvailableProvidersOverview, resolveAvailableProvidersOverview } from '../dynamicCatalogue.js';
+import { getAvailableProvidersOverview, resolveAvailableProvidersOverview, resolveAvailableModels } from '../dynamicCatalogue.js';
 async function showConfiguringAnimation(providerLabel) {
     if (!process.stdout.isTTY)
         return;
@@ -407,6 +407,10 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             config['providerKeys'][target.providerId] = existingKey;
         }
         store.saveConfig(config);
+        // Proactively refresh live models in the background for this active provider
+        if (existingKey || target.providerId === 'ollama') {
+            void resolveAvailableModels(target.providerId, { ...config, apiKey: existingKey }, true).catch(() => { });
+        }
         if (options.loop) {
             options.loop.config = config;
             if (typeof options.loop.updateTierLimits === 'function') {
@@ -442,6 +446,8 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
     config['providerKeys'] = providerKeys;
     config['providerKeys'][target.providerId] = cleanKey;
     store.saveConfig(config);
+    // Proactively refresh live models in the background with the newly saved key
+    void resolveAvailableModels(target.providerId, { ...config, apiKey: cleanKey }, true).catch(() => { });
     if (options.loop) {
         options.loop.config = config;
         if (typeof options.loop.updateTierLimits === 'function') {

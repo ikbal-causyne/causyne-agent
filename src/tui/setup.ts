@@ -126,6 +126,9 @@ export async function runSetup(ui: SetupUI, providers: SetupProvider[], store: {
     const saved: Config = next;
     if (baseUrl) saved.baseUrl = baseUrl; else delete saved.baseUrl;
     store.saveConfig(saved);
+    if (apiKey || provider.id === 'ollama' || isLocalAgent(provider.id)) {
+      void resolveAvailableModels(provider.id, saved, true).catch(() => {});
+    }
     return { provider: provider.id, model };
   }
 }

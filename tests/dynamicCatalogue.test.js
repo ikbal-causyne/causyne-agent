@@ -82,6 +82,11 @@ test('slash command: /model and /models list available models', async () => {
   assert.ok(aliasResult.ok);
   assert.ok(aliasResult.output.includes('Available models for openai'));
   assert.ok(aliasResult.output.includes('gpt-4o'));
+
+  const testCallResult = await runCommand('model', ['test', 'openai', 'gpt-4o'], { surface: 'terminal' });
+  assert.equal(testCallResult.ok, false);
+  assert.ok(testCallResult.output.includes('API Call Test Failed for "openai"'));
+  assert.ok(testCallResult.output.includes('Checks:'));
 });
 
 test('dynamic catalogue: getAvailableProvidersOverview separates BYOK and ACP with live auto-detection', () => {
@@ -207,4 +212,28 @@ test('dynamic catalogue: discoverPeerModels autodetects opencode and claude', as
   const unknown = await discoverPeerModels('non-existent-peer');
   assert.deepEqual(unknown, []);
 });
+
+test('dynamic catalogue: live/cached BYOK models do not retain retired static baseline models', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-byok-test-'));
+  const originalHome = process.env.CAUSYNE_HOME;
+  try {
+    process.env.CAUSYNE_HOME = tempDir;
+    const config = { apiKey: 'dummy-key' };
+    // Simulate live discovery saving only active OpenAI models (where gpt-4o or older were not returned)
+    saveCachedModels('openai', ['gpt-5.6-sol', 'gpt-5.6-luna'], { config });
+
+    const resolved = await resolveAvailableModels('openai', config);
+    assert.equal(resolved.source, 'cache');
+    assert.deepEqual(resolved.models, ['gpt-5.6-sol', 'gpt-5.6-luna']);
+    assert.ok(
+      !resolved.models.includes('gpt-4o'),
+      'Retired baseline models must not pollute live/cached BYOK model list'
+    );
+  } finally {
+    if (originalHome === undefined) delete process.env.CAUSYNE_HOME;
+    else process.env.CAUSYNE_HOME = originalHome;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 

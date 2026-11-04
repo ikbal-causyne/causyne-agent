@@ -13,6 +13,7 @@ import { loadConfig, saveConfig } from '../config.js';
 import {
   getAvailableProvidersOverview,
   resolveAvailableProvidersOverview,
+  resolveAvailableModels,
   type ProviderOverview
 } from '../dynamicCatalogue.js';
 
@@ -511,6 +512,11 @@ export async function runInteractiveModelPicker(
     }
     store.saveConfig(config);
 
+    // Proactively refresh live models in the background for this active provider
+    if (existingKey || target.providerId === 'ollama') {
+      void resolveAvailableModels(target.providerId, { ...config, apiKey: existingKey }, true).catch(() => {});
+    }
+
     if (options.loop) {
       options.loop.config = config;
       if (typeof options.loop.updateTierLimits === 'function') {
@@ -550,6 +556,9 @@ export async function runInteractiveModelPicker(
   config['providerKeys'] = providerKeys;
   config['providerKeys'][target.providerId] = cleanKey;
   store.saveConfig(config);
+
+  // Proactively refresh live models in the background with the newly saved key
+  void resolveAvailableModels(target.providerId, { ...config, apiKey: cleanKey }, true).catch(() => {});
 
   if (options.loop) {
     options.loop.config = config;
