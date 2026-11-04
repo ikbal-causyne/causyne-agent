@@ -1303,7 +1303,8 @@ export class AntigravityProvider extends LLMProvider {
                                         ...(Number.isFinite(stepIndex) ? { id: `agy:${stepIndex}` } : {}),
                                         name,
                                         status,
-                                        ...(detail ? { detail } : {})
+                                        ...(detail ? { detail } : {}),
+                                        ...(rawParams && typeof rawParams === 'object' && Object.keys(rawParams).length > 0 ? { parameters: rawParams } : {})
                                     };
                                     if (status !== 'running') {
                                         const existing = nativeActions.find(a => a.name === action.name && a.detail === action.detail);

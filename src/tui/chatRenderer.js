@@ -25,7 +25,7 @@ import { composerWidth, openingRows, sessionRows } from './layout.js';
 import { sessionComposerWidth } from './sessionSidebar.js';
 import { chatProseWidth, wrappedChatRows } from './textLayout.js';
 import { activityRows } from './activityLayout.js';
-import { cleanToolOutputPreview, normalizeHistoricalToolResult } from './toolOutputNormalizer.js';
+import { cleanToolOutputPreview, normalizeHistoricalToolResult, normalizeHistoricalExternalAction } from './toolOutputNormalizer.js';
 import { formatMarkdownMath } from './markdownMath.js';
 import { renderThinkingFrame } from './thinkingBox.js';
 
@@ -617,9 +617,7 @@ export class ChatRenderer {
         // 2. Restore external / native ACP tool executions
         if (Array.isArray(msg.external_actions) && msg.external_actions.length > 0) {
           for (const ext of msg.external_actions) {
-            const toolName = ext.name || 'tool';
-            const args = ext.parameters || {};
-            const result = ext.detail || (ext.status === 'completed' ? 'Done' : ext.status || '');
+            const { toolName, args, result } = normalizeHistoricalExternalAction(ext);
             this.onStepStart({ tool: toolName, args });
             this.onStepComplete({ tool: toolName, result, elapsed: '' });
           }

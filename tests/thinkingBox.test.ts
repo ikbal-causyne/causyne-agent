@@ -476,7 +476,13 @@ describe('thinkingBox component', () => {
 
     // Step frames for native action
     const stepFrames = transcript.frames.filter(f => f.kind === 'step' || f.kind === 'result');
-    assert.ok(stepFrames.length > 0, 'must restore step frames for native tool action');
+    assert.ok(stepFrames.length >= 2, 'must restore step frames for native tool action');
+    const stepText = stripAnsi(transcript.renderFrame(stepFrames[0], 80).join('\n'));
+    assert.match(stepText, /write/);
+    assert.match(stepText, /novel\.md/);
+    const resultText = stripAnsi(transcript.renderFrame(stepFrames[1], 80).join('\n'));
+    assert.doesNotMatch(resultText, /failed/);
+    assert.match(resultText, /✓|v/);
 
     // Clicking the restored thinking box expands it
     let scheduled = false;

@@ -1,4 +1,33 @@
 import fs from 'node:fs';
+/**
+ * Normalizes an external/native action record for historical transcript restoration,
+ * reconstructing arguments and ensuring verified success/failure status.
+ */
+export function normalizeHistoricalExternalAction(ext) {
+    const toolName = typeof ext?.name === 'string' && ext.name.trim() ? ext.name.trim() : 'tool';
+    const detail = typeof ext?.detail === 'string' ? ext.detail.trim() : '';
+    const status = typeof ext?.status === 'string' ? ext.status.toLowerCase().trim() : '';
+    const isFailed = status === 'failed' || status === 'error';
+    const success = !isFailed;
+    const rawParams = ext?.parameters && typeof ext.parameters === 'object' && !Array.isArray(ext.parameters)
+        ? { ...ext.parameters }
+        : {};
+    const lowerTool = toolName.toLowerCase();
+    const isFileTool = ['read_file', 'write_file', 'edit_file', 'fs_read', 'fs_write', 'fs_edit', 'view_file'].includes(lowerTool);
+    const isCommandTool = ['run_command', 'bash', 'terminal', 'sh', 'zsh', 'sysrun', 'sysrunbg'].includes(lowerTool);
+    const args = {
+        ...rawParams,
+        ...(detail ? { detail } : {}),
+        ...(detail && isFileTool && !rawParams.path && !rawParams.file_path && !rawParams.filePath ? { path: detail } : {}),
+        ...(detail && isCommandTool && !rawParams.command && !rawParams.cmd ? { command: detail } : {})
+    };
+    const result = {
+        success,
+        output: '',
+        ...(isFailed ? { error: typeof ext?.error === 'string' && ext.error ? ext.error : (detail || 'failed') } : {})
+    };
+    return { toolName, args, result };
+}
 const DECAY_MARKER = '[decayed]';
 const SPILL_HEADER_PREFIX = '=== CAUSYNE TOOL OUTPUT';
 /**
