@@ -22,7 +22,7 @@ export interface MessageMarker {
   id: number;
   kind: string;
   row: number;
-  meta?: { messageText?: string; reasoning?: boolean; collapsed?: boolean } | null;
+  meta?: { messageText?: string; reasoning?: boolean; collapsed?: boolean; userInteracted?: boolean } | null;
 }
 
 interface MousePoint { x: number; y: number }
@@ -188,7 +188,7 @@ export function handleMessageMouse(
       const transcript = surface.transcript as unknown as {
         frames?: Array<{
           id: number;
-          meta?: { reasoning?: boolean; collapsed?: boolean } | null;
+          meta?: { reasoning?: boolean; collapsed?: boolean; userInteracted?: boolean } | null;
           rows?: unknown;
           renderedWidth?: number;
         }>;
@@ -200,6 +200,7 @@ export function handleMessageMouse(
       const frame = Array.isArray(frames) ? frames.find(f => f.id === rawMarker.id) : null;
       if (frame && frame.meta && frame.meta.reasoning) {
         frame.meta.collapsed = !frame.meta.collapsed;
+        frame.meta.userInteracted = true;
         frame.rows = null;
         frame.renderedWidth = -1;
         if (transcript) {

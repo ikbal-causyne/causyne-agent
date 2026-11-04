@@ -115,6 +115,7 @@ export function handleMessageMouse(host, loop, event) {
             const frame = Array.isArray(frames) ? frames.find(f => f.id === rawMarker.id) : null;
             if (frame && frame.meta && frame.meta.reasoning) {
                 frame.meta.collapsed = !frame.meta.collapsed;
+                frame.meta.userInteracted = true;
                 frame.rows = null;
                 frame.renderedWidth = -1;
                 if (transcript) {

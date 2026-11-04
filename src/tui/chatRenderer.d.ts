@@ -14,6 +14,7 @@ export class ChatRenderer {
   _activeReasoning?: boolean;
   handle(message: { type: string; [key: string]: unknown }): boolean;
   resetTurn(): void;
+  turnFooter(durationMs?: number): void;
   onAgentReasoning(message: { content?: string; streaming?: boolean; elapsedMs?: number }): void;
   renderReasoning(content: string, options?: { streaming?: boolean; durationText?: string; collapsed?: boolean; startLine?: number }): void;
   scrollThinkingPanel?(key: unknown, surface: unknown): boolean;

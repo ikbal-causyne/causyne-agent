@@ -99,7 +99,36 @@ export class CodeStreamRenderer extends ChatRenderer {
     this.activeCode = null;
     this.modelNote = '';
     this.lastReasoning = '';
+    this.collapseFinishedReasoningFrames();
     super.resetTurn();
+  }
+
+  override turnFooter(durationMs: number): void {
+    this.collapseFinishedReasoningFrames();
+    super.turnFooter(durationMs);
+  }
+
+  /**
+   * Auto-collapses completed thinking box frames when a session turn finishes,
+   * keeping the conversation viewport clean while preserving interactive click-to-expand.
+   */
+  collapseFinishedReasoningFrames(): void {
+    const transcript = this.transcript as unknown as CodeTranscript | null;
+    if (!transcript || !Array.isArray(transcript.frames)) return;
+    let changed = false;
+    for (const frame of transcript.frames) {
+      if (frame?.meta?.reasoning === true && frame.meta.userInteracted !== true && frame.meta.collapsed !== true) {
+        frame.meta.collapsed = true;
+        frame.rows = null;
+        frame.renderedWidth = -1;
+        changed = true;
+      }
+    }
+    if (changed) {
+      transcript.cache = null;
+      transcript.revision++;
+      transcript.changed();
+    }
   }
 
   override handle(message: RendererEvent): boolean {
@@ -135,6 +164,9 @@ export class CodeStreamRenderer extends ChatRenderer {
       }
       this._activeReasoning = false;
       this.lastReasoning = '';
+      if (message?.type === 'task_complete' || (message?.type === 'agent_message' && message.streaming !== true)) {
+        this.collapseFinishedReasoningFrames();
+      }
       if (['step_start', 'task_complete', 'error'].includes(message?.type || '')
         || (message?.type === 'agent_message' && message.streaming !== true)) {
         this.activeCode = null;
