@@ -143,6 +143,16 @@ test('E2E: generated MCP stdio server handles JSON-RPC 2.0 handshake, tools/list
       }
     });
 
+    const waitForResponse = async (id: number, timeoutMs = 3000) => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const found = responses.find(r => r.id === id);
+        if (found) return found;
+        await new Promise(r => setTimeout(r, 20));
+      }
+      return responses.find(r => r.id === id);
+    };
+
     // 1. Initialize
     child.stdin.write(JSON.stringify({
       jsonrpc: '2.0',
@@ -152,8 +162,7 @@ test('E2E: generated MCP stdio server handles JSON-RPC 2.0 handshake, tools/list
     }) + '\n');
 
     // Wait for response 1
-    await new Promise(r => setTimeout(r, 200));
-    const initRes = responses.find(r => r.id === 1);
+    const initRes = await waitForResponse(1);
     assert.ok(initRes, 'received initialize response');
     assert.equal(initRes.result.protocolVersion, '2024-11-05');
     assert.ok(initRes.result.capabilities.tools);
@@ -165,8 +174,7 @@ test('E2E: generated MCP stdio server handles JSON-RPC 2.0 handshake, tools/list
       method: 'tools/list'
     }) + '\n');
 
-    await new Promise(r => setTimeout(r, 200));
-    const listRes = responses.find(r => r.id === 2);
+    const listRes = await waitForResponse(2);
     assert.ok(listRes, 'received tools/list response');
     assert.equal(listRes.result.tools.length, 1);
     assert.equal(listRes.result.tools[0].name, 'get_cpu_load');
@@ -179,8 +187,7 @@ test('E2E: generated MCP stdio server handles JSON-RPC 2.0 handshake, tools/list
       params: { name: 'get_cpu_load', arguments: { intervalMs: 500 } }
     }) + '\n');
 
-    await new Promise(r => setTimeout(r, 200));
-    const callRes = responses.find(r => r.id === 3);
+    const callRes = await waitForResponse(3);
     assert.ok(callRes, 'received tools/call response');
     assert.ok(callRes.result.content);
     assert.equal(callRes.result.content[0].type, 'text');

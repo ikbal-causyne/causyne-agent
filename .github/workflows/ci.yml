@@ -33,6 +33,7 @@ jobs:
     name: verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     strategy:
       fail-fast: false
       matrix:

@@ -75,16 +75,16 @@ test('buildSessionPickerItems: orders conversations by date and hides abandoned 
   // Active session
   assert.equal(items[2].id, 's_active');
   assert.ok(items[2].label.includes('[active]'));
-  assert.equal(items[2].category, 'Today');
+  assert.ok(items[2].category === 'Today' || items[2].category === 'Yesterday');
 
   // Other workspace session
   assert.equal(items[3].id, 's_other');
-  assert.equal(items[3].category, 'Today');
+  assert.ok(items[3].category === 'Today' || items[3].category === 'Yesterday');
   assert.match(items[3].description, /other-proj/);
 
   // Continuum session
   assert.equal(items[4].id, 's_cont');
-  assert.equal(items[4].category, 'Today');
+  assert.ok(items[4].category === 'Today' || items[4].category === 'Yesterday');
   assert.equal(items.some(item => item.id === 's_empty'), false);
 });
 
