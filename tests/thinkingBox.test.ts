@@ -422,8 +422,6 @@ describe('thinkingBox component', () => {
     renderer.onAgentReasoning({ content: 'First thought', streaming: false, elapsedMs: 300 });
     renderer.onAgentReasoning({ content: 'Second thought', streaming: false, elapsedMs: 600 });
     assert.equal(transcript.frames.length, 2);
-    assert.equal(transcript.frames[0]?.meta?.collapsed, true, 'completed reasoning frame must be auto-collapsed');
-    assert.equal(transcript.frames[1]?.meta?.collapsed, true);
 
     // If user previously interacted/expanded a frame, turnFooter still auto-minimizes everything at turn end
     transcript.frames[0]!.meta!.collapsed = false;

@@ -108,13 +108,6 @@ export class CodeStreamRenderer extends ChatRenderer {
     super.turnFooter(durationMs);
   }
 
-  override onAgentReasoning(message: { content?: string; streaming?: boolean; elapsedMs?: number }): void {
-    super.onAgentReasoning(message);
-    if (message?.streaming === false) {
-      this.collapseFinishedReasoningFrames();
-    }
-  }
-
   /**
    * Auto-collapses completed thinking box frames when a session turn finishes,
    * keeping the conversation viewport clean while preserving interactive click-to-expand.
@@ -161,14 +154,12 @@ export class CodeStreamRenderer extends ChatRenderer {
         this.paintCodePanel(this.activeCode);
         if (message.streaming === false) {
           this.lastReasoning = '';
-          this.collapseFinishedReasoningFrames();
         }
         return true;
       }
       const handled = super.handle(message);
       if (message.streaming === false) {
         this.lastReasoning = '';
-        this.collapseFinishedReasoningFrames();
       }
       return handled;
     }
@@ -178,7 +169,9 @@ export class CodeStreamRenderer extends ChatRenderer {
       }
       this._activeReasoning = false;
       this.lastReasoning = '';
-      this.collapseFinishedReasoningFrames(message?.type === 'task_complete');
+      if (message?.type === 'task_complete' || (message?.type === 'agent_message' && message.streaming !== true)) {
+        this.collapseFinishedReasoningFrames(true);
+      }
       if (['step_start', 'task_complete', 'error'].includes(message?.type || '')
         || (message?.type === 'agent_message' && message.streaming !== true)) {
         this.activeCode = null;
@@ -199,7 +192,6 @@ export class CodeStreamRenderer extends ChatRenderer {
       super.onAgentReasoning({ content: this.lastReasoning, streaming: false });
     }
     this.lastReasoning = '';
-    this.collapseFinishedReasoningFrames();
     this.activeCode = event;
     this.paintCodePanel(event);
     if (event.phase === 'done' || event.phase === 'failed') {
