@@ -164,6 +164,22 @@ test('status line: the working line shows the task, the meter shows the window',
   assert.ok(!/99%/.test(idle), 'the footer is pinned at 99% again');
 });
 
+test('status line: reset() preserves contextChars across turns so idle meter stays visible', () => {
+  const status = new StatusLine();
+  status.setSession({ model: 'test-model', cwd: '/tmp', contextLimit: CHAR_POOLS.default });
+  status.onUsage({
+    taskTokens: 500,
+    contextChars: 30000,
+    contextLimitChars: CHAR_POOLS.default
+  });
+  assert.equal(status.turnTokens, 500);
+  assert.match(status.renderIdle({ width: 100 }), /\(25%\)/);
+
+  status.reset();
+  assert.equal(status.turnTokens, 0);
+  assert.match(status.renderIdle({ width: 100 }), /\(25%\)/, 'idle meter must remain visible between turns');
+});
+
 test('media playbook: a failed `which` is not proof a tool is missing', () => {
   // The Blender mandate cured one symptom. The agent then hand-wrote an encode
   // script, ran `which ffmpeg || ls /opt/homebrew/bin/ffmpeg`, took the failure

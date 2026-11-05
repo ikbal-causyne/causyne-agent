@@ -56,11 +56,9 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
   styled(bold('Context'));
   const limit = Number.isFinite(facts.contextLimit) ? Number(facts.contextLimit) : 0;
   const used = Number.isFinite(facts.contextChars) ? Number(facts.contextChars) : 0;
-  if (limit > 0) {
+  if (limit > 0 && used > 0) {
     const rawPercent = (used / limit) * 100;
-    const percent = used > 0
-      ? Math.max(1, Math.min(100, Math.round(rawPercent)))
-      : 0;
+    const percent = Math.max(1, Math.min(100, Math.round(rawPercent)));
     styled(dim(`${percent}% of available window`));
   } else {
     styled(dim('No context measurement yet'));

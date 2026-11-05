@@ -28,6 +28,7 @@ import { activityRows } from './activityLayout.js';
 import { cleanToolOutputPreview, normalizeHistoricalToolResult, normalizeHistoricalExternalAction } from './toolOutputNormalizer.js';
 import { formatMarkdownMath } from './markdownMath.js';
 import { renderThinkingFrame } from './thinkingBox.js';
+import { measureMessages, resolveCharPool } from '../contextManager.js';
 
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
@@ -566,6 +567,11 @@ export class ChatRenderer {
     if (info.messagesCount === undefined || info.messagesCount === null) {
       info.messagesCount = messages.filter(m => m && m.role !== 'system').length;
     }
+    const measuredChars = measureMessages(messages);
+    if (measuredChars > 0) {
+      this.status.contextChars = measuredChars;
+      info.contextChars = measuredChars;
+    }
 
     if (info.title || info.id) {
       this.renderSessionDivider(info);
@@ -702,6 +708,21 @@ export class ChatRenderer {
           });
         }
       }
+    }
+
+    const finalMeasured = measureMessages(messages);
+    if (finalMeasured > 0) {
+      this.status.contextChars = finalMeasured;
+    }
+    if (!this.status.contextLimit) {
+      this.status.contextLimit = resolveCharPool(this.status.tier);
+    }
+    if (sessionInfo) {
+      this.status.setSession({
+        ...sessionInfo,
+        contextChars: this.status.contextChars || finalMeasured,
+        contextLimit: sessionInfo.contextLimit || this.status.contextLimit
+      });
     }
 
     if (this.transcript?.surface?.viewport) {

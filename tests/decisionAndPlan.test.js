@@ -44,6 +44,17 @@ describe('durable decision policy', () => {
     assert.equal(isMutatingToolCall('sysRun', { command: 'git status --short' }), false);
   });
 
+  test('treats test runners and syntax checks as non-mutating verification', () => {
+    assert.equal(isMutatingToolCall('sysRun', { command: 'node /workspace/proposal/kartu-hafalan-juz-30/test_suite.js' }), false);
+    assert.equal(isMutatingToolCall('sysRun', { command: `node -e 'const test = require("node:test"); const assert = require("node:assert");'` }), false);
+    assert.equal(isMutatingToolCall('sysRun', { command: 'node --check /workspace/data.js && node --check /workspace/index.html' }), false);
+    assert.equal(isMutatingToolCall('run_command', { command: 'npm run test' }), false);
+    assert.equal(isMutatingToolCall('sysRun', { command: 'pytest tests/unit' }), false);
+    assert.equal(isMutatingToolCall('sysRun', { command: 'python3 -m unittest discover' }), false);
+    assert.equal(isMutatingToolCall('sysRun', { command: 'rm -rf /workspace/temp' }), true);
+    assert.equal(isMutatingToolCall('run_command', { command: 'npm install express' }), true);
+  });
+
   test('Mode C cannot bypass unresolved architecture or plan checkpoints', () => {
     const loop = {
       config: { autonomyMode: 'C' },

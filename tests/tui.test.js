@@ -211,6 +211,15 @@ describe('tool rows say what the tool is doing', () => {
     assert.equal(detail, '/tmp/thing', 'a new tool must never render blank or broken');
   });
 
+  test('external ACP and peer tools map to identical curated verbs and details', () => {
+    assert.equal(describeTool('run_command', { command: 'node test.js' }).verb, 'run');
+    assert.equal(describeTool('run_command', { command: 'node test.js' }).detail, 'node test.js');
+    assert.equal(describeTool('write_file', { path: '/tmp/test.js' }).verb, 'write');
+    assert.equal(describeTool('read_file', { path: '/tmp/test.js' }).verb, 'read');
+    assert.equal(describeTool('edit_file', { path: '/tmp/test.js', edits: [1, 2] }).verb, 'edit');
+    assert.equal(describeTool('verify', { path: '/tmp/test.js' }).verb, 'verify');
+  });
+
   test('malformed arguments never throw', () => {
     assert.doesNotThrow(() => describeTool('fs_write', null));
     assert.doesNotThrow(() => describeTool(undefined, undefined));

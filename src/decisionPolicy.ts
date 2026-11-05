@@ -52,8 +52,76 @@ const MUTATING_TOOLS = new Set([
   'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move', 'sysRun', 'sysRunBg',
   'gitOp', 'manage_local_dependencies', 'plugin_manage', 'tool_forge', 'plugins_factory', 'create_skill',
   'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content',
-  'write', 'edit', 'multiedit', 'bash', 'terminal', 'execute'
+  'write', 'edit', 'multiedit', 'bash', 'terminal', 'execute', 'run_command'
 ]);
+
+function splitCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escape = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (escape) {
+      current += ch;
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      current += ch;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if (ch === ';') {
+        if (current.trim()) segments.push(current.trim());
+        current = '';
+        continue;
+      }
+      if (ch === '&' && command[i + 1] === '&') {
+        if (current.trim()) segments.push(current.trim());
+        current = '';
+        i++;
+        continue;
+      }
+      if (ch === '|' && command[i + 1] === '|') {
+        if (current.trim()) segments.push(current.trim());
+        current = '';
+        i++;
+        continue;
+      }
+    }
+    current += ch;
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
+}
+
+const READ_ONLY_CMD_REGEX = /^\s*(?:(?:pwd|ls|find|rg|grep|cat|sed|awk|head|tail|wc|diff|file|stat|which|whereis|type|du|df|pdfinfo|pdftotext|identify|mediainfo|ffprobe|otool|readelf|nm|ps|lsof|top|uptime|whoami|id|uname|env|printenv|echo|printf|pytest)\b|git\s+(?:status|diff|log|show|branch|tag|remote|rev-parse|describe)\b|npm\s+(?:view|audit|test|ls|list|explain|run\s+(?:test|check|lint|typecheck|verify))\b|pnpm\s+(?:test|view|audit|ls|list|run\s+(?:test|check|lint|typecheck|verify))\b|yarn\s+(?:test|audit|list|run\s+(?:test|check|lint|typecheck|verify))\b|bun\s+(?:test|pm)\b|npx\s+(?:jest|vitest|mocha|ava|playwright\s+test|cypress\s+run|tsc\s+--noEmit)\b|tsc\s+--noEmit\b|node\s+(?:--check|--test|-e\b|--eval\b|-p\b|--print\b|.*?(?:test|spec|verify|check))|(?:python3?|py)\s+(?:-m\s+(?:unittest|pytest|doctest|py_compile)|-c\b|.*?(?:test|spec|verify))|cargo\s+(?:test|check)\b|go\s+test\b|curl\s+(?:-I|-sI|-s\b|--head)\b)/i;
+
+export function isReadOnlyShellCommand(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) return true;
+  const segments = splitCommandSegments(trimmed);
+  return segments.length > 0 && segments.every(seg => {
+    const s = seg.trim();
+    if (!s) return true;
+    const stripped = s.replace(/^(?:[a-zA-Z_][a-zA-Z0-9_]*=[^\s]+\s+)+/, '');
+    return READ_ONLY_CMD_REGEX.test(stripped);
+  });
+}
 
 function containsAny(text: string, terms: readonly string[]): boolean {
   return terms.some(term => text.includes(term));
@@ -107,9 +175,9 @@ export function isMutatingToolCall(toolName: string, args: Record<string, unknow
   }
   if (toolName === 'native_engine') return !['status', 'catalog', 'describe', 'inspect', 'probe'].includes(String(args.action ?? ''));
   if (MUTATING_TOOLS.has(toolName)) {
-    if (['sysRun', 'sysRunBg', 'bash', 'terminal', 'execute', 'sh', 'zsh'].includes(toolName)) {
+    if (['sysRun', 'sysRunBg', 'bash', 'terminal', 'execute', 'sh', 'zsh', 'run_command'].includes(toolName)) {
       const command = String(args.command ?? args.cmd ?? '');
-      return !/^\s*(?:pwd|ls|find|rg|grep|cat|sed|head|tail|git\s+(?:status|diff|log|show)|npm\s+(?:view|audit|test)|node\s+--check)\b/i.test(command);
+      return !isReadOnlyShellCommand(command);
     }
     if (toolName === 'gitOp') {
       const action = String(args.action ?? args.command ?? args.operation ?? '');

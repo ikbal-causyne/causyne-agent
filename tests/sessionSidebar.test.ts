@@ -33,6 +33,10 @@ test('the sidebar appears only when its conversation column can remain readable'
   assert.equal(rows.length, 30);
   assert.ok(rows.every(row => visibleWidth(row) === 42));
   assert.match(stripAnsi(rows.join('\n')), /25% of available window/);
+
+  const unmeasured = sessionSidebarRows({ title: 'Work', cwd: '/tmp/work', contextChars: 0, contextLimit: 1000 }, 30);
+  assert.match(stripAnsi(unmeasured.join('\n')), /No context measurement yet/);
+  assert.ok(!stripAnsi(unmeasured.join('\n')).includes('0% of available window'));
 });
 
 test('wide Home becomes a full-height two-column session', () => {
