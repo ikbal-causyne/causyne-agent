@@ -250,10 +250,9 @@ export const GLYPHS = HAS_UNICODE
       arrow: '▸', check: '✓', cross: '✕', dot: '·', bullet: '•',
       spinner: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
       hLine: '─', vLine: '│', corner: '└', tee: '├', ellipsis: '…',
-      // The left accent bar of a block. A half-width bar sits INSIDE its column
-      // rather than filling it, so it reads as an edge instead of as a wall —
-      // the same weight opencode's border={["left"]} carries.
-      bar: '▌', step: '▪',
+      // The left accent bar of a block. Uses box-drawing heavy vertical ('┃')
+      // so it joins seamlessly from row to row without font line-height leading gaps.
+      bar: '┃', step: '▪',
       // The permission marker. opencode shows a warning triangle and NO risk
       // word — the level is internal plumbing, and printing 'DANGEROUS' at
       // someone just makes them numb to it. Colour still carries the tier.

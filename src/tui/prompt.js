@@ -667,9 +667,9 @@ export class ChatPrompt {
     if (this.surface?.homeInfo) this.surface.leaveHome();
     if (this.renderer?.renderUserMessage) this.renderer.renderUserMessage(text);
     else this.commit('user', (width) => {
-      const blockWidth = Math.max(8, width - 1);
+      const blockWidth = Math.max(8, width);
       return barBlock(
-        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.bar) - GUTTER)),
+        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER)),
         { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
       );
     });
@@ -1389,7 +1389,7 @@ export class ChatPrompt {
       role: this.busy ? 'accent' : 'user',
       filled: true,
       surface: 'surface',
-      punctuate: true
+      punctuate: false
     });
 
     const planRows = this.planRows(width);
@@ -1414,8 +1414,11 @@ export class ChatPrompt {
     if (this.pickerLayout) this.pickerLayout.totalPromptRows = all.length;
 
     // Park the cursor where the user is typing, not at the end of the picker.
+    const availableWidth = this.surface?.composeAvailableWidth
+      ? this.surface.composeAvailableWidth()
+      : sessionMainWidth(this.surface?.width || terminalWidth());
     const positioned = this.surface
-      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, sessionMainWidth(this.surface.width)))
+      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
       : { rows: all, inset: 0 };
     this.present(positioned.rows, planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
   }

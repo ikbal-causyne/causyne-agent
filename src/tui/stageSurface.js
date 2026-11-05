@@ -199,11 +199,25 @@ export class StageSurface {
     return this.stage.width();
   }
 
+  composeAvailableWidth() {
+    if (this.homeInfo) return this.width;
+    const mainWidth = sessionMainWidth(this.width);
+    const rail = this.railEnabled(mainWidth);
+    const hasTurns = Boolean(this.transcript && collectSessionTurns(this.transcript, mainWidth).length > 0);
+    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
+    return rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
+  }
+
   /** Home is compact; a session uses its full conversation column. */
   composeWidth() {
-    return this.homeInfo
-      ? composerWidth(this.width)
-      : sessionComposerWidth(sessionMainWidth(this.width));
+    if (this.homeInfo) return composerWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width);
+    const rail = this.railEnabled(mainWidth);
+    const hasTurns = Boolean(this.transcript && collectSessionTurns(this.transcript, mainWidth).length > 0);
+    if (!hasTurns) return sessionComposerWidth(mainWidth);
+    const turnRailBudget = rail ? 3 : 0;
+    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
+    return sessionComposerWidth(contentWidth);
   }
 
   /** Keep Home distinct from a selected or newly started conversation. */
@@ -401,6 +415,13 @@ export class StageSurface {
 
     let block = promptRows;
     let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
+    let caretCol = caret ? caret.col : 0;
+
+    if (turnRailBudget > 0) {
+      const railGutter = ' '.repeat(turnRailBudget);
+      block = block.map(row => (row ? railGutter + row : row));
+      caretCol += turnRailBudget;
+    }
 
     // Grow the band to what there is to show, before deciding anything else.
     //
@@ -485,7 +506,7 @@ export class StageSurface {
     const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
     return this.stage.paint(painted, {
       row: rows.length + caretRow,
-      col: caret ? caret.col : 0
+      col: caretCol
     });
   }
 

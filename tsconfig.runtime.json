@@ -212,7 +212,8 @@
     "src/tui/text.ts",
     "src/tui/overlay.ts",
     "src/tui/markdownMath.ts",
-    "src/tui/thinkingBox.ts"
+    "src/tui/thinkingBox.ts",
+    "src/tui/block.ts"
   ],
   "exclude": [
     "node_modules",
