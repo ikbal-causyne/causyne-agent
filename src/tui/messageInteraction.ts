@@ -309,7 +309,7 @@ export function markHoveredMessage(
     if (row < padding || row >= rows.length) continue;
     const existingRow = rows[row] ?? '';
     const plainTrimmed = stripAnsi(existingRow).trimStart();
-    const alreadyHasMarker = plainTrimmed.startsWith('▸') || plainTrimmed.startsWith('│');
+    const alreadyHasMarker = /^[▸│┃|▌┌└├╭╰▪●•]/.test(plainTrimmed);
     const content = transcriptRow === firstContentRow && !alreadyHasMarker
       ? `${paint('accent', '▸')} ${truncate(existingRow, Math.max(0, contentWidth - 2), '')}`
       : existingRow;

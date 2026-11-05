@@ -146,7 +146,7 @@ export class Stage {
   reserve(rows = this.maxHeight) {
     if (this.reserved || this.maxHeight < 1) return false;
     const claim = Math.max(1, Math.min(Math.floor(rows), this.maxHeight));
-    this.write('\n'.repeat(claim));
+    this.write('\n'.repeat(claim) + '\x1b[6 q');
     this.stats.claimed += claim;
     this.reserved = true;
     this.height = claim;
@@ -267,7 +267,7 @@ export class Stage {
     if (!this.reserved) return;
     this.write(SYNC_ON);
     this.moveTo(0);
-    this.write('\r' + ERASE_BELOW + SHOW_CURSOR + SYNC_OFF);
+    this.write('\r' + ERASE_BELOW + SHOW_CURSOR + '\x1b[0 q' + SYNC_OFF);
     this.reserved = false;
     this.cursor = 0;
     this.prev = [];

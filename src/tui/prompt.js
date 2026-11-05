@@ -1358,8 +1358,8 @@ export class ChatPrompt {
     let body = window.slice();
 
     if (this.editor.isEmpty && !this.completion) {
-      const idle = fitHints([`try "${this.example}"`, '/ commands', '@ files'], inner, 'ask anything');
-      body = [dim(this.busy ? 'type to queue a message…' : idle)];
+      const idle = fitHints([`try "${this.example}"`, '/ commands', '@ files'], Math.max(8, inner - 1), 'ask anything');
+      body = [dim(this.busy ? ' type to queue a message…' : ` ${idle}`)];
     }
 
     // The model line lives INSIDE the box, as its last row — except while a
