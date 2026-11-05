@@ -62,4 +62,49 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
       surface.close();
     }
   });
+
+  test('Transcript rows and prompt box bars align at exact column 2 when turns exist', () => {
+    const out = createSink(120, 35);
+    const surface = new StageSurface({ out, env: { CAUSYNE_RAIL: '1', CAUSYNE_SIDEBAR: '0' } });
+    surface.open();
+
+    try {
+      const renderer = new ChatRenderer({ out, transcript: surface.transcript });
+      const prompt = new ChatPrompt({ out, surface, renderer });
+      prompt.active = true;
+
+      // Add user turn
+      renderer.renderUserMessage('Hello from user turn');
+
+      prompt.draw();
+      const band = surface.stage.prev;
+      assert.ok(band.length > 0, 'Stage has painted rows');
+
+      // Find transcript row with message text
+      const transcriptRow = band.find((r: string) => stripAnsi(r).includes('Hello from user turn'));
+      assert.ok(transcriptRow, 'Transcript row exists in painted band');
+      const plainTranscript = stripAnsi(transcriptRow);
+      const transcriptBarCol = plainTranscript.search(/[┃|]/);
+      assert.equal(transcriptBarCol, 2, `Transcript accent bar should be at column 2, got ${transcriptBarCol}`);
+
+      // Check turn dot in column 1 on preceding or current turn row
+      const dotRow = band.find((r: string) => stripAnsi(r).includes('●') || stripAnsi(r).includes('•'));
+      assert.ok(dotRow, 'Turn dot should be present in painted band');
+      const plainDot = stripAnsi(dotRow);
+      const dotCol = plainDot.search(/[●•]/);
+      assert.equal(dotCol, 1, `Turn dot should sit in column 1 of left margin, got ${dotCol}`);
+
+      // Find prompt box row with accent bar
+      const promptRow = band.find((r: string) => stripAnsi(r).includes('try "') || stripAnsi(r).includes('type to queue'));
+      assert.ok(promptRow, 'Prompt row exists in painted band');
+      const plainPrompt = stripAnsi(promptRow);
+      const promptBarCol = plainPrompt.search(/[┃|]/);
+      assert.equal(promptBarCol, 2, `Prompt accent bar should be at column 2, got ${promptBarCol}`);
+
+      // Both must match exactly at column 2
+      assert.equal(transcriptBarCol, promptBarCol, 'Transcript and prompt bars must align at identical column');
+    } finally {
+      surface.close();
+    }
+  });
 });

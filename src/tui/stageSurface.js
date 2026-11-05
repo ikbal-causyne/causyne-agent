@@ -400,9 +400,7 @@ export class StageSurface {
     const sidebar = sidebarVisible(width);
     const mainWidth = sessionMainWidth(width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = hasSessionTurns(this.transcript);
-    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
-    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
+    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
 
     let block = promptRows;
     let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
@@ -665,12 +663,22 @@ export class StageSurface {
     const rail = this.buildRail(rows.length, contentWidth);
     for (let i = 0; i < rows.length; i++) {
       const rightCell = rail[i] || ' ';
+      let row = rows[i] || '';
       if (hasTurns && railResult) {
         const leftCell = railResult.cells[i] || ' ';
-        rows[i] = ` ${leftCell} ${padEnd(rows[i], contentWidth)} ${rightCell}`;
-      } else {
-        rows[i] = `${padEnd(rows[i], contentWidth)} ${rightCell}`;
+        if (leftCell !== ' ') {
+          if (row.startsWith('  ')) {
+            row = ` ${leftCell}${row.slice(2)}`;
+          } else if (row.startsWith(' ')) {
+            row = ` ${leftCell}${row.slice(1)}`;
+          } else if (row.length === 0) {
+            row = ` ${leftCell}`;
+          } else {
+            row = ` ${leftCell} ${row}`;
+          }
+        }
       }
+      rows[i] = `${padEnd(row, contentWidth)} ${rightCell}`;
     }
     return rows;
   }
