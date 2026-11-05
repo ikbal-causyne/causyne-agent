@@ -92,12 +92,12 @@ export function renderCollapsedThinkingBadge(
 
   if (isStreaming) {
     const timePart = durationText ? ` · ${durationText}` : '';
-    return `  ${paint('warn', arrow)} ${bold(paint('warn', activeLabel))}${dim(timePart)} ${dim('· click to expand')}`;
+    return `${paint('warn', arrow)} ${bold(paint('warn', activeLabel))}${dim(timePart)} ${dim('· click to expand')}`;
   }
 
   const timePart = durationText ? ` for ${durationText}` : '';
   const lineWord = totalLines === 1 ? 'line' : 'lines';
-  return `  ${paint('muted', arrow)} ${dim(`${completedLabel}${timePart}`)} ${dim(`(${totalLines} ${lineWord})`)} ${dim('· click to expand')}`;
+  return `${paint('muted', arrow)} ${dim(`${completedLabel}${timePart}`)} ${dim(`(${totalLines} ${lineWord})`)} ${dim('· click to expand')}`;
 }
 
 /**

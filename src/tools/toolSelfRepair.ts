@@ -570,6 +570,16 @@ export function resolveParameterAliases(
         return normalizedItem;
       });
     }
+  } else if (canonicalName === 'memory_write') {
+    if (!modified.fact && modified.creativePattern && typeof modified.creativePattern === 'object') {
+      const cp = modified.creativePattern as Record<string, unknown>;
+      const project = cp.project || 'project';
+      const approach = cp.designApproach ? ` ${cp.designApproach}` : '';
+      const palette = cp.colorPalette ? ` with ${cp.colorPalette}` : '';
+      const fonts = cp.fonts ? ` (${cp.fonts})` : '';
+      modified.fact = `Creative pattern for ${project}:${approach}${palette}${fonts}`.trim();
+      repairs.push("Synthesized required fact from creativePattern for 'memory_write'");
+    }
   } else if (canonicalName === 'native_engine') {
     if (Array.isArray(modified.steps)) {
       modified.steps = (modified.steps as Record<string, unknown>[]).map((item) => {

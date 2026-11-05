@@ -43,7 +43,7 @@ export const memoryWrite = {
           }
         }
       },
-      required: ['fact']
+      required: []
     }
   },
 
@@ -51,8 +51,17 @@ export const memoryWrite = {
     args: MemoryWriteArgs | null | undefined,
     dependencies?: MemoryWriteDependencies
   ): Promise<{ success: boolean; output?: string; error?: string }> => {
-    if (!args || !args.fact) {
-      return { success: false, error: "Missing 'fact' parameter." };
+    if (!args || (!args.fact && !args.creativePattern)) {
+      return { success: false, error: "Missing 'fact' or 'creativePattern' parameter." };
+    }
+
+    if (!args.fact && args.creativePattern) {
+      const cp = args.creativePattern;
+      const project = cp.project || 'project';
+      const approach = cp.designApproach ? ` ${cp.designApproach}` : '';
+      const palette = cp.colorPalette ? ` with ${cp.colorPalette}` : '';
+      const fonts = cp.fonts ? ` (${cp.fonts})` : '';
+      args.fact = `Creative pattern for ${project}:${approach}${palette}${fonts}`.trim();
     }
 
     try {

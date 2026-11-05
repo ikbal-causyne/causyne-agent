@@ -203,8 +203,7 @@ export class StageSurface {
     if (this.homeInfo) return this.width;
     const mainWidth = sessionMainWidth(this.width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = hasSessionTurns(this.transcript);
-    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
+    const turnRailBudget = rail ? 3 : 0;
     return rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
   }
 
@@ -213,8 +212,6 @@ export class StageSurface {
     if (this.homeInfo) return composerWidth(this.width);
     const mainWidth = sessionMainWidth(this.width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = hasSessionTurns(this.transcript);
-    if (!hasTurns) return sessionComposerWidth(mainWidth);
     const turnRailBudget = rail ? 3 : 0;
     const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
     return sessionComposerWidth(contentWidth);
@@ -410,7 +407,7 @@ export class StageSurface {
     const mainWidth = sessionMainWidth(width);
     const rail = this.railEnabled(mainWidth);
     const hasTurns = hasSessionTurns(this.transcript);
-    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
+    const turnRailBudget = rail ? 3 : 0;
     const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
 
     let block = promptRows;
@@ -680,9 +677,11 @@ export class StageSurface {
     const rail = this.buildRail(rows.length, contentWidth);
     for (let i = 0; i < rows.length; i++) {
       const rightCell = rail[i] || ' ';
-      if (hasTurns) {
-        const leftCell = railResult?.cells[i] || ' ';
+      if (hasTurns && railResult) {
+        const leftCell = railResult.cells[i] || ' ';
         rows[i] = ` ${leftCell} ${padEnd(rows[i], contentWidth)} ${rightCell}`;
+      } else if (rail) {
+        rows[i] = `   ${padEnd(rows[i], contentWidth)} ${rightCell}`;
       } else {
         rows[i] = `${padEnd(rows[i], contentWidth)} ${rightCell}`;
       }

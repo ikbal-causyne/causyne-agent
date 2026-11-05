@@ -378,5 +378,20 @@ describe('Universal Tool Self-Repair & Healing Buffer (toolsSelfRepair)', () => 
     assert.equal(res.args.path, '/workspace/main.go');
     assert.equal(res.args.port, 8080);
   });
+
+  test('Structural healing: synthesizes required fact from creativePattern for memory_write', () => {
+    const rawArgs = {
+      creativePattern: {
+        project: 'aethel-biotech-2184',
+        designApproach: 'Speculative Bio-Brutalist',
+        colorPalette: 'Deep Obsidian Abyss (#04070A), Bioluminescent Mint (#00F2A5)',
+        fonts: 'Orbitron, Syne'
+      }
+    };
+    const res = resolveParameterAliases('memory_write', rawArgs);
+    assert.equal(res.repaired, true);
+    assert.ok(typeof res.args.fact === 'string');
+    assert.match(res.args.fact as string, /Creative pattern for aethel-biotech-2184: Speculative Bio-Brutalist/);
+  });
 });
 

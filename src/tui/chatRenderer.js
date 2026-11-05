@@ -350,7 +350,7 @@ export class ChatRenderer {
 
   /** Prose follows the current conversation column with a small text inset. */
   measure() {
-    return chatProseWidth(this.width());
+    return this.transcript ? sessionComposerWidth(this.width()) : chatProseWidth(this.width());
   }
 
   // -------------------------------------------------------------------------
