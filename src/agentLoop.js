@@ -851,7 +851,7 @@ export class AgentLoop {
         catch (e) { }
         // Anti-Slop: Creative Pattern Memory (prevents repeating the same design approach)
         let antiRepeatDirective = '';
-        if (this.currentTaskPrompt && isWebIntent(this.currentTaskPrompt)) {
+        if (cortexEnabled && this.currentTaskPrompt && isWebIntent(this.currentTaskPrompt)) {
             try {
                 const recentPatterns = await cortexDb.getRecentCreativePatterns(5);
                 if (recentPatterns.length > 0) {
@@ -1963,17 +1963,18 @@ export class AgentLoop {
                             limitChars: MAX_CHAR_POOL
                         });
                         this.notice(`Context compacted: ${removed} earlier messages condensed into a reviewable summary.`);
-                        // V5 Cortex tiered condensation. Tier 1 (structural, free) always
-                        // runs so the Digital Brain keeps learning on every provider. Tier 2
-                        // (semantic, billed) is capped per task and fully tracked.
-                        condenseAndSave(dropped, this.utilityProvider(), this.tokenTracker, {
-                            enableLlmPass: this.config.enableCortexCondenser !== false,
-                            maxLlmPasses: this.config.maxCortexCondenserPasses ?? 3,
-                            passesUsed: this._cortexPassesUsed
-                        }).then((outcome) => {
-                            if (outcome.semantic)
-                                this._cortexPassesUsed++;
-                        }).catch(() => { });
+                        // V5 Cortex tiered condensation. Gated behind opt-in config so Cortex
+                        // never runs or touches storage unless explicitly enabled.
+                        if (this.config?.cortex?.enabled) {
+                            condenseAndSave(dropped, this.utilityProvider(), this.tokenTracker, {
+                                enableLlmPass: this.config.enableCortexCondenser !== false,
+                                maxLlmPasses: this.config.maxCortexCondenserPasses ?? 3,
+                                passesUsed: this._cortexPassesUsed
+                            }).then((outcome) => {
+                                if (outcome.semantic)
+                                    this._cortexPassesUsed++;
+                            }).catch(() => { });
+                        }
                     }
                 }
                 // Resolve the active toolset before assembling the prompt: the task
@@ -3563,8 +3564,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             const fatalMsg = `FATAL ERROR: Infinite Token Drain Detected. Agent repeatedly attempted blocked/forbidden actions 4 times in a row. Forcibly aborting task to save tokens.`;
                             this.emitEvent({ type: 'step_error', tool: functionName, error: fatalMsg, toolCallId: toolCall.id });
                             auditLog.log({ event: 'task_killed_circuit_breaker', taskId: this.taskId, reason: fatalMsg });
-                            // Save memory of failure for RLTF
-                            cortexDb.saveMemory(this.currentTaskPrompt || 'Unknown task', 'Agent stubbornly repeated blocked actions causing an infinite loop.', `Do NOT repeat ${functionName} with these exact arguments, as it is permanently blocked by Sandbox. Ensure you respect ALLOWED WORKSPACE PATHS.`).catch(() => { });
+                            // Save memory of failure for RLTF only when Cortex is explicitly enabled
+                            if (this.config?.cortex?.enabled) {
+                                cortexDb.saveMemory(this.currentTaskPrompt || 'Unknown task', 'Agent stubbornly repeated blocked actions causing an infinite loop.', `Do NOT repeat ${functionName} with these exact arguments, as it is permanently blocked by Sandbox. Ensure you respect ALLOWED WORKSPACE PATHS.`, this.workspaceRoot).catch(() => { });
+                            }
                             this.abort();
                             break;
                         }

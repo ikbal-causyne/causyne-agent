@@ -445,7 +445,7 @@ export const COMMANDS = [
     name: 'cortex',
     aliases: ['brain'],
     scope: 'local',
-    usage: '/cortex [on | off | toggle | status | list | forget <id> | forget-here]',
+    usage: '/cortex [on | off | toggle | status | list | forget <id> | forget-here | purge]',
     description: 'Inspect, toggle, or manage the persistent memory and digital brain',
     dialogTitle: 'Cortex',
     // A memory store you cannot read is not a memory, it is a black box that
@@ -477,6 +477,20 @@ export const COMMANDS = [
           config.cortex = { ...(config.cortex || {}), enabled: nextState };
           saveConfig(config);
           return ok(`Cortex memory prompt injection is now ${nextState ? 'ENABLED' : 'DISABLED'}.`);
+        }
+
+        if (verb === 'purge' || verb === 'delete' || verb === 'clear-all') {
+          const fs = await import('node:fs');
+          const path = await import('node:path');
+          const { causyneHome } = await import('./utils/paths.js');
+          const dbFile = path.join(causyneHome(), 'cortex.db');
+          try {
+            if (cortexDb.db?.close) cortexDb.db.close();
+            cortexDb.db = null;
+            cortexDb.isInitialized = false;
+            if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
+          } catch (_) {}
+          return ok('Cortex database completely wiped and deleted from disk.');
         }
 
         if (verb === 'forget' && args[1]) {
