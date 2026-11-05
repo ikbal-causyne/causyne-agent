@@ -502,12 +502,9 @@ export class ChatRenderer {
     if (!text.trim()) return;
 
     this.frame('user', () => {
-      const surfaceComposeW = this.transcript?.surface?.composeWidth
-        ? this.transcript.surface.composeWidth()
-        : null;
-      const width = surfaceComposeW ?? (this.transcript
+      const width = this.transcript
         ? sessionComposerWidth(this.width())
-        : composerWidth(this.measure()));
+        : composerWidth(this.measure());
       const blockWidth = Math.max(8, width);
       const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - 1);
       const rows = barBlock(

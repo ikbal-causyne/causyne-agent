@@ -93,4 +93,37 @@ test('user message box and chatbox have symmetrical width and alignment', async 
   assert.ok(visibleWidth(producedRows[0]!) <= availableW);
 });
 
+test('session transition and /new runs synchronously without re-entrant freeze', async () => {
+  const { StageSurface } = await import('../src/tui/stageSurface.js');
+  const { hasSessionTurns } = await import('../src/tui/turnRail.js');
+  const out = { columns: 155, rows: 40, isTTY: true, write: () => true, on() {}, removeListener() {} };
+  const surface = new StageSurface({ out, env: { CAUSYNE_SIDEBAR: '1' } });
+  surface.enterHome({ cwd: process.cwd(), provider: 'antigravity', model: 'gemini' });
+
+  assert.equal(hasSessionTurns(surface.transcript), false);
+
+  const renderer = new ChatRenderer({ out, transcript: surface.transcript });
+  const t0 = performance.now();
+
+  // Simulate /new / session selection with multiple historical messages
+  renderer.renderSessionHistory([
+    { role: 'user', content: 'Turn 1 user request' },
+    { role: 'assistant', content: 'Turn 1 assistant answer', reasoning_content: 'Thinking step' },
+    { role: 'user', content: 'Turn 2 user request' },
+    { role: 'assistant', content: 'Turn 2 assistant answer' }
+  ], { id: 'test_session_id', title: 'Test Session', messagesCount: 4 });
+
+  const elapsedMs = performance.now() - t0;
+  assert.ok(elapsedMs < 100, `Session transition must execute quickly (<100ms), took ${elapsedMs.toFixed(2)}ms`);
+
+  assert.equal(hasSessionTurns(surface.transcript), true);
+  assert.equal(surface.homeInfo, null);
+
+  // Verify composeWidth and composeAvailableWidth run with 0 re-entrancy
+  const cw = surface.composeWidth();
+  const aw = surface.composeAvailableWidth();
+  assert.ok(cw > 0 && cw <= aw);
+});
+
+
 

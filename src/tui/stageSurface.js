@@ -34,7 +34,7 @@ import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
-import { collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
+import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -203,7 +203,7 @@ export class StageSurface {
     if (this.homeInfo) return this.width;
     const mainWidth = sessionMainWidth(this.width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = Boolean(this.transcript && collectSessionTurns(this.transcript, mainWidth).length > 0);
+    const hasTurns = hasSessionTurns(this.transcript);
     const turnRailBudget = (rail && hasTurns) ? 3 : 0;
     return rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
   }
@@ -213,7 +213,7 @@ export class StageSurface {
     if (this.homeInfo) return composerWidth(this.width);
     const mainWidth = sessionMainWidth(this.width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = Boolean(this.transcript && collectSessionTurns(this.transcript, mainWidth).length > 0);
+    const hasTurns = hasSessionTurns(this.transcript);
     if (!hasTurns) return sessionComposerWidth(mainWidth);
     const turnRailBudget = rail ? 3 : 0;
     const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
@@ -409,7 +409,7 @@ export class StageSurface {
     const sidebar = sidebarVisible(width);
     const mainWidth = sessionMainWidth(width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = this.transcript && collectSessionTurns(this.transcript, mainWidth).length > 0;
+    const hasTurns = hasSessionTurns(this.transcript);
     const turnRailBudget = (rail && hasTurns) ? 3 : 0;
     const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
 

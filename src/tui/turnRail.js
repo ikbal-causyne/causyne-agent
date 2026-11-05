@@ -17,6 +17,15 @@ export function formatTurnTimestamp(ts) {
     return `${dateStr} at ${timeStr}`;
 }
 /**
+ * Fast O(N) check for whether user turns exist without flattening or rendering frames.
+ */
+export function hasSessionTurns(transcript) {
+    if (!transcript || !Array.isArray(transcript.frames) || transcript.frames.length === 0) {
+        return false;
+    }
+    return transcript.frames.some((f) => f && f.kind === 'user');
+}
+/**
  * Collect all user turns from transcript frames.
  */
 export function collectSessionTurns(transcript, contentWidth = 80) {
