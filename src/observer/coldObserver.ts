@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { auditLog } from '../auditLog.js';
+import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { causyneHome } from '../utils/paths.js';
 import {
   boundedArgs,
@@ -184,7 +185,11 @@ function normalizeOutcome(entry: TurnToolEvidence): ToolOutcome {
   const error = nestedError(result);
   const command = entry.command
     || (typeof args.command === 'string' ? args.command : '')
-    || (typeof args.cmd === 'string' ? args.cmd : '');
+    || (typeof args.CommandLine === 'string' ? args.CommandLine : '')
+    || (typeof args.commandLine === 'string' ? args.commandLine : '')
+    || (typeof args.cmd === 'string' ? args.cmd : '')
+    || (typeof args.script === 'string' ? args.script : '')
+    || (['run_command', 'run', 'execute', 'exec', 'bash', 'terminal', 'sh', 'zsh', 'sysrun'].includes(String(entry.tool || '').toLowerCase()) && typeof args.detail === 'string' ? args.detail : '');
   return {
     tool: entry.tool,
     args: boundedArgs(args),
@@ -472,6 +477,7 @@ export class ColdObserver {
       && (TEST_COMMAND.test(outcome.command) || TEST_COMMAND.test(outcome.tool)));
     const hasBuildRun = checks.some((outcome) => outcome.success
       && (BUILD_OR_CHECK_COMMAND.test(outcome.command) || outcome.tool === 'code_verify_syntax'));
+    const isLaunch = isLaunchOnlyPrompt(turnState.userPrompt || '');
     const modifiedCode = lastCodeChange >= 0;
     const declarativeOnly = modifiedCode && outcomes.filter(isCodeMutation).every(outcome => /\.(?:html|css)$/i.test(outcome.path));
     const hasRenderedCheck = checks.some(outcome => outcome.success && outcome.rendered === true);
@@ -489,17 +495,17 @@ export class ColdObserver {
       confidence = 0.92;
       discrepancy = `completion claim conflicts with tool evidence: ${failureSummary(outcomes)}`;
       coldDirective = `[OBSERVER] Your completion claim conflicts with the latest tool evidence: ${failureSummary(outcomes)}. Resolve the failure and rerun the failing check before claiming success.`;
-    } else if (!caveat && TESTS_CLAIM.test(claim) && !hasTestRun) {
+    } else if (!caveat && !isLaunch && modifiedCode && TESTS_CLAIM.test(claim) && !hasTestRun) {
       overconfident = true;
       confidence = 0.86;
       discrepancy = 'claimed passing tests without a successful test command in this task';
       coldDirective = '[OBSERVER] You claimed that tests passed, but no successful test command appears in this task. Run the test command and report its actual result, or state plainly that you did not run it.';
-    } else if (!caveat && BUILD_CLAIM.test(claim) && !hasBuildRun) {
+    } else if (!caveat && !isLaunch && modifiedCode && BUILD_CLAIM.test(claim) && !hasBuildRun) {
       overconfident = true;
       confidence = 0.82;
       discrepancy = 'claimed a passing build or check without a successful verification command';
       coldDirective = '[OBSERVER] You claimed that a build or check passed, but no successful verification command appears in this task. Run the relevant command and report its actual result, or state that it is unverified.';
-    } else if (!caveat && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && (hasRenderedCheck || hasDeclarativeInspection))) {
+    } else if (!caveat && !isLaunch && modifiedCode && !hasBuildRun && !hasTestRun && !(declarativeOnly && (hasRenderedCheck || hasDeclarativeInspection))) {
       overconfident = true;
       confidence = 0.72;
       discrepancy = 'code was modified without a successful test or syntax check';

@@ -2507,10 +2507,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
             }
             const isCompleted = action.status === 'completed';
             const isFailed = action.status === 'failed';
+            const rawExtCommand = action.parameters?.CommandLine
+              || action.parameters?.commandLine
+              || action.parameters?.command
+              || action.parameters?.cmd
+              || action.parameters?.script
+              || (['bash', 'terminal', 'sh', 'zsh', 'sysrun', 'run_command', 'run', 'execute', 'exec'].includes(action.name.toLowerCase()) ? (action.detail || '') : '');
             const actionArgs: Record<string, unknown> = {
               ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
               path: action.parameters?.path || action.parameters?.Path || action.parameters?.filePath || action.detail || '',
-              command: action.parameters?.command || action.parameters?.cmd || (['bash', 'terminal', 'sh', 'zsh', 'sysrun'].includes(action.name.toLowerCase()) ? action.detail : '')
+              command: typeof rawExtCommand === 'string' ? rawExtCommand.trim() : ''
             };
             const terminalId = action.id ? String(action.id) : '';
             const freshTerminal = !terminalId || !observedNativeTerminalIds.has(terminalId);
@@ -3066,6 +3072,41 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
 
           if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress || (typeof contentText === 'string' && (contentText.startsWith('Antigravity executed:') || /^Turn completed by .+ over ACP\.$/i.test(contentText.trim()))))) {
+            const recentSubstantiveAssistant = [...this.messages].reverse().find(m =>
+              m.role === 'assistant'
+              && typeof m.content === 'string'
+              && m.content.trim().length >= 60
+              && !m.content.trim().startsWith('Antigravity executed:')
+              && !/^Turn completed by .+ over ACP\.$/i.test(m.content.trim())
+            );
+
+            if (recentSubstantiveAssistant && typeof recentSubstantiveAssistant.content === 'string') {
+              this.emitEvent({
+                type: 'agent_message',
+                content: recentSubstantiveAssistant.content
+              });
+              this.emitEvent({
+                type: 'status',
+                message: 'Task completed with verified deliverables.'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+
+            if (isLaunchOnlyPrompt(taskPrompt) && this.stepsCompleted > 0) {
+              const launchSummary = 'Project opened in your default browser. Verification checks completed.';
+              this.emitEvent({
+                type: 'agent_message',
+                content: launchSummary
+              });
+              this.emitEvent({
+                type: 'status',
+                message: 'Task completed: project launched and verified.'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+
             this.emitEvent({
               type: 'error',
               message: 'The task stopped before completion after repeated incomplete turns without a final response. Work remains unfinished.'

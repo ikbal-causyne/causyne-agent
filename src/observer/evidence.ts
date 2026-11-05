@@ -489,9 +489,14 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
   const success = record.success !== false && typeof record.error !== 'string';
   const rawError = typeof record.error === 'string' ? record.error : '';
   const exitCode = typeof record.exitCode === 'number' && Number.isFinite(record.exitCode) ? record.exitCode : null;
-  const command = typeof args.command === 'string'
-    ? args.command
-    : typeof args.cmd === 'string' ? args.cmd : '';
+  const rawCommand = typeof args.command === 'string' ? args.command
+    : typeof args.CommandLine === 'string' ? args.CommandLine
+    : typeof args.commandLine === 'string' ? args.commandLine
+    : typeof args.cmd === 'string' ? args.cmd
+    : typeof args.script === 'string' ? args.script
+    : (['run_command', 'run', 'execute', 'exec', 'bash', 'terminal', 'sh', 'zsh', 'sysrun'].includes((tool || '').toLowerCase()) && typeof args.detail === 'string') ? args.detail
+    : '';
+  const command = rawCommand.trim();
   const browserData = Array.isArray(record.data) ? record.data : [];
   const imageCaptured = success && record._is_image_marker === true;
   const observedImage = imageCaptured && record.visionDelivered !== false;

@@ -146,7 +146,7 @@ export class Stage {
   reserve(rows = this.maxHeight) {
     if (this.reserved || this.maxHeight < 1) return false;
     const claim = Math.max(1, Math.min(Math.floor(rows), this.maxHeight));
-    this.write('\n'.repeat(claim) + '\x1b[6 q');
+    this.write('\n'.repeat(claim));
     this.stats.claimed += claim;
     this.reserved = true;
     this.height = claim;
@@ -246,7 +246,7 @@ export class Stage {
     this.moveTo(target.row);
     this.write('\r');
     if (target.col > 0) this.write(`\x1b[${target.col}C`);
-    this.write(SHOW_CURSOR + SYNC_OFF);
+    this.write(SHOW_CURSOR + '\x1b[6 q' + SYNC_OFF);
 
     this.prev = next;
     this.caret = target;

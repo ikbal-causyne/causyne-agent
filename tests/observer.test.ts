@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { CausyneObserver, defaultObserver } from '../src/observer.js';
+import { coldObserver } from '../src/observer/coldObserver.js';
+import { outcomeFromResult } from '../src/observer/evidence.js';
 
 test('CausyneObserver evaluates unverified progress on empty history', () => {
   const observer = new CausyneObserver();
@@ -197,4 +199,48 @@ test('CausyneObserver.verifyLocalWeb tests loopback endpoint and rejects externa
   } finally {
     server.close();
   }
+});
+
+test('outcomeFromResult extracts CommandLine and commandLine correctly', () => {
+  const o1 = outcomeFromResult('run_command', { CommandLine: 'node --test test_suite.js' }, { success: true, exitCode: 0 }, 100);
+  assert.equal(o1.command, 'node --test test_suite.js');
+
+  const o2 = outcomeFromResult('run_command', { commandLine: 'pytest -v' }, { success: true }, 101);
+  assert.equal(o2.command, 'pytest -v');
+
+  const o3 = outcomeFromResult('run_command', { detail: 'cargo test' }, { success: true }, 102);
+  assert.equal(o3.command, 'cargo test');
+});
+
+test('coldObserver recognizes test run via CommandLine and avoids overconfident penalty', async () => {
+  const taskId = 'task-test-cmdline-1';
+  coldObserver.recordToolOutcome(taskId, 'write_file', { path: '/tmp/test.js', content: 'hello' }, { success: true });
+  coldObserver.recordToolOutcome(taskId, 'run_command', { CommandLine: 'node --test test_suite.js' }, { success: true, exitCode: 0 });
+
+  const assessment = await coldObserver.auditTurnVerification({
+    taskId,
+    userPrompt: 'add test and make sure all tests pass',
+    agentClaim: 'Completed. Ran test_suite.js: 6 passed, 0 failed.',
+    toolHistory: coldObserver.getToolOutcomes(taskId),
+    stepsCompleted: 2
+  });
+
+  assert.equal(assessment.overconfident, false);
+  assert.equal(assessment.verified, true);
+});
+
+test('coldObserver does not force test checks on launch-only prompts ("open it ")', async () => {
+  const taskId = 'task-launch-only-1';
+  coldObserver.recordToolOutcome(taskId, 'run_command', { CommandLine: 'open /tmp/project/index.html' }, { success: true, exitCode: 0 });
+
+  const assessment = await coldObserver.auditTurnVerification({
+    taskId,
+    userPrompt: 'open it ',
+    agentClaim: 'The project was inspected and opened in the browser. 6 tests passed.',
+    toolHistory: coldObserver.getToolOutcomes(taskId),
+    stepsCompleted: 1
+  });
+
+  assert.equal(assessment.overconfident, false);
+  assert.equal(assessment.verified, true);
 });

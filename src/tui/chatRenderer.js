@@ -504,7 +504,7 @@ export class ChatRenderer {
 
     this.frame('user', () => {
       const width = this.transcript
-        ? sessionComposerWidth(this.width())
+        ? (this.transcript.surface?.composeWidth?.() ?? sessionComposerWidth(this.width()))
         : composerWidth(this.measure());
       const blockWidth = Math.max(8, width);
       const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - 1);
