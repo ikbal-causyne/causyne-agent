@@ -215,7 +215,8 @@
     "src/tui/thinkingBox.ts",
     "src/tui/block.ts",
     "src/tui/statusLine.ts",
-    "src/tui/toolDisplay.ts"
+    "src/tui/toolDisplay.ts",
+    "src/cortex/cortexEngine.ts"
   ],
   "exclude": [
     "node_modules",

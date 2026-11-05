@@ -1218,7 +1218,11 @@ export class ChatPrompt {
     if (key.name === 'enter' && !key.alt) {
       const item = this.completion.items && this.completion.items[this.selected];
       if (this.completion.kind === 'command' && item) {
-        // Instant execution on single Enter for any slash command
+        if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
+          this.acceptCompletion();
+          return true;
+        }
+        // Instant execution on single Enter for any pure slash command
         this.editor.clear();
         this.completion = null;
         this.deliver(item.value);

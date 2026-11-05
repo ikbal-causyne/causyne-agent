@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { requireCortexModule, provisionCortexDependencies } from './provisioner.js';
 import { causyneHome } from '../utils/paths.js';
+import { openCortexDatabase, computeNativeEmbedding, computeSimilarityScore, readExtendedMemoryStats } from './cortexEngine.js';
 
 // Diagnostics, off by default: console output during a turn overwrites the
 // prompt's live region. See src/cortex/provisioner.js for the full reason.
@@ -72,6 +73,7 @@ export class VectorDB {
   constructor() {
     this.extractor = null;
     this.isInitialized = false;
+    this.isNeural = false;
     this.db = null;
   }
 
@@ -81,16 +83,8 @@ export class VectorDB {
     if (!fs.existsSync(CORTEX_DIR)) {
       fs.mkdirSync(CORTEX_DIR, { recursive: true, mode: 0o700 });
     }
-    
-    // Ensure dependencies are provisioned first
-    await provisionCortexDependencies();
-    
-    if (!Database) {
-      Database = await requireCortexModule('better-sqlite3');
-    }
 
-    // Initialize SQLite Database
-    this.db = new Database(CORTEX_DB_FILE);
+    this.db = await openCortexDatabase(CORTEX_DB_FILE);
     
     // Create the task_memories table if it doesn't exist
     // embedding_vector is stored as a JSON string array of floats
@@ -195,32 +189,37 @@ export class VectorDB {
     
     await this.ensureDb();
 
-    if (!pipeline || !env) {
-      const transformers = await requireCortexModule('@xenova/transformers');
-      pipeline = transformers.pipeline;
-      env = transformers.env;
-
-      // Optimization: Allow local model caching
-      env.localModelPath = path.join(causyneHome(), 'models');
-      env.allowRemoteModels = false; // Model provisioning is an explicit setup step.
-    }
-
-    // Load the lightweight feature extraction pipeline
     try {
+      if (!pipeline || !env) {
+        const transformers = await requireCortexModule('@xenova/transformers');
+        pipeline = transformers.pipeline;
+        env = transformers.env;
+
+        // Optimization: Allow local model caching
+        env.localModelPath = path.join(causyneHome(), 'models');
+        env.allowRemoteModels = false; // Model provisioning is an explicit setup step.
+      }
+
+      // Load the lightweight feature extraction pipeline
       this.extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      this.isNeural = true;
       this.isInitialized = true;
     } catch (error) {
-      debugLog(`[CORTEX] Failed to initialize neural engine: ${error.message}`);
-      throw error;
+      debugLog(`[CORTEX] Neural engine not provisioned; using native zero-dependency semantic vectorizer: ${error.message}`);
+      this.extractor = null;
+      this.isNeural = false;
+      this.isInitialized = true;
     }
   }
 
   async embed(text) {
     if (!this.isInitialized) await this.init();
     
-    // Generate embeddings
-    const output = await this.extractor(text, { pooling: 'mean', normalize: true });
-    return Array.from(output.data);
+    if (this.isNeural && this.extractor) {
+      const output = await this.extractor(text, { pooling: 'mean', normalize: true });
+      return Array.from(output.data);
+    }
+    return computeNativeEmbedding(text);
   }
 
   cosineSimilarity(vecA, vecB) {
@@ -278,11 +277,13 @@ export class VectorDB {
     for (const memory of rows) {
       let similarity;
       try {
-        similarity = this.cosineSimilarity(queryEmbedding, JSON.parse(memory.embedding_vector));
+        const memVec = JSON.parse(memory.embedding_vector);
+        similarity = computeSimilarityScore(queryEmbedding, memVec, queryText, memory.text, Boolean(this.isNeural));
       } catch (e) {
         continue; // a corrupt vector is skipped, never fatal
       }
-      if (similarity <= MIN_SIMILARITY) continue;
+      const minSim = this.isNeural ? MIN_SIMILARITY : 0.18;
+      if (similarity <= minSim) continue;
 
       const ageMs = Math.max(0, now - (memory.timestamp || 0));
       // OBLIVION: S = BASE_HALF_LIFE * (1 + hits * REINFORCEMENT_ALPHA) * tierMultiplier
@@ -403,7 +404,18 @@ export class VectorDB {
     const workspaces = this.db.prepare("SELECT COUNT(DISTINCT workspace) c FROM task_memories WHERE workspace != ''").get().c;
     const newest = this.db.prepare('SELECT MAX(timestamp) t FROM task_memories').get().t || 0;
     const distinct = this.db.prepare('SELECT COUNT(DISTINCT fingerprint) c FROM task_memories').get().c;
-    return { total, distinct, byKind, workspaces, newest };
+    const extended = readExtendedMemoryStats();
+    return {
+      total,
+      distinct,
+      byKind,
+      workspaces,
+      newest,
+      isNeural: Boolean(this.isNeural),
+      engineType: this.isNeural ? 'neural (transformers + sqlite)' : 'native (semantic vector + sqlite)',
+      episodicCount: extended.episodicCount,
+      factsCount: extended.factsCount
+    };
   }
 
   /** Forget one memory, or every memory in a workspace. */

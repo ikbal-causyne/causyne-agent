@@ -106,6 +106,9 @@ function rank(items, query, limit = 50, focusDir = null) {
     }
 
     if (value >= 0) {
+      if (item.isCommand) {
+        value += 2000;
+      }
       if (focusPrefix && val.toLowerCase().startsWith(focusPrefix)) {
         value += 3000;
       }
@@ -131,7 +134,7 @@ const ARGUMENT_LIMIT = 500;
 // `/` commands
 // ---------------------------------------------------------------------------
 
-function commandItems() {
+function commandItems(query = '') {
   // Suggested/high-frequency commands prioritized at the top on a bare '/' (OpenCode architecture)
   const SUGGESTED_ORDER = ['model', 'sessions', 'new', 'clear', 'continuum', 'help', 'status', 'setup', 'mcp'];
   const allCommands = listCommands('terminal');
@@ -157,24 +160,28 @@ function commandItems() {
         match: command.name,
         aliases: Array.isArray(command.aliases) ? command.aliases.filter(isTerminalSafe) : [],
         label: primaryLabel,
-        description: sanitize(command.description || '')
+        description: sanitize(command.description || ''),
+        isCommand: true
       });
     }
   }
 
-  // Skills answer to the slash menu directly, the way claude-code surfaces a
-  // skill as a command you simply type. `/docker` finds the Docker skill
-  // without the user knowing it lives under `devops`, or that `/skills` exists
-  // at all — which is the whole difficulty with a hundred-entry library.
+  // On a bare '/' (no query entered), keep the menu purely focused on genuine slash commands.
+  // Skills belong in `/skills` and must never pollute the top-level palette.
+  if (!query) {
+    return commands;
+  }
+
+  // When a user explicitly searches for a skill keyword (e.g. `/docker`), offer matching skills,
+  // but commands always retain strict priority in ranking.
   const skills = listSkillsForCompletion().map((skill) => ({
     value: `/skills ${skill.domain}/${skill.id}`,
     match: `${skill.id} ${skill.domain}`,
     label: `/${skill.id}`,
-    description: sanitize(skill.description || '')
+    description: sanitize(skill.description || ''),
+    isCommand: false
   }));
 
-  // Commands first: on a bare `/` every entry scores 0, and a stable sort then
-  // leaves the real commands above the library.
   return commands.concat(skills);
 }
 
@@ -401,7 +408,7 @@ export function suggest(text, cursor, options = {}) {
   if (!trigger) return null;
 
   if (trigger.kind === 'command') {
-    const items = rank(commandItems(), trigger.query);
+    const items = rank(commandItems(trigger.query), trigger.query);
     if (items.length === 0) return null;
     return { ...trigger, items, total: items.total };
   }

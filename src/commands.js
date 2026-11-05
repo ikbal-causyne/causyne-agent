@@ -470,16 +470,24 @@ export const COMMANDS = [
         }
 
         const stats = await cortexDb.stats();
-        if (stats.total === 0) {
-          return ok('Nothing learned yet. Cortex records a lesson when a task recovers from a real error.');
+        const engineLabel = stats.engineType || 'native (semantic vector + sqlite)';
+        const overviewLines = [
+          `Cortex Memory Engine: Active (${engineLabel})`,
+          `  Total persistent lessons : ${stats.total}`,
+          `  Episodic observations   : ${stats.episodicCount || 0}`,
+          `  Learned long-term facts  : ${stats.factsCount || 0}`
+        ];
+
+        if (stats.total === 0 && (stats.episodicCount || 0) === 0 && (stats.factsCount || 0) === 0) {
+          return ok(overviewLines.join('\n') + '\n\nNothing learned yet. Cortex records a lesson when a task recovers from a real error.');
         }
 
-        const kinds = stats.byKind.map((k) => `${k.c} ${k.kind}`).join(', ');
+        const kinds = stats.byKind && stats.byKind.length ? stats.byKind.map((k) => `${k.c} ${k.kind}`).join(', ') : 'no categorized lessons yet';
         const age = stats.newest ? new Date(stats.newest).toISOString().slice(0, 10) : 'never';
-        const header = `${stats.total} memories (${kinds}) across ${stats.workspaces} project(s). Newest: ${age}.`;
+        const header = overviewLines.join('\n') + `\n  Lessons breakdown        : ${kinds} across ${stats.workspaces} project(s)\n  Newest recorded lesson   : ${age}`;
 
         if (verb !== 'list') {
-          return ok(header + '\n\nSee them with /cortex list. Forget this project\'s with /cortex forget-here.');
+          return ok(header + '\n\nSee project memories with /cortex list. Forget this project\'s with /cortex forget-here.');
         }
 
         const rows = await cortexDb.inventory({ workspace: process.cwd() });
@@ -1675,9 +1683,7 @@ export const COMMANDS = [
       if (wantsMovements && targets.length === 0) {
         return ok('Design movements to commit to:\n\n' + formatMovementBrief(DESIGN_MOVEMENTS));
       }
-      if (targets.length === 0) {
-        return fail('Usage: slop <file… | directory>   (or: slop --movements to see the catalogue)');
-      }
+      const scanTargets = targets.length > 0 ? targets : ['.'];
 
       const files = [];
       const collect = (target) => {
@@ -1708,9 +1714,9 @@ export const COMMANDS = [
         return null;
       };
 
-      const problems = targets.map(collect).filter(Boolean);
+      const problems = scanTargets.map(collect).filter(Boolean);
       if (files.length === 0) {
-        return fail(problems.length > 0 ? problems.join('\n') : 'Nothing to scan.');
+        return ok(problems.length > 0 ? problems.join('\n') : 'No HTML/CSS/component files found — nothing to score. Try: /slop <path> or /slop --movements.');
       }
 
       const result = analyzeFiles(files);
