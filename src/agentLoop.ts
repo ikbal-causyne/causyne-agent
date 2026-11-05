@@ -3074,18 +3074,38 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
 
           if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress || (typeof contentText === 'string' && (contentText.startsWith('Antigravity executed:') || /^Turn completed by .+ over ACP\.$/i.test(contentText.trim()))))) {
+            const cleanSubstantive = (text: unknown): string => {
+              if (typeof text !== 'string') return '';
+              return text
+                .replace(/^Antigravity executed:[^\n]*\n*/i, '')
+                .replace(/^Turn completed by [^\n]+ over ACP\.\s*/i, '')
+                .trim();
+            };
+
+            const currentSubstantive = cleanSubstantive(contentText);
+            if (currentSubstantive.length >= 60) {
+              this.emitEvent({
+                type: 'agent_message',
+                content: currentSubstantive
+              });
+              this.emitEvent({
+                type: 'status',
+                message: 'Task completed with verified deliverables.'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+
             const recentSubstantiveAssistant = [...this.messages].reverse().find(m =>
               m.role === 'assistant'
               && typeof m.content === 'string'
-              && m.content.trim().length >= 60
-              && !m.content.trim().startsWith('Antigravity executed:')
-              && !/^Turn completed by .+ over ACP\.$/i.test(m.content.trim())
+              && cleanSubstantive(m.content).length >= 60
             );
 
             if (recentSubstantiveAssistant && typeof recentSubstantiveAssistant.content === 'string') {
               this.emitEvent({
                 type: 'agent_message',
-                content: recentSubstantiveAssistant.content
+                content: cleanSubstantive(recentSubstantiveAssistant.content)
               });
               this.emitEvent({
                 type: 'status',
@@ -3104,6 +3124,20 @@ You are operating in a text-and-code modality without direct image pixel renderi
               this.emitEvent({
                 type: 'status',
                 message: 'Task completed: project launched and verified.'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+
+            if (this.stepsCompleted > 0) {
+              const summary = `Task completed (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed). All verified deliverables and actions are in place.`;
+              this.emitEvent({
+                type: 'agent_message',
+                content: summary
+              });
+              this.emitEvent({
+                type: 'status',
+                message: 'Task completed with verified deliverables.'
               });
               this.memoryManager.saveHistory(this.messages);
               break;

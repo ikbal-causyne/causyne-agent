@@ -250,6 +250,21 @@ export class ChatPrompt {
 
   handleData = (chunk) => {
     let motionOnly = true;
+    const str = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : '';
+    // Unbracketed multi-line paste safeguard: when a multi-line block arrives without
+    // bracketed paste (e.g. VS Code terminal or direct paste stream), handle it atomically
+    // as a paste event rather than executing multiple spurious Enter submissions.
+    if (!this.decoder.inPaste && str.length > 2 && (str.includes('\n') || str.includes('\r')) && !str.includes('\x1b')) {
+      const normalized = str.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      try {
+        this.handleKey({ name: 'paste', text: normalized, sequence: normalized });
+      } catch (e) {
+        process.stderr.write(`\n[tui] paste failed: ${e.message}\n`);
+      }
+      this.draw();
+      return;
+    }
+
     for (const key of this.decoder.decode(chunk)) {
       if (key.name !== 'mouse' || !isMouseMotion(key.sequence)) motionOnly = false;
       try {
@@ -737,8 +752,16 @@ export class ChatPrompt {
     }
 
     if (key.name === 'paste') {
+      if (this.surface && typeof this.surface.captureMouse === 'function') {
+        this.surface.captureMouse();
+      }
       this.editor.insert(key.text);
-      this.refreshCompletion();
+      if (typeof key.text === 'string' && !key.text.includes('\n') && key.text.length < 60) {
+        this.refreshCompletion();
+      } else {
+        this.completion = null;
+      }
+      this.scheduleDraw();
       return;
     }
 
@@ -983,8 +1006,8 @@ export class ChatPrompt {
     // sit at almost the same seam — a footer is immediately followed by the next
     // question — so accepting either made the jump land twice two rows apart
     // instead of once per exchange.
-    if (key.name === '[' || (key.alt && key.name === '<')) { viewport.jump(-1, ['user']); return true; }
-    if (key.name === ']' || (key.alt && key.name === '>')) { viewport.jump(1, ['user']); return true; }
+    if ((key.alt && key.name === '[') || (key.alt && key.name === '<')) { viewport.jump(-1, ['user']); return true; }
+    if ((key.alt && key.name === ']') || (key.alt && key.name === '>')) { viewport.jump(1, ['user']); return true; }
 
     if (key.alt && key.name === 'u') { this.offerUndo(); return true; }
 
