@@ -203,7 +203,8 @@ export class StageSurface {
     if (this.homeInfo) return this.width;
     const mainWidth = sessionMainWidth(this.width);
     const rail = this.railEnabled(mainWidth);
-    const turnRailBudget = rail ? 3 : 0;
+    const hasTurns = hasSessionTurns(this.transcript) || Boolean(this.fullSession && rail);
+    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
     return rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
   }
 
@@ -212,7 +213,8 @@ export class StageSurface {
     if (this.homeInfo) return composerWidth(this.width);
     const mainWidth = sessionMainWidth(this.width);
     const rail = this.railEnabled(mainWidth);
-    const turnRailBudget = rail ? 3 : 0;
+    const hasTurns = hasSessionTurns(this.transcript) || Boolean(this.fullSession && rail);
+    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
     const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
     return sessionComposerWidth(contentWidth);
   }
@@ -406,8 +408,8 @@ export class StageSurface {
     const sidebar = sidebarVisible(width);
     const mainWidth = sessionMainWidth(width);
     const rail = this.railEnabled(mainWidth);
-    const hasTurns = hasSessionTurns(this.transcript);
-    const turnRailBudget = rail ? 3 : 0;
+    const hasTurns = hasSessionTurns(this.transcript) || Boolean(this.fullSession && rail);
+    const turnRailBudget = (rail && hasTurns) ? 3 : 0;
     const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET - turnRailBudget) : mainWidth;
 
     let block = promptRows;
@@ -680,7 +682,7 @@ export class StageSurface {
       if (hasTurns && railResult) {
         const leftCell = railResult.cells[i] || ' ';
         rows[i] = ` ${leftCell} ${padEnd(rows[i], contentWidth)} ${rightCell}`;
-      } else if (rail) {
+      } else if (this.fullSession) {
         rows[i] = `   ${padEnd(rows[i], contentWidth)} ${rightCell}`;
       } else {
         rows[i] = `${padEnd(rows[i], contentWidth)} ${rightCell}`;
