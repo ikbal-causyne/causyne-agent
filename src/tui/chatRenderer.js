@@ -509,7 +509,7 @@ export class ChatRenderer {
       const blockWidth = Math.max(8, width);
       const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - 1);
       const rows = barBlock(
-        wrapBlock(safeDisplay(text), innerWidth),
+        wrapBlock(safeDisplay(text), innerWidth, { hang: 0 }),
         { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
       );
       this.write();

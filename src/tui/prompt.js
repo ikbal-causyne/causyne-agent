@@ -684,7 +684,7 @@ export class ChatPrompt {
     else this.commit('user', (width) => {
       const blockWidth = Math.max(8, width);
       return barBlock(
-        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER)),
+        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER), { hang: 0 }),
         { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
       );
     });
@@ -1444,8 +1444,9 @@ export class ChatPrompt {
     const availableWidth = this.surface?.composeAvailableWidth
       ? this.surface.composeAvailableWidth()
       : sessionMainWidth(this.surface?.width || terminalWidth());
+    const insetOverride = this.surface?.composeInset ? this.surface.composeInset() : undefined;
     const positioned = this.surface
-      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
+      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth, insetOverride))
       : { rows: all, inset: 0 };
     this.present(positioned.rows, planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
   }
