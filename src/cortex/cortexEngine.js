@@ -3,7 +3,7 @@
  *
  * Provides instant, production-grade memory persistence and semantic vector retrieval
  * across all development environments and platforms with zero required npm packages,
- * while automatically leveraging `@xenova/transformers` when provisioned.
+ * using Node.js built-in SQLite and deterministic semantic feature hashing.
  */
 import fs from 'node:fs';
 import path from 'node:path';

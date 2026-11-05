@@ -445,8 +445,8 @@ export const COMMANDS = [
     name: 'cortex',
     aliases: ['brain'],
     scope: 'local',
-    usage: '/cortex [list | forget <id> | forget-here]',
-    description: 'Inspect what the agent has learned, and forget any of it',
+    usage: '/cortex [on | off | toggle | status | list | forget <id> | forget-here]',
+    description: 'Inspect, toggle, or manage the persistent memory and digital brain',
     dialogTitle: 'Cortex',
     // A memory store you cannot read is not a memory, it is a black box that
     // occasionally changes the agent's behaviour. Section 4 asks for intelligent
@@ -457,6 +457,28 @@ export const COMMANDS = [
       const verb = String(args[0] || '').toLowerCase();
 
       try {
+        if (verb === 'on' || verb === 'enable') {
+          const config = loadConfig();
+          config.cortex = { ...(config.cortex || {}), enabled: true };
+          saveConfig(config);
+          return ok('Cortex memory prompt injection enabled.\nLessons learned and creative patterns will be selectively injected on substantive, project-scoped queries.');
+        }
+
+        if (verb === 'off' || verb === 'disable') {
+          const config = loadConfig();
+          config.cortex = { ...(config.cortex || {}), enabled: false };
+          saveConfig(config);
+          return ok('Cortex memory prompt injection disabled.\nMemories remain safely preserved on disk, but will not be automatically injected into agent task prompts.');
+        }
+
+        if (verb === 'toggle') {
+          const config = loadConfig();
+          const nextState = !config.cortex?.enabled;
+          config.cortex = { ...(config.cortex || {}), enabled: nextState };
+          saveConfig(config);
+          return ok(`Cortex memory prompt injection is now ${nextState ? 'ENABLED' : 'DISABLED'}.`);
+        }
+
         if (verb === 'forget' && args[1]) {
           const removed = await cortexDb.forget({ id: args[1] });
           return removed ? ok('Forgotten.') : fail(`No memory "${args[1]}".`);
@@ -469,17 +491,20 @@ export const COMMANDS = [
             : `Forgot ${removed} memor${removed === 1 ? 'y' : 'ies'} from this project. Global lessons are untouched.`);
         }
 
+        const config = loadConfig();
+        const injectionStatus = config.cortex?.enabled ? 'ENABLED' : 'DISABLED (default, opt-in)';
         const stats = await cortexDb.stats();
         const engineLabel = stats.engineType || 'native (semantic vector + sqlite)';
         const overviewLines = [
           `Cortex Memory Engine: Active (${engineLabel})`,
+          `  Prompt Injection Status  : ${injectionStatus}`,
           `  Total persistent lessons : ${stats.total}`,
           `  Episodic observations   : ${stats.episodicCount || 0}`,
           `  Learned long-term facts  : ${stats.factsCount || 0}`
         ];
 
         if (stats.total === 0 && (stats.episodicCount || 0) === 0 && (stats.factsCount || 0) === 0) {
-          return ok(overviewLines.join('\n') + '\n\nNothing learned yet. Cortex records a lesson when a task recovers from a real error.');
+          return ok(overviewLines.join('\n') + '\n\nNothing learned yet. Cortex records a lesson when a task recovers from a real error.\nUse "/cortex on" to enable prompt injection when ready.');
         }
 
         const kinds = stats.byKind && stats.byKind.length ? stats.byKind.map((k) => `${k.c} ${k.kind}`).join(', ') : 'no categorized lessons yet';
@@ -487,7 +512,7 @@ export const COMMANDS = [
         const header = overviewLines.join('\n') + `\n  Lessons breakdown        : ${kinds} across ${stats.workspaces} project(s)\n  Newest recorded lesson   : ${age}`;
 
         if (verb !== 'list') {
-          return ok(header + '\n\nSee project memories with /cortex list. Forget this project\'s with /cortex forget-here.');
+          return ok(header + '\n\nToggle injection with /cortex on|off. See project memories with /cortex list. Forget this project\'s with /cortex forget-here.');
         }
 
         const rows = await cortexDb.inventory({ workspace: process.cwd() });

@@ -20,7 +20,7 @@ import { TokenTracker } from './tokenTracker.js';
 
 import { getMemoryContextString } from './memory.js';
 import { MemoryManager } from './memoryManager.js';
-import { cortexDb } from './cortex/vectorDb.js';
+import { cortexDb, isSearchablePrompt } from './cortex/vectorDb.js';
 import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
 import { episodicStore, compileToolObservation } from './memory/episodicStore.js';
 import { buildCodexStyleSummary, compactSessionMessages, autoCompactIfUnderPressure } from './core/contextCompactor.js';
@@ -937,10 +937,11 @@ export class AgentLoop {
   async buildStaticContext() {
     let lessonsLearned = '';
     this._lessonSimilarity = 0;
-    if (this.currentTaskPrompt) {
+    const cortexEnabled = Boolean(this.config?.cortex?.enabled);
+    if (cortexEnabled && this.currentTaskPrompt && isSearchablePrompt(this.currentTaskPrompt)) {
       try {
-        const matches = await cortexDb.search(this.currentTaskPrompt, 2);
-        if (matches.length > 0) {
+        const matches = await cortexDb.search(this.currentTaskPrompt, 2, { workspace: this.workspaceRoot });
+        if (matches.length > 0 && matches[0]) {
           lessonsLearned = `\n\n🧠 DIGITAL BRAIN (LESSONS LEARNED FROM PAST MISTAKES):\n` + matches.map((m: any) => `- ${m.text}`).join('\n');
           this._lessonSimilarity = matches[0].similarity || 0;
           this.debugLog(`cortex search hit: ${(this._lessonSimilarity * 100).toFixed(0)}% similarity`);

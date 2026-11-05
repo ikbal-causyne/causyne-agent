@@ -216,7 +216,10 @@
     "src/tui/block.ts",
     "src/tui/statusLine.ts",
     "src/tui/toolDisplay.ts",
-    "src/cortex/cortexEngine.ts"
+    "src/cortex/cortexEngine.ts",
+    "src/cortex/provisioner.ts",
+    "src/cortex/vectorDb.ts",
+    "src/cortex/autoCondenser.ts"
   ],
   "exclude": [
     "node_modules",

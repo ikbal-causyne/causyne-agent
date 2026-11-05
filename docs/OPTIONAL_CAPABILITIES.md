@@ -4,7 +4,7 @@ Standard sessions and fact/sliding-window memory do not require the Cortex
 native stack. If Cortex is unavailable, the CLI should report that honestly.
 
 The former Cortex provisioner silently installed `better-sqlite3` and
-`@xenova/transformers` at initialization. That installation path has been removed.
+external native packages at initialization. That installation path has been removed.
 Its pinned versions were 12.11.1 and 2.17.2, with protobufjs 7.6.5 and sharp
 0.35.3 overrides. These are historical inventory values, not a recommendation
 that the graph is currently vulnerability-free. The prior isolated graph had
