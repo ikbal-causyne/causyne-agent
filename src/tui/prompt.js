@@ -1444,9 +1444,8 @@ export class ChatPrompt {
     const availableWidth = this.surface?.composeAvailableWidth
       ? this.surface.composeAvailableWidth()
       : sessionMainWidth(this.surface?.width || terminalWidth());
-    const insetOverride = this.surface?.composeInset ? this.surface.composeInset() : undefined;
     const positioned = this.surface
-      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth, insetOverride))
+      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
       : { rows: all, inset: 0 };
     this.present(positioned.rows, planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
   }

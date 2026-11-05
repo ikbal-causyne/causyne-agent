@@ -117,3 +117,4 @@ test('Stress test: 50 consecutive paste-and-clear cycles', () => {
 
   assert.ok(elapsed < 400, `50 paste-and-clear cycles completed in ${elapsed.toFixed(1)}ms`);
 });
+

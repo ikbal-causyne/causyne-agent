@@ -208,21 +208,7 @@ export class StageSurface {
   composeWidth() {
     if (this.homeInfo) return composerWidth(this.width);
     const mainWidth = sessionMainWidth(this.width);
-    const rail = this.railEnabled(mainWidth);
-    const hasTurns = hasSessionTurns(this.transcript);
-    if (rail && hasTurns) {
-      return Math.max(20, mainWidth - RAIL_BUDGET - 3);
-    }
     return sessionComposerWidth(mainWidth);
-  }
-
-  /** Inset for prompt box: align directly with turn rail gutter when turns exist. */
-  composeInset() {
-    if (this.homeInfo) return 0;
-    const mainWidth = sessionMainWidth(this.width);
-    const rail = this.railEnabled(mainWidth);
-    const hasTurns = hasSessionTurns(this.transcript);
-    return (rail && hasTurns) ? 3 : 2;
   }
 
   /** Keep Home distinct from a selected or newly started conversation. */

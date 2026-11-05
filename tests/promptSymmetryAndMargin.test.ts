@@ -39,7 +39,7 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
     }
   });
 
-  test('Prompt box and transcript blocks have exact horizontal alignment and symmetry in session', () => {
+  test('Both chatbox and chat interface share the established session composer width and margin', () => {
     const out = createSink(120, 35);
     const surface = new StageSurface({ out, env: { CAUSYNE_RAIL: '1', CAUSYNE_SIDEBAR: '0' } });
     surface.open();
@@ -48,25 +48,16 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
       const renderer = new ChatRenderer({ out, transcript: surface.transcript });
       const prompt = new ChatPrompt({ out, surface, renderer });
 
-      // Turn 0: empty session
-      assert.equal(surface.composeInset(), 2, 'Empty session has standard 2-column inset');
-
-      // Turn 1: user submits prompt
-      surface.leaveHome();
-      renderer.renderUserMessage('Hello Causyne Agent, create the project');
-      surface.present(['status line'], { row: 0, col: 0 });
-
-      // After user turn exists, turn rail is active:
-      assert.equal(surface.composeInset(), 3, 'Session with turns reserves exactly 3 columns for turn rail');
-
       const mainWidth = sessionMainWidth(120);
-      const expectedContentWidth = mainWidth - 3 - 3; // mainWidth - RAIL_BUDGET (3) - turnRailBudget (3)
-      assert.equal(surface.composeWidth(), expectedContentWidth, 'composeWidth matches contentWidth exactly');
+      const expectedWidth = sessionComposerWidth(mainWidth);
 
-      // Prompt positioning with sessionRows using composeInset
-      const positioned = sessionRows(['[composer]'], mainWidth, surface.composeInset());
-      assert.equal(positioned.inset, 3, 'Prompt rows receive 3 columns of left inset');
-      assert.ok(positioned.rows[0]?.startsWith('   [composer]'), 'Prompt row starts at column 3');
+      // Verify established composeWidth matches sessionComposerWidth
+      assert.equal(surface.composeWidth(), expectedWidth, 'composeWidth matches sessionComposerWidth exactly');
+
+      // Verify sessionRows places rows with established 2-space inset
+      const positioned = sessionRows(['[composer]'], mainWidth);
+      assert.equal(positioned.inset, 2, 'Prompt rows receive established 2 columns of left inset');
+      assert.ok(positioned.rows[0]?.startsWith('  [composer]'), 'Prompt row starts at established column 2');
     } finally {
       surface.close();
     }
