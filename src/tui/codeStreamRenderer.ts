@@ -2,9 +2,16 @@ import { ChatRenderer } from './chatRenderer.js';
 import { CODE_PANEL_LINES, codePreviewLineCount, defaultPreviewStart, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
 import { calculateThinkingLineCount, DEFAULT_MAX_EXPANDED_LINES } from './thinkingBox.js';
 import { markerAt } from './messageInteraction.js';
+import { AdaptiveWheelDampener } from './scrollInteraction.js';
 
 type RendererEvent = { type: string; [key: string]: unknown };
-type CodePanelState = { event: CodeProgressEvent; modelNote: string; start: number; followTail: boolean };
+type CodePanelState = {
+  event: CodeProgressEvent;
+  modelNote: string;
+  start: number;
+  followTail: boolean;
+  dampener?: AdaptiveWheelDampener;
+};
 type CodeFrame = { id: number; meta?: Record<string, unknown> | null; rows?: string[] | null; renderedWidth?: number; produce?: (width: number) => string[] };
 type CodeTranscript = {
   frames: CodeFrame[];
@@ -50,7 +57,13 @@ export class CodeStreamRenderer extends ChatRenderer {
     const limit = lastStart(state.event);
     if (limit === 0) return false;
 
-    const next = Math.max(0, Math.min(limit, state.start + (wheel.direction === 'up' ? -3 : 3)));
+    if (!state.dampener) {
+      state.dampener = new AdaptiveWheelDampener();
+    }
+    const delta = state.dampener.stepRows(wheel.direction as 'up' | 'down', 3);
+    if (delta === 0) return true;
+
+    const next = Math.max(0, Math.min(limit, state.start + (wheel.direction === 'up' ? -delta : delta)));
     if (next === state.start) return true;
 
     state.start = next;
@@ -82,8 +95,15 @@ export class CodeStreamRenderer extends ChatRenderer {
     const limit = Math.max(0, totalLines - DEFAULT_MAX_EXPANDED_LINES);
     if (limit === 0) return false;
 
+    if (!frame.meta._dampener) {
+      frame.meta._dampener = new AdaptiveWheelDampener();
+    }
+    const dampener = frame.meta._dampener as AdaptiveWheelDampener;
+    const delta = dampener.stepRows(wheel.direction as 'up' | 'down', 3);
+    if (delta === 0) return true;
+
     const currentStart = Number(frame.meta.scrollStart) || 0;
-    const next = Math.max(0, Math.min(limit, currentStart + (wheel.direction === 'up' ? -3 : 3)));
+    const next = Math.max(0, Math.min(limit, currentStart + (wheel.direction === 'up' ? -delta : delta)));
     if (next === currentStart) return true;
 
     frame.meta.scrollStart = next;

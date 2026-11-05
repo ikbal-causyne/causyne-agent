@@ -920,11 +920,11 @@ export class ChatPrompt {
     if (key.name === 'wheel') {
       if (!viewport || !key.wheel) return true;
       if (this.renderer?.scrollCodePanel?.(key, this.surface)) {
-        this.draw();
+        if (typeof this.scheduleDraw === 'function') this.scheduleDraw(); else this.draw();
         return true;
       }
       if (this.renderer?.scrollThinkingPanel?.(key, this.surface)) {
-        this.draw();
+        if (typeof this.scheduleDraw === 'function') this.scheduleDraw(); else this.draw();
         return true;
       }
 

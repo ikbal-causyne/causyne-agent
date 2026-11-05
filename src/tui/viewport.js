@@ -94,6 +94,7 @@ export class Viewport {
     accumulator;
     unseen;
     lastWheelMoved;
+    lastWheelDirection;
     constructor({ transcript = null, height = 20, width = 80, speed = DEFAULT_SCROLL_SPEED, acceleration = null } = {}) {
         this.transcript = transcript;
         this.viewHeight = Math.max(1, Math.floor(height));
@@ -106,6 +107,7 @@ export class Viewport {
         this.accumulator = 0;
         this.unseen = 0;
         this.lastWheelMoved = false;
+        this.lastWheelDirection = null;
     }
     get height() { return this.viewHeight; }
     get width() { return this.viewWidth; }
@@ -200,6 +202,10 @@ export class Viewport {
      */
     wheel(direction, notches = 1, now = Date.now()) {
         const before = this.scrollTop;
+        if (this.lastWheelDirection && this.lastWheelDirection !== direction) {
+            this.accumulator = 0;
+        }
+        this.lastWheelDirection = direction;
         const multiplier = this.acceleration ? this.acceleration.tick(now) : 1;
         const amount = Math.abs(notches) * this.speed * multiplier;
         this.accumulator += direction === 'up' ? -amount : amount;

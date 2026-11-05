@@ -8,11 +8,93 @@
 // 4. Scrollbar (rail) mouse interactions clamp cleanly even if clicked above or
 //    below the chat box bounds.
 /**
+ * Adaptive Wheel Dampener & Momentum Controller.
+ *
+ * Distinguishes single mechanical mouse wheel notches (e.g. 1 notch every 100ms+)
+ * from high-frequency macOS trackpad / Magic Mouse continuous event streams (10-100Hz).
+ *
+ * For single notches, full discrete step is preserved.
+ * For continuous trackpad streams, velocity is smoothly damped via sub-line accumulation
+ * so a natural finger swipe advances smoothly without exploding into runaway flight.
+ * Direction reversals provide instant braking to prevent momentum drift.
+ */
+export class AdaptiveWheelDampener {
+    minDamping;
+    thresholdMs;
+    minTickInterval;
+    burstWindowMs;
+    maxBurstNotches;
+    lastTick = 0;
+    lastDirection = null;
+    rowAccumulator = 0;
+    recentBursts = [];
+    constructor(options = {}) {
+        this.minDamping = options.minDamping ?? 0.28;
+        this.thresholdMs = options.thresholdMs ?? 85;
+        this.minTickInterval = options.minTickInterval ?? 6;
+        this.burstWindowMs = options.burstWindowMs ?? 120;
+        this.maxBurstNotches = options.maxBurstNotches ?? 5.0;
+    }
+    /**
+     * Compute adaptive fractional notch multiplier for viewports that possess
+     * their own sub-row accumulator (e.g. Viewport).
+     */
+    computeNotches(direction, now = Date.now()) {
+        if (this.lastDirection && this.lastDirection !== direction) {
+            this.recentBursts = [];
+            this.lastTick = 0;
+            this.rowAccumulator = 0;
+        }
+        this.lastDirection = direction;
+        const gap = this.lastTick ? Math.max(0, now - this.lastTick) : Infinity;
+        this.lastTick = now;
+        if (gap === Infinity || gap > 150) {
+            this.recentBursts = [];
+            return 1.0;
+        }
+        if (gap < this.minTickInterval) {
+            return 1.0;
+        }
+        let damping = Math.max(this.minDamping, Math.min(1.0, gap / this.thresholdMs));
+        const windowStart = now - this.burstWindowMs;
+        this.recentBursts = this.recentBursts.filter(b => b.time >= windowStart);
+        const windowNotches = this.recentBursts.reduce((sum, b) => sum + b.notches, 0);
+        if (windowNotches >= this.maxBurstNotches) {
+            damping = Math.min(damping, 0.15);
+        }
+        this.recentBursts.push({ time: now, notches: damping });
+        return damping;
+    }
+    /**
+     * Compute whole integer row steps for widgets without internal sub-row accumulators
+     * (e.g. Code panel and Thinking box previews).
+     */
+    stepRows(direction, baseSpeed = 3, now = Date.now()) {
+        const notch = this.computeNotches(direction, now);
+        this.rowAccumulator += baseSpeed * notch;
+        const whole = Math.trunc(this.rowAccumulator);
+        if (whole !== 0) {
+            this.rowAccumulator -= whole;
+            return whole;
+        }
+        return 0;
+    }
+    reset() {
+        this.lastTick = 0;
+        this.lastDirection = null;
+        this.rowAccumulator = 0;
+        this.recentBursts = [];
+    }
+}
+export const defaultViewportDampener = new AdaptiveWheelDampener();
+/**
  * Handle mouse wheel scrolling with full viewport containment.
  * Replaces the buggy overscroll release with clean boundary saturation.
  */
-export function handleViewportWheel(key, viewport, surface, host) {
+export function handleViewportWheel(key, viewport, surface, host, now = Date.now()) {
     if (!viewport || !key.wheel)
+        return true;
+    if (key.wheel.direction !== 'up' && key.wheel.direction !== 'down')
         return true;
     // Auto-heal: If the surface was ever detached, immediately re-capture mouse
     // so the session stays responsive and never freezes.
@@ -26,10 +108,16 @@ export function handleViewportWheel(key, viewport, surface, host) {
     if (surface) {
         surface.activeTurnIndex = null;
     }
-    // Pure isolated scrolling: clamp strictly inside [0, maxScrollTop]
-    viewport.wheel(key.wheel.direction === 'down' ? 'down' : 'up');
-    // Immediately draw updated viewport
-    host.draw();
+    const dir = key.wheel.direction === 'down' ? 'down' : 'up';
+    const notches = defaultViewportDampener.computeNotches(dir, now);
+    viewport.wheel(dir, notches, now);
+    // Coalesce redraws to prevent terminal buffer flooding and latency pileup
+    if (typeof host.scheduleDraw === 'function') {
+        host.scheduleDraw();
+    }
+    else {
+        host.draw();
+    }
     return true;
 }
 /**

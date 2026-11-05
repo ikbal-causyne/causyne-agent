@@ -13,7 +13,7 @@ import path from 'node:path';
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { ChatPrompt } from '../src/tui/prompt.js';
 import { PromptHistory } from '../src/tui/history.js';
-import { handleViewportWheel, handleScrollbarMouse } from '../src/tui/scrollInteraction.js';
+import { handleViewportWheel, handleScrollbarMouse, AdaptiveWheelDampener } from '../src/tui/scrollInteraction.js';
 
 function sink({ columns = 100, rows = 40, isTTY = true }: { columns?: number; rows?: number; isTTY?: boolean } = {}) {
   const chunks: string[] = [];
@@ -206,5 +206,63 @@ describe('TUI Scroll Isolation & OpenCode Parity', () => {
 
     assert.equal(prompt.editor.getText(), 'my user command', 'input text must not be modified');
     assert.equal(surface.detached, false);
+  });
+
+  test('rapid trackpad wheel bursts are smoothly rate-limited without runaway flight', () => {
+    const { prompt, surface } = createTestHarness({ frameCount: 500 });
+    const viewport = surface.viewport;
+    assert.ok(viewport, 'viewport must exist');
+
+    viewport.toBottom();
+    const bottom = viewport.scrollTop;
+    assert.ok(bottom > 100, 'transcript should be long');
+
+    // Simulate 30 rapid trackpad wheel up events arriving 10ms apart
+    let simulatedNow = 10000;
+    for (let i = 0; i < 30; i++) {
+      handleViewportWheel(
+        { name: 'wheel', wheel: { direction: 'up', x: 10, y: 5 } },
+        viewport,
+        surface,
+        prompt,
+        simulatedNow
+      );
+      simulatedNow += 10;
+    }
+
+    const scrolledRows = bottom - viewport.scrollTop;
+    assert.ok(scrolledRows > 0, 'must scroll upwards');
+    assert.ok(scrolledRows < 60, `scrolled rows (${scrolledRows}) must be controlled, not runaway`);
+    assert.ok(viewport.scrollTop > 0, 'must not overshoot all the way to 0 on a single swipe');
+  });
+
+  test('instant direction reversal resets momentum and begins scrolling immediately in reverse', () => {
+    const dampener = new AdaptiveWheelDampener();
+    let now = 1000;
+    // Scroll down 5 ticks
+    for (let i = 0; i < 5; i++) {
+      dampener.stepRows('down', 3, now);
+      now += 10;
+    }
+    // Reverse immediately to up: first tick must brake downward momentum and yield full baseline step
+    const firstUpRows = dampener.stepRows('up', 3, now);
+    assert.equal(firstUpRows, 3, 'first tick in reverse direction must yield full baseline response');
+  });
+
+  test('horizontal wheel reports are ignored without causing vertical scroll', () => {
+    const { prompt, surface } = createTestHarness();
+    const viewport = surface.viewport;
+    assert.ok(viewport, 'viewport must exist');
+    viewport.scrollTo(20);
+
+    const handled = handleViewportWheel(
+      { name: 'wheel', wheel: { direction: 'left', x: 10, y: 5 } },
+      viewport,
+      surface,
+      prompt
+    );
+
+    assert.equal(handled, true);
+    assert.equal(viewport.scrollTop, 20, 'horizontal wheel must not modify vertical scroll position');
   });
 });

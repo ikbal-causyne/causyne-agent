@@ -141,6 +141,7 @@ export class Viewport {
   accumulator: number;
   unseen: number;
   lastWheelMoved: boolean;
+  lastWheelDirection: 'up' | 'down' | null;
 
   constructor({
     transcript = null,
@@ -161,6 +162,7 @@ export class Viewport {
     this.accumulator = 0;
     this.unseen = 0;
     this.lastWheelMoved = false;
+    this.lastWheelDirection = null;
   }
 
   get height(): number { return this.viewHeight; }
@@ -261,6 +263,11 @@ export class Viewport {
    */
   wheel(direction: 'up' | 'down', notches: number = 1, now: number = Date.now()): number {
     const before = this.scrollTop;
+    if (this.lastWheelDirection && this.lastWheelDirection !== direction) {
+      this.accumulator = 0;
+    }
+    this.lastWheelDirection = direction;
+
     const multiplier = this.acceleration ? this.acceleration.tick(now) : 1;
     const amount = Math.abs(notches) * this.speed * multiplier;
     this.accumulator += direction === 'up' ? -amount : amount;
