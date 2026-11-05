@@ -1,0 +1,119 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { ChatPrompt } from '../src/tui/prompt.js';
+import { LineEditor } from '../src/tui/lineEditor.js';
+import { KeyDecoder } from '../src/tui/keys.js';
+
+test('Stress test: Large multi-line unbracketed paste (1,000 lines) into ChatPrompt', () => {
+  const lineCount = 1000;
+  const lines: string[] = [];
+  for (let i = 0; i < lineCount; i++) {
+    lines.push(`> [Line ${i}] System error: https://chatgpt.com/settings/usage?ref=${i} </details>`);
+  }
+  const bigPayload = lines.join('\n');
+
+  let submitted: string | null = null;
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+  prompt.waiter = (val: string) => { submitted = val; };
+
+  const start = performance.now();
+  // Simulate delivering the big unbracketed payload directly on stdin
+  prompt.handleData(bigPayload);
+  const elapsed = performance.now() - start;
+
+  // Assert no premature submission occurred
+  assert.equal(submitted, null, 'Unbracketed paste must not submit early on embedded newlines');
+  assert.equal(prompt.editor.lines.length, lineCount, `Must contain exactly ${lineCount} lines`);
+  assert.equal(prompt.completion, null, 'Must bypass command/file completion on multi-line paste to avoid freezing');
+  assert.ok(elapsed < 200, `Large paste processing took ${elapsed.toFixed(1)}ms (must be under 200ms)`);
+
+  // Assert lineEditor rendering is fast
+  const renderStart = performance.now();
+  const layout = prompt.editor.render(100, '');
+  const renderElapsed = performance.now() - renderStart;
+  assert.ok(layout.rows.length >= lineCount);
+  assert.ok(renderElapsed < 150, `Render took ${renderElapsed.toFixed(1)}ms (must be under 150ms)`);
+
+  // Submitting with Enter now delivers the full payload
+  prompt.handleData('\r');
+  assert.equal(submitted, bigPayload, 'Full multi-line text must be submitted atomically upon pressing Enter');
+});
+
+test('Stress test: 5,000-line bracketed paste stress test', () => {
+  const lineCount = 5000;
+  const lines: string[] = [];
+  for (let i = 0; i < lineCount; i++) {
+    lines.push(`console.log("log line ${i}", { index: ${i}, active: true });`);
+  }
+  const codeBlock = lines.join('\n');
+
+  let submitted: string | null = null;
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+  prompt.waiter = (val: string) => { submitted = val; };
+
+  const start = performance.now();
+  prompt.handleKey({ name: 'paste', text: codeBlock, sequence: codeBlock });
+  const elapsed = performance.now() - start;
+
+  assert.equal(submitted, null);
+  assert.equal(prompt.editor.lines.length, lineCount);
+  assert.equal(prompt.completion, null);
+  assert.ok(elapsed < 250, `5,000-line paste handled in ${elapsed.toFixed(1)}ms`);
+
+  prompt.handleKey({ name: 'enter', sequence: '\r' });
+  assert.equal(submitted, codeBlock);
+});
+
+test('Stress test: Punctuation barrage with [, ], /, @, <details>, and ANSI escapes', () => {
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+
+  // Stream in 500 special characters in rapid sequence
+  const stream = '[test_component] /model @src/index.ts </details> > error [nested [brackets]] ';
+  for (let i = 0; i < 10; i++) {
+    for (const char of stream) {
+      prompt.handleData(char);
+    }
+  }
+
+  const expectedRepeated = stream.repeat(10);
+  assert.equal(prompt.editor.getText(), expectedRepeated, 'All punctuation including bare [ and ] must be preserved without viewport jumps');
+  assert.equal(prompt.editor.lines.length, 1);
+});
+
+test('Stress test: Rapid-fire input bursts (2,000 key events)', () => {
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+
+  const start = performance.now();
+  for (let i = 0; i < 2000; i++) {
+    if (i % 50 === 0) {
+      prompt.handleData('[');
+    } else if (i % 50 === 1) {
+      prompt.handleData(']');
+    } else if (i % 100 === 0) {
+      prompt.handleKey({ name: 'backspace', sequence: '\x7f' });
+    } else {
+      prompt.handleData(String.fromCharCode(97 + (i % 26)));
+    }
+  }
+  const elapsed = performance.now() - start;
+
+  assert.ok(prompt.editor.getText().length > 1500);
+  assert.ok(elapsed < 300, `2,000 rapid keystrokes processed in ${elapsed.toFixed(1)}ms`);
+});
+
+test('Stress test: 50 consecutive paste-and-clear cycles', () => {
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+  const block = Array.from({ length: 200 }, (_, i) => `item_${i}: value_${i} [tag_${i}]`).join('\n');
+
+  const start = performance.now();
+  for (let cycle = 0; cycle < 50; cycle++) {
+    prompt.handleData(block);
+    assert.equal(prompt.editor.lines.length, 200);
+    prompt.editor.clear();
+    assert.equal(prompt.editor.lines.length, 1);
+    assert.equal(prompt.editor.isEmpty, true);
+  }
+  const elapsed = performance.now() - start;
+
+  assert.ok(elapsed < 400, `50 paste-and-clear cycles completed in ${elapsed.toFixed(1)}ms`);
+});
