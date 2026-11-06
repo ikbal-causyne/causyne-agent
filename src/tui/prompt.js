@@ -258,7 +258,7 @@ export class ChatPrompt {
     const isBracketedPasteStart = str.startsWith('\x1b[200~');
     const isMouse = str.startsWith('\x1b[<') || str.startsWith('\x1b[M');
     const hasNewlines = str.includes('\n') || str.includes('\r');
-    if (!this.decoder.inPaste && !isBracketedPasteStart && !isMouse && (
+    if (!this.layer && !this.decoder.inPaste && !isBracketedPasteStart && !isMouse && (
       (str.length > 2 && hasNewlines) ||
       (str.length >= 64 && !str.startsWith('\x1b'))
     )) {
@@ -277,7 +277,7 @@ export class ChatPrompt {
 
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      if (key.name === 'char' && typeof key.text === 'string' && !key.alt && !key.ctrl) {
+      if (!this.layer && key.name === 'char' && typeof key.text === 'string' && !key.alt && !key.ctrl) {
         charBatch += key.text;
         motionOnly = false;
         continue;
