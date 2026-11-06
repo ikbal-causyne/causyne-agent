@@ -692,6 +692,14 @@ export class ChatPrompt {
       text === '/clear'
     );
 
+    // Immediate abort signals interrupt the running turn directly without queuing as a future task.
+    if ((text === '/stop' || text === '/interrupt') && this.busy) {
+      this.interrupt();
+      this.notice = 'Interrupted';
+      this.scheduleDraw();
+      return;
+    }
+
     if (isControlCommand && this.busy) {
       this.interrupt();
     }

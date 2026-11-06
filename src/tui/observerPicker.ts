@@ -69,14 +69,14 @@ export function buildObserverPickerItems(
 
   // 1. Toggle Protection
   const activeStatus = config.enabled ? '[Active  ●]' : '[Disabled  ○]';
-  const toggleAction = config.enabled ? 'Turn OFF protection' : 'Turn ON protection';
+  const toggleAction = config.enabled ? 'Click to Turn OFF' : 'Click to Turn ON';
   items.push({
     id: 'toggle',
-    label: `${activeStatus} — Click / Enter to ${toggleAction}`,
+    label: `${activeStatus} — ${toggleAction}`,
     category: 'Protection Status',
     description: config.enabled
       ? 'Cold Observer is actively verifying tool mutations and completion claims'
-      : 'Cold Observer is DISABLED — no safety invariants or claim checks are enforced',
+      : 'Cold Observer is DISABLED — safety invariants and claim checks are disabled',
     searchText: 'toggle enable disable active status turn off turn on switch protection',
     value: { action: 'toggle' }
   });
@@ -167,8 +167,15 @@ export function buildObserverPickerItems(
 /**
  * Launch the Interactive Cold Observer Setup Modal in the live prompt.
  */
-export async function runInteractiveObserverPicker(prompt: PromptHost): Promise<string> {
+export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (msg: string): void => {
+      if (settled) return;
+      settled = true;
+      resolve(msg);
+    };
+
     function openMenu(): void {
       const cfg = coldObserver.getConfig();
       const audits = coldObserver.getAuditHistory();
@@ -184,21 +191,22 @@ export async function runInteractiveObserverPicker(prompt: PromptHost): Promise<
         width: 76,
         height: 20,
         footer: `↑↓ choose  ${GLYPHS.dot}  enter toggle/edit  ${GLYPHS.dot}  esc finish`,
-        onPick: async (picked: ObserverPickerItem | null) => {
+        onPick: (picked: ObserverPickerItem | null): string | void => {
           if (!picked) {
             prompt.closeLayer();
             const currentCfg = coldObserver.getConfig();
-            resolve(`Cold Observer is ${currentCfg.enabled ? 'ACTIVE' : 'DISABLED'} (${currentCfg.mode}, ${currentCfg.strictness}).`);
+            finish(`Cold Observer is ${currentCfg.enabled ? 'ACTIVE' : 'DISABLED'} (${currentCfg.mode}, ${currentCfg.strictness}).`);
             return;
           }
 
           const action = picked.value.action;
 
-          // 1. Toggle Protection
+          // 1. Toggle Protection (Synchronous in-place toggle with visual confirmation)
           if (action === 'toggle') {
             const current = coldObserver.getConfig();
-            coldObserver.updateConfig({ enabled: !current.enabled });
-            prompt.notice = `Cold Observer is now ${!current.enabled ? 'ENABLED' : 'DISABLED'}`;
+            const newEnabled = !current.enabled;
+            coldObserver.updateConfig({ enabled: newEnabled });
+            prompt.notice = `Cold Observer is now ${newEnabled ? 'ACTIVE (Enabled)' : 'DISABLED (Inactive)'}`;
             refreshLayer();
             return 'keep';
           }
@@ -208,7 +216,7 @@ export async function runInteractiveObserverPicker(prompt: PromptHost): Promise<
             const current = coldObserver.getConfig();
             const nextMode: ObserverMode = current.mode === 'deterministic' ? 'advisory' : 'deterministic';
             coldObserver.updateConfig({ mode: nextMode });
-            prompt.notice = `Cold Observer mode set to "${nextMode}"`;
+            prompt.notice = `Cold Observer mode set to "${nextMode.toUpperCase()}"`;
             refreshLayer();
             return 'keep';
           }
@@ -289,30 +297,31 @@ export async function runInteractiveObserverPicker(prompt: PromptHost): Promise<
           // 6. Test Advisory Endpoint
           if (action === 'test') {
             prompt.closeLayer();
-            const health = await coldObserver.healthCheck();
-            const textLines = health.endpoint
-              ? [
-                  `Endpoint: ${health.endpoint}`,
-                  `Model:    ${health.model || '(unset)'}`,
-                  `Status:   ${health.healthy ? 'HEALTHY' : 'UNREACHABLE'} (${health.latencyMs}ms latency)`,
-                  `Detail:   ${health.detail}`,
-                  '',
-                  'Press Esc or Enter to return to Observer setup.'
-                ]
-              : [
-                  'No advisory endpoint configured.',
-                  'The deterministic observer requires no endpoint and remains fully active.',
-                  '',
-                  'Press Esc or Enter to return to Observer setup.'
-                ];
+            void coldObserver.healthCheck().then((health) => {
+              const textLines = health.endpoint
+                ? [
+                    `Endpoint: ${health.endpoint}`,
+                    `Model:    ${health.model || '(unset)'}`,
+                    `Status:   ${health.healthy ? 'HEALTHY' : 'UNREACHABLE'} (${health.latencyMs}ms latency)`,
+                    `Detail:   ${health.detail}`,
+                    '',
+                    'Press Esc or Enter to return to Observer setup.'
+                  ]
+                : [
+                    'No advisory endpoint configured.',
+                    'The deterministic observer requires no endpoint and remains fully active.',
+                    '',
+                    'Press Esc or Enter to return to Observer setup.'
+                  ];
 
-            prompt.openLayer(new DetailTextLayer({
-              title: 'Advisory Endpoint Health Check',
-              lines: textLines,
-              width: 70,
-              height: 12,
-              onDismiss: () => openMenu()
-            }));
+              prompt.openLayer(new DetailTextLayer({
+                title: 'Advisory Endpoint Health Check',
+                lines: textLines,
+                width: 70,
+                height: 12,
+                onDismiss: () => openMenu()
+              }));
+            });
             return;
           }
 
