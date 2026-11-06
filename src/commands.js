@@ -473,7 +473,13 @@ export const COMMANDS = [
     usage: '/usage',
     description: 'Show token usage and estimated cost',
     dialogTitle: 'Usage',
-    run: async () => ok(await buildUsageText())
+    run: async (argv, ctx = {}) => {
+      if (ctx.prompt && typeof ctx.prompt.toggleUsageCard === 'function') {
+        await ctx.prompt.toggleUsageCard(ctx.loop);
+        return ok('', { effect: 'silent' });
+      }
+      return ok(await buildUsageText());
+    }
   },
 
   {

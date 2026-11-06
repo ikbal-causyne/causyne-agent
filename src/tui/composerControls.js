@@ -130,6 +130,11 @@ export function handlePromptEscape(prompt, formatInterruptedRow) {
         prompt.scheduleDraw();
         return;
     }
+    if (prompt.usageCard) {
+        prompt.usageCard = null;
+        prompt.scheduleDraw();
+        return;
+    }
     if (prompt.completion) {
         prompt.completion = null;
         if (prompt.editor.getText().startsWith('/')) {

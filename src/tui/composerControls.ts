@@ -183,6 +183,11 @@ export function handlePromptEscape(
     prompt.scheduleDraw();
     return;
   }
+  if ((prompt as any).usageCard) {
+    (prompt as any).usageCard = null;
+    prompt.scheduleDraw();
+    return;
+  }
   if (prompt.completion) {
     prompt.completion = null;
     if (prompt.editor.getText().startsWith('/')) {

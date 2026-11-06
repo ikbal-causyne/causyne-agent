@@ -26,6 +26,7 @@ import { barBlock, GUTTER } from './block.js';
 import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay, stripAnsi } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
+import { renderUsageCardRows, collectUsageCardData } from './usageCard.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 import { readClipboardSync, writeClipboardSync } from './clipboardSync.js';
@@ -121,6 +122,7 @@ export class ChatPrompt {
     this.busy = false;
     this.active = false;
     this.drawnRows = 0;
+    this.usageCard = null;
 
     // Which row of the drawn block the caret is parked on.
     //
@@ -552,6 +554,31 @@ export class ChatPrompt {
     }));
   }
 
+  /** Toggle the docked usage card directly above the chatbox. */
+  async toggleUsageCard(loop = null) {
+    if (this.usageCard) {
+      this.usageCard = null;
+      this.scheduleDraw();
+      return false;
+    }
+    this.usageCard = await collectUsageCardData(loop || this.messageActionLoop);
+    this.scheduleDraw();
+    return true;
+  }
+
+  showUsageCard(loop = null) {
+    return this.toggleUsageCard(loop);
+  }
+
+  closeUsageCard() {
+    if (this.usageCard) {
+      this.usageCard = null;
+      this.scheduleDraw();
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Ask for approval of a tool call: risk, arguments and a scrollable diff.
    *
@@ -678,6 +705,9 @@ export class ChatPrompt {
     this.history.add(text);
     this.editor.clear();
     this.completion = null;
+    if (this.usageCard && !this.isCommand(text)) {
+      this.usageCard = null;
+    }
 
     // Control commands take priority over busy turns so the user is never locked out.
     // Commands like /stop, /new, /model, /session, /sessions, /continuum, /clear can interrupt
@@ -1517,10 +1547,11 @@ export class ChatPrompt {
       punctuate: false
     });
 
+    const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, width) : [];
     const planRows = this.planRows(width);
     const pickerRows = this.completion ? this.pickerRows(width) : [];
     this.pickerLayout = this.completion ? {
-      pickerStart: planRows.length + boxRows.length,
+      pickerStart: usageCardRows.length + planRows.length + boxRows.length,
       pickerCount: pickerRows.length,
       totalPromptRows: 0
     } : null;
@@ -1534,7 +1565,7 @@ export class ChatPrompt {
     const gap = status.length > 0 ? new Array(FOOTER_GAP).fill('') : [];
 
     const all = this.clampRows(
-      planRows.concat(boxRows, pickerRows, noticeRows, gap, status), width
+      usageCardRows.concat(planRows, boxRows, pickerRows, noticeRows, gap, status), width
     );
     if (this.pickerLayout) this.pickerLayout.totalPromptRows = all.length;
 
@@ -1545,7 +1576,7 @@ export class ChatPrompt {
     const positioned = this.surface
       ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
       : { rows: all, inset: 0 };
-    this.present(positioned.rows, planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
+    this.present(positioned.rows, usageCardRows.length + planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
   }
 
   /**

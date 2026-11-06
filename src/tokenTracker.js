@@ -24,12 +24,16 @@ export class TokenTracker {
     budget;
     taskTokens;
     taskCostUsd;
+    sessionTokens;
+    sessionCostUsd;
     largestStepTokens;
     constructor() {
         this.config = loadConfig();
         this.budget = this.config.tokenBudget || { enabled: false };
         this.taskTokens = 0;
         this.taskCostUsd = 0;
+        this.sessionTokens = 0;
+        this.sessionCostUsd = 0;
         this.largestStepTokens = 0;
         this.ensureUsageDir();
     }
@@ -178,7 +182,9 @@ export class TokenTracker {
         const cost = unitPrice * (quantityUnits || 1);
         const equivalentTokens = Math.round(cost / 0.000002);
         this.taskTokens += equivalentTokens;
+        this.sessionTokens = (this.sessionTokens || 0) + equivalentTokens;
         this.taskCostUsd += cost;
+        this.sessionCostUsd = (this.sessionCostUsd || 0) + cost;
         const cumulative = await this.getCumulativeUsage();
         const daily = await this.getDailyUsage();
         daily.totalTokens += equivalentTokens;
@@ -313,9 +319,11 @@ export class TokenTracker {
             usedTokens: daily.totalTokens,
             dailyTokens: daily.totalTokens,
             taskTokens: this.taskTokens,
+            sessionTokens: this.sessionTokens || this.taskTokens || 0,
             lifetimeTokens: cumulative.totalTokens,
             costUsd: daily.totalCostUsd,
             taskCostUsd: this.taskCostUsd,
+            sessionCostUsd: this.sessionCostUsd || this.taskCostUsd || 0,
             lifetimeCostUsd: cumulative.totalCostUsd,
             isDemo: false
         };
@@ -351,12 +359,24 @@ export class TokenTracker {
         this.taskCostUsd = 0;
         this.largestStepTokens = 0;
     }
+    resetSession() {
+        this.sessionTokens = 0;
+        this.sessionCostUsd = 0;
+        this.taskTokens = 0;
+        this.taskCostUsd = 0;
+        this.largestStepTokens = 0;
+    }
+    reset() {
+        this.resetSession();
+    }
     settle(extra, daily, cumulative) {
         return {
             usedTokens: daily.totalTokens,
             dailyTokens: daily.totalTokens,
             dailyCostUsd: daily.totalCostUsd || 0,
             dailyLimit: Number(this.budget && this.budget.maxTokensPerDay) || 0,
+            sessionTokens: this.sessionTokens || this.taskTokens || 0,
+            sessionCostUsd: this.sessionCostUsd || this.taskCostUsd || 0,
             taskTokens: this.taskTokens,
             taskCostUsd: this.taskCostUsd,
             taskLimit: Number(this.budget && this.budget.maxTokensPerTask) || 0,
@@ -393,9 +413,11 @@ export class TokenTracker {
         }
         const freshStep = freshInput + cTokens;
         this.taskTokens += freshStep;
+        this.sessionTokens = (this.sessionTokens || 0) + freshStep;
         this.largestStepTokens = Math.max(this.largestStepTokens || 0, freshStep);
         const cost = this.calculateCost(promptTokens, completionTokens, usageDetail);
         this.taskCostUsd += cost;
+        this.sessionCostUsd = (this.sessionCostUsd || 0) + cost;
         const { daily, cumulative } = await withUsageLock(async () => {
             const cumulative = await this.getCumulativeUsage();
             const daily = await this.getDailyUsage();
