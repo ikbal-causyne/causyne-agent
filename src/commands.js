@@ -1870,8 +1870,16 @@ export const COMMANDS = [
       { value: 'audit', label: 'audit', description: 'show recent audit history' },
       { value: 'reset', label: 'reset', description: 'restore default settings' }
     ],
-    run: async (argv) => {
+    run: async (argv, ctx = {}) => {
       const { coldObserver } = await import('./observer/coldObserver.js');
+
+      // If interactive prompt is active and no sub-arguments are given, open the interactive setup menu
+      if ((!argv || argv.length === 0 || argv[0] === '') && ctx.prompt) {
+        const { runInteractiveObserverPicker } = await import('./tui/observerPicker.js');
+        const message = await runInteractiveObserverPicker(ctx.prompt);
+        return ok(message, { effect: 'silent' });
+      }
+
       const sub = (argv[0] || 'status').toLowerCase();
 
       if (sub === 'toggle') {

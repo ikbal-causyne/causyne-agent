@@ -89,6 +89,7 @@
     "src/tui/setup.ts",
     "src/tui/modelPicker.ts",
     "src/tui/sessionPicker.ts",
+    "src/tui/observerPicker.ts",
     "src/tui/clipboardSync.ts",
     "src/tui/chatboxClipboard.ts",
     "src/tui/consoleGuard.ts",
