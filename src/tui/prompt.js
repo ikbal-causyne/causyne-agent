@@ -23,7 +23,7 @@ import { PromptHistory } from './history.js';
 import { FileIndex, suggest, applyCompletion, detectTrigger, renderPicker, MAX_VISIBLE } from './completion.js';
 import { paint, dim, bold, GLYPHS, terminalWidth, HAS_COLOR } from './theme.js';
 import { barBlock, GUTTER } from './block.js';
-import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay } from './text.js';
+import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay, stripAnsi } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
@@ -251,13 +251,20 @@ export class ChatPrompt {
   handleData = (chunk) => {
     let motionOnly = true;
     const str = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : '';
-    // Unbracketed multi-line paste safeguard: when a multi-line block arrives without
-    // bracketed paste (e.g. VS Code terminal or direct paste stream), handle it atomically
-    // as a paste event rather than executing multiple spurious Enter submissions.
-    if (!this.decoder.inPaste && str.length > 2 && (str.includes('\n') || str.includes('\r')) && !str.includes('\x1b')) {
-      const normalized = str.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Unbracketed multi-line or bulk paste safeguard: when a multi-line or bulk block arrives
+    // without bracketed paste (e.g. VS Code terminal, native clipboard paste, terminal ANSI logs,
+    // or piped stream), handle it atomically as a paste event rather than executing multiple
+    // spurious Enter submissions or freezing in per-character completion loops.
+    const isBracketedPasteStart = str.startsWith('\x1b[200~');
+    const isMouse = str.startsWith('\x1b[<') || str.startsWith('\x1b[M');
+    const hasNewlines = str.includes('\n') || str.includes('\r');
+    if (!this.decoder.inPaste && !isBracketedPasteStart && !isMouse && (
+      (str.length > 2 && hasNewlines) ||
+      (str.length >= 64 && !str.startsWith('\x1b'))
+    )) {
+      const clean = stripAnsi(str).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       try {
-        this.handleKey({ name: 'paste', text: normalized, sequence: normalized });
+        this.handleKey({ name: 'paste', text: clean, sequence: clean });
       } catch (e) {
         process.stderr.write(`\n[tui] paste failed: ${e.message}\n`);
       }
@@ -265,7 +272,25 @@ export class ChatPrompt {
       return;
     }
 
-    for (const key of this.decoder.decode(chunk)) {
+    const keys = this.decoder.decode(chunk);
+    let charBatch = '';
+
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (key.name === 'char' && typeof key.text === 'string' && !key.alt && !key.ctrl) {
+        charBatch += key.text;
+        motionOnly = false;
+        continue;
+      }
+      if (charBatch.length > 0) {
+        this.editor.insert(charBatch);
+        if (charBatch.length < 60 && !charBatch.includes('\n')) {
+          this.refreshCompletion();
+        } else {
+          this.completion = null;
+        }
+        charBatch = '';
+      }
       if (key.name !== 'mouse' || !isMouseMotion(key.sequence)) motionOnly = false;
       try {
         this.handleKey(key);
@@ -275,6 +300,17 @@ export class ChatPrompt {
         process.stderr.write(`\n[tui] key "${key.name}" failed: ${e.message}\n`);
       }
     }
+
+    if (charBatch.length > 0) {
+      this.editor.insert(charBatch);
+      if (charBatch.length < 60 && !charBatch.includes('\n')) {
+        this.refreshCompletion();
+      } else {
+        this.completion = null;
+      }
+      charBatch = '';
+    }
+
     // All-motion chunks repaint only when the hovered message actually changes.
     if (!motionOnly) this.draw();
   };

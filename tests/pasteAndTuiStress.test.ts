@@ -118,3 +118,38 @@ test('Stress test: 50 consecutive paste-and-clear cycles', () => {
   assert.ok(elapsed < 400, `50 paste-and-clear cycles completed in ${elapsed.toFixed(1)}ms`);
 });
 
+test('Stress test: Large single-line unbracketed paste (50,000 chars) processes in under 50ms without freeze', () => {
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+  const singleLinePayload = 'https://example.com/api/v1/resource?query=' + 'abcdef1234567890'.repeat(3000); // ~48KB single line
+
+  const start = performance.now();
+  prompt.handleData(singleLinePayload);
+  const elapsed = performance.now() - start;
+
+  assert.equal(prompt.editor.lines.length, 1);
+  assert.equal(prompt.editor.getText().length, singleLinePayload.length);
+  assert.ok(elapsed < 50, `50KB single-line paste must process in under 50ms without freeze, took ${elapsed.toFixed(1)}ms`);
+});
+
+test('Stress test: Terminal ANSI colored log paste strips escapes and avoids false Enter submission', () => {
+  let submitted: string | null = null;
+  const prompt = new ChatPrompt({ out: { write: () => {}, rows: 40, columns: 120 } });
+  prompt.waiter = (val: string) => { submitted = val; };
+
+  // Log with ANSI color escapes and newlines copied from a terminal
+  const ansiLog = '\x1b[31m[ERROR]\x1b[0m Failed to compile module: \x1b[33m/app/server.ts\x1b[0m\n' +
+    '\x1b[36m-->\x1b[0m src/index.ts:42:15\n' +
+    '\x1b[32m✔\x1b[0m 12 tests passed, \x1b[31m✖\x1b[0m 1 failed\n';
+
+  prompt.handleData(ansiLog);
+
+  // Must not submit early on the embedded newlines
+  assert.equal(submitted, null, 'ANSI log paste must not trigger premature submission on embedded newlines');
+  assert.equal(prompt.editor.lines.length, 4, 'Must contain 4 lines without ANSI corruption');
+
+  const text = prompt.editor.getText();
+  assert.ok(!text.includes('\x1b['), 'ANSI escape sequences must be stripped from pasted input');
+  assert.ok(text.includes('[ERROR] Failed to compile module: /app/server.ts'));
+});
+
+
