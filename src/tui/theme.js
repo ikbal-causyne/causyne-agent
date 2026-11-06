@@ -248,7 +248,7 @@ export function badge(role, text) {
 export const GLYPHS = HAS_UNICODE
   ? {
       arrow: '▸', check: '✓', cross: '✕', dot: '·', bullet: '•',
-      spinner: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+      spinner: ['◐', '◓', '◑', '◒'],
       hLine: '─', vLine: '│', corner: '└', tee: '├', ellipsis: '…',
       // The left accent bar of a block. Uses box-drawing heavy vertical ('┃')
       // so it joins seamlessly from row to row without font line-height leading gaps.

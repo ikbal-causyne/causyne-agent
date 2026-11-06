@@ -476,7 +476,7 @@ export class ChatRenderer {
       }));
       readline.clearLine(this.out, 1);
       this.spinnerIndex++;
-    }, 90);
+    }, 125);
   }
 
   stopSpinner() {

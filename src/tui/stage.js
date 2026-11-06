@@ -225,15 +225,15 @@ export class Stage {
 
     const next = this.normalize(rows);
     const target = caret && Number.isFinite(caret.row)
-      ? { row: Math.max(0, Math.min(Math.floor(caret.row), this.height - 1)), col: Math.max(0, Math.floor(caret.col) || 0) }
-      : { row: this.height - 1, col: 0 };
+      ? { row: Math.max(0, Math.min(Math.floor(caret.row), this.height - 1)), col: Math.max(0, Math.floor(caret.col) || 0), hideCursor: Boolean(caret.hideCursor) }
+      : { row: this.height - 1, col: 0, hideCursor: Boolean(caret?.hideCursor) };
 
     const changed = [];
     for (let i = 0; i < this.height; i++) {
       if (next[i] !== this.prev[i]) changed.push(i);
     }
 
-    const caretMoved = target.row !== this.caret.row || target.col !== this.caret.col;
+    const caretMoved = target.row !== this.caret.row || target.col !== this.caret.col || target.hideCursor !== this.caret.hideCursor;
     // A frame with nothing to say emits zero bytes. opencode's renderer makes
     // the same bet and calls it out as its main anti-flicker mechanism.
     if (changed.length === 0 && !caretMoved) return 0;
@@ -246,7 +246,7 @@ export class Stage {
     this.moveTo(target.row);
     this.write('\r');
     if (target.col > 0) this.write(`\x1b[${target.col}C`);
-    this.write(SHOW_CURSOR + '\x1b[6 q' + SYNC_OFF);
+    this.write((target.hideCursor ? HIDE_CURSOR : SHOW_CURSOR) + '\x1b[6 q' + SYNC_OFF);
 
     this.prev = next;
     this.caret = target;

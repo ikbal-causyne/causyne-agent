@@ -437,7 +437,7 @@ export class ChatPrompt {
     this.tickTimer = setInterval(() => {
       this.tick++;
       if (this.busy) this.scheduleDraw();
-    }, 90);
+    }, 125);
     if (this.tickTimer.unref) this.tickTimer.unref();
   }
 
@@ -1618,10 +1618,11 @@ export class ChatPrompt {
    * nothing of ours is on the terminal for erase() to walk back over.
    */
   present(all, caretRow, caretCol) {
+    const hideCursor = Boolean(this.busy && this.editor.isEmpty);
     if (this.surface) {
       this.drawnRows = 0;
       this.cursorRow = 0;
-      this.surface.present(all, { row: caretRow, col: caretCol,
+      this.surface.present(all, { row: caretRow, col: caretCol, hideCursor,
         modal: Boolean(this.layer), inline: Boolean(this.layer && !isStartupDialog(this.surface)) });
       return;
     }
@@ -1634,6 +1635,11 @@ export class ChatPrompt {
     this.cursorRow = caretRow;
     this.out.write('\r');
     if (caretCol > 0) this.out.write(`\x1b[${caretCol}C`);
+    if (hideCursor) {
+      this.out.write('\x1b[?25l');
+    } else {
+      this.out.write('\x1b[?25h');
+    }
   }
 
   /**

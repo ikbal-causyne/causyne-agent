@@ -393,7 +393,7 @@ export class StageSurface {
       const view = caret?.modal
         ? placeDialog(promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0)
         : placeHome(this.homeInfo, promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0);
-      return this.stage.paint(view.rows, { row: view.caretRow, col: view.caretCol });
+      return this.stage.paint(view.rows, { row: view.caretRow, col: view.caretCol, hideCursor: caret?.hideCursor });
     }
 
     const width = this.width;
@@ -501,7 +501,8 @@ export class StageSurface {
     const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
     return this.stage.paint(painted, {
       row: rows.length + caretRow,
-      col: caretCol
+      col: caretCol,
+      hideCursor: caret?.hideCursor
     });
   }
 
