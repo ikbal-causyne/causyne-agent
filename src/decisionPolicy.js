@@ -76,7 +76,24 @@ function splitCommandSegments(command) {
         segments.push(current.trim());
     return segments;
 }
-const READ_ONLY_CMD_REGEX = /^\s*(?:(?:pwd|ls|find|rg|grep|cat|sed|awk|head|tail|wc|diff|file|stat|which|whereis|type|du|df|pdfinfo|pdftotext|identify|mediainfo|ffprobe|otool|readelf|nm|ps|lsof|top|uptime|whoami|id|uname|env|printenv|echo|printf|pytest)\b|git\s+(?:status|diff|log|show|branch|tag|remote|rev-parse|describe)\b|npm\s+(?:view|audit|test|ls|list|explain|run\s+(?:test|check|lint|typecheck|verify))\b|pnpm\s+(?:test|view|audit|ls|list|run\s+(?:test|check|lint|typecheck|verify))\b|yarn\s+(?:test|audit|list|run\s+(?:test|check|lint|typecheck|verify))\b|bun\s+(?:test|pm)\b|npx\s+(?:jest|vitest|mocha|ava|playwright\s+test|cypress\s+run|tsc\s+--noEmit)\b|tsc\s+--noEmit\b|node\s+(?:--check|--test|-e\b|--eval\b|-p\b|--print\b|.*?(?:test|spec|verify|check))|(?:python3?|py)\s+(?:-m\s+(?:unittest|pytest|doctest|py_compile)|-c\b|.*?(?:test|spec|verify))|cargo\s+(?:test|check)\b|go\s+test\b|curl\s+(?:-I|-sI|-s\b|--head)\b)/i;
+const READ_ONLY_CMD_PATTERNS = [
+    String.raw `^\s*(?:pwd|ls|find|rg|grep|cat|sed|awk|head|tail|wc|diff|file|stat|which|whereis|type|du|df|pdfinfo|pdftotext|identify|mediainfo|ffprobe|otool|readelf|nm|ps|lsof|top|uptime|whoami|id|uname|env|printenv|echo|printf|pytest)\b`,
+    String.raw `(?:\.\/)?gradlew?\s+(?:test\S*|check\S*|lint\S*)\b`,
+    String.raw `mvn\s+(?:test\S*|verify\S*)\b`,
+    String.raw `git\s+(?:status|diff|log|show|branch|tag|remote|rev-parse|describe)\b`,
+    String.raw `npm\s+(?:view|audit|test|ls|list|explain|run\s+(?:test|check|lint|typecheck|verify))\b`,
+    String.raw `pnpm\s+(?:test|view|audit|ls|list|run\s+(?:test|check|lint|typecheck|verify))\b`,
+    String.raw `yarn\s+(?:test|audit|list|run\s+(?:test|check|lint|typecheck|verify))\b`,
+    String.raw `bun\s+(?:test|pm)\b`,
+    String.raw `npx\s+(?:jest|vitest|mocha|ava|playwright\s+test|cypress\s+run|tsc\s+--noEmit)\b`,
+    String.raw `tsc\s+--noEmit\b`,
+    String.raw `node\s+(?:--check|--test|-e\b|--eval\b|-p\b|--print\b|.*?(?:test|spec|verify|check))`,
+    String.raw `(?:python3?|py)\s+(?:-m\s+(?:unittest|pytest|doctest|py_compile)|-c\b|.*?(?:test|spec|verify))`,
+    String.raw `cargo\s+(?:test|check)\b`,
+    String.raw `go\s+test\b`,
+    String.raw `curl\s+(?:-I|-sI|-s\b|--head)\b`
+];
+const READ_ONLY_CMD_REGEX = new RegExp(READ_ONLY_CMD_PATTERNS.join('|'), 'i');
 export function isReadOnlyShellCommand(command) {
     const trimmed = command.trim();
     if (!trimmed)

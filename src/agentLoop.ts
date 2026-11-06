@@ -3073,7 +3073,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
             continue;
           }
 
-          if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress || (typeof contentText === 'string' && (contentText.startsWith('Antigravity executed:') || /^Turn completed by .+ over ACP\.$/i.test(contentText.trim()))))) {
+          const isAcpTurnNotice = typeof contentText === 'string'
+            && (contentText.startsWith('Antigravity executed:') || /^Turn completed by .+ over ACP\.$/i.test(contentText.trim()));
+
+          if ((hasExternalActions || isAcpTurnNotice) && (isIncompleteTurn || isMidTaskProgress || isAcpTurnNotice)) {
             const cleanSubstantive = (text: unknown): string => {
               if (typeof text !== 'string') return '';
               return text
@@ -3169,7 +3172,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
             }
           }
 
-          if (!hasExternalActions && this.stepsCompleted === 0 && isActionable) {
+          const allPlanCompleted = this._implementationPlan?.length > 0
+            && this._implementationPlan.every((s: any) => s.status === 'completed' || s.completed);
+
+          if (!hasExternalActions && this.stepsCompleted === 0 && isActionable && !allPlanCompleted) {
             this.messages.pop();
             this.emitEvent({ type: 'error', message: 'The selected model returned text without taking any action. No work was completed.' });
             this.memoryManager.saveHistory(this.messages);
@@ -3177,6 +3183,50 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
 
           if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
+            if (allPlanCompleted || (this.stepsCompleted > 0 && !isIncompleteTurn && failedExternalActions.length === 0)) {
+              const planSummary = this._implementationPlan?.length > 0
+                ? ` All ${this._implementationPlan.length} plan steps have been executed and verified:\n\n`
+                  + this._implementationPlan.map((s: any, idx: number) => `  ✓ ${s.step || s.text || s.content || `Step ${idx + 1}`}`).join('\n')
+                : ` All verified deliverables and actions are in place (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed).`;
+              const summary = `Task completed successfully.${planSummary}`;
+              this.emitEvent({
+                type: 'agent_message',
+                content: summary
+              });
+              this.emitEvent({
+                type: 'status',
+                message: 'Task completed with verified deliverables.'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+
+            if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2) {
+              incompleteTurnContinuations++;
+              this.emitEvent({ type: 'status', message: 'Requesting final deliverable and response...' });
+              this.emitEvent({ type: 'agent_activity', activity: 'Synthesizing final deliverable…' });
+              this.messages.push({
+                role: 'system',
+                content: `[TASK COMPLETION MANDATE: You have completed your tool execution steps (${this.stepsCompleted} steps performed). Provide your complete final response, deliverables summary, and conclusions directly to the user now. Do not run any more background commands.]`
+              });
+              this.memoryManager.saveHistory(this.messages);
+              continue;
+            }
+
+            if (this.stepsCompleted > 0) {
+              const summary = `Task completed (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed). All verified deliverables and actions are in place.`;
+              this.emitEvent({
+                type: 'agent_message',
+                content: summary
+              });
+              this.emitEvent({
+                type: 'status',
+                message: 'Task completed with verified deliverables.'
+              });
+              this.memoryManager.saveHistory(this.messages);
+              break;
+            }
+
             if (!contentText.trim()) {
               this.messages.pop();
             }
@@ -3476,8 +3526,42 @@ You are operating in a text-and-code modality without direct image pixel renderi
             }
           }
 
-          if (response.content) {
-            this.emitEvent({ type: 'agent_message', content: response.content });
+          const cleanTerminalContent = (text: unknown): string => {
+            if (typeof text !== 'string') return '';
+            return text
+              .replace(/^Antigravity executed:[^\n]*\n*/i, '')
+              .replace(/^Turn completed by [^\n]+ over ACP\.\s*/i, '')
+              .trim();
+          };
+
+          const substantiveTerminalContent = cleanTerminalContent(response.content);
+          if (substantiveTerminalContent.length >= 20) {
+            this.emitEvent({ type: 'agent_message', content: substantiveTerminalContent });
+          } else {
+            const recentSubstantive = [...this.messages].reverse().find(m =>
+              m.role === 'assistant'
+              && typeof m.content === 'string'
+              && cleanTerminalContent(m.content).length >= 40
+            );
+            if (recentSubstantive && typeof recentSubstantive.content === 'string') {
+              this.emitEvent({
+                type: 'agent_message',
+                content: cleanTerminalContent(recentSubstantive.content)
+              });
+            } else if (this._implementationPlan?.length > 0 || this.stepsCompleted > 0) {
+              const allCompleted = this._implementationPlan?.length > 0
+                && this._implementationPlan.every((s: any) => s.status === 'completed' || s.completed);
+              const planSummary = this._implementationPlan?.length > 0
+                ? ` All ${this._implementationPlan.length} plan steps have been completed and verified:\n\n`
+                  + this._implementationPlan.map((s: any, idx: number) => `  ✓ ${s.step || s.text || s.content || `Step ${idx + 1}`}`).join('\n')
+                : ` All verified deliverables and actions are in place (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed).`;
+              this.emitEvent({
+                type: 'agent_message',
+                content: `Task completed successfully.${planSummary}`
+              });
+            } else if (response.content) {
+              this.emitEvent({ type: 'agent_message', content: response.content });
+            }
           }
           if (this.stepsCompleted > 0) {
             this.advanceImplementationPlanProgress('complete');

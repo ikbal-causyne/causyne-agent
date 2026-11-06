@@ -1,11 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { resolveToolCallEnvelopeArguments } from '../src/implementationPlan.js';
 import { selfRepairToolCall } from '../src/tools/toolSelfRepair.js';
 import { validateToolArguments } from '../src/tools/argumentValidation.js';
 import { updatePlan } from '../src/tools/updatePlan.js';
 import { AcpClient } from '../src/acp/client.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
+import { isReadOnlyShellCommand } from '../src/decisionPolicy.js';
+import { AgentLoop } from '../src/agentLoop.js';
 
 const planSchema = updatePlan.schema.parameters as any;
 
@@ -86,3 +91,58 @@ test('ACP inactivity guard re-arms while a peer-native tool call is running', as
   await new Promise(r => setTimeout(r, 90));
   assert.match(String(settled), /stalled: no activity from peer/);
 });
+
+test('isReadOnlyShellCommand recognizes gradle and maven test commands as non-mutating', () => {
+  assert.equal(isReadOnlyShellCommand('./gradlew testReleaseUnitTest'), true);
+  assert.equal(isReadOnlyShellCommand('gradle test'), true);
+  assert.equal(isReadOnlyShellCommand('mvn test'), true);
+  assert.equal(isReadOnlyShellCommand('./gradlew check'), true);
+  assert.equal(isReadOnlyShellCommand('./gradlew assembleRelease'), false);
+});
+
+test('AgentLoop completes successfully when all plan steps are completed without hanging', async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-completion-test-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+
+  try {
+    const events: any[] = [];
+    const conn = {
+      readyState: 1,
+      send: (data: string) => { events.push(JSON.parse(data)); }
+    };
+    const loop = new AgentLoop(conn, 'test-completion-task', 'Build remote app', { workspaceRoot: workspace });
+
+    // Seed plan and mark all completed
+    loop._implementationPlan = [
+      { id: '1', step: 'Implement feature', status: 'completed' },
+      { id: '2', step: 'Verify unit test', status: 'completed' }
+    ];
+
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => ({
+        content: '',
+        usage: { promptTokens: 10, completionTokens: 0 }
+      })
+    };
+    loop.initializeProvider = () => model as never;
+
+    await loop.run();
+
+    const agentMessage = events.find((e: any) => e.type === 'agent_message');
+    assert.ok(agentMessage, 'Must emit agent_message with completion deliverable');
+    assert.match(agentMessage.content, /Task completed successfully/);
+    assert.match(agentMessage.content, /Implement feature/);
+    assert.match(agentMessage.content, /Verify unit test/);
+
+    const statusDone = events.find((e: any) => e.type === 'status' && e.message?.includes('Task completed with verified deliverables'));
+    assert.ok(statusDone, 'Must emit verified completion status instead of false error');
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
