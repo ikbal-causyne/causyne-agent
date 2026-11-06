@@ -18,7 +18,7 @@ export function sessionRows(rows, columns) {
     const inset = Math.min(3, Math.max(0, available - 3));
     const prefix = ' '.repeat(inset);
     return {
-        rows: rows.map(row => row ? prefix + truncate(row, Math.max(1, available - inset), '') : ''),
+        rows: rows.map(row => row ? prefix + truncate(row, Math.max(1, available - inset - 1), '') : ''),
         inset
     };
 }
