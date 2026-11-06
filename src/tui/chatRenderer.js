@@ -324,9 +324,10 @@ export class ChatRenderer {
       this.rowSink = previousSink;
       this.forcedWidth = previousWidth;
     }
-    const availableWidth = this.transcript?.surface?.composeAvailableWidth
+    const maxAvailable = this.transcript?.surface?.composeAvailableWidth
       ? this.transcript.surface.composeAvailableWidth()
       : width;
+    const availableWidth = Math.min(width, maxAvailable);
     return sessionRows(sink, availableWidth).rows;
   }
 

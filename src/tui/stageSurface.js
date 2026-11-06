@@ -644,7 +644,7 @@ export class StageSurface {
    */
   attachRail(rows, contentWidth) {
     const turns = collectSessionTurns(this.transcript, contentWidth);
-    const hasTurns = turns.length > 1;
+    const hasTurns = turns.length > 0;
     const isAtBottom = typeof this.viewport?.atBottom === 'function' ? this.viewport.atBottom() : false;
     const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, this.viewport.state().scrollTop, rows.length, isAtBottom);
     const railResult = hasTurns
@@ -673,6 +673,8 @@ export class StageSurface {
             row = ` ${leftCell}${row.slice(1)}`;
           } else if (row.length > 0) {
             row = ` ${leftCell} ${row}`;
+          } else {
+            row = ` ${leftCell} `;
           }
         }
       }
