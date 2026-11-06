@@ -23,7 +23,7 @@ test('peer profiles are validated from the user file', () => {
   const profiles = loadPeerProfiles();
   assert.deepEqual(profiles.map((profile) => profile.id).sort(), ['good', 'slow']);
   assert.equal(profiles.find((profile) => profile.id === 'slow').timeoutSeconds, 1800);
-  assert.equal(profiles.find((profile) => profile.id === 'slow').policy, 'read-only');
+  assert.equal(profiles.find((profile) => profile.id === 'slow').policy, 'workspace');
 });
 
 test('peer delegation rejects unknown profiles with guidance', async () => {
@@ -83,7 +83,7 @@ test('peer profile resolves built-in presets when not explicitly configured', ()
   assert.equal(opencode.id, 'opencode');
   assert.equal(opencode.command, 'opencode');
   assert.deepEqual(opencode.args, ['acp']);
-  assert.equal(opencode.policy, 'read-only');
+  assert.equal(opencode.policy, 'workspace');
 });
 
 test('testPeerHandshake succeeds against fixture', async () => {

@@ -174,16 +174,28 @@ function commandItems(query = '') {
 
   // When a user explicitly searches for a skill keyword (e.g. `/docker`), offer matching skills,
   // but commands always retain strict priority in ranking.
-  const skills = listSkillsForCompletion().map((skill) => ({
-    value: `/skills ${skill.domain}/${skill.id}`,
-    match: `${skill.id} ${skill.domain}`,
-    label: `/${skill.id}`,
-    description: sanitize(skill.description || ''),
-    isCommand: false
-  }));
+  //
+  // Skills match only on a CONTIGUOUS piece of their own id, and only once the
+  // query is long enough to mean something. Loose subsequence matching over
+  // "id + domain" let `/p` and `/plu` pull 70+ unrelated skills into the
+  // command palette ("... 72 more"), burying the command being typed.
+  const needle = query.toLowerCase();
+  if (needle.length < SKILL_QUERY_MIN) return commands;
+  const skills = listSkillsForCompletion()
+    .filter((skill) => String(skill.id || '').toLowerCase().includes(needle))
+    .map((skill) => ({
+      value: `/skills ${skill.domain}/${skill.id}`,
+      match: skill.id,
+      label: `/${skill.id}`,
+      description: sanitize(skill.description || ''),
+      isCommand: false
+    }));
 
   return commands.concat(skills);
 }
+
+// Below this many characters a query is still a command prefix, not a skill search.
+const SKILL_QUERY_MIN = 3;
 
 /**
  * A command's own argument suggestions.

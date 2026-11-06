@@ -711,6 +711,10 @@ export class ChatPrompt {
       const settle = this.waiter;
       this.waiter = null;
       if (settle) settle(text);
+      else {
+        if (!Array.isArray(this.queue)) this.queue = [];
+        this.queue.push(text); // nobody is reading yet: hold it, never drop it
+      }
       return;
     }
 
@@ -734,6 +738,14 @@ export class ChatPrompt {
   // -------------------------------------------------------------------------
 
   handleKey(key) {
+    // A notice reports the result of the last action. Once the user edits the
+    // line again it is stale, and leaving it up made "copied ..." follow every
+    // later keystroke for the rest of the session.
+    if (this.notice && !this.layer
+        && (key.name === 'char' || key.name === 'paste' || key.name === 'backspace' || key.name === 'delete')) {
+      this.notice = '';
+    }
+
     // The wheel was handed to the terminal at the top of the band; the moment
     // the user types again they are driving this prompt, so take it back.
     if (key.name !== 'wheel' && key.name !== 'mouse') {
@@ -1232,6 +1244,25 @@ export class ChatPrompt {
   handleCompletionKey(key) {
     if (key.name === 'up') { this.moveSelection(-1); return true; }
     if (key.name === 'down') { this.moveSelection(1); return true; }
+    // The wheel, PgUp and PgDn belong to the open picker. Letting them fall
+    // through scrolled the transcript behind a frozen menu.
+    if (key.name === 'wheel') {
+      const direction = key.wheel && key.wheel.direction;
+      if (direction === 'up') this.moveSelectionClamped(-1);
+      else if (direction === 'down') this.moveSelectionClamped(1);
+      this.scheduleDraw();
+      return true;
+    }
+    if (key.name === 'pageup' && !key.shift) {
+      this.moveSelectionClamped(-MAX_VISIBLE);
+      this.scheduleDraw();
+      return true;
+    }
+    if (key.name === 'pagedown' && !key.shift) {
+      this.moveSelectionClamped(MAX_VISIBLE);
+      this.scheduleDraw();
+      return true;
+    }
     if (key.name === 'mouse') {
       if (key.mouse && key.mouse.pressed && key.mouse.button === 0) {
         let item = null;
@@ -1242,7 +1273,11 @@ export class ChatPrompt {
           const pickerBottom = pickerTop + this.pickerLayout.pickerCount - 1;
 
           if (key.mouse.row >= pickerTop && key.mouse.row <= pickerBottom) {
-            const index = key.mouse.row - pickerTop;
+            // The picker renders a scrolled window (renderPicker); a click maps
+            // to the item under the cursor, not to the first page of items.
+            const total = this.completion.items ? this.completion.items.length : 0;
+            const windowStart = Math.max(0, Math.min(this.selected - MAX_VISIBLE + 1, total - MAX_VISIBLE));
+            const index = windowStart + (key.mouse.row - pickerTop);
             item = this.completion.items && this.completion.items[index];
           } else {
             // Click outside picker closes it
@@ -1256,16 +1291,17 @@ export class ChatPrompt {
 
         if (item) {
           if (this.completion.kind === 'command') {
-            this.editor.clear();
-            this.completion = null;
-            this.deliver(item.value);
+            // A skill entry goes onto the line so the user can say what to do
+            // with it; clicking it used to invoke it immediately with no task.
+            if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
+              this.acceptCompletion();
+              return true;
+            }
+            this.submitPickedCommand(item.value);
             return true;
           }
           if (this.completion.kind === 'command-argument') {
-            const cmd = this.completion.command;
-            this.editor.clear();
-            this.completion = null;
-            this.deliver(`/${cmd} ${item.value}`);
+            this.submitPickedCommand(`/${this.completion.command} ${item.value}`);
             return true;
           }
           this.acceptCompletion();
@@ -1282,9 +1318,7 @@ export class ChatPrompt {
           return true;
         }
         // Instant execution on single Enter for any pure slash command
-        this.editor.clear();
-        this.completion = null;
-        this.deliver(item.value);
+        this.submitPickedCommand(item.value);
         return true;
       }
       if (this.completionIsExact()) {
@@ -1311,6 +1345,26 @@ export class ChatPrompt {
   moveSelection(direction) {
     const count = this.completion.items.length;
     this.selected = (this.selected + direction + count) % count;
+  }
+
+  /** Move without wrapping: a wheel or page key stops at either end. */
+  moveSelectionClamped(delta) {
+    const count = this.completion.items.length;
+    if (count === 0) return;
+    this.selected = Math.max(0, Math.min(count - 1, this.selected + delta));
+  }
+
+  /**
+   * Run a command chosen in the picker through the same path as typing it.
+   *
+   * deliver() bypassed submit(): during a running turn a picked `/stop` was
+   * queued behind the very turn it was meant to stop, and the command never
+   * reached input history.
+   */
+  submitPickedCommand(value) {
+    this.completion = null;
+    this.editor.setText(value);
+    this.submit();
   }
 
   acceptCompletion() {

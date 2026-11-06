@@ -644,13 +644,13 @@ export class StageSurface {
    */
   attachRail(rows, contentWidth) {
     const turns = collectSessionTurns(this.transcript, contentWidth);
+    const hasTurns = turns.length > 1;
     const isAtBottom = typeof this.viewport?.atBottom === 'function' ? this.viewport.atBottom() : false;
     const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, this.viewport.state().scrollTop, rows.length, isAtBottom);
-    const railResult = turns.length > 0
+    const railResult = hasTurns
       ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex)
       : null;
 
-    const hasTurns = turns.length > 0;
     this.turnRailLayout = {
       railX: hasTurns ? 1 : contentWidth + 1,
       stageTop: (this.out.rows || this.stage.height) - this.stage.height,
@@ -671,9 +671,7 @@ export class StageSurface {
             row = ` ${leftCell}${row.slice(2)}`;
           } else if (row.startsWith(' ')) {
             row = ` ${leftCell}${row.slice(1)}`;
-          } else if (row.length === 0) {
-            row = ` ${leftCell}`;
-          } else {
+          } else if (row.length > 0) {
             row = ` ${leftCell} ${row}`;
           }
         }

@@ -970,12 +970,30 @@ export function undoLast(options = {}) {
   // a build script, `mv`, `rm` — announces no paths and produces ZERO file
   // entries. beginTask() snapshots the whole workspace tree precisely to cover
   // that case, and undoTask() already knows how to diff and restore it.
-  //
-  // So the store held hundreds of tree snapshots, cost megabytes to keep, and
-  // `/undo` answered "no file changes have been checkpointed yet" — which was
-  // not merely unhelpful, it was untrue.
-  const candidates = listGroups(200).filter((group) =>
+  const ws = options.workspaceRoot ? path.resolve(options.workspaceRoot) : path.resolve(process.cwd());
+  const allCandidates = listGroups(200).filter((group) =>
     !group.taskId.startsWith('undo_') && isUndoable(group));
+
+  // Filter out dead temporary test directories
+  const validCandidates = allCandidates.filter((group) => {
+    const allPaths = [
+      ...group.trees.map((t) => t.root),
+      ...group.fileEntries.map((e) => e.path)
+    ];
+    if (allPaths.length > 0 && allPaths.every((p) => (p.startsWith('/var/folders/') || p.startsWith('/tmp/')) && !fs.existsSync(p))) {
+      return false;
+    }
+    return true;
+  });
+
+  // Prefer candidates belonging to the current workspace root
+  const workspaceCandidates = validCandidates.filter((group) => {
+    const matchesTree = group.trees.some((t) => t.root && (t.root === ws || ws.startsWith(t.root + path.sep) || t.root.startsWith(ws + path.sep)));
+    const matchesFile = group.fileEntries.some((e) => e.path && (e.path.startsWith(ws + path.sep) || e.path === ws));
+    return matchesTree || matchesFile;
+  });
+
+  const candidates = workspaceCandidates.length > 0 ? workspaceCandidates : validCandidates;
 
   if (candidates.length === 0) {
     return { ok: false, error: 'nothing has been checkpointed yet — no task has run in this workspace' };

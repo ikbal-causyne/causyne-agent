@@ -124,7 +124,14 @@ export async function buildUsageText() {
   const budget = config.tokenBudget || {};
   const lines = [];
 
-  lines.push('Token usage (BYOK — billed by your provider, not by Causyne)');
+  const provider = config.provider || 'default';
+  const isAgy = isAntigravityProvider(provider);
+  const isAcp = isAcpProvider(provider);
+  const billingNote = (isAgy || isAcp)
+    ? '(Local CLI / ACP peer)'
+    : '(BYOK — billed by your provider, not by Causyne)';
+
+  lines.push(`Token usage ${billingNote}`);
   lines.push(`  Provider / model : ${config.provider || 'default'} / ${config.model || 'default'}`);
   lines.push(`  This task        : ${formatNumber(usage.taskTokens)} tokens   $${Number(usage.taskCostUsd || 0).toFixed(4)}`);
   lines.push(`  Today            : ${formatNumber(usage.dailyTokens)} tokens   $${Number(usage.costUsd || 0).toFixed(4)}`);
@@ -215,7 +222,7 @@ export function printCheckpoints(limit = 15) {
  * here, in one place, and each surface renders the single result it is given.
  */
 function runUndo(taskId, options = {}) {
-  const opts = { dryRun: options.dryRun, full: options.full };
+  const opts = { dryRun: options.dryRun, full: options.full, workspaceRoot: options.workspaceRoot };
   return options.step
     ? undoStep({ dryRun: options.dryRun })
     : (taskId ? undoTask(taskId, opts) : undoLast(opts));

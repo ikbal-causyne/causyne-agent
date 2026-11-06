@@ -1,5 +1,23 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+function isTempHome(dir: string): boolean {
+  const normalized = path.resolve(dir);
+  const tmp = path.resolve(os.tmpdir());
+  return (
+    normalized.startsWith(tmp) ||
+    normalized.startsWith('/tmp/') ||
+    normalized.startsWith('/private/tmp/') ||
+    normalized.startsWith('/var/folders/') ||
+    normalized.startsWith('/private/var/folders/')
+  );
+}
+
+function isNodeTestRunner(): boolean {
+  if (process.env['NODE_TEST_CONTEXT']) return true;
+  return process.execArgv.some((arg) => arg === '--test' || arg.startsWith('--test-'));
+}
 
 /**
  * Resolve a path the model supplied, expanding a leading `~`.
@@ -32,5 +50,18 @@ export function causyneHome(): string {
   if (envHome && String(envHome).trim()) {
     return path.resolve(String(envHome).trim());
   }
-  return path.join(os.homedir(), '.causyne');
+  const home = os.homedir();
+  if (isNodeTestRunner() && !isTempHome(home)) {
+    const fallbackRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-test-auto-'));
+    process.env['CAUSYNE_HOME'] = fallbackRoot;
+    process.once('exit', () => {
+      try {
+        fs.rmSync(fallbackRoot, { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup
+      }
+    });
+    return fallbackRoot;
+  }
+  return path.join(home, '.causyne');
 }

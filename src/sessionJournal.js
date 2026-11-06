@@ -489,6 +489,19 @@ export function restoreSessionFromSnapshot(file, snapshot) {
         return false;
     }
 }
+export function renameSession(id, newTitle) {
+    const session = readSession(id);
+    const cleanTitle = String(newTitle ?? '').trim();
+    if (!session || !cleanTitle)
+        return false;
+    return appendEvent(sessionTranscriptFile(session.id), {
+        version: 1,
+        type: 'messages.replaced',
+        at: Date.now(),
+        messages: session.messages,
+        title: cleanTitle
+    });
+}
 export function deleteSession(id) {
     const safe = safeSessionId(id);
     if (!safe)

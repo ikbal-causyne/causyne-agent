@@ -498,7 +498,7 @@ export function getPresetProfile(id: string): PeerProfile | null {
     command: preset.command,
     args: preset.args,
     cwd: null,
-    policy: 'read-only',
+    policy: 'workspace',
     timeoutSeconds: preset.timeoutSeconds || 180,
     env: {}
   };

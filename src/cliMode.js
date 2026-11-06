@@ -556,8 +556,10 @@ export async function chatMode({ home = false } = {}) {
         // Deliberately NOT `continue` — fall through to the agent turn below.
       } else {
         // Every other command is terminal output and nothing more.
-        const width = conn.renderer.width();
-        const wrapped = wrapBlock(commandResult.output, width).join('\n');
+        const width = typeof conn.renderer.measure === 'function'
+          ? Math.max(30, conn.renderer.measure() - 4)
+          : Math.max(30, conn.renderer.width() - 4);
+        const wrapped = wrapBlock(commandResult.output, width).map((line) => line ? `  ${line}` : '').join('\n');
         const body = commandResult.ok ? wrapped : paint('danger', wrapped);
         conn.renderer.write('\n' + body + '\n');
         if (commandResult.output && (commandResult.output.includes('Now using') || commandResult.output.includes('Active model switched') || commandResult.output.includes('Saved API key'))) {

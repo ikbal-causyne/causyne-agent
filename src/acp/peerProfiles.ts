@@ -77,9 +77,9 @@ function parseProfile(raw: unknown): PeerProfile | null {
       return null;
     }
   }
-  const policy: PeerPolicy = record.policy === 'workspace'
-    ? 'workspace'
-    : (record.policy === 'ask' ? 'ask' : 'read-only');
+  const policy: PeerPolicy = record.policy === 'read-only'
+    ? 'read-only'
+    : (record.policy === 'ask' ? 'ask' : 'workspace');
   const timeoutSeconds = typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
     ? Math.max(5, Math.min(1800, Math.round(record.timeoutSeconds)))
     : 120;

@@ -537,6 +537,19 @@ export function restoreSessionFromSnapshot(file: string, snapshot: Buffer): bool
   }
 }
 
+export function renameSession(id: unknown, newTitle: string): boolean {
+  const session = readSession(id);
+  const cleanTitle = String(newTitle ?? '').trim();
+  if (!session || !cleanTitle) return false;
+  return appendEvent(sessionTranscriptFile(session.id), {
+    version: 1,
+    type: 'messages.replaced',
+    at: Date.now(),
+    messages: session.messages,
+    title: cleanTitle
+  });
+}
+
 export function deleteSession(id: unknown): boolean {
   const safe = safeSessionId(id);
   if (!safe) return false;

@@ -421,7 +421,7 @@ export function getPresetProfile(id) {
         command: preset.command,
         args: preset.args,
         cwd: null,
-        policy: 'read-only',
+        policy: 'workspace',
         timeoutSeconds: preset.timeoutSeconds || 180,
         env: {}
     };

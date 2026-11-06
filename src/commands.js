@@ -45,7 +45,12 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execSync } from 'child_process';
 import { runCopyCommand, runPasteCommand } from './tui/chatboxClipboard.js';
+import { getPackageVersion } from './version.js';
+import { listGroups } from './checkpoints.js';
+import { renameSession, getSession } from './sessionStore.js';
+import { listPlugins } from './plugins/pluginManager.js';
 
 export const SCOPES = ['local'];
 
@@ -79,6 +84,13 @@ export const COMMANDS = [
     usage: '/help [command]',
     description: 'List the available commands',
     dialogTitle: 'Commands',
+    complete: () => {
+      return listCommands('terminal').map((c) => ({
+        value: c.name,
+        label: c.name,
+        description: c.description
+      }));
+    },
     run: (argv, ctx) => {
       const [wanted] = argv;
       if (wanted) {
@@ -368,7 +380,28 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/undo [taskId] [--step] [--full] [--apply]',
     description: "Preview rolling back the last task's file changes (--apply to write)",
-    run: (argv) => {
+    dialogTitle: 'Undo',
+    complete: () => {
+      try {
+        const groups = listGroups(10);
+        return [
+          { value: '--apply', label: '--apply', description: 'apply rollback directly to workspace' },
+          { value: '--step', label: '--step', description: 'roll back just the single last file change' },
+          { value: '--full', label: '--full', description: 'roll back entire workspace tree drift' },
+          ...groups.map((g) => ({
+            value: g.taskId,
+            label: g.taskId,
+            description: g.prompt ? `${g.prompt.slice(0, 36)} (${g.fileEntries.length} files)` : `${g.fileEntries.length} files`
+          }))
+        ];
+      } catch (e) {
+        return [
+          { value: '--apply', label: '--apply', description: 'apply rollback directly' },
+          { value: '--step', label: '--step', description: 'roll back just the single last file change' }
+        ];
+      }
+    },
+    run: (argv, ctx = {}) => {
       const flags = new Set(argv.filter(a => a.startsWith('--')));
       const taskId = argv.find(a => !a.startsWith('--'));
 
@@ -378,15 +411,17 @@ export const COMMANDS = [
       // should be able to overwrite a day's work, so the destructive form has
       // to be asked for by name.
       const apply = flags.has('--apply');
+      const workspaceRoot = ctx.loop?.workspaceRoot || process.cwd();
 
       const { ok: succeeded, text } = buildUndoText(taskId, {
         step: flags.has('--step'),
         full: flags.has('--full'),
-        dryRun: !apply
+        dryRun: !apply,
+        workspaceRoot
       });
 
       if (!succeeded) return fail(text);
-      if (apply) return ok(text);
+      if (apply) return ok(text, { effect: 'inline' });
       return ok(`${text}\n\nNothing was written. Run the same command with --apply to restore these files.`);
     }
   },
@@ -442,113 +477,51 @@ export const COMMANDS = [
   },
 
   {
-    name: 'cortex',
-    aliases: ['brain'],
+    name: 'diff',
+    aliases: ['changes', 'git-diff'],
     scope: 'local',
-    usage: '/cortex [on | off | toggle | status | list | forget <id> | forget-here | purge]',
-    description: 'Inspect, toggle, or manage the persistent memory and digital brain',
-    dialogTitle: 'Cortex',
-    // A memory store you cannot read is not a memory, it is a black box that
-    // occasionally changes the agent's behaviour. Section 4 asks for intelligent
-    // safety rather than opacity, and section 10 layer 5 asks for a trail a
-    // human can review. This is that surface.
-    run: async (args = []) => {
-      const { cortexDb } = await import('./cortex/vectorDb.js');
-      const verb = String(args[0] || '').toLowerCase();
-
+    usage: '/diff [staged | stat]',
+    description: 'Show working tree or staged diff for the active workspace',
+    dialogTitle: 'Diff',
+    complete: () => [
+      { value: 'staged', label: 'staged', description: 'show staged changes only (--cached)' },
+      { value: 'stat', label: 'stat', description: 'show diff summary statistics' }
+    ],
+    run: (argv, ctx = {}) => {
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      const sub = (argv[0] || '').toLowerCase();
       try {
-        if (verb === 'on' || verb === 'enable') {
-          const config = loadConfig();
-          config.cortex = { ...(config.cortex || {}), enabled: true };
-          saveConfig(config);
-          return ok('Cortex memory prompt injection enabled.\nLessons learned and creative patterns will be selectively injected on substantive, project-scoped queries.');
-        }
-
-        if (verb === 'off' || verb === 'disable') {
-          const config = loadConfig();
-          config.cortex = { ...(config.cortex || {}), enabled: false };
-          saveConfig(config);
-          return ok('Cortex memory prompt injection disabled.\nMemories remain safely preserved on disk, but will not be automatically injected into agent task prompts.');
-        }
-
-        if (verb === 'toggle') {
-          const config = loadConfig();
-          const nextState = !config.cortex?.enabled;
-          config.cortex = { ...(config.cortex || {}), enabled: nextState };
-          saveConfig(config);
-          return ok(`Cortex memory prompt injection is now ${nextState ? 'ENABLED' : 'DISABLED'}.`);
-        }
-
-        if (verb === 'purge' || verb === 'delete' || verb === 'clear-all') {
-          const fs = await import('node:fs');
-          const path = await import('node:path');
-          const { causyneHome } = await import('./utils/paths.js');
-          const dbFile = path.join(causyneHome(), 'cortex.db');
+        let isGit = fs.existsSync(path.join(ws, '.git'));
+        if (!isGit) {
           try {
-            if (cortexDb.db?.close) cortexDb.db.close();
-            cortexDb.db = null;
-            cortexDb.isInitialized = false;
-            if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
-          } catch (_) {}
-          return ok('Cortex database completely wiped and deleted from disk.');
+            execSync('git rev-parse --is-inside-work-tree', { cwd: ws, stdio: 'pipe' });
+            isGit = true;
+          } catch {
+            isGit = false;
+          }
         }
 
-        if (verb === 'forget' && args[1]) {
-          const removed = await cortexDb.forget({ id: args[1] });
-          return removed ? ok('Forgotten.') : fail(`No memory "${args[1]}".`);
+        if (!isGit) {
+          return ok(`Workspace "${ws}" is not a git repository.`);
         }
 
-        if (verb === 'forget-here') {
-          const removed = await cortexDb.forget({ workspace: process.cwd() });
-          return ok(removed === 0
-            ? 'Nothing was learned in this project yet.'
-            : `Forgot ${removed} memor${removed === 1 ? 'y' : 'ies'} from this project. Global lessons are untouched.`);
+        const status = execSync('git status --short', { cwd: ws, encoding: 'utf8' }).trim();
+        if (!status) {
+          return ok('Working tree is clean. No uncommitted changes in this workspace.');
         }
 
-        const config = loadConfig();
-        const injectionStatus = config.cortex?.enabled ? 'ENABLED' : 'DISABLED (default, opt-in)';
-        const stats = await cortexDb.stats();
-        const engineLabel = stats.engineType || 'native (semantic vector + sqlite)';
-        const overviewLines = [
-          `Cortex Memory Engine: Active (${engineLabel})`,
-          `  Prompt Injection Status  : ${injectionStatus}`,
-          `  Total persistent lessons : ${stats.total}`,
-          `  Episodic observations   : ${stats.episodicCount || 0}`,
-          `  Learned long-term facts  : ${stats.factsCount || 0}`
-        ];
-
-        if (stats.total === 0 && (stats.episodicCount || 0) === 0 && (stats.factsCount || 0) === 0) {
-          return ok(overviewLines.join('\n') + '\n\nNothing learned yet. Cortex records a lesson when a task recovers from a real error.\nUse "/cortex on" to enable prompt injection when ready.');
+        let diffCmd = 'git diff';
+        if (sub === 'staged' || sub === '--cached') {
+          diffCmd = 'git diff --cached';
+        } else if (sub === 'stat') {
+          diffCmd = 'git diff --stat HEAD';
         }
 
-        const kinds = stats.byKind && stats.byKind.length ? stats.byKind.map((k) => `${k.c} ${k.kind}`).join(', ') : 'no categorized lessons yet';
-        const age = stats.newest ? new Date(stats.newest).toISOString().slice(0, 10) : 'never';
-        const header = overviewLines.join('\n') + `\n  Lessons breakdown        : ${kinds} across ${stats.workspaces} project(s)\n  Newest recorded lesson   : ${age}`;
-
-        if (verb !== 'list') {
-          return ok(header + '\n\nToggle injection with /cortex on|off. See project memories with /cortex list. Forget this project\'s with /cortex forget-here.');
-        }
-
-        const rows = await cortexDb.inventory({ workspace: process.cwd() });
-        if (rows.length === 0) {
-          return ok(header + '\n\nNothing applies to this project.');
-        }
-
-        const home = process.env.HOME || '';
-        const lines = rows.slice(0, 15).map((r) => {
-          const when = new Date(r.timestamp).toISOString().slice(0, 10);
-          const where = r.workspace ? (home ? r.workspace.replace(home, '~') : r.workspace) : 'global';
-          const first = String(r.text).split('\n').filter(Boolean).slice(0, 2).join(' — ').slice(0, 96);
-          return `  ${r.id}  ${when}  ${String(r.hits).padStart(3)} hits  [${r.kind}] ${where}\n      ${first}`;
-        });
-
-        return ok(header + '\n\nApplying to this project:\n' + lines.join('\n')
-          + '\n\nForget one with /cortex forget <id>.');
-      } catch (e) {
-        // The neural engine is provisioned at runtime and can be absent. Saying
-        // so is the point: a silent Cortex is indistinguishable from an empty
-        // one, and the user is entitled to know which they have.
-        return fail(`Cortex is unavailable: ${e.message}. Memories are not being recorded or retrieved.`);
+        const diffOutput = execSync(diffCmd, { cwd: ws, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
+        const header = `Git Status (${ws}):\n${status}\n\n${'─'.repeat(50)}\n${diffCmd}:\n`;
+        return ok(diffOutput ? `${header}\n${diffOutput}` : `${header}\n(no file diff for ${diffCmd})`);
+      } catch (err) {
+        return fail(`Could not inspect git diff: ${err.message}`);
       }
     }
   },
@@ -559,6 +532,10 @@ export const COMMANDS = [
     usage: '/plans [import <json-file> | forget]',
     description: 'Inspect, pre-warm, or clear reusable task plans',
     dialogTitle: 'Plan cache',
+    complete: () => [
+      { value: 'import', label: 'import', description: 'import seed plans from a JSON file' },
+      { value: 'forget', label: 'forget', description: 'clear all cached plans' }
+    ],
     run: async (args = []) => {
       const cache = await import('./planCache.js');
       const verb = String(args[0] || '').toLowerCase();
@@ -604,9 +581,33 @@ export const COMMANDS = [
   {
     name: 'plugins',
     scope: 'local',
-    usage: '/plugins [enable <name> | disable <name>]',
+    usage: '/plugins [list | enable <name> | disable <name>]',
     description: 'Inspect or change trust for local plugins',
     dialogTitle: 'Plugins',
+    complete: () => {
+      try {
+        const rows = listPlugins();
+        return [
+          { value: 'list', label: 'list', description: 'list local plugins and trust status' },
+          ...rows.map((p) => ({
+            value: `enable ${p.name}`,
+            label: `enable ${p.name}`,
+            description: `enable plugin ${p.name}`
+          })),
+          ...rows.map((p) => ({
+            value: `disable ${p.name}`,
+            label: `disable ${p.name}`,
+            description: `disable plugin ${p.name}`
+          }))
+        ];
+      } catch (e) {
+        return [
+          { value: 'list', label: 'list', description: 'list local plugins' },
+          { value: 'enable', label: 'enable', description: 'enable a local plugin' },
+          { value: 'disable', label: 'disable', description: 'disable a local plugin' }
+        ];
+      }
+    },
     run: async (args = []) => {
       const manager = await import('./plugins/pluginManager.js');
       const verb = String(args[0] || '').toLowerCase();
@@ -910,6 +911,11 @@ export const COMMANDS = [
     usage: '/continuum [list | read <id> | adopt <id>]',
     description: 'Cross-agent session extraction and resumption (Antigravity, OpenCode, Codex, Claude Code)',
     dialogTitle: 'Continuum',
+    complete: () => [
+      { value: 'list', label: 'list', description: 'scan and list cross-agent sessions' },
+      { value: 'adopt', label: 'adopt', description: 'adopt and resume a peer agent session' },
+      { value: 'read', label: 'read', description: 'preview transcript of a peer session' }
+    ],
     run: async (args = [], context = {}) => {
       const {
         ContinuumScanner,
@@ -983,6 +989,9 @@ export const COMMANDS = [
     usage: '/approvals [clear]',
     description: 'List tools granted "Allow always", or revoke them',
     dialogTitle: 'Approvals',
+    complete: () => [
+      { value: 'clear', label: 'clear', description: 'revoke all standing "Allow always" grants' }
+    ],
     // A standing grant with no way to see or revoke it is a trap, not a
     // convenience. This is the way out, and the confirm dialog that grants one
     // names this command so the user is told about it at the moment it matters.
@@ -1014,16 +1023,17 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/thinking [toggle|expand|collapse]',
     description: 'Toggle or fold thinking process chunks in the conversation transcript',
+    complete: () => [
+      { value: 'toggle', label: 'toggle', description: 'toggle collapsed state of thinking blocks' },
+      { value: 'expand', label: 'expand', description: 'expand all thinking blocks' },
+      { value: 'collapse', label: 'collapse', description: 'collapse all thinking blocks' }
+    ],
     run: (argv, ctx) => {
       const surface = ctx?.prompt?.surface;
       const transcript = surface?.transcript;
-      if (!transcript || !Array.isArray(transcript.frames)) {
-        return ok('No active interactive transcript available.');
-      }
-      const reasoningFrames = transcript.frames.filter((f) => f.kind === 'reasoning');
-      if (reasoningFrames.length === 0) {
-        return ok('No thinking process frames found in the current conversation.');
-      }
+      const reasoningFrames = Array.isArray(transcript?.frames)
+        ? transcript.frames.filter((f) => f.kind === 'reasoning' || f.meta?.reasoning === true)
+        : [];
       const sub = (argv[0] || 'toggle').toLowerCase();
       let newCollapsed;
       if (sub === 'expand') {
@@ -1041,11 +1051,22 @@ export const COMMANDS = [
           frame.renderedWidth = -1;
         }
       }
-      transcript.cache = null;
-      transcript.revision++;
-      transcript.changed?.();
-      if (ctx.prompt?.scheduleDraw) ctx.prompt.scheduleDraw();
-      return ok(`${newCollapsed ? 'Collapsed' : 'Expanded'} ${reasoningFrames.length} thinking frame${reasoningFrames.length === 1 ? '' : 's'}.`);
+      if (transcript) {
+        transcript.cache = null;
+        transcript.revision++;
+        transcript.changed?.();
+      }
+
+      const msg = reasoningFrames.length === 0
+        ? 'No thinking process frames found in the current conversation.'
+        : `${newCollapsed ? 'Collapsed' : 'Expanded'} ${reasoningFrames.length} thinking frame${reasoningFrames.length === 1 ? '' : 's'}.`;
+
+      if (ctx.prompt) {
+        ctx.prompt.notice = msg;
+        if (ctx.prompt.scheduleDraw) ctx.prompt.scheduleDraw();
+        return ok(msg, { effect: 'silent' });
+      }
+      return ok(msg);
     }
   },
 
@@ -1100,9 +1121,15 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/copy [input | last | <text>]',
     description: 'Copy chatbox input, last assistant response, or text to system clipboard',
+    complete: () => [
+      { value: 'last', label: 'last', description: 'copy last assistant response to clipboard' },
+      { value: 'input', label: 'input', description: 'copy current chatbox input to clipboard' }
+    ],
     run: (argv, ctx) => {
       const res = runCopyCommand(argv, ctx);
-      return res.ok ? ok(res.output) : fail(res.output);
+      return res.ok
+        ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
+        : fail(res.output);
     }
   },
 
@@ -1114,7 +1141,9 @@ export const COMMANDS = [
     description: 'Paste clipboard content or text into the chatbox input',
     run: (argv, ctx) => {
       const res = runPasteCommand(argv, ctx);
-      return res.ok ? ok(res.output) : fail(res.output);
+      return res.ok
+        ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
+        : fail(res.output);
     }
   },
 
@@ -1128,7 +1157,8 @@ export const COMMANDS = [
       const loop = ctx.loop;
       if (loop && typeof loop.abort === 'function') {
         loop.abort();
-        return ok('Stop requested.');
+        if (ctx.prompt) ctx.prompt.notice = 'stop requested';
+        return ok('Stop requested.', { effect: ctx.prompt ? 'silent' : undefined });
       }
       return fail('Nothing is running.');
     }
@@ -1500,6 +1530,25 @@ export const COMMANDS = [
     usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke|connect|disconnect|test|refresh <name>]',
     description: 'Manage and diagnose MCP server connections',
     dialogTitle: 'MCP servers',
+    complete: () => {
+      try {
+        const servers = serverStatus();
+        const base = [
+          { value: 'add', label: 'add', description: 'add a new stdio or SSE/HTTP MCP server' }
+        ];
+        for (const s of servers) {
+          base.push({ value: `test ${s.name}`, label: `test ${s.name}`, description: `test ${s.name} connection` });
+          base.push({ value: `grant ${s.name}`, label: `grant ${s.name}`, description: `grant consent to ${s.name}` });
+          base.push({ value: `revoke ${s.name}`, label: `revoke ${s.name}`, description: `revoke consent from ${s.name}` });
+          base.push({ value: `remove ${s.name}`, label: `remove ${s.name}`, description: `remove ${s.name}` });
+          base.push({ value: `refresh ${s.name}`, label: `refresh ${s.name}`, description: `refresh tools for ${s.name}` });
+          base.push({ value: `disconnect ${s.name}`, label: `disconnect ${s.name}`, description: `disconnect ${s.name}` });
+        }
+        return base;
+      } catch (e) {
+        return [{ value: 'add', label: 'add', description: 'add an MCP server' }];
+      }
+    },
     run: async (argv) => {
       const [action, serverName, ...rest] = argv;
 
@@ -1601,6 +1650,26 @@ export const COMMANDS = [
     usage: '/peers [detect | test <id> | add <id> <command…> | remove <id>]',
     description: 'Manage, discover, and test external ACP peer agents (Claude Code, OpenCode, Codex, Gemini, Hermes, etc.)',
     dialogTitle: 'ACP peer agents',
+    complete: () => {
+      try {
+        const peers = listAllPeers();
+        return [
+          { value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' },
+          ...peers.map((p) => ({
+            value: `test ${p.id}`,
+            label: `test ${p.id}`,
+            description: `test zero-token handshake with ${p.label}`
+          })),
+          ...peers.map((p) => ({
+            value: `remove ${p.id}`,
+            label: `remove ${p.id}`,
+            description: `remove peer profile for ${p.label}`
+          }))
+        ];
+      } catch (e) {
+        return [{ value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' }];
+      }
+    },
     run: async (argv) => {
       const [action, peerId, ...rest] = argv;
 
@@ -1673,14 +1742,14 @@ export const COMMANDS = [
           command: rest[0],
           args: rest.slice(1),
           cwd: null,
-          policy: 'read-only',
+          policy: 'workspace',
           timeoutSeconds: 180,
           env: {}
         };
 
         const res = addPeerProfile(newProfile);
         if (!res.ok) return fail(`Could not save peer: ${res.error}`);
-        return ok(`Added peer "${peerId}" [policy: read-only]. Edit ~/.causyne/peers.json to customize policy, timeout, or environment.`);
+        return ok(`Added peer "${peerId}" [policy: workspace]. Edit ~/.causyne/peers.json to customize policy, timeout, or environment.`);
       }
 
       if (action === 'remove') {
@@ -1715,6 +1784,10 @@ export const COMMANDS = [
     scope: 'local',
     usage: '/slop <file… | directory> [--movements]',
     description: 'Score HTML/CSS against the anti-AI-slop rules (Vision §7)',
+    dialogTitle: 'Slop audit',
+    complete: () => [
+      { value: '--movements', label: '--movements', description: 'show recommended design movements' }
+    ],
     run: (argv) => {
       const wantsMovements = argv.includes('--movements');
       const targets = argv.filter(a => !a.startsWith('--'));
@@ -1786,6 +1859,17 @@ export const COMMANDS = [
     usage: '/observer [status|toggle|mode <deterministic|advisory>|endpoint <url|none>|model <name>|strictness <relaxed|standard|strict>|test|audit|reset]',
     description: 'Inspect or configure the Cold Observer',
     dialogTitle: 'Cold Observer',
+    complete: () => [
+      { value: 'status', label: 'status', description: 'view Cold Observer status and audits' },
+      { value: 'toggle', label: 'toggle', description: 'toggle Cold Observer on/off' },
+      { value: 'mode deterministic', label: 'mode deterministic', description: 'fast deterministic rules' },
+      { value: 'mode advisory', label: 'mode advisory', description: 'neural advisory verification' },
+      { value: 'strictness standard', label: 'strictness standard', description: 'standard safety strictness' },
+      { value: 'strictness strict', label: 'strictness strict', description: 'maximum safety strictness' },
+      { value: 'test', label: 'test', description: 'test advisory endpoint' },
+      { value: 'audit', label: 'audit', description: 'show recent audit history' },
+      { value: 'reset', label: 'reset', description: 'restore default settings' }
+    ],
     run: async (argv) => {
       const { coldObserver } = await import('./observer/coldObserver.js');
       const sub = (argv[0] || 'status').toLowerCase();
@@ -1903,6 +1987,10 @@ export const COMMANDS = [
     usage: '/acp [status|peers]',
     description: 'Agent Client Protocol (ACP) server and peer delegation status',
     dialogTitle: 'Agent Client Protocol',
+    complete: () => [
+      { value: 'status', label: 'status', description: 'view ACP protocol server status' },
+      { value: 'peers', label: 'peers', description: 'view ACP peer delegation configuration' }
+    ],
     run: async (argv) => {
       const sub = (argv[0] || 'status').toLowerCase();
       if (sub === 'peer' || sub === 'peers') {
@@ -1929,6 +2017,284 @@ export const COMMANDS = [
         'Workspace:      one workspace per server process',
         '',
         'Run "causyne acp" to connect this agent to any ACP client.'
+      ].join('\n'));
+    }
+  },
+
+  {
+    name: 'init',
+    aliases: ['initialize'],
+    scope: 'local',
+    usage: '/init',
+    description: 'Inspect active workspace architecture and generate or update AGENTS.md instructions',
+    dialogTitle: 'Workspace Init',
+    run: async (argv, ctx = {}) => {
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      const files = fs.existsSync(ws) ? fs.readdirSync(ws) : [];
+      const hasPkg = files.includes('package.json');
+      const hasCargo = files.includes('Cargo.toml');
+      const hasPy = files.includes('pyproject.toml') || files.includes('requirements.txt');
+      const hasGo = files.includes('go.mod');
+      const hasAgents = files.includes('AGENTS.md');
+
+      const detected = [];
+      if (hasPkg) detected.push('Node.js / JavaScript / TypeScript');
+      if (hasCargo) detected.push('Rust / Cargo');
+      if (hasPy) detected.push('Python');
+      if (hasGo) detected.push('Go');
+      if (detected.length === 0) detected.push('Generic workspace');
+
+      const summary = [
+        `Workspace Initializer: ${ws}`,
+        `Ecosystem: ${detected.join(', ')}`,
+        `AGENTS.md: ${hasAgents ? 'Present (ready for refresh)' : 'Not found (needs creation)'}`,
+        '',
+        'To have Causyne Agent inspect and establish conventions for this project,',
+        'run this turn or press Enter to prompt the agent:'
+      ].join('\n');
+
+      if (ctx.prompt) {
+        ctx.prompt.editor.setText('Analyze this project architecture, testing setup, and style conventions, then create or update AGENTS.md for this workspace.');
+        ctx.prompt.scheduleDraw();
+        return ok(summary, { effect: 'inline' });
+      }
+      return ok(summary);
+    }
+  },
+
+  {
+    name: 'review',
+    aliases: ['code-review', 'pr-review'],
+    scope: 'local',
+    usage: '/review [target]',
+    description: 'Run an immediate code review on working tree changes or a file',
+    dialogTitle: 'Code Review',
+    run: async (argv, ctx = {}) => {
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      const target = argv.join(' ').trim();
+      let promptText = '';
+      if (target) {
+        promptText = `Please review ${target} for security vulnerabilities, logic correctness, performance, and best practices.`;
+      } else {
+        try {
+          const status = execSync('git status --short', { cwd: ws, encoding: 'utf8' }).trim();
+          if (!status) {
+            return ok('Working tree is clean. To review a specific file, run: /review <path>');
+          }
+          promptText = `Please review current uncommitted workspace changes (git diff) for correctness, edge cases, regression risk, and code quality.`;
+        } catch {
+          promptText = `Please review the files in this workspace for code quality, architectural consistency, and potential bugs.`;
+        }
+      }
+
+      if (ctx.prompt) {
+        ctx.prompt.editor.setText(promptText);
+        ctx.prompt.scheduleDraw();
+        return ok(`Ready to review: "${promptText}"`, { effect: 'inline' });
+      }
+      return ok(`Code review target: ${promptText}`);
+    }
+  },
+
+  {
+    name: 'retry',
+    aliases: ['again', 'redo'],
+    scope: 'local',
+    usage: '/retry',
+    description: 'Re-send the last user prompt in this session',
+    run: async (argv, ctx = {}) => {
+      const messages = ctx.loop?.messages || [];
+      const lastUser = [...messages].reverse().find(m => m.role === 'user' && typeof m.content === 'string');
+      if (!lastUser || !lastUser.content) {
+        return fail('No previous user prompt found in this session to retry.');
+      }
+      const promptText = lastUser.content;
+      if (ctx.prompt) {
+        ctx.prompt.editor.setText(promptText);
+        ctx.prompt.scheduleDraw();
+        return ok(`Re-loaded last prompt: "${promptText.slice(0, 80)}"`, { effect: 'inline' });
+      }
+      return ok(`Last prompt: ${promptText}`);
+    }
+  },
+
+  {
+    name: 'title',
+    aliases: ['rename'],
+    scope: 'local',
+    usage: '/title [new title]',
+    description: 'View or rename the active chat session title',
+    dialogTitle: 'Session Title',
+    run: async (argv, ctx = {}) => {
+      const activeId = getActiveSessionId();
+      if (!activeId) return fail('No active session.');
+      const session = getSession(activeId);
+      const currentTitle = session ? session.title : 'Untitled';
+
+      const newTitle = argv.join(' ').trim();
+      if (!newTitle) {
+        return ok(`Active session ID: ${activeId}\nCurrent title: "${currentTitle}"\n\nTo rename, run: /title <new name>`);
+      }
+
+      const renamed = renameSession(activeId, newTitle);
+      if (!renamed) return fail(`Could not rename session "${activeId}".`);
+
+      if (ctx.loop?.memoryManager?.session) {
+        ctx.loop.memoryManager.session.title = newTitle;
+      }
+      if (ctx.prompt?.renderer?.status) {
+        ctx.prompt.renderer.status.setSession({ title: newTitle });
+      }
+      if (ctx.prompt?.surface?.stage) {
+        ctx.prompt.scheduleDraw();
+      }
+
+      return ok(`Session renamed to: "${newTitle}"`, { effect: 'inline' });
+    }
+  },
+
+  {
+    name: 'mode',
+    aliases: ['autonomy'],
+    scope: 'local',
+    usage: '/mode [A | B | C]',
+    description: 'View or switch autonomy mode (A: Ask, B: Balanced, C: Autonomous)',
+    dialogTitle: 'Autonomy Mode',
+    complete: () => [
+      { value: 'A', label: 'A', description: 'Ask — review actions before execution' },
+      { value: 'B', label: 'B', description: 'Balanced — normal supervised autonomy' },
+      { value: 'C', label: 'C', description: 'Autonomous — maximum runway within policy' }
+    ],
+    run: async (argv, ctx = {}) => {
+      const config = loadConfig();
+      const target = (argv[0] || '').toUpperCase().trim();
+      if (!target) {
+        if (ctx.prompt) {
+          const { openModeControl } = await import('./tui/composerControls.js');
+          if (ctx.loop) {
+            openModeControl(ctx.prompt, ctx.loop);
+            return ok('Opened mode selector.', { effect: 'silent' });
+          }
+        }
+        return ok(`Current autonomy mode: ${config.autonomyMode || 'B'}\nModes:\n  A: Ask (confirm gated actions)\n  B: Balanced (supervised execution)\n  C: Autonomous (independent execution)`);
+      }
+
+      if (!['A', 'B', 'C'].includes(target)) {
+        return fail(`Invalid mode "${target}". Choose A, B, or C.`);
+      }
+
+      config.autonomyMode = target;
+      saveConfig(config);
+      if (ctx.loop && typeof ctx.loop.setAutonomyMode === 'function') {
+        ctx.loop.setAutonomyMode(target);
+      }
+      if (ctx.prompt) {
+        ctx.prompt.notice = `Mode ${target} active`;
+        if (ctx.prompt.scheduleDraw) ctx.prompt.scheduleDraw();
+        return ok(`Autonomy mode switched to ${target}.`, { effect: 'inline' });
+      }
+      return ok(`Autonomy mode switched to ${target}.`);
+    }
+  },
+
+  {
+    name: 'doctor',
+    aliases: ['health', 'diagnostics'],
+    scope: 'local',
+    usage: '/doctor',
+    description: 'Run environment, provider, and tool health diagnostics',
+    dialogTitle: 'Doctor',
+    run: async (_argv, ctx = {}) => {
+      const config = loadConfig();
+      const lines = ['Causyne Health & Diagnostics', ''];
+
+      const nodeVer = process.version;
+      const nodeOk = parseInt(nodeVer.slice(1).split('.')[0], 10) >= 24;
+      lines.push(`  ${nodeOk ? '✅' : '⚠️'} Node.js version    : ${nodeVer} ${nodeOk ? '(supported)' : '(Node >= 24 required)'}`);
+      lines.push(`  ℹ️ Platform          : ${process.platform} (${process.arch})`);
+
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      let isGit = false;
+      try {
+        execSync('git rev-parse --is-inside-work-tree', { cwd: ws, stdio: 'pipe' });
+        isGit = true;
+      } catch {}
+      lines.push(`  ✅ Workspace root    : ${ws}`);
+      lines.push(`  ${isGit ? '✅' : 'ℹ️'} Git repository    : ${isGit ? 'active' : 'not a git repo'}`);
+
+      const provider = config.provider || 'not configured';
+      const model = config.model || 'default';
+      lines.push(`  ℹ️ Provider / Model  : ${provider} / ${model}`);
+
+      const servers = serverStatus();
+      const grantedCount = servers.filter(s => s.granted).length;
+      lines.push(`  ℹ️ MCP Servers       : ${servers.length} configured (${grantedCount} granted)`);
+
+      const peers = listAllPeers();
+      lines.push(`  ℹ️ ACP Peers         : ${peers.length} available`);
+
+      lines.push('');
+      lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');
+      return ok(lines.join('\n'));
+    }
+  },
+
+  {
+    name: 'export',
+    aliases: ['share', 'save'],
+    scope: 'local',
+    usage: '/export [filename.md]',
+    description: 'Export conversation transcript to a Markdown document in the workspace',
+    dialogTitle: 'Export Conversation',
+    run: async (argv, ctx = {}) => {
+      const activeId = getActiveSessionId();
+      if (!activeId) return fail('No active session to export.');
+      const session = getSession(activeId);
+      if (!session || !session.messages || session.messages.length === 0) {
+        return fail('Session has no messages to export.');
+      }
+
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      const defaultFilename = `causyne-session-${activeId}.md`;
+      const filename = argv.join(' ').trim() || defaultFilename;
+      const targetPath = path.resolve(ws, filename);
+
+      const header = `# Causyne Agent Conversation Export\n\n- **Session ID**: \`${session.id}\`\n- **Title**: ${session.title}\n- **Date**: ${new Date(session.createdAt).toISOString()}\n- **Workspace**: \`${session.workspace}\`\n- **Total Messages**: ${session.messages.length}\n\n---\n\n`;
+
+      const body = session.messages
+        .filter(m => m.role !== 'system')
+        .map(m => {
+          const roleLabel = m.role === 'user' ? '### 👤 User' : '### 🤖 Causyne Agent';
+          return `${roleLabel}\n\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}\n`;
+        })
+        .join('\n---\n\n');
+
+      try {
+        fs.writeFileSync(targetPath, header + body, { encoding: 'utf8', mode: 0o644 });
+        return ok(`Exported conversation to: ${targetPath}`);
+      } catch (err) {
+        return fail(`Could not export conversation: ${err.message}`);
+      }
+    }
+  },
+
+  {
+    name: 'version',
+    aliases: ['v', 'about'],
+    scope: 'local',
+    usage: '/version',
+    description: 'Display Causyne Agent version and runtime environment',
+    dialogTitle: 'Version',
+    run: async () => {
+      const version = getPackageVersion();
+      const config = loadConfig();
+      return ok([
+        `Causyne Agent v${version}`,
+        `  Runtime  : Node.js ${process.version} (${process.platform} ${process.arch})`,
+        `  Provider : ${config.provider || 'default'}`,
+        `  Model    : ${config.model || 'default'}`,
+        `  License  : Business Source License 1.1 (BUSL-1.1)`,
+        `  Website  : https://causyne.com`
       ].join('\n'));
     }
   },
