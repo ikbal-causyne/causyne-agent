@@ -343,5 +343,91 @@ test('handleTurnRailMouse suppresses hover re-arming immediately following click
   assert.equal(mockSurface.hoveredTurnIndex, null, 'hover card must remain dismissed while suppressed');
 });
 
+test('overlayTurnPreviewCard clears underlying occluded text and prevents severed sentence tails from leaking past card border', () => {
+  const baseRows = [
+    '   • index.html (Core semantic layout, temporal HUD, 5 module viewports)               |',
+    '   • style.css (Speculative Bio-Brutalist & Bioluminescent design system)              |',
+    '   • biocanvas.js (60 FPS procedural canvas simulation engine)                         |',
+    '   • audio.js (Web Audio API procedural sound synthesizer)                             |',
+    '   • app.js (Chrono-reversal engine, gene compiler, organ models, and CLI terminal)    |',
+    '   • test_suite.js (Automated verification suite)                                      |'
+  ];
+
+  const card = [
+    '╭──────────────────────────────────────────────╮',
+    '│ User Prompt Header Line 1                    │',
+    '│ 1 of 3                              1:33 AM  │',
+    '╰──────────────────────────────────────────────╯'
+  ];
+
+  const screenWidth = 85;
+  const overlaid = overlayTurnPreviewCard(baseRows, card, 2, 1, screenWidth);
+  assert.equal(overlaid.length, baseRows.length);
+
+  for (let i = 0; i < card.length; i++) {
+    const row = overlaid[i]!;
+    const plain = stripAnsi(row);
+    // Left 3 columns preserved for rail track
+    assert.equal(plain.slice(0, 3), '   ');
+    // Card content present
+    assert.ok(plain.includes(stripAnsi(card[i]!)));
+    // Crucial: Severed word tails from underlying lines must NOT leak directly after card
+    assert.equal(plain.includes('temporal HUD'), false);
+    assert.equal(plain.includes('Bioluminescent'), false);
+    assert.equal(plain.includes('procedural canvas'), false);
+    // Right margin scrollbar preserved
+    assert.ok(plain.endsWith('|'));
+  }
+});
+
+test('handleTurnRailMouse maintains hover tunnel when cursor moves into card body and supports clicking card', () => {
+  let scrolledTo: number | null = null;
+  const dotRows = new Map([[1, 2], [2, 5]]);
+  const rowToTurn = new Map([[2, 1], [5, 2]]);
+  const mockSurface: any = {
+    turnRailLayout: {
+      railX: 1,
+      stageTop: 0,
+      viewportHeight: 30,
+      dotRows,
+      rowToTurn,
+      turns: [
+        { turnIndex: 1, totalTurns: 2, userPrompt: 'Turn 1 prompt', assistantSummary: '', timestamp: 1, formattedDate: '1:00', frameId: 1, startRow: 0 },
+        { turnIndex: 2, totalTurns: 2, userPrompt: 'Turn 2 prompt', assistantSummary: '', timestamp: 2, formattedDate: '2:00', frameId: 2, startRow: 42 }
+      ],
+      cardRect: { x: 4, y: 1, width: 52, height: 8, turnIndex: 1 }
+    },
+    hoveredTurnIndex: 1,
+    hoveredTurnAnchorY: 2,
+    viewport: {
+      scrollTo: (row: number) => { scrolledTo = row; },
+      toBottom: () => { scrolledTo = 999; }
+    }
+  };
+  const mockHost = { scheduleDraw: () => {}, draw: () => {} };
+
+  // 1. Mouse moves from dot 1 (col 1) into card body (col 20, row 4)
+  const motionInsideCard = {
+    mouse: { x: 20, y: 4, button: 0, pressed: false },
+    sequence: '\x1b[<35;21;5M'
+  };
+  const handled = handleTurnRailMouse(motionInsideCard, mockSurface, mockHost);
+  assert.equal(handled, true);
+  // Hovered turn must NOT be dismissed when moving into the card body!
+  assert.equal(mockSurface.hoveredTurnIndex, 1);
+
+  // 2. Click inside the card body navigates to that turn
+  const clickInsideCard = {
+    mouse: { x: 20, y: 4, button: 0, pressed: true },
+    sequence: '\x1b[<0;21;5M'
+  };
+  const clickHandled = handleTurnRailMouse(clickInsideCard, mockSurface, mockHost);
+  assert.equal(clickHandled, true);
+  assert.equal(scrolledTo, 0); // startRow of turn 1
+  assert.equal(mockSurface.activeTurnIndex, 1);
+  assert.equal(mockSurface.hoveredTurnIndex, null, 'card dismissed after click');
+});
+
+
 
 

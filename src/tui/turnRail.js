@@ -286,8 +286,19 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
         const cardRow = cardRows[i] || '';
         // Composite cardRow onto baseRow at column x
         const beforePart = padEnd(truncate(baseRow, x, ''), x);
-        const afterPart = sliceFromColumn(baseRow, x + cardWidth);
-        out[targetY] = `${beforePart}${cardRow}${afterPart}`;
+        let restOfRow = '';
+        if (x <= 4) {
+            // For left-placed turn cards, do not leave severed text tails sticking out
+            const totalRowWidth = Math.max(screenWidth, visibleWidth(baseRow));
+            const rightCell = sliceFromColumn(baseRow, totalRowWidth - 1);
+            const rightCellWidth = visibleWidth(rightCell);
+            const gap = Math.max(0, totalRowWidth - x - cardWidth - rightCellWidth);
+            restOfRow = `${' '.repeat(gap)}${rightCell}`;
+        }
+        else {
+            restOfRow = sliceFromColumn(baseRow, x + cardWidth);
+        }
+        out[targetY] = `${beforePart}${cardRow}${restOfRow}`;
     }
     return out;
 }
@@ -310,26 +321,67 @@ export function handleTurnRailMouse(event, surface, host) {
     const isRail = layout.railX <= 2
         ? (mouseX >= 0 && mouseX <= Math.max(3, layout.railX + 2))
         : (mouseX >= layout.railX - 1 && mouseX <= layout.railX + 2);
-    if (!isRail || relY < 0 || relY >= layout.viewportHeight) {
+    // Check if currently showing a card and mouse is hovering over the card or bridge tunnel
+    const hasActiveCard = surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined;
+    let isCard = false;
+    let isBridge = false;
+    if (hasActiveCard) {
+        const cardRect = layout.cardRect;
+        if (cardRect && cardRect.turnIndex === surface.hoveredTurnIndex) {
+            isCard = mouseX >= cardRect.x && mouseX < cardRect.x + cardRect.width &&
+                relY >= cardRect.y && relY < cardRect.y + cardRect.height;
+            isBridge = layout.railX <= 4 &&
+                mouseX >= 0 && mouseX < cardRect.x &&
+                relY >= cardRect.y && relY < cardRect.y + cardRect.height;
+        }
+        else {
+            const cardWidth = 52;
+            const cardX = layout.railX <= 4 ? layout.railX + 3 : Math.max(0, layout.railX - cardWidth - 1);
+            const anchorY = surface.hoveredTurnAnchorY ?? Math.floor(layout.viewportHeight / 2);
+            const cardHeight = 9;
+            const cardStartY = Math.max(0, Math.min(layout.viewportHeight - cardHeight, anchorY - Math.floor(cardHeight / 2)));
+            const cardEndY = cardStartY + cardHeight;
+            isCard = mouseX >= cardX && mouseX < cardX + cardWidth &&
+                relY >= cardStartY && relY < cardEndY;
+            isBridge = layout.railX <= 4 &&
+                mouseX >= 0 && mouseX < cardX &&
+                relY >= cardStartY && relY < cardEndY;
+        }
+    }
+    const inHoverZone = isRail || isCard || isBridge;
+    if (!inHoverZone || relY < 0 || relY >= layout.viewportHeight) {
         surface.turnRailHoverSuppressed = false;
         if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
-            surface.hoveredTurnIndex = null;
-            surface.hoveredTurnAnchorY = null;
-            if (typeof host?.scheduleDraw === 'function')
-                host.scheduleDraw();
-            else if (typeof host?.draw === 'function')
-                host.draw();
+            if (!surface._turnCardLeaveTimer) {
+                surface._turnCardLeaveTimer = setTimeout(() => {
+                    surface._turnCardLeaveTimer = null;
+                    if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
+                        surface.hoveredTurnIndex = null;
+                        surface.hoveredTurnAnchorY = null;
+                        if (typeof host?.scheduleDraw === 'function')
+                            host.scheduleDraw();
+                        else if (typeof host?.draw === 'function')
+                            host.draw();
+                    }
+                }, 120);
+            }
         }
         return false;
+    }
+    // Inside hover zone - cancel any pending leave timer
+    if (surface._turnCardLeaveTimer) {
+        clearTimeout(surface._turnCardLeaveTimer);
+        surface._turnCardLeaveTimer = null;
     }
     // If hover is temporarily suppressed after a click, swallow rail mouse events until suppression ends
     if (surface.turnRailHoverSuppressed) {
         return true;
     }
-    let turnNum = layout.rowToTurn?.get(relY);
+    // Rail takes precedence when mouse is on the rail track
+    let turnNum = isRail ? layout.rowToTurn?.get(relY) : ((isCard || isBridge) ? surface.hoveredTurnIndex : undefined);
     let anchorY = relY;
-    // If not an exact row hit, resolve closest dot within proximity
-    if (!turnNum && layout.dotRows && layout.dotRows.size > 0) {
+    // If on rail and not an exact row hit, resolve closest dot within proximity
+    if (!turnNum && isRail && layout.dotRows && layout.dotRows.size > 0) {
         let minDistance = Infinity;
         let closestTurn;
         let closestRow;

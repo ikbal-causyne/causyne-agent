@@ -446,7 +446,19 @@ export class StageSurface {
           const card = renderTurnPreviewCard(hoveredTurn, 52);
           const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
           rows = overlayTurnPreviewCard(rows, card, anchorY, this.turnRailLayout?.railX ?? 1, mainWidth);
+          if (this.turnRailLayout) {
+            const cardWidth = 52;
+            const railX = this.turnRailLayout.railX ?? 1;
+            let cardX = railX - cardWidth - 1;
+            if (cardX < 0 || (railX <= 4 && railX + 3 + cardWidth <= mainWidth)) {
+              cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 3));
+            }
+            const startY = Math.max(0, Math.min(rows.length - card.length, anchorY - Math.floor(card.length / 2)));
+            this.turnRailLayout.cardRect = { x: cardX, y: startY, width: cardWidth, height: card.length, turnIndex: hoveredTurn.turnIndex };
+          }
         }
+      } else if (this.turnRailLayout) {
+        this.turnRailLayout.cardRect = null;
       }
       if (this.messageActionOverlay) {
         const overlay = this.messageActionOverlay;
