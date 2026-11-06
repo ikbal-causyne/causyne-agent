@@ -1879,8 +1879,8 @@ export const COMMANDS = [
     run: async (argv, ctx = {}) => {
       const { coldObserver } = await import('./observer/coldObserver.js');
 
-      // If interactive prompt is active and no sub-arguments are given, open the interactive setup menu
-      if ((!argv || argv.length === 0 || argv[0] === '') && ctx.prompt) {
+      // If interactive prompt is active and no sub-arguments or 'status' is given, open the interactive setup menu
+      if ((!argv || argv.length === 0 || argv[0] === '' || argv[0] === 'status') && ctx.prompt) {
         const { runInteractiveObserverPicker } = await import('./tui/observerPicker.js');
         const message = await runInteractiveObserverPicker(ctx.prompt);
         return ok(message, { effect: 'silent' });

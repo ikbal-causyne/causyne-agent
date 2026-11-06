@@ -15,10 +15,10 @@ export function centerRows(rows, columns) {
 /** Conversation content starts at the left margin while Home stays centered. */
 export function sessionRows(rows, columns) {
     const available = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80;
-    const inset = Math.min(2, Math.max(0, available - 2));
+    const inset = Math.min(3, Math.max(0, available - 3));
     const prefix = ' '.repeat(inset);
     return {
-        rows: rows.map(row => row ? prefix + truncate(row, Math.max(1, available - inset - 1), '') : ''),
+        rows: rows.map(row => row ? prefix + truncate(row, Math.max(1, available - inset), '') : ''),
         inset
     };
 }

@@ -667,7 +667,9 @@ export class StageSurface {
       if (hasTurns && railResult) {
         const leftCell = railResult.cells[i] || ' ';
         if (leftCell !== ' ') {
-          if (row.startsWith('  ')) {
+          if (row.startsWith('   ')) {
+            row = ` ${leftCell} ${row.slice(3)}`;
+          } else if (row.startsWith('  ')) {
             row = ` ${leftCell}${row.slice(2)}`;
           } else if (row.startsWith(' ')) {
             row = ` ${leftCell}${row.slice(1)}`;

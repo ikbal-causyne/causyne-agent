@@ -1,4 +1,7 @@
 export function resolveCharPool(...args: any[]): any;
+export function resolveModelContextTokens(options?: { provider?: string; model?: string; overrideTokens?: number }): number;
+export const MODEL_CONTEXT_TOKENS: Record<string, number>;
+export const CHAR_POOLS: Record<string, number>;
 export function measureMessages(...args: any[]): any;
 export function resultCapFor(...args: any[]): any;
 export function decayToolResults(...args: any[]): any;

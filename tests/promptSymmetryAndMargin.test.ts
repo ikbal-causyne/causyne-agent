@@ -54,16 +54,16 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
       // Verify established composeWidth matches sessionComposerWidth
       assert.equal(surface.composeWidth(), expectedWidth, 'composeWidth matches sessionComposerWidth exactly');
 
-      // Verify sessionRows places rows with established 2-space inset
+      // Verify sessionRows places rows with established 3-space inset
       const positioned = sessionRows(['[composer]'], mainWidth);
-      assert.equal(positioned.inset, 2, 'Prompt rows receive established 2 columns of left inset');
-      assert.ok(positioned.rows[0]?.startsWith('  [composer]'), 'Prompt row starts at established column 2');
+      assert.equal(positioned.inset, 3, 'Prompt rows receive established 3 columns of left inset');
+      assert.ok(positioned.rows[0]?.startsWith('   [composer]'), 'Prompt row starts at established column 3');
     } finally {
       surface.close();
     }
   });
 
-  test('Transcript rows and prompt box bars align at exact column 2 when turns exist', () => {
+  test('Transcript rows and prompt box bars align at exact column 3 when turns exist, with breathing space for dot', () => {
     const out = createSink(120, 35);
     const surface = new StageSurface({ out, env: { CAUSYNE_RAIL: '1', CAUSYNE_SIDEBAR: '0' } });
     surface.open();
@@ -85,7 +85,7 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
       assert.ok(transcriptRow, 'Transcript row exists in painted band');
       const plainTranscript = stripAnsi(transcriptRow);
       const transcriptBarCol = plainTranscript.search(/[┃|]/);
-      assert.equal(transcriptBarCol, 2, `Transcript accent bar should be at column 2, got ${transcriptBarCol}`);
+      assert.equal(transcriptBarCol, 3, `Transcript accent bar should be at column 3, got ${transcriptBarCol}`);
 
       // Check turn dot in column 1 on preceding or current turn row
       const dotRow = band.find((r: string) => stripAnsi(r).includes('●') || stripAnsi(r).includes('•'));
@@ -93,15 +93,17 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
       const plainDot = stripAnsi(dotRow);
       const dotCol = plainDot.search(/[●•]/);
       assert.equal(dotCol, 1, `Turn dot should sit in column 1 of left margin, got ${dotCol}`);
+      // Column 2 must be whitespace breathing room between the dot and the vertical bar
+      assert.equal(plainDot[2], ' ', 'Column 2 must be an air column providing breathing space before the bar');
 
       // Find prompt box row with accent bar
       const promptRow = band.find((r: string) => stripAnsi(r).includes('try "') || stripAnsi(r).includes('type to queue'));
       assert.ok(promptRow, 'Prompt row exists in painted band');
       const plainPrompt = stripAnsi(promptRow);
       const promptBarCol = plainPrompt.search(/[┃|]/);
-      assert.equal(promptBarCol, 2, `Prompt accent bar should be at column 2, got ${promptBarCol}`);
+      assert.equal(promptBarCol, 3, `Prompt accent bar should be at column 3, got ${promptBarCol}`);
 
-      // Both must match exactly at column 2
+      // Both must match exactly at column 3
       assert.equal(transcriptBarCol, promptBarCol, 'Transcript and prompt bars must align at identical column');
     } finally {
       surface.close();

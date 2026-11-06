@@ -545,7 +545,13 @@ export class ChatPrompt {
   showText(title, text, options = {}) {
     const panelWidth = dialogWidth(this.width(), options.width || 76);
     const contentWidth = Math.max(12, panelWidth - 4);
-    const lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth);
+    let lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth);
+    if (lines.length > 0 && lines[0].trim().toLowerCase() === String(title || '').trim().toLowerCase()) {
+      lines = lines.slice(1);
+      if (lines.length > 0 && /^[-─═_]+$/.test(lines[0].trim())) {
+        lines = lines.slice(1);
+      }
+    }
     return this.openLayer(new TextLayer({
       title: String(title || 'Details'),
       lines: options.danger ? lines.map((line) => paint('danger', line)) : lines,

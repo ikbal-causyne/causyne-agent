@@ -2,7 +2,7 @@
 
 import { TOOL_DEFINITIONS } from './tools/registry.js';
 import { CORE_TOOLS, PACKS, PACK_PLAYBOOKS } from './toolPacks.js';
-import { resolveCharPool } from './contextManager.js';
+import { resolveCharPool, resolveModelContextTokens } from './contextManager.js';
 import { TokenTracker } from './tokenTracker.js';
 import { loadConfig } from './config.js';
 import { listSpills, getOutputDir } from './outputStore.js';
@@ -53,7 +53,23 @@ function schemaTokens(names) {
 export function buildContextReport() {
   const config = loadConfig();
   const tier = config.tier || 'premium';
-  const charPool = resolveCharPool(tier, config.contextCharPool);
+  const provider = config.provider || 'default';
+  const model = config.model || 'default';
+  const charPool = resolveCharPool(tier, config.contextCharPool, {
+    provider,
+    model,
+    overrideTokens: config.contextTokens || config.maxContextTokens
+  });
+
+  const modelTokens = resolveModelContextTokens({
+    provider,
+    model,
+    overrideTokens: config.contextTokens || config.maxContextTokens
+  });
+
+  const approxTokenPool = modelTokens > 0
+    ? modelTokens
+    : Math.round(charPool / APPROX_CHARS_PER_TOKEN);
 
   const packs = Object.entries(PACKS).map(([name, tools]) => ({
     name,
@@ -66,10 +82,10 @@ export function buildContextReport() {
 
   return {
     tier,
-    provider: config.provider || 'default',
-    model: config.model || 'default',
+    provider,
+    model,
     charPool,
-    approxTokenPool: Math.round(charPool / APPROX_CHARS_PER_TOKEN),
+    approxTokenPool,
     core: { tools: CORE_TOOLS.length, tokens: schemaTokens(CORE_TOOLS) },
     packs,
     allTools: TOOL_DEFINITIONS.length,

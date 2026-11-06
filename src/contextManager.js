@@ -79,14 +79,87 @@ export function resultCapFor(tool) {
 export const CHAR_POOLS = {
   super_max: 400000, // ~100k tokens
   max: 240000,       // ~60k tokens
-  premium: 180000,   // ~45k tokens — the middle rung now buys a real context
-                     // bump over fast, not just the right to run (monetization
-                     // Move 3 / Gap #2 in docs/AGENT_MONETIZATION.md).
-  default: 120000    // ~30k tokens (fast / starter / free)
+  premium: 180000,   // ~45k tokens — legacy subscription tier pool
+  default: 120000    // ~30k tokens
 };
 
-export function resolveCharPool(tier, override) {
+export const MODEL_CONTEXT_TOKENS = {
+  gemini_1m: 1000000,
+  gemini_2m: 2000000,
+  claude_200k: 200000,
+  openai_128k: 128000,
+  openai_200k: 200000,
+  astra_258k: 258000,
+  deepseek_128k: 128000,
+  qwen_128k: 128000,
+  mistral_128k: 128000,
+  grok_131k: 131072,
+  default_byok: 128000
+};
+
+export function resolveModelContextTokens(options = {}) {
+  const { provider = '', model = '', overrideTokens = 0 } = (options || {});
+  if (Number.isFinite(overrideTokens) && overrideTokens > 0) return overrideTokens;
+  const p = String(provider || '').toLowerCase();
+  const m = String(model || '').toLowerCase();
+
+  // Explicit Gemini 1.5 Pro or 2.0 Pro
+  if (m.includes('1.5-pro') || m.includes('2.0-pro') || m.includes('gemini-pro')) {
+    return MODEL_CONTEXT_TOKENS.gemini_2m;
+  }
+  // All other Gemini models, Antigravity ACP peer (Gemini Flash), etc.
+  if (p === 'antigravity' || p === 'agy' || m.includes('gemini') || p.includes('gemini')) {
+    return MODEL_CONTEXT_TOKENS.gemini_1m;
+  }
+  // Astra (as used in developer IDEs)
+  if (m.includes('astra')) {
+    return MODEL_CONTEXT_TOKENS.astra_258k;
+  }
+  // Claude / Anthropic
+  if (p === 'anthropic' || m.includes('claude') || m.includes('sonnet') || m.includes('opus') || m.includes('haiku')) {
+    return MODEL_CONTEXT_TOKENS.claude_200k;
+  }
+  // OpenAI o1 / o3
+  if (m.includes('o1') || m.includes('o3')) {
+    return MODEL_CONTEXT_TOKENS.openai_200k;
+  }
+  // OpenAI GPT-4o / GPT-4
+  if (p === 'openai' || m.includes('gpt-4')) {
+    return MODEL_CONTEXT_TOKENS.openai_128k;
+  }
+  // DeepSeek
+  if (p === 'deepseek' || m.includes('deepseek')) {
+    return MODEL_CONTEXT_TOKENS.deepseek_128k;
+  }
+  // Qwen
+  if (p === 'qwen' || p === 'dashscope' || m.includes('qwen')) {
+    return MODEL_CONTEXT_TOKENS.qwen_128k;
+  }
+  // Mistral
+  if (p === 'mistral' || m.includes('mistral') || m.includes('codestral')) {
+    return MODEL_CONTEXT_TOKENS.mistral_128k;
+  }
+  // Grok / xAI
+  if (p === 'xai' || m.includes('grok')) {
+    return MODEL_CONTEXT_TOKENS.grok_131k;
+  }
+
+  // Any other BYOK / ACP peer
+  if (p && p !== 'default') {
+    return MODEL_CONTEXT_TOKENS.default_byok;
+  }
+
+  return 0; // indicates fallback to subscription tier pool
+}
+
+export function resolveCharPool(tier, override, context = {}) {
   if (override && Number.isFinite(override) && override > 0) return override;
+
+  const modelTokens = resolveModelContextTokens(context);
+  if (modelTokens > 0) {
+    return modelTokens * 4; // 4 chars per token
+  }
+
   if (tier === 'super_max') return CHAR_POOLS.super_max;
   if (tier === 'max') return CHAR_POOLS.max;
   if (tier === 'premium' || tier === 'premium_annual') return CHAR_POOLS.premium;
