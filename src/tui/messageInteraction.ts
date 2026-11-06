@@ -308,11 +308,20 @@ export function markHoveredMessage(
     const row = transcriptRow - surface.viewport.scrollTop + padding;
     if (row < padding || row >= rows.length) continue;
     const existingRow = rows[row] ?? '';
-    const plainTrimmed = stripAnsi(existingRow).trimStart();
-    const alreadyHasMarker = /^[▸│┃|▌┌└├╭╰▪●•]/.test(plainTrimmed);
-    const content = transcriptRow === firstContentRow && !alreadyHasMarker
-      ? `${paint('accent', '▸')} ${truncate(existingRow, Math.max(0, contentWidth - 2), '')}`
-      : existingRow;
+    let content = existingRow;
+    if (transcriptRow === firstContentRow) {
+      const plainTrimmed = stripAnsi(existingRow).trimStart();
+      const alreadyHasMarker = /^[▸│┃|▌┌└├╭╰▪●•]/.test(plainTrimmed);
+      if (!alreadyHasMarker) {
+        if (existingRow.startsWith('   ')) {
+          content = ` ${paint('accent', '▸')} ${existingRow.slice(3)}`;
+        } else if (existingRow.startsWith('  ')) {
+          content = ` ${paint('accent', '▸')}${existingRow.slice(2)}`;
+        } else if (existingRow.startsWith(' ')) {
+          content = `${paint('accent', '▸')}${existingRow.slice(1)}`;
+        }
+      }
+    }
     rows[row] = fill('surfaceHi', padEnd(content, contentWidth));
   }
 }

@@ -393,7 +393,7 @@ export function handleTurnRailMouse(event, surface, host) {
                 closestRow = row;
             }
         }
-        if (minDistance <= 2 && closestTurn !== undefined && closestRow !== undefined) {
+        if (minDistance <= 1 && closestTurn !== undefined && closestRow !== undefined) {
             turnNum = closestTurn;
             anchorY = closestRow;
         }

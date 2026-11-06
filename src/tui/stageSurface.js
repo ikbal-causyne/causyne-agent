@@ -678,18 +678,16 @@ export class StageSurface {
       let row = rows[i] || '';
       if (hasTurns && railResult) {
         const leftCell = railResult.cells[i] || ' ';
-        if (leftCell !== ' ') {
-          if (row.startsWith('   ')) {
-            row = ` ${leftCell} ${row.slice(3)}`;
-          } else if (row.startsWith('  ')) {
-            row = ` ${leftCell}${row.slice(2)}`;
-          } else if (row.startsWith(' ')) {
-            row = ` ${leftCell}${row.slice(1)}`;
-          } else if (row.length > 0) {
-            row = ` ${leftCell} ${row}`;
-          } else {
-            row = ` ${leftCell} `;
-          }
+        if (row.startsWith('   ')) {
+          row = ` ${leftCell} ${row.slice(3)}`;
+        } else if (row.startsWith('  ')) {
+          row = ` ${leftCell}${row.slice(2)}`;
+        } else if (row.startsWith(' ')) {
+          row = `${leftCell}${row.slice(1)}`;
+        } else if (row.length === 0) {
+          row = leftCell !== ' ' ? ` ${leftCell} ` : '';
+        } else {
+          row = ` ${leftCell} ${row}`;
         }
       }
       rows[i] = `${padEnd(row, contentWidth)} ${rightCell}`;
