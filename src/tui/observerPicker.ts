@@ -238,7 +238,6 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
           // 4. Advisory Endpoint Input
           if (action === 'endpoint') {
             const current = coldObserver.getConfig();
-            prompt.closeLayer();
             prompt.openLayer(new InputLayer({
               title: 'Advisory Loopback Endpoint',
               placeholder: 'http://localhost:11434/v1 (or "none" to clear)',
@@ -264,13 +263,12 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
                 openMenu();
               }
             }));
-            return;
+            return 'handled';
           }
 
           // 5. Advisory Model Input
           if (action === 'model') {
             const current = coldObserver.getConfig();
-            prompt.closeLayer();
             prompt.openLayer(new InputLayer({
               title: 'Advisory Model Name',
               placeholder: 'model name (e.g. tiny, qwen2.5-coder) or "none"',
@@ -291,12 +289,11 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
                 openMenu();
               }
             }));
-            return;
+            return 'handled';
           }
 
           // 6. Test Advisory Endpoint
           if (action === 'test') {
-            prompt.closeLayer();
             void coldObserver.healthCheck().then((health) => {
               const textLines = health.endpoint
                 ? [
@@ -322,12 +319,11 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
                 onDismiss: () => openMenu()
               }));
             });
-            return;
+            return 'handled';
           }
 
           // 7. Audit History
           if (action === 'audit') {
-            prompt.closeLayer();
             const recentAudits = coldObserver.getAuditHistory();
             const lines = recentAudits.length === 0
               ? ['No Cold Observer audit records yet.', '', 'Press Esc or Enter to return to Observer setup.']
@@ -346,7 +342,7 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
               height: 18,
               onDismiss: () => openMenu()
             }));
-            return;
+            return 'handled';
           }
 
           // 8. Reset Defaults

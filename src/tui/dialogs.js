@@ -77,8 +77,11 @@ export class SelectLayer extends Layer {
       const item = this.list.current;
       this.settled = true;
       const result = this.onPick ? this.onPick(item) : null;
-      if (result === 'keep') this.settled = false;
-      return result === 'keep' ? 'handled' : 'close';
+      if (result === 'keep' || result === 'handled') {
+        this.settled = false;
+        return 'handled';
+      }
+      return 'close';
     }
     if (action === 'cancel') return 'close';
     return action ? 'handled' : null;

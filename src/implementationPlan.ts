@@ -127,6 +127,31 @@ export function normalizePeerPlanEntries(value: unknown): PlanUpdate | null {
   return { explanation, plan: steps };
 }
 
+const TOOL_CALL_ENVELOPE_KEYS = new Set(['name', 'tool', 'function', 'type', 'id', 'call_id', 'tool_call_id']);
+
+/**
+ * Resolve the argument payload of a text-delimited tool call envelope.
+ *
+ * Accepts `arguments`, `parameters`, `input`, `args`, nested `function.arguments`,
+ * and the flat form some peers emit, where arguments sit beside `name`
+ * (`{"name":"update_plan","plan":[...]}`). Falling back to `{}` for the flat form
+ * discarded every argument and produced false "is required" validation errors.
+ */
+export function resolveToolCallEnvelopeArguments(parsed: Record<string, unknown>): unknown {
+  const fnObj = parsed.function && typeof parsed.function === 'object' && !Array.isArray(parsed.function)
+    ? (parsed.function as Record<string, unknown>)
+    : null;
+  for (const key of ['arguments', 'parameters', 'input', 'args'] as const) {
+    if (parsed[key] !== undefined && parsed[key] !== null) return parsed[key];
+  }
+  if (fnObj && fnObj.arguments !== undefined && fnObj.arguments !== null) return fnObj.arguments;
+  const flat: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!TOOL_CALL_ENVELOPE_KEYS.has(key)) flat[key] = value;
+  }
+  return flat;
+}
+
 export function extractToolCallJsonObjects(text: string, allowUnclosedHealing = true): Array<Record<string, unknown>> {
   const results: Array<Record<string, unknown>> = [];
   if (!text || typeof text !== 'string') return results;

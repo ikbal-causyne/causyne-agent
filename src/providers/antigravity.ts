@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseAction, type ChatResponseToolCall, type ChatResponseUsage } from './base.js';
-import { extractToolCallJsonObjects, stripToolCallMarkup, stripThinkBlocks } from '../implementationPlan.js';
+import { extractToolCallJsonObjects, stripToolCallMarkup, stripThinkBlocks, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 
 /**
  * Baseline fallback models for instant offline availability.
@@ -875,13 +875,7 @@ export class AntigravityProvider extends LLMProvider {
         : null;
       const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
       if (!name) continue;
-      const rawArgs = parsed.arguments !== undefined
-        ? parsed.arguments
-        : parsed.parameters !== undefined
-          ? parsed.parameters
-          : parsed.input !== undefined
-            ? parsed.input
-            : (fnObj?.arguments ?? {});
+      const rawArgs = resolveToolCallEnvelopeArguments(parsed);
       calls.push({
         id: `agy_call_${Date.now()}_${index++}`,
         type: 'function',

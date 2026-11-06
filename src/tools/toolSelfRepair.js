@@ -634,19 +634,62 @@ export function resolveParameterAliases(toolName, args, schema) {
         }
     }
     else if (canonicalName === 'update_plan') {
-        if (!modified.plan && (modified.steps || modified.items || modified.tasks)) {
-            modified.plan = modified.steps || modified.items || modified.tasks;
-            delete modified.steps;
-            delete modified.items;
-            delete modified.tasks;
-            repairs.push("Mapped 'steps' to 'plan' parameter for 'update_plan'");
+        // Peer checklist tools (TodoWrite / todowrite) are aliased to update_plan by
+        // name, so their argument shapes must be mapped here as well.
+        const planAliases = ['steps', 'items', 'tasks', 'todos', 'entries', 'checklist'];
+        if (modified.plan === undefined || modified.plan === null || modified.plan === '') {
+            const source = planAliases.find((key) => modified[key] !== undefined && modified[key] !== null);
+            if (source) {
+                modified.plan = modified[source];
+                repairs.push(`Mapped '${source}' to 'plan' parameter for 'update_plan'`);
+            }
+        }
+        for (const key of planAliases)
+            delete modified[key];
+        if (typeof modified.plan === 'string') {
+            const text = modified.plan.trim();
+            let parsed;
+            if (text.startsWith('[') || text.startsWith('{')) {
+                try {
+                    parsed = JSON.parse(text);
+                }
+                catch {
+                    parsed = undefined;
+                }
+            }
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                const inner = parsed;
+                parsed = inner.plan ?? inner.todos ?? inner.steps ?? inner.items ?? parsed;
+            }
+            if (Array.isArray(parsed)) {
+                modified.plan = parsed;
+                repairs.push("Parsed JSON-encoded 'plan' for 'update_plan'");
+            }
+            else if (text) {
+                const lines = text.split(/\r?\n/)
+                    .map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)])?\s*(?:\[[ xX]\])?\s*/, '').trim())
+                    .filter(Boolean);
+                if (lines.length > 0) {
+                    modified.plan = lines;
+                    repairs.push("Split plain-text 'plan' into steps for 'update_plan'");
+                }
+            }
         }
         if (Array.isArray(modified.plan)) {
             let activeCount = 0;
-            modified.plan = modified.plan.map((raw, idx) => {
-                if (!raw || typeof raw !== 'object')
+            modified.plan = modified.plan.map((entry, idx) => {
+                const raw = typeof entry === 'string' && entry.trim()
+                    ? { step: entry.trim(), status: 'pending' }
+                    : entry;
+                if (!raw || typeof raw !== 'object' || Array.isArray(raw))
                     return raw;
                 const item = { ...raw };
+                if (item.activeForm !== undefined)
+                    delete item.activeForm;
+                if (item.priority !== undefined)
+                    delete item.priority;
+                if (item.id !== undefined && typeof item.id !== 'string')
+                    item.id = String(item.id);
                 if (!item.id)
                     item.id = `step-${idx + 1}`;
                 if (!item.step && (item.content || item.title || item.name || item.description)) {

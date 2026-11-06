@@ -487,6 +487,17 @@ export function handleTurnRailMouse(
 
   if (turnNum) {
     if (isMouseMotion(event.sequence)) {
+      // While a turn is streaming, a hover card would sit on top of live output
+      // (thinking, code edits, tool frames). Clicking a dot still navigates.
+      if (host?.busy) {
+        if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
+          surface.hoveredTurnIndex = null;
+          surface.hoveredTurnAnchorY = null;
+          if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
+          else if (typeof host?.draw === 'function') host.draw();
+        }
+        return true;
+      }
       if (surface.hoveredTurnIndex !== turnNum) {
         surface.hoveredTurnIndex = turnNum;
         surface.hoveredTurnAnchorY = anchorY;

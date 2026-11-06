@@ -715,6 +715,22 @@ export class ChatPrompt {
       this.usageCard = null;
     }
 
+    // Instant slash command shortcuts that operate directly on the prompt surface
+    if (text === '/usage') {
+      void this.toggleUsageCard();
+      return;
+    }
+
+    if (text === '/observer' || text === '/observer status') {
+      import('./observerPicker.js').then(({ runInteractiveObserverPicker }) => {
+        void runInteractiveObserverPicker(this);
+      }).catch((err) => {
+        this.notice = err instanceof Error ? err.message : String(err);
+        this.scheduleDraw();
+      });
+      return;
+    }
+
     // Control commands take priority over busy turns so the user is never locked out.
     // Commands like /stop, /new, /model, /session, /sessions, /continuum, /clear can interrupt
     // a stalled/long-running turn and execute immediately.
@@ -741,9 +757,15 @@ export class ChatPrompt {
     }
 
     if (this.busy) {
-      // The turn is still running: hold the line rather than dropping it.
+      // If user typed another slash command while busy, notify them rather than queuing
+      // it as a chat prompt to the model.
+      if (this.isCommand(text)) {
+        this.notice = `Command ${text} queued — will execute when current turn completes`;
+      } else {
+        this.notice = `queued (${this.queue.length + 1}) — sends when this turn ends`;
+      }
       this.queue.push(text);
-      this.notice = `queued (${this.queue.length}) — sends when this turn ends`;
+      this.scheduleDraw();
       return;
     }
 

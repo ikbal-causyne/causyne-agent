@@ -10,7 +10,7 @@ import type { RequestPermissionRequest, SessionUpdate, ToolKind } from '../acp/p
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
-import { extractToolCallJsonObjects, stripToolCallMarkup } from '../implementationPlan.js';
+import { extractToolCallJsonObjects, stripToolCallMarkup, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 
 interface AcpTransportSnapshot {
   conversationId: string;
@@ -271,13 +271,7 @@ export class AcpProvider extends LLMProvider {
         : null;
       const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
       if (!name) continue;
-      const rawArgs = parsed.arguments !== undefined
-        ? parsed.arguments
-        : parsed.parameters !== undefined
-          ? parsed.parameters
-          : parsed.input !== undefined
-            ? parsed.input
-            : (fnObj?.arguments ?? {});
+      const rawArgs = resolveToolCallEnvelopeArguments(parsed);
       calls.push({
         id: `acp_call_${Date.now()}_${index++}`,
         type: 'function',

@@ -17,6 +17,7 @@ export class AcpClient {
     buffer = '';
     stderrTail = '';
     pending = new Map();
+    openToolCalls = new Map();
     nextId = 1;
     closed = false;
     exitError = null;
@@ -246,7 +247,49 @@ export class AcpClient {
         finally {
             signal?.removeEventListener('abort', onAbort);
             this.updateListener = previous;
+            this.clearOpenToolCalls(sessionId);
         }
+    }
+    /**
+     * Track peer-native tool calls that are still running.
+     *
+     * A peer executing a long native command (build, install, decompile) may send
+     * no session updates until the command finishes. That silence is work, not a
+     * stall, so the inactivity guard re-arms while such a call is open. The hard
+     * prompt timeout still bounds the whole turn.
+     */
+    trackToolCall(sessionId, update) {
+        const record = update;
+        if (record.sessionUpdate !== 'tool_call' && record.sessionUpdate !== 'tool_call_update')
+            return;
+        if (typeof record.toolCallId !== 'string' || !record.toolCallId)
+            return;
+        const key = `${sessionId}\u0000${record.toolCallId}`;
+        const status = typeof record.status === 'string' ? record.status : '';
+        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            this.openToolCalls.delete(key);
+        }
+        else if (record.sessionUpdate === 'tool_call' || status === 'pending' || status === 'in_progress') {
+            if (!this.openToolCalls.has(key))
+                this.openToolCalls.set(key, Date.now());
+        }
+    }
+    clearOpenToolCalls(sessionId) {
+        const prefix = `${sessionId}\u0000`;
+        for (const key of this.openToolCalls.keys()) {
+            if (key.startsWith(prefix))
+                this.openToolCalls.delete(key);
+        }
+    }
+    hasOpenToolCall(sessionId) {
+        if (!sessionId || !this.child || this.child.exitCode !== null || this.closed)
+            return false;
+        const prefix = `${sessionId}\u0000`;
+        for (const key of this.openToolCalls.keys()) {
+            if (key.startsWith(prefix))
+                return true;
+        }
+        return false;
     }
     notifyCancel(sessionId) {
         this.write({
@@ -343,6 +386,7 @@ export class AcpClient {
             const params = parsed.params;
             if (params && typeof params.sessionId === 'string' && params.update) {
                 this.recordSessionModels(params.sessionId, params.update);
+                this.trackToolCall(params.sessionId, params.update);
                 this.updateListener?.(params.sessionId, params.update);
                 this.options.onUpdate?.(params.sessionId, params.update);
             }
@@ -620,6 +664,10 @@ export class AcpClient {
                 if (inactivityTimer)
                     clearTimeout(inactivityTimer);
                 inactivityTimer = setTimeout(() => {
+                    if (this.hasOpenToolCall(options?.sessionId) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
+                        resetInactivity();
+                        return;
+                    }
                     cleanup();
                     this.pending.delete(id);
                     const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);

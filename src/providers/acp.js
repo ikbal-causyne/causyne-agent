@@ -9,7 +9,7 @@ import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
-import { extractToolCallJsonObjects, stripToolCallMarkup } from '../implementationPlan.js';
+import { extractToolCallJsonObjects, stripToolCallMarkup, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 function fingerprint(value) {
     return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -250,13 +250,7 @@ export class AcpProvider extends LLMProvider {
             const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
             if (!name)
                 continue;
-            const rawArgs = parsed.arguments !== undefined
-                ? parsed.arguments
-                : parsed.parameters !== undefined
-                    ? parsed.parameters
-                    : parsed.input !== undefined
-                        ? parsed.input
-                        : (fnObj?.arguments ?? {});
+            const rawArgs = resolveToolCallEnvelopeArguments(parsed);
             calls.push({
                 id: `acp_call_${Date.now()}_${index++}`,
                 type: 'function',
