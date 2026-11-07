@@ -191,7 +191,15 @@ export const COMMANDS = [
           + 'A skill name is one word: lowercase letters, digits and hyphens.');
       }
 
-      if (!action || action === 'mine') {
+      if (action === 'clear' || action === 'off' || action === 'reset') {
+        return { ok: true, effect: 'clear-skill', output: 'Active skill cleared.' };
+      }
+
+      if (!action || (action === 'new' && !target) || action === 'create') {
+        return { ok: true, effect: 'create-skill' };
+      }
+
+      if (action === 'mine' || action === 'list') {
         const own = mine();
         const problems = userSkillProblems();
         const lines = [`Your own skills (${own.length})`, ''];
@@ -286,7 +294,11 @@ export const COMMANDS = [
           label: domain,
           description: `${skills.filter((s) => s.domain === domain).length} skills`
         }));
-      return domains.concat(skills.map((skill) => ({
+      const base = [
+        { value: 'clear', label: 'clear', description: 'clear the currently active skill' },
+        ...domains
+      ];
+      return base.concat(skills.map((skill) => ({
         value: `${skill.domain}/${skill.id}`,
         // Rank against the skill id as well as the full path, so typing the
         // skill name alone finds it without knowing which domain it lives in.
@@ -297,6 +309,10 @@ export const COMMANDS = [
     },
     run: (argv) => {
       const [target] = argv;
+
+      if (target === 'clear' || target === 'off' || target === 'reset') {
+        return { ok: true, effect: 'clear-skill', output: 'Active skill cleared.' };
+      }
 
       if (!target) {
         const catalogue = listCompiledSkills();
@@ -322,7 +338,18 @@ export const COMMANDS = [
         summary.push(`${catalogue.length} skills across ${byDomain.size} domains.`);
         summary.push('Read one with /skills <domain>/<skill>.');
 
-        return { ok: true, output: summary.join('\n'), effect: 'pick-skill', items: catalogue };
+        const pickerItems = [
+          {
+            domain: 'custom',
+            id: 'create',
+            name: '+ Create new skill...',
+            description: 'Author a new custom procedure with interactive wizard',
+            isCreateAction: true
+          },
+          ...catalogue
+        ];
+
+        return { ok: true, output: summary.join('\n'), effect: 'pick-skill', items: pickerItems };
       }
 
       if (target.includes('/')) {

@@ -23,9 +23,11 @@
     "resolveJsonModule": true,
     "declaration": false,
     "sourceMap": false,
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "newLine": "lf"
   },
   "include": [
+    "src/tui/skillAuthoring.ts",
     "src/sessionJournal.ts",
     "src/provisioning/npmInstall.ts",
     "src/plugins/pluginSkills.ts",

@@ -61,6 +61,19 @@ export function sessionSidebarRows(facts, height) {
     line();
     styled(bold('Workspace'));
     line(facts.cwd || 'Unknown');
+    if (facts.activeSkill) {
+        const raw = facts.activeSkill;
+        const skillId = typeof raw === 'string' ? raw : (raw.id || raw.name || '');
+        const skillDesc = typeof raw === 'object' && raw ? raw.description || '' : '';
+        if (skillId) {
+            line();
+            styled(bold('Active Skill'));
+            styled(paint('accent', `⚡ ${truncate(skillId, inner - 4, '…')}`));
+            if (skillDesc) {
+                line(truncate(skillDesc, inner, '…'));
+            }
+        }
+    }
     if (facts.plan?.length) {
         const completed = facts.plan.filter(item => item.status === 'completed').length;
         line();

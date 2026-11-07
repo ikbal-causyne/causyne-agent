@@ -496,7 +496,8 @@ export class StageSurface {
       model: this.sidebarStatus?.model || this.sessionInfo?.model,
       contextChars: this.sidebarStatus?.contextChars,
       contextLimit: this.sidebarStatus?.contextLimit,
-      plan: this.sidebarPlan
+      plan: this.sidebarPlan,
+      activeSkill: this.sessionInfo?.activeSkill
     }, mainRows.length) : [];
     const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
     return this.stage.paint(painted, {

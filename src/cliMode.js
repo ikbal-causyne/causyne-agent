@@ -472,12 +472,66 @@ export async function chatMode({ home = false } = {}) {
       
       // surfaces, and the text form remains the fallback rather than a
       // second implementation that can disagree.
+      if (commandResult.effect === 'clear-skill') {
+        loop.activeSkill = null;
+        if (surface) surface.setSessionInfo({ activeSkill: null });
+        if (prompt) {
+          prompt.notice = 'Active skill cleared';
+          if (typeof prompt.draw === 'function') prompt.draw();
+        }
+        conn.renderer.write('\n' + paint('muted', '  Active skill cleared.') + '\n');
+        continue;
+      }
+
+      if (commandResult.effect === 'create-skill' && prompt) {
+        const { runInteractiveSkillWizard } = await import('./tui/skillAuthoring.js');
+        const created = await runInteractiveSkillWizard(prompt);
+        if (created) {
+          loop.activeSkill = created;
+          if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
+          prompt.notice = `⚡ Skill created & activated: ${created.domain}/${created.id}`;
+          conn.renderer.write('\n' + paint('success', `  Created and activated skill: ${bold(created.domain + '/' + created.id)}`) + '\n');
+          if (created.path) conn.renderer.write(dim(`  Stored at: ${created.path}\n`));
+          if (typeof prompt.draw === 'function') prompt.draw();
+        }
+        continue;
+      }
+
       if (commandResult.effect === 'pick-skill' && prompt) {
-        // Picking a skill puts it on the input line rather than running it
-        // straight away, so the user can add what they want done with it. That
-        // is the difference between a launcher and a document viewer.
-        prompt.browseSkills(commandResult.items, (skill) => {
-          prompt.setText(`/skills ${skill.domain}/${skill.id} `);
+        prompt.browseSkills(commandResult.items, async (skill) => {
+          if (!skill) return;
+          if (skill.isCreateAction || (skill.domain === 'custom' && skill.id === 'create')) {
+            const { runInteractiveSkillWizard } = await import('./tui/skillAuthoring.js');
+            const created = await runInteractiveSkillWizard(prompt);
+            if (created) {
+              loop.activeSkill = created;
+              if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
+              prompt.notice = `⚡ Skill created & activated: ${created.domain}/${created.id}`;
+              conn.renderer.write('\n' + paint('success', `  Created and activated skill: ${bold(created.domain + '/' + created.id)}`) + '\n');
+              if (created.path) conn.renderer.write(dim(`  Stored at: ${created.path}\n`));
+              if (typeof prompt.draw === 'function') prompt.draw();
+            }
+            return;
+          }
+
+          const { readCompiledSkill } = await import('./skillsManager.js');
+          const content = readCompiledSkill(skill.domain, skill.id);
+          loop.activeSkill = {
+            id: `${skill.domain}/${skill.id}`,
+            name: skill.name || skill.id,
+            domain: skill.domain,
+            description: skill.description || '',
+            content: typeof content === 'string' ? content : ''
+          };
+          if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
+          prompt.notice = `⚡ Skill active: ${skill.domain}/${skill.id}`;
+          conn.renderer.write('\n' + paint('success', `  ⚡ Activated skill: ${bold(skill.domain + '/' + skill.id)}`) + '\n');
+          if (skill.description) {
+            conn.renderer.write(dim(`  ${skill.description}\n`));
+          }
+          conn.renderer.write(dim(`  Type instructions for this skill, or press Enter to apply to workspace.\n`));
+          prompt.setText('');
+          if (typeof prompt.draw === 'function') prompt.draw();
         });
         continue;
       }
@@ -526,6 +580,7 @@ export async function chatMode({ home = false } = {}) {
       // a working method the agent follows rather than a document it shows you.
       if (commandResult.effect === 'invoke-skill') {
         loop.activeSkill = commandResult.skill;
+        if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
         conn.renderer.skillInvoked(commandResult.skill.id, commandResult.instruction);
         task = commandResult.instruction
           || `Apply the ${commandResult.skill.id} skill to the current workspace.`;
@@ -589,9 +644,8 @@ export async function chatMode({ home = false } = {}) {
       if (prompt) prompt.setBusy(false);
     }
     conn.stopSpinner();
-    // One turn, one skill: an invocation must not silently steer every later
-    // message in the session.
-    loop.activeSkill = null;
+    // Active skill remains persistent across turns until explicitly cleared via /skill clear or another skill is selected.
+    if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
     conn.renderer.turnFooter(Date.now() - startedAt);
   }
   
