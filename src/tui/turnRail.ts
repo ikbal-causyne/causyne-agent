@@ -400,8 +400,8 @@ export function overlayTurnPreviewCard(
   if (cardRows.length === 0 || viewportRows.length === 0) return viewportRows;
 
   const cardWidth = visibleWidth(cardRows[0] || '');
-  // Clamp card placement horizontally: preferably to the left of the rail, or to the right
-  const cardSpacing = 4; // railX + 4 gives 3 spaces of breathing room after railX
+  // Clamp card placement horizontally: flush-left with transcript baseline at column 3
+  const cardSpacing = 2; // railX + 2 gives x = 3, perfectly flush left with transcript content
   let x = railX - cardWidth - 1;
   if (x < 0 || (railX <= 4 && railX + cardSpacing + cardWidth <= screenWidth)) {
     x = Math.max(0, Math.min(screenWidth - cardWidth - 1, railX + cardSpacing));
@@ -498,7 +498,7 @@ export function handleTurnRailMouse(
                  relY >= cardRect.y && relY < cardRect.y + cardRect.height;
     } else {
       const cardWidth = 52;
-      const cardX = layout.railX <= 4 ? layout.railX + 4 : Math.max(0, layout.railX - cardWidth - 1);
+      const cardX = layout.railX <= 4 ? layout.railX + 2 : Math.max(0, layout.railX - cardWidth - 1);
       const anchorY = surface.hoveredTurnAnchorY ?? Math.floor(layout.viewportHeight / 2);
       const cardHeight = 9;
       const cardStartY = Math.max(0, Math.min(layout.viewportHeight - cardHeight, anchorY - Math.floor(cardHeight / 2)));

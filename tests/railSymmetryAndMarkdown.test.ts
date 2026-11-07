@@ -95,18 +95,18 @@ describe('Turn Rail & Chat Interface Symmetry, Spacing and Markdown Rendering', 
       const row = overlaid[i]!;
       const plain = stripAnsi(row);
 
-      // Card must be offset with generous breathing room (starts at col 5)
+      // Card must align flush-left with transcript content baseline (starts at Column 3)
       const cardBorderIndex = plain.search(/[╭│╰]/);
-      assert.equal(cardBorderIndex, 5, `Card border should start at column 5, got ${cardBorderIndex}`);
+      assert.equal(cardBorderIndex, 3, `Card border should start flush at column 3, got ${cardBorderIndex}`);
 
-      // Crucial: The margin before the card (columns 0..4) must NEVER contain severed '▸' or '>' arrows!
-      const marginBeforeCard = plain.slice(0, 5);
+      // Crucial: The margin before the card (columns 0..2) must NEVER contain severed '▸' or '>' arrows!
+      const marginBeforeCard = plain.slice(0, 3);
       assert.ok(!/[▸>]/.test(marginBeforeCard), `Margin before card row ${i} must not contain severed arrow: "${marginBeforeCard}"`);
 
-      // Column 0 is air space, Column 1 holds turn dot (or space), Columns 2..4 are clean air padding
+      // Column 0 is air space, Column 1 holds turn dot (or space), Column 2 is breathing space before card
       assert.equal(marginBeforeCard[0], ' ', 'Column 0 must be outer air space');
       assert.ok(marginBeforeCard[1] === '•' || marginBeforeCard[1] === '●' || marginBeforeCard[1] === '.' || marginBeforeCard[1] === ' ', 'Column 1 is dot or space');
-      assert.equal(marginBeforeCard.slice(2, 5), '   ', 'Columns 2..4 must be 3 clean spaces of breathing room');
+      assert.equal(marginBeforeCard[2], ' ', 'Column 2 must be 1 clean space of breathing room');
     }
   });
 

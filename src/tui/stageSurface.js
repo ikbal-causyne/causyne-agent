@@ -450,8 +450,8 @@ export class StageSurface {
             const cardWidth = 52;
             const railX = this.turnRailLayout.railX ?? 1;
             let cardX = railX - cardWidth - 1;
-            if (cardX < 0 || (railX <= 4 && railX + 4 + cardWidth <= mainWidth)) {
-              cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 4));
+            if (cardX < 0 || (railX <= 4 && railX + 2 + cardWidth <= mainWidth)) {
+              cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 2));
             }
             const startY = Math.max(0, Math.min(rows.length - card.length, anchorY - Math.floor(card.length / 2)));
             this.turnRailLayout.cardRect = { x: cardX, y: startY, width: cardWidth, height: card.length, turnIndex: hoveredTurn.turnIndex };
