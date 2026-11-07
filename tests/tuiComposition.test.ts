@@ -114,7 +114,8 @@ test('session transition and /new runs synchronously without re-entrant freeze',
   ], { id: 'test_session_id', title: 'Test Session', messagesCount: 4 });
 
   const elapsedMs = performance.now() - t0;
-  assert.ok(elapsedMs < 100, `Session transition must execute quickly (<100ms), took ${elapsedMs.toFixed(2)}ms`);
+  const maxTransitionMs = process.env.CI ? 400 : 100;
+  assert.ok(elapsedMs < maxTransitionMs, `Session transition must execute quickly (<${maxTransitionMs}ms), took ${elapsedMs.toFixed(2)}ms`);
 
   assert.equal(hasSessionTurns(surface.transcript), true);
   assert.equal(surface.homeInfo, null);

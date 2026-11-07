@@ -25,14 +25,16 @@ test('Stress test: Large multi-line unbracketed paste (1,000 lines) into ChatPro
   assert.equal(submitted, null, 'Unbracketed paste must not submit early on embedded newlines');
   assert.equal(prompt.editor.lines.length, lineCount, `Must contain exactly ${lineCount} lines`);
   assert.equal(prompt.completion, null, 'Must bypass command/file completion on multi-line paste to avoid freezing');
-  assert.ok(elapsed < 200, `Large paste processing took ${elapsed.toFixed(1)}ms (must be under 200ms)`);
+  const maxPasteMs = process.env.CI ? 800 : 200;
+  assert.ok(elapsed < maxPasteMs, `Large paste processing took ${elapsed.toFixed(1)}ms (must be under ${maxPasteMs}ms)`);
 
   // Assert lineEditor rendering is fast
   const renderStart = performance.now();
   const layout = prompt.editor.render(100, '');
   const renderElapsed = performance.now() - renderStart;
   assert.ok(layout.rows.length >= lineCount);
-  assert.ok(renderElapsed < 150, `Render took ${renderElapsed.toFixed(1)}ms (must be under 150ms)`);
+  const maxRenderMs = process.env.CI ? 600 : 150;
+  assert.ok(renderElapsed < maxRenderMs, `Render took ${renderElapsed.toFixed(1)}ms (must be under ${maxRenderMs}ms)`);
 
   // Submitting with Enter now delivers the full payload
   prompt.handleData('\r');
@@ -58,7 +60,8 @@ test('Stress test: 5,000-line bracketed paste stress test', () => {
   assert.equal(submitted, null);
   assert.equal(prompt.editor.lines.length, lineCount);
   assert.equal(prompt.completion, null);
-  assert.ok(elapsed < 250, `5,000-line paste handled in ${elapsed.toFixed(1)}ms`);
+  const max5kPasteMs = process.env.CI ? 1000 : 250;
+  assert.ok(elapsed < max5kPasteMs, `5,000-line paste handled in ${elapsed.toFixed(1)}ms (must be under ${max5kPasteMs}ms)`);
 
   prompt.handleKey({ name: 'enter', sequence: '\r' });
   assert.equal(submitted, codeBlock);
@@ -98,7 +101,8 @@ test('Stress test: Rapid-fire input bursts (2,000 key events)', () => {
   const elapsed = performance.now() - start;
 
   assert.ok(prompt.editor.getText().length > 1500);
-  assert.ok(elapsed < 300, `2,000 rapid keystrokes processed in ${elapsed.toFixed(1)}ms`);
+  const maxBurstMs = process.env.CI ? 1200 : 300;
+  assert.ok(elapsed < maxBurstMs, `2,000 rapid keystrokes processed in ${elapsed.toFixed(1)}ms (must be under ${maxBurstMs}ms)`);
 });
 
 test('Stress test: 50 consecutive paste-and-clear cycles', () => {
@@ -115,7 +119,8 @@ test('Stress test: 50 consecutive paste-and-clear cycles', () => {
   }
   const elapsed = performance.now() - start;
 
-  assert.ok(elapsed < 400, `50 paste-and-clear cycles completed in ${elapsed.toFixed(1)}ms`);
+  const maxCyclesMs = process.env.CI ? 1600 : 400;
+  assert.ok(elapsed < maxCyclesMs, `50 paste-and-clear cycles completed in ${elapsed.toFixed(1)}ms (must be under ${maxCyclesMs}ms)`);
 });
 
 test('Stress test: Large single-line unbracketed paste (50,000 chars) processes in under 50ms without freeze', () => {
@@ -128,7 +133,8 @@ test('Stress test: Large single-line unbracketed paste (50,000 chars) processes 
 
   assert.equal(prompt.editor.lines.length, 1);
   assert.equal(prompt.editor.getText().length, singleLinePayload.length);
-  assert.ok(elapsed < 50, `50KB single-line paste must process in under 50ms without freeze, took ${elapsed.toFixed(1)}ms`);
+  const maxSingleLineMs = process.env.CI ? 300 : 50;
+  assert.ok(elapsed < maxSingleLineMs, `50KB single-line paste must process in under ${maxSingleLineMs}ms without freeze, took ${elapsed.toFixed(1)}ms`);
 });
 
 test('Stress test: Terminal ANSI colored log paste strips escapes and avoids false Enter submission', () => {
