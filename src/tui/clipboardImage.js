@@ -230,7 +230,9 @@ export function readClipboardImageSync() {
 export function extractPastedFilePath(input) {
     let raw = String(input ?? '').trim();
     // Strip surrounding quotes
-    raw = raw.replace(/^['"]+|['"]+$/g, '');
+    while (raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))) {
+        raw = raw.slice(1, -1).trim();
+    }
     // Handle file:// URI
     if (raw.startsWith('file://')) {
         try {
@@ -240,9 +242,12 @@ export function extractPastedFilePath(input) {
             // ignore
         }
     }
-    // Unescape backslash-escaped spaces/characters on Unix
+    // Unescape backslash-escaped spaces/characters on Unix, and backslash-escaped spaces on Windows
     if (process.platform !== 'win32') {
         raw = raw.replace(/\\(.)/g, '$1');
+    }
+    else {
+        raw = raw.replace(/\\ /g, ' ');
     }
     return raw;
 }

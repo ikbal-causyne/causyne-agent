@@ -969,7 +969,8 @@ export class AntigravityProvider extends LLMProvider {
         'Causyne provides native host tools for browser verification: `browser_act` (preview and snapshot) and `screenshot`/`vision_inspect_ui`. ' +
         'DO NOT write custom Node.js/Python headless Chrome or CDP WebSocket scripts to inspect console logs or take screenshots. ' +
         'Causyne automatically captures browser console errors and renders WebGL/Canvas with hardware acceleration. ' +
-        'Use <tool_call>{"name": "browser_act", "arguments": {"action": "preview", "filePath": "index.html"}}</tool_call> to verify rendered output directly.\n\n' + promptText;
+        'Use <tool_call>{"name": "browser_act", "arguments": {"actions": [{"type": "preview", "filePath": "index.html"}, {"type": "snapshot"}]}}</tool_call> to verify rendered output directly. ' +
+        'If you start a persistent local HTTP server, use `sysRunBg` or redirect stdio (`nohup ... </dev/null >/dev/null 2>&1 &`) so the server does not break with EIO when the turn pseudo-terminal closes.\n\n' + promptText;
     }
 
     const modelSlug = resolveAgyModelId(this.model);
@@ -1357,7 +1358,9 @@ export class AntigravityProvider extends LLMProvider {
                     ...(detail ? { detail } : {})
                   };
                   if (status !== 'running') {
-                    const existing = nativeActions.find(a => a.name === action.name && a.detail === action.detail);
+                    const existing = nativeActions.find(a => action.id
+                      ? a.id === action.id
+                      : a.name === action.name && a.detail === action.detail);
                     if (existing) existing.status = status;
                     else nativeActions.push(action);
                   }

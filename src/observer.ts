@@ -61,6 +61,21 @@ export interface TaskObservationContext {
   toolHistory: readonly ToolOutcome[];
 }
 
+export function extractClaimedLocalUrls(text: string): string[] {
+  if (!text) return [];
+  const matches = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+(?:\/[^\s)>'"`\]]*)?/gi) || [];
+  const unique = new Set<string>();
+  for (const raw of matches) {
+    let end = raw.length;
+    while (end > 0 && '.,;:!?'.includes(raw[end - 1]!)) {
+      end--;
+    }
+    const cleaned = raw.slice(0, end);
+    if (cleaned) unique.add(cleaned);
+  }
+  return [...unique];
+}
+
 export class CausyneObserver {
   /**
    * Evaluates the current state of a task after a tool outcome or at a step boundary.
@@ -127,7 +142,7 @@ export class CausyneObserver {
     // Check if the agent claims completion
     if (context.agentClaim && context.agentClaim.trim()) {
       const claim = context.agentClaim.toLowerCase();
-      const claimsCompletion = /\b(?:done|complete|completed|finished|implemented|fixed|verified)\b/i.test(claim);
+      const claimsCompletion = /\b(?:done|complete|completed|finished|implemented|fixed|verified|ready)\b|\b(?:is\s+(?:running|live|available|listening|served)\s+(?:at|on)|application\s+is\s+running)\b/i.test(claim);
 
       if (claimsCompletion) {
         // Run deterministic verification checks based on domain
@@ -248,10 +263,12 @@ export class CausyneObserver {
         }
 
         const clientReq = http.get(req.endpoint, { timeout: req.timeoutMs ?? 3000 }, (res) => {
+          res.resume();
           const expected = req.expectedStatus ?? 200;
           const ok = res.statusCode === expected || (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 400);
           const result: { verified: boolean; statusCode?: number; error?: string } = { verified: Boolean(ok) };
           if (typeof res.statusCode === 'number') result.statusCode = res.statusCode;
+          if (!ok) result.error = `HTTP ${res.statusCode ?? 'unknown'}`;
           resolve(result);
         });
 

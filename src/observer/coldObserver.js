@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { auditLog } from '../auditLog.js';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
@@ -22,7 +23,8 @@ const DEFAULT_CONFIG = {
 const COMPLETION_CLAIMS = [
     /\b(?:done|finished|complete(?:d)?|implemented|resolved|fixed|ready)\b/i,
     /\b(?:all|everything)\b[^.\n]{0,60}\b(?:works?|pass(?:es|ed|ing)?|fixed|done|clean)\b/i,
-    /\b(?:no|zero)\s+(?:errors?|issues?|failures?|bugs?)\b/i
+    /\b(?:no|zero)\s+(?:errors?|issues?|failures?|bugs?)\b/i,
+    /\b(?:is\s+(?:running|live|available|listening|served)\s+(?:at|on)|application\s+is\s+running)\b/i
 ];
 const HONEST_CAVEATS = [
     /\b(?:not|never)\s+(?:run|ran|tested|verified|checked|completed?)\b/i,
@@ -62,6 +64,9 @@ function boundedTimeout(value) {
     return Math.max(200, Math.min(5000, Math.round(value)));
 }
 function safeConfigPath() {
+    if (process.env.NODE_TEST_CONTEXT) {
+        return path.join(os.tmpdir(), `causyne-test-observer-${process.pid}.json`);
+    }
     return CONFIG_FILE;
 }
 function readStoredConfig() {

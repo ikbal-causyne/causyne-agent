@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { CausyneObserver, defaultObserver } from '../src/observer.js';
+import { CausyneObserver, defaultObserver, extractClaimedLocalUrls } from '../src/observer.js';
 import { coldObserver } from '../src/observer/coldObserver.js';
 import { outcomeFromResult } from '../src/observer/evidence.js';
 
@@ -243,4 +243,29 @@ test('coldObserver does not force test checks on launch-only prompts ("open it "
 
   assert.equal(assessment.overconfident, false);
   assert.equal(assessment.verified, true);
+});
+
+test('extractClaimedLocalUrls extracts loopback URLs and strips trailing punctuation cleanly', () => {
+  const urls = extractClaimedLocalUrls(
+    'The 3D Burger CAD application is running at http://localhost:8098. Secondary preview: http://127.0.0.1:5173/index.html!'
+  );
+  assert.deepEqual(urls, ['http://localhost:8098', 'http://127.0.0.1:5173/index.html']);
+});
+
+test('coldObserver recognizes "is running at http://localhost:..." as a completion claim and catches unverified code changes', async () => {
+  const taskId = 'task-running-at-claim-1';
+  coldObserver.beginTask(taskId);
+  coldObserver.recordToolOutcome(taskId, 'write_file', { path: '/tmp/app.js', content: 'console.log(1);' }, { success: true });
+
+  const assessment = await coldObserver.auditTurnVerification({
+    taskId,
+    userPrompt: 'make 3d burger cad style view usingthree.js',
+    agentClaim: 'The 3D Burger CAD application is running at http://localhost:8098.',
+    toolHistory: coldObserver.getToolOutcomes(taskId),
+    stepsCompleted: 1
+  });
+
+  assert.equal(assessment.overconfident, true);
+  assert.equal(assessment.verified, false);
+  assert.match(assessment.discrepancy, /code was modified without a successful test or syntax check/);
 });

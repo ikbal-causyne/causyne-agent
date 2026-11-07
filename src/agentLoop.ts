@@ -45,7 +45,7 @@ import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
 import { isVerificationCommand } from './observer/evidence.js';
-import { CausyneObserver, defaultObserver } from './observer.js';
+import { CausyneObserver, defaultObserver, extractClaimedLocalUrls } from './observer.js';
 import type { Observation } from './observer.js';
 import { TimeMachine, recoveryUserMessage, TIME_MACHINE_MAX_ATTEMPTS } from './timeMachine.js';
 import type { RecoveryDecision } from './timeMachine.js';
@@ -697,6 +697,7 @@ export class AgentLoop {
     this.webVerificationScheduled = false;
     // P6: rendered surfaces this task wrote, for the anti-slop gate to read back.
     this.webArtifacts = new Set();
+    this.claimedLocalUrls = new Set();
     this.slopReviewAttempts = 0;
     this.slopLastAuditHash = '';
 
@@ -926,6 +927,42 @@ export class AgentLoop {
         }
       } catch {
         // ignore non-existent paths in shell commands
+      }
+    }
+  }
+
+  hasWebSurfaceArtifacts(): boolean {
+    for (const candidate of this.webArtifacts) {
+      if (/\.(?:html?|css|scss|sass|jsx|tsx|vue|svelte|astro)$/i.test(candidate)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  recordClaimedLocalUrls(text: unknown): void {
+    if (typeof text !== 'string' || !text.trim()) return;
+    const hasServerCaveat = /\b(?:not|never)\s+(?:run|running|started|reachable|listening|verified|working)\b|\b(?:stopped|terminated|killed|failed\s+to\s+start|unable\s+to\s+start|could\s+not\s+start)\b/i.test(text);
+    if (hasServerCaveat) {
+      this.claimedLocalUrls.clear();
+      return;
+    }
+    const urls = extractClaimedLocalUrls(text);
+    if (urls.length === 0) return;
+    const claimsLiveServer = /\b(?:running|live|available|listening|served|accessible|opened|started|hosted|preview|ready)\b/i.test(text);
+    const outcomes = coldObserver.getToolOutcomes(this.taskId);
+    for (const url of urls) {
+      let port = '';
+      try {
+        port = new URL(url).port;
+      } catch {
+        // ignore invalid URL
+      }
+      const hasPortEvidence = Boolean(port) && outcomes.some(o =>
+        (o.command && o.command.includes(port)) || o.tool === 'sysRunBg'
+      );
+      if (claimsLiveServer || hasPortEvidence) {
+        this.claimedLocalUrls.add(url);
       }
     }
   }
@@ -1662,6 +1699,7 @@ export class AgentLoop {
     this.webVerificationScheduled = false;
     this.webVerificationState = { screenshotTaken: false, browserActUsed: false, htmlInspected: false };
     this.webArtifacts = new Set();
+    this.claimedLocalUrls = new Set();
     this.slopReviewAttempts = 0;
     this.slopLastAuditHash = '';
     this.staticContext = null;
@@ -2744,11 +2782,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
           break;
         }
 
+        if (!response.toolCalls?.length && !response.toolRoutingError) {
+          this.recordClaimedLocalUrls(response.content);
+        }
+
         // The host owns verification policy. A model cannot substitute repeated
         // HTTP checks for rendering, and adapters must not contradict this gate.
         if (!response.toolCalls?.length && !response.toolRoutingError && !this.webVerificationScheduled
           && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken
-          && isWebIntent(this.currentTaskPrompt || this.userPrompt || '')
+          && (isWebIntent(this.currentTaskPrompt || this.userPrompt || '') || this.hasWebSurfaceArtifacts())
           && !isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '')
           && !isPlanningOnlyRequest(this.currentTaskPrompt || this.userPrompt || '')) {
           const files: Array<{ path: string; content: string }> = [];
@@ -2759,7 +2801,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
               if (stat.isFile() && stat.size <= 512_000) files.push({ path: candidate, content: fsSync.readFileSync(candidate, 'utf8') });
             } catch { /* Deleted artifacts cannot be verified. */ }
           }
-          const entry = files.find(file => /\.html?$/i.test(file.path));
+          const entry = files.find(file => {
+            if (!/\.html?$/i.test(file.path)) return false;
+            const rel = path.relative(this.workspaceRoot, file.path);
+            return Boolean(rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+          });
           if (entry && analyzeFiles(files).verdict !== 'slop') {
             const { groupStatus } = await import('./provisioning/capabilityProvisioner.js');
             const { isBrowserRuntimeInstalled } = await import('./browser/browserRuntime.js');
@@ -3274,7 +3320,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           // This reads the HTML/CSS actually written and scores it. Weighted and
           // threshold-based, never a single tripwire: a guard with false
           // positives gets switched off (the ZM-09 lesson).
-          if (!isLaunchOnlyPrompt(taskPrompt) && isWebIntent(taskPrompt) && this.webArtifacts.size > 0) {
+          if (!isLaunchOnlyPrompt(taskPrompt) && (isWebIntent(taskPrompt) || this.hasWebSurfaceArtifacts()) && this.webArtifacts.size > 0) {
             try {
               const files: Array<{ path: string; content: string }> = [];
               for (const artifactPath of this.webArtifacts) {
@@ -3337,7 +3383,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           const hasWebOrCodeMutation = this.webArtifacts.size > 0 || outcomes.some((o) =>
             o.success !== false && ['fs_write', 'fs_edit', 'MultiEdit', 'ui_forge', 'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content'].includes(String(o.tool || ''))
           );
-          const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && !isPlanningOnlyRequest(taskPrompt) && isWebIntent(taskPrompt) && hasWebOrCodeMutation;
+          const isWebTask = !isLaunchOnlyPrompt(taskPrompt) && !isPlanningOnlyRequest(taskPrompt) && (isWebIntent(taskPrompt) || this.hasWebSurfaceArtifacts()) && hasWebOrCodeMutation;
           let browserReady = false;
           let browserDeclined = false;
           let browserRuntimeError = '';
@@ -3444,8 +3490,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           if (this.stepsCompleted > 0 && !isWebTask) {
             const assessment = assessVerification({
               archetype: this.taskShape?.archetype,
-              outcomes: coldObserver.getToolOutcomes(this.taskId),
-              skip: ['web']
+              outcomes: coldObserver.getToolOutcomes(this.taskId)
             });
             if (assessment.gaps.length > 0) {
               const domain = assessment.gaps[0]!.domain;
@@ -3515,6 +3560,48 @@ You are operating in a text-and-code modality without direct image pixel renderi
             } catch (_err: any) {
               // Observer fail-open
             }
+          }
+
+          // Live Localhost URL Verification Gate: confirm any claimed local server
+          // URL actually survives the turn and responds over loopback HTTP.
+          if (this.stepsCompleted > 0 && !isPlanningOnlyRequest(taskPrompt) && this.claimedLocalUrls.size > 0) {
+            let localServerFailed = false;
+            let shouldBreakLoop = false;
+            for (const url of [...this.claimedLocalUrls]) {
+              const check = await this.observer.verifyLocalWeb({ endpoint: url, timeoutMs: 2500 });
+              if (check.verified) {
+                coldObserver.recordToolOutcome(this.taskId, 'verify_local_web', { endpoint: url }, {
+                  success: true,
+                  statusCode: check.statusCode ?? 200
+                });
+                this.claimedLocalUrls.delete(url);
+              } else {
+                const errDetail = check.error || 'local endpoint unreachable';
+                coldObserver.recordToolOutcome(this.taskId, 'verify_local_web', { endpoint: url }, {
+                  success: false,
+                  error: errDetail
+                });
+                const recovery = this.timeMachine.observe('verify_local_web', { endpoint: url }, {
+                  success: false,
+                  error: errDetail
+                }, coldObserver.getToolOutcomes(this.taskId));
+                this.emitEvent({ type: 'status', message: `Observer: Local server check failed for ${url} (${errDetail})` });
+                const verdict = await this.handleRecovery(recovery, 'Local Web Verification');
+                if (verdict.stop) {
+                  shouldBreakLoop = true;
+                  break;
+                }
+                this.messages.push({
+                  role: 'system',
+                  content: `[LOCAL SERVER VERIFICATION FAILED]: You claimed the application is available at ${url}, but a live loopback HTTP check after your turn failed (${errDetail}). Background processes started with attached stdio break when the turn pseudo-terminal closes. Restart the server with detached stdio (e.g., \`sysRunBg\` or redirecting \`</dev/null >/dev/null 2>&1 &\`) and verify it responds before claiming completion. ${verdict.guidance}`.trim()
+                });
+                this.memoryManager.saveHistory(this.messages);
+                localServerFailed = true;
+                break;
+              }
+            }
+            if (shouldBreakLoop) break;
+            if (localServerFailed) continue;
           }
 
           if (process.platform === 'darwin' && isDesktopWallpaperChangePrompt(taskPrompt)) {

@@ -372,7 +372,7 @@ When the user asks you to build, create, test, expand, or develop a game, follow
 
 const GAME_INTENT = /\b(game|games|gamedev|godot|unity|unreal|ue5|rpg|platformer|roguelike|arcade|sprite|spritesheet|tilemap|voxel|minecraft|aetheria|voxellia|nes|snes|gameplay|player character|level design|boss fight|simulator|simulation|simulasi)\b|\.(tscn|gd|uproject|umap)\b|[-_]3d\b|\b3d[-_]/i;
 
-const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component|three?\.?js|three?js|webgl|canvas|babylon)\b/i;
+const WEB_INTENT = /\b(web|webpage|website|frontend|front-end|landing page|homepage|dashboard|portfolio|html|html5|css|scss|tailwind|bootstrap|react|vue|svelte|angular|next\.?js|nuxt|astro|ui|ux|user interface|web app|webapp|spa|dom|responsive|ui forge|component forge|component generation|ui component|webgl|canvas|babylon|cad view|cad viewer|cad style view|3d view|3d viewer|3d configurator|3d visualizer)\b|(?:three\.js|threejs|thre\.js|3js|webgl|babylon\.js|babylonjs|pixi\.js|d3\.js|p5\.js|chart\.js)\b/i;
 
 const MEDIA_INTENT = /\b(image|images|picture|photo|photoshop|premiere|after\s*effects|illustrator|indesign|media\s*encoder|uxp|render|3d model|blender|animation|animate|video|movie|film|audio|sound|sfx|music|song|voice|tts|text.to.speech|narration|podcast|thumbnail|poster|illustration|logo)\b|\.(psd|prproj|aep|ai|indd|ccx)\b/i;
 
