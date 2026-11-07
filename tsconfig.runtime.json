@@ -92,6 +92,7 @@
     "src/tui/observerPicker.ts",
     "src/tui/usageCard.ts",
     "src/tui/clipboardSync.ts",
+    "src/tui/clipboardImage.ts",
     "src/tui/chatboxClipboard.ts",
     "src/tui/consoleGuard.ts",
     "src/tui/smartLinkClick.ts",

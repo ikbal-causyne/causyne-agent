@@ -2,6 +2,7 @@
 // Supports native terminal mouse selection, readline kill/yank, Alt+C/Alt+W/Alt+V, and /copy /paste commands.
 
 import { readClipboardSync, writeClipboardSync, emitOsc52Copy } from './clipboardSync.js';
+import { readClipboardImageSync, formatByteSize, type ClipboardImageAttachment } from './clipboardImage.js';
 
 export interface ChatboxEditor {
   lines: string[][];
@@ -20,6 +21,7 @@ export interface ChatboxPrompt {
   notice: string;
   scheduleDraw(): void;
   refreshCompletion?: (() => void) | undefined;
+  pendingAttachments?: ClipboardImageAttachment[] | undefined;
 }
 
 export interface ConversationMessage {
@@ -79,22 +81,43 @@ export function copyChatboxInput(prompt: ChatboxPrompt): { success: boolean; not
 
 /**
  * Paste clipboard content into the chatbox prompt editor.
+ * Seamlessly supports both text and screenshot images from system clipboard.
  */
-export function pasteIntoChatbox(prompt: ChatboxPrompt, fallbackText?: string): { success: boolean; notice: string; text: string } {
+export function pasteIntoChatbox(prompt: ChatboxPrompt, fallbackText?: string): { success: boolean; notice: string; text: string; isImage?: boolean } {
   const raw = fallbackText ?? readClipboardSync();
   const text = normalizeClipboardText(raw);
-  if (!text) {
-    prompt.notice = 'clipboard is empty';
+  if (text) {
+    prompt.editor.insert(text);
+    if (typeof prompt.refreshCompletion === 'function') {
+      prompt.refreshCompletion();
+    }
+    prompt.notice = 'pasted from clipboard';
     prompt.scheduleDraw();
-    return { success: false, notice: prompt.notice, text: '' };
+    return { success: true, notice: prompt.notice, text, isImage: false };
   }
-  prompt.editor.insert(text);
-  if (typeof prompt.refreshCompletion === 'function') {
-    prompt.refreshCompletion();
+
+  // If text is empty and no explicit text fallback was provided, probe for clipboard screenshot/image
+  if (!fallbackText) {
+    const img = readClipboardImageSync();
+    if (img) {
+      if (!Array.isArray(prompt.pendingAttachments)) {
+        prompt.pendingAttachments = [];
+      }
+      prompt.pendingAttachments.push(img);
+      const tag = `[Image: ${img.name}] `;
+      prompt.editor.insert(tag);
+      if (typeof prompt.refreshCompletion === 'function') {
+        prompt.refreshCompletion();
+      }
+      prompt.notice = `attached clipboard screenshot (${formatByteSize(img.size)})`;
+      prompt.scheduleDraw();
+      return { success: true, notice: prompt.notice, text: tag, isImage: true };
+    }
   }
-  prompt.notice = 'pasted from clipboard';
+
+  prompt.notice = 'clipboard is empty';
   prompt.scheduleDraw();
-  return { success: true, notice: prompt.notice, text };
+  return { success: false, notice: prompt.notice, text: '' };
 }
 
 /**
@@ -196,6 +219,9 @@ export function runPasteCommand(
   const result = pasteIntoChatbox(ctx.prompt, explicitText);
   if (!result.success) {
     return { ok: false, output: 'Clipboard is empty or unavailable.' };
+  }
+  if (result.isImage) {
+    return { ok: true, output: `Attached screenshot from clipboard (${result.text.trim()}).` };
   }
   return { ok: true, output: `Pasted ${result.text.length} characters into chatbox input.` };
 }

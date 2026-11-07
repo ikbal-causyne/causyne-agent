@@ -30,6 +30,7 @@ import { renderUsageCardRows, collectUsageCardData } from './usageCard.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 import { readClipboardSync, writeClipboardSync } from './clipboardSync.js';
+import { readClipboardImageSync, formatByteSize, loadLocalImageAttachment } from './clipboardImage.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
 import { settleStageResize } from './resizeRecovery.js';
@@ -169,6 +170,7 @@ export class ChatPrompt {
     this.redrawScheduled = false;
     this.resizeTimer = null;
     this.suspendedSurface = null;
+    this.pendingAttachments = [];
   }
 
   // -------------------------------------------------------------------------
@@ -696,6 +698,43 @@ export class ChatPrompt {
     return false;
   }
 
+  /**
+   * Consume and return any pending multimodal attachments (e.g. pasted screenshots).
+   */
+  consumeAttachments() {
+    const list = Array.isArray(this.pendingAttachments) ? this.pendingAttachments.slice() : [];
+    this.pendingAttachments = [];
+    return list;
+  }
+
+  /**
+   * Paste clipboard content: seamlessly supports text and screenshot images.
+   */
+  pasteClipboard() {
+    const text = readClipboardSync();
+    if (text) {
+      this.editor.insert(text);
+      this.refreshCompletion();
+      this.notice = 'pasted from clipboard';
+      this.scheduleDraw();
+      return;
+    }
+
+    const img = readClipboardImageSync();
+    if (img) {
+      if (!Array.isArray(this.pendingAttachments)) this.pendingAttachments = [];
+      this.pendingAttachments.push(img);
+      this.editor.insert(`[Image: ${img.name}] `);
+      this.refreshCompletion();
+      this.notice = `attached clipboard screenshot (${formatByteSize(img.size)})`;
+      this.scheduleDraw();
+      return;
+    }
+
+    this.notice = 'clipboard is empty';
+    this.scheduleDraw();
+  }
+
   setBusy(busy) {
     this.busy = busy;
     resetTurnInterruptState(this, busy);
@@ -953,18 +992,7 @@ export class ChatPrompt {
         case 'p': return this.openPalette();
         case 'l': return this.clearScreen();
         case 'o': return this.expand();
-        case 'v': {
-          const text = readClipboardSync();
-          if (text) {
-            this.editor.insert(text);
-            this.refreshCompletion();
-            this.notice = 'pasted from clipboard';
-          } else {
-            this.notice = 'clipboard is empty';
-          }
-          this.scheduleDraw();
-          return;
-        }
+        case 'v': return this.pasteClipboard();
         default: break;
       }
     }
@@ -1001,18 +1029,7 @@ export class ChatPrompt {
       this.scheduleDraw();
       return;
     }
-    if (key.alt && key.name === 'v') {
-      const text = readClipboardSync();
-      if (text) {
-        this.editor.insert(text);
-        this.refreshCompletion();
-        this.notice = 'pasted from clipboard';
-      } else {
-        this.notice = 'clipboard is empty';
-      }
-      this.scheduleDraw();
-      return;
-    }
+    if (key.alt && key.name === 'v') return this.pasteClipboard();
     if (key.alt && key.name === 'b') return this.editor.moveWordLeft();
     if (key.alt && key.name === 'f') return this.editor.moveWordRight();
   }

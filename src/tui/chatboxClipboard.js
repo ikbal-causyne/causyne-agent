@@ -1,6 +1,7 @@
 // Chatbox Clipboard Manager: surgical operations for copy, paste, and CRLF normalization.
 // Supports native terminal mouse selection, readline kill/yank, Alt+C/Alt+W/Alt+V, and /copy /paste commands.
 import { readClipboardSync, writeClipboardSync, emitOsc52Copy } from './clipboardSync.js';
+import { readClipboardImageSync, formatByteSize } from './clipboardImage.js';
 /**
  * Clean up text copied or pasted: normalize Windows CRLF and classic Mac CR to LF,
  * remove null bytes and non-printable control characters while preserving valid newlines and tabs.
@@ -42,22 +43,41 @@ export function copyChatboxInput(prompt) {
 }
 /**
  * Paste clipboard content into the chatbox prompt editor.
+ * Seamlessly supports both text and screenshot images from system clipboard.
  */
 export function pasteIntoChatbox(prompt, fallbackText) {
     const raw = fallbackText ?? readClipboardSync();
     const text = normalizeClipboardText(raw);
-    if (!text) {
-        prompt.notice = 'clipboard is empty';
+    if (text) {
+        prompt.editor.insert(text);
+        if (typeof prompt.refreshCompletion === 'function') {
+            prompt.refreshCompletion();
+        }
+        prompt.notice = 'pasted from clipboard';
         prompt.scheduleDraw();
-        return { success: false, notice: prompt.notice, text: '' };
+        return { success: true, notice: prompt.notice, text, isImage: false };
     }
-    prompt.editor.insert(text);
-    if (typeof prompt.refreshCompletion === 'function') {
-        prompt.refreshCompletion();
+    // If text is empty and no explicit text fallback was provided, probe for clipboard screenshot/image
+    if (!fallbackText) {
+        const img = readClipboardImageSync();
+        if (img) {
+            if (!Array.isArray(prompt.pendingAttachments)) {
+                prompt.pendingAttachments = [];
+            }
+            prompt.pendingAttachments.push(img);
+            const tag = `[Image: ${img.name}] `;
+            prompt.editor.insert(tag);
+            if (typeof prompt.refreshCompletion === 'function') {
+                prompt.refreshCompletion();
+            }
+            prompt.notice = `attached clipboard screenshot (${formatByteSize(img.size)})`;
+            prompt.scheduleDraw();
+            return { success: true, notice: prompt.notice, text: tag, isImage: true };
+        }
     }
-    prompt.notice = 'pasted from clipboard';
+    prompt.notice = 'clipboard is empty';
     prompt.scheduleDraw();
-    return { success: true, notice: prompt.notice, text };
+    return { success: false, notice: prompt.notice, text: '' };
 }
 /**
  * Extract the content of the last assistant turn from the conversation.
@@ -147,6 +167,9 @@ export function runPasteCommand(argv, ctx) {
     const result = pasteIntoChatbox(ctx.prompt, explicitText);
     if (!result.success) {
         return { ok: false, output: 'Clipboard is empty or unavailable.' };
+    }
+    if (result.isImage) {
+        return { ok: true, output: `Attached screenshot from clipboard (${result.text.trim()}).` };
     }
     return { ok: true, output: `Pasted ${result.text.length} characters into chatbox input.` };
 }

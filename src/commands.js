@@ -47,6 +47,7 @@ import os from 'os';
 import path from 'path';
 import { execSync } from 'child_process';
 import { runCopyCommand, runPasteCommand } from './tui/chatboxClipboard.js';
+import { loadLocalImageAttachment, formatByteSize } from './tui/clipboardImage.js';
 import { getPackageVersion } from './version.js';
 import { listGroups } from './checkpoints.js';
 import { renameSession, getSession } from './sessionStore.js';
@@ -1150,6 +1151,36 @@ export const COMMANDS = [
       return res.ok
         ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
         : fail(res.output);
+    }
+  },
+
+  {
+    name: 'image',
+    aliases: ['attach', 'screenshot'],
+    scope: 'local',
+    usage: '/image [path]',
+    description: 'Attach a screenshot from clipboard or a local image file to the chat prompt',
+    run: (argv, ctx) => {
+      if (!ctx.prompt) {
+        return fail('The /image command is only available in interactive chat mode.');
+      }
+      if (argv.length === 0) {
+        const res = runPasteCommand([], ctx);
+        return res.ok ? ok(res.output, { effect: 'silent' }) : fail(res.output);
+      }
+      const rawPath = argv.join(' ');
+      const img = loadLocalImageAttachment(rawPath);
+      if (!img) {
+        return fail(`Could not load image at "${rawPath}". Ensure file exists and is a valid image (PNG, JPEG, WebP, GIF).`);
+      }
+      if (!Array.isArray(ctx.prompt.pendingAttachments)) {
+        ctx.prompt.pendingAttachments = [];
+      }
+      ctx.prompt.pendingAttachments.push(img);
+      ctx.prompt.editor.insert(`[Image: ${img.name}] `);
+      ctx.prompt.notice = `attached image ${img.name} (${formatByteSize(img.size)})`;
+      ctx.prompt.scheduleDraw();
+      return ok(`Attached image ${img.name} (${formatByteSize(img.size)}) to chat prompt.`, { effect: 'silent' });
     }
   },
 

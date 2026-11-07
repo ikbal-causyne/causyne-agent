@@ -24,6 +24,7 @@ import { auditLog } from './auditLog.js';
 import { isAcpProvider } from './providers/acp.js';
 import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
+import { loadLocalImageAttachment } from './tui/clipboardImage.js';
 
 // One themed source for the art.
 //
@@ -587,6 +588,14 @@ export async function chatMode({ home = false } = {}) {
     // (`globalAgentLoop.taskId = message.taskId`). The terminal path simply
     // never did.
     loop.taskId = `cli_chat_${Date.now()}`;
+
+    // Transfer any multimodal image attachments (e.g. pasted screenshots from clipboard or /image)
+    if (prompt && typeof prompt.consumeAttachments === 'function') {
+      const atts = prompt.consumeAttachments();
+      if (atts && atts.length > 0) {
+        loop.attachments = atts;
+      }
+    }
 
     conn.renderer.resetTurn();
     const startedAt = Date.now();
