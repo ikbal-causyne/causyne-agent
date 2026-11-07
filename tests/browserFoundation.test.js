@@ -200,6 +200,29 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('restores the last preview target and resolves element refs after an idle close', async () => {
+    const { browser, workspace } = fakeRuntime();
+    const htmlPath = path.join(workspace, 'index.html');
+    fs.writeFileSync(htmlPath, '<h1>Preview</h1><button>Continue</button>');
+    const first = await browser.run([
+      { type: 'preview', filePath: 'index.html' },
+      { type: 'snapshot' }
+    ]);
+    assert.match(first[1].output, /\[e2\]/);
+
+    // Simulate the idle timer closing the browser while waiting between steps
+    await browser.close();
+
+    const second = await browser.run([
+      { type: 'click', ref: 'e2' },
+      { type: 'snapshot' }
+    ]);
+    assert.equal(second[0].output, 'Element clicked');
+    assert.match(second[0].url, /\.causyne-preview\.invalid\/index\.html$/);
+    assert.match(second[1].output, /\[e2\]/);
+    await browser.close();
+  });
+
   test('preview rejects symlink escape from the workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-preview-outside-'));

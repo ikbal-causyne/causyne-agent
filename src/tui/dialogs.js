@@ -395,11 +395,18 @@ export class ApprovalLayer extends Layer {
 
   /** The chip row: the selected option is filled, the rest are dimmed. */
   optionRow() {
-    return this.options
-      .map((option, index) => index === this.selected
+    let col = 0;
+    this.optionBounds = [];
+    const parts = this.options.map((option, index) => {
+      const rendered = index === this.selected
         ? badge(option.id === 'reject' ? 'danger' : 'success', option.label)
-        : dim(`  ${option.label}  `))
-      .join(' ');
+        : dim(`  ${option.label}  `);
+      const width = visibleWidth(rendered);
+      this.optionBounds.push({ index, option, startCol: col, endCol: col + width - 1 });
+      col += width + 1;
+      return rendered;
+    });
+    return parts.join(' ');
   }
 
   body(width, fullHeight) {
@@ -492,6 +499,31 @@ export class ApprovalLayer extends Layer {
       const choice = this.options[this.selected];
       this.answer(Boolean(choice && choice.answer), choice ? choice.id : 'reject');
       return 'close';
+    }
+
+    if (event.name === 'mouse' && event.mouse && event.mouse.pressed && event.mouse.button === 0) {
+      if (!Array.isArray(this.optionBounds) || this.optionBounds.length === 0) {
+        this.optionRow();
+      }
+      const geom = this.panelGeometry;
+      if (geom && Number.isFinite(event.mouse.row) && Number.isFinite(geom.optionScreenRow)) {
+        if (Math.abs(event.mouse.row - geom.optionScreenRow) > 1) return 'handled';
+      }
+      const rawCol = Number.isFinite(event.mouse.col) ? event.mouse.col : -1;
+      const bodyCol = geom ? rawCol - 1 - (geom.inset || 0) - 2 : rawCol;
+      const hit = (this.optionBounds || []).find(b => bodyCol >= b.startCol && bodyCol <= b.endCol);
+      if (hit) {
+        this.selected = hit.index;
+        this.answer(Boolean(hit.option.answer), hit.option.id);
+        return 'close';
+      }
+      return 'handled';
+    }
+
+    if (event.name === 'wheel') {
+      if (event.wheel?.direction === 'up') this.scroll--;
+      else if (event.wheel?.direction === 'down') this.scroll++;
+      return 'handled';
     }
 
     switch (event.name) {

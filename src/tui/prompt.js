@@ -896,11 +896,12 @@ export class ChatPrompt {
     if (this.completion && this.handleCompletionKey(key)) return;
     if (this.handleScrollKey(key)) return;
 
-    const control = key.ctrl && key.name === 'g' ? this.onOpenMode
+    const isModeControl = Boolean(key.ctrl && key.name === 'g');
+    const control = isModeControl ? this.onOpenMode
       : key.alt && key.name === 'm' ? this.onOpenModel
       : key.ctrl && key.name === 't' ? this.onOpenVariant : null;
     if (control) {
-      if (this.busy) {
+      if (this.busy && !isModeControl) {
         this.notice = 'Finish or interrupt the current turn before switching controls';
         this.scheduleDraw();
       } else {
@@ -1692,11 +1693,17 @@ export class ChatPrompt {
     const panelWidth = dialogWidth(availableWidth, this.layer.width || 64);
     const maxHeight = dialogHeight(this.surface?.stage?.maxHeight || this.out?.rows, this.layer.preferredHeight());
     const panel = panelRows(this.layer, panelWidth, maxHeight);
-    const all = this.clampRows(panel.concat(this.statusRow(width)), width);
+    const status = this.statusRow(width);
+    const all = this.clampRows(panel.concat(status), width);
 
     // panelRows() called body(), which is where a layer publishes its cursor.
     const cursor = this.layer.cursor;
     const centered = this.surface ? centerRows(all, availableWidth) : { rows: all, inset: 0 };
+    const stageHeight = this.surface?.stage?.height || this.out?.rows || all.length;
+    this.layer.panelGeometry = {
+      inset: centered.inset,
+      optionScreenRow: stageHeight - status.length - 1
+    };
     this.present(centered.rows, cursor ? 1 + cursor.y : 0,
       (cursor ? 2 + cursor.x : 0) + centered.inset);
   }

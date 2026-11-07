@@ -90,34 +90,9 @@ function makeApprovalHandler(conn, dialogs = null) {
     // and a scrollable diff in one frame. The plain fallback asks the same
     // question in the scrollback, which is all a non-TTY session can do.
     if (dialogs && detail) {
-      // Loops only for "Allow always" → Cancel: backing out of the standing
-      // grant returns you to the question, it does not silently deny the call.
-      // Every other path returns on the first pass.
-      let approved = false;
-      let scope = 'reject';
-
-      for (;;) {
-        const answer = await dialogs.approve(detail);
-        approved = Boolean(answer && answer.approved);
-        scope = (answer && answer.scope) || 'reject';
-
-        if (scope !== 'always') break;
-
-        // A SECOND, EXPLICIT CONFIRMATION — the same shape opencode uses, and
-        // for the same reason: a standing grant is a much larger thing than
-        // approving one call, so it must not be reachable by one keystroke.
-        // The text says exactly what is being given up and for how long.
-        const confirmed = await dialogs.confirm(
-          `Allow ${bold(detail.tool)} to run WITHOUT asking, for the rest of this session?\n`
-          + `  This lasts until Causyne restarts. Undo it any time with /approvals clear.`,
-          // Reaching this question already required moving onto Allow always
-          // and pressing Enter. A second Enter is therefore an explicit second
-          // confirmation, rather than a reflex approval on the first dialog.
-          { defaultAnswer: true }
-        );
-        if (confirmed) break;
-        // Cancelled: ask again rather than denying something they never rejected.
-      }
+      const answer = await dialogs.approve(detail);
+      const approved = Boolean(answer && answer.approved);
+      const scope = (answer && answer.scope) || 'reject';
 
       if (approved && scope === 'always') {
         grantAlways(detail.tool);

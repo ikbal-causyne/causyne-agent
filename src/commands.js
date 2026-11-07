@@ -2234,6 +2234,8 @@ export const COMMANDS = [
         ctx.loop.setAutonomyMode(target);
       }
       if (ctx.prompt) {
+        ctx.prompt.renderer?.status?.setSession?.({ autonomyMode: target });
+        ctx.prompt.surface?.setSessionInfo?.({ autonomyMode: target });
         ctx.prompt.notice = `Mode ${target} active`;
         if (ctx.prompt.scheduleDraw) ctx.prompt.scheduleDraw();
         return ok(`Autonomy mode switched to ${target}.`, { effect: 'inline' });

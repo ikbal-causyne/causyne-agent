@@ -16,7 +16,7 @@ import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
 const NAVIGATION_TIMEOUT_MS = 30_000;
 const ACTION_TIMEOUT_MS = 12_000;
 const IFRAME_SNAPSHOT_TIMEOUT_MS = 3_000;
-const IDLE_CLOSE_MS = 10 * 60_000;
+const IDLE_CLOSE_MS = 30 * 60_000;
 const MAX_SEARCH_RESULTS = 10;
 const MAX_EXTRACT_CHARS = 80_000;
 const MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024;
@@ -936,6 +936,7 @@ export class CausyneBrowser {
   private securedPages = new WeakSet<object>();
   private pageStates = new WeakMap<object, TabState>();
   private contextRouteInstalled = false;
+  private lastTarget: { kind: 'preview'; workspace: string; filePath: string } | { kind: 'url'; url: string } | null = null;
 
   constructor(options: RuntimeOptions = {}) {
     this.workspace = path.resolve(options.workspace ?? process.cwd());
@@ -949,7 +950,10 @@ export class CausyneBrowser {
 
   setWorkspace(workspace: string): void {
     if (workspace && typeof workspace === 'string') {
-      if (this.workspace !== path.resolve(workspace)) this.workspacePreview.clear();
+      if (this.workspace !== path.resolve(workspace)) {
+        this.workspacePreview.clear();
+        this.lastTarget = null;
+      }
       this.workspace = path.resolve(workspace);
     }
   }
@@ -1012,6 +1016,7 @@ export class CausyneBrowser {
   async snapshot(offset = 0): Promise<SnapshotWindow & { tabId: string; url: string; title: string; refsCount: number; structure?: PageStructure | null }> {
     await this.start();
     const state = await this.activeTab();
+    await this.restoreLastTargetIfBlank(state);
     await this.captureSnapshotState(state);
     return {
       ...windowSnapshot(state.lastSnapshot, offset),
@@ -1342,6 +1347,7 @@ export class CausyneBrowser {
     state.refs.clear();
     state.lastSnapshot = '';
     state.lastStructure = null;
+    this.lastTarget = { kind: 'url', url: state.page.url() };
   }
 
   private async preview(state: TabState, filePath: string, workspace: string): Promise<void> {
@@ -1353,6 +1359,25 @@ export class CausyneBrowser {
     state.refs.clear();
     state.lastSnapshot = '';
     state.lastStructure = null;
+    this.lastTarget = { kind: 'preview', workspace, filePath };
+  }
+
+  private async restoreLastTargetIfBlank(state: TabState): Promise<boolean> {
+    if (!this.lastTarget) return false;
+    const currentUrl = state.page.url();
+    if (currentUrl && currentUrl !== 'about:blank') return false;
+    const target = this.lastTarget;
+    try {
+      if (target.kind === 'preview') {
+        await this.preview(state, target.filePath, target.workspace);
+      } else {
+        await this.navigate(state, target.url);
+      }
+      await this.captureSnapshotState(state);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private async navigateWithMacroFallback(state: TabState, action: BrowserAction): Promise<void> {
@@ -1414,8 +1439,11 @@ export class CausyneBrowser {
     const refId = action.ref ?? (action.index !== undefined ? `e${action.index}` : undefined);
     if (refId) {
       let ref = state.refs.get(refId);
-      if (!ref && state.refs.size === 0) {
-        await this.captureSnapshotState(state).catch(() => {});
+      if (!ref) {
+        await this.restoreLastTargetIfBlank(state);
+        if (!state.refs.has(refId)) {
+          await this.captureSnapshotState(state).catch(() => {});
+        }
         ref = state.refs.get(refId);
       }
       if (!ref) throw new Error(`Unknown element ref ${refId}. Take a new snapshot before interacting.`);

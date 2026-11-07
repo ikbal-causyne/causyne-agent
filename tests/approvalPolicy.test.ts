@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  currentToolAutonomyMode, isAutonomousToolContext, isWholeFileDeletion,
+  currentToolAutonomyMode, isAutonomousToolContext, isRoutineBrowserVerification, isWholeFileDeletion,
   requiresToolApproval, withToolAutonomyMode
 } from '../src/approvalPolicy.js';
 import fs from 'node:fs';
@@ -48,6 +48,28 @@ test('Modes A and B keep their supervised approval rules', () => {
   assert.equal(needsApproval('B', 'fs_edit', { path: 'app.ts' }, 'moderate'), false);
   assert.equal(needsApproval('B', 'sysRun', { command: 'chmod 600 app.ts' }, 'dangerous'), true);
   assert.equal(needsApproval('B', 'sysRun', { command: 'chmod 600 app.ts' }, 'dangerous', true), false);
+});
+
+test('routine browser_act verification runs without HITL in Mode B and Mode C, while download/upload require approval in Mode B', () => {
+  const clickAndSnapshot = { actions: [{ type: 'click', ref: 'e2' }, { type: 'snapshot' }] };
+  const screenshotAction = { actions: [{ type: 'screenshot', outputFile: 'verify.png' }] };
+  const downloadAction = { actions: [{ type: 'download', ref: 'e2', outputFile: 'report.pdf' }] };
+  const uploadAction = { actions: [{ type: 'upload', ref: 'e1', filePath: 'data.csv' }] };
+
+  assert.equal(isRoutineBrowserVerification('browser_act', clickAndSnapshot), true);
+  assert.equal(isRoutineBrowserVerification('browser_act', screenshotAction), true);
+  assert.equal(isRoutineBrowserVerification('browser_act', downloadAction), false);
+  assert.equal(isRoutineBrowserVerification('browser_act', uploadAction), false);
+
+  assert.equal(needsApproval('B', 'browser_act', clickAndSnapshot, 'dangerous'), false);
+  assert.equal(needsApproval('C', 'browser_act', clickAndSnapshot, 'dangerous'), false);
+  assert.equal(needsApproval('B', 'browser_act', screenshotAction, 'extreme'), false);
+  assert.equal(needsApproval('C', 'browser_act', screenshotAction, 'extreme'), false);
+  assert.equal(needsApproval('A', 'browser_act', clickAndSnapshot, 'dangerous'), true);
+
+  assert.equal(needsApproval('B', 'browser_act', downloadAction, 'extreme'), true);
+  assert.equal(needsApproval('B', 'browser_act', uploadAction, 'dangerous'), true);
+  assert.equal(needsApproval('C', 'browser_act', downloadAction, 'extreme'), false);
 });
 
 test('tool-local consent checks use only the live session mode', () => {

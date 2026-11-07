@@ -433,3 +433,32 @@ test('always: /approvals lists and clears them', async () => {
   assert.match(String(cleared.output), /Revoked 1/);
   assert.equal(grants.isAlwaysAllowed('sysRun'), false);
 });
+
+test('always: clicking an option chip in ApprovalLayer commits immediately and cliMode does not ask a second confirm', () => {
+  const layer = new ApprovalLayer({ request: REQUEST });
+  layer.body(70, 12);
+  assert.ok(Array.isArray(layer.optionBounds) && layer.optionBounds.length === 3);
+
+  const alwaysChip = layer.optionBounds.find(b => b.option.id === 'always');
+  assert.ok(alwaysChip);
+
+  let got = null;
+  const clickable = new ApprovalLayer({
+    request: REQUEST,
+    onAnswer: (approved, scope) => { got = { approved, scope }; }
+  });
+  clickable.body(70, 12);
+  const res = clickable.key({
+    name: 'mouse',
+    mouse: { pressed: true, button: 0, col: alwaysChip.startCol + 1, row: 10 }
+  });
+  assert.equal(res, 'close');
+  assert.deepEqual(got, { approved: true, scope: 'always' });
+
+  const cliModeSource = fs.readFileSync(path.join(HERE, '..', 'src', 'cliMode.js'), 'utf8');
+  const handlerBlock = cliModeSource.slice(
+    cliModeSource.indexOf('function makeApprovalHandler'),
+    cliModeSource.indexOf('function makeDecisionHandler')
+  );
+  assert.doesNotMatch(handlerBlock, /to run WITHOUT asking/, 'Allow always must not open a redundant second confirmation modal');
+});

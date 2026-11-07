@@ -31,6 +31,8 @@ export function openModeControl(prompt: ControlPrompt, loop: ControlLoop): void 
       config.autonomyMode = item.value;
       saveConfig(config);
       loop.setAutonomyMode(item.value);
+      (prompt as any).renderer?.status?.setSession?.({ autonomyMode: item.value });
+      (prompt as any).surface?.setSessionInfo?.({ autonomyMode: item.value });
       prompt.notice = `Mode ${item.value} active`;
       prompt.scheduleDraw();
     }

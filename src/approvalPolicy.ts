@@ -51,6 +51,21 @@ export function isWholeFileDeletion(tool: string, args: Record<string, unknown>)
     && (WHOLE_FILE_DELETE.test(command) || DELETE_API_CALL.test(command) || NESTED_SHELL_DELETE.test(command));
 }
 
+/** Routine browser verification inside the isolated agent browser (preview, snapshot, click, fill, screenshot, etc.) does not require HITL in Mode B or C unless uploading or downloading files. */
+export function isRoutineBrowserVerification(tool: string, args: Record<string, unknown>): boolean {
+  if (tool !== 'browser_act') return false;
+  const actions = Array.isArray(args?.actions) ? args.actions : [];
+  if (actions.length === 0) {
+    const singleType = typeof args?.action === 'string' ? args.action : typeof args?.type === 'string' ? args.type : '';
+    return singleType !== 'download' && singleType !== 'upload';
+  }
+  return !actions.some(item => {
+    if (!item || typeof item !== 'object') return false;
+    const type = String((item as { type?: unknown; action?: unknown }).type ?? (item as { action?: unknown }).action ?? '');
+    return type === 'download' || type === 'upload';
+  });
+}
+
 /** Prompt policy only. Sandbox denial, workspace checks, and observer veto run separately. */
 export function requiresToolApproval(input: ToolApprovalInput): boolean {
   if (input.mode === 'C') {
@@ -59,6 +74,9 @@ export function requiresToolApproval(input: ToolApprovalInput): boolean {
     return input.tool !== 'fs_delete' || !input.standingApproval;
   }
   if (input.standingApproval) return false;
+  if (input.mode !== 'A' && isRoutineBrowserVerification(input.tool, input.args)) {
+    return false;
+  }
   return input.risk === 'extreme'
     || input.heavyDownload
     || input.risk === 'dangerous'
