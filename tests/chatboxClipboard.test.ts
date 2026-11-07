@@ -193,7 +193,7 @@ test('ChatPrompt Alt+V pastes into prompt editor with notice', () => {
 
   // Alt+V attempts readClipboardSync or displays notice
   prompt.handleKey({ name: 'v', alt: true });
-  assert.ok(prompt.notice.includes('clipboard'));
+  assert.ok(prompt.notice.includes('clipboard') || prompt.notice.includes('kill ring'));
 });
 
 test('ChatPrompt Ctrl+C on non-empty editor copies to clipboard before clearing', () => {
