@@ -1,6 +1,7 @@
 import { ChatRenderer } from './chatRenderer.js';
 import { CODE_PANEL_LINES, codePreviewLineCount, defaultPreviewStart, renderCodeProgress, type CodeProgressEvent } from './codeProgress.js';
-import { calculateThinkingLineCount, DEFAULT_MAX_EXPANDED_LINES } from './thinkingBox.js';
+import { calculateThinkingLineCount, DEFAULT_MAX_EXPANDED_LINES, renderThinkingFrame } from './thinkingBox.js';
+import { formatElapsed, type StatusLine } from './statusLine.js';
 import { markerAt } from './messageInteraction.js';
 import { AdaptiveWheelDampener } from './scrollInteraction.js';
 
@@ -37,7 +38,79 @@ export class CodeStreamRenderer extends ChatRenderer {
   private modelNote = '';
   private lastReasoning = '';
   private currentActivity = 'thinking';
+  private streamingNowMs = 320;
+  private streamingTick: number | undefined = undefined;
   private readonly codePanels = new WeakMap<CodeFrame, CodePanelState>();
+
+  constructor(options?: Record<string, unknown>) {
+    super(options);
+    const status = (this as unknown as { status?: StatusLine }).status;
+    if (status) {
+      status.onTick = (nowMs: number, tick?: number) => {
+        this.onStatusTick(nowMs, tick);
+      };
+    }
+  }
+
+  /**
+   * Synchronizes the active streaming thinking frame with the live status clock
+   * so the running-light shimmer advances smoothly across both surfaces.
+   */
+  onStatusTick(nowMs: number, tick?: number): void {
+    this.streamingNowMs = nowMs;
+    this.streamingTick = tick;
+    const transcript = this.transcript as unknown as CodeTranscript | null;
+    if (!transcript || !Array.isArray(transcript.frames)) return;
+    const tail = transcript.frames.at(-1);
+    if (tail?.meta?.reasoning === true && tail.meta.streaming === true) {
+      if (nowMs > 0) {
+        tail.meta.durationText = formatElapsed(nowMs);
+      }
+      tail.rows = null;
+      tail.renderedWidth = -1;
+      transcript.cache = null;
+      transcript.revision++;
+    }
+  }
+
+  override renderReasoning(
+    content: string,
+    options: {
+      streaming?: boolean;
+      durationText?: string;
+      collapsed?: boolean;
+      startLine?: number;
+      activity?: string;
+      title?: string;
+      completedTitle?: string;
+      nowMs?: number;
+      tick?: number;
+    } = {}
+  ): void {
+    const width = this.measure();
+    const isStreaming = Boolean(options.streaming);
+    const resolvedTick = options.tick ?? this.streamingTick;
+    const rows = renderThinkingFrame(content, {
+      width,
+      streaming: isStreaming,
+      durationText: options.durationText ?? '',
+      collapsed: Boolean(options.collapsed),
+      startLine: Number(options.startLine) || 0,
+      ...(options.activity !== undefined ? { activity: options.activity } : {}),
+      ...(options.title !== undefined ? { title: options.title } : {}),
+      ...(options.completedTitle !== undefined ? { completedTitle: options.completedTitle } : {}),
+      ...(isStreaming ? { nowMs: options.nowMs ?? this.streamingNowMs } : {}),
+      ...(isStreaming && resolvedTick !== undefined ? { tick: resolvedTick } : {})
+    });
+
+    if (rows.length === 0) return;
+
+    this.write();
+    for (const row of rows) {
+      this.write(row);
+    }
+    this.write();
+  }
 
   /** Scroll only the code beneath the pointer; leave the chat viewport alone. */
   scrollCodePanel(key: CodeWheel, surface: CodeSurface | null): boolean {
@@ -154,6 +227,12 @@ export class CodeStreamRenderer extends ChatRenderer {
   }
 
   override handle(message: RendererEvent): boolean {
+    const selfStatus = this as unknown as {
+      quietStatus?: boolean;
+      currentStatus?: string;
+      onStatusChange?: ((s: string) => void) | null;
+    };
+
     if (message?.type === 'agent_activity') {
       const rawActivity = String((message as any).activity || (message as any).message || '').trim();
       if (rawActivity) {
@@ -165,8 +244,18 @@ export class CodeStreamRenderer extends ChatRenderer {
             activity: this.currentActivity,
             title: rawActivity
           });
+          if (selfStatus.quietStatus) {
+            selfStatus.currentStatus = rawActivity;
+            selfStatus.onStatusChange?.(rawActivity);
+          }
           return true;
         }
+        const handled = super.handle(message);
+        if (selfStatus.quietStatus) {
+          selfStatus.currentStatus = rawActivity;
+          selfStatus.onStatusChange?.(rawActivity);
+        }
+        return handled;
       }
     }
 
@@ -188,6 +277,11 @@ export class CodeStreamRenderer extends ChatRenderer {
           activity = 'planning';
         }
         this.currentActivity = activity;
+        if (selfStatus.quietStatus) {
+          const statusLabel = `${activity.charAt(0).toUpperCase() + activity.slice(1)}…`;
+          selfStatus.currentStatus = statusLabel;
+          selfStatus.onStatusChange?.(statusLabel);
+        }
 
         const currentContent = this.lastReasoning ? `${this.lastReasoning}\n${stepLine}` : stepLine;
         this.lastReasoning = currentContent;
@@ -223,12 +317,26 @@ export class CodeStreamRenderer extends ChatRenderer {
         }
         return true;
       }
+      const preservedStatus = selfStatus.quietStatus ? selfStatus.currentStatus : '';
       const handled = super.handle({
         ...message,
         activity: (message as any).activity || this.currentActivity
       });
       if (message.streaming === false) {
         this.lastReasoning = '';
+      } else if (selfStatus.quietStatus) {
+        const activeStatus = preservedStatus || `${this.currentActivity || 'thinking'}…`;
+        selfStatus.currentStatus = activeStatus;
+        selfStatus.onStatusChange?.(activeStatus);
+      }
+      return handled;
+    }
+    if (message?.type === 'usage_update' && selfStatus.quietStatus) {
+      const preservedStatus = selfStatus.currentStatus;
+      const handled = super.handle(message);
+      if (preservedStatus) {
+        selfStatus.currentStatus = preservedStatus;
+        selfStatus.onStatusChange?.(preservedStatus);
       }
       return handled;
     }

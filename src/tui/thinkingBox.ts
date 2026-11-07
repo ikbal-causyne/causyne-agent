@@ -7,8 +7,9 @@
 // Pure TypeScript under strict mode.
 
 // @ts-expect-error theme.js has no TypeScript declaration yet.
-import { paint, bold, dim, GLYPHS, HAS_UNICODE } from './theme.js';
+import { paint, dim, GLYPHS, HAS_UNICODE } from './theme.js';
 import { padEnd, truncate, visibleWidth, wrapBlock } from './text.js';
+import { renderRunningLight } from './runningLight.js';
 
 export interface ThinkingFrameOptions {
   width?: number;
@@ -21,6 +22,8 @@ export interface ThinkingFrameOptions {
   activity?: string;
   title?: string;
   completedTitle?: string;
+  nowMs?: number;
+  tick?: number;
 }
 
 export const DEFAULT_MAX_STREAMING_LINES = 8;
@@ -92,7 +95,17 @@ export function renderCollapsedThinkingBadge(
 
   if (isStreaming) {
     const timePart = durationText ? ` · ${durationText}` : '';
-    return `${paint('warn', arrow)} ${bold(paint('warn', activeLabel))}${dim(timePart)} ${dim('· click to expand')}`;
+    const shimmerNowMs = options.nowMs !== undefined
+      ? options.nowMs
+      : options.tick !== undefined
+        ? options.tick * 80
+        : 320;
+    const styledLabel = renderRunningLight(activeLabel, {
+      nowMs: shimmerNowMs,
+      baseRole: 'warn',
+      boldActive: true
+    });
+    return `${paint('warn', arrow)} ${styledLabel}${dim(timePart)} ${dim('· click to expand')}`;
   }
 
   const timePart = durationText ? ` for ${durationText}` : '';
@@ -195,11 +208,31 @@ export function renderThinkingFrame(
     const maxLines = options.maxVisibleLines ?? DEFAULT_MAX_STREAMING_LINES;
     const timePart = durationText ? ` · ${durationText}` : '';
     const { activeLabel } = resolveActivityLabels(options);
-    const title = `${bold(paint('warn', activeLabel))}${dim(timePart)}`;
+    const shimmerNowMs = options.nowMs !== undefined
+      ? options.nowMs
+      : options.tick !== undefined
+        ? options.tick * 80
+        : 320;
+    const styledActiveLabel = renderRunningLight(activeLabel, {
+      nowMs: shimmerNowMs,
+      baseRole: 'warn',
+      boldActive: true
+    });
+    const title = `${styledActiveLabel}${dim(timePart)}`;
     const footer = collapseHint;
 
     const { top, bottom, wrapRow } = buildThinkingBoxBorders(title, footer, width, role);
     const rows: string[] = [top];
+
+    const renderStreamingRow = (row: string, isActiveTail: boolean): string => {
+      if (!isActiveTail) return wrapRow(dim(row));
+      const truncated = truncate(row, contentBudget, GLYPHS.ellipsis || '…');
+      const shimmered = renderRunningLight(truncated, {
+        nowMs: shimmerNowMs,
+        baseRole: 'muted'
+      });
+      return wrapRow(shimmered);
+    };
 
     if (totalLines > maxLines) {
       const hiddenCount = totalLines - (maxLines - 1);
@@ -209,12 +242,12 @@ export function renderThinkingFrame(
       rows.push(wrapRow(hiddenNotice));
 
       const tailRows = allRows.slice(totalLines - (maxLines - 1));
-      for (const row of tailRows) {
-        rows.push(wrapRow(dim(row)));
+      for (let i = 0; i < tailRows.length; i++) {
+        rows.push(renderStreamingRow(tailRows[i]!, i === tailRows.length - 1));
       }
     } else {
-      for (const row of allRows) {
-        rows.push(wrapRow(dim(row)));
+      for (let i = 0; i < allRows.length; i++) {
+        rows.push(renderStreamingRow(allRows[i]!, i === allRows.length - 1));
       }
     }
 

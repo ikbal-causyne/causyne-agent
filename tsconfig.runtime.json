@@ -216,6 +216,7 @@
     "src/tui/overlay.ts",
     "src/tui/markdownMath.ts",
     "src/tui/thinkingBox.ts",
+    "src/tui/runningLight.ts",
     "src/tui/block.ts",
     "src/tui/statusLine.ts",
     "src/tui/engineSpinner.ts",

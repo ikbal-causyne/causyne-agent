@@ -24,6 +24,7 @@ import { truncate, visibleWidth, safeDisplay, shortenHome } from './text.js';
 import { contextMeter } from './block.js';
 import { CHARS_PER_TOKEN } from '../contextManager.js';
 import { formatAnimatedStatus } from './engineSpinner.js';
+import { renderRunningLight } from './runningLight.js';
 
 /** 1234 -> "1.2k", 1234567 -> "1.2M". Token counts are read, not summed. */
 export function compactCount(value: unknown): string {
@@ -97,6 +98,7 @@ export class StatusLine {
   turnTokens = 0;
   turnCost = 0;
   cachedTokens = 0;
+  onTick: ((nowMs: number, tick?: number) => void) | null = null;
 
   constructor() {
     this.reset();
@@ -210,7 +212,19 @@ export class StatusLine {
       : budget;
     const body = truncate(text, messageBudget, GLYPHS.ellipsis);
 
-    const left = `${head}${paint('muted', body)}`;
+    const isAnimating = tick !== undefined || elapsedMs > 0 || Boolean(spinnerFrame);
+    const shimmerNowMs = elapsedMs > 0 ? elapsedMs : (tick !== undefined ? tick * 80 : 320);
+    if (isAnimating && this.onTick) {
+      try {
+        this.onTick(shimmerNowMs, tick);
+      } catch {
+        // Never allow a tick observer to disrupt status rendering
+      }
+    }
+    const styledBody = isAnimating
+      ? renderRunningLight(body, { nowMs: shimmerNowMs, baseRole: 'muted' })
+      : paint('muted', body);
+    const left = `${head}${styledBody}`;
     if (!tail) return left;
 
     const gap = Math.max(
