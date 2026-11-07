@@ -142,7 +142,7 @@ export class CausyneObserver {
     // Check if the agent claims completion
     if (context.agentClaim && context.agentClaim.trim()) {
       const claim = context.agentClaim.toLowerCase();
-      const claimsCompletion = /\b(?:done|complete|completed|finished|implemented|fixed|verified|ready)\b|\b(?:is\s+(?:running|live|available|listening|served)\s+(?:at|on)|application\s+is\s+running)\b/i.test(claim);
+      const claimsCompletion = /\b(?:done|complete|completed|finished|implemented|fixed|verified)\b|\b(?:is\s+(?:running|live|available|listening|served)\s+(?:at|on)|application\s+is\s+running)\b/i.test(claim);
 
       if (claimsCompletion) {
         // Run deterministic verification checks based on domain
@@ -150,7 +150,12 @@ export class CausyneObserver {
           ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)
         );
         const hasPassingVerification = outcomes.some(o =>
-          o.success && o.command && /\b(?:test|build|check|typecheck|vitest|jest|pytest)\b/i.test(o.command)
+          o.success && (
+            o.rendered === true ||
+            o.tool === 'browser_act' ||
+            o.tool === 'verify_local_web' ||
+            (o.command && /\b(?:test|build|check|typecheck|vitest|jest|pytest)\b/i.test(o.command))
+          )
         );
 
         if (hasMutations && !hasPassingVerification) {

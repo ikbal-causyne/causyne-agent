@@ -1697,6 +1697,7 @@ export class AgentLoop {
     this.gameGuardFired = false;
     this.webGuardFired = false;
     this.webVerificationScheduled = false;
+    this._verificationPlanFired = false;
     this.webVerificationState = { screenshotTaken: false, browserActUsed: false, htmlInspected: false };
     this.webArtifacts = new Set();
     this.claimedLocalUrls = new Set();
@@ -3549,6 +3550,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
               });
 
               if (observation.status === 'ready-to-verify' && !this._verificationPlanFired) {
+                this._verificationPlanFired = true;
                 this.emitEvent({ type: 'status', message: `Observer: ${observation.message || 'Deliverables require verification check.'}` });
                 this.messages.push({
                   role: 'system',

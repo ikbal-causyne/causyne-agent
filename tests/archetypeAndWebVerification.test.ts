@@ -123,6 +123,7 @@ test('AgentLoop rejects dead claimed localhost server URLs and verifies once the
     );
     assert.ok(events.some((e) => e.type === 'task_complete'), 'Task must complete once the localhost URL responds HTTP 200');
   } finally {
+    server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
