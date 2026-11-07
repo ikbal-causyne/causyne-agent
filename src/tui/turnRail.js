@@ -246,8 +246,6 @@ export function formatPreviewCardMarkdown(raw) {
     text = text.replace(/(?:^|[^_])_([^_]+)_(?!_)/g, (m, inner) => m.startsWith('_') ? inner : `${m[0]}${inner}`);
     // Strip strikethrough: ~~text~~ -> text
     text = text.replace(/~~([^~]+)~~/g, '$1');
-    // Strip raw HTML tags: <tag>, </tag>
-    text = text.replace(/<\/?[a-zA-Z][^>]*>/g, '');
     // Collapse multiple spaces/newlines cleanly into single space
     return text.replace(/\s+/g, ' ').trim();
 }
