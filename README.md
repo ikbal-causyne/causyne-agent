@@ -1,7 +1,7 @@
 # Causyne Agent
 
-> **Development status:** Causyne Agent is under active development. It is not
-> yet a stable release, and its interfaces and behavior may change.
+**Development status:** Causyne Agent is under active development. It is not
+yet a stable release, and its interfaces and behavior may change.
 
 Causyne Agent is an AI agent harness for complex, multi-step work. It is being
 developed to turn intention into meaningful progress through capable,
