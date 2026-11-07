@@ -450,8 +450,8 @@ export class StageSurface {
             const cardWidth = 52;
             const railX = this.turnRailLayout.railX ?? 1;
             let cardX = railX - cardWidth - 1;
-            if (cardX < 0 || (railX <= 4 && railX + 3 + cardWidth <= mainWidth)) {
-              cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 3));
+            if (cardX < 0 || (railX <= 4 && railX + 4 + cardWidth <= mainWidth)) {
+              cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 4));
             }
             const startY = Math.max(0, Math.min(rows.length - card.length, anchorY - Math.floor(card.length / 2)));
             this.turnRailLayout.cardRect = { x: cardX, y: startY, width: cardWidth, height: card.length, turnIndex: hoveredTurn.turnIndex };
@@ -681,10 +681,6 @@ export class StageSurface {
         const leftCell = railResult.cells[i] || ' ';
         if (row.startsWith('   ')) {
           row = ` ${leftCell} ${row.slice(3)}`;
-        } else if (row.startsWith('  ')) {
-          row = ` ${leftCell}${row.slice(2)}`;
-        } else if (row.startsWith(' ')) {
-          row = `${leftCell}${row.slice(1)}`;
         } else if (row.length === 0) {
           row = leftCell !== ' ' ? ` ${leftCell} ` : '';
         } else {

@@ -94,6 +94,11 @@ function renderMarkdown(text, width) {
       continue;
     }
 
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+      lines.push(dim(GLYPHS.hLine.repeat(Math.max(4, Math.min(width, 40)))));
+      continue;
+    }
+
     const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (bullet) {
       const indent = bullet[1] + '  ';
@@ -101,6 +106,39 @@ function renderMarkdown(text, width) {
       wrapped.forEach((part, index) => {
         lines.push(index === 0 ? `${indent}${paint('muted', GLYPHS.bullet)} ${part}` : `${indent}  ${part}`);
       });
+      continue;
+    }
+
+    const numbered = line.match(/^(\s*)(\d+\.)\s+(.*)$/);
+    if (numbered) {
+      const prefix = `${numbered[1]}${bold(numbered[2])} `;
+      const indent = ' '.repeat(visibleWidth(`${numbered[1]}${numbered[2]} `));
+      const wrapped = wrap(inline(numbered[3]), width - indent.length);
+      wrapped.forEach((part, index) => {
+        lines.push(index === 0 ? `${prefix}${part}` : `${indent}${part}`);
+      });
+      continue;
+    }
+
+    const quote = line.match(/^(\s*)>\s?(.*)$/);
+    if (quote) {
+      const indent = quote[1] + paint('muted', '│ ');
+      const wrapped = wrap(inline(quote[2]), width - visibleWidth(indent));
+      wrapped.forEach((part) => {
+        lines.push(`${indent}${part}`);
+      });
+      continue;
+    }
+
+    if (/^\s*\|?(\s*:?-+:?\s*\|)+\s*$/.test(line)) {
+      lines.push(dim('  ' + GLYPHS.hLine.repeat(Math.max(4, Math.min(width - 4, 48)))));
+      continue;
+    }
+
+    const tableRow = line.match(/^\s*\|(.+)\|\s*$/);
+    if (tableRow) {
+      const cells = tableRow[1].split('|').map(c => inline(c.trim()));
+      lines.push('  ' + cells.join(paint('muted', ' │ ')));
       continue;
     }
 
@@ -206,8 +244,18 @@ function inline(text) {
   out = out.replace(/`([^`]+)`/g, (_m, code) => stash(HAS_COLOR ? paint('accent', code) : code));
   out = formatMarkdownMath(out);
   out = HAS_COLOR
-    ? out.replace(/\*\*([^*]+)\*\*/g, (m, strong) => bold(strong))
+    ? out.replace(/\*\*\*([^*]+)\*\*\*/g, (_m, strong) => bold(paint('accent', strong)))
+    : out.replace(/\*\*\*([^*]+)\*\*\*/g, '$1');
+  out = HAS_COLOR
+    ? out.replace(/\*\*([^*]+)\*\*/g, (_m, strong) => bold(strong))
     : out.replace(/\*\*([^*]+)\*\*/g, '$1');
+  out = HAS_COLOR
+    ? out.replace(/(?<=^|[\s(])\*([^*\s](?:[^*]*[^*\s])?)\*(?=[\s).,!?]|$)/g, (_m, italic) => `\x1b[3m${italic}\x1b[23m`)
+    : out.replace(/(?<=^|[\s(])\*([^*\s](?:[^*]*[^*\s])?)\*(?=[\s).,!?]|$)/g, '$1');
+  out = HAS_COLOR
+    ? out.replace(/(?<=^|[\s(])_([^\s_](?:[^_]*[^\s_])?)_(?=[\s).,!?]|$)/g, (_m, italic) => `\x1b[3m${italic}\x1b[23m`)
+    : out.replace(/(?<=^|[\s(])_([^\s_](?:[^_]*[^\s_])?)_(?=[\s).,!?]|$)/g, '$1');
+  out = out.replace(/~~([^~]+)~~/g, HAS_COLOR ? '\x1b[9m$1\x1b[29m' : '$1');
 
   if (stashed.length > 0) {
     out = out.replace(/\u0000(\d+)\u0000/g, (m, index) => stashed[Number(index)] || '');

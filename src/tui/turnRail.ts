@@ -102,7 +102,7 @@ export function collectSessionTurns(transcript: any, contentWidth = 80): Session
       turnIndex,
       totalTurns,
       userPrompt: userPrompt.replace(/\s+/g, ' ').trim(),
-      assistantSummary: assistantSummary.replace(/\s+/g, ' ').trim(),
+      assistantSummary: formatPreviewCardMarkdown(assistantSummary),
       timestamp: frame.ts || Date.now(),
       formattedDate: formatTurnTimestamp(frame.ts || Date.now()),
       frameId: frame.id,
@@ -254,6 +254,68 @@ export function buildTurnRailCells(
 }
 
 /**
+ * Render and clean markdown for display within the Floating Turn Preview Card.
+ * Strips raw syntax markers (###, **, *, `, table delimiters) and renders
+ * clean, readable, professional text without leaking markdown source code.
+ */
+export function formatPreviewCardMarkdown(raw: string): string {
+  if (!raw) return '';
+  let text = String(raw);
+
+  // Strip code block fences
+  text = text.replace(/```[a-zA-Z0-9_-]*\n?/g, ' ');
+
+  // Strip headings: ### Heading -> Heading
+  text = text.replace(/(?:^|\n)\s*#{1,6}\s+/g, '\n');
+
+  // Strip blockquotes: > quote -> quote
+  text = text.replace(/(?:^|\n)\s*>\s?/g, '\n');
+
+  // Strip horizontal rules: --- or ***
+  text = text.replace(/(?:^|\n)\s*[-*_]{3,}\s*(?=\n|$)/g, '\n');
+
+  // Strip table separator lines: | :--- | :--- |
+  text = text.replace(/(?:^|\n)\s*\|?(\s*:?-+:?\s*\|)+\s*(?=\n|$)/g, '\n');
+
+  // Convert table row pipes: | a | b | -> a · b
+  text = text.replace(/(?:^|\n)\s*\|\s*(.+?)\s*\|\s*(?=\n|$)/g, (_m, content) => {
+    return '\n' + content.split(/\s*\|\s*/).filter(Boolean).join(' · ');
+  });
+
+  // Convert list bullets: - item, * item -> • item
+  text = text.replace(/(?:^|\n)\s*[-*+]\s+/g, '\n• ');
+
+  // Convert numbered lists: 1. item -> 1. item
+  text = text.replace(/(?:^|\n)\s*(\d+)\.\s+/g, '\n$1. ');
+
+  // Strip links: [label](url) -> label
+  text = text.replace(/\[([^\]\n]+)\]\([^\)\s]+\)/g, '$1');
+
+  // Strip images: ![alt](url) -> alt
+  text = text.replace(/!\[([^\]\n]*)\]\([^\)\s]+\)/g, '$1');
+
+  // Strip inline code backticks: `code` -> code
+  text = text.replace(/`([^`\n]+)`/g, '$1');
+
+  // Format bold and italic: ***text***, **text**, *text*, ___text___, __text__, _text_
+  text = text.replace(/\*\*\*([^*]+)\*\*\*/g, '$1');
+  text = text.replace(/\*\*([^*]+)\*\*/g, '$1');
+  text = text.replace(/(?:^|[^*])\*([^*]+)\*(?!\*)/g, (m, inner) => m.startsWith('*') ? inner : `${m[0]}${inner}`);
+  text = text.replace(/___([^_]+)___/g, '$1');
+  text = text.replace(/__([^_]+)__/g, '$1');
+  text = text.replace(/(?:^|[^_])_([^_]+)_(?!_)/g, (m, inner) => m.startsWith('_') ? inner : `${m[0]}${inner}`);
+
+  // Strip strikethrough: ~~text~~ -> text
+  text = text.replace(/~~([^~]+)~~/g, '$1');
+
+  // Strip raw HTML tags: <tag>, </tag>
+  text = text.replace(/<\/?[a-zA-Z][^>]*>/g, '');
+
+  // Collapse multiple spaces/newlines cleanly into single space
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Render the Floating Turn Preview Card popover.
  * Exactly matches the UX/UI in Screen Recording 2026-10-30 at 02.42.17:
  * - Rounded elevated box (╭─╮ / ╰─╯) with dark translucent background
@@ -269,17 +331,18 @@ export function renderTurnPreviewCard(turn: SessionTurn, maxCardWidth = 50): str
   const borderStyle = `${cardBg}\x1b[38;2;75;75;82m`;
   const reset = '\x1b[0m';
 
-  // Format header: User Prompt (bold primary)
-  const rawPrompt = turn.userPrompt || 'User request';
+  // Format header: User Prompt (bold primary) rendered cleanly without raw markdown
+  const rawPrompt = formatPreviewCardMarkdown(turn.userPrompt || 'User request');
   const promptLines = wrapBlock(rawPrompt, innerWidth).slice(0, 2);
   if (promptLines.length === 2 && promptLines[1]) {
     promptLines[1] = truncate(promptLines[1], innerWidth - 3, '...');
   }
 
-  // Format body: Assistant Summary (muted secondary)
+  // Format body: Assistant Summary (muted secondary) rendered cleanly without raw markdown
   let bodyLines: string[] = [];
   if (turn.assistantSummary) {
-    bodyLines = wrapBlock(turn.assistantSummary, innerWidth).slice(0, 3);
+    const formattedSummary = formatPreviewCardMarkdown(turn.assistantSummary);
+    bodyLines = wrapBlock(formattedSummary, innerWidth).slice(0, 3);
     if (bodyLines.length === 3 && bodyLines[2]) {
       bodyLines[2] = truncate(bodyLines[2], innerWidth - 3, '...');
     }
@@ -338,9 +401,10 @@ export function overlayTurnPreviewCard(
 
   const cardWidth = visibleWidth(cardRows[0] || '');
   // Clamp card placement horizontally: preferably to the left of the rail, or to the right
+  const cardSpacing = 4; // railX + 4 gives 3 spaces of breathing room after railX
   let x = railX - cardWidth - 1;
-  if (x < 0 || (railX <= 4 && railX + 3 + cardWidth <= screenWidth)) {
-    x = Math.max(0, Math.min(screenWidth - cardWidth - 1, railX + 3));
+  if (x < 0 || (railX <= 4 && railX + cardSpacing + cardWidth <= screenWidth)) {
+    x = Math.max(0, Math.min(screenWidth - cardWidth - 1, railX + cardSpacing));
   }
 
   // Center vertically around anchorY
@@ -356,10 +420,29 @@ export function overlayTurnPreviewCard(
     const baseRow = out[targetY] || '';
     const cardRow = cardRows[i] || '';
 
-    // Composite cardRow onto baseRow at column x
-    const beforePart = padEnd(truncate(baseRow, x, ''), x);
+    // Composite cardRow onto baseRow at column x.
+    // To the left of the card, NEVER allow severed underlying characters (like '▸' or text) to leak!
+    // Maintain a perfectly clean, flush, symmetrical margin:
+    // Only preserve the rail dot (if present at railX) and whitespace padding up to column x.
+    let beforePart = '';
+    if (x <= 6 && railX <= 4) {
+      const plainBase = stripAnsi(baseRow);
+      const dotChar = plainBase[railX] || ' ';
+      const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·' || dotChar === '[' || dotChar === ']';
+      let dotCell = ' ';
+      if (isDot) {
+        const sliceDot = sliceFromColumn(baseRow, railX);
+        dotCell = sliceDot ? truncate(sliceDot, 1, '') : dotChar;
+      }
+      const leadingSpace = ' '.repeat(Math.max(0, railX));
+      const trailingSpace = ' '.repeat(Math.max(0, x - railX - 1));
+      beforePart = `${leadingSpace}${dotCell}${trailingSpace}`;
+    } else {
+      beforePart = padEnd(truncate(baseRow, x, ''), x);
+    }
+
     let restOfRow = '';
-    if (x <= 4) {
+    if (x <= 6) {
       // For left-placed turn cards, do not leave severed text tails sticking out
       const totalRowWidth = Math.max(screenWidth, visibleWidth(baseRow));
       const rightCell = sliceFromColumn(baseRow, totalRowWidth - 1);
@@ -415,7 +498,7 @@ export function handleTurnRailMouse(
                  relY >= cardRect.y && relY < cardRect.y + cardRect.height;
     } else {
       const cardWidth = 52;
-      const cardX = layout.railX <= 4 ? layout.railX + 3 : Math.max(0, layout.railX - cardWidth - 1);
+      const cardX = layout.railX <= 4 ? layout.railX + 4 : Math.max(0, layout.railX - cardWidth - 1);
       const anchorY = surface.hoveredTurnAnchorY ?? Math.floor(layout.viewportHeight / 2);
       const cardHeight = 9;
       const cardStartY = Math.max(0, Math.min(layout.viewportHeight - cardHeight, anchorY - Math.floor(cardHeight / 2)));
