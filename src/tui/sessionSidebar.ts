@@ -34,7 +34,13 @@ export function sessionMainWidth(columns: number, home = false): number {
 
 /** The session input uses the available conversation column, with a small inset. */
 export function sessionComposerWidth(columns: number): number {
-  return Number.isFinite(columns) ? Math.max(20, Math.floor(columns) - 3) : 77;
+  const available = Number.isFinite(columns) ? Math.max(20, Math.floor(columns)) : 80;
+  if (available <= 112) {
+    return Math.max(20, available - 3);
+  }
+  // Dynamic readable measure scaling on wide terminals:
+  const readableMeasure = Math.round(109 + 20 * Math.log2(available / 112));
+  return Math.min(available - 3, Math.max(20, readableMeasure));
 }
 
 /** Render only facts the runtime can actually report. */

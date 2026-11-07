@@ -366,38 +366,70 @@ export class LineEditor {
       const prefixWidth = visibleWidth(prefix);
       const budget = Math.max(1, usable - prefixWidth);
       const line = this.lines[index];
+      const isCurrentLine = index === this.line;
 
       let row = prefix;
       let used = 0;
       let placed = false;
 
-      for (let position = 0; position <= line.length; position++) {
-        if (index === this.line && position === this.col) {
+      let pos = 0;
+      while (pos <= line.length) {
+        if (isCurrentLine && pos === this.col && !placed) {
           cursorRow = rows.length;
           cursorCol = prefixWidth + used;
           placed = true;
         }
-        if (position === line.length) break;
+        if (pos === line.length) break;
 
-        const character = line[position];
-        const charWidth = visibleWidth(character);
-        if (used + charWidth > budget) {
+        const isSpace = /\s/.test(line[pos]);
+        let nextPos = pos;
+        let tokenWidth = 0;
+        while (nextPos < line.length && (/\s/.test(line[nextPos]) === isSpace)) {
+          tokenWidth += visibleWidth(line[nextPos]);
+          nextPos++;
+        }
+
+        // If non-whitespace word exceeds remaining space on non-empty line: wrap to next line!
+        if (used > 0 && used + tokenWidth > budget && !isSpace) {
           rows.push(row);
           row = prefix;
           used = 0;
-          // Re-place the cursor if it sat exactly at the wrap point.
-          if (placed && cursorRow === rows.length - 1 && cursorCol === prefixWidth + budget) {
+          if (isCurrentLine && pos === this.col && !placed) {
             cursorRow = rows.length;
             cursorCol = prefixWidth;
+            placed = true;
           }
         }
-        const isSelected = range ? isInsideRange(index, position, range) : false;
-        row += isSelected ? `\x1b[7m${character}\x1b[27m` : character;
-        used += charWidth;
+
+        while (pos < nextPos) {
+          if (isCurrentLine && pos === this.col && !placed) {
+            cursorRow = rows.length;
+            cursorCol = prefixWidth + used;
+            placed = true;
+          }
+          const char = line[pos];
+          const charWidth = visibleWidth(char);
+
+          if (used + charWidth > budget && used > 0) {
+            rows.push(row);
+            row = prefix;
+            used = 0;
+            if (isCurrentLine && pos === this.col && !placed) {
+              cursorRow = rows.length;
+              cursorCol = prefixWidth;
+              placed = true;
+            }
+          }
+
+          const isSelected = range ? isInsideRange(index, pos, range) : false;
+          row += isSelected ? `\x1b[7m${char}\x1b[27m` : char;
+          used += charWidth;
+          pos++;
+        }
       }
 
       rows.push(row);
-      if (index === this.line && !placed) {
+      if (isCurrentLine && !placed) {
         cursorRow = rows.length - 1;
         cursorCol = prefixWidth + used;
       }

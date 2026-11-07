@@ -1527,8 +1527,9 @@ export class ChatPrompt {
     // surface you are writing INTO. Every row of the block is inset by the same
     // gutter, so the caret column is a constant rather than a special case for
     // row 0 — which is also one fewer thing for erase() to get wrong.
+    const boxWidth = Math.max(20, width - 1);
     const inset = visibleWidth(GLYPHS.bar) + GUTTER;
-    const inner = Math.max(8, width - inset);
+    const inner = Math.max(8, boxWidth - inset);
     const layout = this.editor.render(inner, '');
 
     // Scroll the editor internally rather than growing without bound: keep a
@@ -1568,7 +1569,7 @@ export class ChatPrompt {
     const padded = new Array(padTop).fill('')
       .concat(body, new Array(padBottom).fill(''));
     const boxRows = barBlock(padded, {
-      width,
+      width: boxWidth,
       role: this.busy ? 'accent' : 'user',
       filled: true,
       surface: 'surface',
