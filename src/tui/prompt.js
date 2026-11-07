@@ -138,7 +138,7 @@ export class ChatPrompt {
     this.cursorRow = 0;
 
     // The status row of the live region, and the clock that animates it.
-    this.renderer = null;
+    this.renderer = options.renderer || null;
     this.statusMessage = '';
     this.tick = 0;
     this.tickTimer = null;
@@ -672,9 +672,30 @@ export class ChatPrompt {
   // Reading
   // -------------------------------------------------------------------------
 
+  /**
+   * Render submitted user message into the chat transcript.
+   */
+  renderSubmittedUserMessage(text) {
+    if (this.surface?.homeInfo) this.surface.leaveHome();
+    if (this.renderer?.renderUserMessage) this.renderer.renderUserMessage(text);
+    else this.commit('user', (width) => {
+      const blockWidth = Math.max(8, width);
+      return barBlock(
+        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER), { hang: 0 }),
+        { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
+      );
+    });
+  }
+
   /** Next submitted line. Resolves immediately if one was queued while busy. */
   read() {
-    if (this.queue.length > 0) return Promise.resolve(this.queue.shift());
+    if (this.queue.length > 0) {
+      const text = this.queue.shift();
+      if (typeof text === 'string' && !this.isCommand(text)) {
+        this.renderSubmittedUserMessage(text);
+      }
+      return Promise.resolve(text);
+    }
     return new Promise((resolve) => { this.waiter = resolve; });
   }
 
@@ -805,15 +826,9 @@ export class ChatPrompt {
     }
 
     // Render live submissions through the same path used when history reflows.
-    if (this.surface?.homeInfo) this.surface.leaveHome();
-    if (this.renderer?.renderUserMessage) this.renderer.renderUserMessage(text);
-    else this.commit('user', (width) => {
-      const blockWidth = Math.max(8, width);
-      return barBlock(
-        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER), { hang: 0 }),
-        { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
-      );
-    });
+    if (!this.isCommand(text)) {
+      this.renderSubmittedUserMessage(text);
+    }
     const resolve = this.waiter;
     this.waiter = null;
     if (resolve) resolve(text);
@@ -916,7 +931,7 @@ export class ChatPrompt {
     switch (key.name) {
       case 'escape': return this.handleEscape();
       case 'enter':
-        if (key.alt) { this.editor.newline(); return; }
+        if (key.alt || key.shift) { this.editor.newline(); return; }
         return this.submit();
       case 'tab':
         if (key.shift) return;

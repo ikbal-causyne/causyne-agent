@@ -374,12 +374,14 @@ export class LineEditor {
 
       let pos = 0;
       while (pos <= line.length) {
-        if (isCurrentLine && pos === this.col && !placed) {
-          cursorRow = rows.length;
-          cursorCol = prefixWidth + used;
-          placed = true;
+        if (pos === line.length) {
+          if (isCurrentLine && pos === this.col && !placed) {
+            cursorRow = rows.length;
+            cursorCol = prefixWidth + used;
+            placed = true;
+          }
+          break;
         }
-        if (pos === line.length) break;
 
         const isSpace = /\s/.test(line[pos]);
         let nextPos = pos;
@@ -389,24 +391,14 @@ export class LineEditor {
           nextPos++;
         }
 
-        // If non-whitespace word exceeds remaining space on non-empty line: wrap to next line!
+        // If non-whitespace word exceeds remaining space on non-empty line: wrap to next line first!
         if (used > 0 && used + tokenWidth > budget && !isSpace) {
           rows.push(row);
           row = prefix;
           used = 0;
-          if (isCurrentLine && pos === this.col && !placed) {
-            cursorRow = rows.length;
-            cursorCol = prefixWidth;
-            placed = true;
-          }
         }
 
         while (pos < nextPos) {
-          if (isCurrentLine && pos === this.col && !placed) {
-            cursorRow = rows.length;
-            cursorCol = prefixWidth + used;
-            placed = true;
-          }
           const char = line[pos];
           const charWidth = visibleWidth(char);
 
@@ -414,11 +406,12 @@ export class LineEditor {
             rows.push(row);
             row = prefix;
             used = 0;
-            if (isCurrentLine && pos === this.col && !placed) {
-              cursorRow = rows.length;
-              cursorCol = prefixWidth;
-              placed = true;
-            }
+          }
+
+          if (isCurrentLine && pos === this.col && !placed) {
+            cursorRow = rows.length;
+            cursorCol = prefixWidth + used;
+            placed = true;
           }
 
           const isSelected = range ? isInsideRange(index, pos, range) : false;

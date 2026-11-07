@@ -246,7 +246,7 @@ export class Stage {
     this.moveTo(target.row);
     this.write('\r');
     if (target.col > 0) this.write(`\x1b[${target.col}C`);
-    this.write((target.hideCursor ? HIDE_CURSOR : SHOW_CURSOR) + '\x1b[6 q' + SYNC_OFF);
+    this.write((target.hideCursor ? HIDE_CURSOR : SHOW_CURSOR + '\x1b[6 q') + SYNC_OFF);
 
     this.prev = next;
     this.caret = target;

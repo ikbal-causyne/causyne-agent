@@ -70,6 +70,9 @@ export class CodeStreamRenderer extends ChatRenderer {
       tail.renderedWidth = -1;
       transcript.cache = null;
       transcript.revision++;
+      if (typeof transcript.changed === 'function') {
+        transcript.changed();
+      }
     }
   }
 
