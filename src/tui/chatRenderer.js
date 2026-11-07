@@ -520,7 +520,8 @@ export class ChatRenderer {
         elapsedMs: Date.now() - since,
         steps: this.stepCount,
         width: this.width() - 1,
-        spinnerFrame: frame
+        spinnerFrame: frame,
+        tick: this.spinnerIndex
       }));
       readline.clearLine(this.out, 1);
       this.spinnerIndex++;

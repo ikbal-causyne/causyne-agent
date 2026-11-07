@@ -266,3 +266,27 @@ export function getEngineFrame(tick: number, options: EngineSpinnerOptions = {})
   const frame = frames[index];
   return frame !== undefined ? frame : frames[0] || '◖▄▀◗';
 }
+
+const DOT_FRAMES = ['   ', '.  ', '.. ', '...'] as const;
+
+/**
+ * Return animated ellipsis dots for the given tick.
+ * Synchronized with the 8-phase engine turbine (progresses every 2 ticks).
+ */
+export function getAnimatedDots(tick: number): string {
+  const stage = Math.floor(Math.abs(Math.floor(tick)) / 2) % DOT_FRAMES.length;
+  return DOT_FRAMES[stage] ?? '   ';
+}
+
+/**
+ * Append synchronized animated dots to a status message.
+ * Strips any trailing static ellipsis to prevent duplication.
+ */
+export function formatAnimatedStatus(message: string, tick: number): string {
+  let base = (message || 'working').trimEnd();
+  while (base.endsWith('.') || base.endsWith('…')) {
+    base = base.slice(0, -1).trimEnd();
+  }
+  return `${base}${getAnimatedDots(tick)}`;
+}
+

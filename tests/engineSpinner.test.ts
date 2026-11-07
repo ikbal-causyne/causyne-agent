@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   getEngineFrames,
   getEngineFrame,
+  getAnimatedDots,
+  formatAnimatedStatus,
   detectSpinnerStyle,
   type EngineSpinnerStyle,
 } from '../src/tui/engineSpinner.js';
@@ -85,4 +87,31 @@ test('engineSpinner: statusLine renders rich engine frames without line breakage
 
   assert.ok(line.includes('working'));
   assert.ok(visibleWidth(line) <= 79);
+});
+
+test('engineSpinner: animated dots cycle cleanly and maintain constant visible width', () => {
+  for (let tick = 0; tick < 16; tick++) {
+    const dots = getAnimatedDots(tick);
+    assert.equal(visibleWidth(dots), 3, `dots visible width at tick ${tick} must be 3`);
+  }
+
+  const msg0 = formatAnimatedStatus('working', 0);
+  const msg2 = formatAnimatedStatus('working', 2);
+  const msg4 = formatAnimatedStatus('working', 4);
+  const msg6 = formatAnimatedStatus('working', 6);
+
+  assert.equal(msg0, 'working   ');
+  assert.equal(msg2, 'working.  ');
+  assert.equal(msg4, 'working.. ');
+  assert.equal(msg6, 'working...');
+
+  const status = new StatusLine();
+  const rendered = status.render({
+    message: 'working',
+    spinnerFrame: getEngineFrame(2),
+    tick: 4,
+    width: 80,
+  });
+
+  assert.ok(rendered.includes('working..'));
 });

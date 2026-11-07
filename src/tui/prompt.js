@@ -386,7 +386,8 @@ export class ChatPrompt {
       elapsedMs: since ? Date.now() - since : 0,
       steps: this.renderer.stepCount || 0,
       width: Math.max(10, width - 1),
-      spinnerFrame: frame
+      spinnerFrame: frame,
+      tick: this.tick
     })];
   }
 

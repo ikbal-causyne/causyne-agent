@@ -22,6 +22,7 @@ import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, visibleWidth, safeDisplay, shortenHome } from './text.js';
 import { contextMeter } from './block.js';
 import { CHARS_PER_TOKEN } from '../contextManager.js';
+import { formatAnimatedStatus } from './engineSpinner.js';
 /** 1234 -> "1.2k", 1234567 -> "1.2M". Token counts are read, not summed. */
 export function compactCount(value) {
     const n = Number(value) || 0;
@@ -147,7 +148,7 @@ export class StatusLine {
     /**
      * Build the line.
      */
-    render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '' } = {}) {
+    render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick } = {}) {
         const head = spinnerFrame
             ? (typeof spinnerFrame === 'string' && spinnerFrame.includes('\x1b')
                 ? `${spinnerFrame} `
@@ -168,7 +169,10 @@ export class StatusLine {
         if (this.model)
             segments.push(this.model);
         const separator = `  ${GLYPHS.dot}  `;
-        const text = safeDisplay(message);
+        const rawMessage = tick !== undefined
+            ? formatAnimatedStatus(message || 'working', tick)
+            : (message || (spinnerFrame ? 'working' : ''));
+        const text = safeDisplay(rawMessage);
         const kept = segments.slice();
         const wanted = Math.min(visibleWidth(text), Math.max(18, Math.floor(budget / 2)));
         while (kept.length > 0) {
