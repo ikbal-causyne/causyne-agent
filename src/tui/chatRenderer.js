@@ -1000,7 +1000,7 @@ export class ChatRenderer {
     this.frame('approval', () => {
       this.write();
       this.write(`${paint('accent', GLYPHS.arrow)} ${bold(safeDisplay(request.header || 'decision required'))}`);
-      for (const row of wrapBlock(safeDisplay(request.question || ''), Math.max(20, this.width() - 4))) this.write(`  ${row}`);
+      for (const row of wrapBlock(safeDisplay(request.question || ''), Math.max(20, this.width() - 4), { hang: 0 })) this.write(`  ${row}`);
       this.write();
     }, { kind: request.kind || 'other' });
   }
@@ -1222,7 +1222,7 @@ export class ChatRenderer {
     const head = label ? `${label}  ${detail}` : detail;
 
     this.frame('error', () => {
-      const rows = wrapBlock(head, Math.max(20, this.width() - 7));
+      const rows = wrapBlock(head, Math.max(20, this.width() - 7), { hang: 0 });
       this.write(`     ${paint('danger', GLYPHS.cross)} ${paint('danger', rows[0] || '')}`);
       for (const row of rows.slice(1)) this.write(`       ${dim(row)}`);
     }, { tool: msg.tool });
@@ -1363,7 +1363,7 @@ export class ChatRenderer {
       this.write();
       this.write(truncate(head, width - 1, GLYPHS.ellipsis));
       if (instruction) {
-        for (const line of wrapBlock(safeDisplay(instruction), width - 4)) {
+        for (const line of wrapBlock(safeDisplay(instruction), width - 4, { hang: 0 })) {
           this.write(dim(`  ${line}`));
         }
       }
@@ -1388,7 +1388,7 @@ export class ChatRenderer {
     this.frame('notice', () => {
       const width = this.measure();
       const marker = paint(tone === 'muted' ? 'rule' : tone, GLYPHS.vLine);
-      for (const line of wrapBlock(message, width - 2)) {
+      for (const line of wrapBlock(message, width - 2, { hang: 0 })) {
         this.write(`${marker} ${dim(line)}`);
       }
     }, { tone });

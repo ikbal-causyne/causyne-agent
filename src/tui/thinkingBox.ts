@@ -34,7 +34,7 @@ export function calculateThinkingLineCount(content: string, width: number): numb
   if (!text) return 0;
   const safeWidth = Math.max(20, Math.floor(width));
   const contentBudget = Math.max(10, safeWidth - 4);
-  return wrapBlock(text, contentBudget).length;
+  return wrapBlock(text, contentBudget, { hang: 0 }).length;
 }
 
 /**
@@ -177,9 +177,9 @@ export function renderThinkingFrame(
   const isCollapsed = Boolean(options.collapsed);
   const durationText = options.durationText ? String(options.durationText).trim() : '';
 
-  // Wrap lines for inner box width (w - 4)
+  // Wrap lines for inner box width (w - 4) with zero hanging indent
   const contentBudget = Math.max(10, width - 4);
-  const allRows = wrapBlock(text, contentBudget);
+  const allRows = wrapBlock(text, contentBudget, { hang: 0 });
   const totalLines = allRows.length;
 
   if (isCollapsed) {

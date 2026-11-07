@@ -63,6 +63,53 @@ describe('Turn Rail & Chat Interface Symmetry, Spacing and Markdown Rendering', 
     assert.ok(plain.includes('7:19 AM'), 'Timestamp is present');
   });
 
+  test('renderTurnPreviewCard wraps multi-line prompt and summary flush-left with zero hanging indent', () => {
+    const turn: SessionTurn = {
+      turnIndex: 9,
+      totalTurns: 9,
+      userPrompt: 'now build aab for me to uploud to the playstore',
+      assistantSummary: 'Google Play Store Android App Bundle (.aab) Ready The production-ready Android App Bundle (.aab) has been built, minified with R8,',
+      timestamp: Date.now(),
+      formattedDate: '2:37 PM',
+      frameId: 9,
+      startRow: 40
+    };
+
+    const card = renderTurnPreviewCard(turn, 46);
+    // Find prompt line 2 (which contains "playstore")
+    const promptLine2 = card.find(r => stripAnsi(r).includes('playstore'));
+    assert.ok(promptLine2, 'Prompt continuation line should exist');
+    const plainP2 = stripAnsi(promptLine2);
+    // Inside the card, line starts with "│ " followed by text flush-left
+    assert.ok(!plainP2.includes('│   playstore'), `Prompt line 2 must not have 2-space hanging indent: "${plainP2}"`);
+
+    // Find summary line 2
+    const summaryLine2 = card.find(r => stripAnsi(r).includes('Ready The'));
+    assert.ok(summaryLine2, 'Summary continuation line should exist');
+    const plainS2 = stripAnsi(summaryLine2);
+    assert.ok(!plainS2.includes('│   Ready'), `Summary line 2 must not have 2-space hanging indent: "${plainS2}"`);
+  });
+
+  test('renderTurnPreviewCard verifies image 4 test case is completely flush-left without hanging indent', () => {
+    const turn: SessionTurn = {
+      turnIndex: 1,
+      totalTurns: 2,
+      userPrompt: 'improve this game make this game better first in ui/ux aspect make sure the game must ...',
+      assistantSummary: null,
+      timestamp: Date.now(),
+      formattedDate: '2:21 PM',
+      frameId: 1,
+      startRow: 10
+    };
+
+    const card = renderTurnPreviewCard(turn, 46);
+    const line2 = card.find(r => stripAnsi(r).includes('in ui/ux'));
+    assert.ok(line2, 'Prompt continuation line 2 should exist');
+    const plain = stripAnsi(line2);
+    assert.ok(!plain.startsWith('│  '), `Must not have multi-space hanging indent: "${plain}"`);
+    assert.ok(plain.startsWith('│ first in ui/ux'), `Must start flush-left against border padding: "${plain}"`);
+  });
+
   test('overlayTurnPreviewCard never leaks underlying severed tool arrows or characters into left margin', () => {
     const baseRows = [
       ' • ▸ 01 run         find /workspace/app/src/main -type f                              |',

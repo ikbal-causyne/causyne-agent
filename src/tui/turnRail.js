@@ -265,17 +265,17 @@ export function renderTurnPreviewCard(turn, maxCardWidth = 50) {
     const cardBg = '\x1b[48;2;28;28;32m';
     const borderStyle = `${cardBg}\x1b[38;2;75;75;82m`;
     const reset = '\x1b[0m';
-    // Format header: User Prompt (bold primary) rendered cleanly without raw markdown
+    // Format header: User Prompt (bold primary) rendered cleanly without raw markdown, strictly flush-left with hang: 0
     const rawPrompt = formatPreviewCardMarkdown(turn.userPrompt || 'User request');
-    const promptLines = wrapBlock(rawPrompt, innerWidth).slice(0, 2);
+    const promptLines = wrapBlock(rawPrompt, innerWidth, { hang: 0 }).slice(0, 2);
     if (promptLines.length === 2 && promptLines[1]) {
         promptLines[1] = truncate(promptLines[1], innerWidth - 3, '...');
     }
-    // Format body: Assistant Summary (muted secondary) rendered cleanly without raw markdown
+    // Format body: Assistant Summary (muted secondary) rendered cleanly without raw markdown, strictly flush-left with hang: 0
     let bodyLines = [];
     if (turn.assistantSummary) {
         const formattedSummary = formatPreviewCardMarkdown(turn.assistantSummary);
-        bodyLines = wrapBlock(formattedSummary, innerWidth).slice(0, 3);
+        bodyLines = wrapBlock(formattedSummary, innerWidth, { hang: 0 }).slice(0, 3);
         if (bodyLines.length === 3 && bodyLines[2]) {
             bodyLines[2] = truncate(bodyLines[2], innerWidth - 3, '...');
         }

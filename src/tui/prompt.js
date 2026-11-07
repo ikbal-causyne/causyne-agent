@@ -545,7 +545,7 @@ export class ChatPrompt {
   showText(title, text, options = {}) {
     const panelWidth = dialogWidth(this.width(), options.width || 76);
     const contentWidth = Math.max(12, panelWidth - 4);
-    let lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth);
+    let lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth, { hang: 0 });
     if (lines.length > 0 && lines[0].trim().toLowerCase() === String(title || '').trim().toLowerCase()) {
       lines = lines.slice(1);
       if (lines.length > 0 && /^[-─═_]+$/.test(lines[0].trim())) {
