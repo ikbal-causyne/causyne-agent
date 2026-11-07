@@ -219,6 +219,7 @@
     "src/tui/block.ts",
     "src/tui/statusLine.ts",
     "src/tui/engineSpinner.ts",
+    "src/tui/CausyneRotor.ts",
     "src/tui/toolDisplay.ts",
     "src/cortex/cortexEngine.ts",
     "src/cortex/provisioner.ts",
