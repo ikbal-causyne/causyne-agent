@@ -13,6 +13,7 @@
 // Pure Node: no dependency, no shell. Readable by construction.
 
 import os from 'os';
+import { getEngineFrames, getEngineFrame } from './engineSpinner.js';
 
 // ---------------------------------------------------------------------------
 // Capability detection
@@ -248,7 +249,7 @@ export function badge(role, text) {
 export const GLYPHS = HAS_UNICODE
   ? {
       arrow: '▸', check: '✓', cross: '✕', dot: '·', bullet: '•',
-      spinner: ['◐', '◓', '◑', '◒'],
+      spinner: getEngineFrames({ unicode: true }),
       hLine: '─', vLine: '│', corner: '└', tee: '├', ellipsis: '…',
       // The left accent bar of a block. Uses box-drawing heavy vertical ('┃')
       // so it joins seamlessly from row to row without font line-height leading gaps.
@@ -268,7 +269,7 @@ export const GLYPHS = HAS_UNICODE
     }
   : {
       arrow: '>', check: 'v', cross: 'x', dot: '.', bullet: '*',
-      spinner: ['|', '/', '-', '\\'],
+      spinner: getEngineFrames({ unicode: false }),
       hLine: '-', vLine: '|', corner: '`', tee: '+', ellipsis: '...',
       bar: '|', step: '*',
       warnMark: '!',
@@ -396,3 +397,5 @@ export const READABLE_MAX = 100;
 export function readableWidth(available = terminalWidth()) {
   return Math.max(40, Math.min(available, READABLE_MAX));
 }
+
+export { getEngineFrames, getEngineFrame };

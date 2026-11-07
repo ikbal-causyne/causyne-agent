@@ -173,7 +173,11 @@ export class StatusLine {
    * Build the line.
    */
   render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '' }: StatusLineRenderOptions = {}): string {
-    const head = spinnerFrame ? `${paint('accent', spinnerFrame)} ` : '';
+    const head = spinnerFrame
+      ? (typeof spinnerFrame === 'string' && spinnerFrame.includes('\x1b')
+          ? `${spinnerFrame} `
+          : `${paint('accent', spinnerFrame)} `)
+      : '';
     const budget = Math.max(10, width - visibleWidth(head) - 1);
 
     const segments: string[] = [];
