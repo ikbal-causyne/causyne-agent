@@ -31,6 +31,7 @@ import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer
 import { describeTool } from './toolDisplay.js';
 import { readClipboardSync, writeClipboardSync } from './clipboardSync.js';
 import { readClipboardImageSync, formatByteSize, loadLocalImageAttachment } from './clipboardImage.js';
+import { pasteIntoChatbox } from './chatboxClipboard.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
 import { settleStageResize } from './resizeRecovery.js';
@@ -711,28 +712,7 @@ export class ChatPrompt {
    * Paste clipboard content: seamlessly supports text and screenshot images.
    */
   pasteClipboard() {
-    const text = readClipboardSync();
-    if (text) {
-      this.editor.insert(text);
-      this.refreshCompletion();
-      this.notice = 'pasted from clipboard';
-      this.scheduleDraw();
-      return;
-    }
-
-    const img = readClipboardImageSync();
-    if (img) {
-      if (!Array.isArray(this.pendingAttachments)) this.pendingAttachments = [];
-      this.pendingAttachments.push(img);
-      this.editor.insert(`[Image: ${img.name}] `);
-      this.refreshCompletion();
-      this.notice = `attached clipboard screenshot (${formatByteSize(img.size)})`;
-      this.scheduleDraw();
-      return;
-    }
-
-    this.notice = 'clipboard is empty';
-    this.scheduleDraw();
+    pasteIntoChatbox(this);
   }
 
   setBusy(busy) {
@@ -908,13 +888,7 @@ export class ChatPrompt {
       if (this.surface && typeof this.surface.captureMouse === 'function') {
         this.surface.captureMouse();
       }
-      this.editor.insert(key.text);
-      if (typeof key.text === 'string' && !key.text.includes('\n') && key.text.length < 60) {
-        this.refreshCompletion();
-      } else {
-        this.completion = null;
-      }
-      this.scheduleDraw();
+      pasteIntoChatbox(this, key.text);
       return;
     }
 
@@ -1558,8 +1532,17 @@ export class ChatPrompt {
     const caretRow = layout.cursorRow - top;
     let body = window.slice();
 
+    if (!this.editor.isEmpty) {
+      body = body.map((line) => {
+        if (typeof line !== 'string' || !line.includes('[Image ')) return line;
+        return line.replace(/\[Image (\d+)\]/g, (_m, num) => {
+          return paint('warn', bold(`[Image ${num}]`));
+        });
+      });
+    }
+
     if (this.editor.isEmpty && !this.completion) {
-      const idle = fitHints([`try "${this.example}"`, '/ commands', '@ files'], Math.max(8, inner), 'ask anything');
+      const idle = fitHints([`try "${this.example}"`, '/ commands', '@ files', '^V image'], Math.max(8, inner), 'ask anything');
       body = [dim(this.busy ? 'type to queue a message…' : idle)];
     }
 

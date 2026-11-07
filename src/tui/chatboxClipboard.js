@@ -1,7 +1,8 @@
 // Chatbox Clipboard Manager: surgical operations for copy, paste, and CRLF normalization.
 // Supports native terminal mouse selection, readline kill/yank, Alt+C/Alt+W/Alt+V, and /copy /paste commands.
 import { readClipboardSync, writeClipboardSync, emitOsc52Copy } from './clipboardSync.js';
-import { readClipboardImageSync, formatByteSize } from './clipboardImage.js';
+import { readClipboardImageSync, formatByteSize, loadLocalImageAttachment, extractPastedFilePath, isLocalImageFile } from './clipboardImage.js';
+export { loadLocalImageAttachment, extractPastedFilePath, isLocalImageFile };
 /**
  * Clean up text copied or pasted: normalize Windows CRLF and classic Mac CR to LF,
  * remove null bytes and non-printable control characters while preserving valid newlines and tabs.
@@ -43,37 +44,99 @@ export function copyChatboxInput(prompt) {
 }
 /**
  * Paste clipboard content into the chatbox prompt editor.
- * Seamlessly supports both text and screenshot images from system clipboard.
+ * Seamlessly supports both text and screenshot images from system clipboard,
+ * as well as drag-and-dropped local image file paths and empty bracketed pastes.
  */
 export function pasteIntoChatbox(prompt, fallbackText) {
-    const raw = fallbackText ?? readClipboardSync();
-    const text = normalizeClipboardText(raw);
-    if (text) {
-        prompt.editor.insert(text);
-        if (typeof prompt.refreshCompletion === 'function') {
-            prompt.refreshCompletion();
+    const clean = normalizeClipboardText(fallbackText);
+    // 1. If fallbackText was provided (e.g. drag & drop or file paste), check if it's a local image file
+    if (clean) {
+        const filePath = extractPastedFilePath(clean);
+        const localImg = loadLocalImageAttachment(filePath);
+        if (localImg) {
+            if (!Array.isArray(prompt.pendingAttachments)) {
+                prompt.pendingAttachments = [];
+            }
+            prompt.pendingAttachments.push(localImg);
+            const index = prompt.pendingAttachments.length;
+            const tag = `[Image ${index}] `;
+            prompt.editor.insert(tag);
+            if (typeof prompt.refreshCompletion === 'function') {
+                prompt.refreshCompletion();
+            }
+            prompt.notice = `attached image ${index} (${formatByteSize(localImg.size)})`;
+            prompt.scheduleDraw();
+            return { success: true, notice: prompt.notice, text: tag, isImage: true };
         }
-        prompt.notice = 'pasted from clipboard';
-        prompt.scheduleDraw();
-        return { success: true, notice: prompt.notice, text, isImage: false };
     }
-    // If text is empty and no explicit text fallback was provided, probe for clipboard screenshot/image
-    if (!fallbackText) {
+    // 2. If fallbackText was empty (empty bracketed paste from Cmd+V in terminal when an image is copied)
+    // OR no fallbackText was passed (user pressed Ctrl+V, Alt+V, or typed /paste):
+    // Probe system clipboard for screenshot / image FIRST!
+    if (!clean) {
         const img = readClipboardImageSync();
         if (img) {
             if (!Array.isArray(prompt.pendingAttachments)) {
                 prompt.pendingAttachments = [];
             }
             prompt.pendingAttachments.push(img);
-            const tag = `[Image: ${img.name}] `;
+            const index = prompt.pendingAttachments.length;
+            const tag = `[Image ${index}] `;
             prompt.editor.insert(tag);
             if (typeof prompt.refreshCompletion === 'function') {
                 prompt.refreshCompletion();
             }
-            prompt.notice = `attached clipboard screenshot (${formatByteSize(img.size)})`;
+            prompt.notice = `attached clipboard image ${index} (${formatByteSize(img.size)})`;
             prompt.scheduleDraw();
             return { success: true, notice: prompt.notice, text: tag, isImage: true };
         }
+    }
+    // 3. If fallbackText had non-image text: insert it into the editor
+    if (clean) {
+        prompt.editor.insert(clean);
+        if (typeof prompt.refreshCompletion === 'function') {
+            prompt.refreshCompletion();
+        }
+        prompt.notice = 'pasted from clipboard';
+        prompt.scheduleDraw();
+        return { success: true, notice: prompt.notice, text: clean, isImage: false };
+    }
+    // 4. No fallbackText provided and no clipboard image: read text from clipboard
+    const clipText = normalizeClipboardText(readClipboardSync());
+    if (clipText) {
+        const filePath = extractPastedFilePath(clipText);
+        const localImg = loadLocalImageAttachment(filePath);
+        if (localImg) {
+            if (!Array.isArray(prompt.pendingAttachments)) {
+                prompt.pendingAttachments = [];
+            }
+            prompt.pendingAttachments.push(localImg);
+            const index = prompt.pendingAttachments.length;
+            const tag = `[Image ${index}] `;
+            prompt.editor.insert(tag);
+            if (typeof prompt.refreshCompletion === 'function') {
+                prompt.refreshCompletion();
+            }
+            prompt.notice = `attached image ${index} (${formatByteSize(localImg.size)})`;
+            prompt.scheduleDraw();
+            return { success: true, notice: prompt.notice, text: tag, isImage: true };
+        }
+        prompt.editor.insert(clipText);
+        if (typeof prompt.refreshCompletion === 'function') {
+            prompt.refreshCompletion();
+        }
+        prompt.notice = 'pasted from clipboard';
+        prompt.scheduleDraw();
+        return { success: true, notice: prompt.notice, text: clipText, isImage: false };
+    }
+    // 5. Fallback to editor killRing
+    if (prompt.editor.killRing) {
+        prompt.editor.insert(prompt.editor.killRing);
+        if (typeof prompt.refreshCompletion === 'function') {
+            prompt.refreshCompletion();
+        }
+        prompt.notice = 'yanked from kill ring';
+        prompt.scheduleDraw();
+        return { success: true, notice: prompt.notice, text: prompt.editor.killRing, isImage: false };
     }
     prompt.notice = 'clipboard is empty';
     prompt.scheduleDraw();

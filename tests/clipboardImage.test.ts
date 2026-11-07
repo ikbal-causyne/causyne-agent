@@ -8,7 +8,9 @@ import {
   formatByteSize,
   persistImageBuffer,
   loadLocalImageAttachment,
-  readClipboardImageSync
+  readClipboardImageSync,
+  extractPastedFilePath,
+  isLocalImageFile
 } from '../src/tui/clipboardImage.js';
 import { pasteIntoChatbox } from '../src/tui/chatboxClipboard.js';
 
@@ -122,5 +124,53 @@ describe('Clipboard Image Reader & Attachment Capabilities', () => {
     assert.equal(consumed.length, 1);
     assert.equal(consumed[0]?.name, 'screenshot_test.png');
     assert.equal(prompt.pendingAttachments.length, 0, 'Queue must be drained upon consumption');
+  });
+
+  test('extractPastedFilePath and isLocalImageFile handle quotes, URLs, and image validation', () => {
+    assert.equal(extractPastedFilePath('"foo/bar.png"'), 'foo/bar.png');
+    assert.equal(extractPastedFilePath("'foo/bar.png'"), 'foo/bar.png');
+    assert.equal(extractPastedFilePath('foo/my\\ image.png'), 'foo/my image.png');
+
+    const tmpImg = path.join(os.tmpdir(), `causyne_test_ext_${Date.now()}.png`);
+    fs.writeFileSync(tmpImg, pngHeader);
+
+    try {
+      assert.equal(isLocalImageFile(tmpImg), true);
+      assert.equal(isLocalImageFile(`"${tmpImg}"`), true);
+      assert.equal(isLocalImageFile('non_existent.png'), false);
+
+      let text = '';
+      const promptObj = {
+        editor: {
+          lines: [['']],
+          line: 0,
+          col: 0,
+          isEmpty: true,
+          getText: () => text,
+          setText: (t: string) => { text = t; },
+          insert: (t: string) => { text += t; },
+          clear: () => { text = ''; }
+        },
+        notice: '',
+        scheduleDraw: () => {},
+        refreshCompletion: () => {},
+        pendingAttachments: []
+      };
+
+      const dropRes = pasteIntoChatbox(promptObj, tmpImg);
+      assert.equal(dropRes.success, true);
+      assert.equal(dropRes.isImage, true);
+      assert.equal(text, '[Image 1] ');
+      assert.equal(promptObj.pendingAttachments.length, 1);
+
+      // Second paste numbers sequentially as [Image 2]
+      const dropRes2 = pasteIntoChatbox(promptObj, tmpImg);
+      assert.equal(dropRes2.success, true);
+      assert.equal(dropRes2.isImage, true);
+      assert.equal(text, '[Image 1] [Image 2] ');
+      assert.equal(promptObj.pendingAttachments.length, 2);
+    } finally {
+      try { fs.unlinkSync(tmpImg); } catch { /* ignore */ }
+    }
   });
 });

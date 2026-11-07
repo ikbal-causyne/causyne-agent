@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
 
 export interface ClipboardImageAttachment {
@@ -101,24 +102,36 @@ export function persistImageBuffer(
 
 /**
  * Read screenshot or image from macOS clipboard using built-in osascript.
+ * Supports both PNG and JPEG image data placed on clipboard by macOS, browsers, and terminals.
  */
 function readDarwinClipboardImageSync(): Buffer | null {
-  const tempFile = path.join(os.tmpdir(), `causyne_clip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`);
-  // Script uses standard AppleScript POSIX file API with proper error handling and file close guard
+  const tempFile = path.join('/tmp', `causyne_clip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`);
+  // Script uses standard AppleScript POSIX file API with safe error handling and file descriptor close guard
   const script = [
-    `set targetFile to POSIX file "${tempFile}"`,
     'try',
-    '  set imageData to (the clipboard as «class PNGf»)',
-    '  set fileRef to open for access targetFile with write permission',
+    '  set imageData to (the clipboard as "PNGf")',
+    `  set fileRef to open for access POSIX file "${tempFile}" with write permission`,
     '  set eof fileRef to 0',
     '  write imageData to fileRef',
     '  close access fileRef',
     '  return "ok"',
     'on error',
     '  try',
-    '    close access targetFile',
+    `    close access (POSIX file "${tempFile}")`,
     '  end try',
-    '  return ""',
+    '  try',
+    '    set imageData to (the clipboard as JPEG picture)',
+    `    set fileRef to open for access POSIX file "${tempFile}" with write permission`,
+    '    set eof fileRef to 0',
+    '    write imageData to fileRef',
+    '    close access fileRef',
+    '    return "ok"',
+    '  on error',
+    '    try',
+    `      close access (POSIX file "${tempFile}")`,
+    '    end try',
+    '    return ""',
+    '  end try',
     'end try'
   ].join('\n');
 
@@ -229,11 +242,58 @@ export function readClipboardImageSync(): ClipboardImageAttachment | null {
 }
 
 /**
+ * Clean up and extract a valid local file path from pasted text or drag-and-drop strings.
+ * Strips quotes, file:// URIs, and backslash escape sequences.
+ */
+export function extractPastedFilePath(input: string): string {
+  let raw = String(input ?? '').trim();
+  // Strip surrounding quotes
+  raw = raw.replace(/^['"]+|['"]+$/g, '');
+  // Handle file:// URI
+  if (raw.startsWith('file://')) {
+    try {
+      raw = fileURLToPath(raw);
+    } catch {
+      // ignore
+    }
+  }
+  // Unescape backslash-escaped spaces/characters on Unix
+  if (process.platform !== 'win32') {
+    raw = raw.replace(/\\(.)/g, '$1');
+  }
+  return raw;
+}
+
+const KNOWN_IMAGE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.tif'
+]);
+
+/**
+ * Check if a file path corresponds to an existing local image file.
+ */
+export function isLocalImageFile(rawPath: string): boolean {
+  try {
+    const cleaned = extractPastedFilePath(rawPath);
+    if (!cleaned) return false;
+    const resolved = resolveUserPath(cleaned);
+    const ext = path.extname(resolved).toLowerCase();
+    if (!KNOWN_IMAGE_EXTENSIONS.has(ext)) return false;
+    if (!fs.existsSync(resolved)) return false;
+    const stat = fs.statSync(resolved);
+    return stat.isFile() && stat.size > 0 && stat.size <= 25 * 1024 * 1024;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Load a local image file as an attachment (e.g. from /image or /attach command).
  */
 export function loadLocalImageAttachment(rawPath: string): ClipboardImageAttachment | null {
   try {
-    const resolved = resolveUserPath(rawPath);
+    const cleaned = extractPastedFilePath(rawPath);
+    if (!cleaned) return null;
+    const resolved = resolveUserPath(cleaned);
     if (!fs.existsSync(resolved)) return null;
     const stat = fs.statSync(resolved);
     if (!stat.isFile() || stat.size > 25 * 1024 * 1024) return null; // 25 MB ceiling
