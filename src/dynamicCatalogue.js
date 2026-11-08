@@ -80,6 +80,8 @@ export function getCuratedModels(provider) {
     const norm = normalizeProviderKey(provider);
     if (norm === 'antigravity')
         return Object.keys(BASELINE_ANTIGRAVITY_MODELS);
+    if (norm === 'openrouter')
+        return ['openrouter/free'];
     if (norm === 'pi')
         return [...(MODEL_CATALOGUE['Pi (Local Peer)'] || ['default'])];
     const peer = peerIdFromProviderKey(norm);
@@ -1009,41 +1011,10 @@ export async function fetchLiveModels(provider, config = {}) {
             }
         }
         if (norm === 'openrouter') {
-            const host = (baseUrl || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
-            const headers = {
-                'HTTP-Referer': 'https://causyne.com',
-                'X-Title': 'Causyne Agent'
-            };
-            if (apiKey)
-                headers['Authorization'] = `Bearer ${apiKey}`;
-            const res = await fetch(`${host}/models`, {
-                headers,
-                signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-            });
-            if (!res.ok)
-                return ['openrouter/free'];
-            const data = (await res.json());
-            if (Array.isArray(data.data)) {
-                const freeModels = data.data
-                    .filter((m) => {
-                    if (!m.id)
-                        return false;
-                    if (m.id === 'openrouter/free')
-                        return true;
-                    if (m.id.endsWith(':free'))
-                        return true;
-                    const promptZero = m.pricing?.prompt === '0' || m.pricing?.prompt === 0;
-                    const complZero = m.pricing?.completion === '0' || m.pricing?.completion === 0;
-                    return promptZero && complZero;
-                })
-                    .map((m) => m.id || '')
-                    .filter(Boolean)
-                    .sort();
-                if (!freeModels.includes('openrouter/free')) {
-                    freeModels.unshift('openrouter/free');
-                }
-                return freeModels;
-            }
+            // OpenRouter automatically routes free inference server-side via openrouter/free.
+            // Auto-detection of transient individual :free endpoints is disabled specifically
+            // for OpenRouter to prevent routing failures and privacy mismatches, while
+            // keeping ACP and local peer dynamic auto-detection fully active.
             return ['openrouter/free'];
         }
         if (norm === 'openai-compatible') {
@@ -1106,6 +1077,9 @@ function resolveEffectiveApiKey(norm, config = {}) {
  */
 export async function resolveAvailableModels(provider, config = {}, forceRefresh = false) {
     const norm = normalizeProviderKey(provider);
+    if (norm === 'openrouter') {
+        return { models: ['openrouter/free'], source: 'catalogue' };
+    }
     const curated = getCuratedModels(norm);
     const localAgent = isLocalOrAcpProvider(norm);
     const effectiveKey = resolveEffectiveApiKey(norm, config);

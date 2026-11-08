@@ -449,10 +449,30 @@ export function disconnectOpenRouter(store = { loadConfig, saveConfig }) {
     };
     delete providerKeys['openrouter'];
     currentConfig.providerKeys = providerKeys;
+    if (process.env.OPENROUTER_API_KEY) {
+        delete process.env.OPENROUTER_API_KEY;
+    }
     if (currentConfig.provider === 'openrouter') {
-        currentConfig.provider = 'deepseek';
-        currentConfig.model = 'deepseek-chat';
-        currentConfig.apiKey = providerKeys['deepseek'] || '';
+        if (providerKeys['deepseek']) {
+            currentConfig.provider = 'deepseek';
+            currentConfig.model = 'deepseek-chat';
+            currentConfig.apiKey = providerKeys['deepseek'];
+        }
+        else if (providerKeys['anthropic']) {
+            currentConfig.provider = 'anthropic';
+            currentConfig.model = 'claude-3-7-sonnet';
+            currentConfig.apiKey = providerKeys['anthropic'];
+        }
+        else if (providerKeys['openai']) {
+            currentConfig.provider = 'openai';
+            currentConfig.model = 'gpt-4o';
+            currentConfig.apiKey = providerKeys['openai'];
+        }
+        else {
+            currentConfig.provider = 'antigravity';
+            currentConfig.model = 'Gemini 3.8 Flash (Low)';
+            currentConfig.apiKey = '';
+        }
     }
     store.saveConfig(currentConfig);
     return currentConfig;

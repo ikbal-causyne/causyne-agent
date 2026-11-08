@@ -500,28 +500,9 @@ describe('OpenRouter Free — Dynamic Catalogue & Routing', () => {
     assert.equal(route.model, 'openrouter/free');
   });
 
-  test('fetchLiveModels for openrouter filters out paid models and includes free models', async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
-      return new Response(JSON.stringify({
-        data: [
-          { id: 'openrouter/free', pricing: { prompt: '0', completion: '0' } },
-          { id: 'meta-llama/llama-3.3-70b-instruct:free', pricing: { prompt: '0', completion: '0' } },
-          { id: 'openai/gpt-4o', pricing: { prompt: '0.000005', completion: '0.000015' } },
-          { id: 'anthropic/claude-3-opus', pricing: { prompt: '0.000015', completion: '0.000075' } }
-        ]
-      }), { status: 200 });
-    }) as any;
-
-    try {
-      const models = await fetchLiveModels('openrouter', { apiKey: 'test_k' });
-      assert.ok(models.includes('openrouter/free'), 'Must include openrouter/free');
-      assert.ok(models.includes('meta-llama/llama-3.3-70b-instruct:free'), 'Must include verified free model');
-      assert.ok(!models.includes('openai/gpt-4o'), 'Must filter out paid models');
-      assert.ok(!models.includes('anthropic/claude-3-opus'), 'Must filter out paid models');
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+  test('fetchLiveModels for openrouter strictly returns canonical openrouter/free router model without polling transient endpoints', async () => {
+    const models = await fetchLiveModels('openrouter', { apiKey: 'test_k' });
+    assert.deepEqual(models, ['openrouter/free']);
   });
 });
 
@@ -730,5 +711,76 @@ describe('OpenRouter Free — TUI Model Picker Integration & HTML Branding', () 
     assert.equal(storedConfig.provider, 'openrouter');
     assert.equal(storedConfig.model, 'openrouter/free');
     assert.equal(storedConfig.providerKeys?.openrouter, 'or-mock-vault-key-12345');
+  });
+
+  test('buildModelPickerItems: FREE tab strictly exposes openrouter/free and disconnect action when configured', () => {
+    // 1. Configured state: exactly 2 items in FREE tab (openrouter/free and disconnect)
+    const configuredConfig = {
+      provider: 'openrouter',
+      model: 'openrouter/free',
+      providerKeys: { openrouter: 'test-vault-key' }
+    };
+    const overview = {
+      activeProvider: 'openrouter',
+      activeModel: 'openrouter/free',
+      acp: [],
+      byok: [
+        {
+          id: 'openrouter',
+          label: 'OpenRouter Free',
+          isConfigured: true,
+          models: ['cohere/free', 'nvidia/free', 'openrouter/free'],
+          defaultModel: 'openrouter/free'
+        }
+      ]
+    };
+
+    const freeItems = buildModelPickerItems(configuredConfig, overview as any, { tab: 'free' });
+    // Must NOT contain arbitrary individual free models
+    assert.equal(freeItems.filter(i => i.value.type === 'free').length, 1);
+    assert.equal(freeItems[0].label, 'openrouter/free');
+    assert.ok(freeItems.some(i => i.value.action === 'disconnect'), 'Must include disconnect action');
+
+    // 2. Unconfigured state: strictly 1 item (openrouter/free)
+    const unconfiguredConfig = { provider: 'antigravity', model: 'Gemini 3.8 Flash (Low)' };
+    const unconfItems = buildModelPickerItems(unconfiguredConfig, overview as any, { tab: 'free' });
+    assert.equal(unconfItems.length, 1);
+    assert.equal(unconfItems[0].label, 'openrouter/free');
+    assert.ok(!unconfItems.some(i => i.value.action === 'disconnect'), 'Must not include disconnect action when not configured');
+  });
+
+  test('runInteractiveModelPicker: selecting Disconnect OpenRouter unlinks credentials and reverts model', async () => {
+    let storedConfig: Record<string, any> = {
+      provider: 'openrouter',
+      model: 'openrouter/free',
+      providerKeys: { openrouter: 'test-vault-key-xyz' }
+    };
+    const mockStore = {
+      loadConfig: () => ({ ...storedConfig }),
+      saveConfig: (c: any) => { storedConfig = { ...c }; }
+    };
+
+    let promptUpdatedWith: { provider?: string; model?: string } = {};
+    const mockPrompt = {
+      openLayer: (layer: any) => {
+        if (layer.constructor.name === 'ModelPickerLayer') {
+          // Select disconnect action
+          const item = layer.list.all.find((i: any) => i.value.action === 'disconnect');
+          assert.ok(item, 'Disconnect item must exist when configured');
+          setTimeout(() => layer.onPick(item), 1);
+        }
+      },
+      updateModel: (p: string, m: string) => {
+        promptUpdatedWith = { provider: p, model: m };
+      }
+    };
+
+    const result = await runInteractiveModelPicker(mockPrompt as any, mockStore);
+    assert.ok(result.includes('Disconnected OpenRouter'));
+    assert.equal(storedConfig.provider, 'antigravity');
+    assert.equal(storedConfig.model, 'Gemini 3.8 Flash (Low)');
+    assert.equal(storedConfig.providerKeys?.openrouter, undefined);
+    assert.equal(promptUpdatedWith.provider, 'antigravity');
+    assert.equal(promptUpdatedWith.model, 'Gemini 3.8 Flash (Low)');
   });
 });

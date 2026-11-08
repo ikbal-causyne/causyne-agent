@@ -531,7 +531,9 @@ export function saveOpenRouterKey(
 /**
  * Disconnect OpenRouter credentials from local vault.
  */
-export function disconnectOpenRouter(store: { loadConfig(): any; saveConfig(cfg: any): void } = { loadConfig, saveConfig }): Record<string, any> {
+export function disconnectOpenRouter(
+  store: { loadConfig(): any; saveConfig(cfg: any): void } = { loadConfig, saveConfig }
+): Record<string, any> {
   const currentConfig = store.loadConfig() || {};
   const providerKeys = {
     ...(currentConfig.providerKeys && typeof currentConfig.providerKeys === 'object' ? currentConfig.providerKeys : {})
@@ -540,10 +542,28 @@ export function disconnectOpenRouter(store: { loadConfig(): any; saveConfig(cfg:
   delete providerKeys['openrouter'];
   currentConfig.providerKeys = providerKeys;
 
+  if (process.env.OPENROUTER_API_KEY) {
+    delete process.env.OPENROUTER_API_KEY;
+  }
+
   if (currentConfig.provider === 'openrouter') {
-    currentConfig.provider = 'deepseek';
-    currentConfig.model = 'deepseek-chat';
-    currentConfig.apiKey = providerKeys['deepseek'] || '';
+    if (providerKeys['deepseek']) {
+      currentConfig.provider = 'deepseek';
+      currentConfig.model = 'deepseek-chat';
+      currentConfig.apiKey = providerKeys['deepseek'];
+    } else if (providerKeys['anthropic']) {
+      currentConfig.provider = 'anthropic';
+      currentConfig.model = 'claude-3-7-sonnet';
+      currentConfig.apiKey = providerKeys['anthropic'];
+    } else if (providerKeys['openai']) {
+      currentConfig.provider = 'openai';
+      currentConfig.model = 'gpt-4o';
+      currentConfig.apiKey = providerKeys['openai'];
+    } else {
+      currentConfig.provider = 'antigravity';
+      currentConfig.model = 'Gemini 3.8 Flash (Low)';
+      currentConfig.apiKey = '';
+    }
   }
 
   store.saveConfig(currentConfig);

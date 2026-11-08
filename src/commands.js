@@ -1633,8 +1633,31 @@ export const COMMANDS = [
       }
 
       if (sub === 'disconnect') {
-        disconnectOpenRouter();
-        return ok('OpenRouter account disconnected and API key removed from local vault.');
+        const updatedConfig = disconnectOpenRouter();
+        if (ctx.loop) {
+          ctx.loop.config = updatedConfig;
+          if (typeof ctx.loop.updateTierLimits === 'function') {
+            ctx.loop.updateTierLimits();
+          }
+        }
+        if (ctx.prompt) {
+          if (typeof ctx.prompt.updateModel === 'function') {
+            ctx.prompt.updateModel(
+              updatedConfig.provider || 'antigravity',
+              updatedConfig.model || 'Gemini 3.8 Flash (Low)'
+            );
+          } else if (ctx.prompt.renderer?.status) {
+            ctx.prompt.renderer.status.setSession({
+              provider: updatedConfig.provider || 'antigravity',
+              model: updatedConfig.model || 'Gemini 3.8 Flash (Low)'
+            });
+            if (typeof ctx.prompt.scheduleDraw === 'function') ctx.prompt.scheduleDraw();
+          }
+        }
+        return ok(
+          `OpenRouter account disconnected and API key removed from local vault.\n` +
+          `Active model reverted to ${updatedConfig.provider || 'antigravity'} / ${updatedConfig.model || 'Gemini 3.8 Flash (Low)'}.`
+        );
       }
 
       if (sub === 'privacy' || sub === 'data-collection') {

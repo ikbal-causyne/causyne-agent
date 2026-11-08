@@ -9,7 +9,7 @@ import { paint, bold, dim, GLYPHS } from './theme.js';
 // @ts-expect-error untyped local TUI selectList
 import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
-import { startLoopbackAuth, saveOpenRouterKey } from '../auth/openrouterAuth.js';
+import { startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter } from '../auth/openrouterAuth.js';
 import { getAvailableProvidersOverview, resolveAvailableProvidersOverview, resolveAvailableModels } from '../dynamicCatalogue.js';
 async function showConfiguringAnimation(providerLabel) {
     if (!process.stdout.isTTY)
@@ -172,36 +172,50 @@ export function buildModelPickerItems(config, overview, options = {}) {
     }
     // 3. Free Cloud Models (OpenRouter Free)
     if (tab === 'all' || tab === 'free') {
-        const openrouterPeer = overview.byok.find(p => p.id === 'openrouter');
         const isConfigured = Boolean((config.provider === 'openrouter' && config.apiKey) ||
             config.providerKeys?.openrouter ||
             process.env.OPENROUTER_API_KEY);
         const isCurrentProvider = activeProvider === 'openrouter';
-        const models = openrouterPeer?.models && openrouterPeer.models.length > 0
-            ? openrouterPeer.models
-            : ['openrouter/free'];
         const catTitle = isConfigured
             ? 'Free Cloud · OpenRouter (ready)'
             : 'Free Cloud · OpenRouter (connect account)';
-        for (const m of models) {
-            const isCurrent = isCurrentProvider && activeModel === m;
-            const desc = isCurrent
-                ? '● active (free)'
-                : (isConfigured ? 'free inference' : 'connect OpenRouter · free');
+        const isCurrent = isCurrentProvider && (activeModel === 'openrouter/free' || !activeModel);
+        const desc = isCurrent
+            ? '● active (free)'
+            : (isConfigured ? 'free inference' : 'connect OpenRouter · free');
+        // Canonical auto-routing free model (OpenRouter automatically routes free inference)
+        items.push({
+            id: 'openrouter/openrouter/free',
+            label: 'openrouter/free',
+            category: catTitle,
+            description: desc,
+            value: {
+                type: 'free',
+                providerId: 'openrouter',
+                modelId: 'openrouter/free',
+                providerLabel: 'OpenRouter Free',
+                installed: true,
+                isCurrent,
+                isConfigured,
+                envVar: 'OPENROUTER_API_KEY'
+            }
+        });
+        // Provide first-class in-place Disconnect / Unlink action when configured
+        if (isConfigured) {
             items.push({
-                id: `openrouter/${m}`,
-                label: m,
+                id: 'openrouter:disconnect',
+                label: 'Disconnect OpenRouter (unlink account)',
                 category: catTitle,
-                description: desc,
+                description: 'unlink & remove key',
                 value: {
-                    type: 'free',
+                    type: 'action',
                     providerId: 'openrouter',
-                    modelId: m,
+                    modelId: 'disconnect',
                     providerLabel: 'OpenRouter Free',
                     installed: true,
-                    isCurrent,
-                    isConfigured,
-                    envVar: 'OPENROUTER_API_KEY'
+                    isCurrent: false,
+                    isConfigured: true,
+                    action: 'disconnect'
                 }
             });
         }
@@ -457,7 +471,20 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         notifyPrompt(target.providerId, target.modelId);
         return `Now using ${target.providerLabel} / ${target.modelId}.`;
     }
-    // Case 2: OpenRouter Free Models with instant 1-Enter OAuth PKCE flow
+    // Case 2: Disconnect / Unlink action (e.g. Disconnect OpenRouter)
+    if (target.action === 'disconnect' || target.modelId === 'disconnect') {
+        const updatedConfig = disconnectOpenRouter(store);
+        if (options.loop) {
+            options.loop.config = updatedConfig;
+            if (typeof options.loop.updateTierLimits === 'function') {
+                options.loop.updateTierLimits();
+            }
+        }
+        notifyPrompt(updatedConfig.provider || 'antigravity', updatedConfig.model || 'Gemini 3.8 Flash (Low)');
+        return (`✓ Disconnected OpenRouter. Account and API credentials have been unlinked from Causyne Agent.\n` +
+            `Active model reverted to ${updatedConfig.provider || 'antigravity'} / ${updatedConfig.model || 'Gemini 3.8 Flash (Low)'}.`);
+    }
+    // Case 3: OpenRouter Free Models with instant 1-Enter OAuth PKCE flow
     if (target.providerId === 'openrouter') {
         let existingKey = '';
         const providerKeys = config['providerKeys'] && typeof config['providerKeys'] === 'object' ? config['providerKeys'] : {};
