@@ -31,6 +31,8 @@ import {
   disconnectOpenRouter,
   getOpenRouterStatus,
   setOpenRouterDataCollection,
+  renderAuthPage,
+  getLogoBuffer,
   OpenRouterAuthError,
   OPENROUTER_AUTH_URL,
   OPENROUTER_FREE_MODEL
@@ -59,6 +61,11 @@ import {
 
 import { resolveRoute } from '../src/modelRouter.js';
 import { handleInput } from '../src/commands.js';
+import {
+  buildModelPickerItems,
+  ModelPickerLayer,
+  runInteractiveModelPicker
+} from '../src/tui/modelPicker.js';
 
 describe('OpenRouter Free — PKCE Cryptography & Authorization', () => {
   test('PKCE generates RFC 7636 compliant verifier, challenge and CSRF state', () => {
@@ -549,5 +556,179 @@ describe('OpenRouter Free — Slash Command /openrouter', () => {
     const res = await handleInput('/openrouter disconnect', {} as any);
     assert.equal(res.ok, true);
     assert.ok(res.output.includes('disconnected and API key removed'));
+  });
+});
+
+describe('OpenRouter Free — TUI Model Picker Integration & HTML Branding', () => {
+  test('renderAuthPage renders professional HTML with logo and CAUSYNE AGENT branding', () => {
+    const successHtml = renderAuthPage({
+      status: 'success',
+      model: OPENROUTER_FREE_MODEL
+    });
+
+    assert.ok(successHtml.includes('CAUSYNE <span style="color:#9df028;">AGENT</span>'));
+    assert.ok(successHtml.includes('Connected Successfully'));
+    assert.ok(successHtml.includes('OpenRouter Account Authorized'));
+    assert.ok(successHtml.includes('openrouter/free'));
+    assert.ok(successHtml.includes('Return to Terminal'));
+
+    const errorHtml = renderAuthPage({
+      status: 'error',
+      title: 'State Mismatch',
+      errorDetail: 'The CSRF token was invalid.'
+    });
+
+    assert.ok(errorHtml.includes('CAUSYNE <span style="color:#9df028;">AGENT</span>'));
+    assert.ok(errorHtml.includes('Authorization Failed'));
+    assert.ok(errorHtml.includes('Recommended Solutions'));
+    assert.ok(errorHtml.includes('causyne config set providerKeys.openrouter'));
+  });
+
+  test('loopback server serves /logo.png with valid PNG content', async () => {
+    let serverUrl = '';
+    const mockFetch = async () => new Response(JSON.stringify({ key: 'test_logo_key' }));
+    const loopbackPromise = startLoopbackAuth({
+      timeoutMs: 5000,
+      openBrowser: false,
+      fetchFn: mockFetch as any,
+      onUrlReady: (url) => { serverUrl = url; }
+    });
+
+    for (let i = 0; i < 50; i++) {
+      if (serverUrl) break;
+      await new Promise(r => setTimeout(r, 10));
+    }
+
+    const parsed = new URL(serverUrl);
+    const callbackUrl = parsed.searchParams.get('callback_url')!;
+    const state = parsed.searchParams.get('state')!;
+    const callbackParsed = new URL(callbackUrl);
+    const logoUrl = `http://127.0.0.1:${callbackParsed.port}/logo.png`;
+
+    const res = await fetch(logoUrl);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'image/png');
+    const buf = await res.arrayBuffer();
+    assert.ok(buf.byteLength > 1000, 'Logo buffer should be non-trivial PNG image');
+
+    // Complete loopback server cleanly
+    const [callbackRes, result] = await Promise.all([
+      fetch(`${callbackUrl}?code=test_code&state=${state}`),
+      loopbackPromise
+    ]);
+    assert.equal(callbackRes.status, 200);
+    assert.equal(result.apiKey, 'test_logo_key');
+  });
+
+  test('buildModelPickerItems: categorizes OpenRouter under dedicated FREE tab and excludes from BYOK', () => {
+    const config = { provider: 'antigravity', model: 'Gemini 3.8 Flash (Low)' };
+    const overview = {
+      activeProvider: 'antigravity',
+      activeModel: 'Gemini 3.8 Flash (Low)',
+      acp: [],
+      byok: [
+        {
+          id: 'anthropic',
+          label: 'Anthropic',
+          isConfigured: false,
+          isCurrent: false,
+          models: ['claude-3-7-sonnet'],
+          defaultModel: 'claude-3-7-sonnet'
+        },
+        {
+          id: 'openrouter',
+          label: 'OpenRouter Free',
+          isConfigured: false,
+          isCurrent: false,
+          models: ['openrouter/free'],
+          defaultModel: 'openrouter/free'
+        }
+      ]
+    };
+
+    // Tab byok must NOT include OpenRouter
+    const byokItems = buildModelPickerItems(config, overview as any, { tab: 'byok' });
+    assert.ok(byokItems.some(i => i.value.providerId === 'anthropic'));
+    assert.ok(!byokItems.some(i => i.value.providerId === 'openrouter'));
+
+    // Tab free MUST include OpenRouter
+    const freeItems = buildModelPickerItems(config, overview as any, { tab: 'free' });
+    assert.ok(freeItems.some(i => i.value.providerId === 'openrouter' && i.label === 'openrouter/free'));
+    assert.ok(!freeItems.some(i => i.value.providerId === 'anthropic'));
+
+    // Tab all includes both cleanly
+    const allItems = buildModelPickerItems(config, overview as any, { tab: 'all' });
+    assert.ok(allItems.some(i => i.value.providerId === 'anthropic'));
+    assert.ok(allItems.some(i => i.value.providerId === 'openrouter'));
+  });
+
+  test('ModelPickerLayer: renders | ACP | BYOK | FREE | and cycles tabs seamlessly', () => {
+    const config = { provider: 'openrouter', model: 'openrouter/free' };
+    const overview = {
+      activeProvider: 'openrouter',
+      activeModel: 'openrouter/free',
+      acp: [],
+      byok: [
+        {
+          id: 'openrouter',
+          label: 'OpenRouter Free',
+          isConfigured: true,
+          isCurrent: true,
+          models: ['openrouter/free'],
+          defaultModel: 'openrouter/free'
+        }
+      ]
+    };
+
+    const layer = new ModelPickerLayer({
+      config,
+      overview: overview as any,
+      onPick: () => {}
+    });
+
+    // Initial tab defaults to 'free' because config.provider is 'openrouter'
+    assert.equal(layer.activeTab, 'free');
+    const rows = layer.body(80, 20);
+    assert.ok(rows[0].includes('ACP'));
+    assert.ok(rows[0].includes('BYOK'));
+    assert.ok(rows[0].includes('● FREE'));
+
+    // Cycle with tab: free -> acp
+    layer.key({ name: 'tab' });
+    assert.equal(layer.activeTab, 'acp');
+
+    // acp -> byok
+    layer.key({ name: 'tab' });
+    assert.equal(layer.activeTab, 'byok');
+
+    // byok -> free
+    layer.key({ name: 'tab' });
+    assert.equal(layer.activeTab, 'free');
+  });
+
+  test('runInteractiveModelPicker: accepts pasted API key for OpenRouter Free', async () => {
+    let storedConfig: Record<string, any> = { provider: 'antigravity', model: 'Gemini 3.8 Flash (Low)' };
+    const mockStore = {
+      loadConfig: () => ({ ...storedConfig }),
+      saveConfig: (c: any) => { storedConfig = { ...c }; }
+    };
+
+    const mockPrompt = {
+      openLayer: (layer: any) => {
+        if (layer.constructor.name === 'ModelPickerLayer') {
+          const item = layer.list.all.find((i: any) => i.value.providerId === 'openrouter');
+          assert.ok(item, 'OpenRouter item must be present');
+          setTimeout(() => layer.onPick(item), 1);
+        } else if (layer.constructor.name === 'InputLayer') {
+          setTimeout(() => layer.onSubmit('or-mock-vault-key-12345'), 1);
+        }
+      }
+    };
+
+    const result = await runInteractiveModelPicker(mockPrompt as any, mockStore);
+    assert.ok(result.includes('Saved API key. Now using OpenRouter Free'));
+    assert.equal(storedConfig.provider, 'openrouter');
+    assert.equal(storedConfig.model, 'openrouter/free');
+    assert.equal(storedConfig.providerKeys?.openrouter, 'or-mock-vault-key-12345');
   });
 });

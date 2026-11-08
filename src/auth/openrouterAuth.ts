@@ -8,7 +8,9 @@
 
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { URL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, URL } from 'node:url';
 import { loadConfig, saveConfig } from '../config.js';
 import { openWithNativeOS } from '../tools/desktopOpen.js';
 
@@ -127,6 +129,195 @@ export async function exchangeCodeForApiKey(
 }
 
 /**
+ * Retrieve the Causyne Agent emblem logo as a binary buffer if available.
+ */
+export function getLogoBuffer(): Buffer | null {
+  try {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
+    const assetPath = path.resolve(currentDir, '../assets/logo.png');
+    if (fs.existsSync(assetPath)) {
+      return fs.readFileSync(assetPath);
+    }
+  } catch {
+    // Ignore read errors
+  }
+  return null;
+}
+
+/**
+ * Retrieve the Causyne Agent emblem logo encoded as Base64.
+ */
+export function getLogoBase64(): string {
+  const buf = getLogoBuffer();
+  return buf ? buf.toString('base64') : '';
+}
+
+export interface RenderAuthPageOptions {
+  status: 'success' | 'error';
+  title?: string | undefined;
+  message?: string | undefined;
+  errorDetail?: string | undefined;
+  model?: string | undefined;
+}
+
+/**
+ * Render a professional branded HTML response page for OpenRouter OAuth callbacks.
+ */
+export function renderAuthPage(options: RenderAuthPageOptions): string {
+  const isSuccess = options.status === 'success';
+  const base64Logo = getLogoBase64();
+  const logoSrc = base64Logo ? `data:image/png;base64,${base64Logo}` : '/logo.png';
+
+  const badgeHtml = isSuccess
+    ? '<div style="display:inline-flex;align-items:center;gap:8px;' +
+      'background:rgba(46,160,67,0.15);border:1px solid #2ea043;color:#3fb950;' +
+      'padding:6px 18px;border-radius:24px;font-size:13px;font-weight:600;margin-bottom:20px;">' +
+      '✓ Connected Successfully</div>'
+    : '<div style="display:inline-flex;align-items:center;gap:8px;' +
+      'background:rgba(239,68,68,0.15);border:1px solid #ef4444;color:#f87171;' +
+      'padding:6px 18px;border-radius:24px;font-size:13px;font-weight:600;margin-bottom:20px;">' +
+      '✕ Authorization Failed</div>';
+
+  const title = options.title || (isSuccess ? 'OpenRouter Account Authorized' : 'Authorization Error');
+  const defaultMsg = isSuccess
+    ? 'Your OpenRouter account has been connected to Causyne Agent. You can now close this tab and return to your terminal.'
+    : 'The authorization flow could not be completed.';
+  const message = options.message || defaultMsg;
+
+  const contentBox = isSuccess
+    ? '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);' +
+      'border-radius:10px;padding:14px 18px;margin-bottom:28px;text-align:left;font-family:monospace;' +
+      'font-size:13px;color:#cbd5e1;">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:8px;">' +
+      '<span style="color:#64748b;">Active Model</span>' +
+      `<span style="color:#9df028;font-weight:600;">${options.model || OPENROUTER_FREE_MODEL}</span>` +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;">' +
+      '<span style="color:#64748b;">Privacy Guard</span>' +
+      '<span style="color:#38bdf8;">provider.data_collection = &quot;deny&quot;</span>' +
+      '</div>' +
+      '</div>'
+    : '<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);' +
+      'border-radius:10px;padding:14px;color:#fca5a5;font-size:13px;line-height:1.5;margin-bottom:20px;' +
+      `text-align:left;">${options.errorDetail || 'An unexpected error occurred during authorization.'}</div>` +
+      '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);' +
+      'border-radius:10px;padding:16px;margin-bottom:24px;text-align:left;">' +
+      '<div style="color:#ffffff;font-size:13px;font-weight:600;margin-bottom:8px;">Recommended Solutions:</div>' +
+      '<ol style="color:#94a3b8;font-size:13px;line-height:1.6;margin:0;padding-left:18px;">' +
+      '<li>Return to your terminal and select OpenRouter in the FREE tab again to retry.</li>' +
+      '<li>Or create a free API key at <a href="https://openrouter.ai/keys" target="_blank" ' +
+      'style="color:#38bdf8;text-decoration:none;">openrouter.ai/keys</a> and configure it via:</li>' +
+      '</ol>' +
+      '<pre style="background:#05070a;color:#9df028;padding:10px 14px;border-radius:6px;font-family:monospace;' +
+      'font-size:12px;margin-top:10px;overflow-x:auto;">causyne config set providerKeys.openrouter &lt;your-key&gt;</pre>' +
+      '</div>';
+
+  const actionButton = isSuccess
+    ? '<button onclick="window.close()" style="background:#9df028;color:#080b11;border:none;' +
+      'padding:12px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;">' +
+      'Return to Terminal</button>' +
+      '<div style="font-size:12px;color:#64748b;margin-top:14px;">You can safely close this browser window.</div>'
+    : '<button onclick="window.close()" style="background:#334155;color:#f8fafc;border:none;' +
+      'padding:10px 24px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">' +
+      'Close Window</button>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Causyne Agent Connected Successfully</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #080b11 radial-gradient(circle at 50% 20%, #152238 0%, #080b11 75%);
+      color: #c9d1d9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .container {
+      max-width: 540px;
+      width: 100%;
+      text-align: center;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .logo {
+      width: 52px;
+      height: 52px;
+      object-fit: contain;
+      border-radius: 12px;
+      filter: drop-shadow(0 4px 16px rgba(157, 240, 40, 0.3));
+    }
+    .brand-title {
+      font-family: "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: #ffffff;
+      line-height: 1.2;
+    }
+    .brand-subtitle {
+      font-size: 11px;
+      color: #8a99a8;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-top: 2px;
+      text-align: left;
+    }
+    .card {
+      background: rgba(18, 25, 38, 0.95);
+      border: 1px solid rgba(157, 240, 40, 0.22);
+      border-radius: 16px;
+      padding: 36px 32px;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(16px);
+    }
+    h1 {
+      color: #ffffff;
+      font-size: 21px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    p {
+      color: #94a3b8;
+      font-size: 14px;
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <img src="${logoSrc}" alt="Causyne Agent Logo" class="logo" />
+      <div>
+        <div class="brand-title">CAUSYNE <span style="color:#9df028;">AGENT</span></div>
+        <div class="brand-subtitle">Autonomous AI Harness</div>
+      </div>
+    </div>
+    <div class="card">
+      ${badgeHtml}
+      <h1>${title}</h1>
+      <p>${message}</p>
+      ${contentBox}
+      ${actionButton}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+/**
  * Start loopback HTTP server on 127.0.0.1 to receive the OAuth redirect code.
  */
 export async function startLoopbackAuth(options: {
@@ -160,6 +351,23 @@ export async function startLoopbackAuth(options: {
     const server = http.createServer(async (req, res) => {
       try {
         const reqUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
+
+        if (reqUrl.pathname === '/logo.png') {
+          const logoBuf = getLogoBuffer();
+          if (logoBuf) {
+            res.writeHead(200, {
+              'Content-Type': 'image/png',
+              'Content-Length': logoBuf.length,
+              'Cache-Control': 'public, max-age=3600'
+            });
+            res.end(logoBuf);
+            return;
+          }
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Not Found');
+          return;
+        }
+
         if (reqUrl.pathname !== '/callback') {
           res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
           res.end('Not Found');
@@ -172,10 +380,11 @@ export async function startLoopbackAuth(options: {
         if (!state || state !== pkce.state) {
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(
-            '<html><body style="font-family:sans-serif;padding:32px;background:#111;color:#eee;">' +
-            '<h2 style="color:#ef4444;">Authorization Error: State Mismatch</h2>' +
-            '<p>The received CSRF verification state did not match the session. Please try again.</p>' +
-            '</body></html>'
+            renderAuthPage({
+              status: 'error',
+              title: 'Authorization Error: State Mismatch',
+              errorDetail: 'The received CSRF verification state did not match the active session. This can happen if the authorization request timed out or was tampered with.'
+            })
           );
           if (!resolved) {
             resolved = true;
@@ -188,10 +397,11 @@ export async function startLoopbackAuth(options: {
         if (!code) {
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(
-            '<html><body style="font-family:sans-serif;padding:32px;background:#111;color:#eee;">' +
-            '<h2 style="color:#ef4444;">Authorization Failed</h2>' +
-            '<p>No authorization code was returned by OpenRouter.</p>' +
-            '</body></html>'
+            renderAuthPage({
+              status: 'error',
+              title: 'Authorization Failed',
+              errorDetail: 'No authorization code was returned by OpenRouter.'
+            })
           );
           if (!resolved) {
             resolved = true;
@@ -204,10 +414,10 @@ export async function startLoopbackAuth(options: {
         // Send friendly HTML response to user's browser
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(
-          '<html><body style="font-family:sans-serif;padding:40px;background:#0d1117;color:#c9d1d9;text-align:center;">' +
-          '<h2 style="color:#2ea043;margin-bottom:12px;">Causyne Agent Connected Successfully</h2>' +
-          '<p style="font-size:16px;color:#8b949e;">Your OpenRouter account has been authorized. You can close this window and return to your terminal.</p>' +
-          '</body></html>'
+          renderAuthPage({
+            status: 'success',
+            model: OPENROUTER_FREE_MODEL
+          })
         );
 
         // Perform token exchange
@@ -215,7 +425,7 @@ export async function startLoopbackAuth(options: {
 
         if (!resolved) {
           resolved = true;
-          cleanup();
+          setTimeout(cleanup, 1200);
           resolve({ apiKey });
         }
       } catch (err: any) {

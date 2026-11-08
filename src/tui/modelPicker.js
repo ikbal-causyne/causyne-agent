@@ -9,6 +9,7 @@ import { paint, bold, dim, GLYPHS } from './theme.js';
 // @ts-expect-error untyped local TUI selectList
 import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
+import { startLoopbackAuth, saveOpenRouterKey } from '../auth/openrouterAuth.js';
 import { getAvailableProvidersOverview, resolveAvailableProvidersOverview, resolveAvailableModels } from '../dynamicCatalogue.js';
 async function showConfiguringAnimation(providerLabel) {
     if (!process.stdout.isTTY)
@@ -130,27 +131,26 @@ export function buildModelPickerItems(config, overview, options = {}) {
             }
         }
     }
-    // 2. BYOK Providers (Cloud & Local APIs)
+    // 2. BYOK Providers (Cloud & Local APIs) — excluding OpenRouter in BYOK tab
     if (tab === 'all' || tab === 'byok') {
         for (const p of overview.byok) {
+            if (p.id === 'openrouter') {
+                continue;
+            }
             const isCurrentProvider = activeProvider === p.id || (p.id === 'qwen' && activeProvider === 'dashscope-byok');
             const catTitle = p.id === 'ollama'
                 ? `BYOK · ${p.label}`
-                : p.id === 'openrouter'
-                    ? `Free Cloud · ${p.label} ${p.isConfigured ? '(ready)' : '(connect account)'}`
-                    : `BYOK · ${p.label} ${p.isConfigured ? '(configured)' : '(needs key)'}`;
+                : `BYOK · ${p.label} ${p.isConfigured ? '(configured)' : '(needs key)'}`;
             const models = Array.isArray(p.models) && p.models.length > 0 ? p.models : [p.defaultModel];
             for (const m of models) {
                 const isCurrent = isCurrentProvider && activeModel === m;
                 const desc = isCurrent
-                    ? (p.id === 'openrouter' ? '● active (free)' : '● active')
+                    ? '● active'
                     : p.id === 'ollama'
                         ? 'local'
-                        : p.id === 'openrouter'
-                            ? (p.isConfigured ? 'free inference' : 'connect OpenRouter')
-                            : p.isConfigured
-                                ? 'configured'
-                                : 'needs API key';
+                        : p.isConfigured
+                            ? 'configured'
+                            : 'needs API key';
                 items.push({
                     id: `${p.id}/${m}`,
                     label: m,
@@ -170,10 +170,46 @@ export function buildModelPickerItems(config, overview, options = {}) {
             }
         }
     }
+    // 3. Free Cloud Models (OpenRouter Free)
+    if (tab === 'all' || tab === 'free') {
+        const openrouterPeer = overview.byok.find(p => p.id === 'openrouter');
+        const isConfigured = Boolean((config.provider === 'openrouter' && config.apiKey) ||
+            config.providerKeys?.openrouter ||
+            process.env.OPENROUTER_API_KEY);
+        const isCurrentProvider = activeProvider === 'openrouter';
+        const models = openrouterPeer?.models && openrouterPeer.models.length > 0
+            ? openrouterPeer.models
+            : ['openrouter/free'];
+        const catTitle = isConfigured
+            ? 'Free Cloud · OpenRouter (ready)'
+            : 'Free Cloud · OpenRouter (connect account)';
+        for (const m of models) {
+            const isCurrent = isCurrentProvider && activeModel === m;
+            const desc = isCurrent
+                ? '● active (free)'
+                : (isConfigured ? 'free inference' : 'connect OpenRouter · free');
+            items.push({
+                id: `openrouter/${m}`,
+                label: m,
+                category: catTitle,
+                description: desc,
+                value: {
+                    type: 'free',
+                    providerId: 'openrouter',
+                    modelId: m,
+                    providerLabel: 'OpenRouter Free',
+                    installed: true,
+                    isCurrent,
+                    isConfigured,
+                    envVar: 'OPENROUTER_API_KEY'
+                }
+            });
+        }
+    }
     return items;
 }
 /**
- * Sovereign Model Picker Layer with dual-tab support (| ACP | BYOK |)
+ * Sovereign Model Picker Layer with tri-tab support (| ACP | BYOK | FREE |)
  * and interactive 10-model pagination.
  */
 export class ModelPickerLayer extends SelectLayer {
@@ -185,17 +221,19 @@ export class ModelPickerLayer extends SelectLayer {
     allItems;
     constructor(options) {
         const activeProvider = (options.config.provider || '').toLowerCase().trim();
-        const initialTab = activeProvider === 'antigravity' ||
-            activeProvider === 'agy' ||
-            activeProvider === 'acp' ||
-            activeProvider.startsWith('acp/')
-            ? 'acp'
-            : 'byok';
+        const initialTab = activeProvider === 'openrouter'
+            ? 'free'
+            : (activeProvider === 'antigravity' ||
+                activeProvider === 'agy' ||
+                activeProvider === 'acp' ||
+                activeProvider.startsWith('acp/')
+                ? 'acp'
+                : 'byok');
         const expandedPeers = new Set();
         const allItems = buildModelPickerItems(options.config, options.overview, { tab: 'all', maxAcpPerPeer: Infinity });
         super({
             title: 'Select Model',
-            placeholder: 'type to filter (e.g. gemini, sonnet, opencode)…',
+            placeholder: 'type to filter (e.g. gemini, sonnet, openrouter)…',
             emptyText: 'No models matched your search in this tab',
             items: allItems,
             width: 78,
@@ -271,7 +309,8 @@ export class ModelPickerLayer extends SelectLayer {
     body(width, height) {
         const tabACP = this.activeTab === 'acp' ? paint('accent', bold('● ACP')) : dim('ACP');
         const tabBYOK = this.activeTab === 'byok' ? paint('accent', bold('● BYOK')) : dim('BYOK');
-        const tabBar = `  | ${tabACP} | ${tabBYOK} |   ${dim('(Tab / ← → switch tab)')}`;
+        const tabFREE = this.activeTab === 'free' ? paint('accent', bold('● FREE')) : dim('FREE');
+        const tabBar = `  | ${tabACP} | ${tabBYOK} | ${tabFREE} |   ${dim('(Tab / ← → switch tab)')}`;
         const separator = paint('rule', GLYPHS.hLine.repeat(Math.max(4, width)));
         const listHeight = Math.max(1, height - 2);
         const { rows } = this.list.render(width, listHeight);
@@ -283,27 +322,50 @@ export class ModelPickerLayer extends SelectLayer {
             return null;
         // 1. Tab switching via Tab, Left/Right arrows, or PgLeft/PgRight mappings
         if (event.name === 'tab') {
-            this.switchTab(this.activeTab === 'acp' ? 'byok' : 'acp');
+            if (this.activeTab === 'acp')
+                this.switchTab('byok');
+            else if (this.activeTab === 'byok')
+                this.switchTab('free');
+            else
+                this.switchTab('acp');
             return 'handled';
         }
-        if (event.name === 'left' && this.activeTab === 'byok') {
+        if (event.name === 'left') {
             if (!this.list.query || event.alt || event.ctrl || event.meta) {
-                this.switchTab('acp');
-                return 'handled';
+                if (this.activeTab === 'free') {
+                    this.switchTab('byok');
+                    return 'handled';
+                }
+                else if (this.activeTab === 'byok') {
+                    this.switchTab('acp');
+                    return 'handled';
+                }
             }
         }
-        if (event.name === 'right' && this.activeTab === 'acp') {
+        if (event.name === 'right') {
             if (!this.list.query || event.alt || event.ctrl || event.meta) {
-                this.switchTab('byok');
-                return 'handled';
+                if (this.activeTab === 'acp') {
+                    this.switchTab('byok');
+                    return 'handled';
+                }
+                else if (this.activeTab === 'byok') {
+                    this.switchTab('free');
+                    return 'handled';
+                }
             }
         }
         if (event.name === '[' || (event.name === 'pageup' && (event.shift || event.alt || event.ctrl))) {
-            this.switchTab('acp');
+            if (this.activeTab === 'free')
+                this.switchTab('byok');
+            else if (this.activeTab === 'byok')
+                this.switchTab('acp');
             return 'handled';
         }
         if (event.name === ']' || (event.name === 'pagedown' && (event.shift || event.alt || event.ctrl))) {
-            this.switchTab('byok');
+            if (this.activeTab === 'acp')
+                this.switchTab('byok');
+            else if (this.activeTab === 'byok')
+                this.switchTab('free');
             return 'handled';
         }
         // 2. Delegate to SelectList for navigation / query typing
@@ -395,7 +457,97 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         notifyPrompt(target.providerId, target.modelId);
         return `Now using ${target.providerLabel} / ${target.modelId}.`;
     }
-    // Case 2: BYOK Provider (Cloud or Local API)
+    // Case 2: OpenRouter Free Models with instant 1-Enter OAuth PKCE flow
+    if (target.providerId === 'openrouter') {
+        let existingKey = '';
+        const providerKeys = config['providerKeys'] && typeof config['providerKeys'] === 'object' ? config['providerKeys'] : {};
+        if (config['provider'] === 'openrouter' && typeof config['apiKey'] === 'string' && config['apiKey']) {
+            existingKey = config['apiKey'];
+        }
+        else if (providerKeys['openrouter']) {
+            existingKey = providerKeys['openrouter'];
+        }
+        else if (process.env.OPENROUTER_API_KEY) {
+            existingKey = process.env.OPENROUTER_API_KEY;
+        }
+        if (existingKey) {
+            config['provider'] = 'openrouter';
+            config['model'] = target.modelId;
+            config['apiKey'] = existingKey;
+            config['providerKeys'] = providerKeys;
+            config['providerKeys']['openrouter'] = existingKey;
+            store.saveConfig(config);
+            void resolveAvailableModels('openrouter', { ...config, apiKey: existingKey }, true).catch(() => { });
+            if (options.loop) {
+                options.loop.config = config;
+                if (typeof options.loop.updateTierLimits === 'function') {
+                    options.loop.updateTierLimits();
+                }
+            }
+            notifyPrompt('openrouter', target.modelId);
+            return `Now using OpenRouter Free / ${target.modelId}.`;
+        }
+        // Unconfigured OpenRouter: prompt where pressing Enter once immediately starts OAuth redirect
+        const entered = await new Promise((resolve) => {
+            const layer = new InputLayer({
+                title: 'Connect OpenRouter · Free Cloud Inference',
+                lines: [
+                    'Press [Enter] to open your browser and authorize with OpenRouter.',
+                    'Or paste an existing OpenRouter API key (Esc to cancel).'
+                ],
+                mask: false,
+                placeholder: 'Press Enter to authorize in browser, or paste API key',
+                onSubmit: resolve,
+                onCancel: () => resolve(null)
+            });
+            prompt.openLayer(layer);
+        });
+        if (entered === null) {
+            return 'Cancelled. OpenRouter connection was not completed. Model was not changed.';
+        }
+        const cleanInput = entered.trim();
+        if (!cleanInput) {
+            // User pressed Enter on empty placeholder: run OAuth PKCE loopback flow!
+            try {
+                if (process.stdout.isTTY) {
+                    process.stdout.write('\r  \x1b[36m●\x1b[0m Opening browser for OpenRouter OAuth authorization…\n');
+                    process.stdout.write('  \x1b[90mWaiting for authorization on 127.0.0.1 (timeout: 120s)…\x1b[0m\n');
+                }
+                const { apiKey } = await startLoopbackAuth({ timeoutMs: 120_000, openBrowser: true });
+                saveOpenRouterKey(apiKey, { setAsActive: true, store });
+                const updatedConfig = store.loadConfig();
+                if (options.loop) {
+                    options.loop.config = updatedConfig;
+                    if (typeof options.loop.updateTierLimits === 'function') {
+                        options.loop.updateTierLimits();
+                    }
+                }
+                notifyPrompt('openrouter', target.modelId);
+                return `✓ Connected to OpenRouter successfully! Now using OpenRouter Free / ${target.modelId}.`;
+            }
+            catch (err) {
+                return (`✕ OpenRouter authorization failed: ${err?.message || err}\n\n` +
+                    `Solutions:\n` +
+                    `1. Check that your browser can open local URLs (http://127.0.0.1).\n` +
+                    `2. For headless or SSH environments, create a free API key at:\n` +
+                    `   https://openrouter.ai/keys\n` +
+                    `   and run: /openrouter connect <your-api-key>`);
+            }
+        }
+        // User pasted an API key
+        await showConfiguringAnimation('OpenRouter');
+        saveOpenRouterKey(cleanInput, { setAsActive: true, store });
+        const updatedConfig = store.loadConfig();
+        if (options.loop) {
+            options.loop.config = updatedConfig;
+            if (typeof options.loop.updateTierLimits === 'function') {
+                options.loop.updateTierLimits();
+            }
+        }
+        notifyPrompt('openrouter', target.modelId);
+        return `✓ Saved API key. Now using OpenRouter Free / ${target.modelId}.`;
+    }
+    // Case 3: BYOK Provider (Cloud or Local API)
     let existingKey = '';
     const providerKeys = (config['providerKeys'] && typeof config['providerKeys'] === 'object') ? config['providerKeys'] : {};
     if (config['provider'] === target.providerId && typeof config['apiKey'] === 'string' && config['apiKey']) {
