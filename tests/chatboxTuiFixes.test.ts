@@ -190,4 +190,54 @@ describe('Chatbox TUI Fixes Verification', () => {
     assert.ok(output.includes('browser_act'), 'Must include tool name');
     assert.ok(output.includes('Unknown element ref e2'), 'Must include error message from msg.result.error');
   });
+
+  test('ChatPrompt.planRows: compacts plan to 1 line on cramped terminals (stageMax < 22) to protect chatbox vertical budget', () => {
+    const sink = createSink(80, 18);
+    const mockRenderer = {
+      latestPlan: [
+        { text: 'Step 1: Check requirements', status: 'completed' },
+        { text: 'Step 2: Implement tactile micro-vibration feedback', status: 'in_progress' },
+        { text: 'Step 3: Run unit tests', status: 'pending' },
+        { text: 'Step 4: Build artifact', status: 'pending' },
+        { text: 'Step 5: Sign deliverable', status: 'pending' }
+      ]
+    };
+    const prompt = new ChatPrompt({ out: sink as any, renderer: mockRenderer as any });
+    const rows = prompt.planRows(80);
+    // On 18-row terminal (stageMax < 22), planRows should return compact 2-line structure (1 text line + 1 blank line)
+    assert.equal(rows.length, 2, 'Must collapse 5-step plan to compact 2-line summary on cramped terminal');
+    assert.ok(rows[0]?.includes('plan'), 'Must include plan label');
+    assert.ok(rows[0]?.includes('1/5'), 'Must include completed count (1/5)');
+    assert.ok(rows[0]?.includes('tactile micro-vibration'), 'Must include active in-progress step');
+  });
+
+  test('ChatPrompt.drawLayer: budgets dialogHeight reserving room for status bar so dialog panels never exceed stage boundary', () => {
+    const sink = createSink(80, 16);
+    const prompt = new ChatPrompt({ out: sink as any });
+    prompt.active = true;
+
+    // Simulate an approval dialog requesting 20 lines on a 16-row terminal
+    const mockLayer = {
+      width: 60,
+      preferredHeight: () => 20,
+      cursor: null,
+      panelGeometry: null,
+      body: () => [
+        '┌── permission required ──┐',
+        '│ Allow dangerous tool?  │',
+        '│ Option 1: Allow once   │',
+        '│ Option 2: Reject       │',
+        '└─── esc to cancel ───────┘'
+      ]
+    };
+    prompt.layer = mockLayer as any;
+
+    let presentedRows: string[] = [];
+    prompt.present = (all: string[]) => { presentedRows = all; };
+    prompt.drawLayer(80);
+
+    // Dialog + status must not exceed terminal ceiling (16 rows)
+    assert.ok(presentedRows.length <= 16, `Presented rows (${presentedRows.length}) must fit within 16-row terminal`);
+    assert.ok(presentedRows.some(r => r.includes('permission required')), 'Must contain dialog header without being severed');
+  });
 });

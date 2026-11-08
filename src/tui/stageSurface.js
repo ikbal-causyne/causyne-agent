@@ -417,15 +417,12 @@ export class StageSurface {
 
     const height = this.stage.height;
 
-    // The prompt may not eat the whole band — but only once there is a
-    // transcript for it to eat. Trim from the TOP when it would: the status
-    // footer and the caret row are the last rows and the ones worth keeping,
-    // and an input box that has scrolled its own oldest row off is a smaller lie
-    // than a transcript that has vanished.
-    const floor = contentRows > 0
-      ? Math.max(MIN_VIEWPORT_ROWS, this.messageActionOverlay?.panel.length || 0)
-      : 0;
-    const maxBlock = Math.max(1, height - floor);
+    // An active prompt block or modal dialog is the focal point of user interaction.
+    // Never slice the top border, title, or input area when the block fits within the stage height.
+    // The transcript viewport receives the remaining vertical budget (height - block.length).
+    const maxBlock = this.messageActionOverlay?.panel.length
+      ? Math.max(1, height - this.messageActionOverlay.panel.length)
+      : height;
     if (block.length > maxBlock) {
       const cut = block.length - maxBlock;
       block = block.slice(cut);

@@ -88,8 +88,8 @@ const FOOTER_GAP = 1;
 // flex engine, so the same idea is arithmetic — and it is not decoration: on a
 // 17-row terminal the extra row made the banner plus the band come to exactly 17,
 // which costs the top of the wordmark. UX-03's sweep is what caught it.
-const ROOMY_TERMINAL_ROWS = 20;
-const CRAMPED_TERMINAL_ROWS = 18;
+const ROOMY_TERMINAL_ROWS = 22;
+const CRAMPED_TERMINAL_ROWS = 20;
 
 /** Can this process own the keyboard? */
 export function isInteractive() {
@@ -421,6 +421,13 @@ export class ChatPrompt {
     const plan = this.renderer && Array.isArray(this.renderer.latestPlan) ? this.renderer.latestPlan : [];
     if (plan.length === 0) return [];
     const completed = plan.filter(item => item.status === 'completed').length;
+    const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
+    if (stageMax < 22) {
+      const activeStep = plan.find(item => item.status === 'in_progress') || plan.find(item => item.status !== 'completed') || plan[0];
+      const stepText = activeStep ? (activeStep.text || activeStep.step || '') : '';
+      const summary = `${paint('accent', GLYPHS.skill || '✦')} ${bold('plan')} ${dim(`(${completed}/${plan.length})`)} ${dim('·')} ${truncate(safeDisplay(stepText), Math.max(8, width - 24), GLYPHS.ellipsis)}`;
+      return [summary, ''];
+    }
     const rows = [`${bold(paint('accent', 'implementation plan'))}  ${dim(`${completed}/${plan.length}`)}`];
     const limit = Math.min(plan.length, 5);
     for (const item of plan.slice(0, limit)) {
@@ -1706,7 +1713,10 @@ export class ChatPrompt {
     const inline = this.surface && !this.surface.homeInfo;
     const availableWidth = inline ? sessionMainWidth(this.surface.width) : width;
     const panelWidth = dialogWidth(availableWidth, this.layer.width || 64);
-    const maxHeight = dialogHeight(this.surface?.stage?.maxHeight || this.out?.rows, this.layer.preferredHeight());
+    const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
+    const statusReserve = 2; // status row + margin
+    const availableDialogRows = Math.max(4, stageMax - statusReserve);
+    const maxHeight = dialogHeight(availableDialogRows, this.layer.preferredHeight());
     const panel = panelRows(this.layer, panelWidth, maxHeight);
     const status = this.statusRow(width);
     const all = this.clampRows(panel.concat(status), width);

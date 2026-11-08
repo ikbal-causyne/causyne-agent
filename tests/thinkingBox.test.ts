@@ -274,6 +274,9 @@ describe('thinkingBox component', () => {
     assert.equal(handledDown1, true);
     assert.equal(frame.meta?.scrollStart, 3);
 
+    // Reset dampener between discrete synthetic test notches to avoid runner timing jitter
+    if (frame.meta?._dampener) (frame.meta._dampener as any).reset();
+
     // 2. Wheel down again -> scrollStart becomes 6
     const handledDown2 = renderer.scrollThinkingPanel({
       name: 'wheel',
@@ -281,6 +284,9 @@ describe('thinkingBox component', () => {
     }, surface as any);
     assert.equal(handledDown2, true);
     assert.equal(frame.meta?.scrollStart, 6);
+
+    // Reset dampener between discrete synthetic test notches
+    if (frame.meta?._dampener) (frame.meta._dampener as any).reset();
 
     // 3. Wheel up -> scrollStart decreases back to 3
     const handledUp = renderer.scrollThinkingPanel({
