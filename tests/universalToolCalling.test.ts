@@ -191,4 +191,20 @@ describe('Universal Tool Calling — OpenRouterProvider Text Tool Extraction', (
       assert.equal(isBrowserRuntimeInstalled(), true, 'Expected isBrowserRuntimeInstalled to return true when Chromium is present');
     }
   });
+
+  test('fsWrite provides clear directory guidance instead of raw EISDIR error', async () => {
+    const { fsWrite } = await import('../src/tools/fsWrite.js');
+    const res = await fsWrite.execute({ path: '/tmp', content: 'test' });
+    assert.equal(res.success, false);
+    assert.ok(res.error?.includes('is an existing directory'), 'Expected error to note directory target');
+  });
+
+  test('repairJsonArguments recovers unescaped backslashes and trailing garbage tokens', async () => {
+    const { repairJsonArguments } = await import('../src/tools/toolSelfRepair.js');
+    const raw = '{"path": "main.js", "content": "const x = \\  1;\\n"}}\n]';
+    const repaired = repairJsonArguments(raw);
+    assert.equal(repaired.repaired, true);
+    assert.equal(repaired.args.path, 'main.js');
+    assert.ok(typeof repaired.args.content === 'string');
+  });
 });

@@ -375,6 +375,20 @@ export function repairJsonArguments(rawInput: unknown): RepairResult {
       return { args: { items: parsed }, repaired: true, repairs: [...repairs, 'Wrapped array payload into items'] };
     }
   } catch (err: unknown) {
+    const trimmed = trimExtraneousTrailingJsonTokens(healed);
+    if (trimmed !== healed) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return { args: parsed as Record<string, unknown>, repaired: true, repairs: [...repairs, 'Trimmed extraneous trailing tokens'] };
+        }
+        if (Array.isArray(parsed)) {
+          return { args: { items: parsed }, repaired: true, repairs: [...repairs, 'Wrapped array payload into items'] };
+        }
+      } catch {
+        // Fall through to error
+      }
+    }
     const errorMsg = err instanceof Error ? err.message : String(err);
     return {
       args: {},
@@ -388,25 +402,65 @@ export function repairJsonArguments(rawInput: unknown): RepairResult {
 }
 
 /**
- * Handle unescaped newlines/tabs inside string literals without breaking valid JSON escapes.
+ * Trim extraneous trailing braces, brackets, or tokens after the root JSON object/array closes.
+ */
+function trimExtraneousTrailingJsonTokens(input: string): string {
+  const str = input.trim();
+  if (!str.startsWith('{') && !str.startsWith('[')) return input;
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i] ?? '';
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{' || char === '[') {
+      depth++;
+    } else if (char === '}' || char === ']') {
+      depth--;
+      if (depth === 0) {
+        return str.slice(0, i + 1);
+      }
+    }
+  }
+  return input;
+}
+
+/**
+ * Handle unescaped newlines/tabs and invalid backslash escapes inside string literals without breaking valid JSON escapes.
  */
 function sanitizeUnescapedStringLiterals(input: string): string {
   let result = '';
   let inString = false;
   let escapeNext = false;
+  const validEscapes = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']);
 
   for (let i = 0; i < input.length; i++) {
-    const char = input[i];
+    const char = input[i] ?? '';
 
     if (escapeNext) {
-      result += char;
+      if (validEscapes.has(char)) {
+        result += '\\' + char;
+      } else {
+        result += '\\\\' + char;
+      }
       escapeNext = false;
       continue;
     }
 
     if (char === '\\') {
       escapeNext = true;
-      result += char;
       continue;
     }
 
@@ -432,6 +486,10 @@ function sanitizeUnescapedStringLiterals(input: string): string {
     }
 
     result += char;
+  }
+
+  if (escapeNext) {
+    result += '\\\\';
   }
 
   return result;
@@ -460,7 +518,7 @@ function balanceTruncatedJson(input: string, repairs: string[]): string {
   let escapeNext = false;
 
   for (let i = 0; i < str.length; i++) {
-    const char = str[i];
+    const char = str[i] ?? '';
     if (escapeNext) {
       escapeNext = false;
       continue;

@@ -3343,7 +3343,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     }
                     const hasVisionCapability = this.llm.supportsVision !== false && visionReady && !visionDeclined;
                     const isVerified = Boolean(this.webVerificationState.browserActUsed ||
-                        hasBrowserActOutcome ||
                         this.webVerificationState.screenshotTaken ||
                         ((!browserReady || !hasVisionCapability) && this.webVerificationState.htmlInspected) ||
                         hasPassingTests ||
