@@ -44,6 +44,8 @@ export const MIN_STAGE_ROWS = 16;
 // which is what stops a scroll from tearing.
 const SYNC_ON = '\x1b[?2026h';
 const SYNC_OFF = '\x1b[?2026l';
+const NOWRAP_ON = '\x1b[?7l';
+const NOWRAP_OFF = '\x1b[?7h';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
 const ERASE_LINE = '\x1b[K';
@@ -238,7 +240,7 @@ export class Stage {
     // the same bet and calls it out as its main anti-flicker mechanism.
     if (changed.length === 0 && !caretMoved) return 0;
 
-    this.write(SYNC_ON + HIDE_CURSOR);
+    this.write(SYNC_ON + HIDE_CURSOR + NOWRAP_ON);
     for (const i of changed) {
       this.moveTo(i);
       this.write('\r' + next[i] + ERASE_LINE);
@@ -246,7 +248,7 @@ export class Stage {
     this.moveTo(target.row);
     this.write('\r');
     if (target.col > 0) this.write(`\x1b[${target.col}C`);
-    this.write((target.hideCursor ? HIDE_CURSOR : SHOW_CURSOR + '\x1b[6 q') + SYNC_OFF);
+    this.write(NOWRAP_OFF + (target.hideCursor ? HIDE_CURSOR : SHOW_CURSOR + '\x1b[6 q') + SYNC_OFF);
 
     this.prev = next;
     this.caret = target;

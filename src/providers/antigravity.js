@@ -353,9 +353,13 @@ function nativeInspectionTarget(name, parameters) {
     const normName = name.toLowerCase().replace(/[_\s-]/g, '');
     if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(normName)) {
         if (/^(readfile|viewfile)$/.test(normName)) {
-            const p = String(parameters.AbsolutePath ?? parameters.filePath ?? parameters.path ?? parameters.file ?? '');
-            if (p)
-                return p.trim().toLowerCase();
+            const p = String(parameters.AbsolutePath ?? parameters.Path ?? parameters.filePath ?? parameters.path ?? parameters.file ?? '').trim().toLowerCase();
+            if (!p)
+                return null;
+            const start = parameters.StartLine ?? parameters.startLine ?? parameters.offset ?? parameters.line ?? '';
+            const end = parameters.EndLine ?? parameters.endLine ?? parameters.limit ?? '';
+            const byteOffset = parameters.ByteOffset ?? parameters.byteOffset ?? '';
+            return `${p}:${start}-${end}:${byteOffset}`;
         }
         return null;
     }
@@ -390,6 +394,23 @@ function nativeInspectionTarget(name, parameters) {
     }
     return null;
 }
+export function isRepeatableNativeTool(name, parameters = {}) {
+    if (!name || typeof name !== 'string')
+        return false;
+    const action = name.toLowerCase().replace(/[_\s-]/g, '');
+    if (/^(?:managetask|managesubagents|sendmessage|invokesubagent|definesubagent|schedule|tasksummary|todowrite|updateplan|askquestion|processlist|sysrunpoll|procterm|waitfortask|checkstatus)$/.test(action)) {
+        return true;
+    }
+    if (/(?:poll|status|getresult|wait)$/.test(action)) {
+        return true;
+    }
+    if (/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(action)) {
+        const command = cleanCommandString(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '');
+        if (/^(?:ps\s+aux|pgrep|lsof|netstat|ss\s+-)\b/i.test(command))
+            return true;
+    }
+    return false;
+}
 export function isNativeMutation(name, parameters = {}) {
     if (!name || typeof name !== 'string')
         return false;
@@ -405,7 +426,7 @@ export function isNativeMutation(name, parameters = {}) {
     return /\b(?:save_as_mainfile|save_mainfile|write_text|write_bytes|tee)\b/.test(command)
         || /(?:^|[;&|]\s*)(?:cp|mv|rm|install|patch|touch|mkdir|chmod|sed)\s/.test(command)
         || /(?:>|>>)/.test(command)
-        || /\b(?:npm|yarn|pnpm|cargo|gradle|gradlew|mvn|dotnet|pip|pip3|pytest|vitest|jest|tsc|make|docker|git\s+(?:add|commit|checkout|merge|rebase|stash|pull|push))\b/i.test(command);
+        || /\b(?:npm|npx|yarn|pnpm|bun|deno|cargo|gradle|gradlew|mvn|dotnet|pip|pip3|pytest|vitest|jest|tsc|make|cmake|ninja|docker|apktool|jadx|jarsigner|apksigner|zipalign|keytool|adb|kotlinc|javac|go|rustc|swift|xcodebuild|codesign|unzip|tar|brew|git\s+(?:add|commit|checkout|merge|rebase|stash|pull|push|restore|reset|clean|rm|mv|apply|cherry-pick|revert|tag|branch|init|clone))\b/i.test(command);
 }
 export function nativeToolSignature(name, parameters = {}) {
     const normName = name.toLowerCase().replace(/[_\s-]/g, '');
@@ -1007,6 +1028,7 @@ export class AntigravityProvider extends LLMProvider {
             let lastToolSignature = '';
             const recentSignatures = [];
             const seenNativeActionSteps = new Set();
+            const seenLoopCheckSteps = new Set();
             const mediaInspectionCounts = new Map();
             const pendingMediaMutations = new Set();
             // Antigravity's result usage is cumulative across the conversation, but
@@ -1187,13 +1209,38 @@ export class AntigravityProvider extends LLMProvider {
                                     (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
                                     (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
                                     {};
-                                if (name && newNativeAction) {
+                                const hasParams = Boolean(rawParams && typeof rawParams === 'object' && Object.keys(rawParams).length > 0);
+                                const readyForLoopCheck = state === 'DONE'
+                                    || (state === 'ACTIVE' && (hasParams || isNativeMutation(name || '', rawParams) || isRepeatableNativeTool(name || '', rawParams)));
+                                const shouldCheckLoop = Boolean(name) && readyForLoopCheck
+                                    && (!Number.isFinite(stepIndex) || !seenLoopCheckSteps.has(stepIndex));
+                                if (name && state === 'DONE' && !toolInfo?.error && isNativeMutation(name, rawParams)) {
+                                    if (Number.isFinite(stepIndex))
+                                        seenLoopCheckSteps.add(stepIndex);
+                                    lastMutationActionIndex = nativeActionStarts + 1;
+                                    progressiveActionsCount++;
+                                    consecutiveIdenticalCount = 0;
+                                    consecutiveInspections = 0;
+                                    lastToolSignature = '';
+                                    recentSignatures.length = 0;
+                                }
+                                else if (name && shouldCheckLoop) {
+                                    if (Number.isFinite(stepIndex))
+                                        seenLoopCheckSteps.add(stepIndex);
                                     const mutating = isNativeMutation(name, rawParams);
+                                    const repeatable = isRepeatableNativeTool(name, rawParams);
                                     if (mutating) {
                                         lastMutationActionIndex = nativeActionStarts + 1;
                                         progressiveActionsCount++;
                                         consecutiveIdenticalCount = 0;
                                         consecutiveInspections = 0;
+                                        lastToolSignature = '';
+                                        recentSignatures.length = 0;
+                                    }
+                                    else if (repeatable) {
+                                        // Task/subagent polling, plan updates, and user questions are legitimate
+                                        // coordination steps and must not count as aimless read-only loops.
+                                        consecutiveIdenticalCount = 0;
                                         lastToolSignature = '';
                                     }
                                     else if (!desktopTask && options.taskArchetype !== 'media_3d_generation') {
@@ -1220,13 +1267,6 @@ export class AntigravityProvider extends LLMProvider {
                                         const cycle = detectNativeCycle(recentSignatures);
                                         if (cycle && (nativeActionStarts - lastMutationActionIndex) > (cycle.period * 2)) {
                                             const error = Object.assign(new Error(`Antigravity repeated circular cycle of ${cycle.period} tool calls without forward progress. Halting circular loop.`), { code: 'AGY_EXPLORATION_LOOP', period: cycle.period, laps: cycle.laps });
-                                            safeReject(error);
-                                            terminateChild();
-                                            return;
-                                        }
-                                        // 3. Stagnant read-only inspection runaway without mutations on an editing task
-                                        if (consecutiveInspections >= 30 && options.taskArchetype !== 'web_research_only') {
-                                            const error = Object.assign(new Error(`Antigravity performed ${consecutiveInspections} consecutive read-only inspections without writing or modifying code. Halting exploration loop.`), { code: 'AGY_EXPLORATION_LOOP', inspectionCount: consecutiveInspections });
                                             safeReject(error);
                                             terminateChild();
                                             return;

@@ -35,6 +35,7 @@ import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
 import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
+import { registerStageConsoleGuard, setStageConsoleGuardActive } from './consoleGuard.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -193,6 +194,9 @@ export class StageSurface {
     this.lastPromptRows = [];
     this.lastPromptCaret = null;
     this.messageActionOverlay = null;
+    this.unregisterConsoleGuard = null;
+    this.wasModal = false;
+    this.lastBlockLength = 0;
   }
 
   get width() {
@@ -250,6 +254,9 @@ export class StageSurface {
     // the user had typed anything, and 73 of the 77 claimed rows were empty.
     // present() grows it to fit what there actually is.
     if (!this.stage.reserve(1)) return false;
+    this.unregisterConsoleGuard?.();
+    this.unregisterConsoleGuard = registerStageConsoleGuard(this);
+    if (this.out === process.stdout) setStageConsoleGuardActive(true);
     if (!this.homeInfo) this.enableMouse();
     this.armTeardown();
     return true;
@@ -304,6 +311,11 @@ export class StageSurface {
     // Mouse first, unconditionally: it is the one piece of state that outlives
     // the process and damages the terminal the user goes back to.
     this.disableMouse();
+    if (this.unregisterConsoleGuard) {
+      this.unregisterConsoleGuard();
+      this.unregisterConsoleGuard = null;
+      if (this.out === process.stdout) setStageConsoleGuardActive(false);
+    }
     if (!this.stage.reserved) { this.disarmTeardown(); return false; }
     const rows = this.snapshot();
     this.stage.collapse();
@@ -325,6 +337,11 @@ export class StageSurface {
   suspend() {
     if (!this.stage.reserved) return false;
     this.disableMouse();
+    if (this.unregisterConsoleGuard) {
+      this.unregisterConsoleGuard();
+      this.unregisterConsoleGuard = null;
+      if (this.out === process.stdout) setStageConsoleGuardActive(false);
+    }
     this.stage.collapse();
     return true;
   }
@@ -332,6 +349,9 @@ export class StageSurface {
   resume() {
     if (this.stage.reserved) return false;
     if (!this.stage.reserve()) return false;
+    this.unregisterConsoleGuard?.();
+    this.unregisterConsoleGuard = registerStageConsoleGuard(this);
+    if (this.out === process.stdout) setStageConsoleGuardActive(true);
     this.stage.invalidate();
     this.enableMouse();
     return true;
@@ -372,6 +392,9 @@ export class StageSurface {
    * the contract in transcript.js.
    */
   commit(kind, produce, meta = null) {
+    if (kind === 'error' || kind === 'turn' || kind === 'approval') {
+      this.stage.invalidate();
+    }
     return this.transcript.append({ kind, produce, meta });
   }
 
@@ -384,6 +407,12 @@ export class StageSurface {
     if (!this.messageActionOverlay) {
       this.lastPromptRows = promptRows;
       this.lastPromptCaret = caret;
+    }
+
+    const isModal = Boolean(caret?.modal);
+    if (isModal !== this.wasModal) {
+      this.wasModal = isModal;
+      this.stage.invalidate();
     }
 
     if (this.homeInfo || (caret?.modal && !caret?.inline)) {
@@ -428,6 +457,11 @@ export class StageSurface {
       block = block.slice(cut);
       caretRow = Math.max(0, caretRow - cut);
     }
+
+    if (this.lastBlockLength > 0 && this.lastBlockLength !== block.length) {
+      this.stage.invalidate();
+    }
+    this.lastBlockLength = block.length;
 
     const budget = Math.max(0, height - block.length);
     let rows = [];
@@ -685,7 +719,7 @@ export class StageSurface {
           row = ` ${leftCell} ${row}`;
         }
       }
-      rows[i] = `${padEnd(row, contentWidth)} ${rightCell}`;
+      rows[i] = `${padEnd(truncate(row, contentWidth, ''), contentWidth)} ${rightCell}`;
     }
     return rows;
   }

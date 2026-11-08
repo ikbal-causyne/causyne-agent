@@ -19,6 +19,10 @@ const originalConsole = {
   error: console.error.bind(console)
 };
 
+const originalStderrWrite = process.stderr?.write
+  ? process.stderr.write.bind(process.stderr)
+  : null;
+
 export function isAnyStageReservedOnStdout(): boolean {
   if (stageMouseSessionDepth > 0 && process.stdout?.isTTY) {
     return true;
@@ -49,6 +53,17 @@ function ensureConsoleGuardInstalled(): void {
   console.info = wrap(originalConsole.info);
   console.warn = wrap(originalConsole.warn);
   console.error = wrap(originalConsole.error);
+
+  if (originalStderrWrite && process.stderr) {
+    process.stderr.write = ((chunk: unknown, encodingOrCb?: unknown, cb?: unknown): boolean => {
+      if (isAnyStageReservedOnStdout()) {
+        if (typeof encodingOrCb === 'function') (encodingOrCb as () => void)();
+        else if (typeof cb === 'function') (cb as () => void)();
+        return true;
+      }
+      return (originalStderrWrite as (...a: unknown[]) => boolean)(chunk, encodingOrCb, cb);
+    }) as typeof process.stderr.write;
+  }
 }
 
 /**

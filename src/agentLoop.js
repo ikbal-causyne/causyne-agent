@@ -54,6 +54,7 @@ import path from 'path';
 import { analyzeFiles, formatFindings, isScannableFile } from './slopDetector.js';
 import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
+import { isNativeMutation } from './providers/antigravity.js';
 import { resolveMentionedContext } from './promptMentions.js';
 import { isLaunchOnlyPrompt, launchScopeError } from './launchIntent.js';
 import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from './tui/codeProgress.js';
@@ -1890,6 +1891,7 @@ export class AgentLoop {
         const recoveryPaths = new Set();
         let modelCallIndex = 0;
         let mediaExplorationRecoveries = 0;
+        let taskMutationCount = 0;
         let reasoningOnlyRecoveries = 0;
         let planHandoffRecoveries = 0;
         let incompleteTurnContinuations = 0;
@@ -2438,8 +2440,12 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         auditLog.log({ event: 'native_action', taskId: this.taskId,
                             provider: this.config.provider || 'unknown', tool: action.name, status: action.status,
                             ...(action.id ? { actionId: action.id } : {}) });
-                        if (action.status === 'completed' && action.id && !isChecklistTool) {
-                            completedNativeActionIds.add(String(action.id));
+                        if (action.status === 'completed' && !isChecklistTool) {
+                            const actionKey = action.id ? String(action.id) : `${action.name}:${completedNativeActionIds.size}`;
+                            if (!completedNativeActionIds.has(actionKey)) {
+                                completedNativeActionIds.add(actionKey);
+                                this.stepsCompleted++;
+                            }
                         }
                         const isCompleted = action.status === 'completed';
                         const isFailed = action.status === 'failed';
@@ -2501,8 +2507,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             const lowerName = action.name.toLowerCase();
                             const rawDetail = String(action.detail || '');
                             const lowerDetail = rawDetail.toLowerCase();
-                            if (['fs_write', 'fs_edit', 'write_file', 'edit_file', 'write', 'edit', 'replace_file_content'].includes(lowerName)) {
+                            if (['fs_write', 'fs_edit', 'write_file', 'edit_file', 'write', 'edit', 'replace_file_content'].includes(lowerName)
+                                || isNativeMutation(action.name, actionArgs)) {
                                 nativeMutationCount++;
+                                taskMutationCount++;
+                                mediaExplorationRecoveries = 0;
                                 if (nativeMutationCount === 1 && this._implementationPlanSeeded) {
                                     this.advanceImplementationPlanProgress('mutation');
                                 }
@@ -2793,7 +2802,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 const hasExternalActions = completedExternalActions.length > 0;
                 const isIncompleteTurn = Boolean(response.incompleteTurn);
                 if (hasExternalActions) {
-                    this.stepsCompleted += completedExternalActions.length;
+                    this.stepsCompleted += Math.max(0, completedExternalActions.length - completedNativeActionIds.size);
                     for (const extAction of completedExternalActions) {
                         const extPlan = normalizePeerPlanEntries(extAction.parameters);
                         if (extPlan) {
@@ -4478,17 +4487,23 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 }
                 if (e?.code === 'AGY_EXPLORATION_LOOP' || e?.code === 'AGENT_EXPLORATION_LOOP' || e?.code === 'STALL_EXPLORATION_LOOP') {
                     auditLog.log({ event: 'media_exploration_checkpoint', taskId: this.taskId,
-                        inspectionCount: e.inspectionCount, recovery: mediaExplorationRecoveries });
+                        inspectionCount: e.inspectionCount, recovery: mediaExplorationRecoveries, mutations: taskMutationCount });
                     if (mediaExplorationRecoveries++ === 0) {
-                        this.messages.push({ role: 'system', content: '[TASK RECOVERY] Consecutive read-only inspections without workspace changes were paused. ' +
-                                'The user requested a concrete change. Reuse the observations already gathered; do not repeat probes. ' +
-                                'Make one targeted workspace edit now, then run one focused verification. ' +
-                                'If editing is blocked, report the exact blocker. Do not claim completion from inspection alone.' });
+                        this.messages.push({ role: 'system', content: taskMutationCount > 0
+                                ? '[TASK RECOVERY] Repeated identical tool polling or inspection was paused after workspace edits. Do not repeat identical probes; verify the completed changes once and present the final result.'
+                                : '[TASK RECOVERY] Consecutive read-only inspections without workspace changes were paused. ' +
+                                    'The user requested a concrete change. Reuse the observations already gathered; do not repeat probes. ' +
+                                    'Make one targeted workspace edit now, then run one focused verification. ' +
+                                    'If editing is blocked, report the exact blocker. Do not claim completion from inspection alone.' });
                         this.memoryManager.saveHistory(this.messages);
-                        this.emitEvent({ type: 'notice', message: 'Repeated inspection paused; continuing once with a direct edit instruction.' });
+                        this.emitEvent({ type: 'notice', message: taskMutationCount > 0
+                                ? 'Repeated status probe paused; continuing from completed workspace edits.'
+                                : 'Repeated inspection paused; continuing once with a direct edit instruction.' });
                         continue;
                     }
-                    this.emitEvent({ type: 'error', message: 'The provider continued read-only inspection after a corrective checkpoint. The task remains unfinished; no edit was verified.' });
+                    this.emitEvent({ type: 'error', message: taskMutationCount > 0
+                            ? 'The provider repeated an identical tool call after a recovery checkpoint. Workspace edits are preserved on disk.'
+                            : 'The provider continued read-only inspection after a corrective checkpoint. The task remains unfinished; no edit was verified.' });
                     break;
                 }
                 if (e?.code === 'PROVIDER_EMPTY_RESPONSE'

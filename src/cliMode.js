@@ -637,16 +637,19 @@ export async function chatMode({ home = false } = {}) {
           paint('muted', '  Run /setup or select setup from the home menu to configure your provider.\n'));
         continue;
       }
-      await loop.run();
+      try {
+        await loop.run();
+      } finally {
+        conn.stopSpinner();
+        // Active skill remains persistent across turns until explicitly cleared via /skill clear or another skill is selected.
+        if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
+        conn.renderer.turnFooter(Date.now() - startedAt);
+      }
     } finally {
       // Must be released on the error path too, or one failed turn leaves the
       // prompt permanently queueing and the chat looks hung.
       if (prompt) prompt.setBusy(false);
     }
-    conn.stopSpinner();
-    // Active skill remains persistent across turns until explicitly cleared via /skill clear or another skill is selected.
-    if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
-    conn.renderer.turnFooter(Date.now() - startedAt);
   }
   
   process.exit(0);

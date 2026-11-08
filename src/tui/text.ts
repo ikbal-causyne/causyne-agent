@@ -37,14 +37,36 @@ export function stripAnsi(text: unknown): string {
 function isWideCodePoint(code: number): boolean {
   return (
     (code >= 0x1100 && code <= 0x115f) ||   // Hangul Jamo
+    code === 0x231a || code === 0x231b ||   // Watch, Hourglass
+    (code >= 0x23e9 && code <= 0x23fa) ||   // Media control & clock symbols
+    code === 0x25fd || code === 0x25fe ||   // Medium small squares
+    code === 0x2614 || code === 0x2615 ||   // Umbrella with rain, Hot beverage
+    (code >= 0x2648 && code <= 0x2653) ||   // Zodiac symbols
+    code === 0x267f || code === 0x2693 || code === 0x26a1 || // Wheelchair, Anchor, High voltage (⚡)
+    code === 0x26aa || code === 0x26ab || code === 0x26bd || code === 0x26be ||
+    code === 0x26c4 || code === 0x26c5 || code === 0x26ce || code === 0x26d4 ||
+    code === 0x26ea || code === 0x26f2 || code === 0x26f3 || code === 0x26f5 ||
+    code === 0x26fa || code === 0x26fd ||
+    code === 0x2705 || code === 0x270a || code === 0x270b || code === 0x2728 || // ✅ ✊ ✋ ✨
+    code === 0x274c || code === 0x274e || (code >= 0x2753 && code <= 0x2755) ||
+    code === 0x2757 || (code >= 0x2795 && code <= 0x2797) || code === 0x27b0 || code === 0x27bf ||
+    code === 0x2b1b || code === 0x2b1c || code === 0x2b50 || code === 0x2b55 ||
     (code >= 0x2e80 && code <= 0xa4cf) ||   // CJK radicals … Yi
     (code >= 0xac00 && code <= 0xd7a3) ||   // Hangul syllables
     (code >= 0xf900 && code <= 0xfaff) ||   // CJK compatibility ideographs
     (code >= 0xfe30 && code <= 0xfe6f) ||   // CJK compatibility forms
     (code >= 0xff00 && code <= 0xff60) ||   // Fullwidth forms
     (code >= 0xffe0 && code <= 0xffe6) ||
-    (code >= 0x1f300 && code <= 0x1f64f) || // emoji
-    (code >= 0x1f900 && code <= 0x1f9ff)
+    code === 0x1f004 || code === 0x1f0cf || code === 0x1f18e ||
+    (code >= 0x1f191 && code <= 0x1f19a) ||
+    (code >= 0x1f1e6 && code <= 0x1f251) ||
+    (code >= 0x1f300 && code <= 0x1f64f) || // Misc Symbols, Pictographs & Emoticons
+    (code >= 0x1f680 && code <= 0x1f6ff) || // Transport & Map Symbols
+    (code >= 0x1f700 && code <= 0x1f7ff) || // Alchemical & Geometric Shapes Extended
+    (code >= 0x1f800 && code <= 0x1f8ff) || // Supplemental Arrows-C
+    (code >= 0x1f900 && code <= 0x1f9ff) || // Supplemental Symbols & Pictographs
+    (code >= 0x1fa00 && code <= 0x1faff) || // Symbols & Pictographs Extended-A
+    (code >= 0x20000 && code <= 0x3ffff)    // Supplementary Ideographic Planes
   );
 }
 

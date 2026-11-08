@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 import { LineEditor } from '../src/tui/lineEditor.js';
 import { Stage } from '../src/tui/stage.js';
+import { StageSurface } from '../src/tui/stageSurface.js';
 import { ChatPrompt } from '../src/tui/prompt.js';
 import { CodeStreamRenderer } from '../src/tui/codeStreamRenderer.js';
+import { visibleWidth, stripAnsi } from '../src/tui/text.js';
 
 function createSink(columns = 80, rows = 24) {
   const chunks: string[] = [];
@@ -239,5 +241,228 @@ describe('Chatbox TUI Fixes Verification', () => {
     // Dialog + status must not exceed terminal ceiling (16 rows)
     assert.ok(presentedRows.length <= 16, `Presented rows (${presentedRows.length}) must fit within 16-row terminal`);
     assert.ok(presentedRows.some(r => r.includes('permission required')), 'Must contain dialog header without being severed');
+  });
+
+  test('visibleWidth accounts for wide Miscellaneous Symbols and Dingbats (⚡, ✅, ❌, ✨, ⏳) so Stage rows never overflow terminal width', () => {
+    assert.equal(visibleWidth('⚡'), 2);
+    assert.equal(visibleWidth('✅'), 2);
+    assert.equal(visibleWidth('❌'), 2);
+    assert.equal(visibleWidth('✨'), 2);
+    assert.equal(visibleWidth('⏳'), 2);
+    assert.equal(visibleWidth('⚡ android/android-debugging-and-testing'), 40);
+  });
+
+  test('Stage.paint wraps row output in DECAWM reset/set (\\x1b[?7l ... \\x1b[?7h) to prevent hardware line-wrap drift', () => {
+    const sink = createSink(80, 24);
+    const stage = new Stage({ out: sink as any, height: 4 });
+    stage.reserve(4);
+    sink.reset();
+
+    stage.paint(['row 0', 'row 1', 'row 2', 'row 3'], { row: 1, col: 2 });
+    const out = sink.text();
+    const wrapOffIdx = out.indexOf('\x1b[?7l');
+    const wrapOnIdx = out.indexOf('\x1b[?7h');
+    assert.ok(wrapOffIdx !== -1, 'Must emit DECAWM reset \\x1b[?7l before writing stage rows');
+    assert.ok(wrapOnIdx > wrapOffIdx, 'Must restore DECAWM \\x1b[?7h after writing stage rows');
+    stage.collapse();
+  });
+
+  test('StageSurface.attachRail truncates ANSI-prefixed rows when prepending turn-rail cells so rows never exceed contentWidth + 2', () => {
+    const sink = createSink(153, 40);
+    const surface = new StageSurface({ out: sink as any, env: { TERM: 'xterm-256color' } });
+    surface.open();
+    surface.commit('user', () => ['  › Build release bundle']);
+    surface.commit('error', () => [
+      '  \x1b[41m\x1b[37m ERROR \x1b[0m ACP Peer Agent (opencode) Error: AI_APICallError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go'
+    ]);
+    surface.commit('turn', () => [
+      '  \x1b[32m▪\x1b[0m deepseek-v4.1-flash-f…  ·  235 steps  ·  40m 9s',
+      '\x1b[2m  /usage for cost  ·  /undo to roll back\x1b[0m'
+    ]);
+
+    const contentWidth = 109;
+    const rows = [
+      '  \x1b[41m\x1b[37m ERROR \x1b[0m ' + 'X'.repeat(contentWidth),
+      '\x1b[2m  /usage for cost  ·  /undo to roll back\x1b[0m'
+    ];
+    const attached = surface.attachRail(rows, contentWidth);
+    for (const r of attached) {
+      assert.equal(visibleWidth(r), contentWidth + 2, 'Every rail-attached row must be exactly contentWidth + 2 columns');
+    }
+    surface.close();
+  });
+
+  test('StageSurface + ChatPrompt preserve all 5 chatbox rows and caret row across mid-loop approval/question dialogs and error + turnFooter', async () => {
+    const sink = createSink(153, 40);
+    const surface = new StageSurface({ out: sink as any, env: { TERM: 'xterm-256color' } });
+    surface.open();
+    surface.setSessionInfo({
+      title: '/workspace/downloads/ConnectLife',
+      cwd: '/workspace',
+      provider: 'acp/opencode',
+      model: 'deepseek-v4.1-flash-free',
+      activeSkill: {
+        name: 'android/android-debugging-and-testing',
+        description: 'Diagnose, debug, install, and verify Android applications'
+      }
+    });
+
+    const renderer = new CodeStreamRenderer({ transcript: surface.transcript });
+    renderer.status.setSession({
+      provider: 'acp/opencode',
+      model: 'deepseek-v4.1-flash-free'
+    });
+    const prompt = new ChatPrompt({
+      out: sink as any,
+      getMode: () => 'C'
+    });
+    prompt.attachSurface(surface as any);
+    prompt.attach(renderer as any);
+    prompt.active = true;
+
+    // 1. Start a busy turn
+    renderer.renderUserMessage('Build and verify APK');
+    prompt.setBusy(true);
+
+    // 2. Trigger mid-loop approval dialog (allow / always allow / deny) and resolve it
+    const approvalPromise = prompt.approve({
+      tool: 'sys_run',
+      risk: 'MEDIUM',
+      reason: 'Run ./gradlew assembleRelease',
+      args: { command: './gradlew assembleRelease' }
+    });
+    assert.ok(prompt.layer, 'Approval layer must be active');
+    prompt.handleKey({ name: 'enter', shift: false, ctrl: false, alt: false });
+    const approved = await approvalPromise;
+    assert.ok(approved && typeof approved === 'object', 'Approval promise must resolve');
+
+    // 3. Trigger mid-loop ask_question decision dialog and resolve it
+    const decisionPromise = prompt.decide({
+      question: 'Which build variant should be signed?',
+      header: 'Build Variant',
+      options: [
+        { label: 'release', description: 'Production signed bundle' },
+        { label: 'debug', description: 'Local debug APK' }
+      ]
+    });
+    assert.ok(prompt.layer, 'Decision layer must be active');
+    prompt.handleKey({ name: 'enter', shift: false, ctrl: false, alt: false });
+    const decision = await decisionPromise;
+    assert.ok(decision && !(decision as any).cancelled, 'Decision promise must resolve without cancellation');
+
+    // 4. Emit mid-loop error + turnFooter + setBusy(false) (the exact sequence from cliMode.js)
+    renderer.onError({
+      message: 'ACP Peer Agent (opencode) Error: AI_APICallError: Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go'
+    });
+    renderer.turnFooter(2409000);
+    prompt.setBusy(false);
+
+    // Wait for any scheduled setImmediate draw to settle
+    await new Promise(resolve => setImmediate(resolve));
+
+    const prev = surface.stage.prev.map((r: string) => stripAnsi(r));
+    const placeholderIdx = prev.findIndex((r: string) => r.includes(`try "${prompt.example}"`));
+    const buildIdx = prev.findIndex((r: string) => r.includes('Build C'));
+    assert.ok(placeholderIdx !== -1, 'Top placeholder row ("try \\"explain...\\"") must remain intact in stage');
+    assert.ok(buildIdx !== -1, 'Bottom controls row ("Build C") must remain intact in stage');
+    assert.equal(buildIdx - placeholderIdx, 2, 'Chatbox must have intact separator row between placeholder and Build C');
+    assert.equal(surface.stage.cursor, placeholderIdx, 'Terminal cursor must rest on the input/placeholder row, never on Build C');
+
+    surface.close();
+  });
+
+  test('100-iteration stress test: StageSurface + ChatPrompt never clip chatbox rows across 100 approval/decision/error/turnFooter sequences', async () => {
+    for (let iter = 1; iter <= 100; iter++) {
+      const cols = 100 + (iter % 80); // 100..179 columns (tests both sidebar-hidden and sidebar-visible layouts)
+      const rows = 28 + (iter % 45);  // 28..72 rows
+      const sink = createSink(cols, rows);
+      const surface = new StageSurface({ out: sink as any, env: { TERM: 'xterm-256color' } });
+      surface.open();
+      surface.setSessionInfo({
+        title: `/workspace/Project_${iter}`,
+        cwd: '/workspace',
+        provider: iter % 2 === 0 ? 'acp/opencode' : 'antigravity',
+        model: iter % 2 === 0 ? 'deepseek-v4.1-flash-free' : 'Gemini 3.8 Flash (High)',
+        activeSkill: {
+          name: 'android/android-debugging-and-testing',
+          description: 'Diagnose, debug, install, and verify Android applications'
+        }
+      });
+
+      const renderer = new CodeStreamRenderer({ transcript: surface.transcript });
+      renderer.status.setSession({
+        provider: iter % 2 === 0 ? 'acp/opencode' : 'antigravity',
+        model: iter % 2 === 0 ? 'deepseek-v4.1-flash-free' : 'Gemini 3.8 Flash (High)'
+      });
+      const prompt = new ChatPrompt({
+        out: sink as any,
+        getMode: () => 'C'
+      });
+      prompt.attachSurface(surface as any);
+      prompt.attach(renderer as any);
+      prompt.active = true;
+
+      renderer.renderUserMessage(`Iteration ${iter}: build and verify project`);
+      prompt.setBusy(true);
+
+      // Approval layer mid-loop
+      const approvalPromise = prompt.approve({
+        tool: 'sys_run',
+        risk: 'MEDIUM',
+        reason: `Execute step ${iter}`,
+        args: { command: `./gradlew assembleRelease --iter=${iter}` }
+      });
+      prompt.handleKey({ name: iter % 3 === 0 ? 'escape' : 'enter', shift: false, ctrl: false, alt: false });
+      await approvalPromise;
+
+      // Decision layer mid-loop on even iterations
+      if (iter % 2 === 0) {
+        const decisionPromise = prompt.decide({
+          question: `Select target for iteration ${iter}?`,
+          header: 'Target',
+          options: [
+            { label: 'production', description: 'Production bundle' },
+            { label: 'staging', description: 'Staging APK' }
+          ]
+        });
+        prompt.handleKey({ name: 'enter', shift: false, ctrl: false, alt: false });
+        await decisionPromise;
+      }
+
+      // Error or step_error mid-loop
+      if (iter % 3 === 0) {
+        renderer.onStepError({
+          tool: 'sys_run',
+          result: { success: false, error: `Command failed on iteration ${iter}` }
+        });
+      } else {
+        renderer.onError({
+          message: `ACP Peer Agent (opencode) Error: AI_APICallError: Free usage limit reached on iteration ${iter}.`
+        });
+      }
+
+      renderer.turnFooter(1000 * iter);
+      prompt.setBusy(false);
+
+      await new Promise(resolve => setImmediate(resolve));
+
+      // Verify width invariant on every painted stage row
+      for (const rawRow of surface.stage.prev) {
+        assert.ok(
+          visibleWidth(rawRow) <= cols - 1,
+          `Iteration ${iter}: stage row width (${visibleWidth(rawRow)}) exceeded cols - 1 (${cols - 1})`
+        );
+      }
+
+      const prev = surface.stage.prev.map((r: string) => stripAnsi(r));
+      const placeholderIdx = prev.findIndex((r: string) => r.includes(`try "${prompt.example}"`) || r.includes('ask anything'));
+      const buildIdx = prev.findIndex((r: string) => r.includes('Build C'));
+      assert.ok(placeholderIdx >= 1, `Iteration ${iter}: placeholder row must exist with padTop row above it`);
+      assert.ok(buildIdx !== -1, `Iteration ${iter}: Build C row must exist`);
+      assert.equal(buildIdx - placeholderIdx, 2, `Iteration ${iter}: chatbox rows must not be clipped`);
+      assert.equal(surface.stage.cursor, placeholderIdx, `Iteration ${iter}: cursor must sit on placeholder row`);
+
+      surface.close();
+    }
   });
 });

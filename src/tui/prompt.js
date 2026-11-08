@@ -461,6 +461,7 @@ export class ChatPrompt {
   openLayer(layer) {
     this.closeLayer();
     this.layer = layer;
+    if (this.surface?.stage) this.surface.stage.invalidate();
     this.draw();
     return layer;
   }
@@ -473,6 +474,7 @@ export class ChatPrompt {
     // is torn down without one would otherwise leave its promise pending forever
     // and hang the turn.
     if (typeof layer.answer === 'function') layer.answer(false);
+    if (this.surface?.stage) this.surface.stage.invalidate();
     this.draw();
   }
 
@@ -748,6 +750,7 @@ export class ChatPrompt {
     this.busy = busy;
     resetTurnInterruptState(this, busy);
     if (busy) this.startTick(); else this.stopTick();
+    if (this.surface?.stage) this.surface.stage.invalidate();
     this.draw();
   }
 

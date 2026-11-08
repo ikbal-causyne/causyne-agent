@@ -7,6 +7,9 @@ const originalConsole = {
     warn: console.warn.bind(console),
     error: console.error.bind(console)
 };
+const originalStderrWrite = process.stderr?.write
+    ? process.stderr.write.bind(process.stderr)
+    : null;
 export function isAnyStageReservedOnStdout() {
     if (stageMouseSessionDepth > 0 && process.stdout?.isTTY) {
         return true;
@@ -35,6 +38,18 @@ function ensureConsoleGuardInstalled() {
     console.info = wrap(originalConsole.info);
     console.warn = wrap(originalConsole.warn);
     console.error = wrap(originalConsole.error);
+    if (originalStderrWrite && process.stderr) {
+        process.stderr.write = ((chunk, encodingOrCb, cb) => {
+            if (isAnyStageReservedOnStdout()) {
+                if (typeof encodingOrCb === 'function')
+                    encodingOrCb();
+                else if (typeof cb === 'function')
+                    cb();
+                return true;
+            }
+            return originalStderrWrite(chunk, encodingOrCb, cb);
+        });
+    }
 }
 /**
  * Track TUI Stage open/close lifecycle so raw console writes cannot corrupt the composer box.
