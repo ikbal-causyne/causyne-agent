@@ -230,7 +230,7 @@ export class VFETracker {
    */
   getParadigmShiftDirective(): string {
     return (
-      `\n\n🚨 [PARADIGM SHIFT REQUIRED — ACTIVE INFERENCE DEADLOCK DETECTED]\n` +
+      `\n\n△ [PARADIGM SHIFT REQUIRED — ACTIVE INFERENCE DEADLOCK DETECTED]\n` +
       `Variational Free Energy tracking detected a persistent error plateau with zero convergence.\n` +
       `Your current mental model and execution route are trapped in a local minimum.\n` +
       `DO NOT retry previous variations, tweak parameters, or repeat failed commands.\n` +

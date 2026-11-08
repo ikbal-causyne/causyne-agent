@@ -74,10 +74,10 @@ export async function resolveMentionedContext(prompt, options = {}) {
     for (const m of mentions) {
         if (m.isMeta) {
             if (m.path === 'workspace' || m.path === 'here') {
-                sections.push(`📁 REFERENCED SCOPE: Whole workspace (${cwd})`);
+                sections.push(`◆ REFERENCED SCOPE: Whole workspace (${cwd})`);
             }
             else if (m.path === 'rea' || m.path === 'rea-agents') {
-                sections.push(`🔬 REFERENCED CAPABILITY: Reverse Engineer Anything (REA) Substrate active.\n` +
+                sections.push(`◆ REFERENCED CAPABILITY: Reverse Engineer Anything (REA) Substrate active.\n` +
                     `Use the 'reverse_engineering' tool with action 'inspect', 'unpack', 'decompile', or 'engine_tool' to analyze APKs, binaries, and assemblies.`);
             }
             continue;
@@ -120,7 +120,7 @@ export async function resolveMentionedContext(prompt, options = {}) {
         }
         const relPath = path.relative(cwd, targetPath).split(path.sep).join('/');
         if (!found) {
-            sections.push(`📂 REFERENCED PATH: ${m.path} (Note: path was not found on disk at ${relPath})`);
+            sections.push(`◆ REFERENCED PATH: ${m.path} (Note: path was not found on disk at ${relPath})`);
             continue;
         }
         try {
@@ -134,7 +134,7 @@ export async function resolveMentionedContext(prompt, options = {}) {
                 const more = entries.length > MAX_MENTION_DIR_ITEMS
                     ? `\n  ... (${entries.length - MAX_MENTION_DIR_ITEMS} more items)`
                     : '';
-                sections.push(`📁 REFERENCED DIRECTORY: ${relPath}/\n` +
+                sections.push(`◆ REFERENCED DIRECTORY: ${relPath}/\n` +
                     `Directory listing (${summary.length} items):\n` +
                     summary.map(s => `  - ${s}`).join('\n') +
                     more);
@@ -144,7 +144,7 @@ export async function resolveMentionedContext(prompt, options = {}) {
                 const isBinary = /\.(apk|aab|dex|dylib|so|dll|exe|bin|asar|zip|tar|gz|tgz)$/i.test(ext);
                 if (isBinary) {
                     const sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
-                    sections.push(`📦 REFERENCED BINARY PACKAGE: ${relPath} (${stats.size.toLocaleString()} bytes, ~${sizeMb} MB, format: ${ext.toUpperCase().replace('.', '')})\n` +
+                    sections.push(`◆ REFERENCED BINARY PACKAGE: ${relPath} (${stats.size.toLocaleString()} bytes, ~${sizeMb} MB, format: ${ext.toUpperCase().replace('.', '')})\n` +
                         `Note: This is a binary/compiled package. Do not read raw bytes. Use the 'reverse_engineering' tool with action 'inspect', 'unpack', or 'decompile' to analyze manifest, classes, resources, and architecture.`);
                 }
                 else {
@@ -158,7 +158,7 @@ export async function resolveMentionedContext(prompt, options = {}) {
                     else {
                         body = content;
                     }
-                    sections.push(`📄 REFERENCED FILE: ${relPath} (${lines.length} lines):\n` +
+                    sections.push(`◆ REFERENCED FILE: ${relPath} (${lines.length} lines):\n` +
                         '```\n' +
                         body + '\n' +
                         '```');
@@ -167,7 +167,7 @@ export async function resolveMentionedContext(prompt, options = {}) {
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            sections.push(`📂 REFERENCED PATH: ${relPath} (Error reading: ${msg})`);
+            sections.push(`◆ REFERENCED PATH: ${relPath} (Error reading: ${msg})`);
         }
     }
     const referencedContext = sections.length > 0

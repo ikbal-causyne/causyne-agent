@@ -867,7 +867,7 @@ export class AgentLoop {
             try {
                 const matches = await cortexDb.search(this.currentTaskPrompt, 2, { workspace: this.workspaceRoot });
                 if (matches.length > 0 && matches[0]) {
-                    lessonsLearned = `\n\n🧠 DIGITAL BRAIN (LESSONS LEARNED FROM PAST MISTAKES):\n` + matches.map((m) => `- ${m.text}`).join('\n');
+                    lessonsLearned = `\n\n◆ DIGITAL BRAIN (LESSONS LEARNED FROM PAST MISTAKES):\n` + matches.map((m) => `- ${m.text}`).join('\n');
                     this._lessonSimilarity = matches[0].similarity || 0;
                     this.debugLog(`cortex search hit: ${(this._lessonSimilarity * 100).toFixed(0)}% similarity`);
                 }
@@ -891,7 +891,7 @@ export class AgentLoop {
             try {
                 const recentPatterns = await cortexDb.getRecentCreativePatterns(5);
                 if (recentPatterns.length > 0) {
-                    antiRepeatDirective = `\n\n🎨 CREATIVE DIVERSITY (DO NOT REPEAT RECENT PATTERNS):\n` +
+                    antiRepeatDirective = `\n\n◆ CREATIVE DIVERSITY (DO NOT REPEAT RECENT PATTERNS):\n` +
                         recentPatterns.map((p) => `- ${p}`).join('\n') +
                         `\nChoose a DIFFERENT design approach, color palette, and font combination than the above.`;
                 }
@@ -2083,7 +2083,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         Array.isArray(ctx.keyFiles) && ctx.keyFiles.length > 0 && `Key files: ${ctx.keyFiles.slice(0, 25).join(', ')}`
                     ].filter(Boolean);
                     if (facts.length > 0) {
-                        workspaceSummary = `\n\n📂 WORKSPACE CONTEXT (already scanned for you — do NOT waste steps rediscovering this):\n${facts.join('\n')}`;
+                        workspaceSummary = `\n\n◆ WORKSPACE CONTEXT (already scanned for you — do NOT waste steps rediscovering this):\n${facts.join('\n')}`;
                     }
                 }
                 // --- PROMPT ASSEMBLY, ORDERED STABLE → VOLATILE ---
@@ -2189,7 +2189,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     // here never invalidates the cached prefix in [1]-[3].
                     {
                         role: 'system',
-                        content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)\n\n🧠 PERSISTENT MEMORY (FACTS LEARNED ABOUT THE USER):\n${memoryContext}`
+                        content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)\n\n◆ PERSISTENT MEMORY (FACTS LEARNED ABOUT THE USER):\n${memoryContext}`
                     }
                 ];
                 // Dev-only visibility into what fills each step's prompt. Set
@@ -3145,7 +3145,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         const needsDepth = this.config.enforceGameDepth === true && this.stepsCompleted < 50;
                         if (needsDepth) {
                             this.gameGuardFired = true;
-                            this.emitEvent({ type: 'status', message: '⚡ Sovereign Game Guard: Checking production depth...' });
+                            this.emitEvent({ type: 'status', message: '✦ Sovereign Game Guard: Checking production depth...' });
                             const guardMsg = `[SOVEREIGN DEPTH NOTICE: You are building a Full Production Game with enforceGameDepth enabled. Current step count: ${this.stepsCompleted}. Expand the game with more levels, richer UI, complex enemy AI, or more assets before finishing. If the task is genuinely complete, state so and finish.]`;
                             this.messages.push({ role: 'system', content: guardMsg });
                             this.memoryManager.saveHistory(this.messages);
@@ -3189,7 +3189,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                     event: 'anti_slop_notice', taskId: this.taskId,
                                     score: result.score, signals: result.findings.map((f) => f.id)
                                 });
-                                this.emitEvent({ type: 'status', message: `⚡ Anti-Slop Audit: design scored ${result.score}` });
+                                this.emitEvent({ type: 'status', message: `✦ Anti-Slop Audit: design scored ${result.score}` });
                                 if (this.slopReviewAttempts >= 2 || auditHash === this.slopLastAuditHash) {
                                     this.emitEvent({ type: 'error', message: `Web design audit still found generic patterns (score ${result.score}); the result was not verified as complete.` });
                                     this.memoryManager.saveHistory(this.messages);
@@ -3268,7 +3268,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             // The verification tools live in the web pack; make sure they are
                             // actually in context before demanding the agent use them.
                             this.unlockPack('web');
-                            this.emitEvent({ type: 'status', message: '⚡ Anti-Slop Check: Visual/semantic verification recommended.' });
+                            this.emitEvent({ type: 'status', message: '✦ Anti-Slop Check: Visual/semantic verification recommended.' });
                             this.messages.push({ role: 'system', content: webGuardMsg });
                             this.memoryManager.saveHistory(this.messages);
                             if (!this.webVerificationState.htmlInspected || browserReady || (hasVision && visionReady)) {
@@ -4075,7 +4075,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             this.webVerificationState.browserActUsed = false;
                             this.emitEvent({
                                 type: 'status',
-                                message: `⚠️ Browser runtime error(s) detected: ${allRuntimeErrors[0]}`
+                                message: `△ Browser runtime error(s) detected: ${allRuntimeErrors[0]}`
                             });
                             this.messages.push({
                                 role: 'system',
@@ -4207,7 +4207,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                     stepsCompleted: this.stepsCompleted,
                                     activeTier: this.activeTier,
                                     maxTierSteps: this.maxSteps,
-                                    message: `⚡ Circuit Breaker Checkpoint (100 steps reached). Approve to unlock and continue using your remaining ${this.activeTier.toUpperCase()} tier budget (up to ${this.maxSteps} steps total)?`
+                                    message: `△ Circuit Breaker Checkpoint (100 steps reached). Approve to unlock and continue using your remaining ${this.activeTier.toUpperCase()} tier budget (up to ${this.maxSteps} steps total)?`
                                 },
                                 risk: 'info'
                             });
@@ -4218,7 +4218,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 break;
                             }
                             this.circuitBreakerUnlocked = true;
-                            this.emitEvent({ type: 'status', message: `⚡ Circuit breaker unlocked! Resuming execution up to ${this.maxSteps} tier budget...` });
+                            this.emitEvent({ type: 'status', message: `✓ Circuit breaker unlocked! Resuming execution up to ${this.maxSteps} tier budget...` });
                         }
                     }
                     // Sovereign Tier Budget Extension Checkpoint Gate
@@ -4237,7 +4237,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                     stepsCompleted: this.stepsCompleted,
                                     activeTier: this.activeTier,
                                     currentMaxSteps: this.maxSteps,
-                                    message: `⚡ Tier Limit Reached (${this.stepsCompleted} / ${this.maxSteps} steps). The agent needs more steps to fulfill your intent. Approve to unlock another +${extensionBatch} steps for your ${this.activeTier.toUpperCase()} tier?`
+                                    message: `△ Tier Limit Reached (${this.stepsCompleted} / ${this.maxSteps} steps). The agent needs more steps to fulfill your intent. Approve to unlock another +${extensionBatch} steps for your ${this.activeTier.toUpperCase()} tier?`
                                 },
                                 risk: 'info'
                             });
@@ -4249,7 +4249,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             }
                             this.maxSteps += extensionBatch;
                             this.maxCircuitBreaker = this.maxSteps;
-                            this.emitEvent({ type: 'status', message: `⚡ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
+                            this.emitEvent({ type: 'status', message: `✓ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
                         }
                     }
                     // SmartToolsUse tracks actual local tool calls, without denying

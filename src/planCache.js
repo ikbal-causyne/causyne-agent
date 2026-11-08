@@ -877,7 +877,7 @@ export function renderPlanHint(match) {
         .filter(({ step }) => !step.ok);
     if (failureWarnings.length > 0) {
         lines.push('');
-        lines.push('⚠️ FAILURE ROUTE WARNINGS (learned from previous attempts — plan alternatives):');
+        lines.push('△ FAILURE ROUTE WARNINGS (learned from previous attempts — plan alternatives):');
         failureWarnings.forEach(({ step, idx }) => {
             lines.push(`- Step ${idx} (${step.tool}${step.note ? ' → ' + step.note : ''}) FAILED with reason: ${step.why || 'failed'}. Consider an alternative approach.`);
         });

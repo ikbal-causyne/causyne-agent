@@ -84,7 +84,7 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
     if (skillId) {
       line();
       styled(bold('Active Skill'));
-      styled(paint('accent', `⚡ ${truncate(skillId, inner - 4, '…')}`));
+      styled(paint('accent', `✦ ${truncate(skillId, inner - 4, '…')}`));
       if (skillDesc) {
         line(truncate(skillDesc, inner, '…'));
       }

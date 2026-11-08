@@ -244,7 +244,7 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
     }
     if (!switched) {
         cleanPrompt();
-        return `⚠️ Could not switch to session "${targetId}". File may have been removed.`;
+        return `△ Could not switch to session "${targetId}". File may have been removed.`;
     }
     const historyMessages = options.loop?.memoryManager && typeof options.loop.memoryManager.loadHistory === 'function'
         ? options.loop.memoryManager.loadHistory()

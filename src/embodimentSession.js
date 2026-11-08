@@ -145,7 +145,7 @@ export function describeSession(taskId) {
     parts.push('You do NOT know whether they landed — the screen may have changed while you were gone.');
   }
   parts.push('Call ax_snapshot before acting again, and compare what you see to what you expected.');
-  return `\n\n🖥️ EMBODIMENT SESSION\n${parts.join(' ')}`;
+  return `\n\n◆ EMBODIMENT SESSION\n${parts.join(' ')}`;
 }
 
 /** Drop a task's session, e.g. when the task completes. */

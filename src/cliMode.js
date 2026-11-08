@@ -489,7 +489,7 @@ export async function chatMode({ home = false } = {}) {
         if (created) {
           loop.activeSkill = created;
           if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
-          prompt.notice = `⚡ Skill created & activated: ${created.domain}/${created.id}`;
+          prompt.notice = `✦ Skill created & activated: ${created.domain}/${created.id}`;
           conn.renderer.write('\n' + paint('success', `  Created and activated skill: ${bold(created.domain + '/' + created.id)}`) + '\n');
           if (created.path) conn.renderer.write(dim(`  Stored at: ${created.path}\n`));
           if (typeof prompt.draw === 'function') prompt.draw();
@@ -506,7 +506,7 @@ export async function chatMode({ home = false } = {}) {
             if (created) {
               loop.activeSkill = created;
               if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
-              prompt.notice = `⚡ Skill created & activated: ${created.domain}/${created.id}`;
+              prompt.notice = `✦ Skill created & activated: ${created.domain}/${created.id}`;
               conn.renderer.write('\n' + paint('success', `  Created and activated skill: ${bold(created.domain + '/' + created.id)}`) + '\n');
               if (created.path) conn.renderer.write(dim(`  Stored at: ${created.path}\n`));
               if (typeof prompt.draw === 'function') prompt.draw();
@@ -524,8 +524,8 @@ export async function chatMode({ home = false } = {}) {
             content: typeof content === 'string' ? content : ''
           };
           if (surface) surface.setSessionInfo({ activeSkill: loop.activeSkill });
-          prompt.notice = `⚡ Skill active: ${skill.domain}/${skill.id}`;
-          conn.renderer.write('\n' + paint('success', `  ⚡ Activated skill: ${bold(skill.domain + '/' + skill.id)}`) + '\n');
+          prompt.notice = `✦ Skill active: ${skill.domain}/${skill.id}`;
+          conn.renderer.write('\n' + paint('success', `  ✦ Activated skill: ${bold(skill.domain + '/' + skill.id)}`) + '\n');
           if (skill.description) {
             conn.renderer.write(dim(`  ${skill.description}\n`));
           }

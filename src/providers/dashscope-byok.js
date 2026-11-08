@@ -65,7 +65,7 @@ export class DashscopeByokProvider extends LLMProvider {
       // Enterprise Error Handling: Detect Workspace-bound API Key configuration errors
       if (response.status === 401 && this.apiKey && this.apiKey.startsWith('sk-ws-')) {
         if (!this.baseUrl.includes('ws-')) {
-          throw new Error(`\n❌ QWEN WORKSPACE CONFIGURATION ERROR ❌\n\nYou are using a Workspace-bound API Key (starts with sk-ws-), but you haven't configured your Workspace Base URL!\n\nAlibaba requires a specific URL for these keys.\n\n🛠️ HOW TO FIX THIS:\n1. Open your computer terminal.\n2. Run command: causyne-agent config\n3. When asked for 'Custom Base URL', paste your Workspace URL from Alibaba (e.g. https://{Your-Workspace-ID}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions).\n\nAlternatively, use a Standard API Key (starts with sk-) which does not require a custom URL.`);
+          throw new Error(`\n[QWEN WORKSPACE CONFIGURATION ERROR]\n\nYou are using a Workspace-bound API Key (starts with sk-ws-), but you haven't configured your Workspace Base URL!\n\nAlibaba requires a specific URL for these keys.\n\nHOW TO FIX THIS:\n1. Open your computer terminal.\n2. Run command: causyne-agent config\n3. When asked for 'Custom Base URL', paste your Workspace URL from Alibaba (e.g. https://{Your-Workspace-ID}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions).\n\nAlternatively, use a Standard API Key (starts with sk-) which does not require a custom URL.`);
         }
       }
       

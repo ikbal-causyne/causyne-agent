@@ -222,7 +222,7 @@ export class TokenTracker {
         if (alertThreshold && alertThreshold > 0 && daily.totalTokens >= alertThreshold && !daily.alertSent) {
             daily.alertSent = true;
             await this.saveDailyUsage(daily);
-            const msg = `⚠️ Token Budget Alert: Your BYOK usage has reached ${daily.totalTokens.toLocaleString()} tokens (Threshold: ${alertThreshold.toLocaleString()}).`;
+            const msg = `△ Token Budget Alert: Your BYOK usage has reached ${daily.totalTokens.toLocaleString()} tokens (Threshold: ${alertThreshold.toLocaleString()}).`;
             if (onWarning) {
                 onWarning(msg);
             }

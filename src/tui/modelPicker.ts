@@ -468,7 +468,7 @@ export async function runInteractiveModelPicker(
   if (target.type === 'acp') {
     if (!target.installed) {
       return (
-        `⚠️ Notice: "${target.providerLabel}" is not installed on this machine.\n` +
+        `△ Notice: "${target.providerLabel}" is not installed on this machine.\n` +
         `Setup: ${target.setupInstruction || 'Install the CLI binary.'}\n\n` +
         `Model was not changed.`
       );

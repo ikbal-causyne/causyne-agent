@@ -143,7 +143,7 @@ export async function openContinuumPreview(
   ];
 
   for (const msg of detail.messages) {
-    const rolePrefix = msg.role === 'user' ? '👤 USER' : '🤖 ASSISTANT';
+    const rolePrefix = msg.role === 'user' ? 'USER' : 'ASSISTANT';
     lines.push(`${rolePrefix}:`);
     for (const textLine of msg.content.split('\n')) {
       lines.push(`  ${textLine}`);

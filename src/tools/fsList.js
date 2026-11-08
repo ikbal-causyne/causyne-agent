@@ -67,7 +67,7 @@ export const fsList = {
       const maxDepth = args.depth || 2;
       
       const tree = await generateTree(target, 1, maxDepth);
-      const header = `📁 ${target}\n`;
+      const header = `${target}\n`;
       
       return { success: true, output: header + (tree || '  (Empty or access denied)') };
     } catch (e) {

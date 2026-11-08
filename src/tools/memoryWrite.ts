@@ -98,7 +98,7 @@ export const memoryWrite = {
       if (dependencies && typeof dependencies.broadcast === 'function') {
         dependencies.broadcast({
           type: 'agent_message',
-          content: `🧠 Persistent memory updated: "${fact}"`
+          content: `◆ Persistent memory updated: "${fact}"`
         });
       }
 

@@ -495,7 +495,7 @@ export function snipOversizedToolOutputs(messages, options = {}) {
       const tail = msg.content.slice(-tailChars);
       const pointer = msg.spillPath ? ` Full output preserved at: ${msg.spillPath}.` : '';
 
-      msg.content = `${head}\n\n[... ✂️ SNIPPED ${removed.toLocaleString()} CHARS (${Math.round(removed / CHARS_PER_TOKEN).toLocaleString()} TOKENS) TO PREVENT CONTEXT OVERFLOW.${pointer} Use targeted file reads to inspect specific sections ...] \n\n${tail}`;
+      msg.content = `${head}\n\n[... SNIPPED ${removed.toLocaleString()} CHARS (${Math.round(removed / CHARS_PER_TOKEN).toLocaleString()} TOKENS) TO PREVENT CONTEXT OVERFLOW.${pointer} Use targeted file reads to inspect specific sections ...] \n\n${tail}`;
 
       snippedCount++;
       reclaimedChars += (len - msg.content.length);

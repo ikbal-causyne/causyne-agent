@@ -254,6 +254,8 @@ export const GLYPHS = HAS_UNICODE
       // The left accent bar of a block. Uses box-drawing heavy vertical ('┃')
       // so it joins seamlessly from row to row without font line-height leading gaps.
       bar: '┃', step: '▪',
+      // Clean icon glyphs for skills and status indicators (no color emoticons).
+      skill: '✦', sparkle: '✦', diamond: '◆',
       // The permission marker. opencode shows a warning triangle and NO risk
       // word — the level is internal plumbing, and printing 'DANGEROUS' at
       // someone just makes them numb to it. Colour still carries the tier.
@@ -272,6 +274,7 @@ export const GLYPHS = HAS_UNICODE
       spinner: getEngineFrames({ unicode: false }),
       hLine: '-', vLine: '|', corner: '`', tee: '+', ellipsis: '...',
       bar: '|', step: '*',
+      skill: '*', sparkle: '*', diamond: '*',
       warnMark: '!',
       barHeavy: '|',
       topLeft: '+', topRight: '+', bottomLeft: '+', bottomRight: '+'

@@ -1329,7 +1329,7 @@ export const COMMANDS = [
         lines.push('ACP PEER AGENTS (Local Coding Agents & CLI Engines)');
         lines.push('────────────────────────────────────────────────────────────');
         for (const peer of overview.acp) {
-          const icon = peer.installed ? '✅' : '❌';
+          const icon = peer.installed ? '✓' : '✕';
           const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
           lines.push(`  ${icon} ${peer.label.padEnd(24)} — ${status}`);
         }
@@ -1383,7 +1383,7 @@ export const COMMANDS = [
         lines.push('ACP PEER AGENTS (Local Agents & CLI Engines)');
         lines.push('============================================================');
         for (const peer of overview.acp) {
-          const icon = peer.installed ? '✅' : '❌';
+          const icon = peer.installed ? '✓' : '✕';
           const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
           lines.push(`  ${icon} ${peer.label} — ${status}`);
           lines.push(`     Command: ${peer.command}`);
@@ -1440,7 +1440,7 @@ export const COMMANDS = [
           const latencyMs = Math.round(performance.now() - t0);
 
           const outputLines = [
-            `✅ API Call Test Succeeded: "${targetProvider}" / "${providerInstance.model || targetModel || 'default'}"`,
+            `✓ API Call Test Succeeded: "${targetProvider}" / "${providerInstance.model || targetModel || 'default'}"`,
             '',
             `  • Round-trip Latency : ${latencyMs} ms`,
             `  • Response Content   : ${JSON.stringify(response.content || '').slice(0, 80)}`,
@@ -1451,7 +1451,7 @@ export const COMMANDS = [
           return ok(outputLines.join('\n'));
         } catch (err) {
           return fail(
-            `❌ API Call Test Failed for "${targetProvider}" / "${targetModel || config.model || 'default'}":\n\n`
+            `✕ API Call Test Failed for "${targetProvider}" / "${targetModel || config.model || 'default'}":\n\n`
             + `  Error: ${err.message || err}\n\n`
             + `Checks:\n`
             + `  - Verify the API key in /setup.\n`
@@ -1741,7 +1741,7 @@ export const COMMANDS = [
         const detected = await detectAllPeers();
         const lines = ['Discovered ACP Peer Agents', ''];
         for (const item of detected) {
-          const statusIcon = item.status === 'ready' ? '✅' : (item.status === 'needs_auth' ? '⚠️ ' : '❌');
+          const statusIcon = item.status === 'ready' ? '✓' : (item.status === 'needs_auth' ? '△ ' : '✕');
           lines.push(`  ${statusIcon} ${item.id} (${item.label}) — ${item.status.toUpperCase()}`);
           lines.push(`     Command: ${item.command} ${item.args.join(' ')}`);
           if (item.details) lines.push(`     Details: ${item.details}`);
@@ -1759,7 +1759,7 @@ export const COMMANDS = [
           const { resolveAgyBinary } = await import('./providers/antigravity.js');
           const bin = resolveAgyBinary();
           return ok(
-            `✅ Agent Peer Test Passed: "antigravity"\n\n`
+            `✓ Agent Peer Test Passed: "antigravity"\n\n`
             + `Agent: Google Antigravity (AGY)\n`
             + `Command: ${bin} --output-format json\n`
             + `Policy: local-cli\n`
@@ -1780,7 +1780,7 @@ export const COMMANDS = [
         if (handshake.ready) {
           const name = handshake.agentInfo ? `${handshake.agentInfo.name} ${handshake.agentInfo.version}` : profile.label;
           return ok(
-            `✅ ACP Peer Test Passed: "${peerId}"\n\n`
+            `✓ ACP Peer Test Passed: "${peerId}"\n\n`
             + `Agent: ${name}\n`
             + `Command: ${profile.command} ${profile.args.join(' ')}\n`
             + `Policy: ${profile.policy}\n`
@@ -1789,7 +1789,7 @@ export const COMMANDS = [
           );
         } else {
           return fail(
-            `❌ ACP Peer Test Failed: "${peerId}"\n\n`
+            `✕ ACP Peer Test Failed: "${peerId}"\n\n`
             + `Error: ${handshake.error || 'Handshake failed'}\n`
             + `Command: ${profile.command} ${profile.args.join(' ')}`
           );
@@ -2284,8 +2284,8 @@ export const COMMANDS = [
 
       const nodeVer = process.version;
       const nodeOk = parseInt(nodeVer.slice(1).split('.')[0], 10) >= 24;
-      lines.push(`  ${nodeOk ? '✅' : '⚠️'} Node.js version    : ${nodeVer} ${nodeOk ? '(supported)' : '(Node >= 24 required)'}`);
-      lines.push(`  ℹ️ Platform          : ${process.platform} (${process.arch})`);
+      lines.push(`  ${nodeOk ? '✓' : '△'} Node.js version    : ${nodeVer} ${nodeOk ? '(supported)' : '(Node >= 24 required)'}`);
+      lines.push(`  • Platform          : ${process.platform} (${process.arch})`);
 
       const ws = ctx.loop?.workspaceRoot || process.cwd();
       let isGit = false;
@@ -2293,19 +2293,19 @@ export const COMMANDS = [
         execSync('git rev-parse --is-inside-work-tree', { cwd: ws, stdio: 'pipe' });
         isGit = true;
       } catch {}
-      lines.push(`  ✅ Workspace root    : ${ws}`);
-      lines.push(`  ${isGit ? '✅' : 'ℹ️'} Git repository    : ${isGit ? 'active' : 'not a git repo'}`);
+      lines.push(`  ✓ Workspace root    : ${ws}`);
+      lines.push(`  ${isGit ? '✓' : '•'} Git repository    : ${isGit ? 'active' : 'not a git repo'}`);
 
       const provider = config.provider || 'not configured';
       const model = config.model || 'default';
-      lines.push(`  ℹ️ Provider / Model  : ${provider} / ${model}`);
+      lines.push(`  • Provider / Model  : ${provider} / ${model}`);
 
       const servers = serverStatus();
       const grantedCount = servers.filter(s => s.granted).length;
-      lines.push(`  ℹ️ MCP Servers       : ${servers.length} configured (${grantedCount} granted)`);
+      lines.push(`  • MCP Servers       : ${servers.length} configured (${grantedCount} granted)`);
 
       const peers = listAllPeers();
-      lines.push(`  ℹ️ ACP Peers         : ${peers.length} available`);
+      lines.push(`  • ACP Peers         : ${peers.length} available`);
 
       lines.push('');
       lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');
@@ -2338,7 +2338,7 @@ export const COMMANDS = [
       const body = session.messages
         .filter(m => m.role !== 'system')
         .map(m => {
-          const roleLabel = m.role === 'user' ? '### 👤 User' : '### 🤖 Causyne Agent';
+          const roleLabel = m.role === 'user' ? '### User' : '### Causyne Agent';
           return `${roleLabel}\n\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}\n`;
         })
         .join('\n---\n\n');

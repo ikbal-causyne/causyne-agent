@@ -105,10 +105,10 @@ export async function resolveMentionedContext(
   for (const m of mentions) {
     if (m.isMeta) {
       if (m.path === 'workspace' || m.path === 'here') {
-        sections.push(`📁 REFERENCED SCOPE: Whole workspace (${cwd})`);
+        sections.push(`◆ REFERENCED SCOPE: Whole workspace (${cwd})`);
       } else if (m.path === 'rea' || m.path === 'rea-agents') {
         sections.push(
-          `🔬 REFERENCED CAPABILITY: Reverse Engineer Anything (REA) Substrate active.\n` +
+          `◆ REFERENCED CAPABILITY: Reverse Engineer Anything (REA) Substrate active.\n` +
           `Use the 'reverse_engineering' tool with action 'inspect', 'unpack', 'decompile', or 'engine_tool' to analyze APKs, binaries, and assemblies.`
         );
       }
@@ -156,7 +156,7 @@ export async function resolveMentionedContext(
     const relPath = path.relative(cwd, targetPath).split(path.sep).join('/');
 
     if (!found) {
-      sections.push(`📂 REFERENCED PATH: ${m.path} (Note: path was not found on disk at ${relPath})`);
+      sections.push(`◆ REFERENCED PATH: ${m.path} (Note: path was not found on disk at ${relPath})`);
       continue;
     }
 
@@ -174,7 +174,7 @@ export async function resolveMentionedContext(
           : '';
 
         sections.push(
-          `📁 REFERENCED DIRECTORY: ${relPath}/\n` +
+          `◆ REFERENCED DIRECTORY: ${relPath}/\n` +
           `Directory listing (${summary.length} items):\n` +
           summary.map(s => `  - ${s}`).join('\n') +
           more
@@ -185,7 +185,7 @@ export async function resolveMentionedContext(
         if (isBinary) {
           const sizeMb = (stats.size / (1024 * 1024)).toFixed(2);
           sections.push(
-            `📦 REFERENCED BINARY PACKAGE: ${relPath} (${stats.size.toLocaleString()} bytes, ~${sizeMb} MB, format: ${ext.toUpperCase().replace('.', '')})\n` +
+            `◆ REFERENCED BINARY PACKAGE: ${relPath} (${stats.size.toLocaleString()} bytes, ~${sizeMb} MB, format: ${ext.toUpperCase().replace('.', '')})\n` +
             `Note: This is a binary/compiled package. Do not read raw bytes. Use the 'reverse_engineering' tool with action 'inspect', 'unpack', or 'decompile' to analyze manifest, classes, resources, and architecture.`
           );
         } else {
@@ -200,7 +200,7 @@ export async function resolveMentionedContext(
           }
 
           sections.push(
-            `📄 REFERENCED FILE: ${relPath} (${lines.length} lines):\n` +
+            `◆ REFERENCED FILE: ${relPath} (${lines.length} lines):\n` +
             '```\n' +
             body + '\n' +
             '```'
@@ -209,7 +209,7 @@ export async function resolveMentionedContext(
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      sections.push(`📂 REFERENCED PATH: ${relPath} (Error reading: ${msg})`);
+      sections.push(`◆ REFERENCED PATH: ${relPath} (Error reading: ${msg})`);
     }
   }
 

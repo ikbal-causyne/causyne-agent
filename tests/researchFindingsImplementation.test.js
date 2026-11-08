@@ -124,7 +124,7 @@ test('Compaction Stage 2: snips single tool output > 15K tokens (60K chars)', ()
   const result = snipOversizedToolOutputs(messages);
   assert.equal(result.snippedCount, 1);
   assert.ok(result.reclaimedChars > 40000, 'must reclaim tens of thousands of characters');
-  assert.ok(messages[1].content.includes('✂️ SNIPPED'), 'must embed snip marker');
+  assert.ok(messages[1].content.includes('SNIPPED'), 'must embed snip marker');
   assert.ok(messages[1].content.length < 35000, 'snipped tool output must be bounded');
 });
 
@@ -194,6 +194,6 @@ test('Plan Cache: renderPlanHint prominently displays failure route warnings', (
   };
 
   const hint = renderPlanHint(match);
-  assert.ok(hint.includes('⚠️ FAILURE ROUTE WARNINGS'), 'must render failure route warnings section');
+  assert.ok(hint.includes('FAILURE ROUTE WARNINGS'), 'must render failure route warnings section');
   assert.ok(hint.includes('Step 2 (sysRun → npm-test) FAILED with reason: exit_nonzero'), 'must detail failed step and reason');
 });

@@ -367,7 +367,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
     // Case 1: ACP Peer Agent or Antigravity
     if (target.type === 'acp') {
         if (!target.installed) {
-            return (`⚠️ Notice: "${target.providerLabel}" is not installed on this machine.\n` +
+            return (`△ Notice: "${target.providerLabel}" is not installed on this machine.\n` +
                 `Setup: ${target.setupInstruction || 'Install the CLI binary.'}\n\n` +
                 `Model was not changed.`);
         }
