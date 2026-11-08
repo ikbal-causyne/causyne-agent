@@ -94,14 +94,22 @@ export async function exchangeCodeForApiKey(code, codeVerifier, fetchFn = fetch)
     return apiKey;
 }
 /**
- * Retrieve the Causyne Agent emblem logo as a binary buffer if available.
+ * Retrieve the Causyne Agent emblem logo encoded as Base64.
  */
 export function getLogoBuffer() {
     try {
         const currentDir = path.dirname(fileURLToPath(import.meta.url));
-        const assetPath = path.resolve(currentDir, '../assets/logo.png');
-        if (fs.existsSync(assetPath)) {
-            return fs.readFileSync(assetPath);
+        const candidates = [
+            path.resolve(currentDir, '../assets/logo.png'),
+            path.resolve(currentDir, '../../assets/logo.png'),
+            path.resolve(currentDir, '../../../public/assets/logo-200.png'),
+            path.resolve(process.cwd(), 'src/assets/logo.png'),
+            path.resolve(process.cwd(), 'assets/logo.png')
+        ];
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+                return fs.readFileSync(candidate);
+            }
         }
     }
     catch {
@@ -117,60 +125,69 @@ export function getLogoBase64() {
     return buf ? buf.toString('base64') : '';
 }
 /**
- * Render a professional branded HTML response page for OpenRouter OAuth callbacks.
+ * Render a professional branded HTML response page for OpenRouter OAuth callbacks
+ * following the exact visual style and design language of causyne.com.
  */
 export function renderAuthPage(options) {
     const isSuccess = options.status === 'success';
     const base64Logo = getLogoBase64();
     const logoSrc = base64Logo ? `data:image/png;base64,${base64Logo}` : '/logo.png';
     const badgeHtml = isSuccess
-        ? '<div style="display:inline-flex;align-items:center;gap:8px;' +
-            'background:rgba(46,160,67,0.15);border:1px solid #2ea043;color:#3fb950;' +
-            'padding:6px 18px;border-radius:24px;font-size:13px;font-weight:600;margin-bottom:20px;">' +
+        ? '<div style="display:inline-flex;align-items:center;gap:6px;' +
+            'background:rgba(157,240,40,0.12);border:1px solid rgba(157,240,40,0.35);color:#9df028;' +
+            'padding:5px 14px;border-radius:4px;font-size:12px;font-family:\'SF Mono\',Menlo,monospace;font-weight:600;margin-bottom:20px;">' +
             '✓ Connected Successfully</div>'
-        : '<div style="display:inline-flex;align-items:center;gap:8px;' +
-            'background:rgba(239,68,68,0.15);border:1px solid #ef4444;color:#f87171;' +
-            'padding:6px 18px;border-radius:24px;font-size:13px;font-weight:600;margin-bottom:20px;">' +
+        : '<div style="display:inline-flex;align-items:center;gap:6px;' +
+            'background:rgba(239,83,80,0.12);border:1px solid rgba(239,83,80,0.35);color:#ef5350;' +
+            'padding:5px 14px;border-radius:4px;font-size:12px;font-family:\'SF Mono\',Menlo,monospace;font-weight:600;margin-bottom:20px;">' +
             '✕ Authorization Failed</div>';
     const title = options.title || (isSuccess ? 'OpenRouter Account Authorized' : 'Authorization Error');
     const defaultMsg = isSuccess
-        ? 'Your OpenRouter account has been connected to Causyne Agent. You can now close this tab and return to your terminal.'
+        ? 'Your OpenRouter account is now authorized and connected to Causyne Agent. You can close this window and return to your terminal.'
         : 'The authorization flow could not be completed.';
     const message = options.message || defaultMsg;
     const contentBox = isSuccess
-        ? '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);' +
-            'border-radius:10px;padding:14px 18px;margin-bottom:28px;text-align:left;font-family:monospace;' +
-            'font-size:13px;color:#cbd5e1;">' +
-            '<div style="display:flex;justify-content:space-between;margin-bottom:8px;">' +
-            '<span style="color:#64748b;">Active Model</span>' +
+        ? '<div style="background:#191c19;border:1px solid rgba(255,255,255,0.07);' +
+            'border-radius:6px;padding:14px 18px;margin-bottom:24px;text-align:left;font-family:\'SF Mono\',Menlo,Monaco,Consolas,monospace;' +
+            'font-size:12px;line-height:1.7;color:#e4e8e0;">' +
+            '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">' +
+            '<span style="color:#9da697;">Provider</span>' +
+            '<span style="color:#e4e8e0;font-weight:600;">OpenRouter</span>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">' +
+            '<span style="color:#9da697;">Active Model</span>' +
             `<span style="color:#9df028;font-weight:600;">${options.model || OPENROUTER_FREE_MODEL}</span>` +
             '</div>' +
             '<div style="display:flex;justify-content:space-between;">' +
-            '<span style="color:#64748b;">Privacy Guard</span>' +
-            '<span style="color:#38bdf8;">provider.data_collection = &quot;deny&quot;</span>' +
+            '<span style="color:#9da697;">Privacy Guard</span>' +
+            '<span style="color:#9da697;">provider.data_collection = &quot;deny&quot;</span>' +
             '</div>' +
             '</div>'
-        : '<div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);' +
-            'border-radius:10px;padding:14px;color:#fca5a5;font-size:13px;line-height:1.5;margin-bottom:20px;' +
-            `text-align:left;">${options.errorDetail || 'An unexpected error occurred during authorization.'}</div>` +
-            '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);' +
-            'border-radius:10px;padding:16px;margin-bottom:24px;text-align:left;">' +
-            '<div style="color:#ffffff;font-size:13px;font-weight:600;margin-bottom:8px;">Recommended Solutions:</div>' +
-            '<ol style="color:#94a3b8;font-size:13px;line-height:1.6;margin:0;padding-left:18px;">' +
-            '<li>Return to your terminal and select OpenRouter in the FREE tab again to retry.</li>' +
-            '<li>Or create a free API key at <a href="https://openrouter.ai/keys" target="_blank" ' +
-            'style="color:#38bdf8;text-decoration:none;">openrouter.ai/keys</a> and configure it via:</li>' +
+        : '<div style="background:#191c19;border:1px solid rgba(239,83,80,0.25);' +
+            'border-radius:6px;padding:14px;color:#fca5a5;font-size:13px;line-height:1.6;margin-bottom:20px;' +
+            `text-align:left;font-family:\'SF Mono\',Menlo,monospace;">${options.errorDetail || 'An unexpected error occurred during authorization.'}</div>` +
+            '<div style="background:#191c19;border:1px solid rgba(255,255,255,0.07);' +
+            'border-radius:6px;padding:16px;margin-bottom:24px;text-align:left;font-size:13px;">' +
+            '<div style="color:#e4e8e0;font-weight:600;margin-bottom:8px;">Recommended Solutions:</div>' +
+            '<ol style="color:#9da697;line-height:1.6;margin:0;padding-left:18px;">' +
+            '<li>Return to your terminal and select OpenRouter in the FREE tab to retry.</li>' +
+            '<li>Or obtain a free API key at <a href="https://openrouter.ai/keys" target="_blank" ' +
+            'style="color:#9df028;text-decoration:none;">openrouter.ai/keys</a> and connect directly via:</li>' +
             '</ol>' +
-            '<pre style="background:#05070a;color:#9df028;padding:10px 14px;border-radius:6px;font-family:monospace;' +
-            'font-size:12px;margin-top:10px;overflow-x:auto;">causyne config set providerKeys.openrouter &lt;your-key&gt;</pre>' +
+            '<pre style="background:#141714;color:#9df028;padding:10px 14px;border-radius:4px;font-family:\'SF Mono\',Menlo,monospace;' +
+            'font-size:12px;margin-top:10px;border:1px solid rgba(255,255,255,0.07);overflow-x:auto;">causyne config set providerKeys.openrouter &lt;your-key&gt;</pre>' +
             '</div>';
     const actionButton = isSuccess
-        ? '<button onclick="window.close()" style="background:#9df028;color:#080b11;border:none;' +
-            'padding:12px 28px;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;">' +
+        ? '<button id="return-btn" onclick="returnToTerminal()" style="background:#9df028;color:#141714;border:none;' +
+            'padding:11px 26px;border-radius:4px;font-size:13px;font-weight:700;cursor:pointer;' +
+            'font-family:\'SF Mono\',Menlo,monospace;letter-spacing:0.5px;transition:background 0.15s ease;">' +
             'Return to Terminal</button>' +
-            '<div style="font-size:12px;color:#64748b;margin-top:14px;">You can safely close this browser window.</div>'
-        : '<button onclick="window.close()" style="background:#334155;color:#f8fafc;border:none;' +
-            'padding:10px 24px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">' +
+            '<div id="return-hint" style="font-size:12px;color:#60685b;margin-top:14px;line-height:1.5;">' +
+            'Authentication complete. You can close this browser tab (⌘W / Ctrl+W) and switch back to your terminal.' +
+            '</div>'
+        : '<button onclick="window.close()" style="background:#202421;color:#e4e8e0;border:1px solid rgba(255,255,255,0.15);' +
+            'padding:10px 22px;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;' +
+            'font-family:\'SF Mono\',Menlo,monospace;">' +
             'Close Window</button>';
     return `<!DOCTYPE html>
 <html lang="en">
@@ -179,11 +196,11 @@ export function renderAuthPage(options) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Causyne Agent Connected Successfully</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: #080b11 radial-gradient(circle at 50% 20%, #152238 0%, #080b11 75%);
-      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #141714;
+      color: #e4e8e0;
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -191,7 +208,7 @@ export function renderAuthPage(options) {
       padding: 24px;
     }
     .container {
-      max-width: 540px;
+      max-width: 500px;
       width: 100%;
       text-align: center;
     }
@@ -199,53 +216,75 @@ export function renderAuthPage(options) {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 16px;
-      margin-bottom: 28px;
+      gap: 14px;
+      margin-bottom: 24px;
     }
     .logo {
-      width: 52px;
-      height: 52px;
+      width: 40px;
+      height: 40px;
       object-fit: contain;
-      border-radius: 12px;
-      filter: drop-shadow(0 4px 16px rgba(157, 240, 40, 0.3));
     }
     .brand-title {
-      font-family: "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 20px;
       font-weight: 800;
       letter-spacing: 1.5px;
-      color: #ffffff;
+      color: #e4e8e0;
       line-height: 1.2;
+      text-align: left;
     }
     .brand-subtitle {
+      font-family: 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 11px;
-      color: #8a99a8;
-      letter-spacing: 1px;
-      text-transform: uppercase;
+      color: #9da697;
+      letter-spacing: 0.5px;
       margin-top: 2px;
       text-align: left;
     }
+    .brand-slogan {
+      font-family: 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: #60685b;
+      margin-top: 1px;
+      text-align: left;
+    }
     .card {
-      background: rgba(18, 25, 38, 0.95);
-      border: 1px solid rgba(157, 240, 40, 0.22);
-      border-radius: 16px;
-      padding: 36px 32px;
-      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(16px);
+      background: #202421;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 32px 28px;
     }
     h1 {
-      color: #ffffff;
-      font-size: 21px;
+      color: #e4e8e0;
+      font-size: 19px;
       font-weight: 700;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
+      letter-spacing: -0.2px;
     }
     p {
-      color: #94a3b8;
-      font-size: 14px;
+      color: #9da697;
+      font-size: 13px;
       line-height: 1.6;
-      margin-bottom: 24px;
+      margin-bottom: 22px;
     }
   </style>
+  <script>
+    function returnToTerminal() {
+      try {
+        window.open('', '_self', '');
+        window.close();
+      } catch (e) {}
+      var btn = document.getElementById('return-btn');
+      if (btn) {
+        btn.textContent = '✓ Ready! Switch to Terminal';
+        btn.style.background = '#8ea954';
+      }
+      var hint = document.getElementById('return-hint');
+      if (hint) {
+        hint.innerHTML = '<span style="color:#B5D66A;font-weight:600;">Authentication complete!</span> Switch back to your terminal window (Cmd+Tab / Alt+Tab). You can close this tab (Cmd+W / Ctrl+W).';
+      }
+    }
+  </script>
 </head>
 <body>
   <div class="container">
@@ -253,7 +292,8 @@ export function renderAuthPage(options) {
       <img src="${logoSrc}" alt="Causyne Agent Logo" class="logo" />
       <div>
         <div class="brand-title">CAUSYNE <span style="color:#9df028;">AGENT</span></div>
-        <div class="brand-subtitle">Autonomous AI Harness</div>
+        <div class="brand-subtitle">Agentic AI Harness</div>
+        <div class="brand-slogan">From intention to meaningful progress.</div>
       </div>
     </div>
     <div class="card">

@@ -10,17 +10,19 @@ import { paint, bold, dim, GLYPHS } from './theme.js';
 import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter } from '../auth/openrouterAuth.js';
+import { setTransientNotice } from './consoleGuard.js';
 import { getAvailableProvidersOverview, resolveAvailableProvidersOverview, resolveAvailableModels } from '../dynamicCatalogue.js';
-async function showConfiguringAnimation(providerLabel) {
+async function showConfiguringAnimation(providerLabel, promptHost) {
+    if (promptHost && typeof promptHost.scheduleDraw === 'function') {
+        promptHost.notice = `Configuring ${providerLabel} in secure local vault…`;
+        promptHost.scheduleDraw();
+        await new Promise(r => setTimeout(r, 120));
+        promptHost.notice = `✓ ${providerLabel} credentials saved.`;
+        promptHost.scheduleDraw();
+        return;
+    }
     if (!process.stdout.isTTY)
         return;
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    const text = `Configuring ${providerLabel} in secure local vault…`;
-    for (let i = 0; i < 5; i++) {
-        const f = frames[i % frames.length];
-        process.stdout.write(`\r  \x1b[36m${f}\x1b[0m ${text}`);
-        await new Promise(r => setTimeout(r, 60));
-    }
     process.stdout.write(`\r\x1b[K  \x1b[32m✓\x1b[0m ${providerLabel} credentials saved.\n`);
 }
 /**
@@ -536,10 +538,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         if (!cleanInput) {
             // User pressed Enter on empty placeholder: run OAuth PKCE loopback flow!
             try {
-                if (process.stdout.isTTY) {
-                    process.stdout.write('\r  \x1b[36m●\x1b[0m Opening browser for OpenRouter OAuth authorization…\n');
-                    process.stdout.write('  \x1b[90mWaiting for authorization on 127.0.0.1 (timeout: 120s)…\x1b[0m\n');
-                }
+                setTransientNotice(prompt, '● Opening browser for OpenRouter OAuth authorization… (Waiting on 127.0.0.1)', 120_000);
                 const { apiKey } = await startLoopbackAuth({ timeoutMs: 120_000, openBrowser: true });
                 saveOpenRouterKey(apiKey, { setAsActive: true, store });
                 const updatedConfig = store.loadConfig();
@@ -550,9 +549,17 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                     }
                 }
                 notifyPrompt('openrouter', target.modelId);
+                setTransientNotice(prompt, `✓ Connected to OpenRouter successfully! Using OpenRouter Free / ${target.modelId}.`, 5000);
+                if (prompt.surface?.stage) {
+                    prompt.surface.stage.invalidate();
+                }
+                if (typeof prompt.scheduleDraw === 'function') {
+                    prompt.scheduleDraw();
+                }
                 return `✓ Connected to OpenRouter successfully! Now using OpenRouter Free / ${target.modelId}.`;
             }
             catch (err) {
+                setTransientNotice(prompt, `✕ OpenRouter authorization failed: ${err?.message || err}`, 6000);
                 return (`✕ OpenRouter authorization failed: ${err?.message || err}\n\n` +
                     `Solutions:\n` +
                     `1. Check that your browser can open local URLs (http://127.0.0.1).\n` +
@@ -562,7 +569,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
             }
         }
         // User pasted an API key
-        await showConfiguringAnimation('OpenRouter');
+        await showConfiguringAnimation('OpenRouter', prompt);
         saveOpenRouterKey(cleanInput, { setAsActive: true, store });
         const updatedConfig = store.loadConfig();
         if (options.loop) {
@@ -628,7 +635,7 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         return `Cancelled. An API key is required to use ${target.providerLabel} / ${target.modelId}. Model was not changed.`;
     }
     const cleanKey = enteredKey.trim();
-    await showConfiguringAnimation(target.providerLabel);
+    await showConfiguringAnimation(target.providerLabel, prompt);
     config['provider'] = target.providerId;
     config['model'] = target.modelId;
     config['apiKey'] = cleanKey;

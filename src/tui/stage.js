@@ -33,6 +33,7 @@
 // Pure Node: no dependency, no shell.
 
 import { visibleWidth, truncate } from './text.js';
+import { runWithStageWrite } from './consoleGuard.js';
 
 // Below this the band cannot hold a viewport plus an input box plus a footer,
 // and a cramped stage is worse than honest scrollback. The fallback is not a
@@ -133,7 +134,11 @@ export class Stage {
   write(text) {
     if (!text) return;
     this.stats.bytes += text.length;
-    this.out.write(text);
+    if (typeof runWithStageWrite === 'function') {
+      runWithStageWrite(() => this.out.write(text));
+    } else {
+      this.out.write(text);
+    }
   }
 
   /**

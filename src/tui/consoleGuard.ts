@@ -23,6 +23,25 @@ const originalStderrWrite = process.stderr?.write
   ? process.stderr.write.bind(process.stderr)
   : null;
 
+const originalStdoutWrite = process.stdout?.write
+  ? process.stdout.write.bind(process.stdout)
+  : null;
+
+let stageInternalWriting = false;
+
+/**
+ * Run a write operation with permission to write to stdout during Stage sessions.
+ */
+export function runWithStageWrite<T>(fn: () => T): T {
+  const prev = stageInternalWriting;
+  stageInternalWriting = true;
+  try {
+    return fn();
+  } finally {
+    stageInternalWriting = prev;
+  }
+}
+
 export function isAnyStageReservedOnStdout(): boolean {
   if (stageMouseSessionDepth > 0 && process.stdout?.isTTY) {
     return true;
@@ -63,6 +82,21 @@ function ensureConsoleGuardInstalled(): void {
       }
       return (originalStderrWrite as (...a: unknown[]) => boolean)(chunk, encodingOrCb, cb);
     }) as typeof process.stderr.write;
+  }
+
+  if (originalStdoutWrite && process.stdout) {
+    process.stdout.write = ((chunk: unknown, encodingOrCb?: unknown, cb?: unknown): boolean => {
+      if (isAnyStageReservedOnStdout() && !stageInternalWriting) {
+        // Prevent rogue unmanaged writes from emitting bare newlines that scroll the stage
+        const text = String(chunk ?? '');
+        if (text.includes('\n')) {
+          if (typeof encodingOrCb === 'function') (encodingOrCb as () => void)();
+          else if (typeof cb === 'function') (cb as () => void)();
+          return true;
+        }
+      }
+      return (originalStdoutWrite as (...a: unknown[]) => boolean)(chunk, encodingOrCb, cb);
+    }) as typeof process.stdout.write;
   }
 }
 

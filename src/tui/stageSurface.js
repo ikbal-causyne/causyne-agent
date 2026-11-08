@@ -392,9 +392,6 @@ export class StageSurface {
    * the contract in transcript.js.
    */
   commit(kind, produce, meta = null) {
-    if (kind === 'error' || kind === 'turn' || kind === 'approval') {
-      this.stage.invalidate();
-    }
     return this.transcript.append({ kind, produce, meta });
   }
 
@@ -441,17 +438,23 @@ export class StageSurface {
     // entered from Home occupies the available height at every terminal width.
     // Its short transcript is placed next to the input below.
     const contentRows = this.transcript.height(contentWidth);
-    const desired = sessionStageHeight(this.stage.maxHeight, block.length, contentRows, this.fullSession || caret?.inline);
+    const minFloor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
+    const neededWithFloor = Math.min(this.stage.maxHeight, block.length + minFloor);
+    const desired = Math.max(
+      sessionStageHeight(this.stage.maxHeight, block.length, contentRows, this.fullSession || caret?.inline),
+      neededWithFloor
+    );
     if (desired > this.stage.height) this.stage.grow(desired - this.stage.height);
 
     const height = this.stage.height;
 
-    // An active prompt block or modal dialog is the focal point of user interaction.
-    // Never slice the top border, title, or input area when the block fits within the stage height.
-    // The transcript viewport receives the remaining vertical budget (height - block.length).
-    const maxBlock = this.messageActionOverlay?.panel.length
-      ? Math.max(1, height - this.messageActionOverlay.panel.length)
-      : height;
+    // The prompt may not eat the whole band — but only once there is a
+    // transcript for it to eat. Trim from the TOP when it would: the status
+    // footer and the caret row are the last rows and the ones worth keeping,
+    // and an input box that has scrolled its own oldest row off is a smaller lie
+    // than a transcript that has vanished.
+    const floor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
+    const maxBlock = Math.max(1, height - floor);
     if (block.length > maxBlock) {
       const cut = block.length - maxBlock;
       block = block.slice(cut);
