@@ -27,7 +27,7 @@ import { lookupPlan, recordPlan, recordPlanAsync, recordMiss, renderPlanHint, to
 import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
-import { normalizePeerPlanEntries, extractLivePlanFromText, stripToolCallMarkup, stripThinkBlocks } from './implementationPlan.js';
+import { normalizePeerPlanEntries, extractLivePlanFromText, stripToolCallMarkup, stripThinkBlocks, extractToolCallJsonObjects, resolveToolCallEnvelopeArguments } from './implementationPlan.js';
 import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
@@ -2746,6 +2746,33 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 }];
                             delete response.toolRoutingError;
                         }
+                    }
+                }
+                // General Provider Tool Call Extraction Fallback:
+                // If the model did not emit structured API tool calls, but output <tool_call> envelopes
+                // in its content text, extract them so tools execute seamlessly across all general providers.
+                if ((!response.toolCalls || response.toolCalls.length === 0) && response.content) {
+                    const textCalls = [];
+                    let callIndex = 0;
+                    for (const parsed of extractToolCallJsonObjects(response.content)) {
+                        const fnObj = parsed.function && typeof parsed.function === 'object'
+                            ? parsed.function
+                            : null;
+                        const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
+                        if (!name)
+                            continue;
+                        const rawArgs = resolveToolCallEnvelopeArguments(parsed);
+                        textCalls.push({
+                            id: `text_call_${Date.now()}_${callIndex++}`,
+                            type: 'function',
+                            function: {
+                                name: canonicalToolName(name),
+                                arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+                            }
+                        });
+                    }
+                    if (textCalls.length > 0) {
+                        response.toolCalls = textCalls;
                     }
                 }
                 // Add assistant response to history. This is the ONLY place the turn is

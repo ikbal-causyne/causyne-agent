@@ -224,8 +224,8 @@ export function renderAuthPage(options) {
             `<span class="meta-val lime">${options.model || OPENROUTER_FREE_MODEL}</span>` +
             '</div>' +
             '<div class="meta-row" style="margin-bottom:8px;">' +
-            '<span class="meta-label">Privacy Guard</span>' +
-            '<span class="meta-val" style="color:#9da697;">provider.data_collection = &quot;deny&quot;</span>' +
+            '<span class="meta-label">Routing Tier</span>' +
+            '<span class="meta-val" style="color:#9da697;">Community Free Inference (Zero Cost)</span>' +
             '</div>' +
             '<div class="meta-row">' +
             '<span class="meta-label">Protocol</span>' +

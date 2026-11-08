@@ -250,11 +250,17 @@ const PARAMETER_ALIASES: Record<string, string[]> = {
   filter: [
     'pattern', 'glob', 'regex', 'matching'
   ],
+  cwd: [
+    'dir', 'directory', 'workdir', 'working_dir', 'workingDir', 'workingDirectory', 'path', 'folder'
+  ],
+  outputFile: [
+    'output', 'out', 'output_file', 'destination', 'dest', 'target_file', 'file_path', 'file', 'target'
+  ],
   options: [
     'opts', 'config', 'settings', 'params'
   ],
   timeout: [
-    'timeoutMs', 'timeout_ms', 'timeoutSec', 'duration'
+    'timeoutMs', 'timeout_ms', 'timeoutSec', 'timeout_seconds', 'duration', 'timeout_s', 'time_limit'
   ],
   url: [
     'link', 'href', 'endpoint', 'uri', 'target_url'
@@ -806,12 +812,30 @@ export function coerceArgumentTypes(
     if (expectedType === 'number' || expectedType === 'integer') {
       if (typeof val === 'string') {
         const trimmed = val.trim();
-        if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        const timeMatch = (key === 'timeout' || key === 'timeoutMs' || key === 'timeout_ms' || key === 'duration')
+          ? trimmed.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m)?$/i)
+          : null;
+        if (timeMatch && timeMatch[1]) {
+          const rawVal = parseFloat(timeMatch[1]);
+          const unit = (timeMatch[2] || '').toLowerCase();
+          let ms = rawVal;
+          if (unit === 'ms') ms = rawVal;
+          else if (unit === 'm') ms = rawVal * 60 * 1000;
+          else if (unit === 's') ms = rawVal * 1000;
+          else ms = rawVal <= 600 ? rawVal * 1000 : rawVal;
+          modified[key] = expectedType === 'integer' ? Math.round(ms) : ms;
+          repairs.push(`Normalized time string "${val}" -> ${modified[key]}ms for parameter '${key}'`);
+        } else if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
           const num = expectedType === 'integer' ? parseInt(trimmed, 10) : parseFloat(trimmed);
           if (!isNaN(num)) {
             modified[key] = num;
             repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${key}'`);
           }
+        }
+      } else if (typeof val === 'number' && (key === 'timeout' || key === 'timeoutMs')) {
+        if (val > 0 && val <= 600) {
+          modified[key] = Math.round(val * 1000);
+          repairs.push(`Scaled timeout from seconds (${val}s) -> ${modified[key]}ms for parameter '${key}'`);
         }
       } else if (Array.isArray(val) && val.length === 1) {
         const item = val[0];

@@ -7,6 +7,7 @@ import { capabilityDirectory, ensureCapability, loadCapabilityPackage } from '..
 import { resolveBrowserRuntime } from './browserRuntime.js';
 import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
 import { windowSnapshot } from './snapshotWindow.js';
+import { searchPublicWeb } from './searchProviders.js';
 const NAVIGATION_TIMEOUT_MS = 30_000;
 const ACTION_TIMEOUT_MS = 12_000;
 const IFRAME_SNAPSHOT_TIMEOUT_MS = 3_000;
@@ -721,27 +722,43 @@ export class CausyneBrowser {
         const cleaned = String(query ?? '').trim();
         if (!cleaned || cleaned.length > 1_000)
             throw new Error('Search query must contain 1-1000 characters');
-        await this.start();
-        const state = await this.activeTab();
-        const targets = [
-            { engine: 'google', url: `https://www.google.com/search?q=${encodeURIComponent(cleaned)}` },
-            { engine: 'duckduckgo', url: `https://duckduckgo.com/html/?q=${encodeURIComponent(cleaned)}` },
-            { engine: 'bing', url: `https://www.bing.com/search?q=${encodeURIComponent(cleaned)}` }
-        ];
         const failures = [];
-        for (const target of targets) {
-            try {
-                await this.navigate(state, target.url);
-                await state.page.waitForTimeout(250);
-                const extracted = await state.page.evaluate(SEARCH_EXTRACT_SCRIPT);
-                if (Array.isArray(extracted) && extracted.length > 0) {
-                    return extracted.slice(0, MAX_SEARCH_RESULTS).map(result => ({ ...result, engine: target.engine }));
+        try {
+            await this.start();
+            const state = await this.activeTab();
+            const targets = [
+                { engine: 'google', url: `https://www.google.com/search?q=${encodeURIComponent(cleaned)}` },
+                { engine: 'duckduckgo', url: `https://duckduckgo.com/html/?q=${encodeURIComponent(cleaned)}` },
+                { engine: 'bing', url: `https://www.bing.com/search?q=${encodeURIComponent(cleaned)}` }
+            ];
+            for (const target of targets) {
+                try {
+                    await this.navigate(state, target.url);
+                    await state.page.waitForTimeout(500);
+                    const extracted = await state.page.evaluate(SEARCH_EXTRACT_SCRIPT);
+                    if (Array.isArray(extracted) && extracted.length > 0) {
+                        return extracted.slice(0, MAX_SEARCH_RESULTS).map(result => ({ ...result, engine: target.engine }));
+                    }
+                    failures.push(`${target.engine}: no organic results`);
                 }
-                failures.push(`${target.engine}: no organic results`);
+                catch (error) {
+                    failures.push(`${target.engine}: ${errorMessage(error)}`);
+                }
             }
-            catch (error) {
-                failures.push(`${target.engine}: ${errorMessage(error)}`);
+        }
+        catch (browserErr) {
+            failures.push(`browser_session: ${errorMessage(browserErr)}`);
+        }
+        // High-reliability search fallback: query lightweight search providers (DuckDuckGo HTML / Bing RSS) directly
+        try {
+            const publicResults = await searchPublicWeb(cleaned);
+            if (Array.isArray(publicResults) && publicResults.length > 0) {
+                return publicResults.slice(0, MAX_SEARCH_RESULTS);
             }
+            failures.push('public_web: no organic results');
+        }
+        catch (pubErr) {
+            failures.push(`public_web: ${errorMessage(pubErr)}`);
         }
         throw new Error(`Search providers exhausted. ${failures.join('; ')}`);
     }

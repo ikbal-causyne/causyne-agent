@@ -299,7 +299,7 @@ export const sysRun = {
       properties: {
         command: { type: 'string', description: 'The shell command to run' },
         cwd: { type: 'string', description: 'Working directory' },
-        timeout: { type: 'number', description: 'Timeout in ms (default 60000)' }
+        timeout: { type: 'number', description: 'Execution timeout in milliseconds or seconds (e.g. 60 or 60000, default 60000ms). Values <= 600 are interpreted as seconds.' }
       },
       required: ['command']
     }
@@ -308,7 +308,24 @@ export const sysRun = {
   async execute(args: SysRunArgs, context: SysRunContext = {}): Promise<SysRunResult> {
     const rawCommand = (args?.command || '').trim();
     const cwd = args?.cwd ? args.cwd.replace(/^~\//, os.homedir() + '/') : process.cwd();
-    const timeoutMs = args?.timeout || 60000;
+    let timeoutMs = 60000;
+    const rawTimeout = (args as unknown as Record<string, unknown>)?.timeout;
+    if (typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout > 0) {
+      timeoutMs = rawTimeout <= 600 ? Math.round(rawTimeout * 1000) : Math.round(rawTimeout);
+    } else if (typeof rawTimeout === 'string') {
+      const match = rawTimeout.trim().match(/^(\d+(?:\.\d+)?)\s*(ms|s|m)?$/i);
+      if (match && match[1]) {
+        const val = parseFloat(match[1]);
+        const unit = (match[2] || '').toLowerCase();
+        if (unit === 'ms') timeoutMs = Math.round(val);
+        else if (unit === 'm') timeoutMs = Math.round(val * 60 * 1000);
+        else if (unit === 's') timeoutMs = Math.round(val * 1000);
+        else timeoutMs = val <= 600 ? Math.round(val * 1000) : Math.round(val);
+      }
+    }
+    if (timeoutMs < 1000) {
+      timeoutMs = 1000;
+    }
     const signal = context.signal;
 
     // A foreground server waits forever for requests. Keep launch-only turns

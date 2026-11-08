@@ -9,6 +9,7 @@
 import { LLMProvider } from './base.js';
 import { canonicalModelId } from '../modelIds.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { extractToolCallJsonObjects, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 export const OPENROUTER_CHAT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_DEFAULT_FREE_MODEL = 'openrouter/free';
@@ -140,7 +141,8 @@ export class OpenRouterProvider extends LLMProvider {
         if (status === 400 || status === 404) {
             if (lowered.includes('data_collection') || lowered.includes('no provider available') || lowered.includes('data policy')) {
                 throw new OpenRouterPrivacyConstraintError(`No free provider is currently available matching the privacy policy (data_collection='${this.dataCollection}'). ` +
-                    `You can retry shortly, or inspect your preference with /openrouter status.`);
+                    `Free community models on OpenRouter typically require data collection. ` +
+                    `Run "/openrouter allow" to permit free model routing, or inspect your preference with /openrouter status.`);
             }
             if (lowered.includes('rate limit') || lowered.includes('free model quota')) {
                 throw new OpenRouterRateLimitError('OpenRouter Free usage limit reached for this free model. Please wait a moment or select another free model with /model.');
@@ -161,6 +163,12 @@ export class OpenRouterProvider extends LLMProvider {
             content = message.content || '';
             toolCalls = this.normalizeToolCalls(message.tool_calls);
             reasoningContent = message.reasoning || message.reasoning_content || '';
+        }
+        if (toolCalls.length === 0 && content) {
+            const extracted = this.extractToolCallsFromContent(content);
+            if (extracted.length > 0) {
+                toolCalls = extracted;
+            }
         }
         const rawUsage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
         const usage = this.normalizeUsage(rawUsage);
@@ -270,6 +278,12 @@ export class OpenRouterProvider extends LLMProvider {
                 });
             }
         }
+        if (toolCalls.length === 0 && content) {
+            const extracted = this.extractToolCallsFromContent(content);
+            if (extracted.length > 0) {
+                toolCalls.push(...extracted);
+            }
+        }
         const usage = this.normalizeUsage(rawUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
         return {
             content,
@@ -277,6 +291,33 @@ export class OpenRouterProvider extends LLMProvider {
             reasoningContent: reasoningContent || undefined,
             usage
         };
+    }
+    /**
+     * Extract tool calls embedded in content text (e.g. <tool_call> envelopes).
+     */
+    extractToolCallsFromContent(text) {
+        const calls = [];
+        if (!text || typeof text !== 'string')
+            return calls;
+        let index = 0;
+        for (const parsed of extractToolCallJsonObjects(text)) {
+            const fnObj = parsed.function && typeof parsed.function === 'object'
+                ? parsed.function
+                : null;
+            const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
+            if (!name)
+                continue;
+            const rawArgs = resolveToolCallEnvelopeArguments(parsed);
+            calls.push({
+                id: `call_text_${Date.now()}_${index++}`,
+                type: 'function',
+                function: {
+                    name,
+                    arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
+                }
+            });
+        }
+        return calls;
     }
     /**
      * Safely normalize tool calls from provider message.
