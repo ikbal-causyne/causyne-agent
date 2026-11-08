@@ -88,8 +88,8 @@ const FOOTER_GAP = 1;
 // flex engine, so the same idea is arithmetic — and it is not decoration: on a
 // 17-row terminal the extra row made the banner plus the band come to exactly 17,
 // which costs the top of the wordmark. UX-03's sweep is what caught it.
-const ROOMY_TERMINAL_ROWS = 22;
-const CRAMPED_TERMINAL_ROWS = 20;
+const ROOMY_TERMINAL_ROWS = 20;
+const CRAMPED_TERMINAL_ROWS = 18;
 
 /** Can this process own the keyboard? */
 export function isInteractive() {
