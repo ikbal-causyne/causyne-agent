@@ -19,6 +19,7 @@ import { MuseProvider } from './muse.js';
 import { AcpProvider, isAcpProvider } from './acp.js';
 import { PiProvider, isPiProvider } from './pi.js';
 import { AntigravityProvider, isAntigravityProvider } from './antigravity.js';
+import { OpenRouterProvider } from './openrouter.js';
 
 export function createProvider(config) {
   const p = config.provider?.toLowerCase();
@@ -35,6 +36,7 @@ export function createProvider(config) {
   // Meta Model API. 'meta' and 'muse' both reach it: the vendor is Meta, the
   // model family is Muse, and users say either.
   if (p === 'muse' || p === 'meta') return new MuseProvider(config);
+  if (p === 'openrouter' || p === 'openrouter-free') return new OpenRouterProvider(config);
   if (isAcpProvider(p)) return new AcpProvider(config);
   if (isPiProvider(p)) return new PiProvider(config);
   if (isAntigravityProvider(p)) return new AntigravityProvider(config);

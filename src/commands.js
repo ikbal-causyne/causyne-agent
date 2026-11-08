@@ -52,6 +52,15 @@ import { getPackageVersion } from './version.js';
 import { listGroups } from './checkpoints.js';
 import { renameSession, getSession } from './sessionStore.js';
 import { listPlugins } from './plugins/pluginManager.js';
+import {
+  getOpenRouterStatus,
+  startLoopbackAuth,
+  saveOpenRouterKey,
+  disconnectOpenRouter,
+  setOpenRouterDataCollection,
+  buildAuthorizationUrl,
+  generatePkceCodes
+} from './auth/openrouterAuth.js';
 
 export const SCOPES = ['local'];
 
@@ -1585,6 +1594,113 @@ export const COMMANDS = [
       } else {
         return activateModel(config.provider || 'antigravity', rawRequested, `Now using ${config.provider || 'antigravity'} / ${rawRequested}.`);
       }
+    }
+  },
+
+  {
+    name: 'openrouter',
+    aliases: ['free'],
+    scope: 'local',
+    usage: '/openrouter [status | connect | disconnect | privacy <deny|allow>]',
+    description: 'Connect OpenRouter account for free cloud AI models (openrouter/free)',
+    dialogTitle: 'OpenRouter Free',
+    complete: () => [
+      { value: 'status', label: 'status', description: 'view connection and data collection status' },
+      { value: 'connect', label: 'connect', description: 'connect your OpenRouter account via OAuth PKCE' },
+      { value: 'privacy deny', label: 'privacy deny', description: 'strict privacy (default): restrict provider data collection' },
+      { value: 'privacy allow', label: 'privacy allow', description: 'permit routing to training-eligible providers' },
+      { value: 'disconnect', label: 'disconnect', description: 'disconnect OpenRouter account' }
+    ],
+    run: async (argv, ctx = {}) => {
+      const sub = (argv[0] || 'status').toLowerCase();
+
+      if (sub === 'status') {
+        const status = getOpenRouterStatus();
+        const lines = [
+          'OpenRouter Free Models — Connection Status',
+          '',
+          `  • Connected        : ${status.connected ? 'YES' : 'NO'}`,
+          `  • Active Provider  : ${status.active ? 'YES (OpenRouter is active)' : 'NO (using ' + (loadConfig().provider || 'none') + ')'}`,
+          `  • Default Model    : ${status.model}`,
+          `  • Privacy Policy   : provider.data_collection = "${status.dataCollection}"`,
+          `  • Stored Key       : ${status.maskedKey || 'none'} (${status.keySource || 'unconfigured'})`,
+          '',
+          status.connected
+            ? 'OpenRouter Free is ready. Run "/model openrouter/free" to select it.'
+            : 'To connect your account, run "/openrouter connect".'
+        ];
+        return ok(lines.join('\n'));
+      }
+
+      if (sub === 'disconnect') {
+        disconnectOpenRouter();
+        return ok('OpenRouter account disconnected and API key removed from local vault.');
+      }
+
+      if (sub === 'privacy' || sub === 'data-collection') {
+        const val = (argv[1] || '').toLowerCase();
+        if (val !== 'deny' && val !== 'allow') {
+          return fail('Usage: /openrouter privacy <deny | allow>');
+        }
+        setOpenRouterDataCollection(val);
+        const disclosure = val === 'allow'
+          ? '\nNotice: Setting data_collection to "allow" means training-eligible providers are eligible for routing. It does not by itself establish user consent to model training or guarantee training occurs.'
+          : '\nNotice: Strict privacy active. Provider data collection for model training is strictly denied.';
+        return ok(`OpenRouter data_collection policy set to "${val}".${disclosure}`);
+      }
+
+      if (sub === 'connect') {
+        const candidateKey = argv[1];
+        if (candidateKey && candidateKey.trim()) {
+          saveOpenRouterKey(candidateKey.trim(), { setAsActive: true });
+          return ok('Saved OpenRouter API key and switched active model to openrouter/free.');
+        }
+
+        const isSsh = Boolean(process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION);
+        if (isSsh) {
+          const pkce = generatePkceCodes();
+          const authUrl = buildAuthorizationUrl('urn:ietf:wg:oauth:2.0:oob', pkce.codeChallenge, pkce.state);
+          const lines = [
+            'SSH / Headless environment detected.',
+            'Please open the following authorization URL in your browser:',
+            '',
+            `  ${authUrl}`,
+            '',
+            'After authorizing, configure your key using:',
+            '  /openrouter connect <your-api-key>'
+          ];
+          return ok(lines.join('\n'));
+        }
+
+        try {
+          const resultPromise = startLoopbackAuth({
+            timeoutMs: 120_000,
+            openBrowser: true
+          });
+
+          if (ctx.prompt && typeof ctx.prompt.scheduleDraw === 'function') {
+            ctx.prompt.scheduleDraw();
+          }
+
+          const { apiKey } = await resultPromise;
+          saveOpenRouterKey(apiKey, { setAsActive: true });
+
+          if (ctx.loop) {
+            ctx.loop.config = loadConfig();
+          }
+          if (ctx.prompt) {
+            if (typeof ctx.prompt.updateModel === 'function') {
+              ctx.prompt.updateModel('openrouter', 'openrouter/free');
+            }
+          }
+
+          return ok('Successfully authenticated with OpenRouter! Now using openrouter/free.');
+        } catch (err) {
+          return fail(`OpenRouter connection error: ${err.message || err}\nFallback: run "/openrouter connect <api-key>" with an API key from https://openrouter.ai/keys`);
+        }
+      }
+
+      return fail('Usage: /openrouter [status | connect | disconnect | privacy <deny|allow>]');
     }
   },
 

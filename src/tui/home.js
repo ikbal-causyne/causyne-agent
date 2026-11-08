@@ -148,6 +148,7 @@ export const PROVIDERS = [
   { id: 'moonshot', label: 'Moonshot', hint: 'Kimi', category: 'BYOK (Cloud API)' },
   { id: 'xai', label: 'xAI', hint: 'Grok', category: 'BYOK (Cloud API)' },
   { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL', category: 'BYOK (Custom)' },
+  { id: 'openrouter', label: 'OpenRouter (Free Models)', hint: 'free inference router · openrouter/free', category: 'Free Cloud Models' },
   { id: 'ollama', label: 'Ollama', hint: 'local / offline', category: 'BYOK (Local Server)' },
   { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: resolveAgyBinary() ? 'local AGY · Gemini & Claude (ready)' : 'local AGY · (not installed)', category: 'ACP (Peer Agent)' },
   PI_SETUP_PROVIDER,

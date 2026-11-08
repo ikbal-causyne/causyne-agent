@@ -136,11 +136,21 @@ export function buildModelPickerItems(config, overview, options = {}) {
             const isCurrentProvider = activeProvider === p.id || (p.id === 'qwen' && activeProvider === 'dashscope-byok');
             const catTitle = p.id === 'ollama'
                 ? `BYOK · ${p.label}`
-                : `BYOK · ${p.label} ${p.isConfigured ? '(configured)' : '(needs key)'}`;
+                : p.id === 'openrouter'
+                    ? `Free Cloud · ${p.label} ${p.isConfigured ? '(ready)' : '(connect account)'}`
+                    : `BYOK · ${p.label} ${p.isConfigured ? '(configured)' : '(needs key)'}`;
             const models = Array.isArray(p.models) && p.models.length > 0 ? p.models : [p.defaultModel];
             for (const m of models) {
                 const isCurrent = isCurrentProvider && activeModel === m;
-                const desc = isCurrent ? '● active' : (p.id === 'ollama' ? 'local' : (p.isConfigured ? 'configured' : 'needs API key'));
+                const desc = isCurrent
+                    ? (p.id === 'openrouter' ? '● active (free)' : '● active')
+                    : p.id === 'ollama'
+                        ? 'local'
+                        : p.id === 'openrouter'
+                            ? (p.isConfigured ? 'free inference' : 'connect OpenRouter')
+                            : p.isConfigured
+                                ? 'configured'
+                                : 'needs API key';
                 items.push({
                     id: `${p.id}/${m}`,
                     label: m,

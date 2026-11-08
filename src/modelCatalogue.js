@@ -137,7 +137,8 @@ export const MODEL_CATALOGUE = {
   'Pi (Local Peer)': ['default'],
   'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'],
   'OpenCode (ACP)': PEER_MODEL_CATALOGUE.opencode,
-  'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude
+  'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude,
+  'OpenRouter (Free)': ['openrouter/free']
 };
 
 /** Provider labels in picker order. */
@@ -168,6 +169,7 @@ export const DEFAULT_MODEL_BY_PROVIDER = {
   'acp/goose': 'goose',
   'acp/hermes': 'hermes',
   antigravity: 'Gemini 3.8 Flash (Low)',
+  openrouter: 'openrouter/free',
   pi: 'default',
   'openai-compatible': ''
 };
@@ -207,7 +209,8 @@ export const UTILITY_MODEL_BY_PROVIDER = {
   'dashscope-byok': 'qwen3.6-flash',
   anthropic: 'claude-haiku-4-5',      // $1/$5 against opus's $5/$25
   openai: 'gpt-5.4-mini',             // $0.75/$4.50 against sol's $5/$30
-  gemini: 'gemini-3.1-flash-lite'     // $0.25/$1.50 against flash's $1.50/$9
+  gemini: 'gemini-3.1-flash-lite',    // $0.25/$1.50 against flash's $1.50/$9
+  openrouter: 'openrouter/free'
 };
 
 export function allCatalogueModels() {

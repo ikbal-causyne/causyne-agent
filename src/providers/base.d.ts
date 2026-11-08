@@ -84,6 +84,8 @@ export class LLMProvider {
   get supportsVision(): boolean;
   get supportsAudio(): boolean;
   supportsToolSearch?(): boolean;
+  prepareMessages(messages: any[]): any[];
+  normalizeUsage(rawUsage: any): ChatResponseUsage;
   chat(messages: any[], options?: ChatOptions): Promise<ChatResponse>;
 }
 

@@ -71,6 +71,7 @@ export function normalizeProviderKey(provider: string): string {
   if (p === 'xai' || p === 'grok') return 'xai';
   if (p === 'moonshot' || p === 'kimi') return 'moonshot';
   if (p === 'muse' || p === 'meta') return 'muse';
+  if (p === 'openrouter' || p === 'openrouter-free' || p === 'openrouter/free') return 'openrouter';
   if (p === 'openai-compatible' || p === 'custom') return 'openai-compatible';
   if (p === 'antigravity' || p === 'agy') return 'antigravity';
   if (p === 'acp') return 'acp';
@@ -315,6 +316,13 @@ export function getAvailableProvidersOverview(
       label: 'Ollama (Local Server)',
       defaultModel: DEFAULT_MODEL_BY_PROVIDER['ollama'] || 'llama3.3',
       models: MODEL_CATALOGUE['Ollama (Local)'] ? [...MODEL_CATALOGUE['Ollama (Local)']] : []
+    },
+    {
+      id: 'openrouter',
+      label: 'OpenRouter (Free Models)',
+      envVar: 'OPENROUTER_API_KEY',
+      defaultModel: DEFAULT_MODEL_BY_PROVIDER['openrouter'] || 'openrouter/free',
+      models: MODEL_CATALOGUE['OpenRouter (Free)'] ? [...MODEL_CATALOGUE['OpenRouter (Free)']] : ['openrouter/free']
     },
     {
       id: 'xai',
@@ -1064,6 +1072,45 @@ export async function fetchLiveModels(
       if (Array.isArray(data.data)) {
         return data.data.map((m) => m.id || '').filter((id) => /^(qwen)/i.test(id)).sort();
       }
+    }
+
+    if (norm === 'openrouter') {
+      const host = (baseUrl || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+      const headers: Record<string, string> = {
+        'HTTP-Referer': 'https://causyne.com',
+        'X-Title': 'Causyne Agent'
+      };
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      const res = await fetch(`${host}/models`, {
+        headers,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+      });
+      if (!res.ok) return ['openrouter/free'];
+      const data = (await res.json()) as {
+        data?: Array<{
+          id?: string;
+          pricing?: { prompt?: string | number; completion?: string | number };
+        }>;
+      };
+      if (Array.isArray(data.data)) {
+        const freeModels = data.data
+          .filter((m) => {
+            if (!m.id) return false;
+            if (m.id === 'openrouter/free') return true;
+            if (m.id.endsWith(':free')) return true;
+            const promptZero = m.pricing?.prompt === '0' || m.pricing?.prompt === 0;
+            const complZero = m.pricing?.completion === '0' || m.pricing?.completion === 0;
+            return promptZero && complZero;
+          })
+          .map((m) => m.id || '')
+          .filter(Boolean)
+          .sort();
+        if (!freeModels.includes('openrouter/free')) {
+          freeModels.unshift('openrouter/free');
+        }
+        return freeModels;
+      }
+      return ['openrouter/free'];
     }
 
     if (norm === 'openai-compatible') {
