@@ -485,6 +485,15 @@ You are collaborating through the Antigravity high-performance local peer enviro
 - Maintain rigorous execution standards: verify code syntax, inspect file changes, and avoid claiming completion without verified evidence.`;
   }
 
+  if (p === 'openrouter') {
+    return `OPENROUTER INFERENCE ACTIVATION:
+You are running via OpenRouter. You have access to Causyne Agent's full tool suite:
+- For web searches, use \`web_search\` or \`browser_act\` with actions: [{ "type": "search", "query": "..." }].
+- For downloading assets or running shell commands, use \`sysRun\` (with curl, python, etc.). Full network access is enabled and functional.
+- Do not assume network access or file operations are blocked. Always execute the requested actions to completion.
+- When generating web UI projects, inspect your work using \`browser_act\` preview or \`fs_read\` before concluding.`;
+  }
+
   return "";
 }
 
@@ -3501,17 +3510,23 @@ You are operating in a text-and-code modality without direct image pixel renderi
             // fail-open
           }
 
+          const hasVisionCapability = this.llm.supportsVision !== false && visionReady && !visionDeclined;
           const isVerified = Boolean(
             this.webVerificationState.browserActUsed ||
             hasBrowserActOutcome ||
             this.webVerificationState.screenshotTaken ||
-            (!browserReady && this.webVerificationState.htmlInspected) ||
+            ((!browserReady || !hasVisionCapability) && this.webVerificationState.htmlInspected) ||
             hasPassingTests ||
             observerVerified
           );
-          if (isWebTask && !browserReady && this.webVerificationState.htmlInspected
+          if (isWebTask && (!browserReady || !hasVisionCapability) && this.webVerificationState.htmlInspected
             && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken) {
-            this.emitEvent({ type: 'notice', message: 'Source inspection completed. Rendered-page and visual verification were not performed because the browser runtime is unavailable.' });
+            this.emitEvent({
+              type: 'notice',
+              message: !browserReady
+                ? 'Source inspection completed. Rendered-page and visual verification were not performed because the browser runtime is unavailable.'
+                : 'Source inspection completed. Rendered-page visual inspection is not supported by the active model without vision.'
+            });
           }
           if (isWebTask && this.stepsCompleted > 0 && !isVerified) {
             this.emitEvent({

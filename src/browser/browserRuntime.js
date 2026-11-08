@@ -329,7 +329,7 @@ export function isBrowserRuntimeInstalled() {
         if (configured && /(?:chrome|chromium|msedge)(?:\.exe)?$/i.test(path.basename(configured))) {
             return resolveChromiumRuntime(path.resolve(configured)) !== null;
         }
-        return candidates.some(candidate => {
+        const hasCamoufox = candidates.some(candidate => {
             try {
                 assertExecutable(candidate);
                 return Boolean(findResourceDirectory(candidate, realpathSync(candidate)));
@@ -338,6 +338,12 @@ export function isBrowserRuntimeInstalled() {
                 return false;
             }
         });
+        if (hasCamoufox)
+            return true;
+        if (!configured) {
+            return resolveChromiumRuntime() !== null;
+        }
+        return false;
     }
     catch {
         return false;

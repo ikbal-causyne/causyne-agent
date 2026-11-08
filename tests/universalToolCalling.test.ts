@@ -183,4 +183,12 @@ describe('Universal Tool Calling — OpenRouterProvider Text Tool Extraction', (
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('isBrowserRuntimeInstalled returns true when system Chromium or Chrome is available', async () => {
+    const { isBrowserRuntimeInstalled, resolveChromiumRuntime } = await import('../src/browser/browserRuntime.js');
+    const chromium = resolveChromiumRuntime();
+    if (chromium) {
+      assert.equal(isBrowserRuntimeInstalled(), true, 'Expected isBrowserRuntimeInstalled to return true when Chromium is present');
+    }
+  });
 });
