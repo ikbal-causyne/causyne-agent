@@ -1219,8 +1219,9 @@ export class ChatRenderer {
     // single write put the continuation lines at column 0, under a marker
     // indented five columns, so the whole block read as unrelated fragments.
     const label = `${msg.tool || ''}`.trim();
-    const detail = safeDisplay(`${msg.error || ''}`.trim());
-    const head = label ? `${label}  ${detail}` : detail;
+    const rawError = msg.error || (msg.result && (msg.result.error || msg.result.message)) || '';
+    const detail = safeDisplay(`${rawError}`.trim());
+    const head = label && detail ? `${label}  ${detail}` : (detail || label || 'failed');
 
     this.frame('error', () => {
       const rows = wrapBlock(head, Math.max(20, this.width() - 7), { hang: 0 });

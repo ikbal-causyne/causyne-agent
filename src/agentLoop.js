@@ -1168,7 +1168,8 @@ export class AgentLoop {
         const assessment = await coldObserver.evaluateMutation(tool, args, { workspaceRoot: this.workspaceRoot });
         if (assessment.veto)
             return false;
-        const needsApproval = uncertain || requiresToolApproval({
+        const isModeC = (this.config.autonomyMode || 'C') === 'C';
+        const needsApproval = (!isModeC && uncertain) || requiresToolApproval({
             mode: this.config.autonomyMode || 'C', tool, args,
             risk: assessment.requiresConfirmation ? 'dangerous' : validation.risk,
             heavyDownload: false, standingApproval: this.isAlwaysAllowed(tool)
@@ -4134,8 +4135,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     const eventResult = result?._is_image_marker
                         ? { success: result.success !== false && !result.error, output: result.output || `Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'})` }
                         : result;
-                    this.emitEvent({ type: result?.success === false || typeof result?.error === 'string' ? 'step_error' : 'step_complete',
-                        tool: functionName, result: eventResult, toolCallId: toolCall.id });
+                    const isErrorOutcome = result?.success === false || typeof result?.error === 'string';
+                    const errorMsg = eventResult?.error || (typeof result?.error === 'string' ? result.error : undefined);
+                    this.emitEvent({
+                        type: isErrorOutcome ? 'step_error' : 'step_complete',
+                        tool: functionName,
+                        ...(isErrorOutcome && errorMsg ? { error: errorMsg } : {}),
+                        result: eventResult,
+                        toolCallId: toolCall.id
+                    });
                     this.stepsCompleted++;
                     if (this._implementationPlanSeeded && result?.success !== false && !result?.error && functionName !== 'update_plan') {
                         this.advanceImplementationPlanProgress('mutation');

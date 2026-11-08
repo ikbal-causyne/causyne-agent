@@ -61,13 +61,15 @@ export class CodeStreamRenderer extends ChatRenderer {
     this.streamingTick = tick;
     const transcript = this.transcript as unknown as CodeTranscript | null;
     if (!transcript || !Array.isArray(transcript.frames)) return;
-    const tail = transcript.frames.at(-1);
-    if (tail?.meta?.reasoning === true && tail.meta.streaming === true) {
+    const activeFrame = transcript.frames.findLast(
+      (f: CodeFrame) => f?.meta?.reasoning === true && f.meta?.streaming === true
+    );
+    if (activeFrame && activeFrame.meta) {
       if (nowMs > 0) {
-        tail.meta.durationText = formatElapsed(nowMs);
+        activeFrame.meta.durationText = formatElapsed(nowMs);
       }
-      tail.rows = null;
-      tail.renderedWidth = -1;
+      activeFrame.rows = null;
+      activeFrame.renderedWidth = -1;
       transcript.cache = null;
       transcript.revision++;
       if (typeof transcript.changed === 'function') {

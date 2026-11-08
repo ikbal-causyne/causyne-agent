@@ -131,4 +131,63 @@ describe('Chatbox TUI Fixes Verification', () => {
     assert.equal(mockTranscript.frames[0]?.rows, null);
     assert.equal(mockTranscript.cache, null);
   });
+
+  test('CodeStreamRenderer: onStatusTick finds active streaming reasoning frame even when other frames are appended after it', () => {
+    const renderer = new CodeStreamRenderer();
+    let changeNotified = false;
+    const mockTranscript = {
+      frames: [
+        { id: 1, meta: { reasoning: true, streaming: true, durationText: '0.5s' }, rows: ['line 1'], renderedWidth: 80 },
+        { id: 2, meta: { notice: true, streaming: false }, rows: ['[plan updated]'], renderedWidth: 80 }
+      ],
+      cache: {},
+      revision: 1,
+      changed(): void {
+        changeNotified = true;
+      }
+    };
+    (renderer as any).transcript = mockTranscript;
+
+    renderer.onStatusTick(3200, 5);
+    assert.ok(changeNotified, 'Must find streaming reasoning frame and notify change even when not at tail');
+    assert.equal(mockTranscript.frames[0]?.meta?.durationText, '3.2s');
+    assert.equal(mockTranscript.frames[0]?.rows, null);
+  });
+
+  test('CodeStreamRenderer: collapseFinishedReasoningFrames preserves frames where user explicitly interacted', () => {
+    const renderer = new CodeStreamRenderer();
+    let changeNotified = false;
+    const mockTranscript = {
+      frames: [
+        { id: 1, meta: { reasoning: true, streaming: false, collapsed: false, userInteracted: true }, rows: ['thought 1'], renderedWidth: 80 },
+        { id: 2, meta: { reasoning: true, streaming: false, collapsed: false, userInteracted: false }, rows: ['thought 2'], renderedWidth: 80 }
+      ],
+      cache: {},
+      revision: 1,
+      changed(): void {
+        changeNotified = true;
+      }
+    };
+    (renderer as any).transcript = mockTranscript;
+
+    renderer.collapseFinishedReasoningFrames(false);
+    assert.ok(changeNotified, 'Must notify change when unexpanded frames are auto-collapsed');
+    assert.equal(mockTranscript.frames[0]?.meta?.collapsed, false, 'User-interacted frame must remain expanded');
+    assert.equal(mockTranscript.frames[1]?.meta?.collapsed, true, 'Uninteracted frame must be collapsed');
+  });
+
+  test('ChatRenderer: onStepError extracts error description from msg.result.error when msg.error is omitted', () => {
+    const renderer = new CodeStreamRenderer();
+    const emittedLines: string[] = [];
+    (renderer as any).write = (line: string) => { if (line) emittedLines.push(line); };
+
+    renderer.onStepError({
+      tool: 'browser_act',
+      result: { success: false, error: 'Unknown element ref e2. Take a new snapshot before interacting.' }
+    });
+
+    const output = emittedLines.join('\n');
+    assert.ok(output.includes('browser_act'), 'Must include tool name');
+    assert.ok(output.includes('Unknown element ref e2'), 'Must include error message from msg.result.error');
+  });
 });

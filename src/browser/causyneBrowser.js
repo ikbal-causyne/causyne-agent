@@ -10,7 +10,7 @@ import { windowSnapshot } from './snapshotWindow.js';
 const NAVIGATION_TIMEOUT_MS = 30_000;
 const ACTION_TIMEOUT_MS = 12_000;
 const IFRAME_SNAPSHOT_TIMEOUT_MS = 3_000;
-const IDLE_CLOSE_MS = 30 * 60_000;
+const IDLE_CLOSE_MS = 120 * 60_000;
 const MAX_SEARCH_RESULTS = 10;
 const MAX_EXTRACT_CHARS = 80_000;
 const MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024;
