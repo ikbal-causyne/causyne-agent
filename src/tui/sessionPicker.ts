@@ -2,8 +2,7 @@
 // Authored in Strict TypeScript for Causyne Agent.
 // Source-available under BUSL-1.1.
 
-// @ts-expect-error untyped local TUI dialogs
-import { SelectLayer } from './dialogs.js';
+import { SessionPickerLayer } from './sessionPickerView.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from './theme.js';
 import {
@@ -22,6 +21,7 @@ export interface SessionPickerItemValue {
   title?: string | undefined;
   workspace?: string | undefined;
   messageCount?: number | undefined;
+  updatedAt?: number | undefined;
   isCurrent?: boolean | undefined;
 }
 
@@ -157,6 +157,7 @@ export function buildSessionPickerItems(
         title: s.title,
         workspace: s.workspace,
         messageCount: s.messageCount,
+        updatedAt: s.updatedAt,
         isCurrent
       }
     });
@@ -184,7 +185,6 @@ export async function runInteractiveSessionPicker(
   const activeId = getActiveSessionId();
 
   const items = buildSessionPickerItems(sessions, activeId, workspace);
-  const conversationCount = items.filter(item => item.value.type === 'switch').length;
 
   const cleanPrompt = () => {
     if (prompt.editor && typeof prompt.editor.clear === 'function') {
@@ -194,14 +194,10 @@ export async function runInteractiveSessionPicker(
   };
 
   const picked = await new Promise<SessionPickerItem | null>((resolve) => {
-    const layer = new SelectLayer({
-      title: `Sessions (${conversationCount})`,
-      placeholder: 'search sessions by title, id, or workspace...',
-      emptyText: 'no matching sessions found',
-      width: 78,
-      height: 20,
-      footer: `enter select session  ${GLYPHS.dot}  esc cancel`,
+    const layer = new SessionPickerLayer({
       items,
+      activeId,
+      currentWorkspace: workspace,
       onPick: (item: SessionPickerItem | null) => {
         resolve(item || null);
       }

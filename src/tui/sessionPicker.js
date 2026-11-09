@@ -1,8 +1,7 @@
 // Sovereign Interactive Session Picker — modal dialog for listing, switching, and creating sessions.
 // Authored in Strict TypeScript for Causyne Agent.
 // Source-available under BUSL-1.1.
-// @ts-expect-error untyped local TUI dialogs
-import { SelectLayer } from './dialogs.js';
+import { SessionPickerLayer } from './sessionPickerView.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from './theme.js';
 import { listSessions, getActiveSessionId, switchSession, createSession, forkSession } from '../sessionJournal.js';
@@ -106,6 +105,7 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
                 title: s.title,
                 workspace: s.workspace,
                 messageCount: s.messageCount,
+                updatedAt: s.updatedAt,
                 isCurrent
             }
         });
@@ -121,7 +121,6 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
     const sessions = listSessions();
     const activeId = getActiveSessionId();
     const items = buildSessionPickerItems(sessions, activeId, workspace);
-    const conversationCount = items.filter(item => item.value.type === 'switch').length;
     const cleanPrompt = () => {
         if (prompt.editor && typeof prompt.editor.clear === 'function') {
             prompt.editor.clear();
@@ -130,14 +129,10 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
         }
     };
     const picked = await new Promise((resolve) => {
-        const layer = new SelectLayer({
-            title: `Sessions (${conversationCount})`,
-            placeholder: 'search sessions by title, id, or workspace...',
-            emptyText: 'no matching sessions found',
-            width: 78,
-            height: 20,
-            footer: `enter select session  ${GLYPHS.dot}  esc cancel`,
+        const layer = new SessionPickerLayer({
             items,
+            activeId,
+            currentWorkspace: workspace,
             onPick: (item) => {
                 resolve(item || null);
             }

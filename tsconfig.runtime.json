@@ -234,7 +234,8 @@
     "src/reliability/networkHostGuard.ts",
     "src/reliability/visualEvidence.ts",
     "src/reliability/assetEvidence.ts",
-    "src/tui/workspaceSwitch.ts"
+    "src/tui/workspaceSwitch.ts",
+    "src/tui/sessionPickerView.ts"
   ],
   "exclude": [
     "node_modules",
