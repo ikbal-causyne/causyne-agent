@@ -480,10 +480,16 @@ export class AcpProvider extends LLMProvider {
                             if (isInvalidPseudoTool) {
                                 const requested = typeof input.tool === 'string' ? input.tool : '';
                                 if (!this.toolRoutingError && requested && normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === requested)) {
-                                    const rawArgs = (input.args && typeof input.args === 'object') ? input.args
+                                    let rawArgs = (input.args && typeof input.args === 'object') ? input.args
                                         : (input.parameters && typeof input.parameters === 'object') ? input.parameters
-                                            : (earlier?.parameters && typeof earlier.parameters === 'object') ? earlier.parameters
+                                            : (earlier?.parameters && typeof earlier.parameters === 'object' && !earlier.parameters.__pendingStub) ? earlier.parameters
                                                 : undefined;
+                                    if (rawArgs && typeof rawArgs === 'object') {
+                                        const cleanArgs = { ...rawArgs };
+                                        delete cleanArgs.__pendingStub;
+                                        delete cleanArgs.__invalidTool;
+                                        rawArgs = Object.keys(cleanArgs).length > 0 ? cleanArgs : undefined;
+                                    }
                                     this.toolRoutingError = {
                                         tool: requested,
                                         message: typeof input.error === 'string' ? input.error : 'Host tool requested through the peer-native channel',

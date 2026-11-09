@@ -2936,14 +2936,17 @@ You are operating in a text-and-code modality without direct image pixel renderi
 
         // If the peer attempted to call a registered Causyne host tool through its
         // native channel and provided complete, valid arguments (or we can infer
-        // the target for reverse_engineering), auto-bridge it into response.toolCalls
-        // BEFORE recording assistantMsg so it executes immediately in this turn.
+        // the target for reverse_engineering or tool_search), auto-bridge it into
+        // response.toolCalls BEFORE recording assistantMsg so it executes immediately in this turn.
         if ((!response.toolCalls || response.toolCalls.length === 0) && response.toolRoutingError) {
           const rawName = response.toolRoutingError.tool;
           const resolved = resolveTool(rawName);
           if (resolved) {
             const canonical = canonicalToolName(rawName);
             const toolParams: Record<string, unknown> = { ...(response.toolRoutingError.parameters || {}) };
+            delete toolParams.__pendingStub;
+            delete toolParams.__invalidTool;
+
             if (canonical === 'reverse_engineering' && !toolParams.filePath && !toolParams.target && !toolParams.file && !toolParams.path) {
               const promptMatch = (this.currentTaskPrompt || this.userPrompt || '').match(/([a-zA-Z0-9_\-./]+\.(apk|aab|dex|dylib|so|dll|exe|asar))\b/i);
               if (promptMatch && promptMatch[1]) {
@@ -2951,6 +2954,18 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 if (!toolParams.action) toolParams.action = 'inspect';
               }
             }
+
+            if (canonical === 'tool_search' && !toolParams.query && !toolParams.pack && (!Array.isArray(toolParams.names) || toolParams.names.length === 0)) {
+              const prompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
+              const match = prompt.match(/(?:capabilities\s+matching|matching|query[:\s]+|search(?:ing)?\s+for(?:\s+capabilities\s+matching)?|for)\s+([^\n\r]+)/i);
+              if (match && match[1]) {
+                const inferred = match[1].trim().replace(/^["'`]+|["'`.,;]+$/g, '');
+                if (inferred) {
+                  toolParams.query = inferred;
+                }
+              }
+            }
+
             if (Object.keys(toolParams).length > 0 && !this.validateToolArgs(canonical, toolParams)) {
               response.toolCalls = [{
                 id: `host_auto_${Date.now()}`,
@@ -5148,6 +5163,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
     // 4. Search must have a query
     if ((toolName === 'codebase_search' || toolName === 'web_search') && !args.query) {
       return 'Missing required "query" argument';
+    }
+
+    // 5. Tool search must have a query, pack, or names array
+    if (toolName === 'tool_search') {
+      const q = typeof args.query === 'string' ? args.query.trim() : '';
+      const p = typeof args.pack === 'string' ? args.pack.trim() : '';
+      const n = Array.isArray(args.names) && args.names.length > 0;
+      if (!q && !p && !n) {
+        return 'Missing required "query" or "pack" argument';
+      }
     }
 
     return null; // No validation errors

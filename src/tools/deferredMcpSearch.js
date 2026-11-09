@@ -135,7 +135,7 @@ export const deferredMcpSearch = {
     },
     async execute(args, context = {}) {
         try {
-            const query = String(args.query || '').trim();
+            const query = String(args.query ?? args.q ?? args.search ?? args.description ?? args.pattern ?? '').trim();
             if (query.length > MAX_TOOL_SEARCH_QUERY) {
                 return { success: false, error: `Search query exceeds ${MAX_TOOL_SEARCH_QUERY} characters. Use a shorter capability description.` };
             }

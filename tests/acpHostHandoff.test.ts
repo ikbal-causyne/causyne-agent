@@ -181,3 +181,106 @@ test('approval waits settle on cancellation and remove their pending entry', asy
   assert.equal(await waiting, false);
   assert.equal(loop.pendingApprovals.size, 0);
 });
+
+test('validateToolArgs enforces required query, pack, or names for tool_search', () => {
+  const loop = new AgentLoop({ readyState: 1, send() {} }, 'val-test', 'Search');
+  assert.equal(loop.validateToolArgs('tool_search', {}), 'Missing required "query" or "pack" argument');
+  assert.equal(loop.validateToolArgs('tool_search', { __pendingStub: true }), 'Missing required "query" or "pack" argument');
+  assert.equal(loop.validateToolArgs('tool_search', { query: '   ' }), 'Missing required "query" or "pack" argument');
+  assert.equal(loop.validateToolArgs('tool_search', { query: 'android' }), null);
+  assert.equal(loop.validateToolArgs('tool_search', { pack: 'game' }), null);
+  assert.equal(loop.validateToolArgs('tool_search', { names: ['sysRun'] }), null);
+});
+
+test('pending stub parameters are cleaned and never invent invalid tool execution', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-pending-stub-'));
+  const script = path.join(directory, 'peer.cjs');
+  fs.writeFileSync(script, `const fs = require('node:fs');
+const readline = require('node:readline');
+const send = v => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...v})+'\\n');
+let prompt;
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const r = JSON.parse(line);
+ if(r.method === 'initialize') send({id:r.id,result:{protocolVersion:1,agentCapabilities:{}}});
+ if(r.method === 'session/new') send({id:r.id,result:{sessionId:'stub-peer-session'}});
+ if(r.method === 'session/set_model') send({id:r.id,result:{}});
+ if(r.method === 'session/prompt') {
+  prompt = r.id;
+  send({method:'session/update',params:{sessionId:'stub-peer-session',update:{sessionUpdate:'tool_call',toolCallId:'call-001',tool:'tool_search',title:'tool_search',status:'pending',rawInput:{}}}});
+  send({method:'session/update',params:{sessionId:'stub-peer-session',update:{sessionUpdate:'tool_call',toolCallId:'call-001',tool:'invalid',title:'invalid',status:'running',rawInput:{tool:'tool_search',error:'Model tried to call unavailable tool'}}}});
+ }
+ if(r.method === 'session/cancel') {
+  send({id:prompt,result:{stopReason:'cancelled',usage:{inputTokens:10,outputTokens:5}}});
+ }
+});`);
+  const peer = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [script] });
+  const toolSearchContract = { name: 'tool_search', description: 'Search tools', parameters: { type: 'object' } };
+  try {
+    const response = await peer.chat([{ role: 'user', content: 'What can you do?' }], {
+      workspaceRoot: directory,
+      tools: [toolSearchContract]
+    });
+    assert.equal(response.toolRoutingError?.tool, 'tool_search');
+    assert.equal(response.toolRoutingError?.parameters, undefined, 'pending stub must be stripped from routing error parameters');
+    assert.equal(response.toolCalls?.length || 0, 0, 'no fake tool call should be forged from empty parameters');
+  } finally {
+    await peer.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('host auto-bridge for tool_search infers query from user prompt and creates valid tool call', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-tool-search-bridge-'));
+  const script = path.join(directory, 'peer.cjs');
+  fs.writeFileSync(script, `const fs = require('node:fs');
+const readline = require('node:readline');
+const send = v => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...v})+'\\n');
+let prompt;
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const r = JSON.parse(line);
+ if(r.method === 'initialize') send({id:r.id,result:{protocolVersion:1,agentCapabilities:{}}});
+ if(r.method === 'session/new') send({id:r.id,result:{sessionId:'bridge-peer-session'}});
+ if(r.method === 'session/set_model') send({id:r.id,result:{}});
+ if(r.method === 'session/prompt') {
+  prompt = r.id;
+  send({method:'session/update',params:{sessionId:'bridge-peer-session',update:{sessionUpdate:'tool_call',toolCallId:'call-002',tool:'tool_search',title:'tool_search',status:'pending',rawInput:{}}}});
+  send({method:'session/update',params:{sessionId:'bridge-peer-session',update:{sessionUpdate:'tool_call',toolCallId:'call-002',tool:'invalid',title:'invalid',status:'running',rawInput:{tool:'tool_search',error:'Model tried to call unavailable tool'}}}});
+ }
+ if(r.method === 'session/cancel') {
+  send({id:prompt,result:{stopReason:'cancelled',usage:{inputTokens:10,outputTokens:5}}});
+ }
+});`);
+  const peer = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [script] });
+  const toolSearchContract = { name: 'tool_search', description: 'Search tools', parameters: { type: 'object' } };
+  const loop = new AgentLoop({ readyState: 1, send() {} }, 'tool-search-infer-test', 'Use tool_search to search for capabilities matching (a+)+$ and android/.*gradle', { workspaceRoot: directory });
+  try {
+    const response = await peer.chat([{ role: 'user', content: 'Use tool_search to search for capabilities matching (a+)+$ and android/.*gradle' }], {
+      workspaceRoot: directory,
+      tools: [toolSearchContract]
+    });
+    assert.equal(response.toolRoutingError?.tool, 'tool_search');
+    assert.equal(response.toolRoutingError?.parameters, undefined);
+
+    const canonical = 'tool_search';
+    const toolParams: Record<string, unknown> = { ...(response.toolRoutingError.parameters || {}) };
+    delete toolParams.__pendingStub;
+    delete toolParams.__invalidTool;
+
+    if (canonical === 'tool_search' && !toolParams.query && !toolParams.pack && (!Array.isArray(toolParams.names) || toolParams.names.length === 0)) {
+      const prompt = (loop.currentTaskPrompt || loop.userPrompt || '').trim();
+      const match = prompt.match(/(?:capabilities\s+matching|matching|query[:\s]+|search(?:ing)?\s+for(?:\s+capabilities\s+matching)?|for)\s+([^\n\r]+)/i);
+      if (match && match[1]) {
+        const inferred = match[1].trim().replace(/^["'`]+|["'`.,;]+$/g, '');
+        if (inferred) {
+          toolParams.query = inferred;
+        }
+      }
+    }
+
+    assert.equal(toolParams.query, '(a+)+$ and android/.*gradle');
+    assert.equal(loop.validateToolArgs(canonical, toolParams), null, 'inferred parameters must pass tool validation');
+  } finally {
+    await peer.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

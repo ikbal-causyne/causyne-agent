@@ -141,7 +141,7 @@ export const deferredMcpSearch = {
 
   async execute(args: SearchArgs, context: SearchContext = {}): Promise<SearchResult> {
     try {
-      const query = String(args.query || '').trim();
+      const query = String(args.query ?? (args as any).q ?? (args as any).search ?? (args as any).description ?? (args as any).pattern ?? '').trim();
       if (query.length > MAX_TOOL_SEARCH_QUERY) {
         return { success: false, error: `Search query exceeds ${MAX_TOOL_SEARCH_QUERY} characters. Use a shorter capability description.` };
       }
