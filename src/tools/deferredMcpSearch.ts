@@ -14,6 +14,7 @@ async function toolDefinitions(): Promise<ToolDefinition[]> {
 }
 import { buildToolsList } from '../toolsList.js';
 import { PACKS, PACK_NAMES, packForTool, isCoreTool, isResidentTool } from '../toolPacks.js';
+import { literalSearchPattern, formatSkillSearchLine, MAX_TOOL_SEARCH_QUERY } from '../skills/skillSearchSafety.js';
 
 /** Max skills returned alongside the tool matches, so one search stays cheap. */
 const MAX_SKILL_HITS = 5;
@@ -59,7 +60,7 @@ async function searchSkills(terms: string[], pattern: RegExp | null): Promise<st
   return scored
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_SKILL_HITS)
-    .map(({ skill }) => `- ${skill.domain}/${skill.id} — ${skill.name}: ${skill.description || ''}`);
+    .map(({ skill }) => formatSkillSearchLine(skill));
 }
 
 // Real progressive-disclosure tool search.
@@ -107,14 +108,10 @@ function scoreTool(definition: ToolDefinition, terms: string[], pattern: RegExp 
 }
 
 function buildPattern(query: string): RegExp | null {
-  // The query may be a natural-language phrase or a regular expression. Trying
-  // it as a regex first gives power users exact control; a malformed pattern
-  // simply falls back to keyword scoring instead of throwing.
-  try {
-    return new RegExp(query, 'i');
-  } catch (e) {
-    return null;
-  }
+  // Never compile LLM-generated regex. A pattern such as (a+)+$ can freeze
+  // Node's single-threaded event loop. Natural-language token scoring is
+  // preserved; the phrase match is literal and bounded.
+  return literalSearchPattern(query);
 }
 
 export const deferredMcpSearch = {
@@ -126,7 +123,7 @@ export const deferredMcpSearch = {
       properties: {
         query: {
           type: 'string',
-          description: 'What capability you need. Natural language or a regex pattern matched against tool names, descriptions and argument descriptions.'
+          description: 'What capability you need. Use natural language or exact tool/skill names. Special regex characters are treated literally.'
         },
         names: { type: 'array', items: { type: 'string' }, description: 'Exact tool names selected from the compact catalog. Loads only these schemas.' },
         pack: {
@@ -145,6 +142,9 @@ export const deferredMcpSearch = {
   async execute(args: SearchArgs, context: SearchContext = {}): Promise<SearchResult> {
     try {
       const query = String(args.query || '').trim();
+      if (query.length > MAX_TOOL_SEARCH_QUERY) {
+        return { success: false, error: `Search query exceeds ${MAX_TOOL_SEARCH_QUERY} characters. Use a shorter capability description.` };
+      }
       const requestedPack = args.pack ? String(args.pack).toLowerCase() : null;
       const definitions = context.parentLoop?.searchableTools
         ? await context.parentLoop.searchableTools() : await toolDefinitions();

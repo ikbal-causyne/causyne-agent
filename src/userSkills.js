@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { causyneHome } from './utils/paths.js';
+import { assertSkillTreeSafe } from './skills/skillResourceSafety.js';
 
 // Bounds. Every one of these protects the context window, which is the resource
 // a skill library actually spends.
@@ -137,6 +138,7 @@ export function loadUserSkills(root = userSkillsRoot()) {
       const file = path.join(root, domain, name, 'SKILL.md');
       let content;
       try {
+        assertSkillTreeSafe(root, domain, name);
         // Refuse a symlink outright: it is the one way a file inside this
         // directory can point at something outside it.
         const stat = fs.lstatSync(file);
@@ -237,8 +239,21 @@ export function writeUserSkill({ domain, name, content, overwrite = false }, roo
   }
 
   try {
+    // Causyne Skills Safety v1: lexical path checks do not stop an existing
+    // symlinked parent directory from redirecting a skill write elsewhere.
+    assertSkillTreeSafe(root, domain, name, true);
     fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(file, body, 'utf8');
+    assertSkillTreeSafe(root, domain, name);
+    const nofollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+    const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | nofollow
+      | (overwrite ? fs.constants.O_TRUNC : fs.constants.O_EXCL);
+    const fd = fs.openSync(file, flags, 0o600);
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new Error('SKILL.md must be a regular file');
+      fs.writeFileSync(fd, body, 'utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch (e) {
     return { ok: false, error: `could not write ${file}: ${e.message}` };
   }
@@ -257,6 +272,11 @@ export function deleteUserSkill(domain, name, root = userSkillsRoot()) {
     return { ok: false, error: `${domain}/${name} is not a user skill` };
   }
   try {
+    assertSkillTreeSafe(root, domain, name);
+    const skillFile = fs.lstatSync(path.join(directory, 'SKILL.md'));
+    if (skillFile.isSymbolicLink() || !skillFile.isFile()) {
+      throw new Error('SKILL.md must be a regular file');
+    }
     fs.rmSync(directory, { recursive: true, force: true });
   } catch (e) {
     return { ok: false, error: `could not remove ${directory}: ${e.message}` };

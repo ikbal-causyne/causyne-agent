@@ -1,4 +1,3 @@
-// @ts-expect-error userSkills.js is awaiting TypeScript migration.
 import { writeUserSkill, validateSegment, skillTemplate } from '../userSkills.js';
 import { invalidateUserSkills } from '../skillsManager.js';
 // @ts-expect-error theme.js has no TypeScript declaration yet.
@@ -14,7 +13,7 @@ export interface CreatedUserSkill {
   name: string;
   description: string;
   content: string;
-  path?: string;
+  path?: string | undefined;
   source: 'user';
 }
 

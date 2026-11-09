@@ -1,0 +1,174 @@
+/**
+ * Causyne Agent — skill file boundaries and progressive resource disclosure.
+ *
+ * Purely local, synchronous, bounded, cross-platform. The user-skill loader,
+ * mutation API, and fs_read_skill all use this same security boundary.
+ *
+ * This is application-level containment, not a substitute for OS isolation.
+ * No skill code is executed here.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+
+export const MAX_SKILL_RESOURCE_BYTES = 12 * 1024;
+export const MAX_ADVERTISED_SKILL_RESOURCES = 12;
+const SKILL_SEGMENT = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const RESERVED_WINDOWS = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const RESOURCE_GROUPS = new Set(['references', 'templates', 'scripts', 'assets']);
+const TEXT_EXTENSIONS = new Set([
+  '.md', '.mdx', '.txt', '.json', '.yaml', '.yml', '.toml', '.sql',
+  '.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.sh', '.css', '.html',
+  '.xml', '.csv', '.svg'
+]);
+
+function checkSkillSegment(segment: string): void {
+  if (!SKILL_SEGMENT.test(segment) || RESERVED_WINDOWS.test(segment)) {
+    throw new Error(`Invalid skill path segment ${JSON.stringify(segment)}.`);
+  }
+}
+
+function inspectDirectory(directory: string, allowMissing: boolean): boolean {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(directory);
+  } catch (error: unknown) {
+    if (allowMissing && (error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Skill directory is not a real directory: ${directory}`);
+  }
+  return true;
+}
+
+/**
+ * Check each directory segment. In particular, do not let a skill author
+ * place a symlink at ~/.causyne/skills/<domain> or <name> and redirect writes
+ * into an unrelated folder. `path.resolve()` alone does NOT provide this.
+ */
+export function assertSkillTreeSafe(
+  root: string,
+  domain: string,
+  name: string,
+  allowMissing = false
+): string {
+  checkSkillSegment(domain);
+  checkSkillSegment(name);
+  const base = path.resolve(root);
+  const domainDir = path.join(base, domain);
+  const skillDir = path.join(domainDir, name);
+  if (!inspectDirectory(base, allowMissing)) return skillDir;
+  if (!inspectDirectory(domainDir, allowMissing)) return skillDir;
+  inspectDirectory(skillDir, allowMissing);
+  return skillDir;
+}
+
+function checkRelativeResource(relativePath: unknown): string[] {
+  if (typeof relativePath !== 'string' || relativePath.length < 3 || relativePath.length > 240) {
+    throw new Error('Skill resource path must be a short relative string.');
+  }
+  // The API uses portable POSIX-relative names, including on Windows.
+  if (/^[A-Za-z]:/.test(relativePath) || relativePath.startsWith('/') ||
+      relativePath.includes('\\') || /[\x00-\x1f\x7f<>"']/.test(relativePath)) {
+    throw new Error('Absolute, Windows, or control-character resource paths are not permitted.');
+  }
+  const parts = relativePath.split('/');
+  if (parts.length < 2 || parts.length > 5 || !RESOURCE_GROUPS.has(parts[0] ?? '')) {
+    throw new Error('Use a relative file within references/, templates/, scripts/, or assets/.');
+  }
+  for (const segment of parts) {
+    if (!segment || segment === '.' || segment === '..' || segment.startsWith('.')) {
+      throw new Error('Hidden and traversal components are not permitted in skill resources.');
+    }
+  }
+  if (!TEXT_EXTENSIONS.has(path.posix.extname(relativePath).toLowerCase())) {
+    throw new Error('Only text skill resources may be loaded into the model context.');
+  }
+  return parts;
+}
+
+/**
+ * Read one supporting text document without touching unrelated files.
+ * Rejects symlinks in every path component, large files, invalid UTF-8 and
+ * binary content. Note: a concurrently hostile local process can still race
+ * parent-directory replacement; the agent's OS sandbox is the final boundary.
+ */
+export function readSkillTextResource(
+  root: string, domain: string, name: string, relativePath: string
+): string {
+  const components = checkRelativeResource(relativePath);
+  const skillDir = assertSkillTreeSafe(root, domain, name);
+  let cursor = skillDir;
+  for (const component of components.slice(0, -1)) {
+    cursor = path.join(cursor, component);
+    inspectDirectory(cursor, false);
+  }
+  const target = path.join(cursor, components[components.length - 1]!);
+  const physicalRoot = fs.realpathSync(skillDir);
+  const physicalFile = fs.realpathSync(target);
+  if (!physicalFile.startsWith(`${physicalRoot}${path.sep}`)) {
+    throw new Error('Skill resource escapes its own directory.');
+  }
+  const nofollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+  const fd = fs.openSync(target, fs.constants.O_RDONLY | nofollow);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error('Skill resource must be a regular file.');
+    if (stat.size > MAX_SKILL_RESOURCE_BYTES) {
+      throw new Error(`Skill resource exceeds ${MAX_SKILL_RESOURCE_BYTES} bytes.`);
+    }
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    while (bytes <= MAX_SKILL_RESOURCE_BYTES) {
+      const remaining = MAX_SKILL_RESOURCE_BYTES + 1 - bytes;
+      const buffer = Buffer.alloc(Math.min(8192, remaining));
+      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (count === 0) break;
+      chunks.push(buffer.subarray(0, count));
+      bytes += count;
+    }
+    if (bytes > MAX_SKILL_RESOURCE_BYTES) throw new Error('Skill resource grew beyond size limit.');
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+    if (text.includes('\0')) throw new Error('Binary skill resource is not valid model context.');
+    // Terminal control bytes are not useful skill instructions.
+    return text.replace(/[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Offer a bounded, deterministic list of resource names, not their bodies.
+ * Never follow symlinked support directories or files.
+ */
+export function listSkillResourcePaths(
+  root: string, domain: string, name: string,
+  limit = MAX_ADVERTISED_SKILL_RESOURCES
+): string[] {
+  const skillDir = assertSkillTreeSafe(root, domain, name);
+  const out: string[] = [];
+  const bound = Number.isInteger(limit)
+    ? Math.max(0, Math.min(limit, MAX_ADVERTISED_SKILL_RESOURCES)) : MAX_ADVERTISED_SKILL_RESOURCES;
+  const walk = (relative: string, depth: number): void => {
+    if (out.length >= bound || depth > 3) return;
+    const directory = path.join(skillDir, ...relative.split('/'));
+    if (!inspectDirectory(directory, true)) return;
+    const entries = fs.readdirSync(directory, { withFileTypes: true })
+      .filter(item => !item.name.startsWith('.'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 128);
+    for (const entry of entries) {
+      if (out.length >= bound) break;
+      if (entry.isSymbolicLink()) continue;
+      const next = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) walk(next, depth + 1);
+      else if (entry.isFile() && TEXT_EXTENSIONS.has(path.posix.extname(next).toLowerCase())) {
+        const stat = fs.lstatSync(path.join(directory, entry.name));
+        if (stat.size <= MAX_SKILL_RESOURCE_BYTES && !stat.isSymbolicLink()) out.push(next);
+      }
+    }
+  };
+  if (bound === 0) return out;
+  for (const group of RESOURCE_GROUPS) walk(group, 1);
+  return out;
+}
