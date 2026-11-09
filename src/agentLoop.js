@@ -1,4 +1,7 @@
 import { clearSysRunCache } from './tools/sysRun.js';
+import { NetworkHostGuard } from './reliability/networkHostGuard.js';
+import { inspectRequestedImageAssets } from './reliability/assetEvidence.js';
+import { inspect3DVisualEvidence } from './reliability/visualEvidence.js';
 import { getProcessEntitlementGate, EntitlementAccessError } from './licensing/entitlements.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import { createHash, randomUUID } from 'crypto';
@@ -542,6 +545,8 @@ export class AgentLoop {
         this.consecutiveCommands = 0;
         this.circuitBreakerUnlocked = false;
         this.stopRequested = false;
+        this._causyneTaskOutcome = 'incomplete';
+        this._networkHostGuard = new NetworkHostGuard();
         this.pendingApprovals = new Map(); // Maps toolCallId -> resolve function
         this.waitForDecision = async () => null;
         this._decisionAnswers = new Map();
@@ -1573,6 +1578,8 @@ export class AgentLoop {
     // CAUSYNE_ENTITLEMENT_V1: outer lifecycle wrapper, no agent-orchestration rewrite.
     async run() {
         this.rearmAbortController();
+        this._causyneTaskOutcome = 'incomplete';
+        this._networkHostGuard.reset();
         const gate = getProcessEntitlementGate();
         const onEntitlementBlocked = (error) => {
             if (this.stopRequested)
@@ -3077,74 +3084,23 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     const isAcpTurnNotice = typeof contentText === 'string'
                         && (contentText.startsWith('Antigravity executed:') || /^Turn completed by .+ over ACP\.$/i.test(contentText.trim()));
                     if ((hasExternalActions || isAcpTurnNotice) && (isIncompleteTurn || isMidTaskProgress || isAcpTurnNotice)) {
-                        const cleanSubstantive = (text) => {
-                            if (typeof text !== 'string')
-                                return '';
-                            return text
+                        if (isAcpTurnNotice && !isIncompleteTurn && !isMidTaskProgress) {
+                            // A completed peer turn must pass the normal host verification
+                            // gates below. The ACP notice itself is never completion proof.
+                        }
+                        else {
+                            const partial = String(contentText || '')
                                 .replace(/^Antigravity executed:[^\n]*\n*/i, '')
                                 .replace(/^Turn completed by [^\n]+ over ACP\.\s*/i, '')
                                 .trim();
-                        };
-                        const currentSubstantive = cleanSubstantive(contentText);
-                        if (currentSubstantive.length >= 60) {
-                            this.emitEvent({
-                                type: 'agent_message',
-                                content: currentSubstantive
-                            });
-                            this.emitEvent({
-                                type: 'status',
-                                message: 'Task completed with verified deliverables.'
-                            });
+                            if (partial.length >= 20) {
+                                this.emitEvent({ type: 'agent_message', content: partial });
+                            }
+                            this.emitEvent({ type: 'error', message: 'The peer ended with an incomplete or progress-only turn. ' +
+                                    'Actions may have changed files, but completion is not established.' });
                             this.memoryManager.saveHistory(this.messages);
                             break;
                         }
-                        const recentSubstantiveAssistant = [...this.messages].reverse().find(m => m.role === 'assistant'
-                            && typeof m.content === 'string'
-                            && cleanSubstantive(m.content).length >= 60);
-                        if (recentSubstantiveAssistant && typeof recentSubstantiveAssistant.content === 'string') {
-                            this.emitEvent({
-                                type: 'agent_message',
-                                content: cleanSubstantive(recentSubstantiveAssistant.content)
-                            });
-                            this.emitEvent({
-                                type: 'status',
-                                message: 'Task completed with verified deliverables.'
-                            });
-                            this.memoryManager.saveHistory(this.messages);
-                            break;
-                        }
-                        if (isLaunchOnlyPrompt(taskPrompt) && this.stepsCompleted > 0) {
-                            const launchSummary = 'Project opened in your default browser. Verification checks completed.';
-                            this.emitEvent({
-                                type: 'agent_message',
-                                content: launchSummary
-                            });
-                            this.emitEvent({
-                                type: 'status',
-                                message: 'Task completed: project launched and verified.'
-                            });
-                            this.memoryManager.saveHistory(this.messages);
-                            break;
-                        }
-                        if (this.stepsCompleted > 0) {
-                            const summary = `Task completed (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed). All verified deliverables and actions are in place.`;
-                            this.emitEvent({
-                                type: 'agent_message',
-                                content: summary
-                            });
-                            this.emitEvent({
-                                type: 'status',
-                                message: 'Task completed with verified deliverables.'
-                            });
-                            this.memoryManager.saveHistory(this.messages);
-                            break;
-                        }
-                        this.emitEvent({
-                            type: 'error',
-                            message: 'The task stopped before completion after repeated incomplete turns without a final response. Work remains unfinished.'
-                        });
-                        this.memoryManager.saveHistory(this.messages);
-                        break;
                     }
                     if (hasExternalActions && !isIncompleteTurn && !isMidTaskProgress) {
                         incompleteTurnContinuations = 0;
@@ -3171,11 +3127,9 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         break;
                     }
                     if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
-                        if (allPlanCompleted || (this.stepsCompleted > 0 && !isIncompleteTurn && failedExternalActions.length === 0)) {
-                            const planSummary = this._implementationPlan?.length > 0
-                                ? ` All ${this._implementationPlan.length} plan steps have been executed and verified:\n\n`
-                                    + this._implementationPlan.map((s, idx) => `  ✓ ${s.step || s.text || s.content || `Step ${idx + 1}`}`).join('\n')
-                                : ` All verified deliverables and actions are in place (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed).`;
+                        if (allPlanCompleted) {
+                            const planSummary = ` All ${this._implementationPlan.length} plan steps have been completed and verified:\n\n`
+                                + this._implementationPlan.map((s, idx) => `  ✓ ${s.step || s.text || s.content || `Step ${idx + 1}`}`).join('\n');
                             const summary = `Task completed successfully.${planSummary}`;
                             this.emitEvent({
                                 type: 'agent_message',
@@ -3185,40 +3139,20 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 type: 'status',
                                 message: 'Task completed with verified deliverables.'
                             });
+                            this._causyneTaskOutcome = 'completed';
                             this.memoryManager.saveHistory(this.messages);
                             break;
                         }
-                        if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2) {
+                        if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
                             incompleteTurnContinuations++;
-                            this.emitEvent({ type: 'status', message: 'Requesting final deliverable and response...' });
-                            this.emitEvent({ type: 'agent_activity', activity: 'Synthesizing final deliverable…' });
-                            this.messages.push({
-                                role: 'system',
-                                content: `[TASK COMPLETION MANDATE: You have completed your tool execution steps (${this.stepsCompleted} steps performed). Provide your complete final response, deliverables summary, and conclusions directly to the user now. Do not run any more background commands.]`
-                            });
+                            this.emitEvent({ type: 'status', message: 'Requesting the missing final response…' });
+                            this.messages.push({ role: 'system', content: '[FINAL RESPONSE REQUIRED] Report actual completed and incomplete work from tool results. ' +
+                                    'Do not call plan steps or file writes proof of verification.' });
                             this.memoryManager.saveHistory(this.messages);
                             continue;
                         }
-                        if (this.stepsCompleted > 0) {
-                            const summary = `Task completed (${this.stepsCompleted} step${this.stepsCompleted === 1 ? '' : 's'} executed). All verified deliverables and actions are in place.`;
-                            this.emitEvent({
-                                type: 'agent_message',
-                                content: summary
-                            });
-                            this.emitEvent({
-                                type: 'status',
-                                message: 'Task completed with verified deliverables.'
-                            });
-                            this.memoryManager.saveHistory(this.messages);
-                            break;
-                        }
-                        if (!contentText.trim()) {
-                            this.messages.pop();
-                        }
-                        this.emitEvent({
-                            type: 'error',
-                            message: 'The task stopped before completion after repeated blocked or incomplete turns. Work remains unfinished.'
-                        });
+                        this.emitEvent({ type: 'error', message: 'The task stopped with failed actions, an incomplete turn, or no final response. ' +
+                                'Existing files were preserved; completion was not verified.' });
                         this.memoryManager.saveHistory(this.messages);
                         break;
                     }
@@ -3543,6 +3477,36 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             break;
                         }
                     }
+                    // CAUSYNE_RELIABILITY_V1: require real downloaded images
+                    // if image acquisition was part of the user's explicit request.
+                    const imageAssetEvidence = await inspectRequestedImageAssets({
+                        prompt: taskPrompt,
+                        workspaceRoot: this.workspaceRoot,
+                        webArtifacts: [...this.webArtifacts]
+                    });
+                    if (!imageAssetEvidence.ok) {
+                        this.emitEvent({ type: 'error', message: imageAssetEvidence.reason ||
+                                'Required downloaded website images were not verified.' });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
+                    // A preview or DOM snapshot is not proof that a Three.js/WebGL
+                    // rendering was actually examined by a vision-capable model.
+                    const visualEvidence = inspect3DVisualEvidence(taskPrompt, coldObserver.getToolOutcomes(this.taskId));
+                    if (!visualEvidence.ok) {
+                        this.emitEvent({ type: 'error', message: visualEvidence.reason ||
+                                '3D visual output was not verified.' });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
+                    const finalToolOutcomes = coldObserver.getToolOutcomes(this.taskId);
+                    const finalToolOutcome = finalToolOutcomes[finalToolOutcomes.length - 1];
+                    if (this.stepsCompleted > 0 && finalToolOutcome && !finalToolOutcome.success) {
+                        this.emitEvent({ type: 'error', message: `The last observed tool action failed (${finalToolOutcome.tool}). ` +
+                                'Resolve the error or report partial work; no success has been recorded.' });
+                        this.memoryManager.saveHistory(this.messages);
+                        break;
+                    }
                     const cleanTerminalContent = (text) => {
                         if (typeof text !== 'string')
                             return '';
@@ -3626,6 +3590,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         }
                     }
                     catch { /* never block completion on session summary recording */ }
+                    this._causyneTaskOutcome = 'completed';
                     auditLog.log({ event: 'task_complete', taskId: this.taskId, steps: this.stepsCompleted });
                     this.emitEvent({ type: 'task_complete', taskId: this.taskId });
                     break;
@@ -4043,6 +4008,20 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             continue;
                         }
                     }
+                    // CAUSYNE_RELIABILITY_V1: refuse repeated timeouts to one host.
+                    // This is not a network authorization rule; sandbox and approval ran above.
+                    const networkDecision = this._networkHostGuard.before(functionName, args);
+                    if (!networkDecision.allowed) {
+                        const error = String(networkDecision.error);
+                        const failure = { success: false, error, code: 'NETWORK_HOST_UNAVAILABLE' };
+                        coldObserver.recordToolOutcome(this.taskId, functionName, args, failure);
+                        this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
+                            name: functionName, content: JSON.stringify(failure) });
+                        this.emitEvent({ type: 'step_error', tool: functionName,
+                            error, toolCallId: toolCall.id });
+                        this.memoryManager.saveHistory(this.messages);
+                        continue;
+                    }
                     // P2: snapshot the files this call is about to change, before it runs.
                     // Only the mutating fs tools match; everything else returns immediately.
                     // Fail-open by contract — this can never block or fail a tool call.
@@ -4091,6 +4070,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         duration = 0;
                         const errorType = this.classifyError(toolError);
                         const failure = { success: false, error: String(toolError?.message || toolError) };
+                        this._networkHostGuard.after(functionName, args, failure);
                         const alternativeRoute = lookupAlternativeStep({
                             failedTool: functionName,
                             why: failureClass(failure),
@@ -4143,6 +4123,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             hookFeedback: (postHook.messages || []).join('\n') || undefined
                         };
                     }
+                    this._networkHostGuard.after(functionName, args, result);
                     if (result && result.success !== false && !result.error && ['fs_write', 'fs_edit', 'MultiEdit'].includes(functionName)) {
                         this.recordWebArtifact(args.path || args.file_path);
                     }

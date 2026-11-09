@@ -230,7 +230,10 @@
     "src/cortex/cortexEngine.ts",
     "src/cortex/provisioner.ts",
     "src/cortex/vectorDb.ts",
-    "src/cortex/autoCondenser.ts"
+    "src/cortex/autoCondenser.ts",
+    "src/reliability/networkHostGuard.ts",
+    "src/reliability/visualEvidence.ts",
+    "src/reliability/assetEvidence.ts"
   ],
   "exclude": [
     "node_modules",

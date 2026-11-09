@@ -264,8 +264,13 @@ export async function runTask(task) {
   loop.waitForDecision = makeDecisionHandler(conn);
 
   await loop.run();
-  console.log('\n\x1b[32m[DONE]\x1b[0m Task completed.\n');
-  process.exit(0);
+  const completed = loop._causyneTaskOutcome === 'completed';
+  if (completed) {
+    console.log('\n\x1b[32m[DONE]\x1b[0m Task completed and verified.\n');
+  } else {
+    console.error('\n\x1b[31m[INCOMPLETE]\x1b[0m No verified task completion was recorded.\n');
+  }
+  process.exitCode = completed ? 0 : 1;
 }
 
 
