@@ -86,7 +86,7 @@ test('pasteIntoChatbox inserts normalized text and provides user notice feedback
   const res = pasteIntoChatbox(mockPrompt, 'const x = 42;\r\nconst y = 84;\r\n');
   assert.equal(res.success, true);
   assert.equal(mockPrompt.editor.getText(), 'prefix const x = 42;\nconst y = 84;\n');
-  assert.equal(mockPrompt.notice, 'pasted from clipboard');
+  assert.match(mockPrompt.notice, /^pasted 3 lines · [0-9,]+ bytes$/);
   assert.equal(scheduled, true);
   assert.equal(refreshed, true);
 });
@@ -193,7 +193,7 @@ test('ChatPrompt Alt+V pastes into prompt editor with notice', () => {
 
   // Alt+V attempts readClipboardSync or displays notice
   prompt.handleKey({ name: 'v', alt: true });
-  assert.ok(prompt.notice.includes('clipboard') || prompt.notice.includes('kill ring'));
+  assert.ok(prompt.notice.includes('pasted') || prompt.notice.includes('kill ring'));
 });
 
 test('ChatPrompt Ctrl+C on non-empty editor copies to clipboard before clearing', () => {

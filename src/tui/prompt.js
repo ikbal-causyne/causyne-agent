@@ -18,6 +18,7 @@
 // Pure Node. No dependency, no shell.
 
 import { KeyDecoder, bracketedPaste } from './keys.js';
+import { TerminalInputFramer, INPUT_PREFIX_TIMEOUT_MS, shouldTreatAsAtomicPaste } from './terminalInputFramer.js';
 import { LineEditor } from './lineEditor.js';
 import { PromptHistory } from './history.js';
 import { FileIndex, suggest, applyCompletion, detectTrigger, renderPicker, MAX_VISIBLE } from './completion.js';
@@ -120,6 +121,9 @@ export class ChatPrompt {
     this.history = options.history || new PromptHistory();
     this.index = new FileIndex(this.root);
     this.decoder = new KeyDecoder();
+    this.inputFramer = new TerminalInputFramer();
+    this.inputFrameTimer = null;
+    this.decoderRecoveryTimer = null;
 
     this.busy = false;
     this.active = false;
@@ -181,6 +185,7 @@ export class ChatPrompt {
   start() {
     if (this.active) return;
     this.active = true;
+    this.inputFramer.clear();
     this.input.setRawMode(true);
     this.input.resume();
     this.input.on('data', this.handleData);
@@ -195,6 +200,10 @@ export class ChatPrompt {
     if (!this.active) return;
     this.active = false;
     this.stopTick();
+    if (this.inputFrameTimer) { clearTimeout(this.inputFrameTimer); this.inputFrameTimer = null; }
+    if (this.decoderRecoveryTimer) { clearTimeout(this.decoderRecoveryTimer); this.decoderRecoveryTimer = null; }
+    this.inputFramer.clear();
+    this.decoder.pending = Buffer.alloc(0);
     if (this.resizeTimer) { clearTimeout(this.resizeTimer); this.resizeTimer = null; }
     this.erase();
     // The exit contract (UX-01 rev 2 clause d): the band collapses and the whole
@@ -254,30 +263,52 @@ export class ChatPrompt {
   };
 
   handleData = (chunk) => {
+    // KeyDecoder expects complete escape prefixes. A PTY may split ESC from
+    // `[<button;x;yM`; framing these bytes first prevents mouse coordinates
+    // from becoming chat content. Do not decode bulk paste before this step.
+    const frames = this.inputFramer.push(chunk);
+    for (const frame of frames) this.handleFramedData(frame);
+    if (this.inputFrameTimer) { clearTimeout(this.inputFrameTimer); this.inputFrameTimer = null; }
+    if (this.inputFramer.hasPending) {
+      this.inputFrameTimer = setTimeout(() => {
+        this.inputFrameTimer = null;
+        for (const frame of this.inputFramer.flush()) this.handleFramedData(frame);
+      }, INPUT_PREFIX_TIMEOUT_MS);
+      this.inputFrameTimer.unref?.();
+    }
+  };
+
+  handleFramedData = (chunk) => {
     let motionOnly = true;
     const str = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : '';
-    // Unbracketed multi-line or bulk paste safeguard: when a multi-line or bulk block arrives
-    // without bracketed paste (e.g. VS Code terminal, native clipboard paste, terminal ANSI logs,
-    // or piped stream), handle it atomically as a paste event rather than executing multiple
-    // spurious Enter submissions or freezing in per-character completion loops.
-    const isBracketedPasteStart = str.startsWith('\x1b[200~');
-    const isMouse = str.startsWith('\x1b[<') || str.startsWith('\x1b[M');
-    const hasNewlines = str.includes('\n') || str.includes('\r');
-    if (!this.layer && !this.decoder.inPaste && !isBracketedPasteStart && !isMouse && (
-      (str.length > 2 && hasNewlines) ||
-      (str.length >= 64 && !str.startsWith('\x1b'))
-    )) {
-      const clean = stripAnsi(str).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Unbracketed bulk input remains atomic ONLY when no control sequence
+    // is still in flight. This fixes mixed mouse/typing chunks that previously
+    // bypassed KeyDecoder and leaked CSI tails into the composer.
+    if (!this.layer && shouldTreatAsAtomicPaste(chunk, this.decoder)) {
       try {
-        this.handleKey({ name: 'paste', text: clean, sequence: clean });
-      } catch (e) {
-        process.stderr.write(`\n[tui] paste failed: ${e.message}\n`);
+        this.handleKey({ name: 'paste', text: str, sequence: '' });
+      } catch (error) {
+        this.notice = `paste failed: ${error instanceof Error ? error.message : String(error)}`;
+        this.scheduleDraw();
       }
       this.draw();
       return;
     }
 
     const keys = this.decoder.decode(chunk);
+    // A truncated CSI/X10 mouse report must not swallow the next user keystroke.
+    // Paste is exempt: its terminator may arrive across many chunks.
+    if (this.decoderRecoveryTimer) clearTimeout(this.decoderRecoveryTimer);
+    this.decoderRecoveryTimer = null;
+    if (!this.decoder.inPaste && this.decoder.pending.length > 0) {
+      this.decoderRecoveryTimer = setTimeout(() => {
+        this.decoderRecoveryTimer = null;
+        const recovered = this.decoder.drainIncomplete();
+        for (const event of recovered) this.handleKey(event);
+        if (recovered.length) this.scheduleDraw();
+      }, 180);
+      this.decoderRecoveryTimer.unref?.();
+    }
     let charBatch = '';
 
     for (let i = 0; i < keys.length; i++) {
@@ -302,7 +333,8 @@ export class ChatPrompt {
       } catch (e) {
         // A key handler must never take the session down. Say so once and
         // carry on, rather than dying silently the way the old catch(e){} did.
-        process.stderr.write(`\n[tui] key "${key.name}" failed: ${e.message}\n`);
+        this.notice = `input error: ${e instanceof Error ? e.message : String(e)}`;
+        this.scheduleDraw();
       }
     }
 
@@ -410,8 +442,13 @@ export class ChatPrompt {
     const line = parts.join(dim(`  ${GLYPHS.dot}  `));
     const trailing = [status.provider, status.tier].filter(Boolean).join(' ');
     const base = trailing ? `${line}  ${dim(trailing)}` : line;
+    const details = [];
+    if (this.queue.length) details.push(`${this.queue.length} queued`);
+    if (this.editor.lines.length > 1) details.push(`${this.editor.lines.length} lines`);
+    const extra = details.length ? dim(`  ${GLYPHS.dot}  ${details.join(' · ')}`) : '';
+    const withMeta = visibleWidth(base) + visibleWidth(extra) <= width ? base + extra : base;
     const hints = dim('  Ctrl+G mode · Alt+M model · Ctrl+T variant');
-    const full = visibleWidth(base) + visibleWidth(hints) <= width ? base + hints : base;
+    const full = visibleWidth(withMeta) + visibleWidth(hints) <= width ? withMeta + hints : withMeta;
     return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
   }
 
@@ -757,6 +794,12 @@ export class ChatPrompt {
   submit() {
     const text = this.editor.getText();
     if (!text.trim()) return;
+    if (this.busy && this.queue.length >= 32
+        && text.trim() !== '/stop' && text.trim() !== '/interrupt') {
+      this.notice = '32 queued messages: wait for a turn to complete before adding another';
+      this.scheduleDraw();
+      return;
+    }
 
     this.erase();
     this.history.add(text);
@@ -906,6 +949,12 @@ export class ChatPrompt {
       // prevent, and only a layer that opts in by name can do it.
       if (action === 'dismiss') this.closeLayer();
       else if (action !== 'passthrough') return;
+    }
+
+    if (key.name === 'paste-too-large') {
+      this.notice = 'Paste exceeds 2 MiB; input unchanged. Attach a file or reduce the selection.';
+      this.scheduleDraw();
+      return;
     }
 
     if (key.name === 'paste') {

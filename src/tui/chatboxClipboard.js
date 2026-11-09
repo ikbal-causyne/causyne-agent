@@ -1,6 +1,7 @@
 // Chatbox Clipboard Manager: surgical operations for copy, paste, and CRLF normalization.
 // Supports native terminal mouse selection, readline kill/yank, Alt+C/Alt+W/Alt+V, and /copy /paste commands.
 import { readClipboardSync, writeClipboardSync, emitOsc52Copy } from './clipboardSync.js';
+import { stripAnsi } from './text.js';
 import { readClipboardImageSync, formatByteSize, loadLocalImageAttachment, extractPastedFilePath, isLocalImageFile } from './clipboardImage.js';
 export { loadLocalImageAttachment, extractPastedFilePath, isLocalImageFile };
 /**
@@ -10,10 +11,12 @@ export { loadLocalImageAttachment, extractPastedFilePath, isLocalImageFile };
 export function normalizeClipboardText(raw) {
     if (typeof raw !== 'string')
         return '';
-    return raw
+    // Strip CSI/OSC *before* removing C0; deleting ESC first leaves `[31m`
+    // and mouse-control tails as user-visible text. Preserve LF and TAB.
+    return stripAnsi(raw)
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
-        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
 }
 /**
  * Copy text to system clipboard and terminal emulator (via OSC 52).
@@ -48,7 +51,18 @@ export function copyChatboxInput(prompt) {
  * as well as drag-and-dropped local image file paths and empty bracketed pastes.
  */
 export function pasteIntoChatbox(prompt, fallbackText) {
+    const MAX_CHATBOX_BYTES = 2 * 1024 * 1024;
     const clean = normalizeClipboardText(fallbackText);
+    const fits = (text) => {
+        const existing = prompt.editor.getText();
+        if (Buffer.byteLength(existing, 'utf8') + Buffer.byteLength(text, 'utf8') <= MAX_CHATBOX_BYTES)
+            return true;
+        prompt.notice = 'Paste exceeds 2 MiB; input unchanged. Attach the file instead.';
+        prompt.scheduleDraw();
+        return false;
+    };
+    if (clean && !fits(clean))
+        return { success: false, notice: prompt.notice, text: '' };
     // 1. If fallbackText was provided (e.g. drag & drop or file paste), check if it's a local image file
     if (clean) {
         const filePath = extractPastedFilePath(clean);
@@ -96,13 +110,15 @@ export function pasteIntoChatbox(prompt, fallbackText) {
         if (typeof prompt.refreshCompletion === 'function') {
             prompt.refreshCompletion();
         }
-        prompt.notice = 'pasted from clipboard';
+        prompt.notice = `pasted ${clean.split('\n').length} ${clean.includes('\n') ? 'lines' : 'line'} · ${Buffer.byteLength(clean, 'utf8').toLocaleString()} bytes`;
         prompt.scheduleDraw();
         return { success: true, notice: prompt.notice, text: clean, isImage: false };
     }
     // 4. No fallbackText provided and no clipboard image: read text from clipboard
     const clipText = normalizeClipboardText(readClipboardSync());
     if (clipText) {
+        if (!fits(clipText))
+            return { success: false, notice: prompt.notice, text: '' };
         const filePath = extractPastedFilePath(clipText);
         const localImg = loadLocalImageAttachment(filePath);
         if (localImg) {
@@ -124,7 +140,7 @@ export function pasteIntoChatbox(prompt, fallbackText) {
         if (typeof prompt.refreshCompletion === 'function') {
             prompt.refreshCompletion();
         }
-        prompt.notice = 'pasted from clipboard';
+        prompt.notice = `pasted ${clipText.split('\n').length} ${clipText.includes('\n') ? 'lines' : 'line'} · ${Buffer.byteLength(clipText, 'utf8').toLocaleString()} bytes`;
         prompt.scheduleDraw();
         return { success: true, notice: prompt.notice, text: clipText, isImage: false };
     }

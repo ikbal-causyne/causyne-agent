@@ -82,6 +82,9 @@ export class KeyDecoder {
     this.pending = Buffer.alloc(0);
     this.inPaste = false;
     this.pasteBuffer = '';
+    this.pasteChunks = [];
+    this.pasteByteLength = 0;
+    this.pasteOverflow = false;
   }
 
   /** Feed a chunk; get back every complete key event it contained. */
@@ -103,6 +106,17 @@ export class KeyDecoder {
     return events;
   }
 
+  /** Clear an abandoned control sequence rather than swallowing later typing. */
+  drainIncomplete() {
+    if (this.inPaste || this.pending.length === 0) return [];
+    const tail = this.pending.toString('utf8');
+    this.pending = Buffer.alloc(0);
+    if (tail === '[<') return [makeKey('char', { text: '[', sequence: '[' }),
+      makeKey('char', { text: '<', sequence: '<' })];
+    if (tail === '[') return [makeKey('char', { text: '[', sequence: '[' })];
+    return [makeKey('unknown', { sequence: '' })];
+  }
+
   /** Decode one event at `offset`. Returns bytes consumed, or 0 if incomplete. */
   step(buffer, offset, events) {
     // Inside a paste, everything is literal text until the closing marker. The
@@ -113,22 +127,19 @@ export class KeyDecoder {
 
     if (byte === 0x1b) return this.stepEscape(buffer, offset, events);
 
-    // Orphaned SGR mouse sequence: [ < b ; x ; y M|m
-    // Occurs when \x1b is consumed on a chunk boundary or dropped over PTY.
-    // Intercepting here prevents raw sequence strings like `[<64;119;43M` from
-    // leaking into the prompt input box as literal character keystrokes.
-    if (byte === 0x5b && buffer.length - offset >= 3 && buffer[offset + 1] === 0x3c) {
+    // Orphaned SGR report: `ESC` may be lost before `[<b;x;yM`.
+    // Only buffer strings that are valid partial reports. Ordinary code such
+    // as `[<div>` must remain typable and must not hang the editor.
+    if (byte === 0x5b && buffer[offset + 1] === 0x3c) {
       const text = buffer.toString('utf8', offset);
-      if (!/[Mm]/.test(text)) return 0; // Incomplete sequence; wait for subsequent bytes in this.pending
-      const match = /^\[<(\d+);(\d+);(\d+)([Mm])/.exec(text);
+      const match = /^\[<(\d{1,6});(\d{1,6});(\d{1,6})([Mm])/.exec(text);
       if (match) {
-        const code = parseInt(match[1], 10);
-        const col = parseInt(match[2], 10);
-        const row = parseInt(match[3], 10);
-        const pressed = match[4] === 'M';
-        this.emitMouse([code, col, row], pressed, match[0], events);
+        this.emitMouse([Number(match[1]), Number(match[2]), Number(match[3])],
+          match[4] === 'M', match[0], events);
         return match[0].length;
       }
+      // Don't wait forever on malformed or nonmouse `[` + `<` input.
+      if (text.length <= 64 && /^\[<(?:\d{0,6}(?:;\d{0,6}){0,2})$/.test(text)) return 0;
     }
 
     if (byte === 0x0d || byte === 0x0a) {
@@ -162,28 +173,45 @@ export class KeyDecoder {
   }
 
   stepPaste(buffer, offset, events) {
-    const text = buffer.toString('utf8', offset);
-    const end = text.indexOf(PASTE_END);
+    // Bracketed paste can split in the middle of a UTF-8 code point OR CSI
+    // terminator. Accumulate *bytes*, then decode once. Decoding each chunk
+    // independently corrupts emoji and CJK, and can change user code silently.
+    const marker = Buffer.from(PASTE_END, 'ascii');
+    const end = buffer.indexOf(marker, offset);
+    const maxBytes = 2 * 1024 * 1024;
+    const append = (chunk) => {
+      this.pasteByteLength += chunk.length;
+      if (this.pasteByteLength > maxBytes) { this.pasteOverflow = true; return; }
+      if (!this.pasteOverflow && chunk.length) this.pasteChunks.push(Buffer.from(chunk));
+    };
 
-    if (end === -1) {
-      // No terminator yet. Keep whole UTF-8 characters, hold back a split tail.
-      let safe = buffer.length;
-      while (safe > offset && utf8Length(buffer, safe - 1) === 0) safe--;
-      // A partial terminator at the tail must not be swallowed as content.
-      const chunk = buffer.toString('utf8', offset, safe);
-      const keep = partialSuffixLength(chunk, PASTE_END);
-      const usable = chunk.slice(0, chunk.length - keep);
-      if (!usable) return 0;
-      this.pasteBuffer += usable;
-      return Buffer.byteLength(usable, 'utf8');
+    if (end >= 0) {
+      append(buffer.subarray(offset, end));
+      const pasted = this.pasteOverflow ? '' : Buffer.concat(this.pasteChunks).toString('utf8');
+      const oversized = this.pasteOverflow;
+      this.inPaste = false;
+      this.pasteBuffer = '';
+      this.pasteChunks = [];
+      this.pasteByteLength = 0;
+      this.pasteOverflow = false;
+      if (oversized) events.push(makeKey('paste-too-large', { sequence: '' }));
+      else events.push(makeKey('paste', { text: pasted, sequence: pasted }));
+      return end - offset + marker.length;
     }
 
-    this.pasteBuffer += text.slice(0, end);
-    this.inPaste = false;
-    const pasted = this.pasteBuffer;
-    this.pasteBuffer = '';
-    events.push(makeKey('paste', { text: pasted, sequence: pasted }));
-    return Buffer.byteLength(text.slice(0, end), 'utf8') + PASTE_END.length;
+    // Keep only a suffix that might start the paste terminator. All other
+    // bytes can be committed immediately without corrupting Unicode.
+    let retain = 0;
+    for (let count = Math.min(marker.length - 1, buffer.length - offset); count > 0; count--) {
+      if (buffer.subarray(buffer.length - count).equals(marker.subarray(0, count))) {
+        retain = count;
+        break;
+      }
+    }
+    const safeEnd = buffer.length - retain;
+    if (safeEnd === offset) return 0;
+    append(buffer.subarray(offset, safeEnd));
+    return safeEnd - offset;
   }
 
   stepEscape(buffer, offset, events) {
@@ -262,13 +290,23 @@ export class KeyDecoder {
     if (text.startsWith(PASTE_START)) {
       this.inPaste = true;
       this.pasteBuffer = '';
+      this.pasteChunks = [];
+      this.pasteByteLength = 0;
+      this.pasteOverflow = false;
       return PASTE_START.length;
     }
 
     // A CSI sequence is ESC [ , parameters, then one final byte in @..~.
     let index = 2;
     while (index < text.length && !/[@-~]/.test(text[index])) index++;
-    if (index >= text.length) return 0; // still arriving
+    if (index >= text.length) {
+      // A malformed CSI stream must not buffer an unbounded quantity of user input.
+      if (buffer.length - offset > 128) {
+        events.push(makeKey('unknown', { sequence: '' }));
+        return buffer.length - offset;
+      }
+      return 0; // still arriving
+    }
 
     const final = text[index];
     const params = text.slice(2, index);
