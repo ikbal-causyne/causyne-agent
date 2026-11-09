@@ -13,6 +13,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
 
 import { sysRun } from '../src/tools/sysRun.js';
 import { selfRepairToolCall, resolveParameterAliases, coerceArgumentTypes } from '../src/tools/toolSelfRepair.js';
@@ -194,7 +195,7 @@ describe('Universal Tool Calling — OpenRouterProvider Text Tool Extraction', (
 
   test('fsWrite provides clear directory guidance instead of raw EISDIR error', async () => {
     const { fsWrite } = await import('../src/tools/fsWrite.js');
-    const res = await fsWrite.execute({ path: '/tmp', content: 'test' });
+    const res = await fsWrite.execute({ path: os.tmpdir(), content: 'test' });
     assert.equal(res.success, false);
     assert.ok(res.error?.includes('is an existing directory'), 'Expected error to note directory target');
   });
