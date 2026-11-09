@@ -432,11 +432,18 @@ export function overlayTurnPreviewCard(
     if (x <= 6 && railX <= 4) {
       const plainBase = stripAnsi(baseRow);
       const dotChar = plainBase[railX] || ' ';
-      const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·' || dotChar === '[' || dotChar === ']';
+      const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·';
       let dotCell = ' ';
       if (isDot) {
-        const sliceDot = sliceFromColumn(baseRow, railX);
-        dotCell = sliceDot ? truncate(sliceDot, 1, '') : dotChar;
+        if (dotChar === '●') {
+          dotCell = baseRow.includes('230;235;245m')
+            ? '\x1b[1m\x1b[38;2;230;235;245m●\x1b[0m'
+            : '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
+        } else if (dotChar === '•') {
+          dotCell = '\x1b[38;2;115;115;120m•\x1b[0m';
+        } else {
+          dotCell = dotChar;
+        }
       }
       const leadingSpace = ' '.repeat(Math.max(0, railX));
       const trailingSpace = ' '.repeat(Math.max(0, x - railX - 1));
@@ -447,11 +454,12 @@ export function overlayTurnPreviewCard(
 
     let restOfRow = '';
     if (x <= 6) {
-      // For left-placed turn cards, do not leave severed text tails sticking out
-      const totalRowWidth = Math.max(screenWidth, visibleWidth(baseRow));
-      const rightCell = sliceFromColumn(baseRow, totalRowWidth - 1);
+      // For left-placed turn cards, preserve the right overview rail without severed text leaks
+      const rowLen = visibleWidth(baseRow);
+      const rightCell = rowLen > 0 ? sliceFromColumn(baseRow, rowLen - 1) : ' ';
       const rightCellWidth = visibleWidth(rightCell);
-      const gap = Math.max(0, totalRowWidth - x - cardWidth - rightCellWidth);
+      const targetWidth = Math.max(screenWidth, rowLen);
+      const gap = Math.max(0, targetWidth - x - cardWidth - rightCellWidth);
       restOfRow = `${' '.repeat(gap)}${rightCell}`;
     } else {
       restOfRow = sliceFromColumn(baseRow, x + cardWidth);
@@ -482,10 +490,10 @@ export function handleTurnRailMouse(
   const stageTop = layout.stageTop ?? 0;
   const relY = mouseY - stageTop;
 
-  // Rail hit box: if railX <= 2, check columns 0..3 (left margin); otherwise check [railX - 1, railX + 2]
-  const isRail = layout.railX <= 2
-    ? (mouseX >= 0 && mouseX <= Math.max(3, layout.railX + 2))
-    : (mouseX >= layout.railX - 1 && mouseX <= layout.railX + 2);
+  // Rail hit box: if railX <= 4, check columns 0..5 (left margin); otherwise check [railX - 2, railX + 3]
+  const isRail = layout.railX <= 4
+    ? (mouseX >= 0 && mouseX <= Math.max(5, layout.railX + 3))
+    : (mouseX >= layout.railX - 2 && mouseX <= layout.railX + 3);
 
   // Check if currently showing a card and mouse is hovering over the card or bridge tunnel
   const hasActiveCard = surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined;

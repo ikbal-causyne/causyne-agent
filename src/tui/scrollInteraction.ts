@@ -8,6 +8,8 @@
 // 4. Scrollbar (rail) mouse interactions clamp cleanly even if clicked above or
 //    below the chat box bounds.
 
+import { sessionMainWidth } from './sessionSidebar.js';
+
 export interface MouseCoordinate {
   x: number;
   y: number;
@@ -255,14 +257,15 @@ export function handleScrollbarMouse(
   const stageTop = Math.max(0, termRows - stageH);
   const viewportH = viewport.height;
   const stageW = typeof surface.stage?.width === 'function' ? surface.stage.width() : (surface.width || 80);
-  const hasRail = typeof surface.railEnabled === 'function' ? surface.railEnabled(stageW) : true;
-  const contentW = hasRail ? Math.max(20, stageW - 3) : stageW;
+  const mainW = sessionMainWidth(stageW);
+  const hasRail = typeof surface.railEnabled === 'function' ? surface.railEnabled(mainW) : true;
+  const contentW = hasRail ? Math.max(20, mainW - 3) : mainW;
 
   const mouseX = key.mouse.x;
   const mouseY = key.mouse.y;
 
-  // Rail occupies column contentW - 1 through stageW
-  const isRailColumn = mouseX >= contentW - 1 && mouseX <= stageW;
+  // Rail occupies column contentW - 1 through mainW
+  const isRailColumn = mouseX >= contentW - 1 && mouseX <= mainW;
 
   if (isRailColumn) {
     // Auto-heal if detached

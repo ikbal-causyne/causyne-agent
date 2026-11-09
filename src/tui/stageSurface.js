@@ -29,7 +29,7 @@ import { markHoveredMessage } from './messageInteraction.js';
 import { placeMessageActionPanel } from './messageActionPlacement.js';
 import { mouseTracking } from './keys.js';
 import { mouseHoverTracking } from './mouseHover.js';
-import { truncate, padEnd, visibleWidth } from './text.js';
+import { truncate, padEnd, visibleWidth, stripAnsi } from './text.js';
 import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
@@ -727,9 +727,11 @@ export class StageSurface {
       let row = rows[i] || '';
       if (hasTurns && railResult) {
         const leftCell = railResult.cells[i] || ' ';
-        if (row.startsWith('   ')) {
-          row = ` ${leftCell} ${row.slice(3)}`;
-        } else if (row.length === 0) {
+        const leadMatch = row.match(/^((?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_])*)[ ]{3}/);
+        if (leadMatch) {
+          const leadEscapes = leadMatch[1] || '';
+          row = `${leadEscapes} ${leftCell} ${row.slice(leadMatch[0].length)}`;
+        } else if (stripAnsi(row).length === 0) {
           row = leftCell !== ' ' ? ` ${leftCell} ` : '';
         } else {
           row = ` ${leftCell} ${row}`;

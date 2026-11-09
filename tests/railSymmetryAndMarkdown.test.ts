@@ -8,8 +8,10 @@ import {
   formatPreviewCardMarkdown,
   renderTurnPreviewCard,
   overlayTurnPreviewCard,
+  handleTurnRailMouse,
   type SessionTurn
 } from '../src/tui/turnRail.js';
+import { handleScrollbarMouse } from '../src/tui/scrollInteraction.js';
 
 function createSink(columns = 120, rows = 35) {
   const chunks: string[] = [];
@@ -230,5 +232,150 @@ describe('Turn Rail & Chat Interface Symmetry, Spacing and Markdown Rendering', 
     assert.ok(!output.includes('| :--- |'), 'Raw table separator | :--- | must not be rendered literally');
     // Clean text present
     assert.ok(output.includes('AP Isolation'), 'Text inside italics preserved and formatted');
+  });
+
+  test('overlayTurnPreviewCard preserves rightmost overview rail glyph and never outputs stray brackets', () => {
+    // 110 columns wide baseRows with right overview rail character '│'
+    const baseRows = [
+      ' • > Task :app:compileReleaseArtProfile                                                                 │',
+      ' • > Task :app:optimizeReleaseResources                                                                 │',
+      ' • > Task :app:packageRelease                                                                         > │',
+      ' • > Task :app:createReleaseApkListingFileRedirect                                                      │',
+      ' • > Task :app:assembleRelease                                                                          │',
+      ' ● ` ... output truncated — ctrl+o to expand                                                              │'
+    ];
+    const card = [
+      '╭──────────────────────────────────────────────────╮',
+      '│ 2 of 13                                 12:50 AM │',
+      '│ Building the native Kotlin VIDAA Remote app      │',
+      '│ assembleDebug                                    │',
+      '╰──────────────────────────────────────────────────╯'
+    ];
+
+    // Overlay onto rows where screenWidth is 111 (mainWidth) and visibleWidth(baseRow) is 110
+    const overlaid = overlayTurnPreviewCard(baseRows, card, 2, 1, 111);
+    assert.equal(overlaid.length, baseRows.length);
+
+    for (let i = 0; i < overlaid.length; i++) {
+      const row = overlaid[i]!;
+      const plain = stripAnsi(row);
+      // Row must never start with stray '[' or ']'
+      assert.ok(!/^\s*[\[\]]/.test(plain), `Row ${i} must not start with stray bracket: "${plain}"`);
+      // Row must never have isolated stray ']' at column 109
+      assert.ok(!plain.endsWith(']'), `Row ${i} must not end with stray closing bracket: "${plain}"`);
+      // Rightmost non-space character must be the overview rail glyph ('│' or '>')
+      const trimmedEnd = plain.trimEnd();
+      const lastChar = trimmedEnd[trimmedEnd.length - 1];
+      assert.ok(lastChar === '│' || lastChar === '>', `Row ${i} must preserve overview rail glyph: "${plain}"`);
+    }
+  });
+
+  test('attachRail preserves formatting without double indentation when row has leading ANSI escapes before spaces', () => {
+    const out = createSink(120, 35);
+    const surface = new StageSurface({ out, env: { CAUSYNE_RAIL: '1', CAUSYNE_SIDEBAR: '0' } });
+    surface.open();
+
+    try {
+      const renderer = new ChatRenderer({ out, transcript: surface.transcript });
+      renderer.renderUserMessage('test turn');
+      renderer.renderAssistantMessage('Response');
+
+      // Add a row that starts with ANSI background color before 3 spaces
+      surface.transcript.append({
+        kind: 'result',
+        produce: () => ['\x1b[48;2;35;35;40m   Indented styled command output line\x1b[0m']
+      });
+
+      surface.present(['status'], { row: 0, col: 0 });
+      const band = surface.stage.prev;
+      const foundRow = band.find((r: string) => stripAnsi(r).includes('Indented styled command output'));
+      assert.ok(foundRow, 'Styled row must exist');
+
+      const plain = stripAnsi(foundRow);
+      // The text 'Indented' must start at Column 3 (not Column 6!)
+      const col = plain.indexOf('Indented');
+      assert.equal(col, 3, `Styled row must align at Column 3, got ${col}: "${plain}"`);
+    } finally {
+      surface.close();
+    }
+  });
+
+  test('handleScrollbarMouse respects sidebar layout and registers overview rail clicks at mainWidth', () => {
+    let scrolledPosition: number | null = null;
+    let followingResumed = false;
+
+    const mockViewport = {
+      scrollTop: 50,
+      height: 30,
+      maxScrollTop: () => 100,
+      scrollTo: (pos: number) => { scrolledPosition = pos; return pos; },
+      toBottom: () => { followingResumed = true; return 100; }
+    };
+
+    const mockSurface = {
+      stage: {
+        height: 35,
+        width: () => 154
+      },
+      width: 154,
+      railEnabled: () => true,
+      activeTurnIndex: 3
+    };
+
+    const mockHost = {
+      out: { rows: 40 },
+      draw: () => {},
+      notice: ''
+    };
+
+    // Click at col 109 (overview rail in 154-column window with 42-col sidebar: 154 - 42 - 1 = 111 mainWidth)
+    const railClickEvent = {
+      name: 'mouse',
+      mouse: { x: 109, y: 15, button: 0, pressed: true }
+    };
+    const railHandled = handleScrollbarMouse(railClickEvent, mockViewport as any, mockSurface as any, mockHost as any);
+    assert.equal(railHandled, true, 'Click on overview rail column 109 must be handled');
+    assert.ok(scrolledPosition !== null, 'Viewport must be scrolled by rail click');
+
+    // Click inside the sidebar (col 135) must NOT be captured by the scrollbar
+    const sidebarClickEvent = {
+      name: 'mouse',
+      mouse: { x: 135, y: 15, button: 0, pressed: true }
+    };
+    const sidebarHandled = handleScrollbarMouse(sidebarClickEvent, mockViewport as any, mockSurface as any, mockHost as any);
+    assert.equal(sidebarHandled, false, 'Click inside sidebar column 135 must not trigger scrollbar');
+  });
+
+  test('handleTurnRailMouse maintains smooth hover hit testing up to column 5', () => {
+    let scheduled = false;
+    const mockSurface = {
+      turnRailLayout: {
+        railX: 1,
+        stageTop: 0,
+        viewportHeight: 30,
+        dotRows: new Map([[1, 2], [2, 5]]),
+        rowToTurn: new Map([[2, 1], [5, 2]]),
+        turns: [
+          { turnIndex: 1, totalTurns: 2, userPrompt: 'T1', assistantSummary: 'A1', timestamp: 1, formattedDate: '10:00', frameId: 1, startRow: 0 },
+          { turnIndex: 2, totalTurns: 2, userPrompt: 'T2', assistantSummary: 'A2', timestamp: 2, formattedDate: '10:05', frameId: 2, startRow: 20 }
+        ]
+      },
+      hoveredTurnIndex: null,
+      hoveredTurnAnchorY: null
+    };
+
+    const mockHost = {
+      scheduleDraw: () => { scheduled = true; },
+      draw: () => {}
+    };
+
+    // Cursor at column 4, row 5 (comfortably in the gutter beside dot 2)
+    const hoverEvent = {
+      mouse: { x: 4, y: 5, button: 0, pressed: false },
+      sequence: '\x1b[<35;5;6M'
+    };
+    const handled = handleTurnRailMouse(hoverEvent, mockSurface, mockHost);
+    assert.equal(handled, true, 'Hover at column 4 should be within rail gutter hit zone');
+    assert.equal(mockSurface.hoveredTurnIndex, 2, 'Turn 2 should be hovered');
   });
 });

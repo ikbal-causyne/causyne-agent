@@ -6,6 +6,8 @@ import { commandDialog } from '../src/tui/commandPresentation.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { Transcript } from '../src/tui/transcript.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
+import { StageSurface } from '../src/tui/stageSurface.js';
+import { hasSessionTurns } from '../src/tui/turnRail.js';
 
 test('opening and composer use one centered readable column', () => {
   assert.equal(composerWidth(156), 82);
@@ -61,7 +63,6 @@ test('user message uses unbroken continuous heavy vertical bar (one line) withou
 });
 
 test('user message box and chatbox have symmetrical width and alignment', async () => {
-  const { StageSurface } = await import('../src/tui/stageSurface.js');
   const out = { columns: 155, rows: 40, isTTY: true, write: () => true, on() {}, removeListener() {} };
   const surface = new StageSurface({ out, env: { CAUSYNE_SIDEBAR: '1' } });
   surface.open();
@@ -94,8 +95,6 @@ test('user message box and chatbox have symmetrical width and alignment', async 
 });
 
 test('session transition and /new runs synchronously without re-entrant freeze', async () => {
-  const { StageSurface } = await import('../src/tui/stageSurface.js');
-  const { hasSessionTurns } = await import('../src/tui/turnRail.js');
   const out = { columns: 155, rows: 40, isTTY: true, write: () => true, on() {}, removeListener() {} };
   const surface = new StageSurface({ out, env: { CAUSYNE_SIDEBAR: '1' } });
   surface.enterHome({ cwd: process.cwd(), provider: 'antigravity', model: 'gemini' });
