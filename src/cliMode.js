@@ -4,6 +4,7 @@ import { getProcessEntitlementGate } from './licensing/entitlements.js';
 import { loadConfig, saveConfig } from './config.js';
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './tui/prompt.js';
+import { switchChatWorkspace } from './tui/workspaceSwitch.js';
 import { handleInput, listCommands, isCommandInput } from './commands.js';
 import { CodeStreamRenderer as ChatRenderer } from './tui/codeStreamRenderer.js';
 import { paint, bold, dim, badge, GLYPHS, terminalWidth } from './tui/theme.js';
@@ -304,7 +305,7 @@ export async function chatMode({ home = false } = {}) {
   // .agents/rules.json.
   const conn = new LocalCLIConnection();
   const taskId = `cli_chat_${Date.now()}`;
-  const loop = new AgentLoop(conn, taskId, null);
+  let loop = new AgentLoop(conn, taskId, null);
 
   // The context the CLI never showed: which model is about to spend the user's
   // money, in which autonomy mode, over which paths. All of it was already
@@ -458,7 +459,31 @@ export async function chatMode({ home = false } = {}) {
     // A leading slash is a command, not a task. handleInput returns null for
     // anything else, which is what sends the line to the agent — so a prompt
     // that merely mentions a path like /usr/local is still a task.
+    const previousWorkspaceRoot = loop.workspaceRoot;
     const commandResult = await handleInput(task, { surface: 'terminal', loop, prompt });
+    if (commandResult?.effect === 'workspace-changed') {
+      try {
+        // Fresh sandbox AND memory: an old AgentLoop cannot be repointed by
+        // changing process.cwd() or assigning only loop.workspaceContext.
+        const nextRoot = commandResult.workspaceRoot;
+        loop = switchChatWorkspace({
+          workspaceRoot: nextRoot,
+          createLoop: (workspaceRoot) => new AgentLoop(
+            conn, `cli_chat_${Date.now()}`, null, { workspaceRoot }
+          ),
+          prompt, surface, renderer: conn.renderer, headerInfo,
+          approvalHandler: makeApprovalHandler(conn, prompt),
+          decisionHandler: makeDecisionHandler(conn, prompt)
+        });
+        conn.renderer.write(`\n  Workspace switched to: ${nextRoot}\n`);
+      } catch (error) {
+        // Roll back process cwd and prompt state if creation/rebinding fails.
+        try { process.chdir(previousWorkspaceRoot); } catch { /* report below */ }
+        try { prompt?.setWorkingRoot(previousWorkspaceRoot); } catch { /* report below */ }
+        conn.renderer.write(`\n  Workspace switch failed: ${error.message}\n`);
+      }
+      continue;
+    }
     if (commandResult) {
       // Route command output through the renderer, not console.log.
       //

@@ -269,9 +269,10 @@ export class FileIndex {
   async walk() {
     const found = [];
     const queue = [{ dir: this.root, depth: 0 }];
+    let next = 0;
 
-    while (queue.length > 0 && found.length < MAX_INDEX_ENTRIES) {
-      const { dir, depth } = queue.shift();
+    while (next < queue.length && found.length < MAX_INDEX_ENTRIES) {
+      const { dir, depth } = queue[next++];
       let listing;
       try {
         listing = await fsp.readdir(dir, { withFileTypes: true });
@@ -305,6 +306,23 @@ export class FileIndex {
   }
 }
 
+/**
+ * Resolve both the authorized root and candidate to physical paths before
+ * touching a directory. Lexical path.resolve() alone follows symlinks outside
+ * the workspace and can leak private filenames through @ completion.
+ */
+function isPhysicalChild(root, candidate) {
+  try {
+    const base = fs.realpathSync(root);
+    const target = fs.realpathSync(candidate);
+    const relative = path.relative(base, target);
+    return relative === '' || (relative !== '..' &&
+      !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  } catch {
+    return false;
+  }
+}
+
 /** Instant, shell-style completion of one directory level. */
 function directoryItems(root, partial) {
   const slash = partial.lastIndexOf('/');
@@ -313,7 +331,8 @@ function directoryItems(root, partial) {
 
   // Never offer paths outside the workspace root, whatever the user typed.
   const relativeToRoot = path.relative(root, target);
-  if (relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) return [];
+  if (relativeToRoot === '..' || relativeToRoot.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeToRoot) || !isPhysicalChild(root, target)) return [];
 
   let listing;
   try {
@@ -325,14 +344,23 @@ function directoryItems(root, partial) {
   const items = [];
   for (const entry of listing) {
     if (entry.name.startsWith('.')) continue;
-    if (entry.isDirectory() && SKIP_DIRECTORIES.has(entry.name)) continue;
-    const value = dirPart + entry.name + (entry.isDirectory() ? '/' : '');
+    const candidate = path.join(target, entry.name);
+    // A lexical entry can be a symlink to a private directory. Do not offer
+    // any symlink whose physical target leaves the active workspace.
+    if (entry.isSymbolicLink() && !isPhysicalChild(root, candidate)) continue;
+    let isDirectory = entry.isDirectory();
+    if (entry.isSymbolicLink()) {
+      try { isDirectory = fs.statSync(candidate).isDirectory(); }
+      catch { continue; }
+    }
+    if (isDirectory && SKIP_DIRECTORIES.has(entry.name)) continue;
+    const value = dirPart + entry.name + (isDirectory ? '/' : '');
     if (!isTerminalSafe(value)) continue;
     items.push({
       value,
       match: value,
       label: value,
-      description: entry.isDirectory() ? 'directory' : ''
+      description: isDirectory ? 'directory' : ''
     });
   }
   return items;
@@ -449,7 +477,7 @@ export function suggest(text, cursor, options = {}) {
     if (focusDir) {
       const focusTarget = path.resolve(root, focusDir);
       try {
-        if (fs.existsSync(focusTarget) && fs.statSync(focusTarget).isDirectory()) {
+        if (isPhysicalChild(root, focusTarget) && fs.statSync(focusTarget).isDirectory()) {
           const focusedItems = directoryItems(focusTarget, trigger.query).map((item) => ({
             ...item,
             value: `${focusDir}/${item.value}`,

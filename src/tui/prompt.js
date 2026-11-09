@@ -785,15 +785,13 @@ export class ChatPrompt {
     // Control commands take priority over busy turns so the user is never locked out.
     // Commands like /stop, /new, /model, /session, /sessions, /continuum, /clear can interrupt
     // a stalled/long-running turn and execute immediately.
-    const isControlCommand = this.isCommand(text) && (
-      text === '/stop' || text === '/interrupt' ||
-      text.startsWith('/new') ||
-      text.startsWith('/model') ||
-      text.startsWith('/session') ||
-      text.startsWith('/sessions') ||
-      text.startsWith('/continuum') ||
-      text === '/clear'
-    );
+    // Match a COMPLETE command token. Prefix tests made unrelated
+    // commands such as /newsletter interrupt an active agent turn.
+    const commandToken = text.trim().split(/\s+/, 1)[0].toLowerCase();
+    const isControlCommand = this.isCommand(text) && new Set([
+      '/stop', '/interrupt', '/new', '/model', '/models',
+      '/session', '/sessions', '/continuum', '/clear'
+    ]).has(commandToken);
 
     // Immediate abort signals interrupt the running turn directly without queuing as a future task.
     if ((text === '/stop' || text === '/interrupt') && this.busy) {
@@ -1265,10 +1263,12 @@ export class ChatPrompt {
   }
 
   cursorOffset() {
-    const before = this.editor.lines
-      .slice(0, this.editor.line)
-      .reduce((total, line) => total + line.length + 1, 0);
-    return before + this.editor.col;
+    // The editor stores Unicode code points; String.slice() in the completion
+    // provider expects UTF-16 code units. Count units at this API boundary.
+    const before = this.editor.lines.slice(0, this.editor.line)
+      .reduce((total, line) => total + line.join('').length + 1, 0);
+    return before + this.editor.lines[this.editor.line]
+      .slice(0, this.editor.col).join('').length;
   }
 
   openCompletion(force = false) {
@@ -1465,15 +1465,24 @@ export class ChatPrompt {
   }
 
   setCursorOffset(offset) {
-    let remaining = offset;
+    // Convert completion's UTF-16 offset back into the editor's code-point
+    // column, never splitting a surrogate pair or moving to the wrong row.
+    let remaining = Math.max(0, Number.isFinite(offset) ? offset : 0);
     for (let index = 0; index < this.editor.lines.length; index++) {
-      const length = this.editor.lines[index].length;
-      if (remaining <= length) {
+      const line = this.editor.lines[index];
+      const units = line.join('').length;
+      if (remaining <= units || index === this.editor.lines.length - 1) {
+        let column = 0;
+        let consumed = 0;
+        while (column < line.length && consumed + line[column].length <= remaining) {
+          consumed += line[column].length;
+          column++;
+        }
         this.editor.line = index;
-        this.editor.col = remaining;
+        this.editor.col = column;
         return;
       }
-      remaining -= length + 1;
+      remaining -= units + 1;
     }
   }
 

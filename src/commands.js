@@ -154,20 +154,19 @@ export const COMMANDS = [
       if (!stat.isDirectory()) {
         return fail(`Not a directory: ${resolved}`);
       }
+      // Do not mutate the existing AgentLoop: its workspaceRoot, Sandbox,
+      // MemoryManager and loaded session belong to the previous workspace.
+      // The chat controller rebuilds the loop after this explicit command.
+      let canonicalRoot;
       try {
-        process.chdir(resolved);
+        canonicalRoot = fs.realpathSync(resolved);
+        process.chdir(canonicalRoot);
       } catch (err) {
         return fail(`Cannot switch to ${resolved}: ${err.message}`);
       }
-      if (ctx.prompt && typeof ctx.prompt.setWorkingRoot === 'function') {
-        ctx.prompt.setWorkingRoot(resolved);
-      }
-      if (ctx.loop && ctx.loop.perception) {
-        try {
-          ctx.loop.workspaceContext = await ctx.loop.perception.buildContext(resolved);
-        } catch (e) {}
-      }
-      return ok(`Working directory changed to: ${resolved}`);
+      return ok(`Working directory changed to: ${canonicalRoot}`, {
+        effect: 'workspace-changed', workspaceRoot: canonicalRoot
+      });
     }
   },
 

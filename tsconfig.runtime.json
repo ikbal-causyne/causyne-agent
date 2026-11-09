@@ -233,7 +233,8 @@
     "src/cortex/autoCondenser.ts",
     "src/reliability/networkHostGuard.ts",
     "src/reliability/visualEvidence.ts",
-    "src/reliability/assetEvidence.ts"
+    "src/reliability/assetEvidence.ts",
+    "src/tui/workspaceSwitch.ts"
   ],
   "exclude": [
     "node_modules",
