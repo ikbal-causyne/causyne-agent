@@ -1,9 +1,10 @@
 // Continuum TUI Picker: interactive modal dialog for browsing and adopting peer agent sessions.
 // Authorship: Strict TypeScript (Causyne Agent).
 // @ts-expect-error untyped local TUI dialogs
-import { SelectLayer, TextLayer } from '../../tui/dialogs.js';
+import { TextLayer } from '../../tui/dialogs.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from '../../tui/theme.js';
+import { ContinuumPickerLayer } from './continuumPickerView.js';
 import { ContinuumScanner } from '../scanner.js';
 import { adoptContinuumSession } from '../ingest.js';
 function formatTimeAgo(timestamp) {
@@ -43,16 +44,26 @@ export async function runInteractiveContinuum(prompt, options = {}) {
     }
     const items = buildContinuumItems(sessions);
     const pickedSession = await new Promise((resolve) => {
-        const layer = new SelectLayer({
-            title: `Continuum · Cross-Agent Sessions (${sessions.length})`,
-            placeholder: 'search past agent conversations (antigravity, opencode, codex, claude)...',
-            emptyText: 'no matching sessions found',
-            width: 78,
-            height: 20,
-            footer: `enter adopt session  ${GLYPHS.dot}  esc cancel`,
-            items,
-            onPick: (item) => {
-                resolve(item ? item.value : null);
+        const layer = new ContinuumPickerLayer({
+            sessions: items,
+            onPick: (item) => resolve(item?.value || null),
+            onPreview: (session) => {
+                void openContinuumPreview(session.id, prompt, scanner)
+                    .then((opened) => {
+                    if (!opened)
+                        prompt.openLayer(new TextLayer({
+                            title: 'Continuum · Preview unavailable',
+                            lines: ['This session could not be loaded.', 'It may have moved or been deleted.'],
+                            width: 72,
+                            height: 9
+                        }));
+                })
+                    .catch(() => prompt.openLayer(new TextLayer({
+                    title: 'Continuum · Preview unavailable',
+                    lines: ['The source agent session could not be read.'],
+                    width: 72,
+                    height: 9
+                })));
             }
         });
         prompt.openLayer(layer);

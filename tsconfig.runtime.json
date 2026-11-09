@@ -121,6 +121,7 @@
     "src/continuum/scanner.ts",
     "src/continuum/ingest.ts",
     "src/continuum/ui/continuumPicker.ts",
+    "src/continuum/ui/continuumPickerView.ts",
     "src/continuum/index.ts",
     "src/creative/apps.ts",
     "src/creative/blenderBatch.ts",
