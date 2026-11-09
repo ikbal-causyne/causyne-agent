@@ -284,3 +284,56 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('peer-native skill failure routes immediately to host fs_read_skill and cancels peer turn', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-skill-bridge-'));
+  const script = path.join(directory, 'peer.cjs');
+  fs.writeFileSync(script, `const fs = require('node:fs');
+const readline = require('node:readline');
+const send = v => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...v})+'\\n');
+let prompt;
+readline.createInterface({input:process.stdin}).on('line', line => {
+ const r = JSON.parse(line);
+ if(r.method === 'initialize') send({id:r.id,result:{protocolVersion:1,agentCapabilities:{}}});
+ if(r.method === 'session/new') send({id:r.id,result:{sessionId:'skill-peer-session'}});
+ if(r.method === 'session/set_model') send({id:r.id,result:{}});
+ if(r.method === 'session/prompt') {
+  prompt = r.id;
+  send({method:'session/update',params:{sessionId:'skill-peer-session',update:{sessionUpdate:'tool_call',toolCallId:'call-skill-1',tool:'skill',title:'skill',status:'failed',rawInput:{name:'mobile-development/android-build-optimization'},error:'Skill "mobile-development/android-build-optimization" not found'}}});
+ }
+ if(r.method === 'session/cancel') {
+  send({id:prompt,result:{stopReason:'cancelled',usage:{inputTokens:10,outputTokens:5}}});
+ }
+});`);
+  const peer = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [script] });
+  const skillContract = { name: 'fs_read_skill', description: 'Read a bundled skill by id', parameters: { type: 'object' } };
+  const loop = new AgentLoop({ readyState: 1, send() {} }, 'skill-bridge-test', 'Read the skill mobile-development/android-build-optimization using fs_read_skil', { workspaceRoot: directory });
+  try {
+    const response = await peer.chat([{ role: 'user', content: 'Read the skill mobile-development/android-build-optimization using fs_read_skil' }], {
+      workspaceRoot: directory,
+      tools: [skillContract]
+    });
+    assert.equal(response.toolRoutingError?.tool, 'fs_read_skill');
+    assert.deepEqual(response.toolRoutingError?.parameters, { skill_id: 'mobile-development/android-build-optimization' });
+
+    const canonical = 'fs_read_skill';
+    const toolParams: Record<string, unknown> = { ...(response.toolRoutingError.parameters || {}) };
+    delete toolParams.__pendingStub;
+    delete toolParams.__invalidTool;
+
+    if (canonical === 'fs_read_skill') {
+      if (!toolParams.skill_id) {
+        toolParams.skill_id = toolParams.id || toolParams.name || toolParams.skill || '';
+      }
+      delete toolParams.id;
+      delete toolParams.name;
+      delete toolParams.skill;
+    }
+
+    assert.equal(toolParams.skill_id, 'mobile-development/android-build-optimization');
+    assert.equal(loop.validateToolArgs(canonical, toolParams), null);
+  } finally {
+    await peer.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

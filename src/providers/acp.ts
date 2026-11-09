@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { extractToolCallJsonObjects, stripToolCallMarkup, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
+import { canonicalizeToolName } from '../tools/toolSelfRepair.js';
 
 interface AcpTransportSnapshot {
   conversationId: string;
@@ -109,7 +110,8 @@ export class AcpProvider extends LLMProvider {
       '\n\n[ACP Tool Routing & Workspace Boundary Rules]\n' +
       '1. NATIVE FUNCTION CHANNEL vs CAUSYNE HOST XML CHANNEL:\n' +
       '   - Your native function-calling channel ONLY accepts your own native tools (such as `read`, `write`, `edit`, `bash`, `glob`, `grep`, `todowrite`, and configured MCP tools). Use your native tools directly for workspace file reads/writes, shell commands, and todo checklists (use `todowrite` if available instead of calling `update_plan` as a native function).\n' +
-      '   - Causyne host tools listed under [Available Tools] / [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
+      '   - Causyne host tools listed under [Available Tools] / [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`, `fs_read_skill`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
+      '   - Bundled Causyne skills must be read via the host tool `fs_read_skill`. Do NOT call peer-native `skill` or functions for Causyne skills. To read a skill, write `<tool_call>{"name": "fs_read_skill", "arguments": {"skill_id": "domain/name"}}</tool_call>` directly in your assistant text response.\n' +
       '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
       '2. WORKSPACE PATH BOUNDARY (NO /tmp):\n' +
       '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.\n\n[Language & Communication Directive]\nDynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language.'
@@ -183,7 +185,8 @@ export class AcpProvider extends LLMProvider {
         '\n\n[ACP Tool Routing & Workspace Boundary Rules]\n' +
         '1. NATIVE FUNCTION CHANNEL vs CAUSYNE HOST XML CHANNEL:\n' +
         '   - Your native function-calling channel ONLY accepts your own native tools (such as `read`, `write`, `edit`, `bash`, `glob`, `grep`, `todowrite`, and configured MCP tools). Use your native tools directly for workspace file reads/writes, shell commands, and todo checklists (use `todowrite` if available instead of calling `update_plan` as a native function).\n' +
-        '   - Causyne host tools listed under [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
+        '   - Causyne host tools listed under [Current Available Tools] (such as `browser_act`, `screenshot`, `vision_inspect_ui`, `update_plan`, `memory_write`, `ui_forge`, `astryx_oracle`, `tool_search`, `fs_read_skill`) are NOT registered in your native function-calling schema. NEVER invoke them as native function calls (`to=browser_act` or `to=update_plan`), NEVER call `tool_call` as a native tool, and NEVER emit dummy `bash` (`echo`) calls while trying to invoke them.\n' +
+        '   - Bundled Causyne skills must be read via the host tool `fs_read_skill`. Do NOT call peer-native `skill` or functions for Causyne skills. To read a skill, write `<tool_call>{"name": "fs_read_skill", "arguments": {"skill_id": "domain/name"}}</tool_call>` directly in your assistant text response.\n' +
         '   - To invoke a Causyne host tool, write `<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>` directly in your assistant text response with NO native function call in that step; Causyne will execute the host tool and return the result on the next turn.\n' +
         '2. WORKSPACE PATH BOUNDARY (NO /tmp):\n' +
         '   - Keep ALL temporary files, server logs, and headless browser screenshots inside the active workspace directory (for example, `./.shots/preview.png` or `./server.log`). NEVER write to, read from, or `cp`/`mv` paths in `/tmp` or outside the workspace root, as the host sandbox rejects `/tmp` access.'
@@ -479,8 +482,12 @@ export class AcpProvider extends LLMProvider {
                 || earlier?.parameters?.__invalidTool === true
                 || (typeof input.error === 'string' && input.error.length > 0 && typeof input.tool === 'string');
               if (isInvalidPseudoTool) {
-                const requested = typeof input.tool === 'string' ? input.tool : '';
-                if (!this.toolRoutingError && requested && normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === requested)) {
+                const rawRequested = typeof input.tool === 'string' ? input.tool : '';
+                const canonicalRequested = canonicalizeToolName(rawRequested);
+                const hasDirectMatch = normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === rawRequested);
+                const hasCanonicalMatch = normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === canonicalRequested);
+                const requested = hasDirectMatch ? rawRequested : (hasCanonicalMatch ? canonicalRequested : '');
+                if (!this.toolRoutingError && requested) {
                   let rawArgs = (input.args && typeof input.args === 'object') ? input.args
                     : (input.parameters && typeof input.parameters === 'object') ? input.parameters
                     : (earlier?.parameters && typeof earlier.parameters === 'object' && !earlier.parameters.__pendingStub) ? earlier.parameters
@@ -495,6 +502,33 @@ export class AcpProvider extends LLMProvider {
                     tool: requested,
                     message: typeof input.error === 'string' ? input.error : 'Host tool requested through the peer-native channel',
                     parameters: rawArgs
+                  };
+                  client.notifyCancel(sessionId);
+                }
+                this.liveFileActions.delete(id);
+                this.turnActions.delete(id);
+                return;
+              }
+
+              const isPeerNativeSkill = rawTitle.toLowerCase() === 'skill'
+                || name.toLowerCase() === 'skill'
+                || earlier?.name === 'skill';
+              const isFailedSkill = isPeerNativeSkill && (
+                updateObj.status === 'failed'
+                || (typeof input.error === 'string' && /Skill\s+.*not found/i.test(input.error))
+                || (typeof (updateObj as any).error === 'string' && /Skill\s+.*not found/i.test((updateObj as any).error))
+                || (typeof rawOutputObj?.error === 'string' && /Skill\s+.*not found/i.test(rawOutputObj.error))
+              );
+              if (isFailedSkill) {
+                if (!this.toolRoutingError) {
+                  const requestedSkill = String(
+                    input.name || input.id || input.skill_id || input.skill || input.path
+                    || (earlier?.parameters as any)?.name || (earlier?.parameters as any)?.id || (earlier?.parameters as any)?.skill_id || ''
+                  ).trim();
+                  this.toolRoutingError = {
+                    tool: 'fs_read_skill',
+                    message: `Peer-native skill not found in peer catalog; routed to Causyne host tool fs_read_skill`,
+                    parameters: requestedSkill ? { skill_id: requestedSkill } : undefined
                   };
                   client.notifyCancel(sessionId);
                 }

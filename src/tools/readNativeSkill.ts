@@ -10,7 +10,13 @@ import { listCompiledSkills, readCompiledSkill } from '../skillsManager.js';
 import { parseSkillId, userSkillsRoot } from '../userSkills.js';
 import { listSkillResourcePaths, readSkillTextResource } from '../skills/skillResourceSafety.js';
 
-interface SkillReadArgs { skill_id: string; file_path?: string; }
+interface SkillReadArgs {
+  skill_id?: string;
+  id?: string;
+  name?: string;
+  skill?: string;
+  file_path?: string;
+}
 interface SkillReadResult { success: boolean; result?: string; error?: string; }
 
 export default {
@@ -31,12 +37,84 @@ export default {
   },
   execute: async (args: SkillReadArgs): Promise<SkillReadResult> => {
     try {
-      const parsed = parseSkillId(args?.skill_id);
-      if ('error' in parsed) return { success: false, error: parsed.error };
-      const domain = parsed.domain!;
-      const id = parsed.name!;
-      const info = listCompiledSkills().find(s => s.domain === domain && s.id === id);
-      if (!info) return { success: false, error: `Unknown skill ${domain}/${id}. Search the current catalog first.` };
+      const rawSkillId = String(args?.skill_id || (args as any)?.id || (args as any)?.name || (args as any)?.skill || '').trim();
+      if (!rawSkillId) {
+        return { success: false, error: 'skill_id is required' };
+      }
+
+      const allSkills = listCompiledSkills();
+      let domain: string | undefined;
+      let id: string | undefined;
+
+      const parsed = parseSkillId(rawSkillId);
+      if (!('error' in parsed) && parsed.domain && parsed.name) {
+        domain = parsed.domain;
+        id = parsed.name;
+      } else {
+        const cleanName = rawSkillId.includes('/') ? (rawSkillId.split('/').pop() || rawSkillId) : rawSkillId;
+        const directMatch = allSkills.find(s => s.id === cleanName || s.name === cleanName);
+        if (directMatch) {
+          domain = directMatch.domain;
+          id = directMatch.id;
+        } else if ('error' in parsed) {
+          const queryTokens = rawSkillId.toLowerCase().split(/[\/_-]/).filter(t => t.length > 2);
+          const suggestions = allSkills
+            .map(s => {
+              let score = 0;
+              const d = s.domain.toLowerCase();
+              const n = s.id.toLowerCase();
+              const desc = (s.description || '').toLowerCase();
+              for (const t of queryTokens) {
+                if (n.includes(t)) score += 10;
+                if (d.includes(t)) score += 8;
+                if (desc.includes(t)) score += 2;
+              }
+              return { skill: s, score };
+            })
+            .filter(item => item.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3)
+            .map(item => `${item.skill.domain}/${item.skill.id}`);
+          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
+          return { success: false, error: `Invalid skill id "${rawSkillId}".${hint} Expected "domain/name", for example android/gradle-build-configuration.` };
+        }
+      }
+
+      let info = allSkills.find(s => s.domain === domain && s.id === id);
+      if (!info && id) {
+        const alt = allSkills.find(s => s.id === id || s.name === id);
+        if (alt) {
+          domain = alt.domain;
+          id = alt.id;
+          info = alt;
+        }
+      }
+
+      if (!info) {
+        const queryTokens = `${domain || ''} ${id || ''} ${rawSkillId}`.toLowerCase().split(/[\/_-]/).filter(t => t.length > 2);
+        const suggestions = allSkills
+          .map(s => {
+            let score = 0;
+            const d = s.domain.toLowerCase();
+            const n = s.id.toLowerCase();
+            const desc = (s.description || '').toLowerCase();
+            for (const t of queryTokens) {
+              if (n.includes(t)) score += 10;
+              if (d.includes(t)) score += 8;
+              if (desc.includes(t)) score += 2;
+            }
+            return { skill: s, score };
+          })
+          .filter(item => item.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3)
+          .map(item => `${item.skill.domain}/${item.skill.id}`);
+        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
+        return { success: false, error: `Unknown skill ${domain ? `${domain}/${id}` : rawSkillId}.${hint} Search the current catalog with tool_search first.` };
+      }
+
+      domain = info.domain;
+      id = info.id;
 
       const root = userSkillsRoot();
       const resource = args.file_path;

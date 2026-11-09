@@ -2594,7 +2594,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             const recovery = this.timeMachine.observe(action.name, actionArgs, actionOutcome, coldObserver.getToolOutcomes(this.taskId));
                             // Pause now, not at the end of a potentially long peer turn.
                             // An abort is a yield checkpoint, not a user denial or task success.
-                            if (recovery.kind === 'consent') {
+                            if (recovery.kind === 'consent' && action.name.toLowerCase() !== 'skill') {
                                 this._pendingConsent ??= { recovery, tool: action.name };
                                 nativeControl.abort();
                             }
@@ -2855,6 +2855,21 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                     toolParams.query = inferred;
                                 }
                             }
+                        }
+                        if (canonical === 'fs_read_skill') {
+                            if (!toolParams.skill_id) {
+                                toolParams.skill_id = toolParams.id || toolParams.name || toolParams.skill || '';
+                            }
+                            if (!toolParams.skill_id) {
+                                const prompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
+                                const match = prompt.match(/(?:skill|read)\s+([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)/i);
+                                if (match && match[1]) {
+                                    toolParams.skill_id = match[1].trim();
+                                }
+                            }
+                            delete toolParams.id;
+                            delete toolParams.name;
+                            delete toolParams.skill;
                         }
                         if (Object.keys(toolParams).length > 0 && !this.validateToolArgs(canonical, toolParams)) {
                             response.toolCalls = [{
