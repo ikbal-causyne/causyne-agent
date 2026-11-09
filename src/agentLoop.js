@@ -1,4 +1,5 @@
 import { clearSysRunCache } from './tools/sysRun.js';
+import { getProcessEntitlementGate, EntitlementAccessError } from './licensing/entitlements.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import { createHash, randomUUID } from 'crypto';
 import { execFileSync } from 'node:child_process';
@@ -1484,7 +1485,15 @@ export class AgentLoop {
             return remembered;
         this.emitEvent({ type: 'decision_request', request });
         auditLog.log({ event: 'decision_requested', taskId: this.taskId, kind: request.kind, optionCount: request.options.length });
-        const answer = await this.waitForDecision(request);
+        // CAUSYNE_ENTITLEMENT_V1: unresolved durable decisions do not consume fresh leases.
+        this._entitlementGate?.pause();
+        let answer;
+        try {
+            answer = await this.waitForDecision(request);
+        }
+        finally {
+            this._entitlementGate?.resume();
+        }
         if (!answer || typeof answer.label !== 'string' || !answer.label.trim()) {
             this.emitEvent({ type: 'decision_result', request, answer: null });
             return null;
@@ -1561,7 +1570,38 @@ export class AgentLoop {
         }
         this.maxCircuitBreaker = this.maxSteps;
     }
+    // CAUSYNE_ENTITLEMENT_V1: outer lifecycle wrapper, no agent-orchestration rewrite.
     async run() {
+        this.rearmAbortController();
+        const gate = getProcessEntitlementGate();
+        const onEntitlementBlocked = (error) => {
+            if (this.stopRequested)
+                return;
+            this.stopRequested = true;
+            const explanation = error instanceof Error ? error.message : 'Entitlement check failed.';
+            this.emitEvent({ type: 'error', message: `Causyne access paused: ${explanation} No workspace state was removed.` });
+        };
+        try {
+            await gate.begin(onEntitlementBlocked);
+        }
+        catch (error) {
+            if (error instanceof EntitlementAccessError) {
+                this.emitEvent({ type: 'error', message: `Causyne access unavailable: ${error.message}` });
+                return;
+            }
+            throw error;
+        }
+        this._entitlementGate = gate;
+        try {
+            await this.runLicensedCore();
+        }
+        finally {
+            this._entitlementGate = null;
+            gate.end(onEntitlementBlocked);
+        }
+    }
+    /** Existing run implementation moved unchanged; wrapper above owns metering. */
+    async runLicensedCore() {
         this.stopRequested = false;
         // A task that was stopped must not poison the next one — see
         // rearmAbortController(). This has to happen before any tool can run.
@@ -1907,6 +1947,15 @@ export class AgentLoop {
         let emptyResponseRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
         while (!this.stopRequested) {
+            // CAUSYNE_ENTITLEMENT_V1: verify an authorized lease before each model step.
+            try {
+                await this._entitlementGate?.beforeStep();
+            }
+            catch (error) {
+                this.emitEvent({ type: 'error', message: error instanceof Error
+                        ? `Causyne access paused: ${error.message}` : 'Causyne access paused.' });
+                break;
+            }
             if (this.stopRequested) {
                 this.emitEvent({ type: 'error', message: 'Task killed by user.' });
                 auditLog.log({ event: 'task_killed', taskId: this.taskId });
@@ -4643,25 +4692,31 @@ You are operating in a text-and-code modality without direct image pixel renderi
         const signal = this.abortController?.signal;
         if (this.stopRequested || signal?.aborted)
             return false;
-        return new Promise((resolve) => {
-            let settled = false;
-            const finish = (approved) => {
-                if (settled)
-                    return;
-                settled = true;
-                clearTimeout(timer);
-                signal?.removeEventListener('abort', onAbort);
-                this.pendingApprovals.delete(toolCallId);
-                resolve(approved === true);
-            };
-            const onAbort = () => finish(false);
-            const timer = setTimeout(() => finish(false), 3600000);
-            timer.unref();
-            this.pendingApprovals.set(toolCallId, finish);
-            signal?.addEventListener('abort', onAbort, { once: true });
-            if (signal?.aborted)
-                finish(false);
-        });
+        this._entitlementGate?.pause();
+        try {
+            return await new Promise((resolve) => {
+                let settled = false;
+                const finish = (approved) => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    clearTimeout(timer);
+                    signal?.removeEventListener('abort', onAbort);
+                    this.pendingApprovals.delete(toolCallId);
+                    resolve(approved === true);
+                };
+                const onAbort = () => finish(false);
+                const timer = setTimeout(() => finish(false), 3600000);
+                timer.unref();
+                this.pendingApprovals.set(toolCallId, finish);
+                signal?.addEventListener('abort', onAbort, { once: true });
+                if (signal?.aborted)
+                    finish(false);
+            });
+        }
+        finally {
+            this._entitlementGate?.resume();
+        }
     }
     /**
      * Wait before retrying, and stay interruptible while waiting.
@@ -4696,6 +4751,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
         if (spent > 0)
             return 'fatal';
         const msg = (error.message || '').toLowerCase();
+        if (error?.name === 'OpenRouterPrivacyConstraintError'
+            || msg.includes('matching the privacy policy')
+            || msg.includes('data_collection=')) {
+            return 'fatal';
+        }
         if (msg.includes('free usage limit') || msg.includes('subscribe to opencode') || msg.includes('opencode.ai/go') || msg.includes('insufficient_quota') || msg.includes('credit balance is too low')) {
             return 'fatal';
         }

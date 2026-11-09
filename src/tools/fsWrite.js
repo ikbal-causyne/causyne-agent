@@ -8,9 +8,9 @@ export const fsWrite = {
         parameters: {
             type: 'object',
             properties: {
-                path: { type: 'string', description: 'Target file path to write.' },
-                content: { type: 'string', description: 'Full file content to write.' },
-                createDirectories: { type: 'boolean', description: 'Whether to create parent directories if missing.' }
+                path: { type: 'string' },
+                content: { type: 'string' },
+                createDirectories: { type: 'boolean' }
             },
             required: ['path', 'content']
         }

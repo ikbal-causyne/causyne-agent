@@ -1,6 +1,7 @@
 import { program } from 'commander';
 
 import { runTask, chatMode, execCommand, interactiveConfig } from './cliMode.js';
+import { runLicenseCommand } from './licensing/entitlements.js';
 import { runSelfUpdate, diagnoseInstallation, formatDoctorReport } from './autoUpdate.js';
 import { printContextReport, printUsageReport, printCheckpoints, printUndo, buildStatusText, printReport } from './reporting.js';
 import { runCommand } from './commands.js';
@@ -115,6 +116,14 @@ program
   .action(async (options) => {
     announceDevEmulator(options.devEmulator);
     await chatMode();
+  });
+
+// CAUSYNE_ENTITLEMENT_V1: software access is distinct from provider token usage.
+program
+  .command('license [action] [plan]')
+  .description('Show software access or open an authenticated payment checkout')
+  .action(async (action = 'status', plan = '') => {
+    await runLicenseCommand(action, plan);
   });
 
 program

@@ -1,5 +1,6 @@
 import { runSetup } from './tui/setup.js';
 import { AgentLoop } from './agentLoop.js';
+import { getProcessEntitlementGate } from './licensing/entitlements.js';
 import { loadConfig, saveConfig } from './config.js';
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './tui/prompt.js';
@@ -656,6 +657,17 @@ export async function chatMode({ home = false } = {}) {
 }
 
 export async function execCommand(command) {
+  // CAUSYNE_ENTITLEMENT_V1: non-agent CLI shell entry must not bypass access checks.
+  const entitlementGate = getProcessEntitlementGate();
+  try {
+    await entitlementGate.begin((error) => {
+      console.error('Causyne access paused:', error instanceof Error ? error.message : String(error));
+    });
+  } catch (error) {
+    console.error('Causyne access unavailable:', error instanceof Error ? error.message : String(error));
+    process.exitCode = 2;
+    return;
+  }
   // L1 (local-path audit): this used to call sysRun.execute() DIRECTLY, so
   // `causyne-agent exec` was the one path into the shell with no sandbox at all —
   // no risk classification, no approval, not even the FORBIDDEN blocklist. A
