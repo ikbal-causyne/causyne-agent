@@ -182,6 +182,8 @@
     "src/tools/toolScanner.ts",
     "src/tools/toolSelfRepair.ts",
     "src/agentLoop.ts",
+    "src/tui/viewportAnchor.ts",
+    "src/tui/toolActivityPolicy.ts",
     "src/tui/viewport.ts",
     "src/tui/scrollInteraction.ts",
     "src/tui/turnRail.ts",

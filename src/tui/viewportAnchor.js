@@ -1,77 +1,80 @@
 /**
- * Preserve the reader's location while terminal geometry changes.
+ * Frame-anchored viewport reflow for Causyne's Stage/Transcript architecture.
  *
- * Row indices are screen-layout positions, not document positions. Re-wrapping a
- * transcript changes frame heights, so keeping the same numeric scrollTop can
- * jump to unrelated content. Frame identity + relative offset is stable across
- * width changes, without storing or duplicating any message content.
+ * Numeric scroll rows are layout coordinates. They change when a terminal is
+ * resized, whereas a transcript frame's ID remains stable. Preserve the frame
+ * identity and the approximate relative reading position within that frame.
  *
- * This module is deliberately independent of Stage, Transcript, and Node I/O.
+ * TypeScript is the authoritative source. Runtime JS is produced by the
+ * repository's existing `tsc -p tsconfig.runtime.json` build.
  */
-
 function finiteRow(value) {
-  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
-
 function safeMarkers(markers) {
-  if (!Array.isArray(markers)) return [];
-  return markers
-    .filter(marker => marker && Number.isFinite(marker.row) && marker.row >= 0)
-    .map((marker, index) => ({
-      id: marker.id,
-      row: finiteRow(marker.row),
-      originalIndex: index
-    }));
+    if (!Array.isArray(markers))
+        return [];
+    return markers.flatMap((marker, originalIndex) => {
+        if (!marker || !Number.isFinite(marker.row) || marker.row < 0)
+            return [];
+        return [{ id: marker.id, row: finiteRow(marker.row), originalIndex }];
+    });
 }
-
-/** Capture an anchor at the first visible row, measured within its frame. */
+/** Capture the first currently visible frame and relative position within it. */
 export function captureReadingAnchor(markers, top, totalHeight) {
-  const entries = safeMarkers(markers);
-  if (!entries.length) return null;
-  const row = finiteRow(top);
-  let selected = 0;
-  for (let i = 0; i < entries.length; i++) {
-    if (entries[i].row > row) break;
-    selected = i;
-  }
-  const start = entries[selected].row;
-  const next = entries[selected + 1]?.row ?? finiteRow(totalHeight);
-  const frameLength = Math.max(1, next - start);
-  return Object.freeze({
-    id: entries[selected].id ?? null,
-    index: entries[selected].originalIndex,
-    offset: Math.max(0, row - start),
-    fraction: Math.max(0, Math.min(1, (row - start) / frameLength)),
-    originalTop: row
-  });
+    const entries = safeMarkers(markers);
+    if (entries.length === 0)
+        return null;
+    const row = finiteRow(top);
+    let selected = 0;
+    for (let i = 0; i < entries.length; i++) {
+        if ((entries[i]?.row ?? Number.POSITIVE_INFINITY) > row)
+            break;
+        selected = i;
+    }
+    const entry = entries[selected];
+    if (!entry)
+        return null;
+    const start = entry.row;
+    const next = entries[selected + 1]?.row ?? finiteRow(totalHeight);
+    const frameLength = Math.max(1, next - start);
+    return Object.freeze({
+        id: entry.id ?? null,
+        index: entry.originalIndex,
+        offset: Math.max(0, row - start),
+        fraction: Math.max(0, Math.min(1, (row - start) / frameLength)),
+        originalTop: row
+    });
 }
-
-/** Restore to the corresponding frame and approximately the same content line. */
+/** Restore the matching frame and a proportional content offset after reflow. */
 export function restoreReadingAnchor(anchor, markers, totalHeight, viewportHeight) {
-  const total = finiteRow(totalHeight);
-  const visible = Math.max(1, finiteRow(viewportHeight));
-  const max = Math.max(0, total - visible);
-  if (!anchor || !max) return 0;
-  const entries = safeMarkers(markers);
-  if (!entries.length) return Math.min(max, finiteRow(anchor.originalTop));
-
-  let selected = anchor.id == null
-    ? -1
-    : entries.findIndex(marker => marker.id === anchor.id);
-  if (selected < 0 && anchor.id == null && entries[anchor.index]?.originalIndex === anchor.index) {
-    selected = anchor.index;
-  }
-  if (selected < 0) {
-    // Frames may have been evicted while the user was reading. Use the first
-    // surviving frame rather than silently jumping to an unrelated old row.
-    selected = 0;
-  }
-  const start = entries[selected].row;
-  const end = entries[selected + 1]?.row ?? total;
-  const length = Math.max(1, end - start);
-  const fraction = Number.isFinite(anchor.fraction) ? Math.max(0, Math.min(1, anchor.fraction)) : 0;
-  // Relative position is more useful than raw offset after a long paragraph
-  // wraps from 15 lines to 30, while staying inside the same frame.
-  const offset = Math.min(length - 1, Math.round(fraction * length));
-  return Math.max(0, Math.min(max, start + offset));
+    const total = finiteRow(totalHeight);
+    const visible = Math.max(1, finiteRow(viewportHeight));
+    const max = Math.max(0, total - visible);
+    if (!anchor || max === 0)
+        return 0;
+    const entries = safeMarkers(markers);
+    if (entries.length === 0)
+        return Math.min(max, finiteRow(anchor.originalTop));
+    let selected = anchor.id == null
+        ? -1
+        : entries.findIndex(marker => marker.id === anchor.id);
+    if (selected < 0 && anchor.id == null && entries[anchor.index]?.originalIndex === anchor.index) {
+        selected = anchor.index;
+    }
+    if (selected < 0) {
+        // When the anchored frame was evicted, recover in the surviving transcript.
+        selected = 0;
+    }
+    const entry = entries[selected];
+    if (!entry)
+        return Math.min(max, finiteRow(anchor.originalTop));
+    const start = entry.row;
+    const end = entries[selected + 1]?.row ?? total;
+    const length = Math.max(1, end - start);
+    const fraction = Number.isFinite(anchor.fraction)
+        ? Math.max(0, Math.min(1, anchor.fraction))
+        : 0;
+    const offset = Math.min(length - 1, Math.round(fraction * length));
+    return Math.max(0, Math.min(max, start + offset));
 }
