@@ -164,6 +164,9 @@ export const COMMANDS = [
       } catch (err) {
         return fail(`Cannot switch to ${resolved}: ${err.message}`);
       }
+      if (ctx.prompt && typeof ctx.prompt.setWorkingRoot === 'function') {
+        ctx.prompt.setWorkingRoot(canonicalRoot);
+      }
       return ok(`Working directory changed to: ${canonicalRoot}`, {
         effect: 'workspace-changed', workspaceRoot: canonicalRoot
       });
