@@ -9,6 +9,7 @@
 // Pure JS over ./theme.js and ./text.js. No dependency, no shell.
 
 import readline from 'readline';
+import { compactSuccessfulToolResult } from './toolActivityPolicy.js';
 import {
   paint, bold, dim, badge, GLYPHS, terminalWidth, HAS_COLOR, fileLink,
   safeLink, HAS_HYPERLINKS
@@ -1051,7 +1052,7 @@ export class ChatRenderer {
       const detailText = detail ? paint('ink', truncate(detail, Math.max(10, width - used - 12), GLYPHS.ellipsis)) : '';
 
       this.write(`${paint('muted', GLYPHS.arrow)} ${index} ${name} ${detailText}`);
-    }, { step, tool: msg.tool });
+    }, { step, tool: msg.tool, verb: verb || msg.tool, detail });
   }
 
   onStepComplete(msg) {
@@ -1064,6 +1065,23 @@ export class ChatRenderer {
     // the closure — a reflow must not re-point "the last output" at a tool
     // result the user finished with ten turns ago.
     this.captureLastOutput(result);
+
+    const tail = this.transcript?.frames?.at(-1);
+    if (compactSuccessfulToolResult(this.stepCount, result, tail, msg?.tool)) {
+      const { step, verb, detail, tool } = tail.meta;
+      const completedElapsed = elapsed;
+      this.updateTailFrame('step', () => {
+        const width = this.width();
+        const index = paint('muted', String(step).padStart(2, '0'));
+        const name = paint('accent', padEnd(verb || tool, STATUS_GUTTER));
+        const used = 2 + 2 + 1 + Math.max(visibleWidth(verb || tool), STATUS_GUTTER) + 1;
+        const tailText = completedElapsed ? ` ${dim(completedElapsed)}` : '';
+        const detailWidth = Math.max(5, width - used - visibleWidth(tailText) - 10);
+        const detailText = detail ? paint('ink', truncate(detail, detailWidth, GLYPHS.ellipsis)) : '';
+        this.write(`${paint('success', GLYPHS.check)} ${index} ${name} ${detailText}${tailText}`);
+      }, { ...tail.meta, success: true, elapsed: completedElapsed });
+      return;
+    }
 
     this.frame('result', () => {
       if (result.success) {
@@ -1154,10 +1172,13 @@ export class ChatRenderer {
       if (wrapped.length > PREVIEW_LINES + 1) break;
     }
 
-    for (const line of wrapped.slice(0, PREVIEW_LINES)) {
+    // A long tool-heavy run needs a concise preview. Full output remains
+    // available through the existing Ctrl+O expansion path and spill files.
+    const previewLimit = this.stepCount >= 12 ? 5 : PREVIEW_LINES;
+    for (const line of wrapped.slice(0, previewLimit)) {
       this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(line)}`);
     }
-    const clipped = wrapped.length > PREVIEW_LINES || source.length < payload.length;
+    const clipped = wrapped.length > previewLimit || source.length < payload.length;
     if (clipped) this.write(this.clipHint(result.spillPath));
   }
 

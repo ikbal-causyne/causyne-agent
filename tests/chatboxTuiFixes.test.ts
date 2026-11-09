@@ -286,8 +286,9 @@ describe('Chatbox TUI Fixes Verification', () => {
       '\x1b[2m  /usage for cost  ·  /undo to roll back\x1b[0m'
     ];
     const attached = surface.attachRail(rows, contentWidth);
+    const expectedWidth = contentWidth + (surface.turnRailLayout?.turns?.length ? 3 : 0) + 2;
     for (const r of attached) {
-      assert.equal(visibleWidth(r), contentWidth + 2, 'Every rail-attached row must be exactly contentWidth + 2 columns');
+      assert.equal(visibleWidth(r), expectedWidth, 'Every rail-attached row must be bounded by contentWidth plus reserved turn lane and rail');
     }
     surface.close();
   });

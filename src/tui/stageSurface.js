@@ -57,6 +57,8 @@ const MIN_VIEWPORT_ROWS = 2;
 const RAIL_MIN_WIDTH = 60;
 const RAIL_WIDTH = 2;
 const RAIL_BUDGET = RAIL_WIDTH + 1;
+// The interactive turn rail takes three columns at the left of each row.
+const TURN_RAIL_BUDGET = 3;
 
 // Which marker wins when several frames fall in the same rail row. A proportional
 // rail on a long session compresses dozens of frames per row, and what you want
@@ -373,7 +375,9 @@ export class StageSurface {
     if (!this.transcript.isEmpty()) this.opened = true;
     const before = this.lastHeight;
     const mainWidth = sessionMainWidth(this.width);
-    const contentWidth = this.railEnabled(mainWidth) ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
+    const contentWidth = this.railEnabled(mainWidth)
+      ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
+      : mainWidth;
     const after = this.transcript.height(contentWidth);
     this.lastHeight = after;
     // Growth is what drives auto-scroll. Handing the delta over is also what
@@ -426,7 +430,9 @@ export class StageSurface {
     const sidebar = sidebarVisible(width);
     const mainWidth = sessionMainWidth(width);
     const rail = this.railEnabled(mainWidth);
-    const contentWidth = rail ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
+    const contentWidth = rail
+      ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
+      : mainWidth;
 
     let block = promptRows;
     let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
@@ -536,7 +542,9 @@ export class StageSurface {
     const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
     return this.stage.paint(painted, {
       row: rows.length + caretRow,
-      col: caretCol,
+      // The composer may never put its caret into the sidebar or the reserved
+      // right margin, even if layout measurements differ after a resize.
+      col: Math.max(0, Math.min(mainWidth - 2, Number.isFinite(caretCol) ? Math.floor(caretCol) : 0)),
       hideCursor: caret?.hideCursor
     });
   }
@@ -624,7 +632,9 @@ export class StageSurface {
     // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
     // and leaving scrollTop above it would read as "the user scrolled away".
     const mainWidth = sessionMainWidth(this.width);
-    const contentWidth = this.railEnabled(mainWidth) ? Math.max(20, mainWidth - RAIL_BUDGET) : mainWidth;
+    const contentWidth = this.railEnabled(mainWidth)
+      ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
+      : mainWidth;
     this.viewport.resize({ height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2), width: contentWidth });
     this.lastHeight = this.transcript.height(contentWidth);
     return this.stage.reserved;
@@ -656,6 +666,9 @@ export class StageSurface {
 
     const kinds = new Array(height).fill(null);
     for (const marker of this.transcript.markers(contentWidth)) {
+      // Suppress repetitive step/result/reasoning noise on the overview rail.
+      // Checkpoints, user turns, approvals, and errors remain discoverable.
+      if ((RAIL_PRIORITY[marker.kind] || 0) < 50) continue;
       const slot = slotOf(marker.row);
       const held = kinds[slot];
       if (!held || (RAIL_PRIORITY[marker.kind] || 0) > (RAIL_PRIORITY[held] || 0)) {
@@ -722,7 +735,10 @@ export class StageSurface {
           row = ` ${leftCell} ${row}`;
         }
       }
-      rows[i] = `${padEnd(truncate(row, contentWidth, ''), contentWidth)} ${rightCell}`;
+      // Turn markers consume their own three-column lane. Preserve ALL
+      // previously rendered command text instead of clipping its last cells.
+      const rowWidth = contentWidth + (hasTurns ? TURN_RAIL_BUDGET : 0);
+      rows[i] = `${padEnd(truncate(row, rowWidth, ''), rowWidth)} ${rightCell}`;
     }
     return rows;
   }

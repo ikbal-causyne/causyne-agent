@@ -214,6 +214,12 @@ export function buildTurnRailCells(
   }
 
   const count = turns.length;
+  // Dense imported histories may contain hundreds of turns. Show a measured
+  // set of quiet milestones, while always retaining active/hovered endpoints.
+  // All turn objects are preserved for keyboard navigation and preview.
+  const quietStep = count > Math.max(16, Math.floor(height / 2))
+    ? Math.max(2, Math.ceil(count / Math.max(12, Math.floor(height / 3))))
+    : 1;
   // If count fits comfortably, stack consecutive dots centered or upper-aligned
   const startRow = count <= height
     ? Math.max(0, Math.floor((height - count) / 3))
@@ -233,10 +239,11 @@ export function buildTurnRailCells(
     rowIdx = Math.max(0, Math.min(height - 1, rowIdx));
 
     dotRows.set(turnNum, rowIdx);
-    rowToTurn.set(rowIdx, turnNum);
 
     const isHovered = hoveredTurnIndex === turnNum;
     const isActive = activeTurnIndex === turnNum;
+    const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0;
+    if (isHovered || isActive || showQuiet) rowToTurn.set(rowIdx, turnNum);
 
     if (isHovered) {
       // Hovered dot: bright silver highlighted circle
@@ -244,8 +251,8 @@ export function buildTurnRailCells(
     } else if (isActive && !cells[rowIdx]?.includes('230;235;245m')) {
       // Active / current turn: bright white circle
       cells[rowIdx] = '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
-    } else if (!cells[rowIdx]?.includes('●')) {
-      // Muted inactive turns: subtle gray dot
+    } else if (showQuiet && !cells[rowIdx]?.includes('●')) {
+      // Muted inactive turns: sparse gray dot in long sessions
       cells[rowIdx] = '\x1b[38;2;115;115;120m•\x1b[0m';
     }
   }

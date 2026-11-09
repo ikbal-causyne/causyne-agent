@@ -82,6 +82,7 @@ export class ScrollAcceleration {
 // How close to the bottom counts as "back at the bottom" for the purposes of
 // resuming follow.
 const REENGAGE_TOLERANCE = 1;
+import { captureReadingAnchor, restoreReadingAnchor } from './viewportAnchor.js';
 export class Viewport {
     transcript;
     viewHeight;
@@ -115,10 +116,25 @@ export class Viewport {
      * Geometry changed — a resize, or the input box growing under the viewport.
      */
     resize({ height, width } = {}) {
-        if (height !== undefined && Number.isFinite(height) && height > 0)
-            this.viewHeight = Math.floor(height);
-        if (width !== undefined && Number.isFinite(width) && width > 0)
-            this.viewWidth = Math.floor(width);
+        const nextHeight = height !== undefined && Number.isFinite(height) && height > 0
+            ? Math.floor(height) : this.viewHeight;
+        const nextWidth = width !== undefined && Number.isFinite(width) && width > 0
+            ? Math.floor(width) : this.viewWidth;
+        const reflow = nextWidth !== this.viewWidth;
+        const anchor = reflow && this.manual && this.transcript?.markers
+            ? captureReadingAnchor(this.transcript.markers(this.viewWidth), this.scrollTop, this.transcript.height(this.viewWidth)) : null;
+        this.viewHeight = nextHeight;
+        this.viewWidth = nextWidth;
+        if (anchor && this.transcript?.markers) {
+            this.scrollTop = restoreReadingAnchor(anchor, this.transcript.markers(nextWidth), this.transcript.height(nextWidth), nextHeight);
+            const max = this.maxScrollTop();
+            // A deliberate scroll must not suddenly become follow-mode just because
+            // a paragraph gained or lost wrapped rows during resize.
+            this.manual = max > 0 && this.scrollTop < max;
+            if (!this.manual)
+                this.unseen = 0;
+            return;
+        }
         this.refresh();
     }
     contentHeight() {

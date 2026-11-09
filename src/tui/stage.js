@@ -232,7 +232,7 @@ export class Stage {
 
     const next = this.normalize(rows);
     const target = caret && Number.isFinite(caret.row)
-      ? { row: Math.max(0, Math.min(Math.floor(caret.row), this.height - 1)), col: Math.max(0, Math.floor(caret.col) || 0), hideCursor: Boolean(caret.hideCursor) }
+      ? { row: Math.max(0, Math.min(Math.floor(caret.row), this.height - 1)), col: Math.max(0, Math.min(this.width() - 2, Math.floor(caret.col) || 0)), hideCursor: Boolean(caret.hideCursor) }
       : { row: this.height - 1, col: 0, hideCursor: Boolean(caret?.hideCursor) };
 
     const changed = [];

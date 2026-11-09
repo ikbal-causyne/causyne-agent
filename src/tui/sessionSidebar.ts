@@ -95,10 +95,16 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
     const completed = facts.plan.filter(item => item.status === 'completed').length;
     line();
     styled(bold(`Plan  ${completed}/${facts.plan.length}`));
-    for (const item of facts.plan) {
+    const planItems = facts.plan.length <= 6 ? facts.plan : [
+      ...facts.plan.filter(item => item.status === 'in_progress').slice(0, 2),
+      ...facts.plan.filter(item => item.status !== 'in_progress' && item.status !== 'completed').slice(0, 3),
+      ...facts.plan.filter(item => item.status === 'completed').slice(-2)
+    ].slice(0, 6);
+    for (const item of planItems) {
       const mark = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▸' : '·';
       line(`${mark} ${item.text || item.step || item.content || ''}`);
     }
+    if (facts.plan.length > planItems.length) line(`${facts.plan.length - planItems.length} additional plan steps`);
   }
 
   const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
