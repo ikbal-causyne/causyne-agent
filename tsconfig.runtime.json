@@ -237,6 +237,11 @@
     "src/reliability/networkHostGuard.ts",
     "src/reliability/visualEvidence.ts",
     "src/reliability/assetEvidence.ts",
+    "src/agent/abortableDelay.ts",
+    "src/agent/providerFailure.ts",
+    "src/agent/toolTurnIntegrity.ts",
+    "src/agent/workspaceBoundary.ts",
+    "src/tools/toolDispatch.ts",
     "src/tui/workspaceSwitch.ts",
     "src/tui/sessionPickerView.ts"
   ],

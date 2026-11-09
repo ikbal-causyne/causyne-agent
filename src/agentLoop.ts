@@ -3,6 +3,9 @@ import { NetworkHostGuard } from './reliability/networkHostGuard.js';
 import { inspectRequestedImageAssets } from './reliability/assetEvidence.js';
 import { inspect3DVisualEvidence } from './reliability/visualEvidence.js';
 import { getProcessEntitlementGate, EntitlementAccessError } from './licensing/entitlements.js';
+import { repairUnansweredToolCalls, validateToolCallBatch } from './agent/toolTurnIntegrity.js';
+import { waitForAbortableDelay } from './agent/abortableDelay.js';
+import { normalizeAgentFailure } from './agent/providerFailure.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import type { RequestPermissionRequest, RequestPermissionResponse } from './acp/protocol.js';
 import { createHash, randomUUID } from 'crypto';
@@ -1642,12 +1645,19 @@ export class AgentLoop {
     this.maxCircuitBreaker = this.maxSteps;
   }
 
-  // CAUSYNE_ENTITLEMENT_V1: outer lifecycle wrapper, no agent-orchestration rewrite.
+  // AgentLoop lifetime is single-flight: a second run must not reset an active
+  // tool batch, its cancellation signal, message history, or approval scope.
   async run() {
+    if (this._runActive === true) {
+      this.emitEvent({ type: 'error', message: 'AgentLoop is already running. Wait for the current task to finish before starting another.' });
+      return;
+    }
+    this._runActive = true;
+    this.stopRequested = false;
     this.rearmAbortController();
     this._causyneTaskOutcome = 'incomplete';
-    this._networkHostGuard.reset();
     const gate = getProcessEntitlementGate();
+    let gateStarted = false;
     const onEntitlementBlocked = (error: unknown): void => {
       if (this.stopRequested) return;
       this.stopRequested = true;
@@ -1655,29 +1665,56 @@ export class AgentLoop {
       this.emitEvent({ type: 'error', message: `Causyne access paused: ${explanation} No workspace state was removed.` });
     };
     try {
-      await gate.begin(onEntitlementBlocked);
-    } catch (error: unknown) {
-      if (error instanceof EntitlementAccessError) {
-        this.emitEvent({ type: 'error', message: `Causyne access unavailable: ${error.message}` });
+      this._networkHostGuard.reset();
+      // Resume a saved session safely. Missing tool results are explicit
+      // uncertainties, never fabricated executions or successes.
+      const restored = repairUnansweredToolCalls(this.messages);
+      if (restored.repaired > 0) {
+        this.memoryManager.saveHistory(this.messages);
+        this.notice(`Recovered ${restored.repaired} unanswered tool-call record(s). Workspace effects were not assumed.`, 'warning');
+      }
+      if (restored.unresolved > 0) {
+        this.emitEvent({ type: 'error', message: `Conversation history contains ${restored.unresolved} ambiguous tool-call identifier(s). The task was stopped before sending invalid history to the provider.` });
         return;
       }
-      throw error;
-    }
-    this._entitlementGate = gate;
-    try {
+      try {
+        await gate.begin(onEntitlementBlocked);
+        gateStarted = true;
+      } catch (error: unknown) {
+        if (error instanceof EntitlementAccessError) {
+          this.emitEvent({ type: 'error', message: `Causyne access unavailable: ${error.message}` });
+          return;
+        }
+        throw error;
+      }
+      // A user can press Esc while the licensing network request is pending.
+      // Never allow the inner task to clear that cancellation after an await.
+      if (this.stopRequested || this.abortController?.signal?.aborted) return;
+      this._entitlementGate = gate;
       await this.runLicensedCore();
     } finally {
       this._entitlementGate = null;
-      gate.end(onEntitlementBlocked);
+      try {
+        if (gateStarted) gate.end(onEntitlementBlocked);
+      } finally {
+        try {
+          const settled = repairUnansweredToolCalls(this.messages);
+          if (settled.repaired > 0) this.memoryManager.saveHistory(this.messages);
+          if (settled.unresolved > 0) this.debugLog(`Unresolved tool-call identifiers: ${settled.unresolved}`);
+        } catch (error: unknown) {
+          this.debugLog(`Tool-turn recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          this._runActive = false;
+        }
+      }
     }
   }
 
   /** Existing run implementation moved unchanged; wrapper above owns metering. */
   async runLicensedCore() {
-    this.stopRequested = false;
-    // A task that was stopped must not poison the next one — see
-    // rearmAbortController(). This has to happen before any tool can run.
-    this.rearmAbortController();
+    // run() owns cancellation and rearms it exactly once, before awaiting
+    // entitlements. A second reset here could resurrect an aborted task.
+    if (this.stopRequested || this.abortController?.signal?.aborted) return;
     // Refresh tier limits on every task run
     this.updateTierLimits();
     if (!this.llm) {
@@ -2958,6 +2995,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
         // Add assistant response to history. This is the ONLY place the turn is
         // recorded — the completion and guard branches below used to push it a
         // second time, duplicating every finished turn in the history.
+        // Validate tool IDs before adding history or launching prefetch. A
+        // duplicate ID can alias two results and corrupt the provider protocol.
+        const batchAudit = validateToolCallBatch(response.toolCalls);
+        if (!batchAudit.valid) {
+          this.emitEvent({ type: 'error', message: `Provider tool-call protocol error: ${batchAudit.reason}. No host tools from this batch were executed.` });
+          auditLog.log({ event: 'invalid_tool_call_batch', taskId: this.taskId, reason: batchAudit.reason });
+          this.memoryManager.saveHistory(this.messages);
+          break;
+        }
         const hasToolCalls = Boolean(response.toolCalls && response.toolCalls.length > 0);
         const assistantMsg: any = {
           role: 'assistant',
@@ -4724,6 +4770,9 @@ You are operating in a text-and-code modality without direct image pixel renderi
         }
         
       } catch (e: any) {
+        // Providers sometimes throw strings or plain objects. Normalize once
+        // without discarding partial usage or typed provider error codes.
+        e = normalizeAgentFailure(e);
         // A peer can fail after completing billable steps. Charge those steps
         // once even when no final result was returned, including action and
         // wall-clock limits, before deciding whether recovery is possible.
@@ -4963,14 +5012,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
    */
   async backoff(attempt: number) {
     const delay = Math.min(8000, 500 * Math.pow(2, Math.max(0, attempt - 1)));
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, delay);
-      if (timer.unref) timer.unref();
-      const signal = this.abortController && this.abortController.signal;
-      if (signal) {
-        signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-      }
-    });
+    await waitForAbortableDelay(delay, this.abortController?.signal);
   }
 
   // V5: Classify errors for intelligent retry decisions

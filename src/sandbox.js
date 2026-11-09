@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import { loadConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { validateBrowserActSandbox } from './browser/causyneBrowser.js';
+import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
 
 
 function maskQuotedSpans(text) {
@@ -374,49 +375,14 @@ export class Sandbox {
   }
 
   isPathAllowed(targetPath) {
-    // Expand ~
-    let resolved = targetPath;
-    if (resolved.startsWith('~/')) {
-      resolved = path.join(os.homedir(), resolved.slice(2));
-    }
-    resolved = path.resolve(resolved);
-    
-    // V5: Block system-critical paths BEFORE checking allowed paths (OS Protection)
-    const isWindows = os.platform() === 'win32';
-    let isBlocked = false;
-    
-    if (isWindows) {
-      const WIN_BLOCKED = ['C:\\Windows', 'C:\\Program Files', 'C:\\ProgramData'];
-      isBlocked = WIN_BLOCKED.some(blocked => resolved.toLowerCase().startsWith(blocked.toLowerCase()));
-    } else {
-      const UNIX_BLOCKED = ['/etc', '/usr/bin', '/usr/sbin', '/sbin', '/bin', '/System', '/private/var'];
-      isBlocked = UNIX_BLOCKED.some(blocked => resolved.startsWith(blocked));
-    }
-
-    if (isBlocked) {
-      return false;
-    }
-    
-    // V6: Override workspace limits if grantAllAccess is active
-    if (this.grantAllAccess) {
-      return true;
-    }
-    
-    // Check if resolved path is inside any allowed workspace path.
-    //
-    // L2 (local-path audit): this was a bare `resolved.startsWith(allowedBase)`,
-    // which is a STRING prefix test, not a PATH containment test. With the scope
-    // set to /Users/x/Projects it also accepted /Users/x/Projects-secret and
-    // /Users/x/ProjectsBACKUP — any sibling whose name merely begins with the
-    // workspace name. The separator check is what makes it a directory boundary.
-    return this.workspacePaths.some(workspace => {
-      let allowedBase = workspace;
-      if (allowedBase.startsWith('~/')) {
-        allowedBase = path.join(os.homedir(), allowedBase.slice(2));
-      }
-      allowedBase = path.resolve(allowedBase);
-      return resolved === allowedBase || resolved.startsWith(allowedBase + path.sep);
-    });
+    if (typeof targetPath !== 'string' || targetPath.length === 0) return false;
+    const expand = (value) => value.startsWith('~/')
+      ? path.join(os.homedir(), value.slice(2)) : value;
+    const workspaces = Array.isArray(this.workspacePaths)
+      ? this.workspacePaths.filter(item => typeof item === 'string').map(expand) : [];
+    // Resolve physical ancestors, including symlinks, before checking the scope.
+    // Missing destination files remain possible inside a valid workspace.
+    return isPhysicalPathAllowed(expand(targetPath), workspaces, this.grantAllAccess === true);
   }
 
   isInternalUrl(urlString, { allowLoopback = false } = {}) {

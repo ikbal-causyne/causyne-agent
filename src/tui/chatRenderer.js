@@ -611,13 +611,14 @@ export class ChatRenderer {
    * Mirrors OpenCode's session conversation loader so prior turns are visible in viewport.
    */
   renderSessionHistory(messages = [], sessionInfo = null) {
-    this.transcript?.surface?.leaveHome?.(true);
-    this.clearTranscript();
-    this.latestPlan = [];
-    this.onPlanChange?.([]);
-    this.resetTurn();
+    const renderContent = () => {
+      this.transcript?.surface?.leaveHome?.(true);
+      this.clearTranscript();
+      this.latestPlan = [];
+      this.onPlanChange?.([]);
+      this.resetTurn();
 
-    const info = sessionInfo ? { ...sessionInfo } : {};
+      const info = sessionInfo ? { ...sessionInfo } : {};
     if (info.messagesCount === undefined || info.messagesCount === null) {
       info.messagesCount = messages.filter(m => m && m.role !== 'system').length;
     }
@@ -779,10 +780,17 @@ export class ChatRenderer {
       });
     }
 
-    if (this.transcript?.surface?.viewport) {
-      this.transcript.surface.viewport.manual = false;
-      this.transcript.surface.viewport.unseen = 0;
-      this.transcript.surface.viewport.toBottom();
+      if (this.transcript?.surface?.viewport) {
+        this.transcript.surface.viewport.manual = false;
+        this.transcript.surface.viewport.unseen = 0;
+        this.transcript.surface.viewport.toBottom();
+      }
+    };
+
+    if (this.transcript && typeof this.transcript.batch === 'function') {
+      this.transcript.batch(renderContent);
+    } else {
+      renderContent();
     }
   }
 

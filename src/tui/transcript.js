@@ -128,6 +128,22 @@ export class Transcript {
     return frame.id;
   }
 
+  /**
+   * Batch multiple appends or frame updates under a single change event,
+   * preventing O(N^2) reflows during session history restoration.
+   */
+  batch(action) {
+    if (typeof action !== 'function') return;
+    const prevOnChange = this.onChange;
+    this.onChange = null;
+    try {
+      action();
+    } finally {
+      this.onChange = prevOnChange;
+      this.changed();
+    }
+  }
+
   changed() {
     if (!this.onChange) return;
     // A listener that throws must not take the transcript down with it: the
