@@ -1,6 +1,8 @@
 name: Publish npm package
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -21,6 +23,8 @@ concurrency:
 
 jobs:
   authorize:
+    # One-time, owner-authored release command on main; ordinary pushes skip this workflow.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor == 'ikbal-causyne' && startsWith(github.event.head_commit.message, 'publish @causyne/agent@1.20.101'))
     name: authorize immutable release
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -30,8 +34,10 @@ jobs:
 
       - name: Validate release authorization and immutable tag
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
-          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_VERSION: ${{ inputs.version || '1.20.101' }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation || github.event.head_commit.message }}
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_ACTOR: ${{ github.actor }}
           RELEASE_REF_TYPE: ${{ github.ref_type }}
           RELEASE_REF_NAME: ${{ github.ref_name }}
         run: |
@@ -42,9 +48,17 @@ jobs:
           const expectedRepository = 'git+https://github.com/ikbal-causyne/causyne-agent.git';
           const expectedConfirmation = `publish ${expectedName}@${process.env.RELEASE_VERSION}`;
 
-          if (process.env.RELEASE_REF_TYPE !== 'tag') throw new Error('Run releases from an immutable tag.');
-          if (process.env.RELEASE_REF_NAME !== `v${process.env.RELEASE_VERSION}`) throw new Error('Tag and requested version differ.');
-          if (process.env.RELEASE_CONFIRMATION !== expectedConfirmation) throw new Error(`Confirmation must be exactly: ${expectedConfirmation}`);
+          if (process.env.RELEASE_EVENT === 'push') {
+            if (process.env.RELEASE_ACTOR !== 'ikbal-causyne') throw new Error('Unauthorized publisher.');
+            if (process.env.RELEASE_REF_TYPE !== 'branch' || process.env.RELEASE_REF_NAME !== 'main') throw new Error('Release commit must be on main.');
+            if (process.env.RELEASE_VERSION !== '1.20.101') throw new Error('This one-time release gate only permits 1.20.101.');
+            const subject = (process.env.RELEASE_CONFIRMATION || '').split('\n')[0];
+            if (subject !== expectedConfirmation) throw new Error(`Release commit subject must be exactly: ${expectedConfirmation}`);
+          } else {
+            if (process.env.RELEASE_REF_TYPE !== 'tag') throw new Error('Run releases from an immutable tag.');
+            if (process.env.RELEASE_REF_NAME !== `v${process.env.RELEASE_VERSION}`) throw new Error('Tag and requested version differ.');
+            if (process.env.RELEASE_CONFIRMATION !== expectedConfirmation) throw new Error(`Confirmation must be exactly: ${expectedConfirmation}`);
+          }
           if (pkg.name !== expectedName) throw new Error(`Unexpected package name: ${pkg.name}`);
           if (pkg.version !== process.env.RELEASE_VERSION) throw new Error('package.json version and requested version differ.');
           if (pkg.private === true) throw new Error('The manifest is still publication-locked.');
@@ -56,7 +70,7 @@ jobs:
     needs: authorize
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
+    continue-on-error: false
     strategy:
       fail-fast: false
       matrix:
@@ -105,9 +119,25 @@ jobs:
           npm test
           npm run typecheck:strict
 
+  tag:
+    name: create immutable release tag after verification
+    if: github.event_name == 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create immutable v1.20.101 tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref=refs/tags/v1.20.101 -f "sha=${GITHUB_SHA}"
+
   publish:
     name: publish with npm provenance
-    needs: validate
+    needs: [validate, tag]
+    if: always() && needs.validate.result == 'success' && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: npm-release
@@ -146,7 +176,7 @@ jobs:
       - name: Retain release evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: npm-release-evidence-${{ inputs.version }}
+          name: npm-release-evidence-${{ inputs.version || '1.20.101' }}
           path: |
             npm-pack-dry-run.json
             npm-pack.json
