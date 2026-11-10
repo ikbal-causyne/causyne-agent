@@ -13,11 +13,12 @@
 // Pure Node. No dependency, no shell.
 
 import fs from 'fs';
-import fsp from 'fs/promises';
 import path from 'path';
 import { listCommands } from '../commands.js';
 import { listCompiledSkills as listSkillsForCompletion } from '../skillsManager.js';
 import { sanitize, shortenHome } from './text.js';
+import { WorkspaceFileIndex } from './workspaceFileIndex.js';
+export { WorkspaceFileIndex as FileIndex };
 
 export const MAX_VISIBLE = 8;
 
@@ -29,8 +30,6 @@ const SKIP_DIRECTORIES = new Set([
   '.idea', '.cache', 'coverage', 'vendor', 'Pods', '.causyne'
 ]);
 
-const MAX_INDEX_ENTRIES = 20000;
-const MAX_INDEX_DEPTH = 12;
 
 /** A value is offerable only if printing it changes nothing. */
 export function isTerminalSafe(value) {
@@ -52,26 +51,28 @@ export function isTerminalSafe(value) {
  */
 export function score(candidate, query) {
   if (!query) return 0;
-  const haystack = candidate.toLowerCase();
-  const needle = query.toLowerCase();
+  const full = candidate.toLocaleLowerCase();
+  const needle = query.toLocaleLowerCase();
+  const leaf = full.replace(/\/$/, '').split('/').at(-1) || '';
+  const isDirectory = candidate.endsWith('/');
+  const pathPenalty = Math.min(candidate.length, 180);
+  const fileBonus = isDirectory ? 0 : 20;
 
-  if (haystack.startsWith(needle)) return 1000 - candidate.length;
+  if (leaf === needle) return 1800 + fileBonus - pathPenalty;
+  if (leaf.startsWith(needle)) return 1500 + fileBonus - pathPenalty;
+  if (leaf.includes(needle)) return 1200 + fileBonus - pathPenalty;
+  if (full.startsWith(needle)) return 1050 + fileBonus - pathPenalty;
+  if (full.includes(needle)) return 900 + fileBonus - pathPenalty;
 
-  const base = haystack.slice(haystack.lastIndexOf('/') + 1);
-  if (base.startsWith(needle)) return 800 - candidate.length;
-  if (haystack.includes(needle)) return 700 - candidate.length;
-  if (base.includes(needle)) return 600 - candidate.length;
-
-  // Subsequence: every character of the query in order, gaps allowed. This is
-  // what lets "tuich" find "tui/chatRenderer.js".
-  let index = 0;
+  // Fallback: a bounded subsequence match for abbreviations such as tuich.
+  let cursor = 0;
   let gaps = 0;
-  for (const character of haystack) {
-    if (character === needle[index]) {
-      index += 1;
-      if (index === needle.length) return 400 - gaps - candidate.length;
-    } else if (index > 0) {
-      gaps += 1;
+  for (const character of full) {
+    if (character === needle[cursor]) {
+      cursor++;
+      if (cursor === needle.length) return 400 - gaps - pathPenalty;
+    } else if (cursor > 0) {
+      gaps++;
     }
   }
   return -1;
@@ -110,7 +111,7 @@ function rank(items, query, limit = 50, focusDir = null) {
         value += 2000;
       }
       if (focusPrefix && val.toLowerCase().startsWith(focusPrefix)) {
-        value += 3000;
+        value += 90;
       }
       const resultItem = matchedAlias
         ? { ...item, description: `(alias: /${matchedAlias}) ${item.description}` }
@@ -118,7 +119,7 @@ function rank(items, query, limit = 50, focusDir = null) {
       scored.push({ item: resultItem, value });
     }
   }
-  scored.sort((a, b) => b.value - a.value);
+  scored.sort((a, b) => b.value - a.value || a.item.value.localeCompare(b.item.value));
   const ranked = scored.slice(0, limit).map((entry) => entry.item);
   ranked.total = scored.length;
   return ranked;
@@ -244,67 +245,7 @@ function argumentItems(name) {
  * upgrades the experience once it is ready. If it is never ready, nothing
  * breaks — the caller must never await it.
  */
-export class FileIndex {
-  constructor(root) {
-    this.root = root;
-    this.entries = null;
-    this.building = null;
-    this.truncated = false;
-  }
-
-  get isReady() {
-    return Array.isArray(this.entries);
-  }
-
-  /** Kick off the walk. Safe to call repeatedly; only the first one runs. */
-  ensure() {
-    if (this.entries || this.building) return this.building;
-    this.building = this.walk()
-      .then((entries) => { this.entries = entries; return entries; })
-      .catch(() => { this.entries = []; return []; })
-      .finally(() => { this.building = null; });
-    return this.building;
-  }
-
-  async walk() {
-    const found = [];
-    const queue = [{ dir: this.root, depth: 0 }];
-    let next = 0;
-
-    while (next < queue.length && found.length < MAX_INDEX_ENTRIES) {
-      const { dir, depth } = queue[next++];
-      let listing;
-      try {
-        listing = await fsp.readdir(dir, { withFileTypes: true });
-      } catch (e) {
-        continue; // unreadable directory is not an error worth surfacing here
-      }
-
-      for (const entry of listing) {
-        if (entry.name.startsWith('.') && entry.name !== '.env.example') continue;
-        const full = path.join(dir, entry.name);
-
-        if (entry.isDirectory()) {
-          if (SKIP_DIRECTORIES.has(entry.name) || depth >= MAX_INDEX_DEPTH) continue;
-          queue.push({ dir: full, depth: depth + 1 });
-          const relDir = path.relative(this.root, full).split(path.sep).join('/') + '/';
-          if (isTerminalSafe(relDir)) found.push(relDir);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-
-        const relative = path.relative(this.root, full).split(path.sep).join('/');
-        if (!isTerminalSafe(relative)) continue;
-        found.push(relative);
-        if (found.length >= MAX_INDEX_ENTRIES) {
-          this.truncated = true;
-          break;
-        }
-      }
-    }
-    return found;
-  }
-}
+// FileIndex is now owned by src/tui/workspaceFileIndex.ts.
 
 /**
  * Resolve both the authorized root and candidate to physical paths before
@@ -462,11 +403,11 @@ export function suggest(text, cursor, options = {}) {
   const root = options.root || process.cwd();
   const index = options.index;
   const focusDir = options.focusDir || null;
-  if (index && !index.isReady) index.ensure();
+  if (index) void index.ensure();
 
   let pool;
   if (index && index.isReady && trigger.query) {
-    pool = index.entries.map((relative) => ({
+    pool = index.candidates(trigger.query).map((relative) => ({
       value: relative,
       match: relative,
       label: relative,
@@ -495,7 +436,7 @@ export function suggest(text, cursor, options = {}) {
     pool = directoryItems(root, trigger.query);
   }
 
-  const items = rank(pool, trigger.query, 50, focusDir);
+  const items = rank(pool, trigger.query, 500, focusDir);
   if (items.length === 0) return null;
   return { ...trigger, items, total: items.total };
 }

@@ -121,6 +121,8 @@ export class ChatPrompt {
     this.editor = new LineEditor();
     this.history = options.history || new PromptHistory();
     this.index = new FileIndex(this.root);
+    this._unsubscribeFileIndex = null;
+    this.bindFileIndex(this.index);
     this.decoder = new KeyDecoder();
     this.inputFramer = new TerminalInputFramer();
     this.inputFrameTimer = null;
@@ -1304,12 +1306,32 @@ export class ChatPrompt {
   // Completion
   // -------------------------------------------------------------------------
 
+  /** A completed scan must refresh the currently displayed @ picker. */
+  bindFileIndex(index) {
+    if (typeof this._unsubscribeFileIndex === 'function') this._unsubscribeFileIndex();
+    this._unsubscribeFileIndex = index.subscribe(() => {
+      // Ignore a late callback from a previous workspace or a dismissed prompt.
+      if (this.index !== index || !this.active) return;
+      const trigger = detectTrigger(this.editor.getText(), this.cursorOffset());
+      if (!trigger || trigger.kind !== 'file') return;
+      this.openCompletion(false);
+      if (index.truncated) this.notice = 'Workspace file index reached its safety limit; narrow the project root.';
+      else if (this.notice === 'Indexing workspace files…') this.notice = null;
+      this.scheduleDraw();
+    });
+    void index.ensure();
+  }
+
   /** Dynamically re-target the prompt root and optional focused subproject. */
   setWorkingRoot(newRoot, focusDir = null) {
+    if (typeof this._unsubscribeFileIndex === 'function') this._unsubscribeFileIndex();
+    this.index?.dispose();
     this.root = newRoot;
     this.focusDir = focusDir;
     this.index = new FileIndex(newRoot);
-    this.index.ensure();
+    this.bindFileIndex(this.index);
+    const trigger = detectTrigger(this.editor.getText(), this.cursorOffset());
+    if (trigger?.kind === 'file') this.openCompletion(false);
   }
 
   cursorOffset() {

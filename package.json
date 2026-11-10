@@ -1,6 +1,6 @@
 {
   "name": "@causyne/agent",
-  "version": "1.20.95",
+  "version": "1.20.96",
   "description": "Agentic AI for software, tools, and computer workflows",
   "main": "bin/causyne.js",
   "type": "module",
