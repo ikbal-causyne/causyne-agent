@@ -58,11 +58,12 @@ export function parseSkillId(id) {
         return { error: nameError };
     return { domain, name };
 }
-/** Strip control characters and collapse a description onto one line. */
+/** Strip control characters, XML brackets, and collapse a description onto one line. */
 function cleanDescription(value) {
     return String(value == null ? '' : value)
         // eslint-disable-next-line no-control-regex
         .replace(/[\x00-\x1f\x7f]/g, ' ')
+        .replace(/[<>]/g, '')
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, MAX_DESCRIPTION);
@@ -73,7 +74,7 @@ function cleanBody(value) {
     return String(value == null ? '' : value).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 function parseFrontmatter(content) {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     if (!match)
         return {};
     const block = match[1] ?? '';

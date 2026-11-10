@@ -23,7 +23,7 @@ import { invalidateUserSkills } from '../skillsManager.js';
 /** Everything the contract requires, reported at once rather than one at a time. */
 function contractProblems(content) {
   const problems = [];
-  if (!/^---\n[\s\S]*?\n---/.test(content)) {
+  if (!/^---\r?\n[\s\S]*?\r?\n---/.test(content)) {
     problems.push('missing the `---` frontmatter block at the very top');
   }
   if (!/^description:\s*\S/m.test(content)) {

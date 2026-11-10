@@ -199,7 +199,9 @@ export function getUniversalSkillsIndex(domains) {
     for (const skill of domainSkills) {
       if (totalSkillsCount + domainSkillsCount >= MAX_INDEXED_SKILLS) break;
       const mark = skill.source === 'user' ? ' [your own]' : '';
-      domainIndexText += `- **${skill.name}**${mark} (ID: ${domain}/${skill.id}): ${skill.description}\n`;
+      const safeName = String(skill.name || skill.id).replace(/[<>]/g, '');
+      const safeDesc = String(skill.description || '').replace(/[<>]/g, '');
+      domainIndexText += `- **${safeName}**${mark} (ID: ${domain}/${skill.id}): ${safeDesc}\n`;
       domainSkillsCount++;
     }
 

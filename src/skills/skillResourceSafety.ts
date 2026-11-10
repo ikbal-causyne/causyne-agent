@@ -73,10 +73,26 @@ export function writeSkillFileSafely(
   overwrite: boolean,
   useNoFollow = typeof fs.constants.O_NOFOLLOW === 'number' && fs.constants.O_NOFOLLOW !== 0
 ): string {
+  if (typeof fileName !== 'string' || !fileName || path.isAbsolute(fileName) || /^[a-zA-Z]:/.test(fileName) || fileName.includes('\\')) {
+    throw new Error(`Invalid skill file name: ${fileName}`);
+  }
+  const normalizedParts = fileName.split('/');
+  for (const part of normalizedParts) {
+    if (!part || part === '.' || part === '..' || RESERVED_WINDOWS.test(part) || RESERVED_WINDOWS.test(path.posix.parse(part).name)) {
+      throw new Error(`Invalid or traversal segment in skill file name: ${JSON.stringify(part)}`);
+    }
+  }
+
   const directory = assertSkillTreeSafe(root, domain, name, true);
   fs.mkdirSync(directory, { recursive: true });
   assertSkillTreeSafe(root, domain, name);
+
   const file = path.join(directory, fileName);
+  const resolvedDir = path.resolve(directory);
+  const resolvedFile = path.resolve(file);
+  if (resolvedFile !== resolvedDir && !resolvedFile.startsWith(`${resolvedDir}${path.sep}`)) {
+    throw new Error(`Skill file escapes its directory: ${fileName}`);
+  }
   assertSkillFileSafe(file, true);
 
   const nofollow = useNoFollow && typeof fs.constants.O_NOFOLLOW === 'number'
@@ -88,6 +104,11 @@ export function writeSkillFileSafely(
     const fd = fs.openSync(file, flags, 0o600);
     try {
       if (!fs.fstatSync(fd).isFile()) throw new Error(`${fileName} must be a regular file`);
+      const realDir = fs.realpathSync(directory);
+      const realFile = fs.realpathSync(file);
+      if (!samePhysicalDirectory(path.dirname(realFile), realDir)) {
+        throw new Error(`${fileName} resolves outside its skill directory`);
+      }
       fs.writeFileSync(fd, body, 'utf8');
     } finally {
       fs.closeSync(fd);
@@ -156,6 +177,10 @@ function checkRelativeResource(relativePath: unknown): string[] {
     if (!segment || segment === '.' || segment === '..' || segment.startsWith('.')) {
       throw new Error('Hidden and traversal components are not permitted in skill resources.');
     }
+    const baseName = path.posix.parse(segment).name;
+    if (RESERVED_WINDOWS.test(segment) || RESERVED_WINDOWS.test(baseName)) {
+      throw new Error(`Reserved device name ${JSON.stringify(segment)} is not permitted in skill resources.`);
+    }
   }
   if (!TEXT_EXTENSIONS.has(path.posix.extname(relativePath).toLowerCase())) {
     throw new Error('Only text skill resources may be loaded into the model context.');
@@ -222,7 +247,13 @@ export function listSkillResourcePaths(
   root: string, domain: string, name: string,
   limit = MAX_ADVERTISED_SKILL_RESOURCES
 ): string[] {
-  const skillDir = assertSkillTreeSafe(root, domain, name);
+  let skillDir: string;
+  try {
+    skillDir = assertSkillTreeSafe(root, domain, name, true);
+    if (!fs.existsSync(skillDir)) return [];
+  } catch {
+    return [];
+  }
   const out: string[] = [];
   const bound = Number.isInteger(limit)
     ? Math.max(0, Math.min(limit, MAX_ADVERTISED_SKILL_RESOURCES)) : MAX_ADVERTISED_SKILL_RESOURCES;
