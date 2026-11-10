@@ -34,7 +34,7 @@ export function isAutonomousToolContext(context: unknown): boolean {
 }
 
 const SHELL_TOOLS = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell']);
-const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|command|env)\s+)*(?:rm|unlink|rmdir|del|erase|Remove-Item)\b|\bfind\b[^\n;]*\s-delete\b|\bgit\s+(?:rm|clean\s+-[a-z]*f)\b/i;
+const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|command|env)\s+)*(?:rm|unlink|rmdir|del|erase|Remove-Item)\b|\bfind\b[^\n;]*\s-delete\b|\bgit\s+(?:rm\b|clean\b[^\n;&|]*(?:-[a-zA-Z0-9]*f[a-zA-Z0-9]*|--force\b))/i;
 const DELETE_API_CALL = /\b(?:os\.(?:remove|unlink)|shutil\.rmtree|fs\.(?:rm|unlink)(?:Sync)?|\.unlink|\.rmdir)\s*\(/i;
 const NESTED_SHELL_DELETE = /\b(?:bash|sh|zsh|dash)\s+-c\s+['"]\s*(?:rm|unlink|rmdir)\b|\b(?:powershell|pwsh)\s+(?:-Command|-c)\s+['"]?\s*Remove-Item\b/i;
 
