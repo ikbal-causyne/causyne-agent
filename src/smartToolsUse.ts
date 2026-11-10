@@ -9,7 +9,11 @@
  */
 
 import { PACK_PLAYBOOKS, isWebIntent } from './toolPacks.js';
-import { isMutatingToolCall } from './decisionPolicy.js';
+import {
+  isMutatingToolCall,
+  isPureSkillOrCapabilityLookup,
+  redactSkillAndQueryLiterals
+} from './decisionPolicy.js';
 import type { ToolDecision } from './decideTools.js';
 
 export type ExecutionPhase = 'inspection' | 'synthesis' | 'execution' | 'verification';
@@ -202,8 +206,27 @@ export function determineToolScope(
     return { toolScope: null, archetype: 'empty', suppressedPacks: [] };
   }
 
+  // 0. Pure skill inspection, skill catalog inquiry, or tool_search capability lookup
+  if (isPureSkillOrCapabilityLookup(text)) {
+    const tools = new Set([
+      'fs_read_skill',
+      'tool_search',
+      'fs_read',
+      'fs_list',
+      'update_plan'
+    ]);
+    return {
+      toolScope: tools,
+      archetype: 'skill_lookup',
+      suppressedPacks: ['media', 'game', 'web', 'system', 'advanced', 'reverse_engineering'],
+      reason: 'Skill reading or capability lookup uses direct skill access and bounded tool_search; suppresses creative, web, game, system, and binary packs.'
+    };
+  }
+
+  const effectiveText = redactSkillAndQueryLiterals(text);
+
   // 1. Reverse engineering & binary analysis intent
-  if (EXPLICIT_REVERSE_ENGINEERING_PATTERN.test(text)) {
+  if (EXPLICIT_REVERSE_ENGINEERING_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'reverse_engineering',
       'fs_read',
@@ -225,7 +248,7 @@ export function determineToolScope(
   }
 
   // 2. Desktop personalization (e.g. wallpaper / desktop background)
-  if (DESKTOP_PERSONALIZATION_PATTERN.test(text)) {
+  if (DESKTOP_PERSONALIZATION_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'sysRun',
       'web_search',
@@ -245,7 +268,7 @@ export function determineToolScope(
   }
 
   // 2. Pure web research (searching/fetching online information without web app construction)
-  if (PURE_WEB_SEARCH_PATTERN.test(text) && !WEB_CONSTRUCTION_EXCLUSION.test(text)) {
+  if (PURE_WEB_SEARCH_PATTERN.test(effectiveText) && !WEB_CONSTRUCTION_EXCLUSION.test(effectiveText)) {
     const tools = new Set([
       'web_search',
       'web_fetch',
@@ -264,7 +287,7 @@ export function determineToolScope(
   }
 
   // 3. System process or archive administration
-  if (SYSTEM_ADMIN_PATTERN.test(text)) {
+  if (SYSTEM_ADMIN_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'sysRun',
       'proc_term',
@@ -284,7 +307,7 @@ export function determineToolScope(
   }
 
   // 4. Simple local file manipulation
-  if (SIMPLE_FILE_OP_PATTERN.test(text) && !EXPLICIT_WEB_ENGINEERING_PATTERN.test(text) && !EXPLICIT_GAME_DEV_PATTERN.test(text) && !EXPLICIT_SOFTWARE_ENGINEERING_PATTERN.test(text)) {
+  if (SIMPLE_FILE_OP_PATTERN.test(effectiveText) && !EXPLICIT_WEB_ENGINEERING_PATTERN.test(effectiveText) && !EXPLICIT_GAME_DEV_PATTERN.test(effectiveText) && !EXPLICIT_SOFTWARE_ENGINEERING_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'fs_read',
       'fs_write',
@@ -304,7 +327,7 @@ export function determineToolScope(
   }
 
   // 5. Web engineering intent (websites, web applications, landing pages, Three.js web scenes)
-  if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(text)) {
+  if (EXPLICIT_WEB_ENGINEERING_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'fs_write',
       'fs_edit',
@@ -326,7 +349,7 @@ export function determineToolScope(
   }
 
   // 6. Media / 3D generation & creative audio intent
-  if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(text)) {
+  if (EXPLICIT_MEDIA_GENERATION_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'blender_act',
       'creative_apps',
@@ -347,7 +370,7 @@ export function determineToolScope(
   }
 
   // 7. Game development and interactive simulation intent (simulators, 3D worlds, games)
-  if (EXPLICIT_GAME_DEV_PATTERN.test(text)) {
+  if (EXPLICIT_GAME_DEV_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'creative_apps',
       'fs_write',
@@ -370,7 +393,7 @@ export function determineToolScope(
   }
 
   // 8. Software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools)
-  if (EXPLICIT_SOFTWARE_ENGINEERING_PATTERN.test(text)) {
+  if (EXPLICIT_SOFTWARE_ENGINEERING_PATTERN.test(effectiveText)) {
     const tools = new Set([
       'fs_write',
       'fs_edit',
@@ -431,7 +454,7 @@ export function resolveLazyPlaybooks(
 ): LazyPlaybookResult {
   const packs = new Set(unlockedPacks);
   const tools = new Set(observedTools);
-  const text = prompt || '';
+  const text = redactSkillAndQueryLiterals(prompt || '');
 
   const activePlaybooks: string[] = [];
   const microAnnouncements: string[] = [];

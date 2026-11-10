@@ -30,6 +30,8 @@ export function isDirectGameTask(text) {
  * is checked against the ToolsList before use, so a stale entry is inert.
  */
 const TRIGGERS = [
+    { pattern: /\b(fs_read_skill|fs_read_skil|read_skill|skill_id|skills?)\b/i,
+        tools: ['fs_read_skill'], why: 'skill inspection' },
     { pattern: /\b(preview|screenshot|visual(?:ly)?|rendered? (?:page|output|ui)|browser|snapshot|look at (?:the )?(?:ui|page|screen))\b/i,
         tools: ['browser_act', 'screenshot', 'view_image'], why: 'rendered output must be looked at' },
     { pattern: /\b(vision|ocr|inspect (?:the )?(?:ui|screen))\b/i, tools: ['vision_inspect_ui'], why: 'screen inspection' },
@@ -147,6 +149,13 @@ export function decideTools(input) {
                 tools.push(name);
             for (const why of intentMemory.reasons)
                 reasons.push(why);
+        }
+        if (/\b(?:fs_read_skill|fs_read_skil|read_skill|skill_id)\b|\b(?:read|load|open|show|get|inspect|fetch|view|check|use|using|apply|follow)\s+(?:the\s+|this\s+|that\s+|a\s+|existing\s+|compiled\s+)?skills?\b|\b(?:what|which|list|available)\s+(?:all\s+|the\s+)?skills?\b/i.test(prompt)) {
+            const skillTool = known.get('fs_read_skill');
+            if (skillTool) {
+                tools.push(skillTool);
+                reasons.push('skill inspection');
+            }
         }
     }
     if (input.text) {

@@ -141,7 +141,17 @@ export const deferredMcpSearch = {
 
   async execute(args: SearchArgs, context: SearchContext = {}): Promise<SearchResult> {
     try {
-      const query = String(args.query ?? (args as any).q ?? (args as any).search ?? (args as any).description ?? (args as any).pattern ?? '').trim();
+      const rawQueries = (args as any).queries;
+      const joinedQueries = Array.isArray(rawQueries)
+        ? rawQueries.map((item) => String(item ?? '').trim()).filter(Boolean).join(' ')
+        : (typeof rawQueries === 'string' ? rawQueries : '');
+      const rawQuery = Array.isArray(args.query)
+        ? args.query.map((item) => String(item ?? '').trim()).filter(Boolean).join(' ')
+        : args.query;
+      const query = String(
+        rawQuery ?? (args as any).q ?? (args as any).search ?? (args as any).term ??
+        (args as any).regex ?? (args as any).description ?? (args as any).pattern ?? joinedQueries ?? ''
+      ).trim();
       if (query.length > MAX_TOOL_SEARCH_QUERY) {
         return { success: false, error: `Search query exceeds ${MAX_TOOL_SEARCH_QUERY} characters. Use a shorter capability description.` };
       }
@@ -194,10 +204,14 @@ export const deferredMcpSearch = {
         // the system prompt.
         const skillOnly = await searchSkills(terms, pattern);
         if (skillOnly.length > 0) {
+          const canUnlockSkillReader =
+            !isResidentTool('fs_read_skill') &&
+            definitions.some((definition) => definition.name === 'fs_read_skill');
           return {
             success: true,
             output: `No tools matched "${query}", but these SKILLS did — read one with fs_read_skill:\n` +
-              skillOnly.join('\n')
+              skillOnly.join('\n'),
+            ...(canUnlockSkillReader ? { _unlock_tools: ['fs_read_skill'], _unlock_packs: [] } : {})
           };
         }
         return {
@@ -239,6 +253,13 @@ export const deferredMcpSearch = {
         );
       }
       if (skillLines.length > 0) {
+        if (
+          !isResidentTool('fs_read_skill') &&
+          !unlockTools.includes('fs_read_skill') &&
+          definitions.some((definition) => definition.name === 'fs_read_skill')
+        ) {
+          unlockTools.push('fs_read_skill');
+        }
         parts.push(
           `\nMatching SKILLS — read one with fs_read_skill before you plan, do not guess syntax it covers:\n` +
           skillLines.join('\n')

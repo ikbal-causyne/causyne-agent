@@ -1,128 +1,193 @@
-import fs from 'fs/promises';
-import path from 'path';
-import os from 'os';
-
-// Phase 6 AGI Upgrade: Pure JS Levenshtein Distance for native fuzzy searching
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { checkSearchScope, createTraversalGuard, isSafeSymlinkTarget, resolveSearchRoot, shouldExcludeChild } from './walkerSafety.js';
+const MAX_MATCHES = 50;
+const MAX_FUZZY_LENGTH = 128;
 function levenshteinDistance(a, b) {
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) {
-    matrix[i] = [i];
-  }
-  for (let j = 0; j <= a.length; j++) {
-    matrix[0][j] = j;
-  }
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1, // substitution
-          matrix[i][j - 1] + 1,     // insertion
-          matrix[i - 1][j] + 1      // deletion
-        );
-      }
+    const m = a.length;
+    const n = b.length;
+    if (m === 0)
+        return n;
+    if (n === 0)
+        return m;
+    let prev = new Uint16Array(m + 1);
+    let curr = new Uint16Array(m + 1);
+    for (let j = 0; j <= m; j++) {
+        prev[j] = j;
     }
-  }
-  return matrix[b.length][a.length];
+    for (let i = 1; i <= n; i++) {
+        curr[0] = i;
+        const bi = b.charCodeAt(i - 1);
+        for (let j = 1; j <= m; j++) {
+            const cost = a.charCodeAt(j - 1) === bi ? 0 : 1;
+            const del = prev[j] + 1;
+            const ins = curr[j - 1] + 1;
+            const sub = prev[j - 1] + cost;
+            curr[j] = Math.min(del, ins, sub);
+        }
+        const tmp = prev;
+        prev = curr;
+        curr = tmp;
+    }
+    return prev[m];
 }
-
 function isMatch(filename, keywords, extensions, fuzzyMatch) {
-  const lowerFilename = filename.toLowerCase();
-  
-  if (extensions && extensions.length > 0) {
-    const extMatch = extensions.some(ext => lowerFilename.endsWith(ext.toLowerCase()));
-    if (!extMatch) return false;
-  }
-  
-  if (!keywords || keywords.length === 0) return true;
-
-  for (const kw of keywords) {
-    const lowerKw = kw.toLowerCase();
-    if (lowerFilename.includes(lowerKw)) return true;
-    
-    // Fuzzy matching for typos (only applied if keyword is >= 4 chars)
-    if (fuzzyMatch && lowerKw.length >= 4) {
-      for (let i = 0; i <= lowerFilename.length - lowerKw.length + 1; i++) {
-        const chunk = lowerFilename.substr(i, lowerKw.length + 1); 
-        const distance = levenshteinDistance(chunk, lowerKw);
-        const maxDistance = Math.floor(lowerKw.length / 4);
-        if (distance <= maxDistance) return true;
-      }
+    const lowerFilename = filename.toLowerCase();
+    if (extensions.length > 0) {
+        const extMatch = extensions.some((ext) => lowerFilename.endsWith(String(ext).toLowerCase()));
+        if (!extMatch)
+            return false;
     }
-  }
-  return false;
+    if (keywords.length === 0)
+        return true;
+    for (const kw of keywords) {
+        const lowerKw = String(kw).toLowerCase();
+        if (!lowerKw)
+            continue;
+        if (lowerFilename.includes(lowerKw))
+            return true;
+        if (fuzzyMatch &&
+            lowerKw.length >= 4 &&
+            lowerKw.length <= MAX_FUZZY_LENGTH &&
+            lowerFilename.length <= MAX_FUZZY_LENGTH) {
+            const maxDistance = Math.floor(lowerKw.length / 4);
+            const winLen = lowerKw.length + 1;
+            for (let i = 0; i <= lowerFilename.length - lowerKw.length + 1; i++) {
+                const chunk = lowerFilename.slice(i, i + winLen);
+                if (levenshteinDistance(chunk, lowerKw) <= maxDistance)
+                    return true;
+            }
+        }
+    }
+    return false;
 }
-
 export const fsFind = {
-  schema: {
-    name: 'fs.find',
-    description: 'Blazing fast semantic and fuzzy file search by name. Non-blocking Async Indexer.',
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Root directory to start the search.' },
-        keywords: { type: 'array', items: { type: 'string' } },
-        extensions: { type: 'array', items: { type: 'string' } },
-        fuzzyMatch: { type: 'boolean', description: 'Set to true to enable typo tolerance.' }
-      }
-    }
-  },
-  
-  async execute(args) {
-    try {
-      const targetDir = (args.path || process.cwd()).replace(/^~\//, os.homedir() + '/');
-      const keywords = args.keywords || [];
-      const extensions = args.extensions || [];
-      const fuzzyMatch = args.fuzzyMatch === true;
-      
-      const EXCLUDE_DIRS = new Set(['node_modules', '.git', '.gradle', 'build', 'dist', '.idea', '.causyne_trash']);
-      
-      const matches = [];
-      let scanned = 0;
-      const MAX_MATCHES = 50;
-
-      // Phase 6 AGI Upgrade: Asynchronous Non-Blocking Traversal to prevent Event Loop freezing
-      async function walkAsync(dir) {
-        if (matches.length >= MAX_MATCHES) return;
-        
-        let dirents;
+    schema: {
+        name: 'fs.find',
+        description: 'Fast file search by filename keywords and extensions with optional typo tolerance and bounded traversal.',
+        parameters: {
+            type: 'object',
+            properties: {
+                path: { type: 'string', description: 'Root directory to start the search. Defaults to workspace root.' },
+                keywords: { type: 'array', items: { type: 'string' } },
+                extensions: { type: 'array', items: { type: 'string' } },
+                fuzzyMatch: { type: 'boolean', description: 'Set to true to enable typo tolerance.' }
+            }
+        }
+    },
+    async execute(args = {}, context) {
         try {
-          dirents = await fs.readdir(dir, { withFileTypes: true });
-        } catch (err) {
-          return; // Ignore permission/missing errors gracefully
-        }
-
-        const promises = [];
-        for (const dirent of dirents) {
-          if (matches.length >= MAX_MATCHES) break;
-          
-          if (dirent.isDirectory()) {
-            if (!EXCLUDE_DIRS.has(dirent.name)) {
-              promises.push(walkAsync(path.join(dir, dirent.name)));
+            const targetDir = resolveSearchRoot(args?.path, context);
+            const scope = checkSearchScope(targetDir, context);
+            if (!scope.allowed || !scope.realPath) {
+                return { success: false, error: scope.error || `Search path not allowed: ${targetDir}` };
             }
-          } else if (dirent.isFile()) {
-            scanned++;
-            if (isMatch(dirent.name, keywords, extensions, fuzzyMatch)) {
-              matches.push(path.join(dir, dirent.name));
+            const rootReal = scope.realPath;
+            let stat;
+            try {
+                stat = await fs.stat(rootReal);
             }
-          }
+            catch {
+                return { success: false, error: `Search directory does not exist: ${targetDir}` };
+            }
+            if (!stat.isDirectory()) {
+                return { success: false, error: `Search path is not a directory: ${targetDir}` };
+            }
+            const keywords = Array.isArray(args?.keywords) ? args.keywords : [];
+            const extensions = Array.isArray(args?.extensions) ? args.extensions : [];
+            const fuzzyMatch = args?.fuzzyMatch === true;
+            const maxDepth = typeof args?.maxDepth === 'number' && Number.isInteger(args.maxDepth) && args.maxDepth > 0
+                ? Math.min(args.maxDepth, 24)
+                : undefined;
+            const guard = createTraversalGuard({ maxFiles: 30_000, maxDepth, signal: context?.signal });
+            const seen = new Set();
+            const matches = [];
+            let scanned = 0;
+            const queue = [
+                { dir: rootReal, real: rootReal, depth: 0 }
+            ];
+            while (queue.length > 0 && matches.length < MAX_MATCHES) {
+                if (guard.checkStopped())
+                    break;
+                const current = queue.shift();
+                if (seen.has(current.real))
+                    continue;
+                if (!guard.enterDir(current.depth))
+                    continue;
+                seen.add(current.real);
+                let dirents;
+                try {
+                    dirents = await fs.readdir(current.dir, { withFileTypes: true });
+                }
+                catch {
+                    continue;
+                }
+                for (const dirent of dirents) {
+                    if (matches.length >= MAX_MATCHES || guard.checkStopped())
+                        break;
+                    if (shouldExcludeChild(current.real, dirent.name))
+                        continue;
+                    const full = path.join(current.dir, dirent.name);
+                    if (dirent.isDirectory()) {
+                        try {
+                            const childReal = await fs.realpath(full);
+                            if (isSafeSymlinkTarget(childReal, rootReal, context) && !seen.has(childReal)) {
+                                queue.push({ dir: full, real: childReal, depth: current.depth + 1 });
+                            }
+                        }
+                        catch {
+                            // Ignore unreadable directories.
+                        }
+                    }
+                    else if (dirent.isFile()) {
+                        if (!guard.countFile())
+                            break;
+                        scanned++;
+                        if (isMatch(dirent.name, keywords, extensions, fuzzyMatch)) {
+                            matches.push(full);
+                        }
+                    }
+                    else if (dirent.isSymbolicLink()) {
+                        try {
+                            const targetReal = await fs.realpath(full);
+                            if (!isSafeSymlinkTarget(targetReal, rootReal, context))
+                                continue;
+                            const targetStat = await fs.stat(targetReal);
+                            if (targetStat.isDirectory()) {
+                                if (!seen.has(targetReal)) {
+                                    queue.push({ dir: targetReal, real: targetReal, depth: current.depth + 1 });
+                                }
+                            }
+                            else if (targetStat.isFile()) {
+                                if (!guard.countFile())
+                                    break;
+                                scanned++;
+                                if (isMatch(dirent.name, keywords, extensions, fuzzyMatch)) {
+                                    matches.push(full);
+                                }
+                            }
+                        }
+                        catch {
+                            // Ignore broken symlinks.
+                        }
+                    }
+                }
+            }
+            if (guard.stopReason === 'aborted') {
+                return { success: false, aborted: true, error: 'File find aborted.' };
+            }
+            return {
+                success: true,
+                output: JSON.stringify({
+                    scanned_files: scanned,
+                    total_matches: matches.length,
+                    ...(guard.stopReason ? { stopped_reason: guard.stopNotice() } : {}),
+                    matches: matches.length > 0 ? matches : 'No files matched your search parameters.'
+                }, null, 2)
+            };
         }
-        await Promise.all(promises);
-      }
-
-      await walkAsync(targetDir);
-      
-      return { 
-        success: true, 
-        output: JSON.stringify({
-          scanned_files: scanned,
-          total_matches: matches.length,
-          matches: matches.length > 0 ? matches : "No files matched your semantic parameters."
-        }, null, 2)
-      };
-    } catch (e) {
-      return { success: false, error: e.message };
+        catch (error) {
+            return { success: false, error: error instanceof Error ? error.message : String(error) };
+        }
     }
-  }
 };

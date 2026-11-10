@@ -1,3 +1,7 @@
+import {
+  isPureSkillOrCapabilityLookup,
+  redactSkillAndQueryLiterals
+} from './decisionPolicy.js';
 import type {
   TaskPackScore,
   TaskPhase,
@@ -92,11 +96,16 @@ const ARCHETYPES: Record<string, ArchetypeDefinition> = {
   research: {
     label: 'Investigate and report, without changing the system',
     match: {
-      strong: ['explain', 'analyse', 'analyze', 'research', 'compare', 'what is', 'how does', 'review', 'audit', 'analisa', 'jelaskan', 'cek', 'periksa'],
-      weak: ['understand', 'find out', 'summarize']
+      strong: [
+        'explain', 'analyse', 'analyze', 'research', 'compare', 'what is', 'what skills',
+        'which skills', 'list skills', 'available skills', 'read the skill',
+        'using fs_read_skill', 'use tool_search', 'capabilities matching',
+        'how does', 'review', 'audit', 'analisa', 'jelaskan', 'cek', 'periksa'
+      ],
+      weak: ['understand', 'find out', 'summarize', 'skill', 'skills', 'tool_search']
     },
     phases: [
-      { name: 'Gather', tools: ['code_search_ripgrep', 'fs_read', 'web_search', 'web_fetch'], note: 'Search broadly with several phrasings in parallel before concluding.' },
+      { name: 'Gather', tools: ['fs_read_skill', 'tool_search', 'code_search_ripgrep', 'fs_read', 'web_search', 'web_fetch'], note: 'Search broadly with several phrasings in parallel before concluding.' },
       { name: 'Report', tools: [], note: 'Answer concisely and cite exact file paths or URLs. Do not modify anything unless asked.' }
     ]
   },
@@ -149,22 +158,27 @@ function scoreSignals(text: string, signals: SignalSet): { score: number; hits: 
  *
  */
 export function analyzeTask(prompt: string, workspaceContext: WorkspaceContext | null = null): TaskShape {
-  const text = String(prompt || '').toLowerCase();
+  const rawPrompt = String(prompt || '');
+  const pureSkillLookup = isPureSkillOrCapabilityLookup(rawPrompt);
+  const text = (pureSkillLookup ? redactSkillAndQueryLiterals(rawPrompt) : rawPrompt).toLowerCase();
 
   // Which capability packs are worth their token cost for this request.
   const packScores: TaskPackScore[] = [];
-  for (const packName of Object.keys(PACK_SIGNALS)) {
-    const signals = PACK_SIGNALS[packName];
-    if (!signals) continue;
-    const { score } = scoreSignals(text, signals);
-    if (score >= PACK_THRESHOLD) {
-      packScores.push({ name: packName, score });
+  if (!pureSkillLookup) {
+    for (const packName of Object.keys(PACK_SIGNALS)) {
+      const signals = PACK_SIGNALS[packName];
+      if (!signals) continue;
+      const { score } = scoreSignals(text, signals);
+      if (score >= PACK_THRESHOLD) {
+        packScores.push({ name: packName, score });
+      }
     }
   }
 
   // Workspace evidence outranks keywords: a Godot project on disk is far more
-  // reliable than any phrasing in the prompt.
-  if (workspaceContext) {
+  // reliable than any phrasing in the prompt. Pure skill/capability lookups
+  // stay lightweight and never preload workspace app packs.
+  if (workspaceContext && !pureSkillLookup) {
     const signals = [
       workspaceContext.framework,
       workspaceContext.projectType,
@@ -206,6 +220,11 @@ export function analyzeTask(prompt: string, workspaceContext: WorkspaceContext |
   if (integrationScore >= STRONG_WEIGHT && bestArchetype === 'build_app') {
     bestArchetype = 'integrate';
     bestScore = integrationScore;
+  }
+
+  if (pureSkillLookup) {
+    bestArchetype = 'research';
+    bestScore = Math.max(bestScore, STRONG_WEIGHT);
   }
 
   const archetype = bestArchetype || 'build_app';

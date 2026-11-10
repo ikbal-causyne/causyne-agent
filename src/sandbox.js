@@ -233,10 +233,20 @@ export class Sandbox {
     // file_path, the Blender/Godot automators use filepath and directory, the
     // media tools use outputPath. Checking only `path` let all of those write
     // outside the workspace unchallenged.
-    const PATH_ARGUMENTS = ['path', 'cwd', 'source', 'destination', 'file_path', 'filepath', 'directory', 'targetFile', 'outputFile', 'outputPath'];
+    const safeArgs = args && typeof args === 'object' ? args : {};
+    const PATH_ARGUMENTS = [
+      'path', 'searchPath', 'cwd', 'source', 'destination',
+      'file_path', 'filePath', 'filepath', 'directory',
+      'targetFile', 'outputFile', 'outputPath'
+    ];
     const pathsToCheck = [];
     for (const field of PATH_ARGUMENTS) {
-      if (args[field]) pathsToCheck.push(args[field]);
+      if (safeArgs[field]) pathsToCheck.push(safeArgs[field]);
+    }
+    if (Array.isArray(safeArgs.target_directories)) {
+      for (const dir of safeArgs.target_directories) {
+        if (typeof dir === 'string' && dir.trim()) pathsToCheck.push(dir);
+      }
     }
 
     for (const p of pathsToCheck) {
@@ -376,13 +386,23 @@ export class Sandbox {
 
   isPathAllowed(targetPath) {
     if (typeof targetPath !== 'string' || targetPath.length === 0) return false;
-    const expand = (value) => value.startsWith('~/')
-      ? path.join(os.homedir(), value.slice(2)) : value;
+    const expand = (value) => {
+      if (value === '~') return os.homedir();
+      if (value.startsWith('~/') || value.startsWith('~\\')) {
+        return path.join(os.homedir(), value.slice(2));
+      }
+      return value;
+    };
     const workspaces = Array.isArray(this.workspacePaths)
       ? this.workspacePaths.filter(item => typeof item === 'string').map(expand) : [];
+    const baseDir = workspaces[0] ? path.resolve(workspaces[0]) : process.cwd();
+    const expandedTarget = expand(targetPath);
+    const resolvedTarget = path.isAbsolute(expandedTarget)
+      ? expandedTarget
+      : path.resolve(baseDir, expandedTarget);
     // Resolve physical ancestors, including symlinks, before checking the scope.
     // Missing destination files remain possible inside a valid workspace.
-    return isPhysicalPathAllowed(expand(targetPath), workspaces, this.grantAllAccess === true);
+    return isPhysicalPathAllowed(resolvedTarget, workspaces, this.grantAllAccess === true);
   }
 
   isInternalUrl(urlString, { allowLoopback = false } = {}) {

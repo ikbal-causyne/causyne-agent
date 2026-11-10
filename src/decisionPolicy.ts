@@ -165,8 +165,136 @@ export function assessDecisionRequirement(prompt: string): DecisionRequirement {
   };
 }
 
+function extractPreviousCueWord(beforeRaw: string): string {
+  let end = beforeRaw.length;
+  while (end > 0) {
+    const c = beforeRaw[end - 1]!;
+    if (c === ':' || c === '=' || /\s/.test(c)) end--;
+    else break;
+  }
+  let start = end;
+  while (start > 0) {
+    const c = beforeRaw[start - 1]!;
+    if (/\s/.test(c) || c === '(') break;
+    start--;
+  }
+  return beforeRaw.slice(start, end).toLowerCase();
+}
+
+function stripTokenEdgePunctuation(token: string): string {
+  const leading = new Set(['`', '"', "'", '(']);
+  const trailing = new Set(['`', '"', "'", ',', '.', ';', ':', '!', '?', ')']);
+  let start = 0;
+  let end = token.length;
+  while (start < end && leading.has(token[start]!)) start++;
+  while (end > start && trailing.has(token[end - 1]!)) end--;
+  return token.slice(start, end);
+}
+
+function redactDelimitedLiteralAfterKeyword(text: string): string {
+  const cues = new Set(['skill', 'skill_id', 'fs_read_skill', 'fs_read_skil', 'read_skill', 'matching', 'pattern', 'query']);
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '`' || ch === '"') {
+      const lastWord = extractPreviousCueWord(out);
+      const close = text.indexOf(ch, i + 1);
+      if (close !== -1 && cues.has(lastWord)) {
+        out += '<lookup_literal>';
+        i = close + 1;
+        continue;
+      }
+    }
+    if (ch === "'" && (i === 0 || /[\s:=(\[]/.test(text[i - 1]!))) {
+      const lastWord = extractPreviousCueWord(out);
+      const close = text.indexOf("'", i + 1);
+      if (close !== -1 && cues.has(lastWord)) {
+        out += '<lookup_literal>';
+        i = close + 1;
+        continue;
+      }
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+const KNOWN_FILE_EXT_RE =
+  /\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|json|yaml|yml|toml|xml|html|htm|css|scss|md|txt|sql|sh|bash|gradle|properties|apk|aab|dex|so|dylib|dll|exe|wasm|asar|png|jpe?g|webp|pdf|blend\d*|psd|aep|prproj)$/i;
+
+/**
+ * Redact inline skill identifiers and tool_search query/regex literals in O(n) time
+ * so intent classifiers never mistake skill names (e.g. `mobile-development/android-build-optimization`)
+ * or search patterns (e.g. `android/.*gradle`) for software engineering/build commands.
+ */
+export function redactSkillAndQueryLiterals(raw: string): string {
+  const input = String(raw ?? '');
+  if (!input.trim()) return input;
+  const hasSkillOrSearchContext =
+    /\b(?:skills?|fs_read_skill|fs_read_skil|read_skill|tool_search|tool\.search|tool_deferred_mcp_search|capabilities\s+matching)\b/i.test(input);
+  if (!hasSkillOrSearchContext) return input;
+
+  const afterQuoted = redactDelimitedLiteralAfterKeyword(input);
+  return afterQuoted.replace(/\S+/g, (token) => {
+    const core = stripTokenEdgePunctuation(token);
+    if (!core || core === '<lookup_literal>') return token;
+    const isFileLikePath = /^(?:\.{0,2}\/|~\/|https?:\/\/)/i.test(core) || KNOWN_FILE_EXT_RE.test(core);
+    if (isFileLikePath) return token;
+    const isSlashSkillOrPattern = core.includes('/') && /[a-z0-9]/i.test(core);
+    const hasRegexMeta = /[*+?^$[\]\\]/.test(core) && /[a-z0-9]/i.test(core);
+    if (isSlashSkillOrPattern || hasRegexMeta) {
+      return '<lookup_literal>';
+    }
+    return token;
+  });
+}
+
+const NON_LOOKUP_ACTION_RE =
+  /\b(?:create|write|edit|modify|update|delete|remove|rename|move|build|make|implement|refactor|fix|debug|patch|install|deploy|scaffold|generate|compile|execute|decompile|disassemble|launch|apply)\b/;
+
+export function isPureSkillOrCapabilityLookup(raw: string): boolean {
+  const text = String(raw ?? '').trim();
+  if (!text) return false;
+  const cleaned = redactSkillAndQueryLiterals(text).toLowerCase().trim();
+  if (!cleaned) return false;
+
+  if (
+    NON_LOOKUP_ACTION_RE.test(cleaned) ||
+    /\b(?:run|execute)\s+(?:tests?|commands?|scripts?|code)\b/.test(cleaned) ||
+    KNOWN_FILE_EXT_RE.test(cleaned)
+  ) {
+    return false;
+  }
+
+  const isSkillReadRequest =
+    /\b(?:fs_read_skill|fs_read_skil|read_skill|read_skil|skill_read)\b/i.test(text) ||
+    /\b(?:read|load|open|show|get|inspect|fetch|view)\s+(?:the\s+|this\s+|a\s+|compiled\s+|native\s+|user\s+)?skills?\b/i.test(text) ||
+    /\bskill(?:_id|\s+id)\s*[:=]/i.test(text) ||
+    /^\/skills?\b/i.test(text);
+
+  const isSkillInventoryQuestion =
+    /\b(?:what|which|list|show|available|browse)\s+(?:all\s+|the\s+|any\s+)?skills?\b/i.test(text) ||
+    /\bwhat\s+skills?\s+(?:do\s+you\s+have|are\s+available)\b/i.test(text) ||
+    /\bskills?\s+(?:available|catalog|inventory|list)\b/i.test(text);
+
+  const isToolSearchLookup =
+    /\b(?:tool_search|tool\.search|tool_deferred_mcp_search)\b/i.test(text) ||
+    (/\b(?:search|discover|find|lookup|list|show)\b/i.test(text) &&
+      /\bcapabilit(?:y|ies)\b|\bcapability\s+packs?\b/i.test(text));
+
+  return isSkillReadRequest || isSkillInventoryQuestion || isToolSearchLookup;
+}
+
 export function requiresImplementationPlan(prompt: string, archetype = '', confidence = ''): boolean {
-  const text = String(prompt ?? '').toLowerCase();
+  if (archetype === 'skill_lookup' || isPureSkillOrCapabilityLookup(prompt)) {
+    return false;
+  }
+  const text = redactSkillAndQueryLiterals(String(prompt ?? '')).toLowerCase();
+  if (archetype === 'research' && !/\b(?:implement|build|create|migrate|rewrite|refactor|integrate|write|edit|fix|modify|delete|remove|update)\b/.test(text)) {
+    return false;
+  }
   // A classifier can label any "create" request build_app. A single plain
   // text/data-file operation needs no checklist or rejected mutation round trip.
   const namedFiles = new Set([...text.matchAll(/\b[\w./-]+\.(?:txt|md|csv|json)\b/g)].map(match => match[0]));

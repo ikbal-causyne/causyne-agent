@@ -204,6 +204,63 @@ export function isCodeAuthoringTaskPrompt(text: string): boolean {
   return /\b(create|build|make|write|code|implement|generate|game|3js|three?\.?js|three?js|app)\b/i.test(t);
 }
 
+export function extractSkillIdFromPrompt(prompt: string): string {
+  const text = String(prompt || '').trim();
+  if (!text) return '';
+  const stopWords = new Set([
+    'the', 'a', 'an', 'this', 'that', 'from', 'in', 'with',
+    'using', 'for', 'to', 'by', 'and', 'or', 'of'
+  ]);
+  const leadingTrim = new Set(['`', '"', "'", '(', '[']);
+  const trailingTrim = new Set(['`', '"', "'", ')', ',', '.', ';', ':', '!', '?', ']', '\\']);
+  const cleanCandidate = (raw: string): string => {
+    const trimmed = raw.trim();
+    let start = 0;
+    let end = trimmed.length;
+    while (start < end && leadingTrim.has(trimmed[start]!)) start++;
+    while (end > start && trailingTrim.has(trimmed[end - 1]!)) end--;
+    const stripped = trimmed.slice(start, end);
+    if (!stripped || stopWords.has(stripped.toLowerCase())) return '';
+    if (/^(?:fs_read_skill|fs_read_skil|read_skill|read_skil|tool_search)$/i.test(stripped)) {
+      return '';
+    }
+    return stripped;
+  };
+  const isFileExt = (candidate: string): boolean =>
+    /\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|json|html|css|gradle|apk|aab|dex)$/i.test(candidate);
+
+  const cuedSlashMatch = text.match(
+    /(?:\bskill_id|\bskill|\bfs_read_skil{1,2})(?:\s*[:=]\s*|\s+)[`"']?([a-zA-Z0-9][a-zA-Z0-9_.-]{0,80}\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,120})[`"']?/i
+  );
+  if (cuedSlashMatch?.[1]) {
+    const candidate = cleanCandidate(cuedSlashMatch[1]);
+    if (candidate && !isFileExt(candidate)) {
+      return candidate;
+    }
+  }
+  for (const m of text.matchAll(/\b([a-zA-Z0-9][a-zA-Z0-9_.-]{0,80}\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,120})\b/g)) {
+    const candidate = cleanCandidate(m[1] || '');
+    if (candidate && !isFileExt(candidate)) {
+      return candidate;
+    }
+  }
+  const explicitQuotedMatch = text.match(
+    /(?:\bskill_id|\bskill)(?:\s*[:=]\s*|\s+)(?:the\s+)?[`"']([^`"'\n\r]{2,120})[`"']/i
+  );
+  if (explicitQuotedMatch?.[1]) {
+    const candidate = cleanCandidate(explicitQuotedMatch[1]);
+    if (candidate) return candidate;
+  }
+  const bareMatch = text.match(
+    /(?:\bskill_id\s*[:=]\s*|\bskill\s*[:=]\s*|\bskill\s+(?:called\s+|named\s+)?)([a-zA-Z0-9][a-zA-Z0-9_.-]{1,120})/i
+  );
+  if (bareMatch?.[1]) {
+    const candidate = cleanCandidate(bareMatch[1]);
+    if (candidate) return candidate;
+  }
+  return '';
+}
+
 export function isDirectGameTask(text: string): boolean {
   return isDirectGameTaskDecision(text);
 }
@@ -2968,18 +3025,19 @@ You are operating in a text-and-code modality without direct image pixel renderi
 
             if (canonical === 'fs_read_skill') {
               if (!toolParams.skill_id) {
-                toolParams.skill_id = toolParams.id || toolParams.name || toolParams.skill || '';
+                toolParams.skill_id = toolParams.id || toolParams.name || toolParams.skill || toolParams.skillId || toolParams.skillName || '';
               }
               if (!toolParams.skill_id) {
-                const prompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
-                const match = prompt.match(/(?:skill|read)\s+([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)*)/i);
-                if (match && match[1]) {
-                  toolParams.skill_id = match[1].trim();
+                const extracted = extractSkillIdFromPrompt(this.currentTaskPrompt || this.userPrompt || '');
+                if (extracted) {
+                  toolParams.skill_id = extracted;
                 }
               }
               delete toolParams.id;
               delete toolParams.name;
               delete toolParams.skill;
+              delete toolParams.skillId;
+              delete toolParams.skillName;
             }
 
             if (Object.keys(toolParams).length > 0 && !this.validateToolArgs(canonical, toolParams)) {
@@ -5137,22 +5195,46 @@ You are operating in a text-and-code modality without direct image pixel renderi
   // V5: Validate tool call arguments before execution
 
   validateToolArgs(toolName: string, args: any) {
-    // Check for common LLM mistakes
-    
+    if (!args || typeof args !== 'object') {
+      return 'Tool arguments must be a JSON object';
+    }
+
+    const baseDir = this.workspaceRoot || process.cwd();
+    const resolveOne = (raw: string): string | null => {
+      const val = raw.trim();
+      if (!val || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(val)) {
+        return null;
+      }
+      if (val === '~' || val.startsWith('~/') || val.startsWith('~\\')) {
+        return val.replace(/^~(?=$|[\\/])/, os.homedir());
+      }
+      if (!path.isAbsolute(val)) {
+        return path.resolve(baseDir, val);
+      }
+      return val;
+    };
+
     // 1. File operations must have absolute paths
-    const pathFields = ['path', 'source', 'destination', 'target'];
+    const nonPathTargetTools = new Set(['vision_inspect_ui', 'astryx_oracle', 'desktop_act']);
+    const pathFields = [
+      'path', 'searchPath', 'cwd', 'directory',
+      'source', 'destination', 'file_path', 'filePath', 'filepath',
+      'targetFile', 'outputFile', 'outputPath',
+      ...(nonPathTargetTools.has(toolName) ? [] : ['target'])
+    ];
     for (const field of pathFields) {
       if (args[field] && typeof args[field] === 'string') {
-        const val = args[field].trim();
-        if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(val)) {
-          continue;
-        }
-        if (val.startsWith('~')) {
-          args[field] = val.replace(/^~(?=$|[\\/])/, os.homedir());
-        } else if (!path.isAbsolute(val)) {
-          args[field] = path.resolve(this.workspaceRoot || process.cwd(), val);
+        const resolved = resolveOne(args[field]);
+        if (resolved !== null) {
+          args[field] = resolved;
         }
       }
+    }
+    if (Array.isArray(args.target_directories)) {
+      args.target_directories = args.target_directories.map((entry: unknown) => {
+        if (typeof entry !== 'string') return entry;
+        return resolveOne(entry) ?? entry;
+      });
     }
     
     // 2. Terminal commands must have a command string
@@ -5183,11 +5265,21 @@ You are operating in a text-and-code modality without direct image pixel renderi
 
     // 5. Tool search must have a query, pack, or names array
     if (toolName === 'tool_search') {
-      const q = typeof args.query === 'string' ? args.query.trim() : '';
+      const q = typeof args.query === 'string'
+        ? args.query.trim()
+        : (Array.isArray(args.query) ? args.query.map(String).join(' ').trim() : '');
       const p = typeof args.pack === 'string' ? args.pack.trim() : '';
       const n = Array.isArray(args.names) && args.names.length > 0;
       if (!q && !p && !n) {
         return 'Missing required "query" or "pack" argument';
+      }
+    }
+
+    // 6. Skill reader must have a non-empty skill_id
+    if (toolName === 'fs_read_skill') {
+      const sid = typeof args.skill_id === 'string' ? args.skill_id.trim() : '';
+      if (!sid) {
+        return 'Missing required "skill_id" argument';
       }
     }
 

@@ -187,7 +187,13 @@ const PARAMETER_ALIASES = {
     path: [
         'filepath', 'file_path', 'filePath', 'targetFile', 'target_file',
         'fileName', 'file_name', 'file', 'target', 'dir', 'folder',
-        'src_path', 'source_file', 'target_path'
+        'src_path', 'source_file', 'target_path', 'directory', 'searchPath', 'root'
+    ],
+    searchPath: [
+        'path', 'dir', 'directory', 'root', 'folder'
+    ],
+    skill_id: [
+        'id', 'name', 'skill', 'skillId', 'skillName'
     ],
     file_path: [
         'path', 'filepath', 'filePath', 'targetFile', 'target_file',
@@ -198,7 +204,7 @@ const PARAMETER_ALIASES = {
         'terminalCommand', 'run', 'instruction'
     ],
     query: [
-        'q', 'search', 'term', 'pattern', 'search_term',
+        'q', 'search', 'term', 'pattern', 'regex', 'search_term',
         'searchQuery', 'find', 'prompt'
     ],
     pattern: [
@@ -802,7 +808,13 @@ export function resolveParameterAliases(toolName, args, schema) {
     }
     // 3. Resolve top-level parameter aliases
     for (const [canonicalParam, aliases] of Object.entries(PARAMETER_ALIASES)) {
-        const isExpected = expectedKeys.size === 0 || expectedKeys.has(canonicalParam);
+        const isExpected = expectedKeys.size === 0
+            ? (canonicalParam === 'searchPath'
+                ? canonicalName === 'code_search_ripgrep'
+                : canonicalParam === 'skill_id'
+                    ? canonicalName === 'fs_read_skill'
+                    : true)
+            : expectedKeys.has(canonicalParam);
         if (!isExpected)
             continue;
         if (modified[canonicalParam] === undefined || modified[canonicalParam] === null || modified[canonicalParam] === '') {
@@ -966,27 +978,46 @@ export function coerceArgumentTypes(toolName, args, schema) {
 /**
  * Automatically normalize relative file paths to absolute paths using cwd.
  */
-export function normalizePaths(args, cwd = process.cwd()) {
+export function normalizePaths(args, cwd = process.cwd(), schema) {
     const repairs = [];
     const modified = { ...args };
-    const pathKeys = ['path', 'file_path', 'source', 'destination', 'targetFile', 'target', 'outputPath', 'output_path', 'outputFileName'];
+    const targetSchema = schema?.properties?.target;
+    const hasEnumTarget = Boolean(targetSchema && 'enum' in targetSchema);
+    const pathKeys = [
+        'path', 'searchPath', 'cwd', 'directory', 'source', 'destination',
+        'file_path', 'filePath', 'filepath', 'targetFile',
+        ...(hasEnumTarget ? [] : ['target']),
+        'outputPath', 'output_path', 'outputFile', 'outputFileName'
+    ];
+    const normalizeOne = (rawValue, label) => {
+        const trimmed = rawValue.trim();
+        if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+            return rawValue;
+        }
+        if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+            const expanded = trimmed.replace(/^~(?=$|[\\/])/, os.homedir());
+            repairs.push(`Expanded home directory path '${trimmed}' -> '${expanded}' for parameter '${label}'`);
+            return expanded;
+        }
+        if (!path.isAbsolute(trimmed)) {
+            const resolved = path.resolve(cwd, trimmed);
+            repairs.push(`Normalized relative path '${trimmed}' -> '${resolved}' for parameter '${label}'`);
+            return resolved;
+        }
+        return rawValue;
+    };
     for (const key of pathKeys) {
         const val = modified[key];
         if (typeof val === 'string' && val.trim() !== '') {
-            const trimmed = val.trim();
-            // Skip URLs
-            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
-                continue;
-            }
-            if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-                modified[key] = trimmed.replace(/^~(?=$|[\\/])/, os.homedir());
-                repairs.push(`Expanded home directory path '${trimmed}' -> '${modified[key]}' for parameter '${key}'`);
-            }
-            else if (!path.isAbsolute(trimmed)) {
-                modified[key] = path.resolve(cwd, trimmed);
-                repairs.push(`Normalized relative path '${trimmed}' -> '${modified[key]}' for parameter '${key}'`);
-            }
+            modified[key] = normalizeOne(val, key);
         }
+    }
+    if (Array.isArray(modified.target_directories)) {
+        modified.target_directories = modified.target_directories.map((entry, idx) => {
+            if (typeof entry !== 'string' || entry.trim() === '')
+                return entry;
+            return normalizeOne(entry, `target_directories[${idx}]`);
+        });
     }
     return {
         args: modified,
@@ -1069,7 +1100,7 @@ export function selfRepairToolCall(toolCall, toolSchema, options = {}) {
     const typeResult = coerceArgumentTypes(canonicalName, aliasResult.args, toolSchema);
     allRepairs.push(...typeResult.repairs);
     // 4. Normalize filesystem paths
-    const pathResult = normalizePaths(typeResult.args, options.cwd || process.cwd());
+    const pathResult = normalizePaths(typeResult.args, options.cwd || process.cwd(), toolSchema);
     allRepairs.push(...pathResult.repairs);
     const browserResult = canonicalName === 'browser_act'
         ? repairBrowserActions(pathResult.args, options.cwd || process.cwd())
