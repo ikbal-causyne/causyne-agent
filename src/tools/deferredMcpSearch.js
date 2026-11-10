@@ -10,6 +10,7 @@ async function toolDefinitions() {
 import { buildToolsList } from '../toolsList.js';
 import { PACKS, PACK_NAMES, packForTool, isCoreTool, isResidentTool } from '../toolPacks.js';
 import { literalSearchPattern, formatSkillSearchLine, MAX_TOOL_SEARCH_QUERY } from '../skills/skillSearchSafety.js';
+import { queryTerms, wordsOf, termMatches, requiredCoverage } from './searchRelevance.js';
 /** Max skills returned alongside the tool matches, so one search stays cheap. */
 const MAX_SKILL_HITS = 5;
 /**
@@ -21,7 +22,7 @@ const MAX_SKILL_HITS = 5;
  *
  * @returns {string[]} formatted lines, empty when nothing matched
  */
-async function searchSkills(terms, pattern) {
+async function searchSkills(terms, pattern, options = {}) {
     // Imported lazily, not at module scope: registry.js imports THIS module, and
     // skillsManager pulls registry back in transitively — a static import here
     // closes the cycle and the whole tool registry fails to initialise. Same
@@ -35,73 +36,107 @@ async function searchSkills(terms, pattern) {
         return []; // a broken skill store must not take tool search down
     }
     const scored = [];
+    const minCoverage = requiredCoverage(terms.length);
     for (const skill of catalogue) {
-        const haystack = `${skill.id} ${skill.name} ${skill.domain} ${skill.description || ''}`.toLowerCase();
+        // Whole-word matching: a substring test let "kill" match every "skill"
+        // and "and" match every "android".
+        const titleWords = wordsOf(`${skill.id} ${skill.name}`);
+        const domainWords = wordsOf(skill.domain);
+        const allWords = wordsOf(`${skill.id} ${skill.name} ${skill.domain} ${skill.description || ''}`);
         let score = 0;
+        let coverage = 0;
+        let phraseHit = false;
         if (pattern) {
-            if (pattern.test(skill.name) || pattern.test(skill.id))
+            if (pattern.test(skill.name) || pattern.test(skill.id)) {
                 score += 10;
+                phraseHit = true;
+            }
             if (pattern.test(skill.description || ''))
                 score += 4;
         }
         for (const term of terms) {
-            if (skill.id.toLowerCase().includes(term) || skill.name.toLowerCase().includes(term))
+            if (termMatches(term, titleWords)) {
                 score += 8;
-            else if (skill.domain.toLowerCase() === term)
+                coverage++;
+            }
+            else if (termMatches(term, domainWords)) {
                 score += 6;
-            else if (haystack.includes(term))
+                coverage++;
+            }
+            else if (termMatches(term, allWords)) {
                 score += 3;
+                coverage++;
+            }
         }
         if (score > 0)
-            scored.push({ skill, score });
+            scored.push({ skill, score, coverage, phraseHit });
     }
-    return scored
-        .sort((a, b) => b.score - a.score)
+    const strong = scored.filter(entry => entry.phraseHit || entry.coverage >= minCoverage);
+    const pool = strong.length > 0 ? strong : (options.allowFallback ? scored : []);
+    return pool
+        .sort((a, b) => (b.coverage - a.coverage) || (b.score - a.score))
         .slice(0, MAX_SKILL_HITS)
         .map(({ skill }) => formatSkillSearchLine(skill));
 }
-// Real progressive-disclosure tool search.
-//
-// The previous version of this file advertised "80% token savings" while
-// searching a hardcoded catalogue of seven tools that did not exist in the
-// registry (mcp_postgres_data, mcp_github_workflow, mcp_android_cli). Any tool
-// the model discovered that way led straight to a "Tool does not exist" error,
-// and nothing was ever actually deferred.
-//
-// This version searches the live tool registry and unlocks what it finds. The
-// agent loop reads the _unlock_* fields off the result and loads the matching
-// schemas into the next request.
 function scoreTool(definition, terms, pattern) {
     const name = (definition.name || '').toLowerCase();
     const description = (definition.description || '').toLowerCase();
-    // Parameter names and descriptions are searchable too — a query like
-    // "kill process on port" should find a tool whose `port` argument mentions it.
-    let parameterText = '';
+    // Parameter names (e.g. `port`) identify capabilities directly; parameter
+    // descriptions often list example platforms and act only as tiebreakers.
+    let paramKeysText = '';
+    let paramDescText = '';
     const properties = definition.parameters?.properties || definition.input_schema?.properties;
     if (properties) {
         for (const [key, value] of Object.entries(properties)) {
-            parameterText += ` ${key} ${(value && value.description) || ''}`;
+            paramKeysText += ` ${key}`;
+            if (value && value.description) {
+                paramDescText += ` ${value.description}`;
+            }
         }
     }
-    parameterText = parameterText.toLowerCase();
+    paramKeysText = paramKeysText.toLowerCase();
+    paramDescText = paramDescText.toLowerCase();
     let score = 0;
+    let coverage = 0;
+    let nameHit = false;
     if (pattern) {
-        if (pattern.test(name))
+        if (pattern.test(name)) {
             score += 12;
+            nameHit = true;
+        }
         if (pattern.test(description))
             score += 6;
-        if (pattern.test(parameterText))
+        if (pattern.test(paramKeysText) || pattern.test(paramDescText))
             score += 2;
     }
+    // Whole-word matching. Substring tests let "and" hit "command", "kill" hit
+    // "skill" and "port" hit "export", which unlocked unrelated schemas.
+    const nameWords = wordsOf(definition.name || '');
+    const descriptionWords = wordsOf(description);
+    const paramKeyWords = wordsOf(paramKeysText);
+    const paramDescWords = wordsOf(paramDescText);
     for (const term of terms) {
-        if (name.includes(term))
+        let matched = false;
+        if (termMatches(term, nameWords)) {
             score += 10;
-        if (description.includes(term))
+            matched = true;
+        }
+        if (termMatches(term, descriptionWords)) {
             score += 4;
-        if (parameterText.includes(term))
+            matched = true;
+        }
+        if (termMatches(term, paramKeyWords)) {
+            score += 3;
+            matched = true;
+        }
+        if (matched) {
+            coverage++;
+        }
+        else if (termMatches(term, paramDescWords)) {
             score += 1;
+        }
     }
-    return score;
+    return { score, coverage, nameHit };
 }
 function buildPattern(query) {
     // Never compile LLM-generated regex. A pattern such as (a+)+$ can freeze
@@ -176,26 +211,29 @@ export const deferredMcpSearch = {
             }
             const limit = typeof args.limit === 'number' && Number.isInteger(args.limit) && args.limit > 0 ? Math.min(args.limit, 25) : 8;
             const lower = query.toLowerCase();
-            const terms = lower.split(/[^a-z0-9_]+/).filter(t => t.length > 2);
+            const terms = queryTerms(query);
             const pattern = buildPattern(query);
+            // Tool discovery stays bounded: an entry sharing a single generic word
+            // with a multi-word request is not a match.
+            const minCoverage = requiredCoverage(terms.length);
             const exact = definitions.find(definition => definition.name.toLowerCase() === lower);
             const scored = (exact ? [exact] : definitions)
-                .map(definition => ({ definition, score: scoreTool(definition, terms, pattern) }))
-                .filter(entry => entry.score > 0)
-                .sort((a, b) => b.score - a.score)
+                .map(definition => ({ definition, ...scoreTool(definition, terms, pattern) }))
+                .filter(entry => entry.score > 0 && (exact !== undefined || entry.nameHit || entry.coverage >= minCoverage))
+                .sort((a, b) => (b.coverage - a.coverage) || (b.score - a.score))
                 .slice(0, limit);
             if (scored.length === 0) {
                 // Still search skills. "how do I structure a django migration" matches
                 // no tool name and every relevant skill — returning "no tools matched"
                 // and stopping was the whole reason a 40-entry catalogue had to sit in
                 // the system prompt.
-                const skillOnly = await searchSkills(terms, pattern);
+                const skillOnly = await searchSkills(terms, pattern, { allowFallback: true });
                 if (skillOnly.length > 0) {
                     const canUnlockSkillReader = !isResidentTool('fs_read_skill') &&
                         definitions.some((definition) => definition.name === 'fs_read_skill');
                     return {
                         success: true,
-                        output: `No tools matched "${query}", but these SKILLS did — read one with fs_read_skill:\n` +
+                        output: `No tools matched "${query}". Matching SKILLS — read one with fs_read_skill:\n` +
                             skillOnly.join('\n'),
                         ...(canUnlockSkillReader ? { _unlock_tools: ['fs_read_skill'], _unlock_packs: [] } : {})
                     };
@@ -227,7 +265,7 @@ export const deferredMcpSearch = {
             // request of every task, including a bare "hi". Retrieval replaces the
             // catalogue — but only because the retrieval exists, which it did not
             // before this change.
-            const skillLines = await searchSkills(terms, pattern);
+            const skillLines = exact ? [] : await searchSkills(terms, pattern, { allowFallback: false });
             const parts = [];
             if (scored.length > 0) {
                 parts.push(`Found ${scored.length} tool(s) for "${query}". Their full schemas are now loaded and callable on your next turn:\n` +

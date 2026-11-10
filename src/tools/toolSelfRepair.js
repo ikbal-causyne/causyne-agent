@@ -978,9 +978,10 @@ export function coerceArgumentTypes(toolName, args, schema) {
 /**
  * Automatically normalize relative file paths to absolute paths using cwd.
  */
-export function normalizePaths(args, cwd = process.cwd(), schema) {
+export function normalizePaths(args, cwd = process.cwd(), schema, options = {}) {
     const repairs = [];
     const modified = { ...args };
+    const skipKeys = new Set(options.skipKeys || []);
     const targetSchema = schema?.properties?.target;
     const hasEnumTarget = Boolean(targetSchema && 'enum' in targetSchema);
     const pathKeys = [
@@ -1007,12 +1008,14 @@ export function normalizePaths(args, cwd = process.cwd(), schema) {
         return rawValue;
     };
     for (const key of pathKeys) {
+        if (skipKeys.has(key))
+            continue;
         const val = modified[key];
         if (typeof val === 'string' && val.trim() !== '') {
             modified[key] = normalizeOne(val, key);
         }
     }
-    if (Array.isArray(modified.target_directories)) {
+    if (!skipKeys.has('target_directories') && Array.isArray(modified.target_directories)) {
         modified.target_directories = modified.target_directories.map((entry, idx) => {
             if (typeof entry !== 'string' || entry.trim() === '')
                 return entry;
@@ -1099,8 +1102,10 @@ export function selfRepairToolCall(toolCall, toolSchema, options = {}) {
     // 3. Coerce argument types
     const typeResult = coerceArgumentTypes(canonicalName, aliasResult.args, toolSchema);
     allRepairs.push(...typeResult.repairs);
-    // 4. Normalize filesystem paths
-    const pathResult = normalizePaths(typeResult.args, options.cwd || process.cwd(), toolSchema);
+    // 4. Normalize filesystem paths (fs_read_skill uses relative skill-bundle paths, never cwd paths)
+    const pathResult = canonicalName === 'fs_read_skill'
+        ? { args: typeResult.args, repaired: false, repairs: [] }
+        : normalizePaths(typeResult.args, options.cwd || process.cwd(), toolSchema);
     allRepairs.push(...pathResult.repairs);
     const browserResult = canonicalName === 'browser_act'
         ? repairBrowserActions(pathResult.args, options.cwd || process.cwd())

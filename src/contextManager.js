@@ -46,6 +46,8 @@ export const RESULT_CAPS = {
   fs_read: 32000,
   code_search_ast: 32000,
   MultiEdit: 32000,
+  fs_read_skill: 16000,
+  tool_search: 8000,
 
   // Command output. Low information density, high volume, and the conclusion is
   // almost always in the first and last few lines.

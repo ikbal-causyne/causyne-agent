@@ -59,7 +59,16 @@ export function pruneExecutedToolArguments(messages, options = {}) {
  * not make a 60 KB result safe to resend in full on every model call.
  */
 export function shortenOversizedToolObservations(messages, options = {}) {
-    const threshold = Math.max(1, options.threshold ?? 2500);
+    const explicitThreshold = options.threshold !== undefined ? Math.max(1, options.threshold) : undefined;
+    const thresholdFor = (toolName) => {
+        if (explicitThreshold !== undefined)
+            return explicitThreshold;
+        if (toolName === 'fs_read_skill')
+            return 16000;
+        if (toolName === 'tool_search')
+            return 8000;
+        return 2500;
+    };
     let pruned = 0;
     let reclaimedChars = 0;
     let spillFailures = 0;
@@ -68,8 +77,14 @@ export function shortenOversizedToolObservations(messages, options = {}) {
         if (!message || message.role !== 'tool' || typeof message.content !== 'string')
             continue;
         const original = message.content;
+        const threshold = thresholdFor(message.name);
         if (original.length <= threshold || original.startsWith(MARKER))
             continue;
+        // Do not truncate an observation a second time when ToolOutputStore has
+        // already persisted the complete payload and added its recovery notice.
+        if (message.spillPath && original.includes('Causyne ToolOutputStore:') && original.length <= Math.max(threshold + 1000, 4000)) {
+            continue;
+        }
         let spillPath = message.spillPath;
         if (!spillPath) {
             const spill = spillToolResult(original, {

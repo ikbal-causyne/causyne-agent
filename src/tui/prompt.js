@@ -24,6 +24,7 @@ import { PromptHistory } from './history.js';
 import { FileIndex, suggest, applyCompletion, detectTrigger, renderPicker, MAX_VISIBLE } from './completion.js';
 import { paint, dim, bold, GLYPHS, terminalWidth, HAS_COLOR } from './theme.js';
 import { barBlock, GUTTER } from './block.js';
+import { composerGeometry } from './composerGeometry.js';
 import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay, stripAnsi } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
@@ -1603,10 +1604,14 @@ export class ChatPrompt {
     // surface you are writing INTO. Every row of the block is inset by the same
     // gutter, so the caret column is a constant rather than a special case for
     // row 0 — which is also one fewer thing for erase() to get wrong.
-    const boxWidth = Math.max(20, width - 1);
-    const inset = visibleWidth(GLYPHS.bar) + GUTTER;
-    const inner = Math.max(8, boxWidth - inset);
-    const layout = this.editor.render(inner, '');
+    // Reserve one editor cell for the caret. The left bar and gutter are
+    // consumed by barBlock; the remaining full-width body is not all editable.
+    // This prevents a full sentence from placing the cursor beyond the fill.
+    const { boxWidth, inset, editorWidth } = composerGeometry(
+      width, visibleWidth(GLYPHS.barHeavy || GLYPHS.bar), GUTTER
+    );
+    const inner = editorWidth;
+    const layout = this.editor.render(editorWidth, '');
 
     // Scroll the editor internally rather than growing without bound: keep a
     // window of MAX_PROMPT_ROWS that always contains the caret.

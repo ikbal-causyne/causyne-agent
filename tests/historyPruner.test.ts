@@ -129,6 +129,57 @@ test('observations exceeding 2,500 chars are shortened by default to preserve co
   assert.equal(fs.readFileSync(messages[0]?.spillPath ?? '', 'utf8'), original);
 });
 
+test('per-tool default thresholds allow full skill text and tool_search results without truncation', () => {
+  const skillBody = `---
+name: sample-skill
+description: Sample skill
+---
+${'# Guide\n'.repeat(300)}
+${'line of content\n'.repeat(200)}`;
+  assert.ok(skillBody.length > 5000 && skillBody.length < 16000);
+
+  const searchBody = `Found 6 tools for "search":\n${'- tool: hint\n'.repeat(200)}`;
+  assert.ok(searchBody.length > 2600 && searchBody.length < 8000);
+
+  const genericBody = `output\n${'x'.repeat(3500)}`;
+
+  const messages = [
+    { role: 'tool', name: 'fs_read_skill', content: skillBody, tool_call_id: 'skill-call' },
+    { role: 'tool', name: 'tool_search', content: searchBody, tool_call_id: 'search-call' },
+    { role: 'tool', name: 'fs_read', content: genericBody, tool_call_id: 'read-call' }
+  ];
+
+  const result = shortenOversizedToolObservations(messages, { taskId: 'per-tool-caps' });
+  assert.equal(result.pruned, 1, 'only generic tool exceeding 2500 should be pruned');
+  assert.equal(messages[0]?.content, skillBody, 'fs_read_skill must remain intact under 16000 chars');
+  assert.equal(messages[1]?.content, searchBody, 'tool_search must remain intact under 8000 chars');
+  assert.ok(messages[2]?.content.length < genericBody.length, 'generic tool must be shortened');
+});
+
+test('already spilled ToolOutputStore observations are not double-truncated', () => {
+  const spilledContent = `[Causyne ToolOutputStore: output exceeded active window (3200 characters).]
+Recovery file: /tmp/output.txt
+
+--- Preview (first 100 lines) ---
+${'sample preview line\n'.repeat(120)}
+--- End Preview ---`;
+  assert.ok(spilledContent.length > 2500 && spilledContent.length < 3500);
+
+  const messages = [
+    {
+      role: 'tool',
+      name: 'sysRun',
+      content: spilledContent,
+      spillPath: '/tmp/output.txt',
+      tool_call_id: 'spilled-call'
+    }
+  ];
+
+  const result = shortenOversizedToolObservations(messages, { taskId: 'store-spill' });
+  assert.equal(result.pruned, 0, 'ToolOutputStore recovery summary must not be re-truncated');
+  assert.equal(messages[0]?.content, spilledContent);
+});
+
 test('executed file arguments are archived once, with complete contents and stable call pairing', () => {
   const source = Array.from({ length: 600 }, (_, index) => `export const value${index} = ${index};`).join('\n');
   const first = { id: 'first-write', function: { name: 'fs_write', arguments: JSON.stringify({ path: 'first.ts', content: source }) } };

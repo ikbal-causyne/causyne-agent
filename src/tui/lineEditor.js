@@ -376,6 +376,14 @@ export class LineEditor {
       while (pos <= line.length) {
         if (pos === line.length) {
           if (isCurrentLine && pos === this.col && !placed) {
+            // An exact-width final row has no cell after its last glyph.
+            // Move the caret onto an empty continuation row instead of
+            // positioning it outside the editing surface. Preserve text.
+            if (used >= budget && pos > 0) {
+              rows.push(row);
+              row = prefix;
+              used = 0;
+            }
             cursorRow = rows.length;
             cursorCol = prefixWidth + used;
             placed = true;

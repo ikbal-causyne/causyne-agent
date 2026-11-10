@@ -1,5 +1,6 @@
 import { sessionBanner } from './banner.js';
 import { centerRows } from './layout.js';
+import { fitHomeContent } from './composerGeometry.js';
 import { panelRows } from './overlay.js';
 /** A modal before the first conversation belongs to the centered home view. */
 export function isStartupDialog(surface) {
@@ -45,17 +46,20 @@ export function placeHome(info, promptRows, columns, height, caretRow, caretCol)
     const available = Math.max(1, Math.floor(height));
     const logo = centerRows(sessionBanner(info, columns, { height: available }), columns).rows;
     const spacer = available >= 25 ? 2 : 1;
-    const required = logo.length + spacer + promptRows.length;
+    // When the window is short, preserve the composer and editing caret first.
+    // The logo yields height; it must never push a wrapped draft off-screen.
+    const fitted = fitHomeContent(logo, promptRows, available, caretRow, spacer);
+    const required = fitted.logoRows.length + fitted.spacer + fitted.promptRows.length;
     const top = Math.max(0, Math.floor((available - required) / 2));
     const rows = [
         ...Array(top).fill(''),
-        ...logo,
-        ...Array(spacer).fill(''),
-        ...promptRows
+        ...fitted.logoRows,
+        ...Array(fitted.spacer).fill(''),
+        ...fitted.promptRows
     ];
     return {
-        rows: rows.slice(0, available),
-        caretRow: Math.min(available - 1, top + logo.length + spacer + Math.max(0, caretRow)),
+        rows,
+        caretRow: top + fitted.logoRows.length + fitted.spacer + fitted.caretRow,
         caretCol: Math.max(0, Math.min(caretCol, columns - 2))
     };
 }

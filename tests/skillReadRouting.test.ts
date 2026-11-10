@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -13,8 +14,12 @@ import { analyzeTask } from '../src/taskShape.js';
 import { decideTools } from '../src/decideTools.js';
 import { buildToolsList } from '../src/toolsList.js';
 import { deferredMcpSearch } from '../src/tools/deferredMcpSearch.js';
-import { normalizePaths, resolveParameterAliases } from '../src/tools/toolSelfRepair.js';
+import { normalizePaths, resolveParameterAliases, selfRepairToolCall } from '../src/tools/toolSelfRepair.js';
 import { AgentLoop, extractSkillIdFromPrompt } from '../src/agentLoop.js';
+import readNativeSkill from '../src/tools/readNativeSkill.js';
+import { Sandbox } from '../src/sandbox.js';
+import { writeUserSkill } from '../src/userSkills.js';
+import { invalidateUserSkills } from '../src/skillsManager.js';
 
 describe('Skill reading and capability lookup routing', () => {
   test('Test 3 prompt routes to skill_lookup/research without implementation plan and admits fs_read_skill', () => {
@@ -203,5 +208,104 @@ describe('Skill reading and capability lookup routing', () => {
     const cbArgs = { query: 'test', target_directories: ['src'] };
     assert.equal(validate('codebase_search', cbArgs), null);
     assert.deepEqual(cbArgs.target_directories, [path.join(wsRoot, 'src')]);
+  });
+
+  test('deferredMcpSearch precision: ReDoS-shaped and multi-word queries exclude unrelated game tools and false skills', async () => {
+    const t0 = Date.now();
+    const result = await deferredMcpSearch.execute({ query: '(a+)+$ and android/.*gradle' });
+    const duration = Date.now() - t0;
+    assert.ok(duration < 1000, `ReDoS search must complete quickly without freezing: ${duration}ms`);
+    assert.equal(result.success, true);
+    assert.ok(result._unlock_tools?.includes('fs_read_skill'));
+
+    const unlocked = result._unlock_tools || [];
+    const forbiddenTools = [
+      'godot_act', 'game_build_html5', 'game_scene_build', 'game_lore_forge',
+      'game_quest_arc_builder', 'game_animation_rig', 'game_ai_behavior_tree',
+      'game_asset_harvest', 'game_entity_spawner', 'game_economy_balancer',
+      'game_ui_hud_builder'
+    ];
+    for (const tool of forbiddenTools) {
+      assert.equal(unlocked.includes(tool), false, `Tool ${tool} must not be unlocked for android gradle query`);
+    }
+
+    assert.match(result.output || '', /android\/gradle-build-configuration/);
+    assert.match(result.output || '', /android\/agp-9-upgrade/);
+  });
+
+  test('readNativeSkill suggestions: unknown skill provides close matches without noisy domain bleeding', async () => {
+    const res = await readNativeSkill.execute({ skill_id: 'mobile-development/android-build-optimization' });
+    assert.equal(res.success, false);
+    assert.match(res.error || '', /Did you mean:.*android\/gradle-build-configuration/);
+    assert.match(res.error || '', /Did you mean:.*mobile\/app-startup-optimisation/);
+    assert.doesNotMatch(res.error || '', /docker-multi-stage-builds/);
+  });
+
+  test('fs_read_skill preserves relative resource paths and traversal attempts, while Sandbox admits external user-skills', async () => {
+    const wsRoot = path.resolve(os.tmpdir(), 'causyne-sandbox-ws');
+    const relativeResourceCall = {
+      function: {
+        name: 'fs_read_skill',
+        arguments: JSON.stringify({ skill_id: 'team/release-checklist', file_path: 'references/guide.md' })
+      }
+    };
+    const repaired = selfRepairToolCall(relativeResourceCall, readNativeSkill.schema.parameters, { cwd: wsRoot });
+    assert.equal(repaired.args.file_path, 'references/guide.md', 'Relative skill resource path must not resolve against cwd');
+
+    const attackCall = {
+      function: {
+        name: 'fs_read_skill',
+        arguments: JSON.stringify({ skill_id: 'android/gradle-build-configuration', file_path: '../../.ssh/id_rsa' })
+      }
+    };
+    const repairedAttack = selfRepairToolCall(attackCall, readNativeSkill.schema.parameters, { cwd: wsRoot });
+    assert.equal(repairedAttack.args.file_path, '../../.ssh/id_rsa', 'Traversal string must not be altered into absolute root path');
+
+    const validate = (name: string, args: unknown) =>
+      AgentLoop.prototype.validateToolArgs.call({ workspaceRoot: wsRoot }, name, args);
+    const loopArgs = { skill_id: 'team/release-checklist', file_path: 'references/guide.md' };
+    assert.equal(validate('fs_read_skill', loopArgs), null);
+    assert.equal(loopArgs.file_path, 'references/guide.md');
+
+    const sandbox = new Sandbox({ workspaceRoot: wsRoot });
+    const sbDecision = sandbox.validate('fs_read_skill', {
+      skill_id: 'team/release-checklist',
+      file_path: 'references/guide.md'
+    });
+    assert.equal(sbDecision.allowed, true, 'fs_read_skill resources outside workspace must be governed by skill safety, not workspace check');
+
+    // End-to-end user skill read with supporting resource in CAUSYNE_HOME
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-skill-e2e-'));
+    const prevHome = process.env.CAUSYNE_HOME;
+    process.env.CAUSYNE_HOME = tmpHome;
+    invalidateUserSkills();
+    try {
+      const skillRoot = path.join(tmpHome, 'skills');
+      writeUserSkill({
+        domain: 'team',
+        name: 'release',
+        content: '---\nname: release\ndescription: Release checklist\n---\n# Release\n1. Verify.\n   - **Done when:** ok.\n## Verification\n- verify\n'
+      }, skillRoot);
+      const refDir = path.join(skillRoot, 'team', 'release', 'references');
+      fs.mkdirSync(refDir, { recursive: true });
+      fs.writeFileSync(path.join(refDir, 'guide.md'), '# Verified Guide\nFollow checklist.');
+
+      const readSkillRes = await readNativeSkill.execute({ skill_id: 'team/release' });
+      assert.equal(readSkillRes.success, true);
+      assert.match(readSkillRes.result || '', /references\/guide\.md/);
+
+      const readResRes = await readNativeSkill.execute({ skill_id: 'team/release', file_path: 'references/guide.md' });
+      assert.equal(readResRes.success, true);
+      assert.match(readResRes.result || '', /# Verified Guide/);
+
+      const attackRes = await readNativeSkill.execute({ skill_id: 'team/release', file_path: '../../.ssh/id_rsa' });
+      assert.equal(attackRes.success, false);
+      assert.match(attackRes.error || '', /Resource not listed or not accessible/);
+    } finally {
+      if (prevHome === undefined) delete process.env.CAUSYNE_HOME;
+      else process.env.CAUSYNE_HOME = prevHome;
+      invalidateUserSkills();
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });

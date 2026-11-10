@@ -9,6 +9,38 @@
 import { listCompiledSkills, readCompiledSkill } from '../skillsManager.js';
 import { parseSkillId, userSkillsRoot } from '../userSkills.js';
 import { listSkillResourcePaths, readSkillTextResource } from '../skills/skillResourceSafety.js';
+import { queryTerms, wordsOf, termMatches, requiredCoverage } from './searchRelevance.js';
+function suggestSimilarSkills(allSkills, seed, limit = 3) {
+    const terms = queryTerms(seed);
+    if (terms.length === 0)
+        return [];
+    const minCoverage = requiredCoverage(terms.length);
+    const ranked = allSkills
+        .map((skill) => {
+        const titleWords = wordsOf(`${skill.domain} ${skill.id} ${skill.name || ''}`);
+        const descWords = wordsOf(skill.description || '');
+        let score = 0;
+        let coverage = 0;
+        for (const term of terms) {
+            if (termMatches(term, titleWords)) {
+                score += 10;
+                coverage += 1;
+            }
+            else if (termMatches(term, descWords)) {
+                score += 3;
+                coverage += 1;
+            }
+        }
+        return { skill, score, coverage };
+    })
+        .filter((entry) => entry.score > 0);
+    const strong = ranked.filter((entry) => entry.coverage >= minCoverage);
+    const pool = strong.length > 0 ? strong : ranked;
+    return pool
+        .sort((a, b) => (b.coverage - a.coverage) || (b.score - a.score))
+        .slice(0, limit)
+        .map((entry) => `${entry.skill.domain}/${entry.skill.id}`);
+}
 export default {
     schema: {
         name: 'fs_read_skill',
@@ -47,27 +79,7 @@ export default {
                     id = directMatch.id;
                 }
                 else if ('error' in parsed) {
-                    const queryTokens = rawSkillId.toLowerCase().split(/[\/_-]/).filter(t => t.length > 2);
-                    const suggestions = allSkills
-                        .map(s => {
-                        let score = 0;
-                        const d = s.domain.toLowerCase();
-                        const n = s.id.toLowerCase();
-                        const desc = (s.description || '').toLowerCase();
-                        for (const t of queryTokens) {
-                            if (n.includes(t))
-                                score += 10;
-                            if (d.includes(t))
-                                score += 8;
-                            if (desc.includes(t))
-                                score += 2;
-                        }
-                        return { skill: s, score };
-                    })
-                        .filter(item => item.score > 0)
-                        .sort((a, b) => b.score - a.score)
-                        .slice(0, 3)
-                        .map(item => `${item.skill.domain}/${item.skill.id}`);
+                    const suggestions = suggestSimilarSkills(allSkills, rawSkillId);
                     const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
                     return { success: false, error: `Invalid skill id "${rawSkillId}".${hint} Expected "domain/name", for example android/gradle-build-configuration.` };
                 }
@@ -82,27 +94,7 @@ export default {
                 }
             }
             if (!info) {
-                const queryTokens = `${domain || ''} ${id || ''} ${rawSkillId}`.toLowerCase().split(/[\/_-]/).filter(t => t.length > 2);
-                const suggestions = allSkills
-                    .map(s => {
-                    let score = 0;
-                    const d = s.domain.toLowerCase();
-                    const n = s.id.toLowerCase();
-                    const desc = (s.description || '').toLowerCase();
-                    for (const t of queryTokens) {
-                        if (n.includes(t))
-                            score += 10;
-                        if (d.includes(t))
-                            score += 8;
-                        if (desc.includes(t))
-                            score += 2;
-                    }
-                    return { skill: s, score };
-                })
-                    .filter(item => item.score > 0)
-                    .sort((a, b) => b.score - a.score)
-                    .slice(0, 3)
-                    .map(item => `${item.skill.domain}/${item.skill.id}`);
+                const suggestions = suggestSimilarSkills(allSkills, `${domain || ''} ${id || ''} ${rawSkillId}`);
                 const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
                 return { success: false, error: `Unknown skill ${domain ? `${domain}/${id}` : rawSkillId}.${hint} Search the current catalog with tool_search first.` };
             }

@@ -221,7 +221,8 @@ export class Sandbox {
 
   validate(toolName, args) {
     // 1. Tool availability check
-    if (this.deniedTools.has(String(toolName).replace(/\./g, '_'))) {
+    const canonicalToolName = String(toolName || '').replace(/\./g, '_');
+    if (this.deniedTools.has(canonicalToolName)) {
       return { allowed: false, reason: `Tool ${toolName} is denied by local policy`, risk: 'forbidden' };
     }
     if (!this.allowedTools.includes('*') && !this.allowedTools.includes(toolName)) {
@@ -233,19 +234,24 @@ export class Sandbox {
     // file_path, the Blender/Godot automators use filepath and directory, the
     // media tools use outputPath. Checking only `path` let all of those write
     // outside the workspace unchallenged.
+    // fs_read_skill parameters (`skill_id`, `file_path`) identify bundled or
+    // user-skill resources bounded strictly by skillResourceSafety.ts rather
+    // than workspace filesystem paths.
     const safeArgs = args && typeof args === 'object' ? args : {};
-    const PATH_ARGUMENTS = [
-      'path', 'searchPath', 'cwd', 'source', 'destination',
-      'file_path', 'filePath', 'filepath', 'directory',
-      'targetFile', 'outputFile', 'outputPath'
-    ];
     const pathsToCheck = [];
-    for (const field of PATH_ARGUMENTS) {
-      if (safeArgs[field]) pathsToCheck.push(safeArgs[field]);
-    }
-    if (Array.isArray(safeArgs.target_directories)) {
-      for (const dir of safeArgs.target_directories) {
-        if (typeof dir === 'string' && dir.trim()) pathsToCheck.push(dir);
+    if (canonicalToolName !== 'fs_read_skill') {
+      const PATH_ARGUMENTS = [
+        'path', 'searchPath', 'cwd', 'source', 'destination',
+        'file_path', 'filePath', 'filepath', 'directory',
+        'targetFile', 'outputFile', 'outputPath'
+      ];
+      for (const field of PATH_ARGUMENTS) {
+        if (safeArgs[field]) pathsToCheck.push(safeArgs[field]);
+      }
+      if (Array.isArray(safeArgs.target_directories)) {
+        for (const dir of safeArgs.target_directories) {
+          if (typeof dir === 'string' && dir.trim()) pathsToCheck.push(dir);
+        }
       }
     }
 

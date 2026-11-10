@@ -316,6 +316,8 @@ test('caps: a chatty tool gets less window than a dense one', () => {
   assert.ok(resultCapFor('sysRun') < resultCapFor('fs_read'),
     'a build log and a source file are not equally worth their space');
   assert.ok(resultCapFor('fs_list') < resultCapFor('sysRun'));
+  assert.equal(resultCapFor('fs_read_skill'), 16000);
+  assert.equal(resultCapFor('tool_search'), 8000);
   assert.equal(resultCapFor('some_tool_with_no_entry'), DEFAULT_RESULT_CAP);
   assert.equal(resultCapFor(''), DEFAULT_RESULT_CAP);
 });

@@ -94,7 +94,7 @@ import {
 // Provider imports
 import { detectWorkspaceDomains, ensureSkillRepo, getSkillDomainHeader } from './skillsManager.js';
 import { spillToolResult, buildDecayPointer, pruneOutputStore } from './outputStore.js';
-import { defaultToolOutputStore, processToolOutputWithStore, renderSpillDocument } from './tools/toolOutputStore.js';
+import { ToolOutputStore, defaultToolOutputStore, processToolOutputWithStore, renderSpillDocument } from './tools/toolOutputStore.js';
 import { beginTask as beginCheckpointTask, captureBeforeMutation, pruneStore as pruneCheckpointStore, resolveProjectRoot } from './checkpoints.js';
 import fsSync from 'fs';
 import os from 'os';
@@ -4767,12 +4767,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
             let resultString = JSON.stringify(result);
             // Per tool, not one number for all of them. A build log and a
             // source file are not equally worth their space in the window.
+            // Compatibility fallback preserves complete output when primary store is unavailable.
             const MAX_RESULT_CHARS = resultCapFor(functionName);
+            const inlineLimit = Math.min(MAX_RESULT_CHARS, functionName === 'fs_read_skill' ? 16000 : functionName === 'tool_search' ? 8000 : 2500);
             const originalFingerprint = createHash('sha256').update(resultString).digest('hex');
             let spill = null;
-            if (resultString.length > Math.min(MAX_RESULT_CHARS, 2500)) {
+            if (resultString.length > inlineLimit) {
               const document = renderSpillDocument(result, { taskId: this.taskId, step: this.stepsCompleted, tool: functionName });
-              const stored = processToolOutputWithStore(this.taskId, toolCall.id, document);
+              const store = inlineLimit > 2500 ? new ToolOutputStore({ maxChars: inlineLimit, maxLines: 400, maxBytes: Math.max(50 * 1024, inlineLimit * 4) }) : defaultToolOutputStore;
+              const stored = processToolOutputWithStore(this.taskId, toolCall.id, document, store);
               if (stored.isTruncated && stored.diskPath) {
                 spill = { path: stored.diskPath };
                 resultString = JSON.stringify({
@@ -4780,9 +4783,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                   ...(typeof result?.error === 'string' ? { error: result.error.slice(0, 500) } : {}),
                   output: stored.contentForModel
                 });
-              } else if (document.length > 2500) {
-                // Compatibility recovery store if the primary store is unavailable.
-                // spillToolResult preserves the full document; never truncate on failure.
+              } else if (document.length > inlineLimit) {
                 const fallback = spillToolResult(result, { taskId: this.taskId, step: this.stepsCompleted, tool: functionName });
                 if (fallback) {
                   spill = fallback;
@@ -5214,27 +5215,29 @@ You are operating in a text-and-code modality without direct image pixel renderi
       return val;
     };
 
-    // 1. File operations must have absolute paths
+    // 1. File operations must have absolute paths (fs_read_skill uses skill-relative file_path)
     const nonPathTargetTools = new Set(['vision_inspect_ui', 'astryx_oracle', 'desktop_act']);
-    const pathFields = [
-      'path', 'searchPath', 'cwd', 'directory',
-      'source', 'destination', 'file_path', 'filePath', 'filepath',
-      'targetFile', 'outputFile', 'outputPath',
-      ...(nonPathTargetTools.has(toolName) ? [] : ['target'])
-    ];
-    for (const field of pathFields) {
-      if (args[field] && typeof args[field] === 'string') {
-        const resolved = resolveOne(args[field]);
-        if (resolved !== null) {
-          args[field] = resolved;
+    if (toolName !== 'fs_read_skill') {
+      const pathFields = [
+        'path', 'searchPath', 'cwd', 'directory',
+        'source', 'destination', 'file_path', 'filePath', 'filepath',
+        'targetFile', 'outputFile', 'outputPath',
+        ...(nonPathTargetTools.has(toolName) ? [] : ['target'])
+      ];
+      for (const field of pathFields) {
+        if (args[field] && typeof args[field] === 'string') {
+          const resolved = resolveOne(args[field]);
+          if (resolved !== null) {
+            args[field] = resolved;
+          }
         }
       }
-    }
-    if (Array.isArray(args.target_directories)) {
-      args.target_directories = args.target_directories.map((entry: unknown) => {
-        if (typeof entry !== 'string') return entry;
-        return resolveOne(entry) ?? entry;
-      });
+      if (Array.isArray(args.target_directories)) {
+        args.target_directories = args.target_directories.map((entry: unknown) => {
+          if (typeof entry !== 'string') return entry;
+          return resolveOne(entry) ?? entry;
+        });
+      }
     }
     
     // 2. Terminal commands must have a command string
