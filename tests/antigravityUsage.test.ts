@@ -299,17 +299,23 @@ const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
 process.stdin.resume();
 process.stdin.on('end', () => {
   emit({event:'init',conversation_id:'large-budget-test'});
-  // Emit 150k tokens, which would have tripped the old 100k clamp
-  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:150000,output_tokens:200,cache_read_tokens:50000}}});
-  emit({event:'result',result:{status:'SUCCESS',response:'Completed large task successfully',usage:{input_tokens:150000,output_tokens:200}}});
+  // Emit 35k tokens, which trips the 32k per-call ceiling even if large budget passed
+  emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:35000,output_tokens:200,cache_read_tokens:0}}});
+  emit({event:'result',result:{status:'SUCCESS',response:'Completed large task successfully',usage:{input_tokens:35000,output_tokens:200}}});
 });
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    // User configured a 500,000 token budget
-    const res = await provider.chat([{ role: 'user', content: 'Analyze large monorepo' }], { maxTokensThisCall: 500000 });
-    assert.equal(res.content, 'Completed large task successfully');
-    assert.equal(res.usage.promptTokens, 150000);
+    // User configured a 500,000 token budget, but single call is capped at 32k
+    await assert.rejects(
+      provider.chat([{ role: 'user', content: 'Analyze large monorepo' }], { maxTokensThisCall: 500000 }),
+      (error: unknown) => {
+        const stopped = error as { code?: string; tokenLimit?: number };
+        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
+        assert.equal(stopped.tokenLimit, 32_000);
+        return true;
+      }
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -335,7 +341,7 @@ process.stdin.on('end', () => {
       (error: unknown) => {
         const stopped = error as { code?: string; tokenLimit?: number; partialUsage?: { promptTokens?: number } };
         assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
-        assert.equal(stopped.tokenLimit, 100_000);
+        assert.equal(stopped.tokenLimit, 32_000);
         assert.equal(stopped.partialUsage?.promptTokens, 120000);
         return true;
       }
@@ -410,7 +416,7 @@ process.stdin.on('end', () => {
       (error: unknown) => {
         const stopped = error as { code?: string; tokenLimit?: number };
         assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
-        assert.equal(stopped.tokenLimit, 100_000);
+        assert.equal(stopped.tokenLimit, 32_000);
         return true;
       }
     );

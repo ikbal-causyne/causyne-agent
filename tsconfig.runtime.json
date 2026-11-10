@@ -27,6 +27,7 @@
     "newLine": "lf"
   },
   "include": [
+    "src/budget/budgetPolicy.ts",
     "src/tui/skillAuthoring.ts",
     "src/sessionJournal.ts",
     "src/provisioning/npmInstall.ts",

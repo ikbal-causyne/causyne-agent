@@ -364,7 +364,7 @@ setTimeout(() => {}, 10000);
       (error: unknown) => {
         const e = error as { code?: string; tokenLimit?: number; partialUsage?: { promptTokens: number } };
         assert.equal(e.code, 'AGY_TOKEN_BUDGET');
-        assert.equal(e.tokenLimit, 100_000);
+        assert.equal(e.tokenLimit, 32_000);
         assert.equal(e.partialUsage?.promptTokens, 100_001);
         return true;
       }

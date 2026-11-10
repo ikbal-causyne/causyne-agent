@@ -65,7 +65,7 @@ test('detectNativeCycle detects repeating patterns', () => {
 });
 
 
-test('AntigravityProvider dynamically extends runway during active code edits in autonomous mode', { skip: process.platform === 'win32' }, async () => {
+test('AntigravityProvider enforces native action checkpoint in autonomous mode without bypass', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-runway-'));
   const command = path.join(directory, 'agy');
   // Mock agy that emits 60 edits to SlideEditorActivity.kt and completes
@@ -106,18 +106,24 @@ process.stdin.on('end', () => {
   try {
     const provider = new AntigravityProvider({ command });
     const streamedActions: any[] = [];
-    const response = await provider.chat(
-      [{ role: 'user', content: 'Refactor SlideEditorActivity.kt' }],
-      {
-        conversationId: 'runway-session',
-        taskArchetype: 'software_engineering',
-        hardBudget: false,
-        maxNativeActions: 50, // Initially 50
-        onNativeAction: (action) => streamedActions.push(action)
+    await assert.rejects(
+      provider.chat(
+        [{ role: 'user', content: 'Refactor SlideEditorActivity.kt' }],
+        {
+          conversationId: 'runway-session',
+          taskArchetype: 'software_engineering',
+          hardBudget: false,
+          maxNativeActions: 50,
+          onNativeAction: (action) => streamedActions.push(action)
+        }
+      ),
+      (error: unknown) => {
+        const err = error as { code?: string; message?: string };
+        assert.equal(err.code, 'AGY_NATIVE_ACTION_BUDGET');
+        assert.ok(err.message?.includes('50 native-action turn checkpoint'));
+        return true;
       }
     );
-    assert.ok(response.content.includes('SlideEditorActivity.kt refactoring completed'));
-    assert.equal(streamedActions.length, 60);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

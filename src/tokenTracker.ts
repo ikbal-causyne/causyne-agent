@@ -107,6 +107,9 @@ export class TokenTracker {
   sessionTokens: number;
   sessionCostUsd: number;
   largestStepTokens: number;
+  // Applied after every settings reload; prevents trackUsage() from silently
+  // dropping the limit selected at the beginning of this run.
+  enforcedTaskTokenLimit: number | null;
 
   constructor() {
     this.config = loadConfig() as TrackerConfig;
@@ -116,6 +119,7 @@ export class TokenTracker {
     this.sessionTokens = 0;
     this.sessionCostUsd = 0;
     this.largestStepTokens = 0;
+    this.enforcedTaskTokenLimit = null;
     this.ensureUsageDir();
   }
 
@@ -260,6 +264,7 @@ export class TokenTracker {
   ): Promise<{ allowed: boolean; used: number; costUsd: number; taskCostUsd: number; equivalentTokens: number; reason?: string }> {
     this.config = loadConfig() as TrackerConfig;
     this.budget = this.config.tokenBudget || { enabled: false };
+    this.applyEnforcedTaskLimit();
 
     const unitPrice = this.getMediaPricing(provider, model, mediaType);
     const cost = unitPrice * (quantityUnits || 1);
@@ -468,13 +473,32 @@ export class TokenTracker {
     }
   }
 
+  setEnforcedTaskLimit(limit: number | null): void {
+    this.enforcedTaskTokenLimit = Number.isSafeInteger(limit) && Number(limit) > 0
+      ? Number(limit) : null;
+    this.applyEnforcedTaskLimit();
+  }
+
+  private applyEnforcedTaskLimit(): void {
+    const limit = this.enforcedTaskTokenLimit;
+    if (limit === null) return;
+    this.budget = {
+      ...this.budget,
+      enabled: true,
+      hardStop: true,
+      maxTokensPerTask: limit
+    };
+  }
+
   resetTask(): void {
+    this.enforcedTaskTokenLimit = null;
     this.taskTokens = 0;
     this.taskCostUsd = 0;
     this.largestStepTokens = 0;
   }
 
   resetSession(): void {
+    this.enforcedTaskTokenLimit = null;
     this.sessionTokens = 0;
     this.sessionCostUsd = 0;
     this.taskTokens = 0;
@@ -514,6 +538,7 @@ export class TokenTracker {
   ): Promise<SettledUsage> {
     this.config = loadConfig() as TrackerConfig;
     this.budget = this.config.tokenBudget || { enabled: false };
+    this.applyEnforcedTaskLimit();
 
     const finite = (v: number | undefined | null): number => (Number.isFinite(v) ? Math.max(0, Number(v)) : 0);
     const pTokens = finite(promptTokens);

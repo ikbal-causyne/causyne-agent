@@ -27,6 +27,9 @@ export class TokenTracker {
     sessionTokens;
     sessionCostUsd;
     largestStepTokens;
+    // Applied after every settings reload; prevents trackUsage() from silently
+    // dropping the limit selected at the beginning of this run.
+    enforcedTaskTokenLimit;
     constructor() {
         this.config = loadConfig();
         this.budget = this.config.tokenBudget || { enabled: false };
@@ -35,6 +38,7 @@ export class TokenTracker {
         this.sessionTokens = 0;
         this.sessionCostUsd = 0;
         this.largestStepTokens = 0;
+        this.enforcedTaskTokenLimit = null;
         this.ensureUsageDir();
     }
     getPricing(promptTokens = 0) {
@@ -178,6 +182,7 @@ export class TokenTracker {
     async trackMediaUsage(provider, mediaType, model, quantityUnits = 1, onWarning = null) {
         this.config = loadConfig();
         this.budget = this.config.tokenBudget || { enabled: false };
+        this.applyEnforcedTaskLimit();
         const unitPrice = this.getMediaPricing(provider, model, mediaType);
         const cost = unitPrice * (quantityUnits || 1);
         const equivalentTokens = Math.round(cost / 0.000002);
@@ -354,12 +359,30 @@ export class TokenTracker {
             }
         }
     }
+    setEnforcedTaskLimit(limit) {
+        this.enforcedTaskTokenLimit = Number.isSafeInteger(limit) && Number(limit) > 0
+            ? Number(limit) : null;
+        this.applyEnforcedTaskLimit();
+    }
+    applyEnforcedTaskLimit() {
+        const limit = this.enforcedTaskTokenLimit;
+        if (limit === null)
+            return;
+        this.budget = {
+            ...this.budget,
+            enabled: true,
+            hardStop: true,
+            maxTokensPerTask: limit
+        };
+    }
     resetTask() {
+        this.enforcedTaskTokenLimit = null;
         this.taskTokens = 0;
         this.taskCostUsd = 0;
         this.largestStepTokens = 0;
     }
     resetSession() {
+        this.enforcedTaskTokenLimit = null;
         this.sessionTokens = 0;
         this.sessionCostUsd = 0;
         this.taskTokens = 0;
@@ -391,6 +414,7 @@ export class TokenTracker {
     async trackUsage(promptTokens, completionTokens, onWarning = null, usageDetail = null) {
         this.config = loadConfig();
         this.budget = this.config.tokenBudget || { enabled: false };
+        this.applyEnforcedTaskLimit();
         const finite = (v) => (Number.isFinite(v) ? Math.max(0, Number(v)) : 0);
         const pTokens = finite(promptTokens);
         const cTokens = finite(completionTokens);

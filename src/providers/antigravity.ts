@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider, type ProviderConfig, type ChatOptions, type ChatResponse, type ChatResponseAction, type ChatResponseToolCall, type ChatResponseUsage } from './base.js';
+import { peerCallTokenCeiling, peerNativeActionCeiling, shouldRetryPeerError, remainingDesktopTime, createBudgetError, DESKTOP_TASK_WALL_MS } from '../budget/budgetPolicy.js';
 import { extractToolCallJsonObjects, stripToolCallMarkup, stripThinkBlocks, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 
 /**
@@ -944,6 +945,10 @@ export class AntigravityProvider extends LLMProvider {
     const latestPrompt = typeof latestUserMessage?.content === 'string' ? latestUserMessage.content : '';
     const launchOnly = (options as any).taskIntent === 'launch' || isLaunchOnlyPrompt(latestPrompt);
     const desktopTask = (options as any).taskArchetype === 'desktop_personalization';
+    const remainingWall = desktopTask ? remainingDesktopTime((options as any).taskDeadlineMs) : null;
+    if (remainingWall !== null && remainingWall <= 0) {
+      throw createBudgetError('AGY_TASK_DEADLINE', 'Desktop task wall-clock budget reached before the next peer invocation.');
+    }
     let promptText: string;
 
     if (useConversation) {
@@ -1058,9 +1063,7 @@ export class AntigravityProvider extends LLMProvider {
         }
       };
       const configuredActions = Number(options.maxNativeActions);
-      const isAutonomous = (options as any).hardBudget === false;
-      let maxNativeActions = Number.isSafeInteger(configuredActions) && configuredActions >= 0
-        ? configuredActions : desktopTask ? 12 : isAutonomous ? Infinity : 35;
+      const maxNativeActions = peerNativeActionCeiling(configuredActions, desktopTask);
       let nativeActionStarts = 0;
       let lastMutationActionIndex = 0;
       let progressiveActionsCount = 0;
@@ -1085,21 +1088,21 @@ export class AntigravityProvider extends LLMProvider {
       // disabled. Users can set a lower task budget through the existing UI.
       const remainingTaskBudget = Number(options.maxTokensThisCall);
       const rawTokenLimit = Number((options as any).tokenLimit);
-      const hasExplicitLimit = (Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0)
-        || (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0);
       const countReportedTotal = options.tokenBudgetBasis !== 'noncached';
-      const defaultTokenLimit = 100_000;
-      const tokenLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
-        ? remainingTaskBudget
-        : (Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
-            ? rawTokenLimit
-            : defaultTokenLimit);
-      const wallTimer = desktopTask ? setTimeout(() => {
-        const error = new Error('Antigravity exceeded the 180-second desktop task limit. Outcome is unverified.') as Error & { code: string };
-        error.code = 'AGY_DESKTOP_TASK_LIMIT';
+      // A peer may execute many model steps without returning to AgentLoop.
+      // Count uncached input + output for the conservative default ceiling.
+      const requestedLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
+        ? remainingTaskBudget : Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
+          ? rawTokenLimit : Infinity;
+      const tokenLimit = peerCallTokenCeiling(requestedLimit);
+      const wallMs = desktopTask ? Math.min(DESKTOP_TASK_WALL_MS,
+        remainingWall === null ? DESKTOP_TASK_WALL_MS : remainingWall) : null;
+      const wallTimer = wallMs !== null ? setTimeout(() => {
+        const error = createBudgetError('AGY_DESKTOP_TASK_LIMIT',
+          'Antigravity exceeded the remaining desktop task wall-clock allowance. Outcome is unverified.');
         safeReject(error);
         terminateChild();
-      }, 180_000) : null;
+      }, wallMs) : null;
       wallTimer?.unref();
 
       const cleanup = () => {
@@ -1210,21 +1213,15 @@ export class AntigravityProvider extends LLMProvider {
                   const reportedTotal = partialUsage.promptTokens + partialUsage.completionTokens;
                   const uncachedTotal = noncachedTokens(partialUsage);
                   const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
-                  if (Number.isFinite(tokenLimit) && tokenLimit > 0
-                    && spentAgainstLimit >= tokenLimit) {
-                    if ((options as any).hardBudget === false) {
-                      if (process.env.CAUSYNE_DEBUG === '1') {
-                        console.log(`[BUDGET] Turn spent ${spentAgainstLimit} tokens against soft checkpoint ${tokenLimit}. Continuing execution.`);
-                      }
-                    } else {
-                      const error = Object.assign(
-                        new Error(`Antigravity reported ${spentAgainstLimit} tokens against a ${tokenLimit}-token per-call ceiling. This turn stopped and its outcome is unverified.`),
-                        { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }
-                      );
-                      safeReject(error);
-                      terminateChild();
-                      return;
-                    }
+                  if (spentAgainstLimit >= tokenLimit) {
+                    const error = Object.assign(
+                      createBudgetError('AGY_TOKEN_BUDGET',
+                        `Antigravity reached the ${tokenLimit}-token per-call ceiling. Outcome is unverified.`),
+                      { tokenLimit, partialUsage: { ...partialUsage } }
+                    );
+                    safeReject(error);
+                    terminateChild();
+                    return;
                   }
                 }
               }
@@ -1321,7 +1318,7 @@ export class AntigravityProvider extends LLMProvider {
 
                 if (newNativeAction) {
                   nativeActionStarts++;
-                  if (!isAutonomous && Number.isFinite(maxNativeActions) && nativeActionStarts > maxNativeActions) {
+                  if (nativeActionStarts > maxNativeActions) {
                     const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`) as Error & { code: string };
                     error.code = 'AGY_NATIVE_ACTION_BUDGET';
                     safeReject(error);
@@ -1699,16 +1696,11 @@ export class AntigravityProvider extends LLMProvider {
         const uncachedTotal = noncachedTokens(response.usage);
         const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
         if (spentAgainstLimit >= tokenLimit) {
-          if ((options as any).hardBudget === false) {
-            if (process.env.CAUSYNE_DEBUG === '1') {
-              console.log(`[BUDGET] Turn finished with ${spentAgainstLimit} tokens against soft checkpoint ${tokenLimit}. Preserving result.`);
-            }
-          } else {
-            Object.assign(partialUsage, response.usage);
-            safeReject(Object.assign(new Error(`Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`),
-              { code: 'AGY_TOKEN_BUDGET', tokenLimit, partialUsage: { ...partialUsage } }));
-            return;
-          }
+          Object.assign(partialUsage, response.usage);
+          safeReject(Object.assign(createBudgetError('AGY_TOKEN_BUDGET',
+            `Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`),
+            { tokenLimit, partialUsage: { ...partialUsage } }));
+          return;
         }
         safeResolve(response);
       });
@@ -1723,10 +1715,8 @@ export class AntigravityProvider extends LLMProvider {
       try {
         return await this._executeOnce(messages, options);
       } catch (err: any) {
-        if (options.signal?.aborted || err?.name === 'AbortError') {
-          throw err;
-        }
-        if (err?.code === 'AGY_NATIVE_ACTION_DENIED' || err?.code === 'AGY_TOKEN_BUDGET' || err?.code === 'PROVIDER_NO_PROGRESS') {
+        if (!shouldRetryPeerError(err, options.signal?.aborted === true || err?.name === 'AbortError')
+          || err?.code === 'AGY_NATIVE_ACTION_DENIED' || err?.code === 'PROVIDER_NO_PROGRESS') {
           throw err;
         }
         const msg = String(err?.message || '').toLowerCase();

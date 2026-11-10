@@ -6,6 +6,7 @@ import { getProcessEntitlementGate, EntitlementAccessError } from './licensing/e
 import { repairUnansweredToolCalls, validateToolCallBatch } from './agent/toolTurnIntegrity.js';
 import { waitForAbortableDelay } from './agent/abortableDelay.js';
 import { normalizeAgentFailure } from './agent/providerFailure.js';
+import { resolveTaskTokenCeiling, peerCallTokenCeiling, isAntigravityPeer, isTerminalBudgetFailure, desktopDeadline, remainingDesktopTime } from './budget/budgetPolicy.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import type { RequestPermissionRequest, RequestPermissionResponse } from './acp/protocol.js';
 import { createHash, randomUUID } from 'crypto';
@@ -1772,8 +1773,21 @@ export class AgentLoop {
     // run() owns cancellation and rearms it exactly once, before awaiting
     // entitlements. A second reset here could resurrect an aborted task.
     if (this.stopRequested || this.abortController?.signal?.aborted) return;
-    // Refresh tier limits on every task run
+    // Refresh tier limits on every task run.
     this.updateTierLimits();
+    // The CLI reuses AgentLoop between messages. Task consumption must not
+    // leak into the next turn, but session/daily consumption is retained.
+    this.tokenTracker.resetTask();
+    const guardLimit = resolveTaskTokenCeiling({
+      provider: this.config.provider,
+      workerLimit: this.taskTokenLimit,
+      configured: this.tokenTracker.budget
+    });
+    this.tokenTracker.setEnforcedTaskLimit(guardLimit);
+    const taskArchetype = determineToolScope(
+      this.currentTaskPrompt || this.userPrompt || '', this.taskShape
+    ).archetype;
+    this._taskWallDeadlineAt = desktopDeadline(Date.now(), taskArchetype);
     if (!this.llm) {
       throw new Error("API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.");
     }
@@ -2133,6 +2147,13 @@ export class AgentLoop {
 
     // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
     while (!this.stopRequested) {
+      const desktopTimeLeft = remainingDesktopTime(this._taskWallDeadlineAt);
+      if (desktopTimeLeft !== null && desktopTimeLeft <= 0) {
+        this.emitEvent({ type: 'budget_warning', message:
+          'Desktop task stopped at its 180-second wall-clock ceiling. Progress is preserved; outcome is unverified.' });
+        auditLog.log({ event: 'task_stopped_on_wall_budget', taskId: this.taskId });
+        break;
+      }
       // CAUSYNE_ENTITLEMENT_V1: verify an authorized lease before each model step.
       try {
         await this._entitlementGate?.beforeStep();
@@ -2542,26 +2563,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
         }
         const affordability = this.tokenTracker.canAffordAnotherStep();
         if (!affordability.allowed) {
-          if (hardBudget) {
-            this.emitEvent({ type: 'budget_warning', message: affordability.reason });
-            this.emitEvent({ type: 'notice', message: 'Stopped before the token ceiling. Nothing was truncated mid-step.' });
-            if (this._offeredPlanId) {
-              try { recordMiss(this._offeredPlanId); } catch (e: any) { /* never block a stop */ }
-            }
-            auditLog.log({
-              event: 'task_stopped_on_budget', taskId: this.taskId,
-              used: affordability.used, limit: affordability.limit, projected: affordability.projected
-            });
-            break;
-          } else {
-            // Proactive history compaction rather than artificial abort (OpenCode / SWE-agent pattern)
-            pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
-            shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
-            pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
-            const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
-            const extraTokens = Math.max(stepScale * 10, 1_000_000);
-            this.tokenTracker.extendBudget(extraTokens);
+          this.emitEvent({ type: 'budget_warning', message: affordability.reason });
+          this.emitEvent({ type: 'notice', message: 'Task stopped at its token ceiling before the next model call.' });
+          if (this._offeredPlanId) {
+            try { recordMiss(this._offeredPlanId); } catch { /* never block a stop */ }
           }
+          auditLog.log({
+            event: 'task_stopped_on_budget', taskId: this.taskId,
+            used: affordability.used, limit: affordability.limit, projected: affordability.projected
+          });
+          break;
         }
 
         // 2. PLAN (Call LLM). dynamicTools was resolved above so the task brief
@@ -2612,10 +2623,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
           taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
           taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
           hardBudget: hardBudget,
-          maxTokensThisCall: Number.isFinite(configuredRemainingBudget) && hardBudget ? configuredRemainingBudget : undefined,
-          tokenBudgetBasis: Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
+          // The peer can perform multiple billable model steps inside one
+          // chat() call. The per-call bound is independent of autonomy mode.
+          maxTokensThisCall: isAntigravityPeer(this.config.provider)
+            ? peerCallTokenCeiling(configuredRemainingBudget)
+            : Number.isFinite(configuredRemainingBudget) && hardBudget ? configuredRemainingBudget : undefined,
+          tokenBudgetBasis: isAntigravityPeer(this.config.provider) ? 'noncached'
+            : Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
           tokenLimit: hardBudget && Number.isFinite(remainingBudget) && remainingBudget > 0
             ? remainingBudget : undefined,
+          taskDeadlineMs: this._taskWallDeadlineAt ?? undefined,
           workspaceRoot: this.workspaceRoot,
           onPeerPermission: (request: RequestPermissionRequest) => this.requestPeerPermission(request),
           onPeerFileRead: (file: string, options?: { line?: number; limit?: number }) => this.executePeerFile('fs_read', file, undefined, options),
@@ -4894,34 +4911,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
           this.memoryManager.saveHistory(this.messages);
           continue;
         }
-        if (e?.code === 'TASK_TOKEN_BUDGET' || e?.code === 'PROVIDER_TOKEN_BUDGET'
-          || e?.code === 'AGY_DESKTOP_TASK_LIMIT' || e?.code === 'AGY_TOKEN_BUDGET' || e?.code === 'AGY_NATIVE_ACTION_BUDGET') {
-          const isExplicitHardBudget = (Number.isInteger(this.taskTokenLimit) && (this.taskTokenLimit as number) > 0)
-            || (this.tokenTracker.budget?.enabled === true && this.tokenTracker.budget?.hardStop === true);
-          if (this.config.autonomyMode === 'C' && !isExplicitHardBudget) {
-            this.emitEvent({ type: 'budget_warning', message: e.message });
-            pruneStaleToolObservations(this.messages, { keepRecent: 3, minChars: 300, taskId: this.taskId });
-            shortenOversizedToolObservations(this.messages, { threshold: 1500, taskId: this.taskId });
-            pruneExecutedToolArguments(this.messages, { threshold: 1500, taskId: this.taskId });
-            const stepScale = Math.max(this.tokenTracker.largestStepTokens || 50_000, 100_000);
-            const extraTokens = Math.max(stepScale * 10, 1_000_000);
-            this.tokenTracker.extendBudget(extraTokens);
-            this.emitEvent({ type: 'status', message: 'Continuing autonomous task execution without artificial interruption…' });
-            this.messages.push({
-              role: 'system',
-              content: '[Autonomous task continuation: Do not repeat prior actions. Proceed with executing next concrete steps.]'
-            });
-            this.memoryManager.saveHistory(this.messages);
-            continue;
-          }
+        if (isTerminalBudgetFailure(e)) {
+          // Budget checkpoints always stop this task. Mode C is autonomous
+          // about tools, not about spending user resources without approval.
           this.messages.push({ role: 'system', content: `[Unfinished task checkpoint] ${e.message}` });
           this.memoryManager.saveHistory(this.messages);
           this.emitEvent({ type: 'budget_warning', message: e.message });
           auditLog.log({
-            event: 'efficiency_checkpoint',
-            taskId: this.taskId,
-            reason: (e as any)?.reason || (e as any)?.code,
-            tokenUsage: this.tokenTracker.taskTokens
+            event: 'efficiency_checkpoint', taskId: this.taskId,
+            reason: e.code, tokenUsage: this.tokenTracker.taskTokens,
+            outcome: 'unverified'
           });
           break;
         }
