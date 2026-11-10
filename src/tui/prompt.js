@@ -22,6 +22,7 @@ import { TerminalInputFramer, INPUT_PREFIX_TIMEOUT_MS, shouldTreatAsAtomicPaste 
 import { LineEditor } from './lineEditor.js';
 import { PromptHistory } from './history.js';
 import { FileIndex, suggest, applyCompletion, detectTrigger, renderPicker, MAX_VISIBLE } from './completion.js';
+import { removeInlineSlashToken, isInlineSkillInvocation } from './inlineSlash.js';
 import { paint, dim, bold, GLYPHS, terminalWidth, HAS_COLOR } from './theme.js';
 import { barBlock, GUTTER } from './block.js';
 import { composerGeometry } from './composerGeometry.js';
@@ -1446,6 +1447,12 @@ export class ChatPrompt {
         }
 
         if (item) {
+          if (this.completion.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
+            const selectedCommand = this.completion.kind === 'command'
+              ? item.value : `/${this.completion.command} ${item.value}`;
+            this.runInlineSlashSelection(selectedCommand);
+            return true;
+          }
           if (this.completion.kind === 'command') {
             // A skill entry goes onto the line so the user can say what to do
             // with it; clicking it used to invoke it immediately with no task.
@@ -1466,8 +1473,14 @@ export class ChatPrompt {
       }
       return true;
     }
-    if (key.name === 'enter' && !key.alt) {
+    if (key.name === 'enter' && !key.alt && !key.shift) {
       const item = this.completion.items && this.completion.items[this.selected];
+      if (item && this.completion.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
+        const selectedCommand = this.completion.kind === 'command'
+          ? item.value : `/${this.completion.command} ${item.value}`;
+        this.runInlineSlashSelection(selectedCommand);
+        return true;
+      }
       if (this.completion.kind === 'command' && item) {
         if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
           this.acceptCompletion();
@@ -1486,10 +1499,22 @@ export class ChatPrompt {
       this.acceptCompletion();
       return true;
     }
-    if (key.name === 'tab') { this.acceptCompletion(); return true; }
+    if (key.name === 'tab') {
+      if (this.completion?.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
+        // Tab must never silently turn an unsent message into a local command.
+        this.notice = 'Press Enter to run the selected command; your unsent draft is preserved.';
+        this.scheduleDraw();
+        return true;
+      }
+      this.acceptCompletion();
+      return true;
+    }
     if (key.name === 'escape') {
+      const dismissed = this.completion;
       this.completion = null;
-      if (this.editor.getText().startsWith('/')) {
+      // Only discard a standalone leading command token. Never erase a
+      // longer draft just because its first character happens to be /.
+      if (!dismissed?.inline && /^\s*\/[a-z0-9_?-]*$/i.test(this.editor.getText())) {
         this.editor.clear();
       }
       this.scheduleDraw();
@@ -1521,6 +1546,56 @@ export class ChatPrompt {
     this.completion = null;
     this.editor.setText(value);
     this.submit();
+  }
+
+  /**
+   * Execute an explicitly selected slash action from anywhere in a draft.
+   * Ordinary commands run through submit() with the unsent draft suspended;
+   * selecting a compiled skill applies it to the draft as its instruction.
+   * Neither path changes parseCommand() or interprets ambient prose as control.
+   */
+  runInlineSlashSelection(value) {
+    const trigger = this.completion;
+    if (!trigger?.inline || (trigger.kind !== 'command' && trigger.kind !== 'command-argument')) {
+      this.submitPickedCommand(value);
+      return;
+    }
+
+    const currentText = this.editor.getText();
+    const currentCursor = this.cursorOffset();
+    let remaining;
+    try {
+      remaining = removeInlineSlashToken(currentText, currentCursor, trigger);
+    } catch (error) {
+      // The draft might have changed since the last render. Never execute a
+      // command selected against stale input or erase user-authored text.
+      this.notice = 'The command text changed. Reopen the / menu and select again.';
+      this.completion = null;
+      this.scheduleDraw();
+      return;
+    }
+
+    const consumeDraft = isInlineSkillInvocation(value) && remaining.text.trim().length > 0;
+    const commandText = consumeDraft ? `${value} ${remaining.text.trim()}` : value;
+
+    // submit() itself protects the queue, but return early here to avoid
+    // discarding the unfinished inline token when the command was not queued.
+    if (this.busy && this.queue.length >= 32 && !/^\/(?:stop|interrupt)$/i.test(commandText)) {
+      this.notice = '32 queued messages: command not submitted; your draft is unchanged.';
+      this.scheduleDraw();
+      return;
+    }
+
+    this.completion = null;
+    try {
+      this.editor.setText(commandText);
+      this.submit(); // existing history, permission and command-dispatch boundary
+    } finally {
+      this.editor.setText(consumeDraft ? '' : remaining.text);
+      if (!consumeDraft) this.setCursorOffset(remaining.cursor);
+      this.completion = null;
+      this.scheduleDraw();
+    }
   }
 
   acceptCompletion() {
@@ -1845,6 +1920,9 @@ export class ChatPrompt {
     const matched = this.completion.total || this.completion.items.length;
     const hidden = matched - drawn.length;
     if (hidden > 0) drawn.push(dim(`    ${GLYPHS.ellipsis} ${hidden} more`));
+    if (this.completion?.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
+      drawn.push(dim('    ' + truncate('Enter run  ·  Esc dismiss  ·  draft protected', Math.max(0, width - 5))));
+    }
     return drawn;
   }
 }

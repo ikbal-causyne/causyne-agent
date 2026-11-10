@@ -260,8 +260,13 @@ describe('completion — suggestions that cannot lie or inject', () => {
     assert.equal(detectTrigger('/usr/local/bin', 14), null);
   });
 
-  test('a slash in the middle of a sentence does not open the picker', () => {
-    assert.equal(suggest('fix the /usr path', 12), null);
+  test('a command token after prose opens the picker without treating paths as commands', () => {
+    const text = 'fix the app /mo';
+    const menu = suggest(text, text.length);
+    assert.equal(menu?.kind, 'command');
+    assert.equal(menu?.inline, true);
+    assert.ok(menu.items.some((item) => item.value === '/model'));
+    assert.equal(suggest('fix the /usr/local path', 18), null);
   });
 
   test('@ completes files, and applying it inserts a mention', () => {
@@ -813,10 +818,13 @@ describe('completion — a command completes its own arguments', () => {
       'only a single argument token completes — opencode hides on the same condition');
   });
 
-  test('a slash mid-sentence never becomes a command argument', () => {
+  test('inline command arguments work but slash paths remain ordinary text', () => {
     assert.equal(detectTrigger('please read /usr/local x', 24), null);
-    assert.equal(detectTrigger('tell me about /skills d', 23), null,
-      'the trigger is anchored, exactly as the command trigger is');
+    const text = 'tell me about /skills d';
+    const trigger = detectTrigger(text, text.length);
+    assert.equal(trigger?.kind, 'command-argument');
+    assert.equal(trigger?.command, 'skills');
+    assert.equal(trigger?.inline, true);
   });
 
   test('typing letters narrows the suggestions', () => {

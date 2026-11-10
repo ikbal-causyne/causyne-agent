@@ -18,6 +18,7 @@ import { listCommands } from '../commands.js';
 import { listCompiledSkills as listSkillsForCompletion } from '../skillsManager.js';
 import { sanitize, shortenHome } from './text.js';
 import { WorkspaceFileIndex } from './workspaceFileIndex.js';
+import { detectInlineSlashTrigger } from './inlineSlash.js';
 export { WorkspaceFileIndex as FileIndex };
 
 export const MAX_VISIBLE = 8;
@@ -312,44 +313,14 @@ function directoryItems(root, partial) {
 // ---------------------------------------------------------------------------
 
 /**
- * What, if anything, should be completed at the cursor.
- *
- * `/` only counts at the very start of the input — that is what keeps a task
- * that merely mentions `/usr/local/bin` from opening a command picker, the same
- * rule parseCommand() enforces when the line is finally submitted.
+ * Find a slash command or @ reference at the current caret position.
+ * Slash detection works at any whitespace-delimited token boundary. Execution
+ * remains exclusive to explicit selection; normal prompt dispatch is unchanged.
  */
 export function detectTrigger(text, cursor) {
   const before = text.slice(0, cursor);
-
-  if (/^\/[a-z0-9_?-]*$/i.test(before)) {
-    return { kind: 'command', start: 0, query: before.slice(1) };
-  }
-
-  // `/command <argument>` — the command's OWN suggestions.
-  //
-  // Completion used to stop dead at the space: `/skills d` offered nothing, so
-  // the only way to reach a skill was to submit `/skills` bare and browse. With
-  // a hundred of them that is a poor trade for someone who already knows the
-  // name they want.
-  //
-  // openclaw's contract (src/tui/commands.ts): a command declares its argument
-  // completions and the prompt asks it for the ones matching what has been typed
-  // — `getArgumentCompletions(prefix)`. Same shape here, generic over every
-  // command, so `/mcp`, `/model` and the rest can adopt it by adding one
-  // function and nothing in this file changes.
-  //
-  // Anchored, and a single argument token only: a second word ends the
-  // completion rather than trying to complete inside a sentence. opencode hides
-  // its picker on exactly the same condition.
-  const argument = before.match(/^\/([a-z0-9_?-]+)[ \t]+(\S*)$/i);
-  if (argument) {
-    return {
-      kind: 'command-argument',
-      command: argument[1],
-      start: cursor - argument[2].length,
-      query: argument[2]
-    };
-  }
+  const slash = detectInlineSlashTrigger(text, cursor);
+  if (slash) return slash;
 
   // 1. Quoted @ file mention: @"pixel2d games/ or @'pixel2d games/
   // Supports spaces in directory or file names
