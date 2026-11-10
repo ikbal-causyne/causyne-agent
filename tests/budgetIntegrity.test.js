@@ -26,7 +26,8 @@ test('Antigravity cannot skip checkpoint when hardBudget is false', () => {
   assert.doesNotMatch(code, /isAutonomous\s*\?\s*Infinity/);
   assert.doesNotMatch(code, /!isAutonomous\s*&&\s*Number\.isFinite\(maxNativeActions\)/);
   assert.match(code, /shouldRetryPeerError\(err/);
-  assert.match(code, /const tokenLimit = peerCallTokenCeiling\(requestedLimit\)/);
+  assert.match(code, /const tokenLimit = peerCallTokenCeiling\(options.maxTokensThisCall\)/);
+  assert.match(code, /if \(tokenLimit !== null && spentAgainstLimit >= tokenLimit\)/);
 });
 
 test('TokenTracker retains the per-task ceiling after reload', async () => {
@@ -72,9 +73,10 @@ test('A transient error with already billed partial usage is not replayed', asyn
   assert.equal(invocations, 1);
 });
 
-test('Budget policy is finite under default and gives explicit limits precedence', () => {
-  assert.equal(resolveTaskTokenCeiling({ provider: 'antigravity' }), 80_000);
-  assert.equal(resolveTaskTokenCeiling({ provider: 'antigravity', configured: { enabled: true, maxTokensPerTask: 10_000 } }), 10_000);
+test('Only explicit hard ceilings are terminal; soft defaults never block work', () => {
+  assert.equal(resolveTaskTokenCeiling({ provider: 'antigravity' }), null);
+  assert.equal(resolveTaskTokenCeiling({ provider: 'antigravity', configured: { enabled: true, hardStop: true, maxTokensPerTask: 10_000 } }), 10_000);
+  assert.equal(peerCallTokenCeiling(Infinity), null);
   assert.equal(peerCallTokenCeiling(20_000), 20_000);
   assert.equal(isTerminalBudgetFailure({ code: 'AGY_NATIVE_ACTION_BUDGET' }), true);
 });

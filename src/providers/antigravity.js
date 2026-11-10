@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider } from './base.js';
-import { peerCallTokenCeiling, peerNativeActionCeiling, shouldRetryPeerError, remainingDesktopTime, createBudgetError, DESKTOP_TASK_WALL_MS } from '../budget/budgetPolicy.js';
+import { peerCallTokenCeiling, peerNativeActionCeiling, shouldRetryPeerError, remainingDesktopTime, createBudgetError, DEFAULT_AGY_CALL_TOKENS } from '../budget/budgetPolicy.js';
 import { extractToolCallJsonObjects, stripToolCallMarkup, stripThinkBlocks, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 /**
  * Baseline fallback models for instant offline availability.
@@ -955,7 +955,7 @@ export class AntigravityProvider extends LLMProvider {
                 'Use only the tools needed. Search and download alone are not completion. ' +
                 'After setting the desktop picture, read back the actual system wallpaper and compare it with the intended image. ' +
                 'If a command is denied or the readback does not confirm the change, report the blocker honestly. ' +
-                'Keep native tool actions within 12; use Causyne tool calls when a native action is blocked.\n\n' + promptText;
+                'Avoid repeated or unnecessary actions; use Causyne tools when a native action is blocked.\n\n' + promptText;
         }
         const taskArchetype = options.taskArchetype || determineToolScope(latestPrompt).archetype;
         const webOrGameTask = taskArchetype === 'web_engineering' || taskArchetype === 'game_development';
@@ -1021,7 +1021,7 @@ export class AntigravityProvider extends LLMProvider {
                     // A process that already exited needs no further action.
                 }
             };
-            const configuredActions = Number(options.maxNativeActions);
+            const configuredActions = options.maxNativeActions;
             const maxNativeActions = peerNativeActionCeiling(configuredActions, desktopTask);
             let nativeActionStarts = 0;
             let lastMutationActionIndex = 0;
@@ -1042,19 +1042,24 @@ export class AntigravityProvider extends LLMProvider {
                 promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0,
                 thinkingTokens: 0, measurement: 'provider_reported', cacheMeasurement: 'provider_reported'
             };
-            // A headless peer can run many paid model steps before chat() returns.
-            // Keep a finite per-call ceiling even when the optional task budget is
-            // disabled. Users can set a lower task budget through the existing UI.
-            const remainingTaskBudget = Number(options.maxTokensThisCall);
-            const rawTokenLimit = Number(options.tokenLimit);
+            // Never invent a 32k token limit or 180s task deadline for a user.
+            // Explicit user hard caps are still enforced on streamed steps.
             const countReportedTotal = options.tokenBudgetBasis !== 'noncached';
-            // A peer may execute many model steps without returning to AgentLoop.
-            // Count uncached input + output for the conservative default ceiling.
-            const requestedLimit = Number.isFinite(remainingTaskBudget) && remainingTaskBudget > 0
-                ? remainingTaskBudget : Number.isFinite(rawTokenLimit) && rawTokenLimit > 0
-                ? rawTokenLimit : Infinity;
-            const tokenLimit = peerCallTokenCeiling(requestedLimit);
-            const wallMs = desktopTask ? Math.min(DESKTOP_TASK_WALL_MS, remainingWall === null ? DESKTOP_TASK_WALL_MS : remainingWall) : null;
+            const tokenLimit = peerCallTokenCeiling(options.maxTokensThisCall)
+                ?? peerCallTokenCeiling(options.tokenLimit);
+            const wallMs = desktopTask ? remainingWall : null;
+            let softCallNoticeIssued = false;
+            const noteSoftUsage = (usedTokens) => {
+                if (tokenLimit !== null || softCallNoticeIssued || usedTokens < DEFAULT_AGY_CALL_TOKENS)
+                    return;
+                softCallNoticeIssued = true;
+                if (typeof options.onBudgetAdvisory === 'function') {
+                    try {
+                        options.onBudgetAdvisory({ scope: 'provider call', usedTokens, threshold: DEFAULT_AGY_CALL_TOKENS });
+                    }
+                    catch { /* UI callbacks must not break the peer's stream. */ }
+                }
+            };
             const wallTimer = wallMs !== null ? setTimeout(() => {
                 const error = createBudgetError('AGY_DESKTOP_TASK_LIMIT', 'Antigravity exceeded the remaining desktop task wall-clock allowance. Outcome is unverified.');
                 safeReject(error);
@@ -1116,6 +1121,11 @@ export class AntigravityProvider extends LLMProvider {
                 }
                 options.signal.addEventListener('abort', onAbort, { once: true });
             }
+            if (tokenLimit === 0) {
+                safeReject(createBudgetError('AGY_TOKEN_BUDGET', 'Explicit per-call token allowance is exhausted.'));
+                terminateChild();
+                return;
+            }
             // Feed prompt directly into child process stdin, then close stdin
             try {
                 child.stdin.on('error', () => { });
@@ -1170,7 +1180,8 @@ export class AntigravityProvider extends LLMProvider {
                                     const reportedTotal = partialUsage.promptTokens + partialUsage.completionTokens;
                                     const uncachedTotal = noncachedTokens(partialUsage);
                                     const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
-                                    if (spentAgainstLimit >= tokenLimit) {
+                                    noteSoftUsage(spentAgainstLimit);
+                                    if (tokenLimit !== null && spentAgainstLimit >= tokenLimit) {
                                         const error = Object.assign(createBudgetError('AGY_TOKEN_BUDGET', `Antigravity reached the ${tokenLimit}-token per-call ceiling. Outcome is unverified.`), { tokenLimit, partialUsage: { ...partialUsage } });
                                         safeReject(error);
                                         terminateChild();
@@ -1268,7 +1279,7 @@ export class AntigravityProvider extends LLMProvider {
                                 }
                                 if (newNativeAction) {
                                     nativeActionStarts++;
-                                    if (nativeActionStarts > maxNativeActions) {
+                                    if (maxNativeActions !== null && nativeActionStarts > maxNativeActions) {
                                         const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`);
                                         error.code = 'AGY_NATIVE_ACTION_BUDGET';
                                         safeReject(error);
@@ -1636,7 +1647,8 @@ export class AntigravityProvider extends LLMProvider {
                 const reportedTotal = promptTokens + completionTokens;
                 const uncachedTotal = noncachedTokens(response.usage);
                 const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
-                if (spentAgainstLimit >= tokenLimit) {
+                noteSoftUsage(spentAgainstLimit);
+                if (tokenLimit !== null && spentAgainstLimit >= tokenLimit) {
                     Object.assign(partialUsage, response.usage);
                     safeReject(Object.assign(createBudgetError('AGY_TOKEN_BUDGET', `Antigravity reached its ${tokenLimit}-token checkpoint. Work remains unverified.`), { tokenLimit, partialUsage: { ...partialUsage } }));
                     return;

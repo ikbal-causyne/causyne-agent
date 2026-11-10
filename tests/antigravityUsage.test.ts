@@ -189,7 +189,7 @@ process.stdin.on('end', () => {
     const provider = new AntigravityProvider({ command });
     await assert.rejects(
       provider.chat([{ role: 'user', content: 'Change my wallpaper' }], {
-        conversationId: 'session-2', taskArchetype: 'desktop_personalization'
+        conversationId: 'session-2', taskArchetype: 'desktop_personalization', maxNativeActions: 12
       }),
       (error: unknown) => (error as { code?: string }).code === 'AGY_NATIVE_ACTION_BUDGET'
     );
@@ -217,7 +217,7 @@ process.stdin.on('end', () => {
     const provider = new AntigravityProvider({ command });
     await assert.rejects(
       provider.chat([{ role: 'user', content: 'Change my wallpaper' }], {
-        conversationId: 'session-partial', taskArchetype: 'desktop_personalization', maxRetries: 2
+        conversationId: 'session-partial', taskArchetype: 'desktop_personalization', maxNativeActions: 12, maxRetries: 2
       }),
       (error: unknown) => {
         const failed = error as { code?: string; partialUsage?: { promptTokens: number; completionTokens: number; cachedPromptTokens?: number } };
@@ -299,29 +299,23 @@ const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
 process.stdin.resume();
 process.stdin.on('end', () => {
   emit({event:'init',conversation_id:'large-budget-test'});
-  // Emit 35k tokens, which trips the 32k per-call ceiling even if large budget passed
+  // Emit 35k tokens; this must be accepted when the user's explicit ceiling is 500k.
   emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:35000,output_tokens:200,cache_read_tokens:0}}});
   emit({event:'result',result:{status:'SUCCESS',response:'Completed large task successfully',usage:{input_tokens:35000,output_tokens:200}}});
 });
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    // User configured a 500,000 token budget, but single call is capped at 32k
-    await assert.rejects(
-      provider.chat([{ role: 'user', content: 'Analyze large monorepo' }], { maxTokensThisCall: 500000 }),
-      (error: unknown) => {
-        const stopped = error as { code?: string; tokenLimit?: number };
-        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
-        assert.equal(stopped.tokenLimit, 32_000);
-        return true;
-      }
-    );
+    // User authorized up to 500k: a successful 35k peer call must not be discarded.
+    const result = await provider.chat([{ role: 'user', content: 'Analyze large monorepo' }], { maxTokensThisCall: 500000 });
+    assert.equal(result.content, 'Completed large task successfully');
+    assert.equal(result.usage.promptTokens, 35000);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
-test('Antigravity treats tokenLimit Infinity as unset and keeps a finite default ceiling', { skip: process.platform === 'win32' }, async () => {
+test('Antigravity treats tokenLimit Infinity as unset and does not fabricate a hard ceiling', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-infinity-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -336,16 +330,9 @@ process.stdin.on('end', () => {
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    await assert.rejects(
-      provider.chat([{ role: 'user', content: 'Deep research' }], { tokenLimit: Infinity }),
-      (error: unknown) => {
-        const stopped = error as { code?: string; tokenLimit?: number; partialUsage?: { promptTokens?: number } };
-        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
-        assert.equal(stopped.tokenLimit, 32_000);
-        assert.equal(stopped.partialUsage?.promptTokens, 120000);
-        return true;
-      }
-    );
+    const result = await provider.chat([{ role: 'user', content: 'Deep research' }], { tokenLimit: Infinity });
+    assert.equal(result.content, 'Completed deep search without budget kill');
+    assert.equal(result.usage.promptTokens, 120000);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -397,7 +384,7 @@ process.stdin.on('end', () => {
   }
 });
 
-test('Antigravity enforces the default 100k ceiling when tokenLimit is undefined', { skip: process.platform === 'win32' }, async () => {
+test('Antigravity permits completed work without an explicit token ceiling', { skip: process.platform === 'win32' }, async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-agy-default-100k-'));
   const command = path.join(directory, 'agy');
   fs.writeFileSync(command, `#!/usr/bin/env node
@@ -406,20 +393,14 @@ process.stdin.resume();
 process.stdin.on('end', () => {
   emit({event:'init',conversation_id:'default-cap-test'});
   emit({event:'step_update',step_update:{step_index:1,state:'DONE',step_type:'agent_response',usage:{input_tokens:99000,output_tokens:2000,cache_read_tokens:0}}});
-  setTimeout(() => emit({event:'result',result:{status:'SUCCESS',response:'Should be stopped by default 100k ceiling'}}), 500);
+  setTimeout(() => emit({event:'result',result:{status:'SUCCESS',response:'Completed without an artificial token ceiling'}}), 500);
 });
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    await assert.rejects(
-      provider.chat([{ role: 'user', content: 'Normal prompt without task budget' }], { conversationId: 'session-default-cap' }),
-      (error: unknown) => {
-        const stopped = error as { code?: string; tokenLimit?: number };
-        assert.equal(stopped.code, 'AGY_TOKEN_BUDGET');
-        assert.equal(stopped.tokenLimit, 32_000);
-        return true;
-      }
-    );
+    const result = await provider.chat([{ role: 'user', content: 'Normal prompt without task budget' }], { conversationId: 'session-default-cap' });
+    assert.equal(result.content, 'Completed without an artificial token ceiling');
+    assert.ok(result.usage.promptTokens >= 0);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -439,7 +420,10 @@ process.stdin.on('end', () => {
 `, { mode: 0o755 });
   try {
     const provider = new AntigravityProvider({ command });
-    await assert.rejects(provider.chat([{ role: 'user', content: 'Use cached context' }], {}), (error: unknown) => (error as { code: string }).code === 'AGY_TOKEN_BUDGET');
+    const result = await provider.chat([{ role: 'user', content: 'Use cached context' }], {});
+    assert.equal(result.content, 'Finished with cached input');
+    assert.equal(result.usage.uncachedPromptTokens, 99000);
+    assert.equal(result.usage.cachedPromptTokens, 10000);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

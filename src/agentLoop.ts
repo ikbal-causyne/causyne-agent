@@ -6,7 +6,7 @@ import { getProcessEntitlementGate, EntitlementAccessError } from './licensing/e
 import { repairUnansweredToolCalls, validateToolCallBatch } from './agent/toolTurnIntegrity.js';
 import { waitForAbortableDelay } from './agent/abortableDelay.js';
 import { normalizeAgentFailure } from './agent/providerFailure.js';
-import { resolveTaskTokenCeiling, peerCallTokenCeiling, isAntigravityPeer, isTerminalBudgetFailure, desktopDeadline, remainingDesktopTime } from './budget/budgetPolicy.js';
+import { resolveTaskTokenCeiling, peerCallTokenCeiling, isAntigravityPeer, isTerminalBudgetFailure, desktopDeadline, remainingDesktopTime, DEFAULT_AGY_TASK_TOKENS } from './budget/budgetPolicy.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import type { RequestPermissionRequest, RequestPermissionResponse } from './acp/protocol.js';
 import { createHash, randomUUID } from 'crypto';
@@ -1787,7 +1787,10 @@ export class AgentLoop {
     const taskArchetype = determineToolScope(
       this.currentTaskPrompt || this.userPrompt || '', this.taskShape
     ).archetype;
-    this._taskWallDeadlineAt = desktopDeadline(Date.now(), taskArchetype);
+    // A workspace category must not create an unrequested 180-second kill switch.
+    const strictDesktopWallMs = this.tokenTracker.budget?.enabled && this.tokenTracker.budget?.hardStop
+      ? this.tokenTracker.budget.maxWallTimeMs : undefined;
+    this._taskWallDeadlineAt = desktopDeadline(Date.now(), taskArchetype, strictDesktopWallMs);
     if (!this.llm) {
       throw new Error("API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.");
     }
@@ -2137,6 +2140,7 @@ export class AgentLoop {
     const isAutonomousMode = (this.config.autonomyMode || 'C') === 'C';
     const recoveryPaths = new Set<string>();
     let modelCallIndex = 0;
+    let softUsageNoticeIssued = false;
     let mediaExplorationRecoveries = 0;
     let taskMutationCount = 0;
     let reasoningOnlyRecoveries = 0;
@@ -2625,9 +2629,14 @@ You are operating in a text-and-code modality without direct image pixel renderi
           hardBudget: hardBudget,
           // The peer can perform multiple billable model steps inside one
           // chat() call. The per-call bound is independent of autonomy mode.
+          // Only explicit hard budgets constrain the peer. No synthetic 32k sub-limit.
           maxTokensThisCall: isAntigravityPeer(this.config.provider)
-            ? peerCallTokenCeiling(configuredRemainingBudget)
+            ? (hardBudget ? peerCallTokenCeiling(configuredRemainingBudget) ?? undefined : undefined)
             : Number.isFinite(configuredRemainingBudget) && hardBudget ? configuredRemainingBudget : undefined,
+          onBudgetAdvisory: (details: { scope: string; usedTokens: number; threshold: number }) => {
+            this.emitEvent({ type: 'notice', message:
+              `Usage advisory: ${details.usedTokens.toLocaleString()} fresh tokens during this ${details.scope}; no implicit hard stop. /stop cancels; configure a hard budget to enforce a ceiling.` });
+          },
           tokenBudgetBasis: isAntigravityPeer(this.config.provider) ? 'noncached'
             : Number.isFinite(configuredRemainingBudget) ? 'total' : 'noncached',
           tokenLimit: hardBudget && Number.isFinite(remainingBudget) && remainingBudget > 0
@@ -2923,6 +2932,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
             response.usage.promptTokens, response.usage.completionTokens, response.usage
           )
         });
+
+        // Soft advisory only; repeated status frames must not consume tokens or stop work.
+        if (isAntigravityPeer(this.config.provider) && !hardBudget && !softUsageNoticeIssued
+          && this.tokenTracker.taskTokens >= DEFAULT_AGY_TASK_TOKENS) {
+          softUsageNoticeIssued = true;
+          this.emitEvent({ type: 'notice', message:
+            `Task usage passed ${DEFAULT_AGY_TASK_TOKENS.toLocaleString()} fresh tokens. This is an advisory, not a stop. Use /stop or set a user hard budget to limit further calls.` });
+          auditLog.log({ event: 'task_usage_advisory', taskId: this.taskId, freshTokens: this.tokenTracker.taskTokens });
+        }
 
         const cachedTokens = response.usage.cachedPromptTokens || 0;
         if (cachedTokens > 0) {

@@ -360,7 +360,7 @@ setTimeout(() => {}, 10000);
   try {
     const provider = new AntigravityProvider({ command: agy, model: 'Claude Opus 5.5 (High)' });
     await assert.rejects(
-      provider.chat([{ role: 'user', content: 'build a page' }], { taskId: 'ceiling-test' }),
+      provider.chat([{ role: 'user', content: 'build a page' }], { taskId: 'ceiling-test', maxTokensThisCall: 32_000, hardBudget: true }),
       (error: unknown) => {
         const e = error as { code?: string; tokenLimit?: number; partialUsage?: { promptTokens: number } };
         assert.equal(e.code, 'AGY_TOKEN_BUDGET');

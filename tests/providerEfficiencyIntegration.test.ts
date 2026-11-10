@@ -58,7 +58,7 @@ process.stdin.on('end', () => {
 `, { mode: 0o755 });
   try {
     const peer = new AntigravityProvider({ command: executable });
-    await assert.rejects(peer.chat([{ role: 'user', content: 'Create the horse app' }], { maxRetries: 2 }),
+    await assert.rejects(peer.chat([{ role: 'user', content: 'Create the horse app' }], { maxRetries: 2, maxTokensThisCall: 32_000 }),
       (error: unknown) => {
         const checkpoint = error as { code?: string; partialUsage?: { promptTokens: number; completionTokens: number } };
         assert.equal(checkpoint.code, 'AGY_TOKEN_BUDGET');

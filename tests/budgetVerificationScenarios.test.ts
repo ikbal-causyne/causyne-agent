@@ -11,74 +11,42 @@ import {
   desktopDeadline,
   remainingDesktopTime,
   shouldRetryPeerError,
-  hasBillablePartialUsage,
-  DEFAULT_AGY_TASK_TOKENS,
-  DEFAULT_AGY_CALL_TOKENS,
-  DEFAULT_DESKTOP_NATIVE_ACTIONS,
-  DEFAULT_AGY_NATIVE_ACTIONS,
-  DESKTOP_TASK_WALL_MS
+  hasBillablePartialUsage
 } from '../src/budget/budgetPolicy.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { TokenTracker } from '../src/tokenTracker.js';
 
 describe('Hard Budget Enforcement Verification Matrix (Mode C, Antigravity, Wall-clock, Turn Resets)', () => {
 
-  test('Autonomy mode C cannot bypass token limits (no 1M token auto-extension)', () => {
-    // Mode C sets hardBudget=false, but resolveTaskTokenCeiling provides a finite ceiling
-    const defaultCeiling = resolveTaskTokenCeiling({ provider: 'antigravity' });
-    assert.equal(defaultCeiling, DEFAULT_AGY_TASK_TOKENS);
-    assert.equal(defaultCeiling, 80_000);
-
-    const callCeiling = peerCallTokenCeiling(undefined);
-    assert.equal(callCeiling, DEFAULT_AGY_CALL_TOKENS);
-    assert.equal(callCeiling, 32_000);
-
-    // Verify all budget stops are terminal in mode C
-    const terminalErrors = [
-      'TASK_TOKEN_BUDGET',
-      'PROVIDER_TOKEN_BUDGET',
-      'AGY_DESKTOP_TASK_LIMIT',
-      'AGY_TOKEN_BUDGET',
-      'AGY_NATIVE_ACTION_BUDGET',
-      'AGY_TASK_DEADLINE',
-      'TASK_WALL_BUDGET'
-    ];
-    for (const code of terminalErrors) {
+  test('Mode C does not invent a task or per-call hard limit', () => {
+    assert.equal(resolveTaskTokenCeiling({ provider: 'antigravity' }), null);
+    assert.equal(peerCallTokenCeiling(undefined), null);
+    assert.equal(peerCallTokenCeiling(Infinity), null);
+    for (const code of ['AGY_TOKEN_BUDGET', 'TASK_TOKEN_BUDGET', 'AGY_DESKTOP_TASK_LIMIT']) {
       assert.equal(isTerminalBudgetFailure({ code }), true);
       assert.equal(shouldRetryPeerError({ code }), false);
     }
   });
 
-  test('Autonomy mode C cannot bypass native-action limits', () => {
-    // Desktop tasks strictly cap at 12 actions even if configured high or in mode C
-    assert.equal(peerNativeActionCeiling(100, true), DEFAULT_DESKTOP_NATIVE_ACTIONS);
-    assert.equal(peerNativeActionCeiling(Infinity, true), DEFAULT_DESKTOP_NATIVE_ACTIONS);
-    assert.equal(peerNativeActionCeiling(undefined, true), DEFAULT_DESKTOP_NATIVE_ACTIONS);
-
-    // General tasks cap at 128
-    assert.equal(peerNativeActionCeiling(Infinity, false), DEFAULT_AGY_NATIVE_ACTIONS);
-    assert.equal(peerNativeActionCeiling(undefined, false), DEFAULT_AGY_NATIVE_ACTIONS);
-    // Lower configured action ceiling takes precedence
+  test('Native-action hard limits are opt-in; repetition circuit breaker remains independent', () => {
+    assert.equal(peerNativeActionCeiling(undefined, true), null);
+    assert.equal(peerNativeActionCeiling(Infinity, false), null);
     assert.equal(peerNativeActionCeiling(15, false), 15);
+    assert.equal(peerNativeActionCeiling(12, true), 12);
   });
 
-  test('Autonomy mode C cannot bypass wall-clock deadline', () => {
+  test('Desktop wall-clock hard limit is opt-in, not 180 seconds by default', () => {
     const start = Date.now();
-    const deadline = desktopDeadline(start, 'desktop_personalization');
-    assert.equal(deadline, start + DESKTOP_TASK_WALL_MS);
-
-    // After 180s has elapsed, remainingDesktopTime is 0
+    assert.equal(desktopDeadline(start, 'desktop_personalization'), null);
+    assert.equal(desktopDeadline(start, 'desktop_personalization', 480_000), start + 480_000);
     assert.equal(remainingDesktopTime(start - 1000), 0);
-    // Future deadline returns remaining ms
-    assert.ok(remainingDesktopTime(start + 5000)! <= 5000);
-    // Non-desktop task returns null (no artificial deadline)
-    assert.equal(desktopDeadline(start, 'software_engineering'), null);
+    assert.equal(desktopDeadline(start, 'software_engineering', 480_000), null);
   });
 
   test('Smaller user-configured budget takes strict precedence', () => {
     const ceiling = resolveTaskTokenCeiling({
       provider: 'antigravity',
-      configured: { enabled: true, maxTokensPerTask: 5_000 }
+      configured: { enabled: true, hardStop: true, maxTokensPerTask: 5_000 }
     });
     assert.equal(ceiling, 5_000);
 
@@ -86,7 +54,7 @@ describe('Hard Budget Enforcement Verification Matrix (Mode C, Antigravity, Wall
     const workerCeiling = resolveTaskTokenCeiling({
       provider: 'antigravity',
       workerLimit: 3_000,
-      configured: { enabled: true, maxTokensPerTask: 10_000 }
+      configured: { enabled: true, hardStop: true, maxTokensPerTask: 10_000 }
     });
     assert.equal(workerCeiling, 3_000);
   });
@@ -94,7 +62,7 @@ describe('Hard Budget Enforcement Verification Matrix (Mode C, Antigravity, Wall
   test('Larger explicitly configured budget is respected at task level', () => {
     const ceiling = resolveTaskTokenCeiling({
       provider: 'antigravity',
-      configured: { enabled: true, maxTokensPerTask: 250_000 }
+      configured: { enabled: true, hardStop: true, maxTokensPerTask: 250_000 }
     });
     assert.equal(ceiling, 250_000);
   });
@@ -189,7 +157,7 @@ process.stdin.on('end', () => {
       await assert.rejects(
         provider.chat([{ role: 'user', content: 'Explore target' }], {
           conversationId: 'checkpoint-session',
-          hardBudget: false // autonomous mode C
+          hardBudget: true, maxTokensThisCall: 32_000 // explicitly configured hard checkpoint
         }),
         (err: any) => {
           assert.equal(err.code, 'AGY_TOKEN_BUDGET');

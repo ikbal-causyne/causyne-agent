@@ -30,6 +30,8 @@ export interface TokenBudgetConfig {
   hardStop?: boolean;
   maxTokensPerDay?: number;
   maxTokensPerTask?: number;
+  /** Optional HARD wall-clock ceiling for desktop-personalization tasks only. */
+  maxWallTimeMs?: number;
   maxCostUsd?: number;
   alertThresholdTokens?: number;
   warningThreshold?: number;
