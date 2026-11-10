@@ -41,6 +41,82 @@ function inspectDirectory(directory: string, allowMissing: boolean): boolean {
   return true;
 }
 
+export function assertSkillFileSafe(filePath: string, allowMissing = false): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(filePath);
+  } catch (error: unknown) {
+    if (allowMissing && (error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`Skill file must be a regular file: ${filePath}`);
+  }
+}
+
+function samePhysicalDirectory(a: string, b: string): boolean {
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/**
+ * Write a regular skill file safely across both POSIX (O_NOFOLLOW) and Windows
+ * (no O_NOFOLLOW): reject symlinks before opening, and never truncate until
+ * lstatSync, fstatSync, and realpathSync confirm the descriptor is not a symlink
+ * and resolves inside the skill directory.
+ */
+export function writeSkillFileSafely(
+  root: string,
+  domain: string,
+  name: string,
+  fileName: string,
+  body: string,
+  overwrite: boolean,
+  useNoFollow = typeof fs.constants.O_NOFOLLOW === 'number' && fs.constants.O_NOFOLLOW !== 0
+): string {
+  const directory = assertSkillTreeSafe(root, domain, name, true);
+  fs.mkdirSync(directory, { recursive: true });
+  assertSkillTreeSafe(root, domain, name);
+  const file = path.join(directory, fileName);
+  assertSkillFileSafe(file, true);
+
+  const nofollow = useNoFollow && typeof fs.constants.O_NOFOLLOW === 'number'
+    ? fs.constants.O_NOFOLLOW
+    : 0;
+  if (nofollow !== 0) {
+    const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | nofollow
+      | (overwrite ? fs.constants.O_TRUNC : fs.constants.O_EXCL);
+    const fd = fs.openSync(file, flags, 0o600);
+    try {
+      if (!fs.fstatSync(fd).isFile()) throw new Error(`${fileName} must be a regular file`);
+      fs.writeFileSync(fd, body, 'utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+    return file;
+  }
+
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT
+    | (overwrite ? 0 : fs.constants.O_EXCL);
+  const fd = fs.openSync(file, flags, 0o600);
+  try {
+    assertSkillTreeSafe(root, domain, name);
+    assertSkillFileSafe(file, false);
+    const realDir = fs.realpathSync(directory);
+    const realFile = fs.realpathSync(file);
+    if (!samePhysicalDirectory(path.dirname(realFile), realDir)) {
+      throw new Error(`${fileName} resolves outside its skill directory`);
+    }
+    if (!fs.fstatSync(fd).isFile()) throw new Error(`${fileName} must be a regular file`);
+    if (overwrite) {
+      fs.ftruncateSync(fd, 0);
+    }
+    fs.writeFileSync(fd, body, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+  return file;
+}
+
 /**
  * Check each directory segment. In particular, do not let a skill author
  * place a symlink at ~/.causyne/skills/<domain> or <name> and redirect writes
@@ -104,6 +180,7 @@ export function readSkillTextResource(
     inspectDirectory(cursor, false);
   }
   const target = path.join(cursor, components[components.length - 1]!);
+  assertSkillFileSafe(target, false);
   const physicalRoot = fs.realpathSync(skillDir);
   const physicalFile = fs.realpathSync(target);
   if (!physicalFile.startsWith(`${physicalRoot}${path.sep}`)) {

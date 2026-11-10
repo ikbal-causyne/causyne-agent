@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { readSkillTextResource, listSkillResourcePaths,
-  assertSkillTreeSafe, MAX_SKILL_RESOURCE_BYTES
+  assertSkillTreeSafe, writeSkillFileSafely, MAX_SKILL_RESOURCE_BYTES
 } from '../src/skills/skillResourceSafety.js';
 import { literalSearchPattern, formatSkillSearchLine,
   MAX_TOOL_SEARCH_QUERY
@@ -86,6 +86,27 @@ describe('skill write/delete path safety', () => {
     const result = writeUserSkill({ domain: 'team', name: 'release-checklist', content: SAMPLE, overwrite: true }, root);
     assert.equal(result.ok, false);
     assert.equal(fs.readFileSync(outside, 'utf8'), 'DO NOT CHANGE');
+  }));
+
+  test('prevents symlink overwrite and truncates safely even when O_NOFOLLOW is unavailable (Windows path)', () => fixture((root, base) => {
+    const targetFile = path.join(root, 'team', 'release-checklist', 'SKILL.md');
+    writeSkillFileSafely(root, 'team', 'release-checklist', 'SKILL.md', SAMPLE + '\n' + 'x'.repeat(200), true, false);
+    writeSkillFileSafely(root, 'team', 'release-checklist', 'SKILL.md', SAMPLE, true, false);
+    assert.equal(fs.readFileSync(targetFile, 'utf8'), SAMPLE);
+
+    const outside = path.join(base, 'outside-win.md');
+    fs.writeFileSync(outside, 'KEEP SAFE');
+    fs.unlinkSync(targetFile);
+    try { fs.symlinkSync(outside, targetFile); }
+    catch (e) { if (e.code === 'EPERM') return; throw e; }
+    assert.throws(() => writeSkillFileSafely(root, 'team', 'release-checklist', 'SKILL.md', SAMPLE, true, false));
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'KEEP SAFE');
+
+    const dangling = path.join(base, 'does-not-exist.md');
+    fs.unlinkSync(targetFile);
+    fs.symlinkSync(dangling, targetFile);
+    assert.equal(writeUserSkill({ domain: 'team', name: 'release-checklist', content: SAMPLE, overwrite: false }, root).ok, false);
+    assert.equal(fs.existsSync(dangling), false);
   }));
 
   test('normal skill creation, loading, overwriting and removal still work', () => fixture(root => {

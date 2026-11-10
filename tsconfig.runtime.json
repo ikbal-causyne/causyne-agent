@@ -33,6 +33,7 @@
     "src/plugins/pluginSkills.ts",
     "src/skills/skillResourceSafety.ts",
     "src/skills/skillSearchSafety.ts",
+    "src/userSkills.ts",
     "src/tools/readNativeSkill.ts",
     "src/tools/walkerSafety.ts",
     "src/tools/fsSearch.ts",
