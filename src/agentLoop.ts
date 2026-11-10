@@ -670,6 +670,8 @@ export class AgentLoop {
     this.eventSink = eventSink;
     this.taskId = taskId;
     this.userPrompt = userPrompt;
+    // User intent must remain independent of injected @-file contents.
+    this.taskIntentPrompt = userPrompt;
     this.workspaceRoot = typeof options.workspaceRoot === 'string' && options.workspaceRoot
       ? options.workspaceRoot
       : process.cwd();
@@ -1778,6 +1780,8 @@ export class AgentLoop {
     // The CLI reuses AgentLoop between messages. Task consumption must not
     // leak into the next turn, but session/daily consumption is retained.
     this.tokenTracker.resetTask();
+    // Referenced source is model context, not authorization or task intent.
+    this.taskIntentPrompt = this.userPrompt ?? this.taskIntentPrompt ?? this.currentTaskPrompt ?? '';
     const guardLimit = resolveTaskTokenCeiling({
       provider: this.config.provider,
       workerLimit: this.taskTokenLimit,
@@ -1785,7 +1789,7 @@ export class AgentLoop {
     });
     this.tokenTracker.setEnforcedTaskLimit(guardLimit);
     const taskArchetype = determineToolScope(
-      this.currentTaskPrompt || this.userPrompt || '', this.taskShape
+      this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '', this.taskShape
     ).archetype;
     // A workspace category must not create an unrequested 180-second kill switch.
     const strictDesktopWallMs = this.tokenTracker.budget?.enabled && this.tokenTracker.budget?.hardStop
@@ -1799,8 +1803,8 @@ export class AgentLoop {
     // awareness instead of burning steps rediscovering it. The result used to be
     // assigned to a local variable and thrown away.
     auditLog.log({ event: 'task_start', taskId: this.taskId, request: this.userPrompt });
-    this.initialDesktopPictures = process.platform === 'darwin' && isDesktopWallpaperChangePrompt(this.userPrompt || '')
-      ? readMacDesktopPictures() : null;
+    this._wallpaperChangeRequested = process.platform === 'darwin' && isDesktopWallpaperChangePrompt(this.taskIntentPrompt || '');
+    this.initialDesktopPictures = this._wallpaperChangeRequested ? readMacDesktopPictures() : null;
     // Preserve an explicit workspace selected by the caller (for example ACP).
     // The constructor already defaults to process.cwd() when none was supplied.
     coldObserver.beginTask(this.taskId);
@@ -2389,7 +2393,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           lazyPlaybookResult.microAnnouncements
         ].filter(Boolean).join('\n\n');
         auditLog.log({ event: 'smart_tools_context', taskId: this.taskId, step: this.stepsCompleted,
-          archetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
+          archetype: determineToolScope(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
           toolCount: dynamicTools.length, toolSchemaChars: JSON.stringify(dynamicTools).length,
           catalogTools: this.toolsListEntries?.length || 0, catalogChars: this.toolsListText.length,
           selectedToolCount: this.unlockedTools.size,
@@ -2624,8 +2628,8 @@ You are operating in a text-and-code modality without direct image pixel renderi
         const response = await this.llm.chat(prunedMessages, {
           taskId: this.taskId,
           conversationId: this.memoryManager?.sessionId || this.taskId,
-          taskIntent: isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
-          taskArchetype: determineToolScope(this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
+          taskIntent: isLaunchOnlyPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
+          taskArchetype: determineToolScope(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
           hardBudget: hardBudget,
           // The peer can perform multiple billable model steps inside one
           // chat() call. The per-call bound is independent of autonomy mode.
@@ -2991,9 +2995,9 @@ You are operating in a text-and-code modality without direct image pixel renderi
         // HTTP checks for rendering, and adapters must not contradict this gate.
         if (!response.toolCalls?.length && !response.toolRoutingError && !this.webVerificationScheduled
           && !this.webVerificationState.browserActUsed && !this.webVerificationState.screenshotTaken
-          && (isWebIntent(this.currentTaskPrompt || this.userPrompt || '') || this.hasWebSurfaceArtifacts())
-          && !isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '')
-          && !isPlanningOnlyRequest(this.currentTaskPrompt || this.userPrompt || '')) {
+          && (isWebIntent(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '') || this.hasWebSurfaceArtifacts())
+          && !isLaunchOnlyPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '')
+          && !isPlanningOnlyRequest(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '')) {
           const files: Array<{ path: string; content: string }> = [];
           for (const candidate of this.webArtifacts) {
             if (files.length >= 50) break;
@@ -3236,7 +3240,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
           const contentText = response.content || '';
           const lower = contentText.toLowerCase();
-          const taskPrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
+          const taskPrompt = (this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '').trim();
           const isActionable = isActionableTaskPrompt(taskPrompt);
 
           if (!hasExternalActions && isProviderPlanOrQuotaRefusal(contentText)) {
@@ -3796,7 +3800,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
             if (localServerFailed) continue;
           }
 
-          if (process.platform === 'darwin' && isDesktopWallpaperChangePrompt(taskPrompt)) {
+          if (this._wallpaperChangeRequested) {
             const currentDesktopPictures = readMacDesktopPictures();
             if (!this.initialDesktopPictures || !currentDesktopPictures || currentDesktopPictures === this.initialDesktopPictures) {
               this.emitEvent({ type: 'error', message: 'The desktop wallpaper change was not confirmed by macOS readback. The task remains incomplete.' });
@@ -4034,7 +4038,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
             this.debugLog(`[TOOL SELF-REPAIR] Healed tool call '${functionName}': ${repair.repairs.join(', ')}`);
           }
 
-          if (isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '')) {
+          if (isLaunchOnlyPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '')) {
             const scopeError = launchScopeError(functionName, args || {});
             if (scopeError) {
               this.emitEvent({ type: 'step_error', tool: functionName, error: scopeError, toolCallId: toolCall.id });
@@ -4075,8 +4079,8 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
 
           // Universal Intelligent Loop Guard & Stall Breaker (Hermes / Claude Code architecture)
-          const isExecTask = isExecutionOrLaunchTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
-          const isAuthoringTask = !isExecTask && isCodeAuthoringTaskPrompt(this.currentTaskPrompt || this.userPrompt || '');
+          const isExecTask = isExecutionOrLaunchTaskPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '');
+          const isAuthoringTask = !isExecTask && isCodeAuthoringTaskPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '');
 
           const guardDecision = this.stallGuard.beforeCall(functionName, args || {}, {
             isAuthoringTask
@@ -4119,7 +4123,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           
           
           // Sovereign Game Pre-Flight Interceptor (v1.3.13)
-          const isGameTaskExec = !isLaunchOnlyPrompt(this.currentTaskPrompt || this.userPrompt || '') && isGameIntent(this.currentTaskPrompt || this.userPrompt || '');
+          const isGameTaskExec = !isLaunchOnlyPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '') && isGameIntent(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '');
 
           const ALL_GAME_TOOLS_LIST = [
             'godot_act', 'game_asset_fetch', 'game_build_html5',
