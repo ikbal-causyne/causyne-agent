@@ -99,7 +99,7 @@ describe('Hard Budget Enforcement Verification Matrix (Mode C, Antigravity, Wall
     assert.equal(ceiling, 250_000);
   });
 
-  test('Interrupted provider calls (AbortSignal) abort cleanly and do not retry paid work', async () => {
+  test('Interrupted provider calls (AbortSignal) abort cleanly and do not retry paid work', { skip: process.platform === 'win32' }, async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-abort-test-'));
     const agy = path.join(dir, 'agy');
     fs.writeFileSync(agy, `#!/usr/bin/env node
@@ -155,7 +155,7 @@ setTimeout(() => {}, 60000);
     assert.equal(tracker.sessionTokens, 30_000);
   });
 
-  test('Antigravity execution stops at budget checkpoint, preserves partial work, and reports outcome', async () => {
+  test('Antigravity execution stops at budget checkpoint, preserves partial work, and reports outcome', { skip: process.platform === 'win32' }, async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-checkpoint-test-'));
     const agy = path.join(dir, 'agy');
     fs.writeFileSync(agy, `#!/usr/bin/env node
