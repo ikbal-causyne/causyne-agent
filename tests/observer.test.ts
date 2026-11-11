@@ -345,3 +345,32 @@ test('observer does not treat a browser action without rendered evidence as veri
   assert.equal(obs.status, 'ready-to-verify');
   assert.equal(obs.verified, false);
 });
+
+test('observer cannot mark verification passed after nonzero test exit code', () => {
+  const obs = defaultObserver.evaluate({
+    taskId: 'failed-check-status',
+    workspaceRoot: '/tmp',
+    userGoal: 'Fix parser',
+    agentClaim: 'Fixed the parser',
+    toolHistory: [
+      { tool: 'fs_edit', args: {}, success: true, error: '', exitCode: null, path: 'parser.ts', command: '', at: 1 },
+      { tool: 'sysRun', args: { command: 'npm test' }, success: true, error: '', exitCode: 1, path: '', command: 'npm test', at: 2 }
+    ]
+  });
+  assert.equal(obs.verified, false);
+  assert.equal(obs.status, 'ready-to-verify');
+});
+
+test('observer does not treat negated completion statements as success claims', () => {
+  for (const agentClaim of ['Not done yet.', 'The task is not fixed.', 'I have never verified it.', 'It is not fully completed.']) {
+    const obs = defaultObserver.evaluate({
+      taskId: 'negated-claim',
+      workspaceRoot: '/tmp',
+      userGoal: 'Fix parser',
+      agentClaim,
+      toolHistory: [{ tool: 'sysRun', args: {}, success: true, error: '', exitCode: 0, path: '', command: 'npm test', at: 1 }]
+    });
+    assert.notEqual(obs.status, 'verified', agentClaim);
+    assert.equal(obs.verified, false, agentClaim);
+  }
+});
