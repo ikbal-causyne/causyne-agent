@@ -293,3 +293,10 @@ test('verifyCreative rejects directories regardless of apparent size', () => {
   try { assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: '.', minBytes: 0 }).verified, false); }
   finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('verifyCreative rejects negative and NaN size thresholds', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-art-size-'));
+  try { fs.writeFileSync(path.join(root, 'a.bin'), 'abc');
+    for (const minBytes of [-1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: 'a.bin', minBytes }).verified, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

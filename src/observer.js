@@ -176,6 +176,8 @@ export class CausyneObserver {
         if (!stat.isFile())
             return { verified: false, bytes: 0, error: 'Media artifact must be a regular file.' };
         const minBytes = req.minBytes ?? 100;
+        if (!Number.isSafeInteger(minBytes) || minBytes < 0)
+            return { verified: false, bytes: stat.size, error: 'Invalid minimum artifact size.' };
         if (stat.size < minBytes) {
             return { verified: false, bytes: stat.size, error: `Media asset too small (${stat.size} bytes < ${minBytes} bytes)` };
         }
