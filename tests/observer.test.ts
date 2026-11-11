@@ -333,3 +333,12 @@ test('observer does not reuse test evidence from before the latest edit', () => 
   assert.equal(obs.status, 'ready-to-verify');
   assert.equal(obs.verified, false);
 });
+
+test('observer does not treat a browser action without rendered evidence as verification', () => {
+  const obs = defaultObserver.evaluate({ taskId: 'no-render', workspaceRoot: '/tmp', userGoal: 'Build UI', agentClaim: 'Implemented', toolHistory: [
+    { tool: 'fs_edit', args: {}, success: true, error: '', exitCode: null, path: 'ui.ts', command: '', at: 1 },
+    { tool: 'browser_act', args: {}, success: true, error: '', exitCode: 0, path: '', command: '', rendered: false, at: 2 }
+  ] });
+  assert.equal(obs.status, 'ready-to-verify');
+  assert.equal(obs.verified, false);
+});
