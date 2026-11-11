@@ -678,6 +678,7 @@ export class AgentLoop {
   static MAX_CONSECUTIVE_FAILURES = 3;
   constructor(eventSink: AgentLoopEventSink | null, taskId: string, userPrompt: string | null, options: AgentLoopOptions = {}) {
     this.eventSink = eventSink;
+    this._deliveredAgentMessages = new Set<string>();
     this.taskId = taskId;
     this.userPrompt = userPrompt;
     // User intent must remain independent of injected @-file contents.
@@ -1434,6 +1435,20 @@ export class AgentLoop {
   }
 
   emitEvent(messageObj: AgentLoopEvent) {
+    if (messageObj.type === 'agent_message' && typeof (messageObj as any).content === 'string') {
+      const content = (messageObj as any).content.trim().replace(/\s+/g, ' ');
+      if (content) {
+        const streaming = (messageObj as any).streaming === true;
+        if ([...this._deliveredAgentMessages].some((prior: string) => prior === content || (streaming && prior.startsWith(content)))) return;
+        if (!streaming) {
+          if (this._deliveredAgentMessages.size >= 32) {
+            const oldest = this._deliveredAgentMessages.values().next().value;
+            if (typeof oldest === 'string') this._deliveredAgentMessages.delete(oldest);
+          }
+          this._deliveredAgentMessages.add(content);
+        }
+      }
+    }
     if (this.eventSink && this.eventSink.readyState === 1) {
       this.eventSink.send(JSON.stringify({ taskId: this.taskId, ...messageObj }));
     }
@@ -2133,6 +2148,7 @@ export class AgentLoop {
     }
 
     this.stepsCompleted = 0;
+    this._deliveredAgentMessages.clear();
     // Fresh per task. A digest from a previous task would point at a step
     // number the model can no longer see, which is worse than paying twice.
     this._observationDigests = new Map();

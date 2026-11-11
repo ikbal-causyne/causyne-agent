@@ -707,3 +707,24 @@ test('multi-section execution reports are not mistaken for a mid-task promise fr
   assert.equal(isMidTaskProgressText(report), false);
   assert.equal(isMidTaskProgressText("I will run the next verification now."), true);
 });
+
+test('agent message emission is idempotent within a task and never hides distinct results or errors', () => {
+  const events: any[] = [];
+  const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+    'duplicate-conclusion', 'Inspect and report');
+  const report = 'A complete test report with the actual failures and required stop decision.';
+  loop.emitEvent({ type: 'agent_message', content: report });
+  loop.emitEvent({ type: 'agent_message', content: report });
+  loop.emitEvent({ type: 'agent_message', content: report.slice(0, 25), streaming: true });
+  loop.emitEvent({ type: 'agent_message', content: report, streaming: true });
+  loop.emitEvent({ type: 'agent_message', content: 'A different verified report.' });
+  loop.emitEvent({ type: 'error', message: 'Regression verification failed' });
+  assert.deepEqual(events.filter(e => e.type === 'agent_message').map(e => e.content),
+    [report, 'A different verified report.']);
+  assert.equal(events.filter(e => e.type === 'error').length, 1);
+  const otherEvents: any[] = [];
+  const newTask = new AgentLoop({ readyState: 1, send: (payload: string) => otherEvents.push(JSON.parse(payload)) },
+    'new-task', 'Inspect and report');
+  newTask.emitEvent({ type: 'agent_message', content: report });
+  assert.equal(otherEvents.filter(e => e.type === 'agent_message').length, 1);
+});
