@@ -3330,23 +3330,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         break;
                     }
                     if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
-                        if (allPlanCompleted) {
-                            const planSummary = ` All ${this._implementationPlan.length} plan steps have been completed and verified:\n\n`
-                                + this._implementationPlan.map((s, idx) => `  ✓ ${s.step || s.text || s.content || `Step ${idx + 1}`}`).join('\n');
-                            const summary = `Task completed successfully.${planSummary}`;
-                            this.emitEvent({
-                                type: 'agent_message',
-                                content: summary
-                            });
-                            this.emitEvent({
-                                type: 'status',
-                                message: 'Task completed with verified deliverables.'
-                            });
-                            this._causyneTaskOutcome = 'completed';
-                            this.memoryManager.saveHistory(this.messages);
-                            break;
-                        }
-                        if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
+if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
                             incompleteTurnContinuations++;
                             this.emitEvent({ type: 'status', message: 'Requesting the missing final response…' });
                             this.messages.push({ role: 'system', content: '[FINAL RESPONSE REQUIRED] Report actual completed and incomplete work from tool results. ' +

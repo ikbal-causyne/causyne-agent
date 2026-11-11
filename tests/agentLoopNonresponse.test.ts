@@ -728,3 +728,38 @@ test('agent message emission is idempotent within a task and never hides distinc
   newTask.emitEvent({ type: 'agent_message', content: report });
   assert.equal(otherEvents.filter(e => e.type === 'agent_message').length, 1);
 });
+
+test('a completed checklist cannot convert failed native actions into a fabricated success conclusion', async () => {
+  const oldCwd = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-failed-checklist-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: any[] = [];
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'failed-checklist', 'apply the game patch and stop if any test fails',
+      { workspaceRoot: workspace });
+    let calls = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls++;
+        loop._implementationPlan = [{ step: 'Apply patch and test', status: 'completed' }];
+        return { content: '', incompleteTurn: true,
+          externalActions: [{ name: 'run_command', status: 'failed', detail: 'regression tests failed' }],
+          usage: { promptTokens: 20, completionTokens: 10 } };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+    await loop.run();
+    assert.ok(calls <= 4, 'the agent must not keep regenerating a conclusion');
+    assert.equal(events.some(e => e.type === 'task_complete'), false);
+    assert.equal(events.some(e => e.type === 'agent_message' && /task completed successfully/i.test(e.content || '')), false);
+    assert.equal(events.some(e => e.type === 'error'), true);
+  } finally {
+    process.chdir(oldCwd);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
