@@ -320,7 +320,10 @@ test('verifyLocalWeb does not count an HTTP redirect as a working page', async (
 });
 
 test('verifyLocalWeb rejects credentials embedded in local URLs', async () => {
-  const result = await defaultObserver.verifyLocalWeb({ endpoint: 'http://user:secret@127.0.0.1:12345/' });
+  const url = new URL('http://127.0.0.1:12345/');
+  url.username = 'user';
+  url.password = 'test';
+  const result = await defaultObserver.verifyLocalWeb({ endpoint: url.href });
   assert.equal(result.verified, false);
   assert.match(result.error ?? '', /credentials/);
 });
