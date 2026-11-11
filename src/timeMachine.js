@@ -24,11 +24,15 @@ function record(value) {
 }
 function operationFamily(args) {
     const command = typeof args.command === 'string' ? args.command
-        : typeof args.cmd === 'string' ? args.cmd : '';
+        : typeof args.cmd === 'string' ? args.cmd
+            : typeof args.CommandLine === 'string' ? args.CommandLine
+                : typeof args.commandLine === 'string' ? args.commandLine
+                    : typeof args.script === 'string' ? args.script : '';
     if (!command) {
-        if (typeof args.url === 'string') {
+        const endpoint = typeof args.url === 'string' ? args.url : typeof args.endpoint === 'string' ? args.endpoint : '';
+        if (endpoint) {
             try {
-                return new URL(args.url).hostname.toLowerCase();
+                return new URL(endpoint).hostname.toLowerCase();
             }
             catch {
                 return '';
@@ -46,15 +50,16 @@ function operationFamily(args) {
 }
 function issueKey(tool, args) {
     const family = operationFamily(args);
-    const target = String(args.path ?? args.file_path ?? args.filePath ?? '');
+    const target = String(args.path ?? args.file_path ?? args.filePath ?? args.target ?? args.endpoint ?? args.url ?? '');
+    const workspace = String(args.cwd ?? '');
     // Changing error text/class does not buy another three attempts at the same
     // operation. Targets are hashed and never included in recovery messages.
-    return createHash('sha256').update(`${tool}\0${family}\0${target}`).digest('hex');
+    return createHash('sha256').update(`${tool}\0${family}\0${target}\0${workspace}`).digest('hex');
 }
 function lastGoodTool(outcomes) {
     for (let index = outcomes.length - 1; index >= 0; index--) {
         const outcome = outcomes[index];
-        if (outcome?.success)
+        if (outcome?.success && (outcome.exitCode == null || outcome.exitCode === 0) && !outcome.error?.trim())
             return outcome.tool;
     }
     return null;
@@ -91,7 +96,9 @@ export class TimeMachine {
     }
     observe(tool, args, result, outcomes = []) {
         const value = record(result);
-        const failed = value.success === false || typeof value.error === 'string';
+        const failed = value.success === false || (typeof value.error === 'string' && value.error.trim().length > 0)
+            || (typeof value.exitCode === 'number' && (!Number.isFinite(value.exitCode) || value.exitCode !== 0))
+            || value.failureKind === 'site_refusal';
         const classification = failed ? failureClass(value) || 'failed' : '';
         const key = issueKey(tool, args);
         const good = lastGoodTool(outcomes);
@@ -117,7 +124,7 @@ export class TimeMachine {
         }
         const error = typeof value.error === 'string' ? value.error : '';
         const needsHuman = classification === 'permission' || /user denied|approval required|authentication required/i.test(error);
-        const attempt = (this.failures.get(key) || 0) + 1;
+        const attempt = Math.min(TIME_MACHINE_MAX_ATTEMPTS, (this.failures.get(key) || 0) + 1);
         this.failures.set(key, attempt);
         const checkpoint = good ? ` Last successful tool: ${good}.` : '';
         if (needsHuman) {
@@ -141,6 +148,11 @@ export class TimeMachine {
             return { kind: 'stop', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
                 failureClass: classification, lastGoodTool: good,
                 guidance: `Further attempts were not approved. Stop this task. Give a brief evidence-based report and state what remains unresolved.${checkpoint}` };
+        }
+        if (classification === 'rate_limited' && attempt < TIME_MACHINE_CONSENT_AT) {
+            return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
+                failureClass: classification, lastGoodTool: good,
+                guidance: `Rate limit reached. Respect the provider's retry/reset window; do not immediately resend the same request.${checkpoint}` };
         }
         if (value.failureKind === 'site_refusal' && attempt < TIME_MACHINE_MAX_ATTEMPTS) {
             return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
