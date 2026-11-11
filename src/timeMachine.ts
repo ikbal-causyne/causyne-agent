@@ -43,7 +43,10 @@ function record(value: unknown): Record<string, unknown> {
 
 function operationFamily(args: Record<string, unknown>): string {
   const command = typeof args.command === 'string' ? args.command
-    : typeof args.cmd === 'string' ? args.cmd : '';
+    : typeof args.cmd === 'string' ? args.cmd
+    : typeof args.CommandLine === 'string' ? args.CommandLine
+    : typeof args.commandLine === 'string' ? args.commandLine
+    : typeof args.script === 'string' ? args.script : '';
   if (!command) {
     const endpoint = typeof args.url === 'string' ? args.url : typeof args.endpoint === 'string' ? args.endpoint : '';
     if (endpoint) {

@@ -227,3 +227,13 @@ test('failure attempts remain bounded after the six-attempt limit', () => {
     if (n >= 6) assert.equal(decision.kind, 'stop');
   }
 });
+
+test('alternate command argument names keep unrelated scripts in different retry families', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'exited with code 1' };
+  assert.equal(machine.observe('exec', { CommandLine: 'npm run build' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { CommandLine: 'npm run typecheck' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { commandLine: 'npm run lint' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { script: 'npm run unit' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { CommandLine: 'npm run build' }, fail).attempt, 2);
+});
