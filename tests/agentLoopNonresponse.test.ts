@@ -763,3 +763,37 @@ test('a completed checklist cannot convert failed native actions into a fabricat
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('a completed checklist cannot substitute for executable tool evidence', async () => {
+  const oldCwd = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-unexecuted-plan-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: any[] = [];
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'unexecuted-plan-regression', 'write the requested code changes',
+      { workspaceRoot: workspace });
+    let calls = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls++;
+        loop._implementationPlan = [{ step: 'Write changes', status: 'completed' }];
+        return { content: 'All changes completed successfully.',
+          usage: { promptTokens: 20, completionTokens: 10 } };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+    await loop.run();
+    assert.ok(calls <= 4, 'missing actions must stop rather than create another conclusion loop');
+    assert.equal(events.some(e => e.type === 'task_complete'), false);
+    assert.equal(events.some(e => e.type === 'agent_message' && /completed successfully/.test(e.content || '')), false);
+    assert.equal(events.some(e => e.type === 'error' && /No work was completed/.test(e.message || '')), true);
+  } finally {
+    process.chdir(oldCwd);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});

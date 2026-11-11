@@ -3459,10 +3459,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
             }
           }
 
-          const allPlanCompleted = this._implementationPlan?.length > 0
-            && this._implementationPlan.every((s: any) => s.status === 'completed' || s.completed);
-
-          if (!hasExternalActions && this.stepsCompleted === 0 && isActionable && !allPlanCompleted) {
+          if (!hasExternalActions && this.stepsCompleted === 0 && isActionable) {
             this.messages.pop();
             this.emitEvent({ type: 'error', message: 'The selected model returned text without taking any action. No work was completed.' });
             this.memoryManager.saveHistory(this.messages);
