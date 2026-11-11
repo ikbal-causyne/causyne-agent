@@ -247,3 +247,14 @@ test('explicit site refusal without an error string remains a failure and replan
   assert.equal(decision.attempt, 1);
   assert.match(decision.guidance, /another public source/);
 });
+
+test('rate limits demand backoff immediately while retaining the consent boundary', () => {
+  const machine = new TimeMachine();
+  const args = { command: 'npm publish' };
+  const result = { success: false, error: 'HTTP 429 rate limit reached' };
+  const first = machine.observe('exec', args, result);
+  assert.equal(first.kind, 'replan');
+  assert.match(first.guidance, /retry\/reset window/);
+  assert.equal(machine.observe('exec', args, result).kind, 'replan');
+  assert.equal(machine.observe('exec', args, result).kind, 'consent');
+});
