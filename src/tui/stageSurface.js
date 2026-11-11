@@ -478,6 +478,16 @@ export class StageSurface {
     if (budget > 0) {
       this.viewport.resize({ height: budget, width: contentWidth });
       rows = alignTranscriptRows(this.viewport.rows(), contentRows);
+      // In follow mode, the viewport can land on the blank separator between
+      // two assistant frames after enough replies to fill the band. Show a
+      // subtle boundary marker in that same row instead of a visible void.
+      // Do not shift row indices: rails, hover targets and reading anchors
+      // are keyed to the original transcript row positions.
+      if (this.viewport.following && this.viewport.maxScrollTop() > 0
+          && rows.length > 0 && stripAnsi(rows[0] || '').trim() === ''
+          && rows.some(row => stripAnsi(row).trim() !== '')) {
+        rows[0] = paint('rule', ` ${GLYPHS.dot} `);
+      }
       this.decorate(rows, contentWidth);
       markHoveredMessage(rows, this, contentWidth);
       if (rail) this.attachRail(rows, contentWidth);
