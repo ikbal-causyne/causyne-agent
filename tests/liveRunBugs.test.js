@@ -300,8 +300,10 @@ test('tui: the surface can hand the wheel back to the terminal and take it again
   const surface = Object.create(StageSurface.prototype);
   surface.out = { write: (text) => written.push(text) };
   surface.mouseCaptured = true;
-  // Taking the wheel back forces a full repaint, so the stub needs a stage.
-  surface.stage = { invalidate: () => {} };
+  surface.mouseWanted = true;
+  surface.mouseOn = true;
+  // Taking the wheel back forces a full repaint; model a reserved active stage.
+  surface.stage = { reserved: true, invalidate: () => {} };
 
   assert.equal(surface.releaseMouse(), true, 'the wheel could not be released');
   assert.equal(surface.releaseMouse(), false, 'releasing twice should be a no-op');
@@ -324,9 +326,11 @@ test('tui: the band stops painting while the terminal owns the scroll', async ()
   const surface = Object.create(StageSurface.prototype);
   surface.out = { write: () => {} };
   surface.mouseCaptured = true;
+  surface.mouseWanted = true;
+  surface.mouseOn = true;
   surface.detached = false;
   let invalidated = 0;
-  surface.stage = { invalidate: () => { invalidated++; } };
+  surface.stage = { reserved: true, invalidate: () => { invalidated++; } };
 
   surface.releaseMouse();
   assert.equal(surface.detached, true, 'handing the wheel over did not detach the band');
