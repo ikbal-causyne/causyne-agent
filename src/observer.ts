@@ -277,7 +277,9 @@ export class CausyneObserver {
         const clientReq = http.get(req.endpoint, { timeout: req.timeoutMs ?? 3000 }, (res) => {
           res.resume();
           const expected = req.expectedStatus ?? 200;
-          const ok = res.statusCode === expected || (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 400);
+          const ok = req.expectedStatus === undefined
+            ? (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 400)
+            : res.statusCode === expected;
           const result: { verified: boolean; statusCode?: number; error?: string } = { verified: Boolean(ok) };
           if (typeof res.statusCode === 'number') result.statusCode = res.statusCode;
           if (!ok) result.error = `HTTP ${res.statusCode ?? 'unknown'}`;

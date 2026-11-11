@@ -300,3 +300,12 @@ test('verifyCreative rejects negative and NaN size thresholds', () => {
     for (const minBytes of [-1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: 'a.bin', minBytes }).verified, false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('verifyLocalWeb respects explicitly required HTTP status', async () => {
+  const server = http.createServer((_req, res) => { res.writeHead(204); res.end(); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try { const port = (server.address() as any).port;
+    const result = await defaultObserver.verifyLocalWeb({ endpoint: `http://127.0.0.1:${port}`, expectedStatus: 200 });
+    assert.equal(result.statusCode, 204); assert.equal(result.verified, false);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
