@@ -830,7 +830,8 @@ export class ChatRenderer {
 
   formatAssistantMessage(content, { streaming = false } = {}) {
     const width = this.measure();
-    this.write();
+    // The frame already ends with a blank separator. A leading blank row on the
+    // first assistant response leaves a visible void in compact chat view.
     this.write(`${paint('agent', GLYPHS.arrow)} ${bold(paint('agent', 'Causyne'))}${streaming ? ' ' + dim('…') : ''}`);
     // Reserve the transcript's three-column inset and final safety cell.
     for (const line of renderMarkdown(content, Math.max(8, width - 4))) {

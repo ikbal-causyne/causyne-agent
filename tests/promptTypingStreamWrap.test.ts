@@ -42,10 +42,10 @@ describe('Prompt typing stream wrapping and vertical stretching', () => {
   });
 
   test('Composer width conforms dynamically using smart scaling algorithm on wide terminals', () => {
-    // Normal columns: matches available - 3
-    assert.equal(sessionComposerWidth(80), 77);
-    assert.equal(sessionComposerWidth(100), 97);
-    assert.equal(sessionComposerWidth(111), 108);
+    // Normal columns reserve three cells of inset and one final safety column
+    assert.equal(sessionComposerWidth(80), 76);
+    assert.equal(sessionComposerWidth(100), 96);
+    assert.equal(sessionComposerWidth(111), 107);
 
     // Wide terminals: widens smoothly without stretching excessively across hundreds of columns
     const width140 = sessionComposerWidth(140);

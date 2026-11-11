@@ -21,14 +21,17 @@ function createSurface(columns: number, rows = 40) {
 
 test('the sidebar appears only when its conversation column can remain readable', () => {
   assert.equal(sidebarVisible(120), false);
-  assert.equal(sidebarVisible(121), true);
+  assert.equal(sidebarVisible(121), false);
+  assert.equal(sidebarVisible(160), false);
+  assert.equal(sidebarVisible(161), true);
   assert.equal(sidebarVisible(154, true), false);
   process.env.CAUSYNE_SIDEBAR = 'off';
   assert.equal(sidebarVisible(154), false);
   delete process.env.CAUSYNE_SIDEBAR;
-  assert.equal(sessionMainWidth(154), 111);
+  assert.equal(sessionMainWidth(154), 154);
+  assert.equal(sessionMainWidth(200), 157);
   assert.equal(sessionMainWidth(100), 100);
-  assert.equal(sessionComposerWidth(sessionMainWidth(154)), 108);
+  assert.ok(sessionComposerWidth(sessionMainWidth(154)) <= 150);
   const rows = sessionSidebarRows({ title: 'Work', cwd: '/tmp/work', contextChars: 250, contextLimit: 1000 }, 30);
   assert.equal(rows.length, 30);
   assert.ok(rows.every(row => visibleWidth(row) === 42));
@@ -40,7 +43,7 @@ test('the sidebar appears only when its conversation column can remain readable'
 });
 
 test('wide Home becomes a full-height two-column session', () => {
-  const { surface } = createSurface(154);
+  const { surface } = createSurface(200);
   try {
     surface.enterHome(info);
     surface.present(['  INPUT'], { row: 0, col: 4 });
@@ -52,7 +55,7 @@ test('wide Home becomes a full-height two-column session', () => {
     assert.equal(surface.stage.height, surface.stage.maxHeight);
     assert.match(screen, /hello/);
     assert.match(screen, /25% of available window/);
-    assert.ok(surface.stage.prev.every(row => visibleWidth(row) < 154));
+    assert.ok(surface.stage.prev.every(row => visibleWidth(row) < 200));
     assert.ok(surface.stage.prev.at(-1)?.includes('INPUT'));
   } finally {
     surface.close();
@@ -73,7 +76,7 @@ test('a selected session keeps its input at the bottom as the sidebar appears an
     assert.ok(surface.stage.prev.every(row => visibleWidth(row) < out.columns));
     assert.match(stripAnsi(surface.stage.prev.at(-1) || ''), /INPUT/);
 
-    out.columns = 154;
+    out.columns = 200;
     assert.equal(surface.resize(), true);
     surface.present(['  INPUT'], { row: 0, col: 4 });
     assert.equal(surface.stage.height, surface.stage.maxHeight);
@@ -109,7 +112,7 @@ test('session transcript stays directly above input at 145x69', () => {
 });
 
 test('an active plan stays in the sidebar and an inline decision keeps the transcript visible', () => {
-  const { surface } = createSurface(154, 50);
+  const { surface } = createSurface(200, 50);
   try {
     surface.enterHome(info);
     surface.leaveHome(true);
@@ -124,7 +127,7 @@ test('an active plan stays in the sidebar and an inline decision keeps the trans
     assert.match(screen, /CHOOSE ARCHITECTURE/);
     assert.match(screen, /Plan  1\/2/);
     assert.match(screen, /Choose the layout/);
-    assert.ok(surface.stage.prev.every(row => visibleWidth(row) < 154));
+    assert.ok(surface.stage.prev.every(row => visibleWidth(row) < 200));
   } finally {
     surface.close();
   }

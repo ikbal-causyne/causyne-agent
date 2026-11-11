@@ -315,9 +315,9 @@ describe('Turn Rail & Chat Interface Symmetry, Spacing and Markdown Rendering', 
     const mockSurface = {
       stage: {
         height: 35,
-        width: () => 154
+        width: () => 200
       },
-      width: 154,
+      width: 200,
       railEnabled: () => true,
       activeTurnIndex: 3
     };
@@ -328,22 +328,22 @@ describe('Turn Rail & Chat Interface Symmetry, Spacing and Markdown Rendering', 
       notice: ''
     };
 
-    // Click at col 109 (overview rail in 154-column window with 42-col sidebar: 154 - 42 - 1 = 111 mainWidth)
+    // Click at col 155 (overview rail in 200-column window: 200 - 42 - 1 = 157 mainWidth)
     const railClickEvent = {
       name: 'mouse',
-      mouse: { x: 109, y: 15, button: 0, pressed: true }
+      mouse: { x: 155, y: 15, button: 0, pressed: true }
     };
     const railHandled = handleScrollbarMouse(railClickEvent, mockViewport as any, mockSurface as any, mockHost as any);
-    assert.equal(railHandled, true, 'Click on overview rail column 109 must be handled');
+    assert.equal(railHandled, true, 'Click on overview rail column 155 must be handled');
     assert.ok(scrolledPosition !== null, 'Viewport must be scrolled by rail click');
 
-    // Click inside the sidebar (col 135) must NOT be captured by the scrollbar
+    // Click inside the sidebar (col 175) must NOT be captured by the scrollbar
     const sidebarClickEvent = {
       name: 'mouse',
-      mouse: { x: 135, y: 15, button: 0, pressed: true }
+      mouse: { x: 175, y: 15, button: 0, pressed: true }
     };
     const sidebarHandled = handleScrollbarMouse(sidebarClickEvent, mockViewport as any, mockSurface as any, mockHost as any);
-    assert.equal(sidebarHandled, false, 'Click inside sidebar column 135 must not trigger scrollbar');
+    assert.equal(sidebarHandled, false, 'Click inside sidebar column 175 must not trigger scrollbar');
   });
 
   test('handleTurnRailMouse maintains smooth hover hit testing up to column 5', () => {
