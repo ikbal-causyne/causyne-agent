@@ -287,3 +287,9 @@ test('verifyDocs reports a directory as invalid instead of throwing', () => {
   try { assert.deepEqual(defaultObserver.verifyDocs({ workspaceRoot: root, filePath: '.', requiredHeadings: ['Overview'] }), { verified: false, missingHeadings: ['Overview'] }); }
   finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('verifyCreative rejects directories regardless of apparent size', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-art-dir-'));
+  try { assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: '.', minBytes: 0 }).verified, false); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
