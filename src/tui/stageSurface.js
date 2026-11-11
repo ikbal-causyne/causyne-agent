@@ -265,7 +265,7 @@ export class StageSurface {
   }
 
   enableMouse() {
-    if (!this.mouseWanted || this.mouseOn) return false;
+    if (!this.mouseWanted || this.mouseOn || !this.stage.reserved) return false;
     this.out.write(mouseTracking(true));
     this.out.write(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
@@ -273,12 +273,14 @@ export class StageSurface {
     return true;
   }
 
-  disableMouse() {
-    if (!this.mouseOn) return false;
-    this.out.write(mouseHoverTracking(false, this.env));
+  disableMouse(force = false) {
+    if (!force && !this.mouseOn && !this.mouseCaptured) return false;
+    // Restore terminal motion modes, including stale tracking from an interrupted turn.
+    this.out.write(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
     this.out.write(mouseTracking(false));
     this.mouseCaptured = false;
     this.mouseOn = false;
+    this.detached = false;
     return true;
   }
 
@@ -310,9 +312,8 @@ export class StageSurface {
   }
 
   close() {
-    // Mouse first, unconditionally: it is the one piece of state that outlives
-    // the process and damages the terminal the user goes back to.
-    this.disableMouse();
+    // Force the terminal to release tracking, even if internal flags were stale.
+    this.disableMouse(true);
     if (this.unregisterConsoleGuard) {
       this.unregisterConsoleGuard();
       this.unregisterConsoleGuard = null;
@@ -766,7 +767,8 @@ export class StageSurface {
 
   /** Take it back, once the user is driving the band again. */
   captureMouse() {
-    if (this.mouseCaptured) return false;
+    // Home and suspended stages must not arm modes their teardown cannot observe.
+    if (!this.mouseWanted || !this.mouseOn || !this.stage.reserved || this.mouseCaptured) return false;
     this.out.write(mouseTracking(true));
     this.out.write(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
@@ -789,11 +791,8 @@ export function createStageSurface({ out = process.stdout, env = process.env, co
   if (env.CAUSYNE_SIMPLE_INPUT === '1') return null;
   if (stageHeight(out, env) < 1) return null;
 
-  const effectiveEnv = env.CAUSYNE_MOUSE_HOVER === undefined
-    ? { ...env, CAUSYNE_MOUSE_HOVER: '1' }
-    : env;
-
-  const surface = new StageSurface({ out, env: effectiveEnv, config, speed, openingWidth });
+  // Terminal-wide motion tracking is opt-in, never silently enabled by the TUI.
+  const surface = new StageSurface({ out, env, config, speed, openingWidth });
   if (!surface.open()) return null;
   return surface;
 }
