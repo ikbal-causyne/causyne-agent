@@ -164,3 +164,18 @@ test('agent loop stops at three failed attempts when user declines retry consent
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test('empty error strings are not tool failures or false observer outcomes', async () => {
+  const machine = new TimeMachine();
+  const target = { command: 'npm test' };
+  const first = machine.observe('exec', target, { success: true, error: '', exitCode: 0 });
+  assert.equal(first.kind, 'none');
+  assert.equal(first.attempt, 0);
+  const failure = machine.observe('exec', target, { success: false, error: '' });
+  assert.equal(failure.kind, 'continue');
+  const recovery = machine.observe('exec', target, { success: true, error: '', exitCode: 0 });
+  assert.equal(recovery.kind, 'resolved');
+  const { outcomeFromResult } = await import('../src/observer/evidence.js');
+  assert.equal(outcomeFromResult('exec', target, { success: true, error: '', exitCode: 0 }, 0).success, true);
+  assert.equal(outcomeFromResult('exec', target, { success: false, error: '' }, 0).success, false);
+});

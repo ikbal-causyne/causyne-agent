@@ -422,7 +422,7 @@ export function outcomeFromResult(tool, args, result, at) {
     const record = result !== null && typeof result === 'object' && !Array.isArray(result)
         ? result
         : {};
-    const success = record.success !== false && typeof record.error !== 'string';
+    const success = record.success !== false && !(typeof record.error === 'string' && record.error.trim().length > 0);
     const rawError = typeof record.error === 'string' ? record.error : '';
     const exitCode = typeof record.exitCode === 'number' && Number.isFinite(record.exitCode) ? record.exitCode : null;
     const rawCommand = typeof args.command === 'string' ? args.command

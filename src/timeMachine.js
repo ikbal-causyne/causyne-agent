@@ -91,7 +91,7 @@ export class TimeMachine {
     }
     observe(tool, args, result, outcomes = []) {
         const value = record(result);
-        const failed = value.success === false || typeof value.error === 'string';
+        const failed = value.success === false || (typeof value.error === 'string' && value.error.trim().length > 0);
         const classification = failed ? failureClass(value) || 'failed' : '';
         const key = issueKey(tool, args);
         const good = lastGoodTool(outcomes);
