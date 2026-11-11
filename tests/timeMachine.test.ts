@@ -215,3 +215,15 @@ test('lastGoodTool ignores outcomes with nonzero exit codes or error text', () =
   assert.equal(decision.lastGoodTool, 'fs_read');
   assert.match(decision.guidance, /Last successful tool: fs_read/);
 });
+
+test('failure attempts remain bounded after the six-attempt limit', () => {
+  const machine = new TimeMachine();
+  const args = { command: 'npm test' };
+  const fail = { success: false, error: 'test failed' };
+  for (let n = 1; n <= 9; n++) {
+    const decision = machine.observe('exec', args, fail);
+    assert.equal(decision.attempt, Math.min(n, 6));
+    if (n === 3) machine.grantExtension(decision.issueKey);
+    if (n >= 6) assert.equal(decision.kind, 'stop');
+  }
+});
