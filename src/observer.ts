@@ -224,6 +224,7 @@ export class CausyneObserver {
       return { verified: false, missingHeadings: req.requiredHeadings || [] };
     }
 
+    if (!fs.statSync(fullPath).isFile()) return { verified: false, missingHeadings: req.requiredHeadings || [] };
     const content = fs.readFileSync(fullPath, 'utf8');
     const missing: string[] = [];
 

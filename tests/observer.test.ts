@@ -281,3 +281,9 @@ test('verifyCode rejects empty files and directories', () => {
     for (const target of ['blank.js', 'subdir']) assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: [target] }).evidence, 'invalid_file');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('verifyDocs reports a directory as invalid instead of throwing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-doc-dir-'));
+  try { assert.deepEqual(defaultObserver.verifyDocs({ workspaceRoot: root, filePath: '.', requiredHeadings: ['Overview'] }), { verified: false, missingHeadings: ['Overview'] }); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

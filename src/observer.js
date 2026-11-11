@@ -149,6 +149,8 @@ export class CausyneObserver {
         if (!fs.existsSync(fullPath)) {
             return { verified: false, missingHeadings: req.requiredHeadings || [] };
         }
+        if (!fs.statSync(fullPath).isFile())
+            return { verified: false, missingHeadings: req.requiredHeadings || [] };
         const content = fs.readFileSync(fullPath, 'utf8');
         const missing = [];
         for (const heading of req.requiredHeadings || []) {
