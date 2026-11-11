@@ -112,8 +112,14 @@ function hasShellControlOperators(command: string): boolean {
       else if (quote === ch) quote = null;
       continue;
     }
-    // Shell substitution remains active inside double quotes.
-    if (ch === '`' || ch === '
+    // Shell substitution is active inside double quotes.
+    if (ch === '`' || ch === '$' || ch === '\n' || ch === '\r') return true;
+    if (quote === null && /[;&|><()]/.test(ch)) return true;
+  }
+  return quote !== null;
+}
+
+/** A launch-only request authorizes inspection, starting the app, and opening it. */
 export function launchScopeError(tool: string, args: Record<string, unknown>): string | null {
   if (MUTATION_TOOLS.has(tool)) {
     return 'The user asked to open the existing project, not change its files or configuration.';
@@ -128,37 +134,6 @@ export function launchScopeError(tool: string, args: Record<string, unknown>): s
 
     if (OPEN_COMMAND.test(command) || isServerLaunchCommand(command) || LOCAL_HEALTH_CHECK.test(command) || PORT_CLEANUP_COMMAND.test(command)) {
       return null;
-    }
-
-    if (READ_ONLY_COMMAND.test(command)) {
-      return null;
-    }
-
-    return 'The user asked to open the existing project. Use read-only inspection, a background server, or desktop.open; do not run unrelated commands.';
-  }
-
-  return null;
-}
- || ch === '\n' || ch === '\r') return true;
-    if (quote === null && /[;&|><()]/.test(ch)) return true;
-  }
-  return quote !== null;
-}
-/** A launch-only request authorizes inspection, starting the app, and opening it. */
-export function launchScopeError(tool: string, args: Record<string, unknown>): string | null {
-  if (MUTATION_TOOLS.has(tool)) {
-    return 'The user asked to open the existing project, not change its files or configuration.';
-  }
-
-  if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
-    const command = String(args.command ?? args.input ?? '').trim();
-
-    if (OPEN_COMMAND.test(command) || isServerLaunchCommand(command) || LOCAL_HEALTH_CHECK.test(command) || PORT_CLEANUP_COMMAND.test(command)) {
-      return null;
-    }
-
-    if (/[;&|><`$()]/.test(command)) {
-      return 'A launch-only request does not authorize chained shell commands. Use one scoped command per tool call.';
     }
 
     if (READ_ONLY_COMMAND.test(command)) {
