@@ -269,3 +269,79 @@ test('coldObserver recognizes "is running at http://localhost:..." as a completi
   assert.equal(assessment.verified, false);
   assert.match(assessment.discrepancy, /code was modified without a successful test or syntax check/);
 });
+
+test('verifyCode cannot verify an unspecified deliverable set', () => {
+  assert.equal(defaultObserver.verifyCode({ workspaceRoot: os.tmpdir() }).verified, false);
+  assert.equal(defaultObserver.verifyCode({ workspaceRoot: os.tmpdir(), changedFiles: [] }).evidence, 'no_files');
+});
+
+test('verifyCode rejects empty files and directories', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-empty-'));
+  try { fs.writeFileSync(path.join(root, 'blank.js'), ''); fs.mkdirSync(path.join(root, 'subdir'));
+    for (const target of ['blank.js', 'subdir']) assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: [target] }).evidence, 'invalid_file');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyDocs reports a directory as invalid instead of throwing', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-doc-dir-'));
+  try { assert.deepEqual(defaultObserver.verifyDocs({ workspaceRoot: root, filePath: '.', requiredHeadings: ['Overview'] }), { verified: false, missingHeadings: ['Overview'] }); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyCreative rejects directories regardless of apparent size', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-art-dir-'));
+  try { assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: '.', minBytes: 0 }).verified, false); }
+  finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyCreative rejects negative and NaN size thresholds', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-art-size-'));
+  try { fs.writeFileSync(path.join(root, 'a.bin'), 'abc');
+    for (const minBytes of [-1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: 'a.bin', minBytes }).verified, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyLocalWeb respects explicitly required HTTP status', async () => {
+  const server = http.createServer((_req, res) => { res.writeHead(204); res.end(); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try { const port = (server.address() as any).port;
+    const result = await defaultObserver.verifyLocalWeb({ endpoint: `http://127.0.0.1:${port}`, expectedStatus: 200 });
+    assert.equal(result.statusCode, 204); assert.equal(result.verified, false);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('verifyLocalWeb does not count an HTTP redirect as a working page', async () => {
+  const server = http.createServer((_req, res) => { res.writeHead(302, { location: 'http://example.com/' }); res.end(); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try { const port = (server.address() as any).port;
+    const result = await defaultObserver.verifyLocalWeb({ endpoint: `http://127.0.0.1:${port}` });
+    assert.equal(result.statusCode, 302); assert.equal(result.verified, false);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('verifyLocalWeb rejects credentials embedded in local URLs', async () => {
+  const url = new URL('http://127.0.0.1:12345/');
+  url.username = 'user';
+  url.password = 'test';
+  const result = await defaultObserver.verifyLocalWeb({ endpoint: url.href });
+  assert.equal(result.verified, false);
+  assert.match(result.error ?? '', /credentials/);
+});
+
+test('observer does not reuse test evidence from before the latest edit', () => {
+  const obs = defaultObserver.evaluate({ taskId: 'stale-test', workspaceRoot: '/tmp', userGoal: 'Fix parser', agentClaim: 'Fixed', toolHistory: [
+    { tool: 'sysRun', args: {}, success: true, error: '', exitCode: 0, path: '', command: 'npm test', at: 1 },
+    { tool: 'fs_write', args: {}, success: true, error: '', exitCode: null, path: 'parser.ts', command: '', at: 2 }
+  ] });
+  assert.equal(obs.status, 'ready-to-verify');
+  assert.equal(obs.verified, false);
+});
+
+test('observer does not treat a browser action without rendered evidence as verification', () => {
+  const obs = defaultObserver.evaluate({ taskId: 'no-render', workspaceRoot: '/tmp', userGoal: 'Build UI', agentClaim: 'Implemented', toolHistory: [
+    { tool: 'fs_edit', args: {}, success: true, error: '', exitCode: null, path: 'ui.ts', command: '', at: 1 },
+    { tool: 'browser_act', args: {}, success: true, error: '', exitCode: 0, path: '', command: '', rendered: false, at: 2 }
+  ] });
+  assert.equal(obs.status, 'ready-to-verify');
+  assert.equal(obs.verified, false);
+});

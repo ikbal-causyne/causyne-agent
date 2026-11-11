@@ -149,10 +149,9 @@ export class CausyneObserver {
         const hasMutations = outcomes.some(o =>
           ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)
         );
-        const hasPassingVerification = outcomes.some(o =>
+        const hasPassingVerification = outcomes.slice(outcomes.findLastIndex(o => ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)) + 1).some(o =>
           o.success && (
             o.rendered === true ||
-            o.tool === 'browser_act' ||
             o.tool === 'verify_local_web' ||
             (o.command && /\b(?:test|build|check|typecheck|vitest|jest|pytest)\b/i.test(o.command))
           )
@@ -192,6 +191,7 @@ export class CausyneObserver {
    * Deterministically verifies code deliverables (targeted test, build, syntax).
    */
   public verifyCode(req: CodeVerificationRequest): { verified: boolean; error?: string; evidence: string } {
+    if (!req.changedFiles?.length) return { verified: false, error: 'No code deliverables supplied.', evidence: 'no_files' };
     if (req.changedFiles && req.changedFiles.length > 0) {
       for (const file of req.changedFiles) {
         const fullPath = path.isAbsolute(file) ? file : path.join(req.workspaceRoot, file);
@@ -201,6 +201,9 @@ export class CausyneObserver {
             error: `Target deliverable ${file} does not exist on disk.`,
             evidence: 'file_missing'
           };
+        }
+        if (!fs.statSync(fullPath).isFile() || fs.statSync(fullPath).size === 0) {
+          return { verified: false, error: `Target deliverable ${file} is not a non-empty file.`, evidence: 'invalid_file' };
         }
       }
     }
@@ -220,6 +223,7 @@ export class CausyneObserver {
       return { verified: false, missingHeadings: req.requiredHeadings || [] };
     }
 
+    if (!fs.statSync(fullPath).isFile()) return { verified: false, missingHeadings: req.requiredHeadings || [] };
     const content = fs.readFileSync(fullPath, 'utf8');
     const missing: string[] = [];
 
@@ -246,7 +250,9 @@ export class CausyneObserver {
     }
 
     const stat = fs.statSync(fullPath);
+    if (!stat.isFile()) return { verified: false, bytes: 0, error: 'Media artifact must be a regular file.' };
     const minBytes = req.minBytes ?? 100;
+    if (!Number.isSafeInteger(minBytes) || minBytes < 0) return { verified: false, bytes: stat.size, error: 'Invalid minimum artifact size.' };
     if (stat.size < minBytes) {
       return { verified: false, bytes: stat.size, error: `Media asset too small (${stat.size} bytes < ${minBytes} bytes)` };
     }
@@ -267,10 +273,17 @@ export class CausyneObserver {
           return;
         }
 
+        if (url.username || url.password) {
+          resolve({ verified: false, error: 'Local verification URL must not contain credentials.' });
+          return;
+        }
+
         const clientReq = http.get(req.endpoint, { timeout: req.timeoutMs ?? 3000 }, (res) => {
           res.resume();
           const expected = req.expectedStatus ?? 200;
-          const ok = res.statusCode === expected || (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 400);
+          const ok = req.expectedStatus === undefined
+            ? (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
+            : res.statusCode === expected;
           const result: { verified: boolean; statusCode?: number; error?: string } = { verified: Boolean(ok) };
           if (typeof res.statusCode === 'number') result.statusCode = res.statusCode;
           if (!ok) result.error = `HTTP ${res.statusCode ?? 'unknown'}`;
