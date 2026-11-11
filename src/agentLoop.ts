@@ -161,6 +161,8 @@ export interface AgentLoopOptions {
 export function isActionableTaskPrompt(text: string): boolean {
   const t = (text || '').trim();
   if (!t) return false;
+  // A no-execution request can be satisfied by analysis without mandatory tool calls.
+  if (isNoExecutionPrompt(t)) return false;
   const pureGreeting = /^(hi|hello|hey|yo|halo|hai|p|assalamu['a]?[l]?aikum|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
   if (pureGreeting) return false;
   const actionKeywords = /\b(continue|resume|proceed|lanjut\w*|create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find|download|buat\w*|bikin\w*|perbaik\w*|tambah\w*|ubah\w*|hapus\w*|jalan\w*|pasang\w*|analis\w*|cek\w*|rancang\w*|desain\w*|kerjakan\w*|tolong\w*|bantu\w*|ganti\w*|tulis\w*|kembangkan\w*)\b/i;
@@ -184,6 +186,8 @@ export function isDesktopWallpaperChangePrompt(text: string): boolean {
   if (isNoExecutionPrompt(t) || isReadOnlyOrExplanatoryPrompt(t)) return false;
   if (/^(?:why|how|what|does|can\s+you\s+explain|explain|tell\s+me|show\s+me\s+how)\b/i.test(t)) return false;
   if (/\b(?:why|how)\s+does\b/i.test(t)) return false;
+  // Debugging wallpaper-related source or regexes is not a request to mutate macOS.
+  if (/\b(?:test|review|audit|analy[sz]e|debug|refactor|inspect|explain|write|implement)\b[\s\S]{0,140}\b(?:regex|code|source|logic|verification|readback|function|script|test)\b/i.test(t)) return false;
   return /\b(?:change|set|switch|replace)\s+(?:(?:my|the|this|current|desktop|mac|macos)\s+){0,4}(?:desktop picture|wallpaper|desktop background)\b/i.test(t);
 }
 
