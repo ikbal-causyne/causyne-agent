@@ -237,3 +237,13 @@ test('alternate command argument names keep unrelated scripts in different retry
   assert.equal(machine.observe('exec', { script: 'npm run unit' }, fail).attempt, 1);
   assert.equal(machine.observe('exec', { CommandLine: 'npm run build' }, fail).attempt, 2);
 });
+
+test('explicit site refusal without an error string remains a failure and replans', () => {
+  const machine = new TimeMachine();
+  const decision = machine.observe('web_fetch', { url: 'https://example.org/blocked' }, {
+    failureKind: 'site_refusal', status: 403, error: ''
+  });
+  assert.equal(decision.kind, 'replan');
+  assert.equal(decision.attempt, 1);
+  assert.match(decision.guidance, /another public source/);
+});
