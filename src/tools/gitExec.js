@@ -1,6 +1,45 @@
-import { exec } from 'child_process';
-import os from 'os';
+import { execFile } from 'node:child_process';
+import os from 'node:os';
 import { currentToolAutonomyMode } from '../approvalPolicy.js';
+
+/**
+ * Parse the documented Git subcommand syntax without invoking a shell.
+ * Quoted commit messages and filenames are preserved as single arguments.
+ */
+export function parseGitArguments(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) throw new Error('A Git subcommand is required.');
+  const argv = [];
+  let token = '';
+  let quote = null;
+  let started = false;
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw.charAt(i);
+    const next = raw.charAt(i + 1);
+    if (char === '\\' && quote !== "'" && next && /[\\\s"'\\]/.test(next)) {
+      token += next;
+      started = true;
+      i++;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      if (!quote) { quote = char; started = true; continue; }
+      if (quote === char) { quote = null; continue; }
+    }
+    if (!quote && /[;&|><`$()\r\n]/.test(char)) {
+      throw new Error('Git commands must contain one subcommand, without shell operators or substitution.');
+    }
+    if (!quote && /\s/.test(char)) {
+      if (started) { argv.push(token); token = ''; started = false; }
+      continue;
+    }
+    token += char;
+    started = true;
+  }
+  if (quote) throw new Error('Unterminated quote in Git command.');
+  if (started) argv.push(token);
+  if (!argv.length) throw new Error('A Git subcommand is required.');
+  return argv;
+}
 
 export const gitExec = {
   schema: {
@@ -16,39 +55,40 @@ export const gitExec = {
     }
   },
   async execute(args) {
-    const cwd = (args.cwd || process.cwd()).replace(/^~\//, os.homedir() + '/');
-    let cmdString = args.command;
-    
-    // Phase 5 AGI Upgrade: Boundary Conditions
-    if (cmdString.includes('-i') || cmdString.includes('interactive')) {
-      return { success: false, error: 'Interactive workflows (e.g., rebase -i) are strictly forbidden in AGI automation. Use precise non-interactive commands.' };
+    const cwd = String(args?.cwd || process.cwd()).replace(/^~\//, os.homedir() + '/');
+    let argv;
+    try {
+      argv = parseGitArguments(args?.command);
+    } catch (error) {
+      return { success: false, error: error.message };
     }
-    
-    if ((cmdString.includes('push -f') || cmdString.includes('push --force') || cmdString.includes('branch -D'))
-      && currentToolAutonomyMode() === undefined) {
+
+    const subcommand = argv[0];
+    if (subcommand === 'rebase' && argv.some(arg => arg === '-i' || arg === '--interactive')) {
+      return { success: false, error: 'Interactive Git rebase is not supported. Use precise non-interactive commands.' };
+    }
+    const forcingPush = subcommand === 'push' && argv.slice(1).some(arg => arg === '-f' || arg === '--force' || arg.startsWith('--force-with-lease'));
+    const forcingBranch = subcommand === 'branch' && argv.includes('-D');
+    if ((forcingPush || forcingBranch) && currentToolAutonomyMode() === undefined) {
       return { success: false, error: 'Destructive Git action requires the agent session approval and sandbox policy.' };
     }
 
-    const command = `git ${cmdString}`;
-    
-    return new Promise((resolve) => {
-      exec(command, { cwd, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
+    return new Promise(resolve => {
+      // Never use a shell here: gitOp is a structured tool, not an arbitrary shell.
+      execFile('git', argv, { cwd, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
         const fullOutput = (stdout || '') + '\n' + (stderr || '');
-        
-        // Phase 5 AGI Upgrade: Autonomous Conflict Detection
         if (fullOutput.includes('CONFLICT (content): Merge conflict')) {
-          resolve({ 
-            success: false, 
-            error: `[AUTONOMOUS CONFLICT DETECTED]\nGit merge conflict occurred. DO NOT PANIC.\n1. Use fs.read to read the conflicted files.\n2. Analyze the <<<<<<< HEAD markers.\n3. Use fs.edit to surgically resolve the conflict.\n4. Run git add and git commit.`, 
-            output: fullOutput 
+          resolve({
+            success: false,
+            error: '[AUTONOMOUS CONFLICT DETECTED] Git merge conflict occurred. Inspect conflicted files, resolve exact markers and verify before continuing.',
+            output: fullOutput
           });
           return;
         }
-
         if (error) {
           resolve({ success: false, output: stdout, error: stderr || error.message, exitCode: error.code });
         } else {
-          resolve({ success: true, output: stdout || stderr, exitCode: 0 }); 
+          resolve({ success: true, output: stdout || stderr, exitCode: 0 });
         }
       });
     });
