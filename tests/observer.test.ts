@@ -374,3 +374,35 @@ test('observer does not treat negated completion statements as success claims', 
     assert.equal(obs.verified, false, agentClaim);
   }
 });
+
+test('observer code, docs and creative verification cannot authenticate files outside workspace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-obs-scope-root-'));
+  const external = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-obs-scope-outside-'));
+  try {
+    const outsideCode = path.join(external, 'app.js');
+    const outsideDocs = path.join(external, 'README.md');
+    const outsideImage = path.join(external, 'render.png');
+    fs.writeFileSync(outsideCode, 'export const valid = true;');
+    fs.writeFileSync(outsideDocs, '# Overview\n');
+    fs.writeFileSync(outsideImage, Buffer.alloc(512, 1));
+
+    assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: [outsideCode] }).evidence, 'outside_workspace');
+    assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: [path.relative(root, outsideCode)] }).verified, false);
+    assert.equal(defaultObserver.verifyDocs({ workspaceRoot: root, filePath: outsideDocs, requiredHeadings: ['Overview'] }).verified, false);
+    assert.equal(defaultObserver.verifyCreative({ workspaceRoot: root, artifactPath: outsideImage, minBytes: 100 }).verified, false);
+
+    fs.writeFileSync(path.join(root, 'app.js'), 'export const valid = true;');
+    assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: ['app.js'] }).verified, true);
+    const symlink = path.join(root, 'outside-app.js');
+    try {
+      fs.symlinkSync(outsideCode, symlink);
+    } catch (error) {
+      if (!['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+      return;
+    }
+    assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: ['outside-app.js'] }).verified, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(external, { recursive: true, force: true });
+  }
+});

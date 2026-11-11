@@ -76,6 +76,17 @@ export function extractClaimedLocalUrls(text: string): string[] {
   return [...unique];
 }
 
+function isWorkspaceArtifact(workspaceRoot: string, targetPath: string): boolean {
+  try {
+    const root = fs.realpathSync(workspaceRoot);
+    const target = fs.realpathSync(targetPath);
+    const relative = path.relative(root, target);
+    return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+}
+
 export class CausyneObserver {
   /**
    * Evaluates the current state of a task after a tool outcome or at a step boundary.
@@ -203,6 +214,9 @@ export class CausyneObserver {
             evidence: 'file_missing'
           };
         }
+        if (!isWorkspaceArtifact(req.workspaceRoot, fullPath)) {
+          return { verified: false, error: `Target deliverable ${file} is outside the workspace.`, evidence: 'outside_workspace' };
+        }
         if (!fs.statSync(fullPath).isFile() || fs.statSync(fullPath).size === 0) {
           return { verified: false, error: `Target deliverable ${file} is not a non-empty file.`, evidence: 'invalid_file' };
         }
@@ -224,6 +238,7 @@ export class CausyneObserver {
       return { verified: false, missingHeadings: req.requiredHeadings || [] };
     }
 
+    if (!isWorkspaceArtifact(req.workspaceRoot, fullPath)) return { verified: false, missingHeadings: req.requiredHeadings || [] };
     if (!fs.statSync(fullPath).isFile()) return { verified: false, missingHeadings: req.requiredHeadings || [] };
     const content = fs.readFileSync(fullPath, 'utf8');
     const missing: string[] = [];
@@ -250,6 +265,7 @@ export class CausyneObserver {
       return { verified: false, bytes: 0, error: `Media asset not found: ${req.artifactPath}` };
     }
 
+    if (!isWorkspaceArtifact(req.workspaceRoot, fullPath)) return { verified: false, bytes: 0, error: 'Media artifact is outside the workspace.' };
     const stat = fs.statSync(fullPath);
     if (!stat.isFile()) return { verified: false, bytes: 0, error: 'Media artifact must be a regular file.' };
     const minBytes = req.minBytes ?? 100;
