@@ -179,3 +179,15 @@ test('empty error strings are not tool failures or false observer outcomes', asy
   assert.equal(outcomeFromResult('exec', target, { success: true, error: '', exitCode: 0 }, 0).success, true);
   assert.equal(outcomeFromResult('exec', target, { success: false, error: '' }, 0).success, false);
 });
+
+test('a nonzero exit code cannot resolve TimeMachine history or pass evidence normalization', async () => {
+  const machine = new TimeMachine();
+  const args = { command: 'npm test' };
+  assert.equal(machine.observe('exec', args, { success: false, exitCode: 1 }).attempt, 1);
+  const stillFailed = machine.observe('exec', args, { success: true, error: '', exitCode: 2 });
+  assert.equal(stillFailed.kind, 'continue');
+  assert.equal(stillFailed.attempt, 2);
+  assert.equal(machine.observe('exec', args, { success: true, exitCode: 0 }).kind, 'resolved');
+  const { outcomeFromResult } = await import('../src/observer/evidence.js');
+  assert.equal(outcomeFromResult('exec', args, { success: true, exitCode: 1 }, 0).success, false);
+});

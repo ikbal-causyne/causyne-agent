@@ -112,7 +112,8 @@ export class TimeMachine {
   observe(tool: string, args: Record<string, unknown>, result: unknown,
     outcomes: readonly ToolOutcome[] = []): RecoveryDecision {
     const value = record(result);
-    const failed = value.success === false || (typeof value.error === 'string' && value.error.trim().length > 0);
+    const failed = value.success === false || (typeof value.error === 'string' && value.error.trim().length > 0)
+      || (typeof value.exitCode === 'number' && (!Number.isFinite(value.exitCode) || value.exitCode !== 0));
     const classification = failed ? failureClass(value) || 'failed' : '';
     const key = issueKey(tool, args);
     const good = lastGoodTool(outcomes);
