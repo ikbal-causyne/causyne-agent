@@ -97,7 +97,7 @@ export function isServerLaunchCommand(command) {
 function hasShellControlOperators(command) {
     let quote = null;
     for (let i = 0; i < command.length; i++) {
-        const ch = command[i];
+        const ch = command.charAt(i);
         if (ch === '\\') {
             if (i === command.length - 1)
                 return true;
