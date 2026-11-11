@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
-import { assertSkillFileSafe, assertSkillTreeSafe, writeSkillFileSafely } from './skills/skillResourceSafety.js';
+import { assertSkillFileSafe, assertSkillTreeSafe, writeSkillFileSafely, isPathWithin } from './skills/skillResourceSafety.js';
 // Bounds. Every one of these protects the context window, which is the resource
 // a skill library actually spends.
 export const MAX_USER_SKILLS = 200;
@@ -224,7 +224,7 @@ export function writeUserSkill({ domain, name, content, overwrite = false }, roo
     // segment has been joined. Validation above already makes this unreachable.
     const resolvedRoot = path.resolve(root);
     const resolvedFile = path.resolve(file);
-    if (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + path.sep)) {
+    if (!isPathWithin(resolvedFile, resolvedRoot)) {
         return { ok: false, error: 'refusing to write outside the skills directory' };
     }
     if (!overwrite && fs.existsSync(file)) {

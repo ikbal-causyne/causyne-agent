@@ -13,11 +13,66 @@ const OPEN_COMMAND = /^\s*(?:open|xdg-open|start)\s+\S+/i;
 const LOCAL_HEALTH_CHECK = /^\s*curl\b[^;&|><`$()]*https?:\/\/(?:localhost|127\.0\.0\.1):\d+(?:\/\S*)?\s*$/i;
 const PORT_CLEANUP_COMMAND = /^\s*(?:pkill|kill|fuser)\b/i;
 
-const MUTATION_TOOLS = new Set([
+export const MUTATION_TOOLS = new Set([
   'fs_write', 'fs_edit', 'fs_delete', 'fs_move',
   'multi_edit', 'MultiEdit', 'edit_file', 'write_to_file', 'delete_file',
   'create_skill', 'manage_local_dependencies'
 ]);
+
+const NO_EXECUTION_PHRASES = /\b(?:don'?t|do\s+not|never|without)\s+(?:execute|run|modify|mutate|apply|touch|write|change|edit|delete)\b|\b(?:no|without)\s+(?:execution|tools?|actions?)\b|\bjust\s+explain\b|\bread[\s-]only\b/i;
+
+export function isNoExecutionPrompt(prompt?: string | null): boolean {
+  if (!prompt || typeof prompt !== 'string') return false;
+  return NO_EXECUTION_PHRASES.test(prompt);
+}
+
+export function isReadOnlyOrExplanatoryPrompt(prompt?: string | null): boolean {
+  if (!prompt || typeof prompt !== 'string') return false;
+  const trimmed = prompt.trim();
+  if (trimmed.length === 0) return false;
+  if (isNoExecutionPrompt(trimmed)) return true;
+  if (!INQUIRY_WORDS.test(trimmed)) return false;
+  // If the inquiry also explicitly commands creation/modification, it's not read-only
+  if (CHANGE_VERBS.test(trimmed)) return false;
+  return true;
+}
+
+/** Enforces scope boundaries when the user's intent is explanatory or forbids execution. */
+export function readOnlyScopeError(
+  tool: string,
+  args: Record<string, unknown>,
+  prompt?: string | null
+): string | null {
+  const p = prompt || '';
+  const noExecution = isNoExecutionPrompt(p);
+
+  if (noExecution) {
+    if (tool === 'fs_read' || tool === 'doc_read') return null;
+    return 'The user explicitly requested an explanation without action execution; modifying files or executing commands is not authorized.';
+  }
+
+  if (isReadOnlyOrExplanatoryPrompt(p)) {
+    if (MUTATION_TOOLS.has(tool) || tool === 'desktop_act' || tool === 'computer_use') {
+      return 'The user requested an explanation/read-only inquiry, not workspace modifications or desktop actions.';
+    }
+    if (tool === 'gitOp') {
+      const command = String(args.command || '');
+      if (/\b(?:commit|push|reset|rebase|merge|checkout\s+-b|branch\s+-[dD])\b/i.test(command)) {
+        return 'A read-only inquiry does not authorize modifying git history or branches.';
+      }
+      return null;
+    }
+    if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
+      const command = String(args.command ?? args.input ?? '').trim();
+      if (READ_ONLY_COMMAND.test(command) && !/[;&|><`$()]/.test(command)) {
+        return null;
+      }
+      return 'A read-only inquiry authorizes only non-mutating status inspection commands (e.g. pwd, git status, cat), not arbitrary execution.';
+    }
+  }
+
+  return null;
+}
 
 export function isLaunchOnlyPrompt(prompt: string): boolean {
   if (!prompt || typeof prompt !== 'string') return false;

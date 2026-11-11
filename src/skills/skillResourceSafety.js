@@ -53,6 +53,11 @@ export function assertSkillFileSafe(filePath, allowMissing = false) {
         throw new Error(`Skill file must be a regular file: ${filePath}`);
     }
 }
+export function isPathWithin(targetPath, parentDir) {
+    const normTarget = process.platform === 'win32' ? path.resolve(targetPath).toLowerCase() : path.resolve(targetPath);
+    const normParent = process.platform === 'win32' ? path.resolve(parentDir).toLowerCase() : path.resolve(parentDir);
+    return normTarget === normParent || normTarget.startsWith(normParent.endsWith(path.sep) ? normParent : `${normParent}${path.sep}`);
+}
 function samePhysicalDirectory(a, b) {
     return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
@@ -78,7 +83,7 @@ export function writeSkillFileSafely(root, domain, name, fileName, body, overwri
     const file = path.join(directory, fileName);
     const resolvedDir = path.resolve(directory);
     const resolvedFile = path.resolve(file);
-    if (resolvedFile !== resolvedDir && !resolvedFile.startsWith(`${resolvedDir}${path.sep}`)) {
+    if (!isPathWithin(resolvedFile, resolvedDir)) {
         throw new Error(`Skill file escapes its directory: ${fileName}`);
     }
     assertSkillFileSafe(file, true);
@@ -190,7 +195,7 @@ export function readSkillTextResource(root, domain, name, relativePath) {
     assertSkillFileSafe(target, false);
     const physicalRoot = fs.realpathSync(skillDir);
     const physicalFile = fs.realpathSync(target);
-    if (!physicalFile.startsWith(`${physicalRoot}${path.sep}`)) {
+    if (!isPathWithin(physicalFile, physicalRoot)) {
         throw new Error('Skill resource escapes its own directory.');
     }
     const nofollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;

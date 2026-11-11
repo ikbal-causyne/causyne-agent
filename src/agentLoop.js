@@ -64,7 +64,7 @@ import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
 import { isNativeMutation } from './providers/antigravity.js';
 import { resolveMentionedContext } from './promptMentions.js';
-import { isLaunchOnlyPrompt, launchScopeError } from './launchIntent.js';
+import { isLaunchOnlyPrompt, launchScopeError, isNoExecutionPrompt, isReadOnlyOrExplanatoryPrompt, readOnlyScopeError } from './launchIntent.js';
 import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction } from './tui/codeProgress.js';
 import { StallGuardController } from './stallGuard.js';
 import { buildRecoverableDroppedSummary, pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments } from './historyPruner.js';
@@ -103,7 +103,17 @@ export function isGenericHandoffResponse(text) {
     return handoff && !verifiedOutcome;
 }
 export function isDesktopWallpaperChangePrompt(text) {
-    return /\b(?:change|set|switch|replace)\b[\s\S]{0,100}\b(?:desktop picture|wallpaper|desktop background)\b|\b(?:desktop picture|wallpaper|desktop background)\b[\s\S]{0,100}\b(?:change|set|switch|replace)\b/i.test(text || '');
+    const t = (text || '').trim();
+    if (!t)
+        return false;
+    // Explanatory questions or prompts that explicitly forbid execution are never wallpaper mutation requests
+    if (isNoExecutionPrompt(t) || isReadOnlyOrExplanatoryPrompt(t))
+        return false;
+    if (/^(?:why|how|what|does|can\s+you\s+explain|explain|tell\s+me|show\s+me\s+how)\b/i.test(t))
+        return false;
+    if (/\b(?:why|how)\s+does\b/i.test(t))
+        return false;
+    return /\b(?:change|set|switch|replace)\b[\s\S]{0,100}\b(?:desktop picture|wallpaper|desktop background)\b|\b(?:desktop picture|wallpaper|desktop background)\b[\s\S]{0,100}\b(?:change|set|switch|replace)\b/i.test(t);
 }
 function readMacDesktopPictures() {
     try {
@@ -3675,6 +3685,35 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         this.memoryManager.saveHistory(this.messages);
                         break;
                     }
+                    const isAuthoringTask = isCodeAuthoringTaskPrompt(taskPrompt);
+                    if (isAuthoringTask) {
+                        const outcomes = coldObserver.getToolOutcomes(this.taskId);
+                        const hasCodeOrWorkspaceMutation = this.webArtifacts.size > 0 || outcomes.some((o) => o.success !== false && [
+                            'fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit', 'multi_edit',
+                            'ui_forge', 'write_file', 'write_to_file', 'edit_file', 'replace_file_content',
+                            'multi_replace_file_content', 'native_engine', 'update_plan'
+                        ].includes(String(o.tool || '')));
+                        if (!hasCodeOrWorkspaceMutation && completedNativeActionIds.size === 0) {
+                            if (this._nonMutationNudges === undefined)
+                                this._nonMutationNudges = 0;
+                            if (this._nonMutationNudges < 2) {
+                                this._nonMutationNudges++;
+                                this.messages.push({
+                                    role: 'system',
+                                    content: `[ACTION MANDATE: The user explicitly instructed: "${taskPrompt}". You inspected workspace files but did not create, write, or modify any code. You must invoke the appropriate authoring tools (e.g. fs_write) to produce the requested deliverables before completing the task.]`
+                                });
+                                this.emitEvent({ type: 'status', message: 'Enforcing code implementation: requiring code creation before completion…' });
+                                this.memoryManager.saveHistory(this.messages);
+                                continue;
+                            }
+                            this.emitEvent({
+                                type: 'error',
+                                message: 'The requested authoring task was not completed; no files or code were created or modified.'
+                            });
+                            this.memoryManager.saveHistory(this.messages);
+                            break;
+                        }
+                    }
                     const cleanTerminalContent = (text) => {
                         if (typeof text !== 'string')
                             return '';
@@ -3869,6 +3908,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         }
                         if (args && ['sysRun', 'sysRunBg', 'terminal_persistent_shell'].includes(functionName) && !args.cwd) {
                             args.cwd = this.workspaceRoot;
+                        }
+                    }
+                    const intentPrompt = this.taskIntentPrompt || this.userPrompt || this.currentTaskPrompt || '';
+                    if (isNoExecutionPrompt(intentPrompt) || isReadOnlyOrExplanatoryPrompt(intentPrompt)) {
+                        const readOnlyError = readOnlyScopeError(functionName, args || {}, intentPrompt);
+                        if (readOnlyError) {
+                            this.emitEvent({ type: 'step_error', tool: functionName, error: readOnlyError, toolCallId: toolCall.id });
+                            this.messages.push({ role: 'tool', tool_call_id: toolCall.id, name: functionName,
+                                content: JSON.stringify({ success: false, error: readOnlyError }) });
+                            continue;
                         }
                     }
                     // Universal Repetition & Infinite Loop Circuit Breakers (Token Hemorrhage Guard)

@@ -4,7 +4,8 @@ import { causyneHome } from './utils/paths.js';
 import {
   assertSkillFileSafe,
   assertSkillTreeSafe,
-  writeSkillFileSafely
+  writeSkillFileSafely,
+  isPathWithin
 } from './skills/skillResourceSafety.js';
 
 export interface UserSkill {
@@ -256,7 +257,7 @@ export function writeUserSkill(
   // segment has been joined. Validation above already makes this unreachable.
   const resolvedRoot = path.resolve(root);
   const resolvedFile = path.resolve(file);
-  if (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(resolvedRoot + path.sep)) {
+  if (!isPathWithin(resolvedFile, resolvedRoot)) {
     return { ok: false, error: 'refusing to write outside the skills directory' };
   }
 
