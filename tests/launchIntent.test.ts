@@ -346,3 +346,12 @@ test('read-only and launch-only tasks reject persistent-state and host-mutation 
     assert.match(readOnlyScopeError(tool, {}, 'explain what this repository contains'), /not workspace modifications/, tool);
   }
 });
+
+test('plugin inspection remains available but plugin mutations require authorization', () => {
+  assert.equal(launchScopeError('plugin.manager', { action: 'list' }), null);
+  assert.equal(readOnlyScopeError('plugin.manager', { action: 'list' }, 'explain plugins'), null);
+  for (const action of ['create', 'enable', 'disable', undefined]) {
+    assert.match(launchScopeError('plugin.manager', { action }), /does not authorize modifying installed plugins/);
+    assert.match(readOnlyScopeError('plugin.manager', { action }, 'explain plugins'), /does not authorize modifying installed plugins/);
+  }
+});

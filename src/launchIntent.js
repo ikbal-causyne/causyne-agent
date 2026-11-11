@@ -68,6 +68,9 @@ export function readOnlyScopeError(tool, args, prompt) {
         if (MUTATION_TOOLS.has(tool) || tool === 'desktop_act' || tool === 'computer_use') {
             return 'The user requested an explanation/read-only inquiry, not workspace modifications or desktop actions.';
         }
+        if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
+            return 'A read-only inquiry does not authorize modifying installed plugins.';
+        }
         if (tool === 'gitOp') {
             return isGitInspectionCommand(args.command)
                 ? null
@@ -141,7 +144,10 @@ export function launchScopeError(tool, args) {
     if (MUTATION_TOOLS.has(tool)) {
         return 'The user asked to open the existing project, not change its files or configuration.';
     }
-    if (tool === 'gitOp') {
+    if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
+        return 'A launch-only request does not authorize modifying installed plugins.';
+    }
+        if (tool === 'gitOp') {
         return isGitInspectionCommand(args.command)
             ? null
             : 'A launch-only request allows Git inspection, not working-tree or history changes.';
