@@ -131,6 +131,7 @@ export class ChatPrompt {
 
     this.busy = false;
     this.active = false;
+    this.exitHook = null;
     this.drawnRows = 0;
     this.usageCard = null;
 
@@ -194,6 +195,13 @@ export class ChatPrompt {
     this.input.resume();
     this.input.on('data', this.handleData);
     this.out.write(bracketedPaste(true));
+    // Node's normal exit does not guarantee ChatPrompt.stop() is called.
+    // Always restore bracketed paste and raw stdin when the process exits.
+    this.exitHook = () => {
+      try { this.out.write(bracketedPaste(false)); } catch { /* terminal already closed */ }
+      try { this.input.setRawMode(false); } catch { /* stdin already closed */ }
+    };
+    process.once('exit', this.exitHook);
     // Rows are laid out against the terminal width; without this they stay stale
     // until the next keystroke, and a narrowed terminal wraps rows that erase()
     // is still counting as one.
@@ -219,6 +227,10 @@ export class ChatPrompt {
     this.input.off('data', this.handleData);
     try { this.input.setRawMode(false); } catch (e) { /* already closed */ }
     this.input.pause();
+    if (this.exitHook) {
+      process.removeListener('exit', this.exitHook);
+      this.exitHook = null;
+    }
   }
 
   /**

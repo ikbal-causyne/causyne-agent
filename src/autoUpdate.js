@@ -13,7 +13,7 @@ import { causyneHome } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
 const PACKAGE_NAME = '@causyne/agent';
 const REGISTRY_LATEST = 'https://registry.npmjs.org/@causyne%2fagent/latest';
-const DEFAULT_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour for active developer agility
+const DEFAULT_CHECK_INTERVAL_MS = 0; // A bare 'causyne' checks the published version on every launch
 const ERROR_RETRY_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes retry on network error
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 function updateStateFile(options = {}) {
@@ -229,7 +229,7 @@ export async function runSelfUpdate(verbose = false, options = {}) {
         return { updated: false, reason: 'failed', error: message, ...info };
     }
 }
-/** Check on launch, defaulting to at most once per hour with fast retry on error. */
+/** Check on every launch by default; an explicit env interval may opt into caching. */
 export async function startUpdateChecker(options = {}) {
     const env = options.env || process.env;
     if (env.CAUSYNE_DISABLE_AUTOUPDATE === '1' || env.CAUSYNE_DISABLE_AUTOUPDATE === 'true') {
@@ -251,9 +251,9 @@ export async function startUpdateChecker(options = {}) {
         ? customInterval
         : DEFAULT_CHECK_INTERVAL_MS;
     const state = readState(options);
-    if (!options.force && Number.isFinite(state.checkedAt)) {
+    if (!options.force && checkInterval > 0 && Number.isFinite(state.checkedAt)) {
         const elapsed = Date.now() - state.checkedAt;
-        const intervalToUse = state.error ? ERROR_RETRY_INTERVAL_MS : checkInterval;
+        const intervalToUse = state.error ? Math.min(ERROR_RETRY_INTERVAL_MS, checkInterval) : checkInterval;
         if (elapsed < intervalToUse) {
             return { updated: false, reason: 'recently-checked', latest: state.latest, ...info };
         }

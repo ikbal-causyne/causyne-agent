@@ -69,7 +69,7 @@ test('startUpdateChecker applies 2-minute backoff on previous error instead of f
   assert.equal(result.updated, false);
   assert.equal(result.reason, 'current');
 
-  // Case 2: Last successful check was recent (10 minutes ago, no error) -> should skip
+  // Case 2: Explicit 1-hour check interval retains an opt-in startup cache
   fs.writeFileSync(stateFile, JSON.stringify({
     checkedAt: Date.now() - 10 * 60 * 1000,
     latest: '1.20.19'
@@ -77,7 +77,7 @@ test('startUpdateChecker applies 2-minute backoff on previous error instead of f
 
   fetchCalled = false;
   const skipResult = await startUpdateChecker({
-    env: { CAUSYNE_INSTALL_ROOT: managedRoot, CAUSYNE_NPM_COMMAND: 'npm' },
+    env: { CAUSYNE_INSTALL_ROOT: managedRoot, CAUSYNE_NPM_COMMAND: 'npm', CAUSYNE_UPDATE_INTERVAL_MS: '3600000' },
     currentVersion: '1.20.19',
     stateFile,
     fetchImpl
@@ -145,4 +145,36 @@ test('diagnoseInstallation and formatDoctorReport include npmCommand and update 
   assert.match(report, /Version\s+:\s+1\.20\.19/);
   assert.match(report, /Latest\s+:\s+1\.20\.25/);
   assert.match(report, /Update\s+:\s+available/);
+});
+
+test('bare causyne launch checks registry even if previous check was recent', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-update-on-launch-'));
+  const stateFile = path.join(tmpDir, 'update-state.json');
+  try {
+    fs.writeFileSync(stateFile, JSON.stringify({
+      checkedAt: Date.now(),
+      latest: '1.20.100'
+    }));
+    let fetchCount = 0;
+    const fetchImpl = async () => {
+      fetchCount++;
+      return { ok: true, json: async () => ({ name: '@causyne/agent', version: '1.20.100' }) };
+    };
+    const env = { CAUSYNE_INSTALL_ROOT: path.join(tmpDir, 'managed'), CAUSYNE_NPM_COMMAND: 'npm' };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await startUpdateChecker({ env, currentVersion: '1.20.100', stateFile, fetchImpl });
+      assert.equal(result.reason, 'current');
+    }
+    assert.equal(fetchCount, 2, 'each bare launch must check for the published version');
+    const disabled = await startUpdateChecker({
+      env: { ...env, CAUSYNE_DISABLE_AUTOUPDATE: '1' },
+      currentVersion: '1.20.100',
+      stateFile,
+      fetchImpl
+    });
+    assert.equal(disabled.reason, 'disabled');
+    assert.equal(fetchCount, 2, 'explicit auto-update opt-out must never fetch');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
