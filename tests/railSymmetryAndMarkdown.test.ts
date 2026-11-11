@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { StageSurface } from '../src/tui/stageSurface.js';
+import { StageSurface, leadingAnsiControlEnd } from '../src/tui/stageSurface.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 import {
@@ -378,4 +378,20 @@ describe('Turn Rail & Chat Interface Symmetry, Spacing and Markdown Rendering', 
     assert.equal(handled, true, 'Hover at column 4 should be within rail gutter hit zone');
     assert.equal(mockSurface.hoveredTurnIndex, 2, 'Turn 2 should be hovered');
   });
+});
+
+test('leading ANSI control sequences are scanned in linear time without changing rail alignment', () => {
+  const prefix = '\x1b[48;2;35;35;40m\x1b]0;status\x07\x1b[1m';
+  assert.equal(leadingAnsiControlEnd(prefix + '   three cells'), prefix.length);
+  assert.equal(leadingAnsiControlEnd('plain   three cells'), 0);
+  assert.equal(leadingAnsiControlEnd('\x1b]0;status\x1b\\   three cells'), '\x1b]0;status\x1b\\'.length);
+  assert.equal(leadingAnsiControlEnd('\x1bX   three cells'), 2);
+  assert.equal(leadingAnsiControlEnd('\x1b[1;'), 0);
+
+  const longValid = '\x1b[' + '1;'.repeat(50_000) + 'm   command text';
+  const longBroken = '\x1b[' + '1;'.repeat(50_000) + '!';
+  const started = performance.now();
+  assert.equal(leadingAnsiControlEnd(longValid), longValid.indexOf('   command'));
+  assert.equal(leadingAnsiControlEnd(longBroken), 0);
+  assert.ok(performance.now() - started < 1_500, 'ANSI parsing must remain bounded on long inputs');
 });

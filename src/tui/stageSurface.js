@@ -60,6 +60,44 @@ const RAIL_BUDGET = RAIL_WIDTH + 1;
 // The interactive turn rail takes three columns at the left of each row.
 const TURN_RAIL_BUDGET = 3;
 
+// Count a prefix of terminal control sequences with a deterministic scan.
+// This preserves CSI, OSC (BEL/ST), and two-byte ESC codes without regex
+// backtracking on long or malformed terminal output.
+export function leadingAnsiControlEnd(row) {
+  if (typeof row !== 'string') return 0;
+  let index = 0;
+  while (row.charCodeAt(index) === 27) {
+    let cursor = index + 1;
+    const kind = row.charCodeAt(cursor);
+    if (kind === 91) { // ESC [
+      cursor++;
+      while (row.charCodeAt(cursor) >= 48 && row.charCodeAt(cursor) <= 63) cursor++;
+      while (row.charCodeAt(cursor) >= 32 && row.charCodeAt(cursor) <= 47) cursor++;
+      const final = row.charCodeAt(cursor);
+      if (final >= 64 && final <= 126) {
+        index = cursor + 1;
+        continue;
+      }
+    } else if (kind === 93) { // ESC ] ... BEL or ESC backslash
+      cursor++;
+      while (cursor < row.length && row.charCodeAt(cursor) !== 7 && row.charCodeAt(cursor) !== 27) cursor++;
+      if (row.charCodeAt(cursor) === 7) {
+        index = cursor + 1;
+        continue;
+      }
+      if (row.charCodeAt(cursor) === 27 && row.charCodeAt(cursor + 1) === 92) {
+        index = cursor + 2;
+        continue;
+      }
+    } else if ((kind >= 64 && kind <= 90) || (kind >= 92 && kind <= 95)) {
+      index = cursor + 1;
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
 // Which marker wins when several frames fall in the same rail row. A proportional
 // rail on a long session compresses dozens of frames per row, and what you want
 // to see at a glance is the thing that went wrong or the thing you can roll back
@@ -738,10 +776,10 @@ export class StageSurface {
       let row = rows[i] || '';
       if (hasTurns && railResult) {
         const leftCell = railResult.cells[i] || ' ';
-        const leadMatch = row.match(/^((?:\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_])*)[ ]{3}/);
-        if (leadMatch) {
-          const leadEscapes = leadMatch[1] || '';
-          row = `${leadEscapes} ${leftCell} ${row.slice(leadMatch[0].length)}`;
+        const leadEnd = leadingAnsiControlEnd(row);
+        if (row.slice(leadEnd, leadEnd + 3) === '   ') {
+          const leadEscapes = row.slice(0, leadEnd);
+          row = `${leadEscapes} ${leftCell} ${row.slice(leadEnd + 3)}`;
         } else if (stripAnsi(row).length === 0) {
           row = leftCell !== ' ' ? ` ${leftCell} ` : '';
         } else {

@@ -1,0 +1,10 @@
+{
+  "nestedPlus": "(a+)+$",
+  "doubleNestedPlus": "((a+)+)+$",
+  "nestedAlphanumeric": "([a-zA-Z0-9]+)*$",
+  "overlappingPlus": "(x+x+)+y",
+  "nestedStars": "((x*)*)*",
+  "overlappingAlternatives": "(a|aa)+$",
+  "nestedLowercase": "([a-z]+)*$",
+  "backreference": "(a)\\1"
+}
