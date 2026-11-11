@@ -192,6 +192,7 @@ export class CausyneObserver {
    * Deterministically verifies code deliverables (targeted test, build, syntax).
    */
   public verifyCode(req: CodeVerificationRequest): { verified: boolean; error?: string; evidence: string } {
+    if (!req.changedFiles?.length) return { verified: false, error: 'No code deliverables supplied.', evidence: 'no_files' };
     if (req.changedFiles && req.changedFiles.length > 0) {
       for (const file of req.changedFiles) {
         const fullPath = path.isAbsolute(file) ? file : path.join(req.workspaceRoot, file);

@@ -269,3 +269,8 @@ test('coldObserver recognizes "is running at http://localhost:..." as a completi
   assert.equal(assessment.verified, false);
   assert.match(assessment.discrepancy, /code was modified without a successful test or syntax check/);
 });
+
+test('verifyCode cannot verify an unspecified deliverable set', () => {
+  assert.equal(defaultObserver.verifyCode({ workspaceRoot: os.tmpdir() }).verified, false);
+  assert.equal(defaultObserver.verifyCode({ workspaceRoot: os.tmpdir(), changedFiles: [] }).evidence, 'no_files');
+});
