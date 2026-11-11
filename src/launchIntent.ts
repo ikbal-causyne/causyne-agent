@@ -162,7 +162,7 @@ export function launchScopeError(tool: string, args: Record<string, unknown>): s
       return null;
     }
 
-    return 'The user asked to open the existing project. Use read-only inspection, a background server, or desktop.open; do not run unrelated commands.';
+    return 'A launch-only request does not authorize unrelated commands. Use read-only inspection, a background server, or desktop.open; do not run unrelated commands.';
   }
 
   return null;

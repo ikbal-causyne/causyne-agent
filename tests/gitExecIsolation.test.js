@@ -10,8 +10,8 @@ test('Git arguments preserve quoted messages and literal Windows paths', () => {
   assert.deepEqual(parseGitArguments('commit -m "fix: preserve message spaces"'),
     ['commit', '-m', 'fix: preserve message spaces']);
   assert.deepEqual(parseGitArguments('status --short'), ['status', '--short']);
-  assert.deepEqual(parseGitArguments(String.raw`show C:\\Users\\example\\file.txt`),
-    ['show', String.raw`C:\\Users\\example\\file.txt`]);
+  assert.deepEqual(parseGitArguments(String.raw`show C:\Users\example\file.txt`),
+    ['show', String.raw`C:\Users\example\file.txt`]);
   assert.throws(() => parseGitArguments('status && echo unexpected'), /shell operators/);
   assert.throws(() => parseGitArguments('status; touch marker'), /shell operators/);
   assert.throws(() => parseGitArguments('status `whoami`'), /shell operators/);

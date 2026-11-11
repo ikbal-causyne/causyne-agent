@@ -157,7 +157,7 @@ export function launchScopeError(tool, args) {
         if (READ_ONLY_COMMAND.test(command) && !MUTATING_INSPECTION_OPTIONS.test(command)) {
             return null;
         }
-        return 'The user asked to open the existing project. Use read-only inspection, a background server, or desktop.open; do not run unrelated commands.';
+        return 'A launch-only request does not authorize unrelated commands. Use read-only inspection, a background server, or desktop.open; do not run unrelated commands.';
     }
     return null;
 }
