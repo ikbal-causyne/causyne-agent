@@ -345,7 +345,7 @@ export function isMidTaskProgressText(text: string): boolean {
     "i'm going to ",
     'going to '
   ];
-  if (intentPrefixes.some(prefix => lastLower.startsWith(prefix) || lower.startsWith(prefix))) {
+  if (intentPrefixes.some(prefix => lastLower.startsWith(prefix) || (trimmed.length <= 280 && lower.startsWith(prefix)))) {
     if (!/\b(?:task completed|all done|everything is ready|finished|complete\.)\b/i.test(lastSentence)) {
       return true;
     }
@@ -678,6 +678,7 @@ export class AgentLoop {
   static MAX_CONSECUTIVE_FAILURES = 3;
   constructor(eventSink: AgentLoopEventSink | null, taskId: string, userPrompt: string | null, options: AgentLoopOptions = {}) {
     this.eventSink = eventSink;
+    this._deliveredAgentMessages = new Set<string>();
     this.taskId = taskId;
     this.userPrompt = userPrompt;
     // User intent must remain independent of injected @-file contents.
@@ -1434,6 +1435,20 @@ export class AgentLoop {
   }
 
   emitEvent(messageObj: AgentLoopEvent) {
+    if (messageObj.type === 'agent_message' && typeof (messageObj as any).content === 'string') {
+      const content = (messageObj as any).content.trim().replace(/\s+/g, ' ');
+      if (content) {
+        const streaming = (messageObj as any).streaming === true;
+        if ([...this._deliveredAgentMessages].some((prior: string) => prior === content || (streaming && prior.startsWith(content)))) return;
+        if (!streaming) {
+          if (this._deliveredAgentMessages.size >= 32) {
+            const oldest = this._deliveredAgentMessages.values().next().value;
+            if (typeof oldest === 'string') this._deliveredAgentMessages.delete(oldest);
+          }
+          this._deliveredAgentMessages.add(content);
+        }
+      }
+    }
     if (this.eventSink && this.eventSink.readyState === 1) {
       this.eventSink.send(JSON.stringify({ taskId: this.taskId, ...messageObj }));
     }
@@ -2133,6 +2148,7 @@ export class AgentLoop {
     }
 
     this.stepsCompleted = 0;
+    this._deliveredAgentMessages.clear();
     // Fresh per task. A digest from a previous task would point at a step
     // number the model can no longer see, which is worse than paying twice.
     this._observationDigests = new Map();
@@ -3443,10 +3459,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
             }
           }
 
-          const allPlanCompleted = this._implementationPlan?.length > 0
-            && this._implementationPlan.every((s: any) => s.status === 'completed' || s.completed);
-
-          if (!hasExternalActions && this.stepsCompleted === 0 && isActionable && !allPlanCompleted) {
+          if (!hasExternalActions && this.stepsCompleted === 0 && isActionable) {
             this.messages.pop();
             this.emitEvent({ type: 'error', message: 'The selected model returned text without taking any action. No work was completed.' });
             this.memoryManager.saveHistory(this.messages);
@@ -3454,22 +3467,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
           }
 
           if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
-            if (allPlanCompleted) {
-              const planSummary = ` All ${this._implementationPlan.length} plan steps have been completed and verified:\n\n`
-                + this._implementationPlan.map((s: any, idx: number) => `  ✓ ${s.step || s.text || s.content || `Step ${idx + 1}`}`).join('\n');
-              const summary = `Task completed successfully.${planSummary}`;
-              this.emitEvent({
-                type: 'agent_message',
-                content: summary
-              });
-              this.emitEvent({
-                type: 'status',
-                message: 'Task completed with verified deliverables.'
-              });
-              this._causyneTaskOutcome = 'completed';
-              this.memoryManager.saveHistory(this.messages);
-              break;
-            }
             if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
               incompleteTurnContinuations++;
               this.emitEvent({ type: 'status', message: 'Requesting the missing final response…' });

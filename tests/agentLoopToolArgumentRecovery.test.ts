@@ -100,7 +100,7 @@ test('isReadOnlyShellCommand recognizes gradle and maven test commands as non-mu
   assert.equal(isReadOnlyShellCommand('./gradlew assembleRelease'), false);
 });
 
-test('AgentLoop completes successfully when all plan steps are completed without hanging', async () => {
+test('AgentLoop refuses a completed checklist without actual execution evidence', async () => {
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-completion-test-'));
   fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
@@ -132,14 +132,12 @@ test('AgentLoop completes successfully when all plan steps are completed without
 
     await loop.run();
 
-    const agentMessage = events.find((e: any) => e.type === 'agent_message');
-    assert.ok(agentMessage, 'Must emit agent_message with completion deliverable');
-    assert.match(agentMessage.content, /Task completed successfully/);
-    assert.match(agentMessage.content, /Implement feature/);
-    assert.match(agentMessage.content, /Verify unit test/);
-
-    const statusDone = events.find((e: any) => e.type === 'status' && e.message?.includes('Task completed with verified deliverables'));
-    assert.ok(statusDone, 'Must emit verified completion status instead of false error');
+    const fabricatedCompletion = events.find((e: any) => e.type === 'agent_message' &&
+      /Task completed successfully/.test(e.content || ''));
+    assert.equal(fabricatedCompletion, undefined, 'A checklist alone cannot establish execution');
+    assert.equal(events.some((e: any) => e.type === 'task_complete'), false);
+    assert.equal(events.some((e: any) => e.type === 'status' && e.message?.includes('Task completed')), false);
+    assert.equal(events.some((e: any) => e.type === 'error' && /No work was completed/.test(e.message || '')), true);
   } finally {
     process.chdir(previousDirectory);
     fs.rmSync(workspace, { recursive: true, force: true });

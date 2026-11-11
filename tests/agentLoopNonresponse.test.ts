@@ -691,3 +691,109 @@ test('AgentLoop automatically reconnects and continues when peer returns empty r
   }
 });
 
+
+test('multi-section execution reports are not mistaken for a mid-task promise from their opening sentence', () => {
+  const report = [
+    "I will inspect the archive and run the supplied verification.",
+    "",
+    "### Execution report",
+    "- The patch was applied in the selected project.",
+    "- Two regression assertions failed and the complete suite stopped.",
+    "",
+    "### Termination",
+    "Execution halted on the user's stop-on-failure instruction. Awaiting further instructions."
+  ].join('\n');
+  assert.ok(report.length > 280);
+  assert.equal(isMidTaskProgressText(report), false);
+  assert.equal(isMidTaskProgressText("I will run the next verification now."), true);
+});
+
+test('agent message emission is idempotent within a task and never hides distinct results or errors', () => {
+  const events: any[] = [];
+  const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+    'duplicate-conclusion', 'Inspect and report');
+  const report = 'A complete test report with the actual failures and required stop decision.';
+  loop.emitEvent({ type: 'agent_message', content: report });
+  loop.emitEvent({ type: 'agent_message', content: report });
+  loop.emitEvent({ type: 'agent_message', content: report.slice(0, 25), streaming: true });
+  loop.emitEvent({ type: 'agent_message', content: report, streaming: true });
+  loop.emitEvent({ type: 'agent_message', content: 'A different verified report.' });
+  loop.emitEvent({ type: 'error', message: 'Regression verification failed' });
+  assert.deepEqual(events.filter(e => e.type === 'agent_message').map(e => e.content),
+    [report, 'A different verified report.']);
+  assert.equal(events.filter(e => e.type === 'error').length, 1);
+  const otherEvents: any[] = [];
+  const newTask = new AgentLoop({ readyState: 1, send: (payload: string) => otherEvents.push(JSON.parse(payload)) },
+    'new-task', 'Inspect and report');
+  newTask.emitEvent({ type: 'agent_message', content: report });
+  assert.equal(otherEvents.filter(e => e.type === 'agent_message').length, 1);
+});
+
+test('a completed checklist cannot convert failed native actions into a fabricated success conclusion', async () => {
+  const oldCwd = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-failed-checklist-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: any[] = [];
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'failed-checklist', 'apply the game patch and stop if any test fails',
+      { workspaceRoot: workspace });
+    let calls = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls++;
+        loop._implementationPlan = [{ step: 'Apply patch and test', status: 'completed' }];
+        return { content: '', incompleteTurn: true,
+          externalActions: [{ name: 'run_command', status: 'failed', detail: 'regression tests failed' }],
+          usage: { promptTokens: 20, completionTokens: 10 } };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+    await loop.run();
+    assert.ok(calls <= 4, 'the agent must not keep regenerating a conclusion');
+    assert.equal(events.some(e => e.type === 'task_complete'), false);
+    assert.equal(events.some(e => e.type === 'agent_message' && /task completed successfully/i.test(e.content || '')), false);
+    assert.equal(events.some(e => e.type === 'error'), true);
+  } finally {
+    process.chdir(oldCwd);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('a completed checklist cannot substitute for executable tool evidence', async () => {
+  const oldCwd = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-unexecuted-plan-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: any[] = [];
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'unexecuted-plan-regression', 'write the requested code changes',
+      { workspaceRoot: workspace });
+    let calls = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls++;
+        loop._implementationPlan = [{ step: 'Write changes', status: 'completed' }];
+        return { content: 'All changes completed successfully.',
+          usage: { promptTokens: 20, completionTokens: 10 } };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+    await loop.run();
+    assert.ok(calls <= 4, 'missing actions must stop rather than create another conclusion loop');
+    assert.equal(events.some(e => e.type === 'task_complete'), false);
+    assert.equal(events.some(e => e.type === 'agent_message' && /completed successfully/.test(e.content || '')), false);
+    assert.equal(events.some(e => e.type === 'error' && /No work was completed/.test(e.message || '')), true);
+  } finally {
+    process.chdir(oldCwd);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
