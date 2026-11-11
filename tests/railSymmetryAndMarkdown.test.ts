@@ -386,10 +386,10 @@ test('leading ANSI control sequences are scanned in linear time without changing
   assert.equal(leadingAnsiControlEnd('plain   three cells'), 0);
   assert.equal(leadingAnsiControlEnd('\x1b]0;status\x1b\\   three cells'), '\x1b]0;status\x1b\\'.length);
   assert.equal(leadingAnsiControlEnd('\x1bX   three cells'), 2);
-  assert.equal(leadingAnsiControlEnd('\x1b[1;bad   three cells'), 0);
+  assert.equal(leadingAnsiControlEnd('\x1b[1;'), 0);
 
   const longValid = '\x1b[' + '1;'.repeat(50_000) + 'm   command text';
-  const longBroken = '\x1b[' + '1;'.repeat(50_000) + '!   malformed escape';
+  const longBroken = '\x1b[' + '1;'.repeat(50_000) + '!';
   const started = performance.now();
   assert.equal(leadingAnsiControlEnd(longValid), longValid.indexOf('   command'));
   assert.equal(leadingAnsiControlEnd(longBroken), 0);
