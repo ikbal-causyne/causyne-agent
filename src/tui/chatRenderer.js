@@ -84,14 +84,18 @@ function renderMarkdown(text, width) {
       continue;
     }
     if (inFence) {
-      lines.push(paint('accent', '  ' + truncate(line, width - 2, '')));
+      for (const codeRow of wrapBlock('  ' + line, Math.max(8, width), { hang: 0 })) {
+        lines.push(paint('accent', codeRow));
+      }
       continue;
     }
 
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       lines.push('');
-      lines.push(bold(paint('ink', heading[2])));
+      for (const headingRow of wrap(heading[2], Math.max(8, width))) {
+        lines.push(bold(paint('ink', headingRow)));
+      }
       continue;
     }
 
@@ -138,8 +142,10 @@ function renderMarkdown(text, width) {
 
     const tableRow = line.match(/^\s*\|(.+)\|\s*$/);
     if (tableRow) {
-      const cells = tableRow[1].split('|').map(c => inline(c.trim()));
-      lines.push('  ' + cells.join(paint('muted', ' │ ')));
+      const cells = tableRow[1].split('|').map(c => c.trim());
+      for (const tableLine of wrapBlock('  ' + cells.join(' │ '), Math.max(8, width), { hang: 0 })) {
+        lines.push(inline(tableLine));
+      }
       continue;
     }
 
@@ -826,7 +832,8 @@ export class ChatRenderer {
     const width = this.measure();
     this.write();
     this.write(`${paint('agent', GLYPHS.arrow)} ${bold(paint('agent', 'Causyne'))}${streaming ? ' ' + dim('…') : ''}`);
-    for (const line of renderMarkdown(content, width - 2)) {
+    // Reserve the transcript's three-column inset and final safety cell.
+    for (const line of renderMarkdown(content, Math.max(8, width - 4))) {
       this.write(line ? '  ' + line : '');
     }
     this.write();

@@ -6,9 +6,10 @@ import { StageSurface } from '../src/tui/stageSurface.js';
 import { Transcript } from '../src/tui/transcript.js';
 import { visibleWidth, stripAnsi } from '../src/tui/text.js';
 import { chatTextWidth } from '../src/tui/textLayout.js';
+import { sidebarVisible, sessionMainWidth, sessionComposerWidth } from '../src/tui/sessionSidebar.js';
 
-const narrow = 109; // Conversation width at 155 terminal columns with sidebar and rail.
-const wide = 188; // Conversation width at 234 terminal columns with sidebar and rail.
+const narrow = 109; // Simulate a previously cramped conversation measure.
+const wide = 188; // Conversation measure on a wide terminal.
 
 test('error text reflows at both screenshot widths without losing its final words', () => {
   const transcript = new Transcript();
@@ -57,7 +58,7 @@ test('the complete error remains above the input through a 155x78 to 234x76 resi
       out.rows = rows;
       assert.equal(surface.resize(), true);
       surface.present(['INPUT'], { row: 0, col: 0 });
-      const main = surface.stage.prev.map((row: string) => stripAnsi(row).slice(0, columns - 43));
+      const main = surface.stage.prev.map((row: string) => stripAnsi(row).slice(0, sessionMainWidth(columns)));
       assert.ok(main.join(' ').replace(/\s+/g, ' ').includes('would only spend your budget.'));
       assert.match(main.at(-1) || '', /INPUT/);
       assert.equal(surface.stage.height, rows - 1);
@@ -65,5 +66,36 @@ test('the complete error remains above the input through a 155x78 to 234x76 resi
     }
   } finally {
     surface.close();
+  }
+});
+
+test('responsive sidebar yields the full chat width in narrow VS Code terminals', () => {
+  for (const columns of [70, 90, 120, 130, 155, 160]) {
+    assert.equal(sidebarVisible(columns), false, `sidebar should collapse at ${columns} columns`);
+    assert.equal(sessionMainWidth(columns), columns);
+    assert.ok(sessionComposerWidth(columns) <= columns - 4);
+  }
+  assert.equal(sidebarVisible(161), true);
+  assert.equal(sessionMainWidth(161), 161 - 42 - 1);
+});
+
+test('long assistant code, headings and table cells reflow without losing content', () => {
+  const transcript = new Transcript();
+  const renderer = new ChatRenderer({ transcript });
+  renderer.handle({ type: 'agent_message', content: [
+    '# ' + 'headingword '.repeat(20).trim(),
+    '| Label | ' + 'tablevalue '.repeat(25).trim() + ' |',
+    '```text',
+    'codeword '.repeat(25).trim(),
+    '```'
+  ].join('\n') });
+  for (const width of [65, 79, 109]) {
+    const rows = transcript.rows(width).map(stripAnsi);
+    const text = rows.join(' ').replace(/\s+/g, ' ');
+    assert.equal((text.match(/headingword/g) ?? []).length, 20, `heading lost at ${width}`);
+    assert.equal((text.match(/tablevalue/g) ?? []).length, 25, `table lost at ${width}`);
+    assert.equal((text.match(/codeword/g) ?? []).length, 25, `code fence lost at ${width}`);
+    assert.ok(transcript.rows(width).every((row: string) => visibleWidth(row) < width),
+      `message overflows a ${width}-column conversation`);
   }
 });

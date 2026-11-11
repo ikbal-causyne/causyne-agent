@@ -4,7 +4,9 @@ import { padEnd, safeDisplay, truncate } from './text.js';
 import { bold, dim, fill, paint } from './theme.js';
 
 export const SIDEBAR_WIDTH = 42;
-export const SIDEBAR_THRESHOLD = 120;
+// A 42-column sidebar is only useful if the conversation retains a readable width.
+// Narrow IDE terminals should prioritize the user's complete message over metadata.
+export const SIDEBAR_THRESHOLD = 160;
 
 export interface SidebarFacts {
   title?: string;
@@ -37,11 +39,11 @@ export function sessionMainWidth(columns: number, home = false): number {
 export function sessionComposerWidth(columns: number): number {
   const available = Number.isFinite(columns) ? Math.max(20, Math.floor(columns)) : 80;
   if (available <= 112) {
-    return Math.max(20, available - 3);
+    return Math.max(20, available - 4);
   }
   // Dynamic readable measure scaling on wide terminals:
   const readableMeasure = Math.round(109 + 20 * Math.log2(available / 112));
-  return Math.min(available - 3, Math.max(20, readableMeasure));
+  return Math.min(available - 4, Math.max(20, readableMeasure));
 }
 
 /** Render only facts the runtime can actually report. */
