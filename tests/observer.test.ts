@@ -274,3 +274,10 @@ test('verifyCode cannot verify an unspecified deliverable set', () => {
   assert.equal(defaultObserver.verifyCode({ workspaceRoot: os.tmpdir() }).verified, false);
   assert.equal(defaultObserver.verifyCode({ workspaceRoot: os.tmpdir(), changedFiles: [] }).evidence, 'no_files');
 });
+
+test('verifyCode rejects empty files and directories', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-empty-'));
+  try { fs.writeFileSync(path.join(root, 'blank.js'), ''); fs.mkdirSync(path.join(root, 'subdir'));
+    for (const target of ['blank.js', 'subdir']) assert.equal(defaultObserver.verifyCode({ workspaceRoot: root, changedFiles: [target] }).evidence, 'invalid_file');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

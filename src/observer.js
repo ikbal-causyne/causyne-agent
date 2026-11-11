@@ -131,6 +131,9 @@ export class CausyneObserver {
                         evidence: 'file_missing'
                     };
                 }
+                if (!fs.statSync(fullPath).isFile() || fs.statSync(fullPath).size === 0) {
+                    return { verified: false, error: `Target deliverable ${file} is not a non-empty file.`, evidence: 'invalid_file' };
+                }
             }
         }
         return {
