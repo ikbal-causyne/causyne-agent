@@ -45,8 +45,9 @@ function operationFamily(args: Record<string, unknown>): string {
   const command = typeof args.command === 'string' ? args.command
     : typeof args.cmd === 'string' ? args.cmd : '';
   if (!command) {
-    if (typeof args.url === 'string') {
-      try { return new URL(args.url).hostname.toLowerCase(); } catch { return ''; }
+    const endpoint = typeof args.url === 'string' ? args.url : typeof args.endpoint === 'string' ? args.endpoint : '';
+    if (endpoint) {
+      try { return new URL(endpoint).hostname.toLowerCase(); } catch { return ''; }
     }
     return '';
   }
@@ -61,10 +62,11 @@ function operationFamily(args: Record<string, unknown>): string {
 
 function issueKey(tool: string, args: Record<string, unknown>): string {
   const family = operationFamily(args);
-  const target = String(args.path ?? args.file_path ?? args.filePath ?? '');
+  const target = String(args.path ?? args.file_path ?? args.filePath ?? args.target ?? args.endpoint ?? args.url ?? '');
+  const workspace = String(args.cwd ?? '');
   // Changing error text/class does not buy another three attempts at the same
   // operation. Targets are hashed and never included in recovery messages.
-  return createHash('sha256').update(`${tool}\0${family}\0${target}`).digest('hex');
+  return createHash('sha256').update(`${tool}\0${family}\0${target}\0${workspace}`).digest('hex');
 }
 
 function lastGoodTool(outcomes: readonly ToolOutcome[]): string | null {

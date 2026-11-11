@@ -191,3 +191,17 @@ test('a nonzero exit code cannot resolve TimeMachine history or pass evidence no
   const { outcomeFromResult } = await import('../src/observer/evidence.js');
   assert.equal(outcomeFromResult('exec', args, { success: true, exitCode: 1 }, 0).success, false);
 });
+
+test('distinct endpoints and working directories have independent retry budgets', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'service unavailable' };
+  const first = { endpoint: 'http://127.0.0.1:3000/health' };
+  const second = { endpoint: 'http://127.0.0.1:3000/status' };
+  assert.equal(machine.observe('verify_local_web', first, fail).attempt, 1);
+  assert.equal(machine.observe('verify_local_web', second, fail).attempt, 1);
+  assert.equal(machine.observe('verify_local_web', first, fail).attempt, 2);
+  assert.equal(machine.observe('exec', { command: 'npm test', cwd: '/workspace/one' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { command: 'npm test', cwd: '/workspace/two' }, fail).attempt, 1);
+  assert.equal(machine.observe('web_fetch', { url: 'https://example.org/a' }, fail).attempt, 1);
+  assert.equal(machine.observe('web_fetch', { url: 'https://example.org/b' }, fail).attempt, 1);
+});
