@@ -85,6 +85,9 @@ export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
         return false;
+    // A no-execution request can be satisfied by analysis without mandatory tool calls.
+    if (isNoExecutionPrompt(t))
+        return false;
     const pureGreeting = /^(hi|hello|hey|yo|halo|hai|p|assalamu['a]?[l]?aikum|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
     if (pureGreeting)
         return false;
@@ -112,6 +115,9 @@ export function isDesktopWallpaperChangePrompt(text) {
     if (/^(?:why|how|what|does|can\s+you\s+explain|explain|tell\s+me|show\s+me\s+how)\b/i.test(t))
         return false;
     if (/\b(?:why|how)\s+does\b/i.test(t))
+        return false;
+    // Debugging wallpaper-related source or regexes is not a request to mutate macOS.
+    if (/\b(?:test|review|audit|analy[sz]e|debug|refactor|inspect|explain|write|implement)\b[\s\S]{0,140}\b(?:regex|code|source|logic|verification|readback|function|script|test)\b/i.test(t))
         return false;
     return /\b(?:change|set|switch|replace)\s+(?:(?:my|the|this|current|desktop|mac|macos)\s+){0,4}(?:desktop picture|wallpaper|desktop background)\b/i.test(t);
 }
