@@ -56,7 +56,7 @@ function issueKey(tool, args) {
 function lastGoodTool(outcomes) {
     for (let index = outcomes.length - 1; index >= 0; index--) {
         const outcome = outcomes[index];
-        if (outcome?.success)
+        if (outcome?.success && (outcome.exitCode == null || outcome.exitCode === 0) && !outcome.error?.trim())
             return outcome.tool;
     }
     return null;

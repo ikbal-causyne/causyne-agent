@@ -72,7 +72,7 @@ function issueKey(tool: string, args: Record<string, unknown>): string {
 function lastGoodTool(outcomes: readonly ToolOutcome[]): string | null {
   for (let index = outcomes.length - 1; index >= 0; index--) {
     const outcome = outcomes[index];
-    if (outcome?.success) return outcome.tool;
+    if (outcome?.success && (outcome.exitCode == null || outcome.exitCode === 0) && !outcome.error?.trim()) return outcome.tool;
   }
   return null;
 }

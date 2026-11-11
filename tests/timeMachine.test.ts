@@ -205,3 +205,13 @@ test('distinct endpoints and working directories have independent retry budgets'
   assert.equal(machine.observe('web_fetch', { url: 'https://example.org/a' }, fail).attempt, 1);
   assert.equal(machine.observe('web_fetch', { url: 'https://example.org/b' }, fail).attempt, 1);
 });
+
+test('lastGoodTool ignores outcomes with nonzero exit codes or error text', () => {
+  const machine = new TimeMachine();
+  const corruptExit = { ...priorSuccess, tool: 'failed_test', success: true, exitCode: 1, at: 2 };
+  const corruptError = { ...priorSuccess, tool: 'failed_build', success: true, error: 'build failed', at: 3 };
+  const decision = machine.observe('exec', { command: 'npm test' },
+    { success: false, error: 'check failed' }, [priorSuccess, corruptExit, corruptError]);
+  assert.equal(decision.lastGoodTool, 'fs_read');
+  assert.match(decision.guidance, /Last successful tool: fs_read/);
+});
