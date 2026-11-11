@@ -33,7 +33,13 @@ export function isReadOnlyOrExplanatoryPrompt(prompt?: string | null): boolean {
   if (trimmed.length === 0) return false;
   if (isNoExecutionPrompt(trimmed)) return true;
   if (!INQUIRY_WORDS.test(trimmed)) return false;
-  // If the inquiry also explicitly commands creation/modification, it's not read-only
+  // Questions about *how to modify* are still requests for information.
+  if (/^(?:please\s+)?(?:how|why|what|where|when|who)\b/i.test(trimmed)) return true;
+  if (/^(?:please\s+)?(?:explain|describe|summarize|analy[sz]e|review|tell\s+me)\b/i.test(trimmed)) {
+    const followUp = /\b(?:and|then|also|afterwards)\s+(?:please\s+)?(.+)/i.exec(trimmed)?.[1] ?? '';
+    if (!CHANGE_VERBS.test(followUp) && !/^(?:run|execute|test|launch|open|start)\b/i.test(followUp)) return true;
+  }
+  // An inquiry that also commands implementation must not be forced read-only.
   if (CHANGE_VERBS.test(trimmed)) return false;
   return true;
 }

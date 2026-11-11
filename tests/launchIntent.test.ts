@@ -6,7 +6,7 @@ import path from 'node:path';
 import childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
-import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError, readOnlyScopeError } from '../src/launchIntent.js';
+import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError, readOnlyScopeError, isReadOnlyOrExplanatoryPrompt } from '../src/launchIntent.js';
 import { assessVerification } from '../src/verificationPlan.js';
 import { outcomeFromResult } from '../src/observer/evidence.js';
 import { stripToolCallMarkup, extractLivePlanFromText } from '../src/implementationPlan.js';
@@ -329,3 +329,13 @@ test('creative bridge DOM/Python simulator prompt does not trigger false web ren
 
 
 
+
+
+test('questions about how to fix code never authorize workspace mutations', () => {
+  assert.equal(isReadOnlyOrExplanatoryPrompt('How do I fix the failed build?'), true);
+  assert.equal(isReadOnlyOrExplanatoryPrompt('Please explain how to delete an obsolete file'), true);
+  assert.equal(isReadOnlyOrExplanatoryPrompt('Review the code and fix the bugs'), false);
+  assert.equal(isReadOnlyOrExplanatoryPrompt('Explain the issue, then implement the fix'), false);
+  assert.match(readOnlyScopeError('fs_delete', { path: 'data.json' }, 'How do I delete this file?'), /read-only inquiry/);
+  assert.match(readOnlyScopeError('sysRun', { command: 'npm install' }, 'Explain how to install packages'), /non-mutating/);
+});
