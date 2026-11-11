@@ -149,7 +149,7 @@ export class CausyneObserver {
         const hasMutations = outcomes.some(o =>
           ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)
         );
-        const hasPassingVerification = outcomes.some(o =>
+        const hasPassingVerification = outcomes.slice(outcomes.findLastIndex(o => ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)) + 1).some(o =>
           o.success && (
             o.rendered === true ||
             o.tool === 'browser_act' ||

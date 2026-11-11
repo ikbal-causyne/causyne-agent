@@ -324,3 +324,12 @@ test('verifyLocalWeb rejects credentials embedded in local URLs', async () => {
   assert.equal(result.verified, false);
   assert.match(result.error ?? '', /credentials/);
 });
+
+test('observer does not reuse test evidence from before the latest edit', () => {
+  const obs = defaultObserver.evaluate({ taskId: 'stale-test', workspaceRoot: '/tmp', userGoal: 'Fix parser', agentClaim: 'Fixed', toolHistory: [
+    { tool: 'sysRun', args: {}, success: true, error: '', exitCode: 0, path: '', command: 'npm test', at: 1 },
+    { tool: 'fs_write', args: {}, success: true, error: '', exitCode: null, path: 'parser.ts', command: '', at: 2 }
+  ] });
+  assert.equal(obs.status, 'ready-to-verify');
+  assert.equal(obs.verified, false);
+});
