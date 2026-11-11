@@ -6,7 +6,7 @@ import path from 'node:path';
 import childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
-import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError } from '../src/launchIntent.js';
+import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError, readOnlyScopeError, isReadOnlyOrExplanatoryPrompt, isNoExecutionPrompt } from '../src/launchIntent.js';
 import { assessVerification } from '../src/verificationPlan.js';
 import { outcomeFromResult } from '../src/observer/evidence.js';
 import { stripToolCallMarkup, extractLivePlanFromText } from '../src/implementationPlan.js';
@@ -55,12 +55,42 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.match(launchScopeError('fs_edit', { path: 'server.py' }), /not change/);
   assert.match(launchScopeError('sysRun', { command: 'python3 -c "open(\"server.py\",\"w\")"' }), /does not authorize/);
   assert.match(launchScopeError('sysRun', { command: 'ls -la && rm server.py' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev && touch /tmp/unauthorized' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRunBg', { command: 'python3 server.py; rm -rf ./data' }), /chained shell commands/);
+  assert.match(launchScopeError('terminal_persistent_shell', { command: 'open https://example.com && echo unexpected' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev `whoami`' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev $(whoami)' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev\nrm -rf ./data' }), /chained shell commands/);
+  assert.equal(launchScopeError('sysRun', { command: 'open "http://localhost:8000/?test=1&debug=true"' }), null);
+  // Opening an app never authorizes terminating unrelated host processes.
+  assert.match(launchScopeError('sysRun', { command: 'pkill -f Terminal' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRunBg', { command: 'kill -9 1' }), /Use read-only inspection/);
+  assert.match(launchScopeError('terminal_persistent_shell', { command: 'fuser -k 8080/tcp' }), /Use read-only inspection/);
   assert.equal(launchScopeError('tool_search', {}), null);
+  assert.equal(launchScopeError('gitOp', { command: 'status --short' }), null);
+  assert.match(launchScopeError('gitOp', { command: 'checkout -- .' }), /Git inspection/);
+  assert.match(launchScopeError('gitOp', { command: 'clean -fd' }), /Git inspection/);
+  assert.match(launchScopeError('gitOp', { command: 'status; touch /tmp/surprise' }), /Git inspection/);
+  assert.match(launchScopeError('gitOp', { command: 'diff --ext-diff' }), /Git inspection/);
+  assert.match(readOnlyScopeError('gitOp', { command: 'restore .' }, 'explain current status'), /inspection of Git status/);
+  assert.match(readOnlyScopeError('gitOp', { command: 'status; rm -rf ./data' }, 'explain current status'), /inspection of Git status/);
+  assert.match(readOnlyScopeError('gitOp', { command: 'show --output=/tmp/out' }, 'explain current status'), /inspection of Git status/);
+  assert.equal(readOnlyScopeError('gitOp', { command: 'log -1 --oneline' }, 'explain current status'), null);
   assert.equal(launchScopeError('update_plan', {}), null);
   assert.equal(launchScopeError('desktop_open', { target: '~/village_cat_foundation/index.html' }), null);
   assert.equal(launchScopeError('desktop.open', { target: 'http://localhost:8000' }), null);
   assert.equal(launchScopeError('sysRun', { command: 'open "http://localhost:8000/?test=1&debug=true"' }), null);
   assert.equal(launchScopeError('sysRun', { command: 'ls -la /tmp' }), null);
+  // Commands advertised as read-only must not accept mutating command-line flags.
+  assert.match(launchScopeError('sysRun', { command: 'find . -delete' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRun', { command: 'find . -exec rm data +' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRun', { command: 'git diff --output=/tmp/secret' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRun', { command: 'rg --pre=sh suspicious' }), /Use read-only inspection/);
+  const inquiry = 'explain what files are present';
+  assert.match(readOnlyScopeError('sysRun', { command: 'find . -delete' }, inquiry), /only non-mutating/);
+  assert.match(readOnlyScopeError('sysRun', { command: 'git show --output=/tmp/file' }, inquiry), /only non-mutating/);
+  assert.match(readOnlyScopeError('sysRun', { command: 'rg --pre=sh pattern' }, inquiry), /only non-mutating/);
+  assert.equal(readOnlyScopeError('sysRun', { command: 'find . -name package.json' }, inquiry), null);
   assert.equal(launchScopeError('sysRun', { command: 'python3 /tmp/server.py' }), null);
   assert.equal(launchScopeError('sysRun', { command: 'curl -f http://127.0.0.1:8765/' }), null);
   assert.match(launchScopeError('sysRun', { command: 'curl -o server.py http://example.com/' }), /Use read-only inspection/);
@@ -299,3 +329,54 @@ test('creative bridge DOM/Python simulator prompt does not trigger false web ren
 
 
 
+
+
+test('questions about how to fix code never authorize workspace mutations', () => {
+  assert.equal(isReadOnlyOrExplanatoryPrompt('How do I fix the failed build?'), true);
+  assert.equal(isReadOnlyOrExplanatoryPrompt('Please explain how to delete an obsolete file'), true);
+  assert.equal(isReadOnlyOrExplanatoryPrompt('Review the code and fix the bugs'), false);
+  assert.equal(isReadOnlyOrExplanatoryPrompt('Explain the issue, then implement the fix'), false);
+  assert.match(readOnlyScopeError('fs_delete', { path: 'data.json' }, 'How do I delete this file?'), /read-only inquiry/);
+  assert.match(readOnlyScopeError('sysRun', { command: 'npm install' }, 'Explain how to install packages'), /non-mutating/);
+});
+
+test('read-only and launch-only tasks reject persistent-state and host-mutation tools', () => {
+  for (const tool of ['skill_create', 'memory_write', 'archive', 'tool.forge', 'proc.term']) {
+    assert.match(launchScopeError(tool, {}), /not change/, tool);
+    assert.match(readOnlyScopeError(tool, {}, 'explain what this repository contains'), /not workspace modifications/, tool);
+  }
+});
+
+test('plugin inspection remains available but plugin mutations require authorization', () => {
+  assert.equal(launchScopeError('plugin.manager', { action: 'list' }), null);
+  assert.equal(readOnlyScopeError('plugin.manager', { action: 'list' }, 'explain plugins'), null);
+  for (const action of ['create', 'enable', 'disable', undefined]) {
+    assert.match(launchScopeError('plugin.manager', { action }), /does not authorize modifying installed plugins/);
+    assert.match(readOnlyScopeError('plugin.manager', { action }, 'explain plugins'), /does not authorize modifying installed plugins/);
+  }
+});
+
+test('creative app probes do not authorize file edits or live application mutations', () => {
+  for (const action of ['status', 'verify_bridge']) {
+    assert.equal(launchScopeError('creative_apps', { action }), null);
+    assert.equal(readOnlyScopeError('creative_apps', { action }, 'explain the bridge'), null);
+  }
+  for (const action of ['studio_edit', 'blender_batch', 'studio_pipeline', 'live_bridge', 'engine_bridge', 'scaffold_uxp', undefined]) {
+    assert.match(launchScopeError('creative_apps', { action }), /does not authorize creative application mutations/);
+    assert.match(readOnlyScopeError('creative_apps', { action }, 'explain the bridge'), /does not authorize creative application mutations/);
+  }
+});
+
+test('prohibiting test execution does not revoke authorization to edit requested code', () => {
+  for (const prompt of [
+    'Fix this bug, but do not run tests',
+    'Please implement the change without running tests',
+    'Update the files and never execute unit tests'
+  ]) {
+    assert.equal(isNoExecutionPrompt(prompt), false, prompt);
+    assert.equal(readOnlyScopeError('fs_edit', { path: 'src/main.js' }, prompt), null);
+  }
+  assert.equal(isNoExecutionPrompt('Do not execute anything, just explain the issue'), true);
+  assert.equal(isNoExecutionPrompt('Do not run tests and do not modify any files'), true);
+  assert.equal(isNoExecutionPrompt('do not run the tests'), false);
+});
