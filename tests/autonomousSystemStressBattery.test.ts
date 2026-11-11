@@ -195,7 +195,11 @@ describe('Autonomous Quantitative Stress & Penetration Battery', () => {
 
       const dur = performance.now() - t0;
       assert.ok(deniedCount > 0);
-      assert.ok(dur < 2500, `10,000 path checks took ${dur.toFixed(2)}ms (< 2500ms threshold)`);
+      // Windows GitHub runners have materially slower filesystem/path metadata calls.
+      // Preserve identical 10k path checks and escape assertions; adjust only the
+      // platform-sensitive wall-clock performance budget.
+      const thresholdMs = process.platform === 'win32' ? 10000 : 2500;
+      assert.ok(dur < thresholdMs, `10,000 path checks took ${dur.toFixed(2)}ms (< ${thresholdMs}ms threshold)`);
     });
   });
 
