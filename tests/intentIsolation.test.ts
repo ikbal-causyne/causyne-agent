@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentLoop, isDesktopWallpaperChangePrompt } from '../src/agentLoop.js';
+import { AgentLoop, isDesktopWallpaperChangePrompt, isActionableTaskPrompt } from '../src/agentLoop.js';
 
 test('an @ referenced source file cannot authorize an unrelated macOS wallpaper task', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-intent-source-'));
@@ -111,6 +111,7 @@ test('new CLI turn clears a stale wallpaper intent while retaining referenced fi
       "function changeWallpaper() { return 'change my desktop picture'; }\\n");
     process.chdir(workspace);
     const request = '@docs/wallpaper.js review the verification logic, do not execute anything';
+    assert.equal(isActionableTaskPrompt(request), false, 'read-only review must not force tool execution');
     const events: Array<{ type: string; message?: string }> = [];
     const loop = new AgentLoop(
       { readyState: 1, send: value => events.push(JSON.parse(value)) },
