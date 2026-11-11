@@ -150,10 +150,10 @@ export function launchScopeError(tool, args) {
     if (tool === 'creative_apps' && !['status', 'verify_bridge'].includes(String(args.action ?? '').toLowerCase())) {
         return 'A launch-only request does not authorize creative application mutations.';
     }
-        if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
+    if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
         return 'A launch-only request does not authorize modifying installed plugins.';
     }
-        if (tool === 'gitOp') {
+    if (tool === 'gitOp') {
         return isGitInspectionCommand(args.command)
             ? null
             : 'A launch-only request allows Git inspection, not working-tree or history changes.';

@@ -151,17 +151,17 @@ export function launchScopeError(tool: string, args: Record<string, unknown>): s
     return 'A launch-only request does not authorize creative application mutations.';
   }
 
-    if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
+  if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
     return 'A launch-only request does not authorize modifying installed plugins.';
   }
 
-    if (tool === 'gitOp') {
+  if (tool === 'gitOp') {
     return isGitInspectionCommand(args.command)
       ? null
       : 'A launch-only request allows Git inspection, not working-tree or history changes.';
   }
 
-    if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
+  if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
     const command = String(args.command ?? args.input ?? '').trim();
 
     if (hasShellControlOperators(command)) {
