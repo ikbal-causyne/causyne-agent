@@ -309,3 +309,12 @@ test('verifyLocalWeb respects explicitly required HTTP status', async () => {
     assert.equal(result.statusCode, 204); assert.equal(result.verified, false);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('verifyLocalWeb does not count an HTTP redirect as a working page', async () => {
+  const server = http.createServer((_req, res) => { res.writeHead(302, { location: 'http://example.com/' }); res.end(); });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try { const port = (server.address() as any).port;
+    const result = await defaultObserver.verifyLocalWeb({ endpoint: `http://127.0.0.1:${port}` });
+    assert.equal(result.statusCode, 302); assert.equal(result.verified, false);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});

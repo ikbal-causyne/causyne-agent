@@ -199,7 +199,7 @@ export class CausyneObserver {
                     res.resume();
                     const expected = req.expectedStatus ?? 200;
                     const ok = req.expectedStatus === undefined
-                        ? (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 400)
+                        ? (res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300)
                         : res.statusCode === expected;
                     const result = { verified: Boolean(ok) };
                     if (typeof res.statusCode === 'number')
