@@ -1,4 +1,3 @@
-import { setStageConsoleGuardActive } from './consoleGuard.js';
 
 /**
  * Terminal-wide motion reports (?1003h) allow hover feedback, but hijack native mouse selection.
@@ -6,9 +5,6 @@ import { setStageConsoleGuardActive } from './consoleGuard.js';
  * Opt-in via CAUSYNE_MOUSE_HOVER=1.
  */
 export function mouseHoverTracking(enabled: boolean, env: NodeJS.ProcessEnv = process.env): string {
-  if (env === process.env) {
-    setStageConsoleGuardActive(enabled);
-  }
   if (String(env.CAUSYNE_MOUSE_HOVER ?? '0') !== '1') return '';
   return enabled ? '\x1b[?1003h' : '\x1b[?1003l';
 }
