@@ -55,6 +55,13 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.match(launchScopeError('fs_edit', { path: 'server.py' }), /not change/);
   assert.match(launchScopeError('sysRun', { command: 'python3 -c "open(\"server.py\",\"w\")"' }), /does not authorize/);
   assert.match(launchScopeError('sysRun', { command: 'ls -la && rm server.py' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev && touch /tmp/unauthorized' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRunBg', { command: 'python3 server.py; rm -rf ./data' }), /chained shell commands/);
+  assert.match(launchScopeError('terminal_persistent_shell', { command: 'open https://example.com && echo unexpected' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev `whoami`' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev $(whoami)' }), /chained shell commands/);
+  assert.match(launchScopeError('sysRun', { command: 'npm run dev\nrm -rf ./data' }), /chained shell commands/);
+  assert.equal(launchScopeError('sysRun', { command: 'open "http://localhost:8000/?test=1&debug=true"' }), null);
   assert.equal(launchScopeError('tool_search', {}), null);
   assert.equal(launchScopeError('update_plan', {}), null);
   assert.equal(launchScopeError('desktop_open', { target: '~/village_cat_foundation/index.html' }), null);
