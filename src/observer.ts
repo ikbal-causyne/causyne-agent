@@ -274,6 +274,11 @@ export class CausyneObserver {
           return;
         }
 
+        if (url.username || url.password) {
+          resolve({ verified: false, error: 'Local verification URL must not contain credentials.' });
+          return;
+        }
+
         const clientReq = http.get(req.endpoint, { timeout: req.timeoutMs ?? 3000 }, (res) => {
           res.resume();
           const expected = req.expectedStatus ?? 200;
