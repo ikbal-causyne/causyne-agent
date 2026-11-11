@@ -141,7 +141,8 @@ export class CausyneObserver {
 
     // Check if the agent claims completion
     if (context.agentClaim && context.agentClaim.trim()) {
-      const claim = context.agentClaim.toLowerCase();
+      // Negative completion statements must not be promoted to verified outcomes.
+      const claim = context.agentClaim.toLowerCase().replace(/\b(?:not|never|isn't|wasn't|haven't|hasn't)\s+(?:(?:yet|fully|actually|successfully)\s+)?(?:done|complete|completed|finished|implemented|fixed|verified)\b/gi, '');
       const claimsCompletion = /\b(?:done|complete|completed|finished|implemented|fixed|verified)\b|\b(?:is\s+(?:running|live|available|listening|served)\s+(?:at|on)|application\s+is\s+running)\b/i.test(claim);
 
       if (claimsCompletion) {
