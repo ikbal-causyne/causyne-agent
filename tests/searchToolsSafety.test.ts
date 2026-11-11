@@ -1,4 +1,5 @@
 import { describe, test } from 'node:test';
+import { adversarialRegex } from './helpers/adversarialRegexFixtures.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -185,7 +186,7 @@ describe('Search and directory walker safety', () => {
     const fx = createTempFixture();
     const ctx = { workspacePaths: [fx.ws] };
     try {
-      for (const dangerous of ['(a+)+$', '(a|aa)+$', '([a-z]+)*$', '(a)\\1', 'a{9999}', 'x'.repeat(501)]) {
+      for (const dangerous of [adversarialRegex.nestedPlus, adversarialRegex.overlappingAlternatives, adversarialRegex.nestedLowercase, adversarialRegex.backreference, 'a{9999}', 'x'.repeat(501)]) {
         assert.ok(validateRegexSafety(dangerous), `Expected rejection for ${dangerous}`);
         const compiled = compileSafeSearchRegex(dangerous, { isRegex: true });
         assert.equal(compiled.regex, undefined);
@@ -197,25 +198,25 @@ describe('Search and directory walker safety', () => {
       }
 
       const t0 = Date.now();
-      const sErr = await fsSearch.execute({ path: fx.ws, query: '(a+)+$', isRegex: true }, ctx);
+      const sErr = await fsSearch.execute({ path: fx.ws, query: adversarialRegex.nestedPlus, isRegex: true }, ctx);
       assert.equal(sErr.success, false);
       assert.match(sErr.error || '', /Nested quantifiers|ReDoS/i);
 
       const rgErr = await codeSearcher.execute(
-        { searchPath: fx.ws, query: '(a|aa)+$', isRegex: true },
+        { searchPath: fx.ws, query: adversarialRegex.overlappingAlternatives, isRegex: true },
         ctx
       );
       assert.equal(rgErr.success, false);
       assert.match(rgErr.error || '', /Nested quantifiers|ReDoS/i);
 
       const cbErr = await codebaseSearch.execute(
-        { target_directories: [fx.ws], query: '(a+)+$', isRegex: true },
+        { target_directories: [fx.ws], query: adversarialRegex.nestedPlus, isRegex: true },
         ctx
       );
       assert.equal(cbErr.success, false);
 
-      // Literal default treats '(a+)+$' safely without backtracking
-      const litRes = await fsSearch.execute({ path: fx.ws, query: '(a+)+$' }, ctx);
+      // Literal default treats adversarialRegex.nestedPlus safely without backtracking
+      const litRes = await fsSearch.execute({ path: fx.ws, query: adversarialRegex.nestedPlus }, ctx);
       assert.equal(litRes.success, true);
       assert.ok(Date.now() - t0 < 2000, 'ReDoS guard must return immediately');
     } finally {

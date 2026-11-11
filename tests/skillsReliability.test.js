@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test';
+import { adversarialRegex } from './helpers/adversarialRegexFixtures.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -122,7 +123,7 @@ describe('skill write/delete path safety', () => {
 
 describe('safe and low-cost skill search', () => {
   test('regex metacharacters are literal, not a catastrophic backtracking program', () => {
-    const expression = literalSearchPattern('(a+)+$');
+    const expression = literalSearchPattern(adversarialRegex.nestedPlus);
     assert.ok(expression);
     assert.equal(expression.test('a'.repeat(25_000) + 'X'), false);
     assert.equal(expression.test('literally (a+)+$ in this name'), true);

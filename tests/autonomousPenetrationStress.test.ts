@@ -1,4 +1,5 @@
 import { test, describe, after, before } from 'node:test';
+import { adversarialRegex } from './helpers/adversarialRegexFixtures.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,11 +161,11 @@ describe('Autonomous Penetration and Stress Battery', () => {
   describe('P2 — ReDoS and Catastrophic Backtracking Immunity', () => {
     test('validateRegexSafety rejects polynomial and exponential backtracking patterns in linear time', () => {
       const attacks = [
-        '(a+)+$',
+        adversarialRegex.nestedPlus,
         '(a|aa)+',
         '(a|a?)+$',
         '((a*)*)*$',
-        '([a-zA-Z0-9]+)*$',
+        adversarialRegex.nestedAlphanumeric,
         '(a+){10}',
         'a{1,1000000}',
         'abc\\',
@@ -188,15 +189,15 @@ describe('Autonomous Penetration and Stress Battery', () => {
       assert.equal(safe.regex.test('hello beautiful world'), true);
 
       // Malicious pattern returns error rather than compiling an unsafe RegExp
-      const unsafe = compileSafeSearchRegex('(a+)+$', { isRegex: true });
+      const unsafe = compileSafeSearchRegex(adversarialRegex.nestedPlus, { isRegex: true });
       assert.equal(unsafe.regex, undefined, 'Unsafe regex must not produce a compiled RegExp');
       assert.ok(typeof unsafe.error === 'string', 'Unsafe regex must return an explanation error');
     });
 
     test('deferredMcpSearch handles rapid adversarial and ReDoS query barrage', async () => {
       const adversarialQueries = [
-        '(a+)+$ and android/.*gradle',
-        '((x*)*)* and react',
+        adversarialRegex.nestedPlus + ' and android/.*gradle',
+        adversarialRegex.nestedStars + ' and react',
         'a'.repeat(250) + ' and database',
         '\\x00\\x1b[31m injected query',
         'SELECT * FROM users WHERE 1=1'

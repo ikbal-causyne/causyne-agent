@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { adversarialRegex } from './helpers/adversarialRegexFixtures.js';
 import assert from 'node:assert/strict';
 
 import { deferredMcpSearch } from '../src/tools/deferredMcpSearch.js';
@@ -12,7 +13,7 @@ test('skill discovery still provides concrete skill IDs, not invented tool names
 });
 
 test('adversarial regex-shaped queries remain a literal search, not a RegExp program', async () => {
-  const result = await deferredMcpSearch.execute({ query: '(a+)+$' });
+  const result = await deferredMcpSearch.execute({ query: adversarialRegex.nestedPlus });
   assert.equal(result.success, true);
 });
 

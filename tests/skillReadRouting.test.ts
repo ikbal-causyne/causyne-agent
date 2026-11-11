@@ -1,4 +1,5 @@
 import { describe, test } from 'node:test';
+import { adversarialRegex } from './helpers/adversarialRegexFixtures.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -155,7 +156,7 @@ describe('Skill reading and capability lookup routing', () => {
     const queriesRes = await deferredMcpSearch.execute({ queries: ['database', 'query'] } as any);
     assert.equal(queriesRes.success, true);
 
-    const regexAliasRes = await deferredMcpSearch.execute({ regex: '(a+)+$' } as any);
+    const regexAliasRes = await deferredMcpSearch.execute({ regex: adversarialRegex.nestedPlus } as any);
     assert.equal(regexAliasRes.success, true);
   });
 
@@ -212,7 +213,7 @@ describe('Skill reading and capability lookup routing', () => {
 
   test('deferredMcpSearch precision: ReDoS-shaped and multi-word queries exclude unrelated game tools and false skills', async () => {
     const t0 = Date.now();
-    const result = await deferredMcpSearch.execute({ query: '(a+)+$ and android/.*gradle' });
+    const result = await deferredMcpSearch.execute({ query: adversarialRegex.nestedPlus + ' and android/.*gradle' });
     const duration = Date.now() - t0;
     assert.ok(duration < 1000, `ReDoS search must complete quickly without freezing: ${duration}ms`);
     assert.equal(result.success, true);
