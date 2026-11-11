@@ -138,7 +138,7 @@ export function launchScopeError(tool, args) {
             ? null
             : 'A launch-only request allows Git inspection, not working-tree or history changes.';
     }
-        if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
+    if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
         const command = String(args.command ?? args.input ?? '').trim();
         if (hasShellControlOperators(command)) {
             return 'A launch-only request does not authorize chained shell commands. Use one scoped command per tool call.';
