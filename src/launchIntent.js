@@ -68,6 +68,9 @@ export function readOnlyScopeError(tool, args, prompt) {
         if (MUTATION_TOOLS.has(tool) || tool === 'desktop_act' || tool === 'computer_use') {
             return 'The user requested an explanation/read-only inquiry, not workspace modifications or desktop actions.';
         }
+        if (tool === 'creative_apps' && !['status', 'verify_bridge'].includes(String(args.action ?? '').toLowerCase())) {
+            return 'A read-only inquiry does not authorize creative application mutations.';
+        }
         if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
             return 'A read-only inquiry does not authorize modifying installed plugins.';
         }
@@ -144,7 +147,10 @@ export function launchScopeError(tool, args) {
     if (MUTATION_TOOLS.has(tool)) {
         return 'The user asked to open the existing project, not change its files or configuration.';
     }
-    if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
+    if (tool === 'creative_apps' && !['status', 'verify_bridge'].includes(String(args.action ?? '').toLowerCase())) {
+        return 'A launch-only request does not authorize creative application mutations.';
+    }
+        if (tool === 'plugin.manager' && String(args.action ?? '').toLowerCase() !== 'list') {
         return 'A launch-only request does not authorize modifying installed plugins.';
     }
         if (tool === 'gitOp') {

@@ -355,3 +355,14 @@ test('plugin inspection remains available but plugin mutations require authoriza
     assert.match(readOnlyScopeError('plugin.manager', { action }, 'explain plugins'), /does not authorize modifying installed plugins/);
   }
 });
+
+test('creative app probes do not authorize file edits or live application mutations', () => {
+  for (const action of ['status', 'verify_bridge']) {
+    assert.equal(launchScopeError('creative_apps', { action }), null);
+    assert.equal(readOnlyScopeError('creative_apps', { action }, 'explain the bridge'), null);
+  }
+  for (const action of ['studio_edit', 'blender_batch', 'studio_pipeline', 'live_bridge', 'engine_bridge', 'scaffold_uxp', undefined]) {
+    assert.match(launchScopeError('creative_apps', { action }), /does not authorize creative application mutations/);
+    assert.match(readOnlyScopeError('creative_apps', { action }, 'explain the bridge'), /does not authorize creative application mutations/);
+  }
+});
