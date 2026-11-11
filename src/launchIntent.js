@@ -121,7 +121,6 @@ function hasShellControlOperators(command) {
     }
     return quote !== null;
 }
-
 /** A launch-only request authorizes inspection, starting the app, and opening it. */
 export function launchScopeError(tool, args) {
     if (MUTATION_TOOLS.has(tool)) {
