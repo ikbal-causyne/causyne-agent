@@ -339,3 +339,10 @@ test('questions about how to fix code never authorize workspace mutations', () =
   assert.match(readOnlyScopeError('fs_delete', { path: 'data.json' }, 'How do I delete this file?'), /read-only inquiry/);
   assert.match(readOnlyScopeError('sysRun', { command: 'npm install' }, 'Explain how to install packages'), /non-mutating/);
 });
+
+test('read-only and launch-only tasks reject persistent-state and host-mutation tools', () => {
+  for (const tool of ['skill_create', 'memory_write', 'archive', 'tool.forge', 'proc.term']) {
+    assert.match(launchScopeError(tool, {}), /not change/, tool);
+    assert.match(readOnlyScopeError(tool, {}, 'explain what this repository contains'), /not workspace modifications/, tool);
+  }
+});

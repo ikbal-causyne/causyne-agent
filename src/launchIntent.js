@@ -15,7 +15,7 @@ const LOCAL_HEALTH_CHECK = /^\s*curl\b[^;&|><`$()]*https?:\/\/(?:localhost|127\.
 export const MUTATION_TOOLS = new Set([
     'fs_write', 'fs_edit', 'fs_delete', 'fs_move',
     'multi_edit', 'MultiEdit', 'edit_file', 'write_to_file', 'delete_file',
-    'create_skill', 'manage_local_dependencies'
+    'create_skill', 'manage_local_dependencies', 'skill_create', 'memory_write', 'archive', 'tool.forge', 'proc.term'
 ]);
 const NO_EXECUTION_PHRASES = /\b(?:don'?t|do\s+not|never|without)\s+(?:execute|run|modify|mutate|apply|touch|write|change|edit|delete)\b|\b(?:no|without)\s+(?:execution|tools?|actions?)\b|\bjust\s+explain\b|\bread[\s-]only\b/i;
 export function isNoExecutionPrompt(prompt) {
