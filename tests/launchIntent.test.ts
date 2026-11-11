@@ -6,7 +6,7 @@ import path from 'node:path';
 import childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
-import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError, readOnlyScopeError, isReadOnlyOrExplanatoryPrompt } from '../src/launchIntent.js';
+import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError, readOnlyScopeError, isReadOnlyOrExplanatoryPrompt, isNoExecutionPrompt } from '../src/launchIntent.js';
 import { assessVerification } from '../src/verificationPlan.js';
 import { outcomeFromResult } from '../src/observer/evidence.js';
 import { stripToolCallMarkup, extractLivePlanFromText } from '../src/implementationPlan.js';
@@ -365,4 +365,18 @@ test('creative app probes do not authorize file edits or live application mutati
     assert.match(launchScopeError('creative_apps', { action }), /does not authorize creative application mutations/);
     assert.match(readOnlyScopeError('creative_apps', { action }, 'explain the bridge'), /does not authorize creative application mutations/);
   }
+});
+
+test('prohibiting test execution does not revoke authorization to edit requested code', () => {
+  for (const prompt of [
+    'Fix this bug, but do not run tests',
+    'Please implement the change without running tests',
+    'Update the files and never execute unit tests'
+  ]) {
+    assert.equal(isNoExecutionPrompt(prompt), false, prompt);
+    assert.equal(readOnlyScopeError('fs_edit', { path: 'src/main.js' }, prompt), null);
+  }
+  assert.equal(isNoExecutionPrompt('Do not execute anything, just explain the issue'), true);
+  assert.equal(isNoExecutionPrompt('Do not run tests and do not modify any files'), true);
+  assert.equal(isNoExecutionPrompt('do not run the tests'), false);
 });

@@ -18,10 +18,12 @@ export const MUTATION_TOOLS = new Set([
     'create_skill', 'manage_local_dependencies', 'skill_create', 'memory_write', 'archive', 'tool.forge', 'proc.term'
 ]);
 const NO_EXECUTION_PHRASES = /\b(?:don'?t|do\s+not|never|without)\s+(?:execute|run|modify|mutate|apply|touch|write|change|edit|delete)\b|\b(?:no|without)\s+(?:execution|tools?|actions?)\b|\bjust\s+explain\b|\bread[\s-]only\b/i;
+// 'Do not run tests' is a scoped restriction, not a prohibition on editing code.
+const SCOPED_TEST_PROHIBITION = /\b(?:don'?t|do\s+not|never|without)\s+(?:run|execute)\s+(?:the\s+)?(?:unit\s+|integration\s+|e2e\s+)?(?:tests?|checks?|lint(?:ing|ers?)?|benchmarks?|test\s+suite)\b/gi;
 export function isNoExecutionPrompt(prompt) {
     if (!prompt || typeof prompt !== 'string')
         return false;
-    return NO_EXECUTION_PHRASES.test(prompt);
+    return NO_EXECUTION_PHRASES.test(prompt.replace(SCOPED_TEST_PROHIBITION, ''));
 }
 export function isReadOnlyOrExplanatoryPrompt(prompt) {
     if (!prompt || typeof prompt !== 'string')
