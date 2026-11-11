@@ -691,3 +691,19 @@ test('AgentLoop automatically reconnects and continues when peer returns empty r
   }
 });
 
+
+test('multi-section execution reports are not mistaken for a mid-task promise from their opening sentence', () => {
+  const report = [
+    "I will inspect the archive and run the supplied verification.",
+    "",
+    "### Execution report",
+    "- The patch was applied in the selected project.",
+    "- Two regression assertions failed and the complete suite stopped.",
+    "",
+    "### Termination",
+    "Execution halted on the user's stop-on-failure instruction. Awaiting further instructions."
+  ].join('\n');
+  assert.ok(report.length > 280);
+  assert.equal(isMidTaskProgressText(report), false);
+  assert.equal(isMidTaskProgressText("I will run the next verification now."), true);
+});

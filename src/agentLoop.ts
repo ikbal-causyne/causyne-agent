@@ -345,7 +345,7 @@ export function isMidTaskProgressText(text: string): boolean {
     "i'm going to ",
     'going to '
   ];
-  if (intentPrefixes.some(prefix => lastLower.startsWith(prefix) || lower.startsWith(prefix))) {
+  if (intentPrefixes.some(prefix => lastLower.startsWith(prefix) || (trimmed.length <= 280 && lower.startsWith(prefix)))) {
     if (!/\b(?:task completed|all done|everything is ready|finished|complete\.)\b/i.test(lastSentence)) {
       return true;
     }
