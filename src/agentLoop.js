@@ -3330,7 +3330,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         break;
                     }
                     if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
-if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
+                        if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
                             incompleteTurnContinuations++;
                             this.emitEvent({ type: 'status', message: 'Requesting the missing final response…' });
                             this.messages.push({ role: 'system', content: '[FINAL RESPONSE REQUIRED] Report actual completed and incomplete work from tool results. ' +
