@@ -635,6 +635,8 @@ export async function chatMode({ home = false } = {}) {
     homeTransition.beginTurn(loop);
     loop.userPrompt = task;
     loop.currentTaskPrompt = task;
+    // Snapshot every new turn's authority independently of previous task state.
+    loop.taskIntentPrompt = task;
     // ONE USER REQUEST IS ONE TASK.
     //
     // The loop object is reused across the whole chat — that is deliberate, it
