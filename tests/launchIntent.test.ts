@@ -6,7 +6,7 @@ import path from 'node:path';
 import childProcess from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
-import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError } from '../src/launchIntent.js';
+import { isLaunchOnlyPrompt, isServerLaunchCommand, launchScopeError, readOnlyScopeError } from '../src/launchIntent.js';
 import { assessVerification } from '../src/verificationPlan.js';
 import { outcomeFromResult } from '../src/observer/evidence.js';
 import { stripToolCallMarkup, extractLivePlanFromText } from '../src/implementationPlan.js';
@@ -72,6 +72,16 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.equal(launchScopeError('desktop.open', { target: 'http://localhost:8000' }), null);
   assert.equal(launchScopeError('sysRun', { command: 'open "http://localhost:8000/?test=1&debug=true"' }), null);
   assert.equal(launchScopeError('sysRun', { command: 'ls -la /tmp' }), null);
+  // Commands advertised as read-only must not accept mutating command-line flags.
+  assert.match(launchScopeError('sysRun', { command: 'find . -delete' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRun', { command: 'find . -exec rm data +' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRun', { command: 'git diff --output=/tmp/secret' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRun', { command: 'rg --pre=sh suspicious' }), /Use read-only inspection/);
+  const inquiry = 'explain what files are present';
+  assert.match(readOnlyScopeError('sysRun', { command: 'find . -delete' }, inquiry), /only non-mutating/);
+  assert.match(readOnlyScopeError('sysRun', { command: 'git show --output=/tmp/file' }, inquiry), /only non-mutating/);
+  assert.match(readOnlyScopeError('sysRun', { command: 'rg --pre=sh pattern' }, inquiry), /only non-mutating/);
+  assert.equal(readOnlyScopeError('sysRun', { command: 'find . -name package.json' }, inquiry), null);
   assert.equal(launchScopeError('sysRun', { command: 'python3 /tmp/server.py' }), null);
   assert.equal(launchScopeError('sysRun', { command: 'curl -f http://127.0.0.1:8765/' }), null);
   assert.match(launchScopeError('sysRun', { command: 'curl -o server.py http://example.com/' }), /Use read-only inspection/);
