@@ -38,6 +38,17 @@ export function isReadOnlyOrExplanatoryPrompt(prompt?: string | null): boolean {
   return true;
 }
 
+const READ_ONLY_GIT_COMMAND = /^(?:status|diff|log|show|rev-parse|ls-files)(?=\s|$)/i;
+const RISKY_GIT_INSPECTION_OPTIONS = /(?:^|\s)--(?:ext-diff|textconv|config-env)(?=\s|$|=)/i;
+
+function isGitInspectionCommand(rawCommand: unknown): boolean {
+  const command = String(rawCommand ?? '').trim();
+  return READ_ONLY_GIT_COMMAND.test(command)
+    && !hasShellControlOperators(command)
+    && !MUTATING_INSPECTION_OPTIONS.test(command)
+    && !RISKY_GIT_INSPECTION_OPTIONS.test(command);
+}
+
 /** Enforces scope boundaries when the user's intent is explanatory or forbids execution. */
 export function readOnlyScopeError(
   tool: string,
@@ -57,11 +68,9 @@ export function readOnlyScopeError(
       return 'The user requested an explanation/read-only inquiry, not workspace modifications or desktop actions.';
     }
     if (tool === 'gitOp') {
-      const command = String(args.command || '');
-      if (/\b(?:commit|push|reset|rebase|merge|checkout\s+-b|branch\s+-[dD])\b/i.test(command)) {
-        return 'A read-only inquiry does not authorize modifying git history or branches.';
-      }
-      return null;
+      return isGitInspectionCommand(args.command)
+        ? null
+        : 'A read-only inquiry authorizes inspection of Git status and history, not repository mutations.';
     }
     if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
       const command = String(args.command ?? args.input ?? '').trim();
@@ -126,7 +135,13 @@ export function launchScopeError(tool: string, args: Record<string, unknown>): s
     return 'The user asked to open the existing project, not change its files or configuration.';
   }
 
-  if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
+  if (tool === 'gitOp') {
+    return isGitInspectionCommand(args.command)
+      ? null
+      : 'A launch-only request allows Git inspection, not working-tree or history changes.';
+  }
+
+    if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
     const command = String(args.command ?? args.input ?? '').trim();
 
     if (hasShellControlOperators(command)) {

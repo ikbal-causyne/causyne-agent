@@ -67,6 +67,15 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.match(launchScopeError('sysRunBg', { command: 'kill -9 1' }), /Use read-only inspection/);
   assert.match(launchScopeError('terminal_persistent_shell', { command: 'fuser -k 8080/tcp' }), /Use read-only inspection/);
   assert.equal(launchScopeError('tool_search', {}), null);
+  assert.equal(launchScopeError('gitOp', { command: 'status --short' }), null);
+  assert.match(launchScopeError('gitOp', { command: 'checkout -- .' }), /Git inspection/);
+  assert.match(launchScopeError('gitOp', { command: 'clean -fd' }), /Git inspection/);
+  assert.match(launchScopeError('gitOp', { command: 'status; touch /tmp/surprise' }), /Git inspection/);
+  assert.match(launchScopeError('gitOp', { command: 'diff --ext-diff' }), /Git inspection/);
+  assert.match(readOnlyScopeError('gitOp', { command: 'restore .' }, 'explain current status'), /inspection of Git status/);
+  assert.match(readOnlyScopeError('gitOp', { command: 'status; rm -rf ./data' }, 'explain current status'), /inspection of Git status/);
+  assert.match(readOnlyScopeError('gitOp', { command: 'show --output=/tmp/out' }, 'explain current status'), /inspection of Git status/);
+  assert.equal(readOnlyScopeError('gitOp', { command: 'log -1 --oneline' }, 'explain current status'), null);
   assert.equal(launchScopeError('update_plan', {}), null);
   assert.equal(launchScopeError('desktop_open', { target: '~/village_cat_foundation/index.html' }), null);
   assert.equal(launchScopeError('desktop.open', { target: 'http://localhost:8000' }), null);
