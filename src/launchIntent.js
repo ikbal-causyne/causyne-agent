@@ -10,7 +10,6 @@ const SERVER_COMMAND = /^\s*(?:python(?:3(?:\.\d+)?)?\s+(?:-u\s+)?(?:\S*\/)?serv
 const READ_ONLY_COMMAND = /^\s*(?:pwd|ls|rg|grep|cat|head|tail|find|which|where|ps|pgrep|lsof|netstat|ss|git\s+(?:status|diff|log|show)|node\s+(?:-v|--version)|python(?:3(?:\.\d+)?)?\s+(?:-V|--version))\b/i;
 const OPEN_COMMAND = /^\s*(?:open|xdg-open|start)\s+\S+/i;
 const LOCAL_HEALTH_CHECK = /^\s*curl\b[^;&|><`$()]*https?:\/\/(?:localhost|127\.0\.0\.1):\d+(?:\/\S*)?\s*$/i;
-const PORT_CLEANUP_COMMAND = /^\s*(?:pkill|kill|fuser)\b/i;
 export const MUTATION_TOOLS = new Set([
     'fs_write', 'fs_edit', 'fs_delete', 'fs_move',
     'multi_edit', 'MultiEdit', 'edit_file', 'write_to_file', 'delete_file',
@@ -131,7 +130,7 @@ export function launchScopeError(tool, args) {
         if (hasShellControlOperators(command)) {
             return 'A launch-only request does not authorize chained shell commands. Use one scoped command per tool call.';
         }
-        if (OPEN_COMMAND.test(command) || isServerLaunchCommand(command) || LOCAL_HEALTH_CHECK.test(command) || PORT_CLEANUP_COMMAND.test(command)) {
+        if (OPEN_COMMAND.test(command) || isServerLaunchCommand(command) || LOCAL_HEALTH_CHECK.test(command)) {
             return null;
         }
         if (READ_ONLY_COMMAND.test(command)) {

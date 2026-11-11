@@ -62,6 +62,10 @@ test('opening an existing project excludes file mutation and unrelated commands'
   assert.match(launchScopeError('sysRun', { command: 'npm run dev $(whoami)' }), /chained shell commands/);
   assert.match(launchScopeError('sysRun', { command: 'npm run dev\nrm -rf ./data' }), /chained shell commands/);
   assert.equal(launchScopeError('sysRun', { command: 'open "http://localhost:8000/?test=1&debug=true"' }), null);
+  // Opening an app never authorizes terminating unrelated host processes.
+  assert.match(launchScopeError('sysRun', { command: 'pkill -f Terminal' }), /Use read-only inspection/);
+  assert.match(launchScopeError('sysRunBg', { command: 'kill -9 1' }), /Use read-only inspection/);
+  assert.match(launchScopeError('terminal_persistent_shell', { command: 'fuser -k 8080/tcp' }), /Use read-only inspection/);
   assert.equal(launchScopeError('tool_search', {}), null);
   assert.equal(launchScopeError('update_plan', {}), null);
   assert.equal(launchScopeError('desktop_open', { target: '~/village_cat_foundation/index.html' }), null);
