@@ -401,7 +401,7 @@ export class ChatPrompt {
     renderer.onPlanChange = (plan) => {
       if (this.surface) this.surface.sidebarPlan = plan;
       this.scheduleDraw();
-      return this.surface && sidebarVisible(this.surface.width) ? 'sidebar' : undefined;
+      return this.surface && sidebarVisible(this.surface.width, false, this.surface.env) ? 'sidebar' : undefined;
     };
   }
 
@@ -470,7 +470,7 @@ export class ChatPrompt {
 
   /** Persistent checklist shown outside the chat transcript. */
   planRows(width) {
-    if (this.surface && sidebarVisible(this.surface.width)) return [];
+    if (this.surface && sidebarVisible(this.surface.width, false, this.surface.env)) return [];
     const plan = this.renderer && Array.isArray(this.renderer.latestPlan) ? this.renderer.latestPlan : [];
     if (plan.length === 0) return [];
     const completed = plan.filter(item => item.status === 'completed').length;
@@ -482,8 +482,15 @@ export class ChatPrompt {
       return [summary, ''];
     }
     const rows = [`${bold(paint('accent', 'implementation plan'))}  ${dim(`${completed}/${plan.length}`)}`];
+    // When the sidebar is absent, keep the active task visible instead of
+    // permanently showing the first five (often already completed) steps.
     const limit = Math.min(plan.length, 5);
-    for (const item of plan.slice(0, limit)) {
+    const active = plan.findIndex(item => item.status === 'in_progress');
+    const pending = plan.findIndex(item => item.status !== 'completed');
+    const focus = active >= 0 ? active : pending >= 0 ? pending : plan.length - 1;
+    const start = Math.max(0, Math.min(focus - 1, plan.length - limit));
+    if (start > 0) rows.push(`  ${dim(`${GLYPHS.ellipsis} ${start} earlier`)}`);
+    for (const item of plan.slice(start, start + limit)) {
       const mark = item.status === 'completed'
         ? paint('success', GLYPHS.check)
         : item.status === 'in_progress'
@@ -491,7 +498,8 @@ export class ChatPrompt {
           : paint('muted', GLYPHS.dot);
       rows.push(`  ${mark} ${truncate(safeDisplay(item.text || item.step || ''), Math.max(8, width - 5), GLYPHS.ellipsis)}`);
     }
-    if (plan.length > limit) rows.push(`  ${dim(`${GLYPHS.ellipsis} ${plan.length - limit} more`)}`);
+    const remaining = plan.length - start - limit;
+    if (remaining > 0) rows.push(`  ${dim(`${GLYPHS.ellipsis} ${remaining} later`)}`);
     rows.push('');
     return rows;
   }

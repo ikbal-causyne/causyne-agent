@@ -312,3 +312,27 @@ test('sidebar resize resets terminal reflow anchor on width changes only', () =>
     surface.close();
   }
 });
+
+test('sidebar-disabled sessions keep the active plan in the main TUI', () => {
+  const out = { columns: 200, rows: 50, isTTY: true, write: () => true, on() {}, removeListener() {} };
+  const surface = new StageSurface({ out, env: { CAUSYNE_MOUSE: '0', CAUSYNE_SIDEBAR: 'off' } });
+  assert.equal(surface.open(), true);
+  try {
+    const prompt = new ChatPrompt({ out, surface });
+    prompt.renderer = { latestPlan: Array.from({ length: 12 }, (_, index) => ({
+      text: 'Phase ' + (index + 1),
+      status: index < 8 ? 'completed' : index === 8 ? 'in_progress' : 'pending'
+    })) };
+    const rendered = stripAnsi(prompt.planRows(150).join('\n'));
+    assert.match(rendered, /Phase 9/, 'the active step must remain readable');
+    assert.match(rendered, /earlier/, 'previous steps must be summarized');
+    assert.ok(rendered.indexOf('Phase 8') < rendered.indexOf('Phase 9'));
+    assert.doesNotMatch(rendered, /Phase 1\n/);
+    surface.sidebarPlan = prompt.renderer.latestPlan;
+    surface.present(['COMPOSER', 'STATUS'], { row: 0, col: 3 });
+    assert.doesNotMatch(stripAnsi(surface.stage.prev.join('\n')), /Plan  8\/12/,
+      'the disabled sidebar must not render hidden duplicate plan text');
+  } finally {
+    surface.close();
+  }
+});
