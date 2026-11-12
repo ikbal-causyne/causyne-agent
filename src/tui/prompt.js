@@ -775,11 +775,12 @@ export class ChatPrompt {
   }
 
   /** Queue text with its attachments. Local command values retain their existing type. */
-  enqueueSubmission(text) {
+  enqueueSubmission(text, { rendered = false } = {}) {
+    if (!Array.isArray(this.queue)) this.queue = [];
     if (this.isCommand(text)) {
       this.queue.push(text);
     } else {
-      this.queue.push({ kind: 'chat-submission', text, attachments: this.takeSubmissionAttachments() });
+      this.queue.push({ kind: 'chat-submission', text, attachments: this.takeSubmissionAttachments(), rendered });
     }
   }
 
@@ -791,7 +792,7 @@ export class ChatPrompt {
       const submission = entry && typeof entry === 'object' && entry.kind === 'chat-submission';
       const text = submission ? entry.text : entry;
       if (submission) this.currentSubmissionAttachments = entry.attachments;
-      if (typeof text === 'string' && !this.isCommand(text)) {
+      if (typeof text === 'string' && !this.isCommand(text) && !(submission && entry.rendered)) {
         this.renderSubmittedUserMessage(text);
       }
       this.scheduleDraw();
@@ -853,6 +854,7 @@ export class ChatPrompt {
   submit() {
     const text = this.editor.getText();
     if (!text.trim()) return;
+    if (!Array.isArray(this.queue)) this.queue = [];
     // busy=false does not imply read() is awaiting: command dispatch has gaps.
     if ((this.busy || !this.waiter) && this.queue.length >= 32
         && !/^\/(?:stop|interrupt)$/i.test(text.trim())) {
@@ -870,7 +872,7 @@ export class ChatPrompt {
     }
 
     // Instant slash command shortcuts that operate directly on the prompt surface
-    if (text === '/usage') {
+    if (text === '/usage' && typeof this.toggleUsageCard === 'function') {
       void this.toggleUsageCard();
       return;
     }
@@ -932,7 +934,7 @@ export class ChatPrompt {
       else {
         this.enqueueSubmission(text); // no waiter yet: retain the command
         this.notice = `queued (${this.queue.length}) — sends when ready`;
-        this.scheduleDraw();
+        this.scheduleDraw?.();
       }
       return;
     }
@@ -945,10 +947,13 @@ export class ChatPrompt {
       this.renderSubmittedUserMessage(text);
       resolve(text);
     } else {
-      // Previously the editor was cleared here without resolving or queuing.
-      this.enqueueSubmission(text);
+      // Display the user's submitted message immediately, as before, but
+      // retain it until the CLI registers its next read() waiter.
+      // The rendered marker prevents a duplicate transcript entry at dequeue.
+      this.renderSubmittedUserMessage(text);
+      this.enqueueSubmission(text, { rendered: true });
       this.notice = `queued (${this.queue.length}) — sends when ready`;
-      this.scheduleDraw();
+      this.scheduleDraw?.();
     }
   }
 

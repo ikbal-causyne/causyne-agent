@@ -19,9 +19,9 @@ test('non-busy submit without a read waiter is not silently discarded', async ()
   prompt.submit();
   assert.equal(prompt.editor.getText(), '');
   assert.equal(prompt.queue.length, 1);
-  assert.deepEqual(rendered, [], 'unsent text must not appear as a completed submission');
+  assert.deepEqual(rendered, ['sent between two turns'], 'a submitted message must be visible immediately');
   assert.equal(await prompt.read(), 'sent between two turns');
-  assert.deepEqual(rendered, ['sent between two turns']);
+  assert.deepEqual(rendered, ['sent between two turns'], 'dequeue must not render a second copy');
 });
 
 test('messages entered during a running turn are retained and dispatched FIFO', async () => {
