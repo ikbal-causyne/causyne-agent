@@ -236,7 +236,7 @@ export class Stage {
             return false;
         this.write('\x1b[999B\r');
         this.cursor = this.height - 1;
-        this.caret = { row: this.cursor, col: 0, hideCursor: this.caret.hideCursor };
+        this.caret = { row: this.cursor, col: 0, hideCursor: Boolean(this.caret.hideCursor) };
         this.invalidate();
         return true;
     }
