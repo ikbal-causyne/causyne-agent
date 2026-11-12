@@ -172,6 +172,9 @@ export class ChatPrompt {
     this.layer = null;
     this.queue = [];
     this.waiter = null;
+    // Each submission owns its attachments; later pasted images must not leak
+    // into a turn which was already sent.
+    this.currentSubmissionAttachments = null;
     this.completion = null;
     this.selected = 0;
     this.lastCtrlC = 0;
@@ -757,13 +760,41 @@ export class ChatPrompt {
     });
   }
 
-  /** Next submitted line. Resolves immediately if one was queued while busy. */
+  /** Restore attachments if an earlier submission was handled as a local command. */
+  restoreUnconsumedAttachments() {
+    if (Array.isArray(this.currentSubmissionAttachments) && this.currentSubmissionAttachments.length) {
+      this.pendingAttachments = this.currentSubmissionAttachments.concat(this.pendingAttachments);
+    }
+    this.currentSubmissionAttachments = null;
+  }
+
+  takeSubmissionAttachments() {
+    const attachments = Array.isArray(this.pendingAttachments) ? this.pendingAttachments : [];
+    this.pendingAttachments = [];
+    return attachments;
+  }
+
+  /** Queue text with its attachments. Local command values retain their existing type. */
+  enqueueSubmission(text) {
+    if (this.isCommand(text)) {
+      this.queue.push(text);
+    } else {
+      this.queue.push({ kind: 'chat-submission', text, attachments: this.takeSubmissionAttachments() });
+    }
+  }
+
+  /** Read in FIFO order and display a submitted message only once dispatched. */
   read() {
+    this.restoreUnconsumedAttachments();
     if (this.queue.length > 0) {
-      const text = this.queue.shift();
+      const entry = this.queue.shift();
+      const submission = entry && typeof entry === 'object' && entry.kind === 'chat-submission';
+      const text = submission ? entry.text : entry;
+      if (submission) this.currentSubmissionAttachments = entry.attachments;
       if (typeof text === 'string' && !this.isCommand(text)) {
         this.renderSubmittedUserMessage(text);
       }
+      this.scheduleDraw();
       return Promise.resolve(text);
     }
     return new Promise((resolve) => { this.waiter = resolve; });
@@ -795,9 +826,13 @@ export class ChatPrompt {
    * Consume and return any pending multimodal attachments (e.g. pasted screenshots).
    */
   consumeAttachments() {
-    const list = Array.isArray(this.pendingAttachments) ? this.pendingAttachments.slice() : [];
-    this.pendingAttachments = [];
-    return list;
+    // An empty submission snapshot still takes precedence over a future draft.
+    if (this.currentSubmissionAttachments !== null) {
+      const attachments = this.currentSubmissionAttachments;
+      this.currentSubmissionAttachments = null;
+      return Array.isArray(attachments) ? attachments : [];
+    }
+    return this.takeSubmissionAttachments();
   }
 
   /**
@@ -818,8 +853,9 @@ export class ChatPrompt {
   submit() {
     const text = this.editor.getText();
     if (!text.trim()) return;
-    if (this.busy && this.queue.length >= 32
-        && text.trim() !== '/stop' && text.trim() !== '/interrupt') {
+    // busy=false does not imply read() is awaiting: command dispatch has gaps.
+    if ((this.busy || !this.waiter) && this.queue.length >= 32
+        && !/^\/(?:stop|interrupt)$/i.test(text.trim())) {
       this.notice = '32 queued messages: wait for a turn to complete before adding another';
       this.scheduleDraw();
       return;
@@ -880,7 +916,7 @@ export class ChatPrompt {
       } else {
         this.notice = `queued (${this.queue.length + 1}) — sends when this turn ends`;
       }
-      this.queue.push(text);
+      this.enqueueSubmission(text);
       this.scheduleDraw();
       return;
     }
@@ -894,19 +930,26 @@ export class ChatPrompt {
       this.waiter = null;
       if (settle) settle(text);
       else {
-        if (!Array.isArray(this.queue)) this.queue = [];
-        this.queue.push(text); // nobody is reading yet: hold it, never drop it
+        this.enqueueSubmission(text); // no waiter yet: retain the command
+        this.notice = `queued (${this.queue.length}) — sends when ready`;
+        this.scheduleDraw();
       }
       return;
     }
 
-    // Render live submissions through the same path used when history reflows.
-    if (!this.isCommand(text)) {
-      this.renderSubmittedUserMessage(text);
-    }
     const resolve = this.waiter;
     this.waiter = null;
-    if (resolve) resolve(text);
+    if (resolve) {
+      this.restoreUnconsumedAttachments();
+      this.currentSubmissionAttachments = this.takeSubmissionAttachments();
+      this.renderSubmittedUserMessage(text);
+      resolve(text);
+    } else {
+      // Previously the editor was cleared here without resolving or queuing.
+      this.enqueueSubmission(text);
+      this.notice = `queued (${this.queue.length}) — sends when ready`;
+      this.scheduleDraw();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1657,6 +1700,19 @@ export class ChatPrompt {
   // Drawing
   // -------------------------------------------------------------------------
 
+  /** Preview pending input without falsely adding unsent text to the transcript. */
+  queuedPreviewRows(width) {
+    if (this.queue.length === 0) return [];
+    const last = this.queue[this.queue.length - 1];
+    const text = typeof last === 'string' ? last
+      : last && typeof last.text === 'string' ? last.text : 'pending action';
+    const prefix = `  Queued (${this.queue.length}): `;
+    const available = Math.max(0, width - visibleWidth(prefix) - 2);
+    // Do not reformat megabyte-sized pastes on every running-turn redraw.
+    const preview = safeDisplay(text.slice(0, 160).replace(/\s+/g, ' ').trim());
+    return [dim(prefix + truncate(preview, available, GLYPHS.ellipsis))];
+  }
+
   /**
    * Clamp every row so the terminal can never wrap one of them.
    *
@@ -1791,6 +1847,7 @@ export class ChatPrompt {
       pickerCount: pickerRows.length,
       totalPromptRows: 0
     } : null;
+    const queuedRows = this.queuedPreviewRows(width);
     const noticeRows = this.notice ? [dim(`  ${this.notice}`)] : [];
 
     // And a row of air between the box and the footer. The picker and a notice
@@ -1801,7 +1858,7 @@ export class ChatPrompt {
     const gap = status.length > 0 ? new Array(FOOTER_GAP).fill('') : [];
 
     const all = this.clampRows(
-      usageCardRows.concat(planRows, boxRows, pickerRows, noticeRows, gap, status), width
+      usageCardRows.concat(planRows, boxRows, pickerRows, queuedRows, noticeRows, gap, status), width
     );
     if (this.pickerLayout) this.pickerLayout.totalPromptRows = all.length;
 
