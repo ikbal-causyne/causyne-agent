@@ -3052,6 +3052,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     // some providers, so a terminal turn always carries something.
                     content: hasToolCalls ? '' : (response.content || 'No final response was provided.')
                 };
+                if (!hasToolCalls && !String(response.content || '').trim()) {
+                    // Protocol-only placeholder: never present as a real assistant answer.
+                    // Some peers reject empty assistant turns during history continuation.
+                    assistantMsg.causyne_synthetic_no_final = true;
+                }
                 if (hasToolCalls) {
                     assistantMsg.tool_calls = response.toolCalls;
                 }

@@ -744,7 +744,21 @@ export class ChatRenderer {
           : (Array.isArray(msg.content)
               ? msg.content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
               : String(msg.content || ''));
-        if (text.trim()) {
+        // The agent loop stores a protocol placeholder when a peer emits no
+        // final reply. Restoring it as a Causyne message falsely implies an
+        // answer was given. Older histories have the literal but no marker.
+        const syntheticNoFinal = msg.causyne_synthetic_no_final === true
+          || (text.trim() === 'No final response was provided.'
+              && (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0));
+        if (syntheticNoFinal) {
+          const isLatestTurn = !messages.slice(i + 1).some(next =>
+            next && (next.role === 'assistant' || next.role === 'user'));
+          if (isLatestTurn) {
+            this.frame('notice', () => {
+              this.write(`${paint('warn', GLYPHS.warnMark)} ${dim('Provider returned no final answer; task completion is unverified.')}`);
+            }, { syntheticNoFinal: true });
+          }
+        } else if (text.trim()) {
           this.renderAssistantMessage(text);
         }
       } else if (role === 'tool') {

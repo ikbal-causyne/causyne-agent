@@ -127,3 +127,41 @@ test('session transition and /new runs synchronously without re-entrant freeze',
 
 
 
+
+test('restoring an empty provider result never fabricates an assistant answer', () => {
+  const out = { columns: 155, rows: 70, write: () => true };
+  const transcript = new Transcript();
+  const renderer = new ChatRenderer({ out, transcript });
+  renderer.renderSessionHistory([
+    { role: 'user', content: 'Build Suika Kawai and report test results' },
+    { role: 'assistant', content: 'No final response was provided.', causyne_synthetic_no_final: true,
+      reasoning_content: 'Invoking the required checks.' },
+    { role: 'assistant', content: 'No final response was provided.' }
+  ]);
+  const visible = stripAnsi(transcript.rows(155).join('\n'));
+  assert.equal(visible.includes('No final response was provided.'), false,
+    'protocol placeholders are not user-visible answers');
+  assert.match(visible, /Provider returned no final answer; task completion is unverified/);
+  assert.match(visible, /Build Suika Kawai/);
+  assert.ok(transcript.frames.some(frame => frame.kind === 'reasoning'),
+    'real reasoning must remain readable even when its final reply was empty');
+  assert.equal(transcript.frames.filter(frame => frame.kind === 'assistant').length, 0);
+  assert.equal(transcript.frames.filter(frame => frame.kind === 'notice'
+    && frame.meta?.syntheticNoFinal).length, 1);
+});
+
+test('synthetic empty turns are hidden between real assistant replies', () => {
+  const out = { columns: 155, write: () => true };
+  const transcript = new Transcript();
+  const renderer = new ChatRenderer({ out, transcript });
+  renderer.renderSessionHistory([
+    { role: 'user', content: 'Run tests' },
+    { role: 'assistant', content: 'No final response was provided.', causyne_synthetic_no_final: true },
+    { role: 'assistant', content: 'Tests executed; two assertions failed.' }
+  ]);
+  const visible = stripAnsi(transcript.rows(155).join('\n'));
+  assert.doesNotMatch(visible, /No final response was provided/);
+  assert.doesNotMatch(visible, /Provider returned no final answer/);
+  assert.match(visible, /two assertions failed/);
+  assert.equal(transcript.frames.filter(frame => frame.kind === 'assistant').length, 1);
+});
