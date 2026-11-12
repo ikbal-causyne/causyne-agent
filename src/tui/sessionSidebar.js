@@ -1,4 +1,4 @@
-import { padEnd, safeDisplay, truncate } from './text.js';
+import { padEnd, safeDisplay, stripAnsi, truncate } from './text.js';
 // The terminal theme is still a standalone JavaScript module in the TS migration.
 // @ts-expect-error theme.js has no TypeScript declaration yet.
 import { bold, dim, fill, paint } from './theme.js';
@@ -32,6 +32,7 @@ export function sessionComposerWidth(columns) {
 }
 /** Render only facts the runtime can actually report. */
 export function sessionSidebarRows(facts, height) {
+    const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
     const inner = SIDEBAR_WIDTH - 4;
     const rows = [];
     const line = (value = '') => {
@@ -84,14 +85,24 @@ export function sessionSidebarRows(facts, height) {
     }
     if (facts.plan?.length) {
         const completed = facts.plan.filter(item => item.status === 'completed').length;
-        line();
+        // Budget from the actual metadata, including optional skill/model rows.
+        // Preserve space for the focused step and overflow summaries on short panes.
+        const planBudget = Math.min(6, Math.max(0, count - 3));
+        while (rows.length > count - planBudget) {
+            const blank = rows.findIndex(row => stripAnsi(row).replace('│', '').trim() === '');
+            if (blank < 0)
+                break;
+            rows.splice(blank, 1);
+        }
+        if (rows.length > count - planBudget)
+            rows.length = Math.max(0, count - planBudget);
         styled(bold(`Plan  ${completed}/${facts.plan.length}`));
         // Keep plan steps in execution order and keep the active step in view.
-        const maxSteps = Math.max(2, Math.min(10, Math.floor(height) - 14));
+        const maxSteps = Math.max(1, Math.min(10, count - rows.length - 3));
         const activeIndex = facts.plan.findIndex(item => item.status === 'in_progress');
         const pendingIndex = facts.plan.findIndex(item => item.status !== 'completed');
         const focus = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : facts.plan.length - 1;
-        const start = Math.max(0, Math.min(focus - 2, facts.plan.length - maxSteps));
+        const start = Math.max(0, Math.min(focus - Math.min(2, maxSteps - 1), facts.plan.length - maxSteps));
         const planItems = facts.plan.slice(start, start + maxSteps);
         if (start > 0)
             line(`${start} earlier plan steps`);
@@ -103,7 +114,6 @@ export function sessionSidebarRows(facts, height) {
         if (remaining > 0)
             line(`${remaining} later plan steps`);
     }
-    const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
     const visible = rows.slice(0, count);
     while (visible.length < count - 1)
         lineFor(visible);
