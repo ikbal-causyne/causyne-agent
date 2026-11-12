@@ -251,3 +251,30 @@ test('sidebar visibility and composer layout honor the stage environment consist
     surface.close();
   }
 });
+
+test('sidebar preserves plan execution order and displays the active step in long plans', () => {
+  const plan = Array.from({ length: 12 }, (_, index) => ({
+    text: 'Step ' + (index + 1),
+    status: index < 7 ? 'completed' : index === 7 ? 'in_progress' : 'pending'
+  }));
+  const rows = sessionSidebarRows({
+    title: 'Work', cwd: '/tmp/work', provider: 'acp/opencode',
+    model: 'deepseek-v4.1-flash-free', plan
+  }, 32);
+  const output = stripAnsi(rows.join('\n'));
+  assert.match(output, /Plan  7\/12/);
+  assert.match(output, /▸ Step 8/);
+  assert.ok(output.indexOf('Step 7') < output.indexOf('Step 8'));
+  assert.ok(output.indexOf('Step 8') < output.indexOf('Step 9'));
+  assert.match(output, /earlier plan steps/);
+  assert.match(output, /deepseek-v4\.1-flash-free/, 'model identifier should not be cut by provider name');
+  assert.ok(rows.every(row => visibleWidth(row) === 42));
+});
+
+test('sidebar treats skill IDs as untrusted terminal text', () => {
+  const rows = sessionSidebarRows({
+    activeSkill: { id: 'safe\x1b[2Jskill', description: 'Ordinary description' }
+  }, 25);
+  assert.ok(rows.every(row => visibleWidth(row) === 42));
+  assert.ok(!rows.join('').includes('\x1b[2J'), 'model-supplied skill text must not erase the terminal');
+});

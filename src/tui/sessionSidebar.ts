@@ -74,7 +74,12 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
   }
   line();
   styled(bold('Model'));
-  line([facts.provider, facts.model].filter(Boolean).join(' / ') || 'Not configured');
+  if (height >= 24 && facts.provider && facts.model) {
+    line(facts.provider);
+    line(facts.model);
+  } else {
+    line([facts.provider, facts.model].filter(Boolean).join(' / ') || 'Not configured');
+  }
   line();
   styled(bold('Workspace'));
   line(facts.cwd || 'Unknown');
@@ -86,7 +91,7 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
     if (skillId) {
       line();
       styled(bold('Active Skill'));
-      styled(paint('accent', `✦ ${truncate(skillId, inner - 4, '…')}`));
+      styled(paint('accent', `✦ ${truncate(safeDisplay(skillId), inner - 4, '…')}`));
       if (skillDesc) {
         line(truncate(skillDesc, inner, '…'));
       }
@@ -97,16 +102,20 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
     const completed = facts.plan.filter(item => item.status === 'completed').length;
     line();
     styled(bold(`Plan  ${completed}/${facts.plan.length}`));
-    const planItems = facts.plan.length <= 6 ? facts.plan : [
-      ...facts.plan.filter(item => item.status === 'in_progress').slice(0, 2),
-      ...facts.plan.filter(item => item.status !== 'in_progress' && item.status !== 'completed').slice(0, 3),
-      ...facts.plan.filter(item => item.status === 'completed').slice(-2)
-    ].slice(0, 6);
+    // Keep plan steps in execution order and keep the active step in view.
+    const maxSteps = Math.max(2, Math.min(10, Math.floor(height) - 14));
+    const activeIndex = facts.plan.findIndex(item => item.status === 'in_progress');
+    const pendingIndex = facts.plan.findIndex(item => item.status !== 'completed');
+    const focus = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : facts.plan.length - 1;
+    const start = Math.max(0, Math.min(focus - 2, facts.plan.length - maxSteps));
+    const planItems = facts.plan.slice(start, start + maxSteps);
+    if (start > 0) line(`${start} earlier plan steps`);
     for (const item of planItems) {
       const mark = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▸' : '·';
       line(`${mark} ${item.text || item.step || item.content || ''}`);
     }
-    if (facts.plan.length > planItems.length) line(`${facts.plan.length - planItems.length} additional plan steps`);
+    const remaining = facts.plan.length - start - planItems.length;
+    if (remaining > 0) line(`${remaining} later plan steps`);
   }
 
   const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
