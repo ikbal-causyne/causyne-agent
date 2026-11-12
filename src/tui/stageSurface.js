@@ -687,7 +687,8 @@ export class StageSurface {
     } else if (columns !== this.lastColumns && !this.detached) {
       // macOS Terminal may physically reflow rows when the sidebar appears
       // or disappears. The old caret row is then no longer a reliable anchor.
-      this.stage.reanchor();
+      if (typeof this.stage.reanchor === 'function') this.stage.reanchor();
+      else this.stage.invalidate();
     }
     this.lastColumns = columns;
     this.stage.invalidate();
@@ -836,7 +837,8 @@ export class StageSurface {
     this.detached = false;
     // After native scrollback, the former physical cursor location is unknown.
     // Return to the screen bottom before repainting any transcript rows.
-    this.stage.reanchor();
+    if (typeof this.stage.reanchor === 'function') this.stage.reanchor();
+    else this.stage.invalidate();
     return true;
   }
 }
