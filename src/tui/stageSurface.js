@@ -245,13 +245,13 @@ export class StageSurface {
 
   composeAvailableWidth() {
     if (this.homeInfo) return this.width;
-    return sessionMainWidth(this.width);
+    return sessionMainWidth(this.width, false, this.env);
   }
 
   /** Home is compact; a session uses its full conversation column. */
   composeWidth() {
     if (this.homeInfo) return composerWidth(this.width);
-    const mainWidth = sessionMainWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width, false, this.env);
     return sessionComposerWidth(mainWidth);
   }
 
@@ -413,7 +413,7 @@ export class StageSurface {
   handleChange() {
     if (!this.transcript.isEmpty()) this.opened = true;
     const before = this.lastHeight;
-    const mainWidth = sessionMainWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width, false, this.env);
     const contentWidth = this.railEnabled(mainWidth)
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
       : mainWidth;
@@ -466,8 +466,8 @@ export class StageSurface {
     }
 
     const width = this.width;
-    const sidebar = sidebarVisible(width);
-    const mainWidth = sessionMainWidth(width);
+    const sidebar = sidebarVisible(width, false, this.env);
+    const mainWidth = sessionMainWidth(width, false, this.env);
     const rail = this.railEnabled(mainWidth);
     const contentWidth = rail
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
@@ -675,12 +675,18 @@ export class StageSurface {
       this.close();
       return false;
     }
-    // Re-claim only what the content justifies; present() grows it from there.
-    this.stage.resize(next, 1);
+    // A width-only resize must not collapse and re-claim the whole session.
+    // Claiming fresh lines on every drag scrolls the transcript and leaves
+    // obsolete sidebar columns behind during the 160-column breakpoint.
+    // The existing rows are already reserved: repaint them in place with
+    // their new width, clearing trailing cells through Stage.paint().
+    if (!this.stage.reserved || next !== this.stage.maxHeight) {
+      this.stage.resize(next, 1);
+    }
     this.stage.invalidate();
     // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
     // and leaving scrollTop above it would read as "the user scrolled away".
-    const mainWidth = sessionMainWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width, false, this.env);
     const contentWidth = this.railEnabled(mainWidth)
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
       : mainWidth;

@@ -182,3 +182,99 @@ test('a short startup dialog has a readable minimum size and an active chat rema
     surface.close();
   }
 });
+
+test('repeated sidebar breakpoint resizing reflows in place without scrolling or ghost panels', () => {
+  const writes: string[] = [];
+  const out = {
+    columns: 163, rows: 78, isTTY: true,
+    write: (chunk: string) => { writes.push(String(chunk)); return true; },
+    on() {}, removeListener() {}
+  };
+  const surface = new StageSurface({ out, env: { CAUSYNE_MOUSE: '0' } });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome(info);
+    surface.leaveHome(true);
+    surface.commit('user', () => ['sidebar resize regression']);
+    surface.sidebarStatus = {
+      cwd: '/workspace/suika-game',
+      contextChars: 300,
+      contextLimit: 1000
+    };
+    surface.present(['TYPE HERE'], { row: 0, col: 3 });
+    const initialClaims = surface.stage.stats.claimed;
+    for (const columns of [160, 158, 130, 161, 163, 159, 200, 95, 163]) {
+      out.columns = columns;
+      const beforeWrite = writes.length;
+      assert.equal(surface.resize(), true);
+      surface.present(['TYPE HERE'], { row: 0, col: 3 });
+      assert.equal(surface.stage.stats.claimed, initialClaims,
+        'width-only resize must never claim rows or scroll the terminal');
+      assert.ok(!writes.slice(beforeWrite).join('').includes('\n'),
+        'width-only resize must repaint without newlines');
+      const rendered = surface.stage.prev.map(row => stripAnsi(row || ''));
+      assert.ok(rendered.every(row => visibleWidth(row) < columns), 'rows must not wrap');
+      assert.match(rendered.at(-1) || '', /TYPE HERE/, 'composer stays visible');
+      if (columns > 160) {
+        assert.match(rendered.join('\n'), /Context/, 'sidebar must be repainted after reopening');
+        assert.match(rendered.join('\n'), /suika-game/);
+      } else {
+        assert.doesNotMatch(rendered.join('\n'), /30% of available window/,
+          'sidebar must fully disappear at the responsive breakpoint');
+      }
+    }
+  } finally {
+    surface.close();
+  }
+});
+
+test('sidebar visibility and composer layout honor the stage environment consistently', () => {
+  const env = { CAUSYNE_SIDEBAR: 'off', CAUSYNE_MOUSE: '0' };
+  assert.equal(sidebarVisible(200, false, env), false);
+  assert.equal(sessionMainWidth(200, false, env), 200);
+  const out = {
+    columns: 200, rows: 40, isTTY: true,
+    write: () => true, on() {}, removeListener() {}
+  };
+  const surface = new StageSurface({ out, env });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome(info);
+    surface.leaveHome(true);
+    surface.commit('user', () => ['sidebar environment test']);
+    surface.present(['COMPOSER'], { row: 0, col: 2 });
+    const output = stripAnsi(surface.stage.prev.join('\n'));
+    assert.doesNotMatch(output, /No context measurement yet/);
+    assert.equal(surface.composeAvailableWidth(), 200);
+    assert.equal(surface.stage.prev.at(-1)?.includes('COMPOSER'), true);
+  } finally {
+    surface.close();
+  }
+});
+
+test('sidebar preserves plan execution order and displays the active step in long plans', () => {
+  const plan = Array.from({ length: 12 }, (_, index) => ({
+    text: 'Step ' + (index + 1),
+    status: index < 7 ? 'completed' : index === 7 ? 'in_progress' : 'pending'
+  }));
+  const rows = sessionSidebarRows({
+    title: 'Work', cwd: '/tmp/work', provider: 'acp/opencode',
+    model: 'deepseek-v4.1-flash-free', plan
+  }, 32);
+  const output = stripAnsi(rows.join('\n'));
+  assert.match(output, /Plan  7\/12/);
+  assert.match(output, /▸ Step 8/);
+  assert.ok(output.indexOf('Step 7') < output.indexOf('Step 8'));
+  assert.ok(output.indexOf('Step 8') < output.indexOf('Step 9'));
+  assert.match(output, /earlier plan steps/);
+  assert.match(output, /deepseek-v4\.1-flash-free/, 'model identifier should not be cut by provider name');
+  assert.ok(rows.every(row => visibleWidth(row) === 42));
+});
+
+test('sidebar treats skill IDs as untrusted terminal text', () => {
+  const rows = sessionSidebarRows({
+    activeSkill: { id: 'safe\x1b[2Jskill', description: 'Ordinary description' }
+  }, 25);
+  assert.ok(rows.every(row => visibleWidth(row) === 42));
+  assert.ok(!rows.join('').includes('\x1b[2J'), 'model-supplied skill text must not erase the terminal');
+});
