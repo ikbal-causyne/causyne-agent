@@ -21,18 +21,18 @@ export interface SidebarFacts {
 }
 
 /** A side panel is useful only when a readable conversation column remains. */
-export function sidebarVisible(columns: number, home = false): boolean {
-  if (typeof process !== 'undefined' && process.env) {
-    const setting = String(process.env.CAUSYNE_SIDEBAR ?? '').trim().toLowerCase();
+export function sidebarVisible(columns: number, home = false, env: { CAUSYNE_SIDEBAR?: string } = typeof process !== 'undefined' ? process.env : {}): boolean {
+  if (env) {
+    const setting = String(env.CAUSYNE_SIDEBAR ?? '').trim().toLowerCase();
     if (setting === 'off' || setting === '0' || setting === 'false') return false;
   }
   return !home && Number.isFinite(columns) && columns > SIDEBAR_THRESHOLD;
 }
 
 /** Reserve the last terminal column so a wide row cannot wrap the stage. */
-export function sessionMainWidth(columns: number, home = false): number {
+export function sessionMainWidth(columns: number, home = false, env: { CAUSYNE_SIDEBAR?: string } = typeof process !== 'undefined' ? process.env : {}): number {
   const width = Number.isFinite(columns) ? Math.max(20, Math.floor(columns)) : 80;
-  return sidebarVisible(width, home) ? width - SIDEBAR_WIDTH - 1 : width;
+  return sidebarVisible(width, home, env) ? width - SIDEBAR_WIDTH - 1 : width;
 }
 
 /** The session input uses the available conversation column, with a small inset. */

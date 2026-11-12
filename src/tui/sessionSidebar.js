@@ -7,18 +7,18 @@ export const SIDEBAR_WIDTH = 42;
 // Narrow IDE terminals should prioritize the user's complete message over metadata.
 export const SIDEBAR_THRESHOLD = 160;
 /** A side panel is useful only when a readable conversation column remains. */
-export function sidebarVisible(columns, home = false) {
-    if (typeof process !== 'undefined' && process.env) {
-        const setting = String(process.env.CAUSYNE_SIDEBAR ?? '').trim().toLowerCase();
+export function sidebarVisible(columns, home = false, env = typeof process !== 'undefined' ? process.env : {}) {
+    if (env) {
+        const setting = String(env.CAUSYNE_SIDEBAR ?? '').trim().toLowerCase();
         if (setting === 'off' || setting === '0' || setting === 'false')
             return false;
     }
     return !home && Number.isFinite(columns) && columns > SIDEBAR_THRESHOLD;
 }
 /** Reserve the last terminal column so a wide row cannot wrap the stage. */
-export function sessionMainWidth(columns, home = false) {
+export function sessionMainWidth(columns, home = false, env = typeof process !== 'undefined' ? process.env : {}) {
     const width = Number.isFinite(columns) ? Math.max(20, Math.floor(columns)) : 80;
-    return sidebarVisible(width, home) ? width - SIDEBAR_WIDTH - 1 : width;
+    return sidebarVisible(width, home, env) ? width - SIDEBAR_WIDTH - 1 : width;
 }
 /** The session input uses the available conversation column, with a small inset. */
 export function sessionComposerWidth(columns) {

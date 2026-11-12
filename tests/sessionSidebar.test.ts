@@ -227,3 +227,27 @@ test('repeated sidebar breakpoint resizing reflows in place without scrolling or
     surface.close();
   }
 });
+
+test('sidebar visibility and composer layout honor the stage environment consistently', () => {
+  const env = { CAUSYNE_SIDEBAR: 'off', CAUSYNE_MOUSE: '0' };
+  assert.equal(sidebarVisible(200, false, env), false);
+  assert.equal(sessionMainWidth(200, false, env), 200);
+  const out = {
+    columns: 200, rows: 40, isTTY: true,
+    write: () => true, on() {}, removeListener() {}
+  };
+  const surface = new StageSurface({ out, env });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome(info);
+    surface.leaveHome(true);
+    surface.commit('user', () => ['sidebar environment test']);
+    surface.present(['COMPOSER'], { row: 0, col: 2 });
+    const output = stripAnsi(surface.stage.prev.join('\n'));
+    assert.doesNotMatch(output, /No context measurement yet/);
+    assert.equal(surface.composeAvailableWidth(), 200);
+    assert.equal(surface.stage.prev.at(-1)?.includes('COMPOSER'), true);
+  } finally {
+    surface.close();
+  }
+});

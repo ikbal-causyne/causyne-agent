@@ -245,13 +245,13 @@ export class StageSurface {
 
   composeAvailableWidth() {
     if (this.homeInfo) return this.width;
-    return sessionMainWidth(this.width);
+    return sessionMainWidth(this.width, false, this.env);
   }
 
   /** Home is compact; a session uses its full conversation column. */
   composeWidth() {
     if (this.homeInfo) return composerWidth(this.width);
-    const mainWidth = sessionMainWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width, false, this.env);
     return sessionComposerWidth(mainWidth);
   }
 
@@ -413,7 +413,7 @@ export class StageSurface {
   handleChange() {
     if (!this.transcript.isEmpty()) this.opened = true;
     const before = this.lastHeight;
-    const mainWidth = sessionMainWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width, false, this.env);
     const contentWidth = this.railEnabled(mainWidth)
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
       : mainWidth;
@@ -466,8 +466,8 @@ export class StageSurface {
     }
 
     const width = this.width;
-    const sidebar = sidebarVisible(width);
-    const mainWidth = sessionMainWidth(width);
+    const sidebar = sidebarVisible(width, false, this.env);
+    const mainWidth = sessionMainWidth(width, false, this.env);
     const rail = this.railEnabled(mainWidth);
     const contentWidth = rail
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
@@ -686,7 +686,7 @@ export class StageSurface {
     this.stage.invalidate();
     // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
     // and leaving scrollTop above it would read as "the user scrolled away".
-    const mainWidth = sessionMainWidth(this.width);
+    const mainWidth = sessionMainWidth(this.width, false, this.env);
     const contentWidth = this.railEnabled(mainWidth)
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
       : mainWidth;
