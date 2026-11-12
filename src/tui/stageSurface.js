@@ -186,6 +186,7 @@ export class StageSurface {
     this.env = env;
 
     this.stage = new Stage({ out, env });
+    this.lastColumns = this.stage.width();
     this.transcript = new Transcript({
       onEvict: (rows) => this.absorbEvicted(rows),
       onChange: () => this.handleChange()
@@ -680,9 +681,15 @@ export class StageSurface {
     // obsolete sidebar columns behind during the 160-column breakpoint.
     // The existing rows are already reserved: repaint them in place with
     // their new width, clearing trailing cells through Stage.paint().
+    const columns = this.stage.width();
     if (!this.stage.reserved || next !== this.stage.maxHeight) {
       this.stage.resize(next, 1);
+    } else if (columns !== this.lastColumns && !this.detached) {
+      // macOS Terminal may physically reflow rows when the sidebar appears
+      // or disappears. The old caret row is then no longer a reliable anchor.
+      this.stage.reanchor();
     }
+    this.lastColumns = columns;
     this.stage.invalidate();
     // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
     // and leaving scrollTop above it would read as "the user scrolled away".
@@ -827,9 +834,9 @@ export class StageSurface {
     this.out.write(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.detached = false;
-    // Every row the diff remembers is stale — the terminal has scrolled under
-    // us. Redraw the whole band rather than trusting a single cached row.
-    this.stage.invalidate();
+    // After native scrollback, the former physical cursor location is unknown.
+    // Return to the screen bottom before repainting any transcript rows.
+    this.stage.reanchor();
     return true;
   }
 }

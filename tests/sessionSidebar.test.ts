@@ -278,3 +278,37 @@ test('sidebar treats skill IDs as untrusted terminal text', () => {
   assert.ok(rows.every(row => visibleWidth(row) === 42));
   assert.ok(!rows.join('').includes('\x1b[2J'), 'model-supplied skill text must not erase the terminal');
 });
+
+test('sidebar resize resets terminal reflow anchor on width changes only', () => {
+  const writes: string[] = [];
+  const out = { columns: 173, rows: 78, isTTY: true,
+    write: (value: string) => { writes.push(String(value)); return true; },
+    on() {}, removeListener() {} };
+  const surface = new StageSurface({ out, env: { CAUSYNE_MOUSE: '0' } });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome(info);
+    surface.leaveHome(true);
+    surface.commit('user', () => ['a message that remains during resize']);
+    surface.present(['COMPOSER', '', 'STATUS'], { row: 0, col: 5 });
+    const claimed = surface.stage.stats.claimed;
+    for (const columns of [314, 173, 155, 160, 161, 314, 155]) {
+      out.columns = columns;
+      const previous = writes.length;
+      surface.resize();
+      const resizeBytes = writes.slice(previous).join('');
+      assert.match(resizeBytes, /\x1b\[999B\r/, 'reflow must restore physical screen-bottom anchor');
+      assert.doesNotMatch(resizeBytes, /\n|\x1b\[2J|\x1b\[\?1049h/);
+      surface.present(['COMPOSER', '', 'STATUS'], { row: 0, col: 5 });
+      assert.equal(surface.stage.stats.claimed, claimed);
+      assert.ok(surface.stage.prev.every(row => visibleWidth(row || '') < columns));
+      assert.match(stripAnsi(surface.stage.prev.at(-1) || ''), /STATUS/);
+    }
+    const previous = writes.length;
+    surface.resize();
+    assert.doesNotMatch(writes.slice(previous).join(''), /\x1b\[999B\r/,
+      'no-op resize must not reposition the terminal');
+  } finally {
+    surface.close();
+  }
+});

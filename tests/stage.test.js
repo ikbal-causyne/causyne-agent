@@ -671,3 +671,25 @@ describe('the two halves compose', () => {
     assert.match(stripAnsi(flushed.join('\n')), /note 0/);
   });
 });
+
+test('reanchor after terminal reflow resets row tracking without scrolling or absolute addressing', () => {
+  const out = sink({ rows: 78, columns: 173 });
+  const stage = new Stage({ out, env: {} });
+  stage.reserve(77);
+  stage.paint(Array.from({ length: 77 }, (_, i) => 'line ' + i), { row: 71, col: 15 });
+  const claimed = stage.stats.claimed;
+  out.reset();
+  out.columns = 155;
+  assert.equal(stage.reanchor(), true);
+  assert.equal(stage.cursor, 76);
+  assert.equal(stage.caret.row, 76);
+  assert.equal(stage.prev.length, 77);
+  assert.ok(stage.prev.every(row => row === null));
+  assert.equal(stage.stats.claimed, claimed, 'reflow must not reserve extra rows');
+  assert.equal(out.text(), '\x1b[999B\r', 'relative CUD must find bottom without LF or absolute cursor moves');
+  stage.paint(Array.from({ length: 77 }, (_, i) => 'narrow ' + i), { row: 71, col: 3 });
+  assert.equal(stage.prev[76], 'narrow 76');
+  assert.equal(stage.stats.claimed, claimed);
+  stage.collapse();
+  assert.equal(stage.reanchor(), false, 'unreserved stages must never move the cursor');
+});

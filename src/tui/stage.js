@@ -226,6 +226,21 @@ export class Stage {
         this.cursor = target;
     }
     /**
+     * Recover the reserved band's physical anchor after a terminal reflow.
+     * A width change can soft-wrap old screen rows before the next repaint.
+     * Cursor-down clamps at the screen bottom without emitting a newline or
+     * addressing an absolute row, preserving native terminal scrollback.
+     */
+    reanchor() {
+        if (!this.reserved)
+            return false;
+        this.write('\x1b[999B\r');
+        this.cursor = this.height - 1;
+        this.caret = { row: this.cursor, col: 0, hideCursor: this.caret.hideCursor };
+        this.invalidate();
+        return true;
+    }
+    /**
      * Repaint the band. Rows that did not change cost nothing.
      *
      * Returns the number of rows actually written, so a test can assert that an
