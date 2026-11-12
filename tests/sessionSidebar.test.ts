@@ -182,3 +182,48 @@ test('a short startup dialog has a readable minimum size and an active chat rema
     surface.close();
   }
 });
+
+test('repeated sidebar breakpoint resizing reflows in place without scrolling or ghost panels', () => {
+  const writes: string[] = [];
+  const out = {
+    columns: 163, rows: 78, isTTY: true,
+    write: (chunk: string) => { writes.push(String(chunk)); return true; },
+    on() {}, removeListener() {}
+  };
+  const surface = new StageSurface({ out, env: { CAUSYNE_MOUSE: '0' } });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome(info);
+    surface.leaveHome(true);
+    surface.commit('user', () => ['sidebar resize regression']);
+    surface.sidebarStatus = {
+      cwd: '/workspace/suika-game',
+      contextChars: 300,
+      contextLimit: 1000
+    };
+    surface.present(['TYPE HERE'], { row: 0, col: 3 });
+    const initialClaims = surface.stage.stats.claimed;
+    for (const columns of [160, 158, 130, 161, 163, 159, 200, 95, 163]) {
+      out.columns = columns;
+      const beforeWrite = writes.length;
+      assert.equal(surface.resize(), true);
+      surface.present(['TYPE HERE'], { row: 0, col: 3 });
+      assert.equal(surface.stage.stats.claimed, initialClaims,
+        'width-only resize must never claim rows or scroll the terminal');
+      assert.ok(!writes.slice(beforeWrite).join('').includes('\n'),
+        'width-only resize must repaint without newlines');
+      const rendered = surface.stage.prev.map(row => stripAnsi(row || ''));
+      assert.ok(rendered.every(row => visibleWidth(row) < columns), 'rows must not wrap');
+      assert.match(rendered.at(-1) || '', /TYPE HERE/, 'composer stays visible');
+      if (columns > 160) {
+        assert.match(rendered.join('\n'), /Context/, 'sidebar must be repainted after reopening');
+        assert.match(rendered.join('\n'), /suika-game/);
+      } else {
+        assert.doesNotMatch(rendered.join('\n'), /30% of available window/,
+          'sidebar must fully disappear at the responsive breakpoint');
+      }
+    }
+  } finally {
+    surface.close();
+  }
+});

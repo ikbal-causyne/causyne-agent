@@ -675,8 +675,14 @@ export class StageSurface {
       this.close();
       return false;
     }
-    // Re-claim only what the content justifies; present() grows it from there.
-    this.stage.resize(next, 1);
+    // A width-only resize must not collapse and re-claim the whole session.
+    // Claiming fresh lines on every drag scrolls the transcript and leaves
+    // obsolete sidebar columns behind during the 160-column breakpoint.
+    // The existing rows are already reserved: repaint them in place with
+    // their new width, clearing trailing cells through Stage.paint().
+    if (!this.stage.reserved || next !== this.stage.maxHeight) {
+      this.stage.resize(next, 1);
+    }
     this.stage.invalidate();
     // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
     // and leaving scrollTop above it would read as "the user scrolled away".
