@@ -134,6 +134,9 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Audit all dependencies including development tools
+        run: npm audit --audit-level=moderate
+
       - name: Create and inspect the exact tarball
         id: pack
         run: |

@@ -29,6 +29,9 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Audit all dependencies including development tools
+        run: npm audit --audit-level=moderate
+
   verify:
     name: verify (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
