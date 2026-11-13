@@ -169,9 +169,15 @@ export async function ${fnName}(args = {}, context = {}) {
   const url = new URL(targetPath, base);
 
   if (${JSON.stringify(httpMethod)} === 'GET' && requestArgs && typeof requestArgs === 'object') {
-    for (const [k, v] of Object.entries(requestArgs)) {
-      if (v !== undefined && v !== null) url.searchParams.append(k, String(v));
-    }
+    const appendQuery = (key, value) => {
+      if (value === undefined || value === null) return;
+      if (Array.isArray(value)) {
+        for (const item of value) appendQuery(key, item);
+        return;
+      }
+      url.searchParams.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    };
+    for (const [k, v] of Object.entries(requestArgs)) appendQuery(k, v);
   }
 
   ${buildAuthSetup(service)}

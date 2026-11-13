@@ -251,10 +251,15 @@ test('PluginsFactory: HTTP tools substitute path placeholders and keep them out 
     }) as typeof fetch;
 
     const module = await import(pathToFileURL(path.join(pluginsDir, 'path-params', 'index.js')).href);
-    const response = await module.execute({ id: 'a b/c', q: 'search' });
+    const response = await module.execute({ id: 'a b/c', q: 'search', tags: ['one', 'two'], filter: { open: true } });
     assert.equal(response.success, true);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, 'https://api.example.com/v1/users/a%20b%2Fc?q=search');
+    const parsedUrl = new URL(calls[0].url);
+    assert.equal(parsedUrl.origin + parsedUrl.pathname, 'https://api.example.com/v1/users/a%20b%2Fc');
+    assert.equal(parsedUrl.searchParams.get('q'), 'search');
+    assert.deepEqual(parsedUrl.searchParams.getAll('tags'), ['one', 'two']);
+    assert.equal(parsedUrl.searchParams.get('filter'), '{"open":true}');
+    assert.equal(parsedUrl.searchParams.has('id'), false);
 
     const missing = await module.execute({ q: 'search' });
     assert.equal(missing.success, false);
