@@ -243,6 +243,39 @@ test('E2E: generated Native CLI plugin runs system binary and captures stdout/st
   }
 });
 
+test('E2E: colliding sanitized tool names receive unique exports', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-collision-e2e-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'collision-safe',
+      description: 'Collision probe',
+      serviceKind: 'http_api',
+      tools: [
+        { name: 'get_item', description: 'Primary tool', parameters: { type: 'object', properties: {} } },
+        { name: 'get-user', description: 'Hyphen tool', parameters: { type: 'object', properties: {} } },
+        { name: 'get_user', description: 'Underscore tool', parameters: { type: 'object', properties: {} } }
+      ]
+    };
+
+    const scaffold = await factory.scaffold(factory.assess(service));
+    assert.equal(scaffold.success, true);
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(scaffold.targetDirectory, 'plugin.json'), 'utf8'));
+    assert.equal(manifest.tools[1].export, 'get_user');
+    assert.equal(manifest.tools[2].export, 'get_user_2');
+
+    const module = await import(`file://${path.join(scaffold.targetDirectory, 'index.js')}`);
+    assert.equal(typeof module.get_user, 'function');
+    assert.equal(typeof module.get_user_2, 'function');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('E2E: reserved-word tool names produce a loadable module', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-reserved-e2e-'));
   try {

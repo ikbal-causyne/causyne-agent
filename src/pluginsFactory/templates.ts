@@ -41,13 +41,23 @@ export function sanitizeIdentifier(name: string): string {
 }
 
 /**
- * Computes the canonical export name for a tool within an index.js ES module.
- * The primary tool is always exported as "execute" (the default runner contract).
- * Additional tools are exported with their sanitized identifier.
+ * Computes canonical export names for every tool in a module.
+ * The primary tool is always exported as "execute" (the default runner
+ * contract). Additional tools receive sanitized identifiers, disambiguated
+ * when two tool names collapse to the same binding (e.g. "get-user" and
+ * "get_user").
  */
-function getExportName(tool: ServiceToolDescriptor, index: number): string {
-  if (index === 0) return 'execute';
-  return sanitizeIdentifier(tool.name);
+function buildExportNames(tools: ServiceToolDescriptor[]): string[] {
+  const used = new Set<string>(['execute']);
+  return tools.map((tool, index) => {
+    if (index === 0) return 'execute';
+    const base = sanitizeIdentifier(tool.name);
+    let name = base;
+    let suffix = 2;
+    while (used.has(name)) name = `${base}_${suffix++}`;
+    used.add(name);
+    return name;
+  });
 }
 
 /**
@@ -55,6 +65,7 @@ function getExportName(tool: ServiceToolDescriptor, index: number): string {
  */
 export function generateHttpPluginScaffold(service: ServiceDescriptor): ScaffoldingPayload {
   const capabilities = Array.from(new Set(['network', ...(service.capabilities || [])]));
+  const exportNames = buildExportNames(service.tools);
   const primaryTool = service.tools[0] || {
     name: 'query',
     description: `Execute request against ${service.name}`,
@@ -72,13 +83,13 @@ export function generateHttpPluginScaffold(service: ServiceDescriptor): Scaffold
       description: tool.description,
       parameters: tool.parameters,
       entry: 'index.js',
-      export: getExportName(tool, idx),
+      export: exportNames[idx],
       timeoutMs: 30000
     }))
   };
 
   const toolExecutors = service.tools.map((tool, idx) => {
-    const fnName = getExportName(tool, idx);
+    const fnName = exportNames[idx];
     const httpMethod = tool.httpMethod || 'POST';
     const httpPath = tool.httpPath || '/';
     return `
@@ -178,6 +189,7 @@ causyne plugins enable ${service.name}
  */
 export function generateCliPluginScaffold(service: ServiceDescriptor): ScaffoldingPayload {
   const capabilities = Array.from(new Set(['subprocess', ...(service.capabilities || [])]));
+  const exportNames = buildExportNames(service.tools);
   const primaryTool = service.tools[0] || {
     name: 'run',
     description: `Execute command for ${service.name}`,
@@ -195,13 +207,13 @@ export function generateCliPluginScaffold(service: ServiceDescriptor): Scaffoldi
       description: tool.description,
       parameters: tool.parameters,
       entry: 'index.js',
-      export: getExportName(tool, idx),
+      export: exportNames[idx],
       timeoutMs: 45000
     }))
   };
 
   const toolExecutors = service.tools.map((tool, idx) => {
-    const fnName = getExportName(tool, idx);
+    const fnName = exportNames[idx];
     const binary = service.cliBinary || service.name;
     return `
 /**
@@ -286,6 +298,7 @@ causyne plugins enable ${service.name}
  */
 export function generatePythonBridgeScaffold(service: ServiceDescriptor): ScaffoldingPayload {
   const capabilities = Array.from(new Set(['subprocess', ...(service.capabilities || [])]));
+  const exportNames = buildExportNames(service.tools);
   const primaryTool = service.tools[0] || {
     name: 'run_python',
     description: `Execute Python workflow for ${service.name}`,
@@ -303,13 +316,13 @@ export function generatePythonBridgeScaffold(service: ServiceDescriptor): Scaffo
       description: tool.description,
       parameters: tool.parameters,
       entry: 'index.js',
-      export: getExportName(tool, idx),
+      export: exportNames[idx],
       timeoutMs: 60000
     }))
   };
 
   const toolExecutors = service.tools.map((tool, idx) => {
-    const fnName = getExportName(tool, idx);
+    const fnName = exportNames[idx];
     const pythonMethod = tool.pythonMethod || tool.name;
     return `
 /**
