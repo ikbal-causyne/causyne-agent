@@ -154,9 +154,9 @@ export class Viewport {
     acceleration = null
   }: ViewportOptions = {}) {
     this.transcript = transcript;
-    this.viewHeight = Math.max(1, Math.floor(height));
-    this.viewWidth = Math.max(1, Math.floor(width));
-    this.speed = speed > 0 ? speed : DEFAULT_SCROLL_SPEED;
+    this.viewHeight = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 20;
+    this.viewWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 80;
+    this.speed = Number.isFinite(speed) && speed > 0 ? speed : DEFAULT_SCROLL_SPEED;
     this.acceleration = acceleration || null;
 
     this.scrollTop = 0;
@@ -176,9 +176,9 @@ export class Viewport {
    */
   resize({ height, width }: { height?: number; width?: number } = {}): void {
     const nextHeight = height !== undefined && Number.isFinite(height) && height > 0
-      ? Math.floor(height) : this.viewHeight;
+      ? Math.max(1, Math.floor(height)) : this.viewHeight;
     const nextWidth = width !== undefined && Number.isFinite(width) && width > 0
-      ? Math.floor(width) : this.viewWidth;
+      ? Math.max(1, Math.floor(width)) : this.viewWidth;
     const reflow = nextWidth !== this.viewWidth;
     const anchor = reflow && this.manual && this.transcript?.markers
       ? captureReadingAnchor(this.transcript.markers(this.viewWidth), this.scrollTop,
