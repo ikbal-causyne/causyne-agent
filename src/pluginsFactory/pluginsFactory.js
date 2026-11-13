@@ -91,6 +91,7 @@ export class PluginsFactory {
                 error: `Invalid service name "${service.name}". Must match ^[a-z0-9][a-z0-9-]{0,63}$`
             };
         }
+        const normalizedService = { ...service, name: normalizedName };
         const route = proposal.userConfirmedRoute ?? proposal.recommendedRoute;
         const isMcp = route === 'mcp_server';
         const baseDir = options.baseDir
@@ -126,17 +127,17 @@ export class PluginsFactory {
         let payload;
         if (route === 'native_plugin') {
             if (service.serviceKind === 'cli' || service.cliBinary) {
-                payload = generateCliPluginScaffold(service);
+                payload = generateCliPluginScaffold(normalizedService);
             }
             else {
-                payload = generateHttpPluginScaffold(service);
+                payload = generateHttpPluginScaffold(normalizedService);
             }
         }
         else if (route === 'python_bridge') {
-            payload = generatePythonBridgeScaffold(service);
+            payload = generatePythonBridgeScaffold(normalizedService);
         }
         else {
-            payload = generateMcpServerScaffold(service);
+            payload = generateMcpServerScaffold(normalizedService);
         }
         if (options.dryRun) {
             return {
@@ -144,7 +145,7 @@ export class PluginsFactory {
                 route,
                 targetDirectory: targetDir,
                 createdFiles: payload.files.map(f => f.relativePath),
-                instructions: `[Dry Run] Scaffolding plan ready for ${service.name} at ${targetDir}`
+                instructions: `[Dry Run] Scaffolding plan ready for ${normalizedName} at ${targetDir}`
             };
         }
         // Write files to target directory

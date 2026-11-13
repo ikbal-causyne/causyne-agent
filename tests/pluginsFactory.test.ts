@@ -218,6 +218,34 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: normalizes service names so manifest, folder, and state agree', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-name-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'Weather-Feed',
+      description: 'Weather service',
+      serviceKind: 'http_api',
+      tools: [{ name: 'get_weather', description: 'Get weather', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, true);
+    assert.equal(path.basename(result.targetDirectory), 'weather-feed');
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.targetDirectory, 'plugin.json'), 'utf8'));
+    assert.equal(manifest.name, 'weather-feed');
+
+    const state = JSON.parse(fs.readFileSync(path.join(tmpDir, 'plugins', 'state.json'), 'utf8'));
+    assert.equal(state.plugins['weather-feed'].enabled, false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: scaffolds Python bridge with bridge.py and Node subprocess wrapper', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-py-'));
 
