@@ -264,8 +264,8 @@ export class PluginsFactory {
         if (!isMcp) {
             // Calculate plugin digest
             digest = computePluginDirectoryDigest(targetDir);
-            // Record disabled state in state.json
-            this.recordPluginState(normalizedName, digest);
+            // Record disabled state in state.json next to the scaffolded plugin.
+            this.recordPluginState(normalizedName, digest, baseDir);
             instructions = [
                 `Custom plugin '${normalizedName}' successfully scaffolded at: ${targetDir}`,
                 `Kind: ${route === 'python_bridge' ? 'Python Bridge Plugin' : 'Native Plugin'}`,
@@ -335,12 +335,12 @@ export class PluginsFactory {
     /**
      * Ensures state.json records the newly scaffolded plugin as disabled.
      */
-    recordPluginState(pluginName, digest) {
+    recordPluginState(pluginName, digest, stateRoot = this.pluginsRoot) {
         try {
-            if (!fs.existsSync(this.pluginsRoot)) {
-                fs.mkdirSync(this.pluginsRoot, { recursive: true, mode: 0o700 });
+            if (!fs.existsSync(stateRoot)) {
+                fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
             }
-            const stateFile = path.join(this.pluginsRoot, 'state.json');
+            const stateFile = path.join(stateRoot, 'state.json');
             let state = {
                 version: 1,
                 plugins: {}

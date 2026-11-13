@@ -218,6 +218,31 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: records state beside a custom base directory', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-basedir-'));
+  try {
+    const defaultRoot = path.join(tmpDir, 'plugins');
+    const customRoot = path.join(tmpDir, 'custom-plugins');
+    const factory = new PluginsFactory({
+      pluginsDir: defaultRoot,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'custom-root',
+      description: 'Custom base directory probe',
+      serviceKind: 'http_api',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service), { baseDir: customRoot });
+    assert.equal(result.success, true);
+    assert.equal(fs.existsSync(path.join(customRoot, 'state.json')), true);
+    assert.equal(fs.existsSync(path.join(defaultRoot, 'state.json')), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: repairs a malformed plugin state map instead of dropping the new record', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-state-'));
   try {
