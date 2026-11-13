@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { parseBingRss } from '../src/browser/searchProviders.js';
 
 test('public search results exclude credential URLs and known internal destinations', () => {
+  const credentialUrl = new URL('https://example.com/');
+  credentialUrl.username = 'user';
+  credentialUrl.password = 'pass';
   const links = [
     'http://127.0.0.1/admin', 'http://10.0.0.1/', 'http://[::1]/',
-    'https://metadata.google.internal/', 'https://service.local/', 'https://user:pass@example.com/',
+    'https://metadata.google.internal/', 'https://service.local/', credentialUrl.href,
     'https://example.com/public'
   ];
   const xml = '<rss>' + links.map((link, i) =>
