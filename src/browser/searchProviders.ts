@@ -112,7 +112,7 @@ export async function searchPublicWeb(query: string, options: SearchOptions = {}
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
-  const signal = options.signal ?? controller.signal;
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   const providers = [
     {
       engine: 'duckduckgo-html',
