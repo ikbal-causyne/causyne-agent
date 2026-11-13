@@ -63,7 +63,7 @@ export interface TaskObservationContext {
 
 export function extractClaimedLocalUrls(text: string): string[] {
   if (!text) return [];
-  const matches = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+(?:\/[^\s)>'"`\]]*)?/gi) || [];
+  const matches = text.match(/https?:\/\/[^\s)>'"`]+/gi) || [];
   const unique = new Set<string>();
   for (const raw of matches) {
     let end = raw.length;
@@ -71,7 +71,14 @@ export function extractClaimedLocalUrls(text: string): string[] {
       end--;
     }
     const cleaned = raw.slice(0, end);
-    if (cleaned) unique.add(cleaned);
+    if (!cleaned) continue;
+    try {
+      const url = new URL(cleaned);
+      if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.username || url.password) continue;
+      unique.add(cleaned);
+    } catch {
+      // Ignore malformed and lookalike URLs rather than verifying a false localhost claim.
+    }
   }
   return [...unique];
 }

@@ -7,7 +7,7 @@ import { isVerificationCommand } from './observer/evidence.js';
 export function extractClaimedLocalUrls(text) {
     if (!text)
         return [];
-    const matches = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+(?:\/[^\s)>'"`\]]*)?/gi) || [];
+    const matches = text.match(/https?:\/\/[^\s)>'"`]+/gi) || [];
     const unique = new Set();
     for (const raw of matches) {
         let end = raw.length;
@@ -15,8 +15,17 @@ export function extractClaimedLocalUrls(text) {
             end--;
         }
         const cleaned = raw.slice(0, end);
-        if (cleaned)
+        if (!cleaned)
+            continue;
+        try {
+            const url = new URL(cleaned);
+            if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) || url.username || url.password)
+                continue;
             unique.add(cleaned);
+        }
+        catch {
+            // Ignore malformed and lookalike URLs rather than verifying a false localhost claim.
+        }
     }
     return [...unique];
 }
