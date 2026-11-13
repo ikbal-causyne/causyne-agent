@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
+const MAX_ACTIVE_PREVIEWS = 128;
 const MIME: Record<string, string> = {
   '.html': 'text/html', '.htm': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
@@ -27,6 +28,10 @@ export class WorkspacePreview {
     if (!within(root, target) || !/\.html?$/i.test(target)) throw new Error('Preview requires an HTML file inside the selected workspace');
     const origin = `https://${randomUUID()}.causyne-preview.invalid`;
     this.roots.set(origin, path.dirname(target));
+    if (this.roots.size > MAX_ACTIVE_PREVIEWS) {
+      const oldest = this.roots.keys().next().value;
+      if (oldest) this.roots.delete(oldest);
+    }
     return `${origin}/${encodeURIComponent(path.basename(target))}`;
   }
 
