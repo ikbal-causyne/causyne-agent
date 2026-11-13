@@ -64,6 +64,30 @@ test('every command argument name gets verification guidance when its check pass
   }
 });
 
+test('leading environment assignments cannot reset the retry budget of the same command', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'exit code 1', exitCode: 1 };
+  const attempts = ['npm test', 'CI=1 npm test', 'CI=1 FOO=bar npm test', 'npm test']
+    .map(command => machine.observe('exec', { command }, fail).attempt);
+  assert.deepEqual(attempts, [1, 2, 3, 4]);
+  const other = machine.observe('exec', { command: 'CI=1 npm run lint' }, fail);
+  assert.equal(other.attempt, 1, 'a different command keeps its own budget');
+});
+
+test('case-sensitive package scripts cannot resolve or consume each other retry budgets', () => {
+  for (const manager of ['npm', 'pnpm', 'yarn', 'bun']) {
+    const machine = new TimeMachine();
+    const fail = { success: false, error: 'script failed', exitCode: 1 };
+    const upper = { command: `${manager} run Build` };
+    const lower = { command: `${manager} run build` };
+    assert.equal(machine.observe('exec', upper, fail).attempt, 1);
+    assert.equal(machine.observe('exec', lower, { success: true, exitCode: 0 }).kind, 'none');
+    assert.equal(machine.observe('exec', upper, fail).attempt, 2);
+    assert.equal(machine.observe('exec', lower, fail).attempt, 1);
+    assert.equal(machine.observe('exec', upper, { success: true, exitCode: 0 }).kind, 'resolved');
+  }
+});
+
 test('a site refusal immediately redirects the agent away from the blocked URL', () => {
   const machine = new TimeMachine();
   const decision = machine.observe('web_fetch', { url: 'https://example.com/blocked' }, {
