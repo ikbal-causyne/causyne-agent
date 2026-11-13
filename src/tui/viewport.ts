@@ -263,6 +263,7 @@ export class Viewport {
   }
 
   scrollTo(position: number, { snap = false }: { snap?: boolean } = {}): number {
+    if (!Number.isFinite(position)) return this.scrollTop;
     const max = this.maxScrollTop();
     let next = Math.max(0, Math.min(Math.round(position), max));
 

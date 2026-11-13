@@ -198,6 +198,8 @@ export class Viewport {
         }
     }
     scrollTo(position, { snap = false } = {}) {
+        if (!Number.isFinite(position))
+            return this.scrollTop;
         const max = this.maxScrollTop();
         let next = Math.max(0, Math.min(Math.round(position), max));
         if (snap && next > this.scrollTop && max - next <= REENGAGE_TOLERANCE)
