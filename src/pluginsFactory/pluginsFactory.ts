@@ -183,6 +183,18 @@ export class PluginsFactory {
       };
     }
 
+    const endpointError = this.validateEndpoint(service, route);
+    if (endpointError) {
+      return {
+        success: false,
+        route,
+        targetDirectory: '',
+        createdFiles: [],
+        instructions: '',
+        error: endpointError
+      };
+    }
+
     const baseDir = options.baseDir
       ? path.resolve(options.baseDir)
       : isMcp
@@ -374,6 +386,21 @@ export class PluginsFactory {
       if (!CAPABILITIES.has(capability)) {
         return `Unknown capability "${capability}".`;
       }
+    }
+    return null;
+  }
+
+  private validateEndpoint(service: ServiceDescriptor, route: RouteKind): string | null {
+    const isHttpNative = route === 'native_plugin' && service.serviceKind !== 'cli' && !service.cliBinary;
+    if (!isHttpNative || !service.endpoint) return null;
+    let parsed: URL;
+    try {
+      parsed = new URL(service.endpoint);
+    } catch {
+      return `Invalid endpoint URL "${service.endpoint}".`;
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return `Endpoint must use http or https, received "${parsed.protocol}".`;
     }
     return null;
   }

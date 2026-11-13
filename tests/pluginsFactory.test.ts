@@ -219,6 +219,34 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: rejects non-HTTP endpoints before scaffolding', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-endpoint-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const tools: ServiceDescriptor['tools'] = [
+      { name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }
+    ];
+    for (const endpoint of ['javascript:alert(1)', 'not-a-url', 'ftp://example.com/file']) {
+      const service: ServiceDescriptor = {
+        name: 'bad-endpoint',
+        description: 'Endpoint probe',
+        serviceKind: 'http_api',
+        endpoint,
+        tools
+      };
+      const result = await factory.scaffold(factory.assess(service));
+      assert.equal(result.success, false);
+      assert.match(result.error ?? '', /endpoint|URL/i);
+      assert.equal(fs.existsSync(path.join(tmpDir, 'plugins', 'bad-endpoint')), false);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: HTTP tools substitute path placeholders and keep them out of query/body', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-pathparams-'));
   const originalFetch = globalThis.fetch;
@@ -264,6 +292,11 @@ test('PluginsFactory: HTTP tools substitute path placeholders and keep them out 
     const missing = await module.execute({ q: 'search' });
     assert.equal(missing.success, false);
     assert.match(missing.error, /Missing path parameter/);
+    assert.equal(calls.length, 1);
+
+    const malformed = await module.execute({ id: '\uD800' });
+    assert.equal(malformed.success, false);
+    assert.match(malformed.error, /Invalid request URL/);
     assert.equal(calls.length, 1);
   } finally {
     globalThis.fetch = originalFetch;

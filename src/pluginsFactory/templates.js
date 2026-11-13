@@ -151,10 +151,15 @@ export async function ${fnName}(args = {}, context = {}) {
   if (missingPathParams.length > 0) {
     return { success: false, error: \`Missing path parameter(s): \${missingPathParams.join(', ')}\` };
   }
-  const rel = rawPath.replace(/\\{([^}]+)\\}/g, (_match, key) => encodeURIComponent(String(requestArgs[key])));
-  for (const key of pathParamNames) delete requestArgs[key];
-  const targetPath = rel.startsWith('/') ? rel.slice(1) : rel;
-  const url = new URL(targetPath, base);
+  let url;
+  try {
+    const rel = rawPath.replace(/\\{([^}]+)\\}/g, (_match, key) => encodeURIComponent(String(requestArgs[key])));
+    for (const key of pathParamNames) delete requestArgs[key];
+    const targetPath = rel.startsWith('/') ? rel.slice(1) : rel;
+    url = new URL(targetPath, base);
+  } catch (err) {
+    return { success: false, error: \`Invalid request URL: \${err instanceof Error ? err.message : String(err)}\` };
+  }
 
   if (${JSON.stringify(httpMethod)} === 'GET' && requestArgs && typeof requestArgs === 'object') {
     const appendQuery = (key, value) => {
