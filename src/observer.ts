@@ -171,7 +171,7 @@ export class CausyneObserver {
 
         if (!hasPassingVerification) {
           return {
-            status: 'ready-to-verify',
+            status: hasMutations ? 'ready-to-verify' : 'progressing',
             evidenceRefs,
             verified: false,
             confidence: 0.6,

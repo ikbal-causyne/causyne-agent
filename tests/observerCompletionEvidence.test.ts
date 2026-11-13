@@ -16,7 +16,7 @@ test('read-only tool success cannot verify an unsubstantiated completion claim',
       at: Date.now()
     }]
   });
-  assert.equal(observation.status, 'ready-to-verify');
+  assert.equal(observation.status, 'progressing');
   assert.equal(observation.verified, false);
   assert.match(observation.message ?? '', /without supporting verification evidence/i);
 });

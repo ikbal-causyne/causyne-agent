@@ -101,7 +101,7 @@ export class CausyneObserver {
                     (o.command && /\b(?:test|build|check|typecheck|vitest|jest|pytest)\b/i.test(o.command))));
                 if (!hasPassingVerification) {
                     return {
-                        status: 'ready-to-verify',
+                        status: hasMutations ? 'ready-to-verify' : 'progressing',
                         evidenceRefs,
                         verified: false,
                         confidence: 0.6,
