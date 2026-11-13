@@ -52,7 +52,21 @@ export interface PluginsFactoryToolResult {
   error?: string | undefined;
 }
 
+const SERVICE_KINDS = new Set(['http_api', 'cli', 'python_sdk', 'mcp_only', 'custom']);
+const AUTH_TYPES = new Set(['none', 'bearer', 'apiKey', 'basic', 'env']);
+const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']);
+const ROUTE_KINDS = new Set(['native_plugin', 'python_bridge', 'mcp_server']);
+
 function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor {
+  if (args.serviceKind !== undefined && !SERVICE_KINDS.has(args.serviceKind)) {
+    throw new Error(`Invalid serviceKind "${String(args.serviceKind)}".`);
+  }
+  if (args.authType !== undefined && !AUTH_TYPES.has(args.authType)) {
+    throw new Error(`Invalid authType "${String(args.authType)}".`);
+  }
+  if (args.userPreferredRoute !== undefined && !ROUTE_KINDS.has(args.userPreferredRoute)) {
+    throw new Error(`Invalid userPreferredRoute "${String(args.userPreferredRoute)}".`);
+  }
   if (args.tools !== undefined && !Array.isArray(args.tools)) {
     throw new Error('"tools" must be an array of tool descriptors.');
   }
@@ -71,6 +85,9 @@ function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor
       (t.parameters === null || typeof t.parameters !== 'object' || Array.isArray(t.parameters))
     ) {
       throw new Error(`Tool "${t.name}" parameters must be an object JSON schema.`);
+    }
+    if (t.httpMethod !== undefined && !HTTP_METHODS.has(t.httpMethod)) {
+      throw new Error(`Tool "${t.name}" has invalid httpMethod "${String(t.httpMethod)}".`);
     }
     const rawParams = t.parameters ?? {};
     if (rawParams['type'] !== undefined && rawParams['type'] !== 'object') {

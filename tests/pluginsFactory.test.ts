@@ -946,6 +946,40 @@ test('plugins_factory tool rejects malformed tool descriptors', async () => {
   assert.match(missingDescription.error ?? '', /non-empty description/);
 });
 
+test('plugins_factory tool rejects invalid enum values', async () => {
+  const badKind = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'bad-kind',
+    serviceKind: 'grpc' as never
+  });
+  assert.equal(badKind.success, false);
+  assert.match(badKind.error ?? '', /Invalid serviceKind/);
+
+  const badAuth = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'bad-auth',
+    authType: 'oauth' as never
+  });
+  assert.equal(badAuth.success, false);
+  assert.match(badAuth.error ?? '', /Invalid authType/);
+
+  const badRoute = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'bad-route',
+    userPreferredRoute: 'websocket' as never
+  });
+  assert.equal(badRoute.success, false);
+  assert.match(badRoute.error ?? '', /Invalid userPreferredRoute/);
+
+  const badMethod = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'bad-method',
+    tools: [{ name: 'get_item', description: 'Get item', httpMethod: 'TRACE' as never }]
+  });
+  assert.equal(badMethod.success, false);
+  assert.match(badMethod.error ?? '', /invalid httpMethod/);
+});
+
 test('plugins_factory tool execution: assess and scaffold actions work via tool interface', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-tool-test-'));
 
