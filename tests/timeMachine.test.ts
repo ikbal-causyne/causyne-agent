@@ -64,6 +64,21 @@ test('every command argument name gets verification guidance when its check pass
   }
 });
 
+test('blank command aliases do not hide a populated fallback command', () => {
+  const fields = ['command', 'cmd', 'CommandLine', 'commandLine', 'script'];
+  for (let index = 1; index < fields.length; index++) {
+    const machine = new TimeMachine();
+    const blanks = Object.fromEntries(fields.slice(0, index).map(field => [field, '  ']));
+    const check = { ...blanks, [fields[index]!]: 'npm run build' };
+    const fail = { success: false, error: 'exit code 1', exitCode: 1 };
+    assert.equal(machine.observe('exec', check, fail).attempt, 1);
+    assert.equal(machine.observe('exec', { command: 'npm run lint' }, fail).attempt, 1);
+    const recovered = machine.observe('exec', { command: 'npm run build' }, { success: true, exitCode: 0 });
+    assert.equal(recovered.kind, 'resolved');
+    assert.match(recovered.guidance, /verification command now passed/);
+  }
+});
+
 test('leading environment assignments cannot reset the retry budget of the same command', () => {
   const machine = new TimeMachine();
   const fail = { success: false, error: 'exit code 1', exitCode: 1 };

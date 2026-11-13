@@ -23,11 +23,8 @@ function record(value) {
         ? value : {};
 }
 function commandText(args) {
-    return typeof args.command === 'string' ? args.command
-        : typeof args.cmd === 'string' ? args.cmd
-            : typeof args.CommandLine === 'string' ? args.CommandLine
-                : typeof args.commandLine === 'string' ? args.commandLine
-                    : typeof args.script === 'string' ? args.script : '';
+    return [args.command, args.cmd, args.CommandLine, args.commandLine, args.script]
+        .find((value) => typeof value === 'string' && value.trim().length > 0) ?? '';
 }
 function operationFamily(args) {
     const command = commandText(args);
@@ -144,7 +141,7 @@ export class TimeMachine {
         if (attempt >= TIME_MACHINE_MAX_ATTEMPTS) {
             return { kind: 'stop', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
                 failureClass: classification, lastGoodTool: good,
-                guidance: `The same failure class persisted through ${TIME_MACHINE_MAX_ATTEMPTS} attempts. Stop this task. Give a brief evidence-based report, state what remains unresolved, and ask for input only if needed. Put a detailed report in a Markdown file only if the user requests one.${checkpoint}` };
+                guidance: `The same operation failed through ${TIME_MACHINE_MAX_ATTEMPTS} attempts. Stop this task. Give a brief evidence-based report, state what remains unresolved, and ask for input only if needed. Put a detailed report in a Markdown file only if the user requests one.${checkpoint}` };
         }
         // The agent may spend three attempts alone. The fourth through sixth belong
         // to the user: without an explicit grant the budget ends here.
