@@ -349,8 +349,11 @@ export class PluginsFactory {
                 try {
                     const raw = fs.readFileSync(stateFile, 'utf8');
                     const parsed = JSON.parse(raw);
-                    if (parsed && typeof parsed === 'object') {
-                        state = { version: 1, plugins: parsed.plugins || {} };
+                    const parsedPlugins = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                        ? parsed.plugins
+                        : undefined;
+                    if (parsedPlugins && typeof parsedPlugins === 'object' && !Array.isArray(parsedPlugins)) {
+                        state = { version: 1, plugins: parsedPlugins };
                     }
                 }
                 catch {

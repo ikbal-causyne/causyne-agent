@@ -218,6 +218,34 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: repairs a malformed plugin state map instead of dropping the new record', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-state-'));
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.writeFileSync(path.join(pluginsDir, 'state.json'), JSON.stringify({ version: 1, plugins: [] }));
+
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'state-repair',
+      description: 'State probe',
+      serviceKind: 'http_api',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, true);
+    const state = JSON.parse(fs.readFileSync(path.join(pluginsDir, 'state.json'), 'utf8'));
+    assert.equal(Array.isArray(state.plugins), false);
+    assert.equal(state.plugins['state-repair'].enabled, false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: refuses to write through a symlinked target', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-symlink-'));
   try {
