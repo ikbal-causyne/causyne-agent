@@ -218,6 +218,33 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: reports write failures instead of throwing', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-write-'));
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.writeFileSync(path.join(pluginsDir, 'blocked'), 'not a directory');
+
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'blocked',
+      description: 'Write failure probe',
+      serviceKind: 'http_api',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service), { force: true });
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /Failed to scaffold/);
+    assert.equal(fs.readFileSync(path.join(pluginsDir, 'blocked'), 'utf8'), 'not a directory');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: rejects an unsupported route instead of scaffolding MCP', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-route-'));
   try {

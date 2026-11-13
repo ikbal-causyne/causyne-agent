@@ -224,17 +224,36 @@ export class PluginsFactory {
     }
 
     // Write files to target directory
-    fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    const createdRoot = !fs.existsSync(targetDir);
     const createdFiles: string[] = [];
 
-    for (const file of payload.files) {
-      const filePath = path.join(targetDir, file.relativePath);
-      const fileDir = path.dirname(filePath);
-      if (!fs.existsSync(fileDir)) {
-        fs.mkdirSync(fileDir, { recursive: true, mode: 0o700 });
+    try {
+      fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+      for (const file of payload.files) {
+        const filePath = path.join(targetDir, file.relativePath);
+        const fileDir = path.dirname(filePath);
+        if (!fs.existsSync(fileDir)) {
+          fs.mkdirSync(fileDir, { recursive: true, mode: 0o700 });
+        }
+        fs.writeFileSync(filePath, file.content, { encoding: 'utf8', mode: 0o600 });
+        createdFiles.push(file.relativePath);
       }
-      fs.writeFileSync(filePath, file.content, { encoding: 'utf8', mode: 0o600 });
-      createdFiles.push(file.relativePath);
+    } catch (err) {
+      if (createdRoot) {
+        try {
+          fs.rmSync(targetDir, { recursive: true, force: true });
+        } catch {
+          // Preserve the original write failure.
+        }
+      }
+      return {
+        success: false,
+        route,
+        targetDirectory: targetDir,
+        createdFiles: [],
+        instructions: '',
+        error: `Failed to scaffold ${normalizedName}: ${err instanceof Error ? err.message : String(err)}`
+      };
     }
 
     let digest: string | undefined;
