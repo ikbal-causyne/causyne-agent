@@ -195,6 +195,24 @@ test('E2E: generated MCP stdio server handles JSON-RPC 2.0 handshake, tools/list
     assert.equal(parsedData.tool, 'get_cpu_load');
     assert.equal(parsedData.echo.intervalMs, 500);
 
+    // 4. A notification without an id must not produce a response.
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/list'
+    }) + '\n');
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(responses.length, 3, 'notifications receive no response');
+
+    // 5. Requests without an id are still ignored, while later requests work.
+    child.stdin.write(JSON.stringify({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'ping'
+    }) + '\n');
+    const pingRes = await waitForResponse(4);
+    assert.ok(pingRes, 'received ping response');
+    assert.deepEqual(pingRes.result, {});
+
     child.kill('SIGTERM');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -643,6 +643,10 @@ function send(message) {
 function handleRequest(request) {
   const { id, method, params } = request;
 
+  // JSON-RPC notifications carry no id and must never receive a response,
+  // even when they use a request-style method such as tools/list.
+  if (id === undefined) return null;
+
   switch (method) {
     case 'initialize':
       return {
