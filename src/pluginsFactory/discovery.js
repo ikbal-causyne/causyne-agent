@@ -14,28 +14,43 @@ import { listPlugins } from '../plugins/pluginManager.js';
 const NATIVE_TOOLS_CATALOG = [
     { name: 'fs_read', description: 'Read file contents from the workspace', aliases: ['read_file', 'cat', 'open_file'] },
     { name: 'fs_write', description: 'Write or append file contents in the workspace', aliases: ['write_file', 'save_file'] },
-    { name: 'sys_run', description: 'Execute shell commands with safety checks', aliases: ['run_command', 'shell', 'exec', 'bash'] },
+    { name: 'sysRun', description: 'Execute shell commands with safety checks', aliases: ['run_command', 'shell', 'exec', 'bash'] },
     { name: 'web_search', description: 'Perform web search queries', aliases: ['search', 'google_search', 'web_query'] },
     { name: 'web_fetch', description: 'Fetch and extract clean markdown from web pages', aliases: ['curl', 'http_get', 'scrape'] },
-    { name: 'browser_automator', description: 'Autonomous browser control for web apps and QA', aliases: ['playwright', 'puppeteer', 'chrome'] },
-    { name: 'vision_inspector', description: 'Inspect images and visual assets with OCR/layout', aliases: ['ocr', 'image_inspect'] },
-    { name: 'resolve_automator', description: 'DaVinci Resolve automation and studio workflows', aliases: ['resolve', 'davinci', 'video_edit'] },
-    { name: 'blender_batch', description: 'Blender 3D scene rendering and automation', aliases: ['blender', '3d_render', 'cycles'] },
+    { name: 'browser_act', description: 'Autonomous browser control for web apps and QA', aliases: ['playwright', 'puppeteer', 'chrome'] },
+    { name: 'vision_inspect_ui', description: 'Inspect images and visual assets with OCR/layout', aliases: ['ocr', 'image_inspect'] },
+    { name: 'resolve_act', description: 'DaVinci Resolve automation and studio workflows', aliases: ['resolve', 'davinci', 'video_edit'] },
+    { name: 'blender_act', description: 'Blender 3D scene rendering and automation', aliases: ['blender', '3d_render', 'cycles'] },
     { name: 'archive', description: 'Extract, inspect, or build archive files (zip/tar)', aliases: ['unzip', 'tar', 'extract'] },
-    { name: 'pdf_reader', description: 'Extract structured text and tables from PDF documents', aliases: ['read_pdf', 'extract_pdf'] },
-    { name: 'database_query', description: 'Execute structured queries on SQLite/PostgreSQL/MySQL', aliases: ['sql', 'query_db'] }
+    { name: 'pdf_read', description: 'Extract structured text and tables from PDF documents', aliases: ['read_pdf', 'extract_pdf'] }
 ];
+/**
+ * Normalizes a name for token comparison. Hyphens and underscores become
+ * spaces so "web_search" and "web search" compare identically.
+ */
+function normalizeTerm(value) {
+    return value.toLowerCase().trim().replace(/[-_]+/g, ' ');
+}
+/**
+ * Matches whole terms only. Substring matching made "research" match
+ * "search" and "sqlite" match a phantom SQL tool.
+ */
+function matchesTerm(normalizedQuery, candidate) {
+    const term = normalizeTerm(candidate);
+    if (!term)
+        return false;
+    return normalizedQuery === term || ` ${normalizedQuery} `.includes(` ${term} `);
+}
 /**
  * Searches for existing capabilities matching a service or tool query.
  */
 export function findExistingCapability(query) {
-    const normalized = query.toLowerCase().trim().replace(/[-_]/g, ' ');
+    const normalized = normalizeTerm(query);
     if (!normalized)
         return { covered: false };
     // 1. Check Native Built-in Tools
     for (const tool of NATIVE_TOOLS_CATALOG) {
-        const toolNameNorm = tool.name.toLowerCase().replace(/[-_]/g, ' ');
-        if (toolNameNorm === normalized || tool.aliases.some(alias => alias === normalized || normalized.includes(alias))) {
+        if (matchesTerm(normalized, tool.name) || tool.aliases.some(alias => matchesTerm(normalized, alias))) {
             return {
                 covered: true,
                 source: 'native_tool',
@@ -48,8 +63,7 @@ export function findExistingCapability(query) {
     try {
         const plugins = listPlugins();
         for (const plugin of plugins) {
-            const pluginNameNorm = plugin.name.toLowerCase().replace(/[-_]/g, ' ');
-            if (pluginNameNorm === normalized || normalized.includes(pluginNameNorm)) {
+            if (matchesTerm(normalized, plugin.name)) {
                 return {
                     covered: true,
                     source: 'plugin',
@@ -59,8 +73,7 @@ export function findExistingCapability(query) {
             }
             if (Array.isArray(plugin.tools)) {
                 for (const t of plugin.tools) {
-                    const tNorm = t.toLowerCase().replace(/[-_]/g, ' ');
-                    if (tNorm === normalized || normalized.includes(tNorm)) {
+                    if (matchesTerm(normalized, t)) {
                         return {
                             covered: true,
                             source: 'plugin',
@@ -79,8 +92,7 @@ export function findExistingCapability(query) {
     try {
         const servers = configuredServers();
         for (const s of servers) {
-            const sNameNorm = s.name.toLowerCase().replace(/[-_]/g, ' ');
-            if (sNameNorm === normalized || normalized.includes(sNameNorm)) {
+            if (matchesTerm(normalized, s.name)) {
                 return {
                     covered: true,
                     source: 'mcp',

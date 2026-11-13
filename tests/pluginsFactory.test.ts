@@ -157,6 +157,30 @@ test('PluginsFactory: discovery identifies built-in native tools', () => {
   assert.equal(match.matchName, 'web_search');
 });
 
+test('PluginsFactory: discovery uses real built-in tool names', () => {
+  const expected: Array<[string, string]> = [
+    ['sysRun', 'sysRun'],
+    ['browser act', 'browser_act'],
+    ['vision inspect ui', 'vision_inspect_ui'],
+    ['resolve act', 'resolve_act'],
+    ['blender act', 'blender_act'],
+    ['pdf read', 'pdf_read']
+  ];
+  for (const [query, name] of expected) {
+    const match = findExistingCapability(query);
+    assert.equal(match.covered, true, `${query} should be covered`);
+    assert.equal(match.matchName, name);
+  }
+});
+
+test('PluginsFactory: discovery ignores substrings inside unrelated words', () => {
+  for (const query of ['research', 'startup', 'sqlite', 'database_query']) {
+    const match = findExistingCapability(query);
+    assert.equal(match.covered, false, `${query} should not match a native tool`);
+  }
+  assert.equal(findExistingCapability('web search').matchName, 'web_search');
+});
+
 test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with digest and disabled state', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-test-'));
 
