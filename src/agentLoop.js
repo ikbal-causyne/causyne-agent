@@ -40,7 +40,7 @@ import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js'
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
-import { isVerificationCommand } from './observer/evidence.js';
+import { isRenderedNativeBrowserAction, isVerificationCommand } from './observer/evidence.js';
 import { CausyneObserver, defaultObserver, extractClaimedLocalUrls } from './observer.js';
 import { TimeMachine, recoveryUserMessage, TIME_MACHINE_MAX_ATTEMPTS } from './timeMachine.js';
 import { packForTool, isCoreTool, isGameIntent, isWebIntent, PACK_PLAYBOOKS, PACKS } from './toolPacks.js';
@@ -2742,7 +2742,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                     this.advanceImplementationPlanProgress('mutation');
                                 }
                             }
-                            else if (['browse', 'browser_act', 'preview', 'snapshot', 'scrape', 'web_fetch'].includes(lowerName)) {
+                            else if (isRenderedNativeBrowserAction(lowerName)) {
                                 this.webVerificationState.browserActUsed = true;
                                 this.advanceImplementationPlanProgress('verification');
                             }
@@ -2766,7 +2766,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 this.llm.supportsVision) {
                                 this.webVerificationState.screenshotTaken = true;
                             }
-                            if (['browse', 'browser_act', 'preview', 'snapshot', 'scrape', 'web_fetch'].includes(lowerName)) {
+                            if (isRenderedNativeBrowserAction(lowerName)) {
                                 this.webVerificationState.browserActUsed = true;
                             }
                             if (/\.(html?|css|jsx|tsx|vue|svelte)\b/i.test(rawDetail)) {

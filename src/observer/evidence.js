@@ -114,6 +114,9 @@ export function toolPath(args) {
 export function isCodePath(target) {
     return CODE_EXTENSIONS.has(path.extname(target).toLowerCase());
 }
+export function isRenderedNativeBrowserAction(tool) {
+    return ['browser_act', 'preview', 'snapshot'].includes(tool.toLowerCase());
+}
 export function isVerificationCommand(command) {
     return VERIFICATION_COMMAND.test(command);
 }

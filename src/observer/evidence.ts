@@ -171,6 +171,10 @@ export function isCodePath(target: string): boolean {
   return CODE_EXTENSIONS.has(path.extname(target).toLowerCase());
 }
 
+export function isRenderedNativeBrowserAction(tool: string): boolean {
+  return ['browser_act', 'preview', 'snapshot'].includes(tool.toLowerCase());
+}
+
 export function isVerificationCommand(command: string): boolean {
   return VERIFICATION_COMMAND.test(command);
 }
