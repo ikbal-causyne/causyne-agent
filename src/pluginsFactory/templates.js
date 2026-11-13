@@ -79,19 +79,19 @@ function buildExportNames(tools) {
  */
 export function generateHttpPluginScaffold(service) {
     const capabilities = Array.from(new Set(['network', ...(service.capabilities || [])]));
-    const exportNames = buildExportNames(service.tools);
-    const primaryTool = service.tools[0] || {
-        name: 'query',
-        description: `Execute request against ${service.name}`,
-        parameters: { type: 'object', properties: {} }
-    };
+    const effectiveTools = service.tools.length > 0 ? service.tools : [{
+            name: 'query',
+            description: `Execute request against ${service.name}`,
+            parameters: { type: 'object', properties: {} }
+        }];
+    const exportNames = buildExportNames(effectiveTools);
     const manifest = {
         schemaVersion: 1,
         name: service.name,
         version: '1.0.0',
         description: service.description || `Native HTTP plugin for ${service.name}`,
         capabilities,
-        tools: service.tools.map((tool, idx) => ({
+        tools: effectiveTools.map((tool, idx) => ({
             name: tool.name,
             description: tool.description,
             parameters: tool.parameters,
@@ -100,7 +100,7 @@ export function generateHttpPluginScaffold(service) {
             timeoutMs: 30000
         }))
     };
-    const toolExecutors = service.tools.map((tool, idx) => {
+    const toolExecutors = effectiveTools.map((tool, idx) => {
         const fnName = exportNames[idx];
         const httpMethod = tool.httpMethod || 'POST';
         const httpPath = tool.httpPath || '/';
@@ -195,19 +195,19 @@ causyne plugins enable ${service.name}
  */
 export function generateCliPluginScaffold(service) {
     const capabilities = Array.from(new Set(['subprocess', ...(service.capabilities || [])]));
-    const exportNames = buildExportNames(service.tools);
-    const primaryTool = service.tools[0] || {
-        name: 'run',
-        description: `Execute command for ${service.name}`,
-        parameters: { type: 'object', properties: {} }
-    };
+    const effectiveTools = service.tools.length > 0 ? service.tools : [{
+            name: 'run',
+            description: `Execute command for ${service.name}`,
+            parameters: { type: 'object', properties: {} }
+        }];
+    const exportNames = buildExportNames(effectiveTools);
     const manifest = {
         schemaVersion: 1,
         name: service.name,
         version: '1.0.0',
         description: service.description || `Native CLI plugin for ${service.name}`,
         capabilities,
-        tools: service.tools.map((tool, idx) => ({
+        tools: effectiveTools.map((tool, idx) => ({
             name: tool.name,
             description: tool.description,
             parameters: tool.parameters,
@@ -216,7 +216,7 @@ export function generateCliPluginScaffold(service) {
             timeoutMs: 45000
         }))
     };
-    const toolExecutors = service.tools.map((tool, idx) => {
+    const toolExecutors = effectiveTools.map((tool, idx) => {
         const fnName = exportNames[idx];
         const binary = service.cliBinary || service.name;
         return `
@@ -298,19 +298,19 @@ causyne plugins enable ${service.name}
  */
 export function generatePythonBridgeScaffold(service) {
     const capabilities = Array.from(new Set(['subprocess', ...(service.capabilities || [])]));
-    const exportNames = buildExportNames(service.tools);
-    const primaryTool = service.tools[0] || {
-        name: 'run_python',
-        description: `Execute Python workflow for ${service.name}`,
-        parameters: { type: 'object', properties: {} }
-    };
+    const effectiveTools = service.tools.length > 0 ? service.tools : [{
+            name: 'run_python',
+            description: `Execute Python workflow for ${service.name}`,
+            parameters: { type: 'object', properties: {} }
+        }];
+    const exportNames = buildExportNames(effectiveTools);
     const manifest = {
         schemaVersion: 1,
         name: service.name,
         version: '1.0.0',
         description: service.description || `Python bridge plugin for ${service.name}`,
         capabilities,
-        tools: service.tools.map((tool, idx) => ({
+        tools: effectiveTools.map((tool, idx) => ({
             name: tool.name,
             description: tool.description,
             parameters: tool.parameters,
@@ -319,7 +319,7 @@ export function generatePythonBridgeScaffold(service) {
             timeoutMs: 60000
         }))
     };
-    const toolExecutors = service.tools.map((tool, idx) => {
+    const toolExecutors = effectiveTools.map((tool, idx) => {
         const fnName = exportNames[idx];
         const pythonMethod = tool.pythonMethod || tool.name;
         return `

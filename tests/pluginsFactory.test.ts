@@ -218,6 +218,34 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: empty tool lists still produce a loadable plugin', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-empty-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'empty-tools',
+      description: 'Service without explicit tools',
+      serviceKind: 'http_api',
+      tools: []
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, true);
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(result.targetDirectory, 'plugin.json'), 'utf8'));
+    assert.equal(manifest.tools.length, 1);
+    assert.equal(manifest.tools[0].export, 'execute');
+
+    const module = await import(`file://${path.join(result.targetDirectory, 'index.js')}`);
+    assert.equal(typeof module.execute, 'function');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: normalizes service names so manifest, folder, and state agree', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-name-'));
   try {
