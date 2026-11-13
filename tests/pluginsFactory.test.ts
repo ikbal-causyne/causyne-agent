@@ -218,7 +218,41 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
-test('PluginsFactory: reports write failures instead of throwing', async () => {
+test('PluginsFactory: refuses to write through a symlinked target', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-symlink-'));
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    const outside = path.join(tmpDir, 'outside');
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    try {
+      fs.symlinkSync(outside, path.join(pluginsDir, 'linked-plugin'), 'dir');
+    } catch {
+      t.skip('symlinks are not available on this platform');
+      return;
+    }
+
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'linked-plugin',
+      description: 'Symlink probe',
+      serviceKind: 'http_api',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service), { force: true });
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /must not be a symlink/);
+    assert.deepEqual(fs.readdirSync(outside), []);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('PluginsFactory: refuses a target path that is not a directory', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-write-'));
   try {
     const pluginsDir = path.join(tmpDir, 'plugins');
@@ -238,7 +272,7 @@ test('PluginsFactory: reports write failures instead of throwing', async () => {
 
     const result = await factory.scaffold(factory.assess(service), { force: true });
     assert.equal(result.success, false);
-    assert.match(result.error ?? '', /Failed to scaffold/);
+    assert.match(result.error ?? '', /not a directory/);
     assert.equal(fs.readFileSync(path.join(pluginsDir, 'blocked'), 'utf8'), 'not a directory');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });

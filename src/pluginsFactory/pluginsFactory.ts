@@ -42,6 +42,22 @@ const MAX_TOOLS = 32;
 const CAPABILITIES = new Set(['workspace:read', 'workspace:write', 'network', 'subprocess']);
 
 /**
+ * Resolves symlinked ancestors even when the final path does not exist yet.
+ * Keeps containment checks consistent on macOS, where /var is a symlink.
+ */
+function resolveWithExistingAncestors(target: string): string {
+  let current = path.resolve(target);
+  const missing: string[] = [];
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(target);
+    missing.unshift(path.basename(current));
+    current = parent;
+  }
+  return path.join(fs.realpathSync(current), ...missing);
+}
+
+/**
  * Computes the exact SHA-256 directory digest matching Causyne's pluginManager.
  */
 export function computePluginDirectoryDigest(directory: string): string {
@@ -174,10 +190,14 @@ export class PluginsFactory {
 
     const targetDir = path.join(baseDir, normalizedName);
 
-    // Path containment check: ensure targetDir cannot escape baseDir
-    const resolvedBase = path.resolve(baseDir);
-    const resolvedTarget = path.resolve(targetDir);
-    if (!resolvedTarget.startsWith(resolvedBase + path.sep)) {
+    // Path containment check: resolve the nearest real parent so a symlinked
+    // target or parent cannot redirect writes outside the base directory.
+    const resolvedBase = resolveWithExistingAncestors(baseDir);
+    const targetParent = path.dirname(targetDir);
+    const resolvedParent = resolveWithExistingAncestors(targetParent);
+    const resolvedTarget = path.join(resolvedParent, path.basename(targetDir));
+    const relativeTarget = path.relative(resolvedBase, resolvedTarget);
+    if (!relativeTarget || relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
       return {
         success: false,
         route,
@@ -188,15 +208,38 @@ export class PluginsFactory {
       };
     }
 
-    if (fs.existsSync(targetDir) && !options.force) {
-      return {
-        success: false,
-        route,
-        targetDirectory: targetDir,
-        createdFiles: [],
-        instructions: '',
-        error: `Directory already exists: ${targetDir}. Use force: true to overwrite.`
-      };
+    if (fs.existsSync(targetDir)) {
+      const targetStat = fs.lstatSync(targetDir);
+      if (targetStat.isSymbolicLink()) {
+        return {
+          success: false,
+          route,
+          targetDirectory: targetDir,
+          createdFiles: [],
+          instructions: '',
+          error: `Target path must not be a symlink: ${targetDir}`
+        };
+      }
+      if (!targetStat.isDirectory()) {
+        return {
+          success: false,
+          route,
+          targetDirectory: targetDir,
+          createdFiles: [],
+          instructions: '',
+          error: `Target path is not a directory: ${targetDir}`
+        };
+      }
+      if (!options.force) {
+        return {
+          success: false,
+          route,
+          targetDirectory: targetDir,
+          createdFiles: [],
+          instructions: '',
+          error: `Directory already exists: ${targetDir}. Use force: true to overwrite.`
+        };
+      }
     }
 
     // Select scaffolding payload generator based on route
