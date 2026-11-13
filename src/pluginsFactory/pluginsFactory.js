@@ -219,10 +219,15 @@ export class PluginsFactory {
      * has already written files and recorded a digest.
      */
     validateTools(tools) {
+        const seen = new Set();
         for (const tool of tools) {
             if (!TOOL_NAME_PATTERN.test(tool.name)) {
                 return `Invalid tool name "${tool.name}". Must match ^[a-z][a-z0-9_-]{0,63}$`;
             }
+            if (seen.has(tool.name)) {
+                return `Duplicate tool name "${tool.name}".`;
+            }
+            seen.add(tool.name);
         }
         return null;
     }

@@ -218,6 +218,31 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: rejects duplicate tool names', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-duplicate-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'duplicate-tools',
+      description: 'Duplicate tool probe',
+      serviceKind: 'http_api',
+      tools: [
+        { name: 'get_item', description: 'First', parameters: { type: 'object', properties: {} } },
+        { name: 'get_item', description: 'Second', parameters: { type: 'object', properties: {} } }
+      ]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /Duplicate tool name/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: rejects tool names the plugin loader cannot accept', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-tool-name-'));
   try {
