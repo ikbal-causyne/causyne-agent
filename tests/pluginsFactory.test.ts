@@ -946,6 +946,56 @@ test('plugins_factory tool rejects malformed tool descriptors', async () => {
   assert.match(missingDescription.error ?? '', /non-empty description/);
 });
 
+test('PluginsFactory: Python bridge handles empty output, early exit, and platform binary', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('fake shebang executables are POSIX-only');
+    return;
+  }
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-python-edge-'));
+  const previousPython = process.env.CAUSYNE_PYTHON;
+  try {
+    const silent = path.join(tmpDir, 'silent-python');
+    fs.writeFileSync(silent, '#!/usr/bin/env node\nprocess.stdin.resume();\nprocess.stdin.on("end", () => process.exit(0));\n', { mode: 0o755 });
+    const instant = path.join(tmpDir, 'instant-python');
+    fs.writeFileSync(instant, '#!/usr/bin/env node\nprocess.exit(0);\n', { mode: 0o755 });
+
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const makeService = (name: string): ServiceDescriptor => ({
+      name,
+      description: 'Python edge probe',
+      serviceKind: 'python_sdk',
+      pythonModule: 'math',
+      tools: [{ name: 'compute', description: 'Compute', pythonMethod: 'compute', parameters: { type: 'object', properties: {} } }]
+    });
+
+    process.env.CAUSYNE_PYTHON = silent;
+    const silentScaffold = await factory.scaffold(factory.assess(makeService('silent-bridge')));
+    assert.equal(silentScaffold.success, true);
+    const silentModule = await import(pathToFileURL(path.join(silentScaffold.targetDirectory, 'index.js')).href);
+    const silentResult = await silentModule.execute({});
+    assert.equal(silentResult.success, false);
+    assert.match(silentResult.error, /returned no output/);
+
+    process.env.CAUSYNE_PYTHON = instant;
+    const instantScaffold = await factory.scaffold(factory.assess(makeService('instant-bridge')));
+    assert.equal(instantScaffold.success, true);
+    const instantCode = fs.readFileSync(path.join(instantScaffold.targetDirectory, 'index.js'), 'utf8');
+    assert.match(instantCode, /child\.stdin\.on\('error'/);
+    assert.match(instantCode, /process\.platform === 'win32' \? 'python' : 'python3'/);
+    const instantModule = await import(pathToFileURL(path.join(instantScaffold.targetDirectory, 'index.js')).href);
+    const instantResult = await instantModule.execute({});
+    assert.equal(instantResult.success, false);
+  } finally {
+    if (previousPython === undefined) delete process.env.CAUSYNE_PYTHON;
+    else process.env.CAUSYNE_PYTHON = previousPython;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('plugins_factory schema constrains service names and tool limits', () => {
   const params = pluginsFactoryTool.schema.parameters;
   assert.equal(params.properties.serviceName.pattern, '^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$');

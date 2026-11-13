@@ -391,6 +391,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE_SCRIPT = path.join(__dirname, 'bridge.py');
+const PYTHON_BIN = process.env.CAUSYNE_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 
 async function invokePythonBridge(action, args, context) {
   const payload = JSON.stringify({
@@ -402,7 +403,7 @@ async function invokePythonBridge(action, args, context) {
   });
 
   return new Promise((resolve) => {
-    const child = spawn('python3', [BRIDGE_SCRIPT], {
+    const child = spawn(PYTHON_BIN, [BRIDGE_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONUNBUFFERED: '1' }
     });
@@ -429,16 +430,23 @@ async function invokePythonBridge(action, args, context) {
     child.on('error', (err) => {
       finish({
         success: false,
-        error: \`Failed to spawn python3: \${err.message}. Ensure python3 is installed and in PATH.\`
+        error: \`Failed to spawn \${PYTHON_BIN}: \${err.message}. Ensure Python 3 is installed and in PATH.\`
+      });
+    });
+
+    child.stdin.on('error', (err) => {
+      finish({
+        success: false,
+        error: \`Python bridge stdin error: \${err.message}\`
       });
     });
 
     child.on('close', (code) => {
-      if (code !== 0 && !stdout.trim()) {
+      if (!stdout.trim()) {
         finish({
           success: false,
           exitCode: code,
-          error: stderr.trim() || \`Python bridge exited with code \${code}\`
+          error: stderr.trim() || \`Python bridge returned no output (exit code \${code})\`
         });
         return;
       }
