@@ -285,6 +285,10 @@ export class Viewport {
    * quietly round to 1 or 2 forever.
    */
   wheel(direction: 'up' | 'down', notches: number = 1, now: number = Date.now()): number {
+    if (!Number.isFinite(notches) || !Number.isFinite(now)) {
+      this.lastWheelMoved = false;
+      return this.scrollTop;
+    }
     const before = this.scrollTop;
     if (this.lastWheelDirection && this.lastWheelDirection !== direction) {
       this.accumulator = 0;
@@ -293,6 +297,10 @@ export class Viewport {
 
     const multiplier = this.acceleration ? this.acceleration.tick(now) : 1;
     const amount = Math.abs(notches) * this.speed * multiplier;
+    if (!Number.isFinite(amount)) {
+      this.lastWheelMoved = false;
+      return this.scrollTop;
+    }
     this.accumulator += direction === 'up' ? -amount : amount;
     const whole = Math.trunc(this.accumulator);
     if (whole !== 0) {
