@@ -52,3 +52,11 @@ test('a long activity stays inside the conversation column beside the sidebar', 
     surface.close();
   }
 });
+
+test('activity rows honor narrow terminal widths instead of forcing 20 columns', () => {
+  for (const width of [8, 12, 19]) {
+    const rows = activityRows('running npm run typecheck:strict in a small terminal window', width);
+    assert.ok(rows.length > 1);
+    assert.ok(rows.every(row => visibleWidth(row) < width), `activity row escaped ${width}-column terminal`);
+  }
+});
