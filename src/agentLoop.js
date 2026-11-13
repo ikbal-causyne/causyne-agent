@@ -2769,9 +2769,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             if (isRenderedNativeBrowserAction(lowerName)) {
                                 this.webVerificationState.browserActUsed = true;
                             }
-                            if (/\.(html?|css|jsx|tsx|vue|svelte)\b/i.test(rawDetail)) {
-                                this.webVerificationState.htmlInspected = true;
-                            }
                         }
                         const nativeCode = codeProgressFromAction(action.name, { ...(action.parameters && typeof action.parameters === 'object' ? action.parameters : {}),
                             path: action.parameters?.path || action.parameters?.Path || action.detail || '' }, `provider:${action.name}:${action.detail || ''}`, action.status === 'completed' ? 'done' : action.status === 'failed' ? 'failed' : 'working', 'provider');
