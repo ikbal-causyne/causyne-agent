@@ -38,6 +38,7 @@ import type {
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const MAX_TOOLS = 32;
 
 /**
  * Computes the exact SHA-256 directory digest matching Causyne's pluginManager.
@@ -264,6 +265,9 @@ export class PluginsFactory {
    * has already written files and recorded a digest.
    */
   private validateTools(tools: ServiceToolDescriptor[]): string | null {
+    if (tools.length > MAX_TOOLS) {
+      return `Plugin exceeds ${MAX_TOOLS} tools.`;
+    }
     const seen = new Set<string>();
     for (const tool of tools) {
       if (!TOOL_NAME_PATTERN.test(tool.name)) {

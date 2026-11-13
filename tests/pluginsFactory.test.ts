@@ -218,6 +218,32 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: rejects plugins with too many tools', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-too-many-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'too-many-tools',
+      description: 'Tool limit probe',
+      serviceKind: 'http_api',
+      tools: Array.from({ length: 33 }, (_, index) => ({
+        name: `tool_${index}`,
+        description: `Tool ${index}`,
+        parameters: { type: 'object' as const, properties: {} }
+      }))
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /exceeds 32 tools/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: rejects duplicate tool names', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-duplicate-'));
   try {
