@@ -218,6 +218,34 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: activation guidance uses the real /plugins command', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-guidance-'));
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'guidance',
+      description: 'Activation guidance probe',
+      serviceKind: 'http_api',
+      endpoint: 'https://api.example.com/items',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, true);
+    assert.match(result.instructions, /\/plugins enable guidance/);
+    assert.doesNotMatch(result.instructions, /causyne plugins/);
+    const readme = fs.readFileSync(path.join(pluginsDir, 'guidance', 'README.md'), 'utf8');
+    assert.match(readme, /\/plugins enable guidance/);
+    assert.doesNotMatch(readme, /causyne plugins/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: records state beside a custom base directory', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-basedir-'));
   try {

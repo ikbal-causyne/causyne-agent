@@ -195,7 +195,7 @@ ${service.authEnvVar ? `- **Environment Variable**: Set \`${service.authEnvVar}\
 By default, this plugin is created in a **disabled** state to allow code review.
 To activate after reviewing the code:
 \`\`\`bash
-causyne plugins enable ${service.name}
+/plugins enable ${service.name}
 \`\`\`
 `;
 
@@ -303,7 +303,7 @@ ${service.description}
 ## Security & Activation
 This plugin is created disabled. After verifying the source code:
 \`\`\`bash
-causyne plugins enable ${service.name}
+/plugins enable ${service.name}
 \`\`\`
 `;
 
@@ -523,7 +523,7 @@ python3 --version
 ## Security & Activation
 This plugin is created disabled. Review the code in \`bridge.py\` and \`index.js\`, then enable:
 \`\`\`bash
-causyne plugins enable ${service.name}
+/plugins enable ${service.name}
 \`\`\`
 `;
 

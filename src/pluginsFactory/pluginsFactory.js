@@ -273,8 +273,7 @@ export class PluginsFactory {
                 `Security Status: DISABLED (Review source files before enabling)`,
                 '',
                 `To activate after review:`,
-                `  causyne plugins enable ${normalizedName}`,
-                `  (or in chat: /plugins enable ${normalizedName})`
+                `  /plugins enable ${normalizedName}`
             ].join('\n');
         }
         else {
