@@ -60,11 +60,12 @@ function operationFamily(args: Record<string, unknown>): string {
   // `CI=1 npm test` must share the retry budget of `npm test`.
   while (tokens.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0] || '')) tokens.shift();
   const words = tokens.slice(0, 3);
+  const executable = (words[0] || '').replace(/^.*[\\/]/, '');
   // Keep common verification commands distinct without retaining paths,
   // source text, environment variables, or credentials in the journal.
-  if (/^(npm|pnpm|yarn|bun)$/.test(words[0] || '')) {
+  if (/^(npm|pnpm|yarn|bun)$/.test(executable)) {
     // Script names are case-sensitive; a passing `build` cannot resolve `Build`.
-    return words.slice(0, words[1] === 'run' ? 3 : 2).join(' ');
+    return [executable, ...words.slice(1, words[1] === 'run' ? 3 : 2)].join(' ');
   }
   return (words[0] || '').replace(/^.*[\\/]/, '').toLowerCase().slice(0, 32);
 }

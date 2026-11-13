@@ -135,6 +135,19 @@ test('distinct checks have separate budgets without retaining raw error text', (
   assert.equal(JSON.stringify(second).includes('secret.example'), false);
 });
 
+test('absolute package-manager paths preserve script-specific retry histories', () => {
+  for (const executable of ['/usr/local/bin/npm', '/opt/tools/pnpm', 'C:\\tools\\yarn', '/opt/tools/bun']) {
+    const machine = new TimeMachine();
+    const manager = executable.split(/[\\/]/).at(-1)!;
+    const fail = { success: false, error: 'script failed', exitCode: 1 };
+    assert.equal(machine.observe('exec', { command: `${executable} run build` }, fail).attempt, 1);
+    assert.equal(machine.observe('exec', { command: `${executable} run lint` }, fail).attempt, 1);
+    assert.equal(machine.observe('exec', { command: `${manager} run build` }, fail).attempt, 2);
+    assert.equal(machine.observe('exec', { command: `${executable} run lint` }, { success: true, exitCode: 0 }).kind, 'resolved');
+    assert.equal(machine.observe('exec', { command: `${executable} run build` }, fail).attempt, 3);
+  }
+});
+
 test('agent loop stops a repeatedly failing returned tool result after six executions', async () => {
   const previousDirectory = process.cwd();
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-time-machine-'));
