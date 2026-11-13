@@ -150,11 +150,11 @@ export function parseSingleAction(
   const argsRaw = callMatch[2] || '';
 
   const argsMap: Record<string, string> = {};
-  const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*(?:['"]([^'"]+)['"]|([^,\s'")]+))/g;
+  const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,\s'")]+))/g;
   let match: RegExpExecArray | null;
   while ((match = kvRegex.exec(argsRaw)) !== null) {
     const key = match[1];
-    const val = match[2] ?? match[3];
+    const val = (match[2] ?? match[3] ?? match[4])?.replace(/\\(['"\\])/g, '$1');
     if (key && val !== undefined) {
       argsMap[key] = val;
     }

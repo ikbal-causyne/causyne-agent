@@ -76,11 +76,11 @@ export function parseSingleAction(rawAction, screenContext = { width: 1920, heig
     const funcName = callMatch[1]?.toLowerCase();
     const argsRaw = callMatch[2] || '';
     const argsMap = {};
-    const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*(?:['"]([^'"]+)['"]|([^,\s'")]+))/g;
+    const kvRegex = /([a-zA-Z_0-9]+)\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,\s'")]+))/g;
     let match;
     while ((match = kvRegex.exec(argsRaw)) !== null) {
         const key = match[1];
-        const val = match[2] ?? match[3];
+        const val = (match[2] ?? match[3] ?? match[4])?.replace(/\\(['"\\])/g, '$1');
         if (key && val !== undefined) {
             argsMap[key] = val;
         }
