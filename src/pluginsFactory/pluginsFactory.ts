@@ -32,10 +32,12 @@ import type {
   RouteKind,
   ScaffoldOptions,
   ScaffoldResult,
-  ServiceDescriptor
+  ServiceDescriptor,
+  ServiceToolDescriptor
 } from './types.js';
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /**
  * Computes the exact SHA-256 directory digest matching Causyne's pluginManager.
@@ -127,6 +129,18 @@ export class PluginsFactory {
     const normalizedService: ServiceDescriptor = { ...service, name: normalizedName };
     const route = proposal.userConfirmedRoute ?? proposal.recommendedRoute;
     const isMcp = route === 'mcp_server';
+
+    const toolError = this.validateTools(service.tools);
+    if (toolError) {
+      return {
+        success: false,
+        route,
+        targetDirectory: '',
+        createdFiles: [],
+        instructions: '',
+        error: toolError
+      };
+    }
 
     const baseDir = options.baseDir
       ? path.resolve(options.baseDir)
@@ -243,6 +257,19 @@ export class PluginsFactory {
       result.digest = digest;
     }
     return result;
+  }
+
+  /**
+   * Rejects descriptors that the plugin loader would refuse after the factory
+   * has already written files and recorded a digest.
+   */
+  private validateTools(tools: ServiceToolDescriptor[]): string | null {
+    for (const tool of tools) {
+      if (!TOOL_NAME_PATTERN.test(tool.name)) {
+        return `Invalid tool name "${tool.name}". Must match ^[a-z][a-z0-9_-]{0,63}$`;
+      }
+    }
+    return null;
   }
 
   /**

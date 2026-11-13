@@ -218,6 +218,29 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: rejects tool names the plugin loader cannot accept', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-tool-name-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'bad-tool-name',
+      description: 'Invalid tool name probe',
+      serviceKind: 'http_api',
+      tools: [{ name: 'Get Weather', description: 'Invalid', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /Invalid tool name/);
+    assert.equal(fs.existsSync(path.join(tmpDir, 'plugins', 'bad-tool-name')), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: empty tool lists still produce a loadable plugin', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-empty-'));
   try {
