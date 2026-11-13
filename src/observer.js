@@ -209,7 +209,7 @@ export class CausyneObserver {
             try {
                 const url = new URL(req.endpoint);
                 // Security gate: only loopback is permitted for local verification
-                if (!['localhost', '127.0.0.1', '::1'].includes(url.hostname)) {
+                if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
                     resolve({ verified: false, error: 'Only local loopback endpoints (127.0.0.1, localhost) may be verified.' });
                     return;
                 }

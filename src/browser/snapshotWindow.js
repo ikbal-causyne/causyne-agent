@@ -10,7 +10,7 @@ export function windowSnapshot(snapshot, requestedOffset = 0) {
     }
     const contentBudget = MAX_SNAPSHOT_CHARS - SNAPSHOT_TAIL_CHARS - 240;
     const maximumOffset = Math.max(0, totalChars - SNAPSHOT_TAIL_CHARS);
-    const offset = Math.min(Math.max(0, Math.floor(requestedOffset)), maximumOffset);
+    const offset = Math.min(Math.max(0, Number.isFinite(requestedOffset) ? Math.floor(requestedOffset) : 0), maximumOffset);
     const chunkEnd = Math.min(offset + contentBudget, maximumOffset);
     const hasMore = chunkEnd < maximumOffset;
     const tail = text.slice(-SNAPSHOT_TAIL_CHARS);

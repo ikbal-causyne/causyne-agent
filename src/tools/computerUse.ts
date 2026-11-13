@@ -114,7 +114,7 @@ export const computerUse = {
           desktopActions.push({ verb: 'type', text: args.key });
         }
       } else if (actionType === 'wait') {
-        desktopActions.push({ verb: 'wait', seconds: Math.min(10, Math.max(0.1, args.seconds || 1)) });
+        desktopActions.push({ verb: 'wait', seconds: Math.min(10, Math.max(0.1, Number.isFinite(args.seconds) ? args.seconds! : 1)) });
       } else {
         return { success: false, error: `Unsupported computer_use action: ${actionType}` };
       }
