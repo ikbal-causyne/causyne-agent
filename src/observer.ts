@@ -3,7 +3,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { coldObserver } from './observer/coldObserver.js';
-import type { ToolOutcome } from './observer/evidence.js';
+import { isVerificationCommand, type ToolOutcome } from './observer/evidence.js';
 
 export type ObservationStatus =
   | 'progressing'
@@ -165,7 +165,7 @@ export class CausyneObserver {
           o.success && (o.exitCode == null || o.exitCode === 0) && (
             o.rendered === true ||
             o.tool === 'verify_local_web' ||
-            (o.command && /\b(?:test|build|check|typecheck|vitest|jest|pytest)\b/i.test(o.command))
+            (o.command && isVerificationCommand(o.command))
           )
         );
 

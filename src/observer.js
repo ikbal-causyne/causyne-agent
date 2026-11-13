@@ -3,6 +3,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { coldObserver } from './observer/coldObserver.js';
+import { isVerificationCommand } from './observer/evidence.js';
 export function extractClaimedLocalUrls(text) {
     if (!text)
         return [];
@@ -98,7 +99,7 @@ export class CausyneObserver {
                 const hasMutations = outcomes.some(o => ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool));
                 const hasPassingVerification = outcomes.slice(outcomes.findLastIndex(o => ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)) + 1).some(o => o.success && (o.exitCode == null || o.exitCode === 0) && (o.rendered === true ||
                     o.tool === 'verify_local_web' ||
-                    (o.command && /\b(?:test|build|check|typecheck|vitest|jest|pytest)\b/i.test(o.command))));
+                    (o.command && isVerificationCommand(o.command))));
                 if (!hasPassingVerification) {
                     return {
                         status: hasMutations ? 'ready-to-verify' : 'progressing',
