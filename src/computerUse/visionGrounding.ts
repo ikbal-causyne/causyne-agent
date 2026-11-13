@@ -140,7 +140,7 @@ export function parseSingleAction(
 
   const callMatch = line.match(/^([a-zA-Z_0-9]+)\s*\((.*)\)$/);
   if (!callMatch) {
-    if (/finished/i.test(line)) {
+    if (/^finished$/i.test(line)) {
       return { action: 'finished', rawStr: line };
     }
     return null;

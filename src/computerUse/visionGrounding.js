@@ -68,7 +68,7 @@ export function parseSingleAction(rawAction, screenContext = { width: 1920, heig
     line = line.replace(/^(?:Action(?:_Summary)?[:：]\s*)/i, '').trim();
     const callMatch = line.match(/^([a-zA-Z_0-9]+)\s*\((.*)\)$/);
     if (!callMatch) {
-        if (/finished/i.test(line)) {
+        if (/^finished$/i.test(line)) {
             return { action: 'finished', rawStr: line };
         }
         return null;
