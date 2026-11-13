@@ -7,6 +7,10 @@
 import { parseVisionGroundingPrediction, visionGroundingToDesktopAct, groundBoxCenter } from '../computerUse/visionGrounding.js';
 import { desktopAct } from './desktopAct.js';
 import { auditLog } from '../auditLog.js';
+function hasValidCoordinates(value) {
+    return Array.isArray(value) && (value.length === 2 || value.length === 4)
+        && value.every(coord => typeof coord === 'number' && Number.isFinite(coord));
+}
 export const computerUse = {
     schema: {
         name: 'computer_use',
@@ -76,17 +80,22 @@ export const computerUse = {
             // Mode 2: Direct action request
             const actionType = args.action || 'click';
             if (actionType === 'click') {
-                const coords = args.coordinates || [];
+                const coords = args.coordinates;
+                if (!hasValidCoordinates(coords))
+                    return { success: false, error: 'Click requires finite coordinates [x, y] or [x1, y1, x2, y2].' };
                 const point = groundBoxCenter(coords, screen);
-                if (!point)
-                    return { success: false, error: 'Click requires valid coordinates [x, y].' };
+                if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y))
+                    return { success: false, error: 'Click coordinates are outside the supported screen context.' };
                 desktopActions.push({ verb: 'clickxy', x: point.x, y: point.y });
             }
             else if (actionType === 'type') {
-                if (args.coordinates && args.coordinates.length >= 2) {
+                if (args.coordinates !== undefined) {
+                    if (!hasValidCoordinates(args.coordinates))
+                        return { success: false, error: 'Type target requires finite coordinates [x, y] or [x1, y1, x2, y2].' };
                     const point = groundBoxCenter(args.coordinates, screen);
-                    if (point)
-                        desktopActions.push({ verb: 'clickxy', x: point.x, y: point.y });
+                    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y))
+                        return { success: false, error: 'Type target coordinates are outside the supported screen context.' };
+                    desktopActions.push({ verb: 'clickxy', x: point.x, y: point.y });
                 }
                 if (!args.text)
                     return { success: false, error: 'Type action requires "text" parameter.' };
@@ -102,8 +111,11 @@ export const computerUse = {
                 if (keyCode !== undefined) {
                     desktopActions.push({ verb: 'key', keyCode });
                 }
-                else {
+                else if (/^[a-z0-9]$/i.test(args.key)) {
                     desktopActions.push({ verb: 'type', text: args.key });
+                }
+                else {
+                    return { success: false, error: 'Unsupported key name or chord. Use action "type" for text; compound hotkeys require supported key actuation.' };
                 }
             }
             else if (actionType === 'wait') {
