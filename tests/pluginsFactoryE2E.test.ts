@@ -243,6 +243,36 @@ test('E2E: generated Native CLI plugin runs system binary and captures stdout/st
   }
 });
 
+test('E2E: python module text cannot inject bridge.py statements', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-python-inject-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'python-safe',
+      description: 'Python injection probe',
+      serviceKind: 'python_sdk',
+      pythonModule: 'math\nraise RuntimeError("escaped")',
+      tools: [{ name: 'run', description: 'Run', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const scaffold = await factory.scaffold(factory.assess(service));
+    assert.equal(scaffold.success, true);
+    const bridge = fs.readFileSync(path.join(scaffold.targetDirectory, 'bridge.py'), 'utf8');
+    assert.equal(bridge.includes('\nraise RuntimeError("escaped")'), false);
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('python3', ['-m', 'py_compile', path.join(scaffold.targetDirectory, 'bridge.py')], { stdio: 'ignore' });
+      child.on('error', reject);
+      child.on('close', code => code === 0 ? resolve() : reject(new Error(`py_compile exited ${code}`)));
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('E2E: comment terminators in tool descriptions cannot escape generated code', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-comment-e2e-'));
   try {
