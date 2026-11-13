@@ -218,6 +218,40 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: generated HTTP auth matches the declared auth type', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-auth-'));
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const cases = [
+      { name: 'auth-api-key', authType: 'apiKey' as const, expected: /X-API-Key/, forbidden: /Authorization/ },
+      { name: 'auth-basic', authType: 'basic' as const, expected: /Basic .*Buffer\.from/, forbidden: /Bearer/ },
+      { name: 'auth-none', authType: 'none' as const, expected: /const authHeader = undefined;/, forbidden: /process\.env/ }
+    ];
+    for (const item of cases) {
+      const service: ServiceDescriptor = {
+        name: item.name,
+        description: 'Auth probe',
+        serviceKind: 'http_api',
+        endpoint: 'https://api.example.com/items',
+        authType: item.authType,
+        authEnvVar: 'FACTORY_AUTH_PROBE',
+        tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+      };
+      const result = await factory.scaffold(factory.assess(service));
+      assert.equal(result.success, true);
+      const code = fs.readFileSync(path.join(pluginsDir, item.name, 'index.js'), 'utf8');
+      assert.match(code, item.expected);
+      assert.doesNotMatch(code, item.forbidden);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: quotes MCP server paths that contain spaces', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne factory quote-'));
   try {

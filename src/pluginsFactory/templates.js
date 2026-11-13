@@ -81,6 +81,33 @@ function buildExportNames(tools) {
     });
 }
 /**
+ * Builds the generated auth setup. The env var keeps the secret out of the
+ * manifest while authType selects the header shape the API expects.
+ */
+function buildAuthSetup(service) {
+    if (!service.authEnvVar || service.authType === 'none') {
+        return 'const authHeader = undefined;';
+    }
+    const envAccess = `process.env[${JSON.stringify(service.authEnvVar)}]`;
+    const authType = service.authType || 'bearer';
+    let headerName = 'Authorization';
+    let valueExpression;
+    if (authType === 'basic') {
+        valueExpression = `\`Basic \${Buffer.from(${envAccess}).toString('base64')}\``;
+    }
+    else if (authType === 'apiKey') {
+        headerName = 'X-API-Key';
+        valueExpression = envAccess;
+    }
+    else if (authType === 'env') {
+        valueExpression = envAccess;
+    }
+    else {
+        valueExpression = `\`Bearer \${${envAccess}}\``;
+    }
+    return `const authHeader = ${envAccess} ? { name: ${JSON.stringify(headerName)}, value: ${valueExpression} } : undefined;`;
+}
+/**
  * Generates scaffold files for a Native HTTP Plugin.
  */
 export function generateHttpPluginScaffold(service) {
@@ -126,15 +153,13 @@ export async function ${fnName}(args = {}, context = {}) {
     }
   }
 
-  const authHeader = ${service.authEnvVar
-            ? `process.env[${JSON.stringify(service.authEnvVar)}] ? \`Bearer \${process.env[${JSON.stringify(service.authEnvVar)}]}\` : undefined`
-            : 'undefined'};
+  ${buildAuthSetup(service)}
 
   const headers = {
     'Accept': 'application/json',
     'Content-Type': 'application/json'
   };
-  if (authHeader) headers['Authorization'] = authHeader;
+  if (authHeader) headers[authHeader.name] = authHeader.value;
 
   try {
     const response = await fetch(url.toString(), {
