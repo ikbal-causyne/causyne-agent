@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+import { isPrivateAddress } from './urlPolicy.js';
 const MAX_PROVIDER_BYTES = 2 * 1024 * 1024;
 const MAX_RESULTS = 10;
 const SEARCH_TIMEOUT_MS = 15_000;
@@ -24,6 +26,11 @@ function publicResultUrl(value) {
     try {
         const parsed = new URL(decodeEntities(value));
         if (!['http:', 'https:'].includes(parsed.protocol))
+            return null;
+        const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+        if (parsed.username || parsed.password || host === 'localhost' ||
+            host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') ||
+            (isIP(host) !== 0 && isPrivateAddress(host)))
             return null;
         if (/(^|\.)(bing|duckduckgo)\.com$/i.test(parsed.hostname))
             return null;
