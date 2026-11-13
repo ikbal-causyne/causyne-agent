@@ -53,6 +53,17 @@ test('only a successful matching check resolves its failure', () => {
   assert.equal(machine.observe('exec', check, { success: true }).kind, 'none');
 });
 
+test('every command argument name gets verification guidance when its check passes again', () => {
+  for (const field of ['command', 'cmd', 'CommandLine', 'commandLine', 'script']) {
+    const machine = new TimeMachine();
+    const check = { [field]: 'npm test' };
+    machine.observe('exec', check, { success: false, error: 'exit code 1', exitCode: 1 });
+    const decision = machine.observe('exec', check, { success: true, exitCode: 0 });
+    assert.equal(decision.kind, 'resolved', field);
+    assert.match(decision.guidance, /verification command now passed/, field);
+  }
+});
+
 test('a site refusal immediately redirects the agent away from the blocked URL', () => {
   const machine = new TimeMachine();
   const decision = machine.observe('web_fetch', { url: 'https://example.com/blocked' }, {

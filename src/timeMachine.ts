@@ -41,12 +41,16 @@ function record(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {};
 }
 
-function operationFamily(args: Record<string, unknown>): string {
-  const command = typeof args.command === 'string' ? args.command
+function commandText(args: Record<string, unknown>): string {
+  return typeof args.command === 'string' ? args.command
     : typeof args.cmd === 'string' ? args.cmd
     : typeof args.CommandLine === 'string' ? args.CommandLine
     : typeof args.commandLine === 'string' ? args.commandLine
     : typeof args.script === 'string' ? args.script : '';
+}
+
+function operationFamily(args: Record<string, unknown>): string {
+  const command = commandText(args);
   if (!command) {
     const endpoint = typeof args.url === 'string' ? args.url : typeof args.endpoint === 'string' ? args.endpoint : '';
     if (endpoint) {
@@ -138,7 +142,7 @@ export class TimeMachine {
         issueKey: '',
         lastGoodTool: good,
         guidance: hadFailure
-          ? isVerificationCommand(String(args.command || args.cmd || ''))
+          ? isVerificationCommand(commandText(args))
             ? 'The same verification command now passed. Report that check as evidence; assess the rest of the task separately.'
             : 'This tool call succeeded. Verify the intended task outcome before reporting success.'
           : ''
