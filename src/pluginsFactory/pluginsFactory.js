@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from '../utils/paths.js';
 import { assessRoute } from './strategy.js';
-import { generateCliPluginScaffold, generateHttpPluginScaffold, generateMcpServerScaffold, generatePythonBridgeScaffold } from './templates.js';
+import { generateCliPluginScaffold, generateHttpPluginScaffold, generateMcpServerScaffold, generatePythonBridgeScaffold, shellQuote } from './templates.js';
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_TOOLS = 32;
@@ -283,7 +283,7 @@ export class PluginsFactory {
                 `Security Status: UNGRANTED (Review source files before granting)`,
                 '',
                 `To register and grant:`,
-                `  causyne mcp add ${normalizedName} node ${path.join(targetDir, 'server.js')}`,
+                `  causyne mcp add ${normalizedName} node ${shellQuote(path.join(targetDir, 'server.js'))}`,
                 `  causyne mcp grant ${normalizedName}`,
                 `  (or in chat: /mcp grant ${normalizedName})`
             ].join('\n');

@@ -22,6 +22,12 @@ const RESERVED_IDENTIFIERS = new Set([
     'yield'
 ]);
 /**
+ * Quotes a value for safe display inside a POSIX shell command line.
+ */
+export function shellQuote(value) {
+    return `'${value.replace(/'/g, "'\\''")}'`;
+}
+/**
  * Sanitizes an arbitrary tool or parameter name into a valid JavaScript identifier.
  * Prevents syntax errors when tools contain hyphens (e.g. "get-weather" -> "get_weather").
  */
@@ -663,7 +669,7 @@ Where feasible, prefer native plugins or Python bridges for higher token efficie
 ## Registration & Grant
 In Causyne Agent, register and review this server:
 \`\`\`bash
-causyne mcp add ${service.name} node ~/.causyne/mcp-servers/${service.name}/server.js
+causyne mcp add ${service.name} node "$HOME/.causyne/mcp-servers/${service.name}/server.js"
 causyne mcp grant ${service.name}
 \`\`\`
 `;

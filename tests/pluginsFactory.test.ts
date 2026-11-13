@@ -218,6 +218,32 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: quotes MCP server paths that contain spaces', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne factory quote-'));
+  try {
+    const mcpServersDir = path.join(tmpDir, 'mcp servers');
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir
+    });
+    const service: ServiceDescriptor = {
+      name: 'quoted-server',
+      description: 'MCP quoting probe',
+      serviceKind: 'mcp_only',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, true);
+    const serverPath = path.join(mcpServersDir, 'quoted-server', 'server.js');
+    assert.ok(result.instructions.includes(`node '${serverPath}'`));
+    const readme = fs.readFileSync(path.join(mcpServersDir, 'quoted-server', 'README.md'), 'utf8');
+    assert.match(readme, /node "\$HOME\/\.causyne\/mcp-servers\/quoted-server\/server\.js"/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: activation guidance uses the real /plugins command', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-guidance-'));
   try {

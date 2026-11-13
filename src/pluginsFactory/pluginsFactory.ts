@@ -24,7 +24,8 @@ import {
   generateCliPluginScaffold,
   generateHttpPluginScaffold,
   generateMcpServerScaffold,
-  generatePythonBridgeScaffold
+  generatePythonBridgeScaffold,
+  shellQuote
 } from './templates.js';
 import type {
   FactoryRouteProposal,
@@ -325,7 +326,7 @@ export class PluginsFactory {
         `Security Status: UNGRANTED (Review source files before granting)`,
         '',
         `To register and grant:`,
-        `  causyne mcp add ${normalizedName} node ${path.join(targetDir, 'server.js')}`,
+        `  causyne mcp add ${normalizedName} node ${shellQuote(path.join(targetDir, 'server.js'))}`,
         `  causyne mcp grant ${normalizedName}`,
         `  (or in chat: /mcp grant ${normalizedName})`
       ].join('\n');
