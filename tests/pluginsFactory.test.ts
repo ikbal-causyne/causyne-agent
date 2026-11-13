@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { pathToFileURL } from 'node:url';
 
 import {
   PluginsFactory,
@@ -214,6 +215,53 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
     assert.equal(state.plugins['weather-feed'].enabled, false, 'plugin is created disabled for user security');
     assert.equal(state.plugins['weather-feed'].digest, result.digest);
   } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('PluginsFactory: HTTP tools substitute path placeholders and keep them out of query/body', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-pathparams-'));
+  const originalFetch = globalThis.fetch;
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'path-params',
+      description: 'Path parameter probe',
+      serviceKind: 'http_api',
+      endpoint: 'https://api.example.com/v1',
+      tools: [{
+        name: 'get_user',
+        description: 'Get a user by id',
+        httpMethod: 'GET',
+        httpPath: '/users/{id}',
+        parameters: { type: 'object', properties: { id: { type: 'string' }, q: { type: 'string' } } }
+      }]
+    };
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, true);
+
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return { ok: true, json: async () => ({ id: 'a b/c' }) } as Response;
+    }) as typeof fetch;
+
+    const module = await import(pathToFileURL(path.join(pluginsDir, 'path-params', 'index.js')).href);
+    const response = await module.execute({ id: 'a b/c', q: 'search' });
+    assert.equal(response.success, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.example.com/v1/users/a%20b%2Fc?q=search');
+
+    const missing = await module.execute({ q: 'search' });
+    assert.equal(missing.success, false);
+    assert.match(missing.error, /Missing path parameter/);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

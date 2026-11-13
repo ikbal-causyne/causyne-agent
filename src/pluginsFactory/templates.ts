@@ -156,11 +156,20 @@ export function generateHttpPluginScaffold(service: ServiceDescriptor): Scaffold
 export async function ${fnName}(args = {}, context = {}) {
   const endpoint = ${JSON.stringify(service.endpoint || 'https://api.example.com')};
   const base = endpoint.endsWith('/') ? endpoint : endpoint + '/';
-  const rel = ${JSON.stringify(httpPath)}.startsWith('/') ? ${JSON.stringify(httpPath)}.slice(1) : ${JSON.stringify(httpPath)};
-  const url = new URL(rel, base);
+  const rawPath = ${JSON.stringify(httpPath)};
+  const pathParamNames = Array.from(rawPath.matchAll(/\\{([^}]+)\\}/g), match => match[1]);
+  const requestArgs = args && typeof args === 'object' ? { ...args } : {};
+  const missingPathParams = pathParamNames.filter(key => requestArgs[key] === undefined || requestArgs[key] === null);
+  if (missingPathParams.length > 0) {
+    return { success: false, error: \`Missing path parameter(s): \${missingPathParams.join(', ')}\` };
+  }
+  const rel = rawPath.replace(/\\{([^}]+)\\}/g, (_match, key) => encodeURIComponent(String(requestArgs[key])));
+  for (const key of pathParamNames) delete requestArgs[key];
+  const targetPath = rel.startsWith('/') ? rel.slice(1) : rel;
+  const url = new URL(targetPath, base);
 
-  if (${JSON.stringify(httpMethod)} === 'GET' && args && typeof args === 'object') {
-    for (const [k, v] of Object.entries(args)) {
+  if (${JSON.stringify(httpMethod)} === 'GET' && requestArgs && typeof requestArgs === 'object') {
+    for (const [k, v] of Object.entries(requestArgs)) {
       if (v !== undefined && v !== null) url.searchParams.append(k, String(v));
     }
   }
@@ -177,7 +186,7 @@ export async function ${fnName}(args = {}, context = {}) {
     const response = await fetch(url.toString(), {
       method: ${JSON.stringify(httpMethod)},
       headers,
-      body: ${httpMethod !== 'GET' ? 'JSON.stringify(args)' : 'undefined'}
+      body: ${httpMethod !== 'GET' ? 'JSON.stringify(requestArgs)' : 'undefined'}
     });
 
     if (!response.ok) {
