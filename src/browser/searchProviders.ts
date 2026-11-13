@@ -17,9 +17,15 @@ interface SearchOptions {
 function decodeEntities(value: string): string {
   const named: Record<string, string> = { amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"' };
   return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (full, entity: string) => {
-    if (entity.startsWith('#x')) return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
-    if (entity.startsWith('#')) return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
-    return named[entity.toLowerCase()] ?? full;
+    const normalized = entity.toLowerCase();
+    if (normalized.startsWith('#')) {
+      const point = normalized.startsWith('#x')
+        ? Number.parseInt(normalized.slice(2), 16)
+        : Number.parseInt(normalized.slice(1), 10);
+      return Number.isInteger(point) && point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+        ? String.fromCodePoint(point) : full;
+    }
+    return named[normalized] ?? full;
   });
 }
 
