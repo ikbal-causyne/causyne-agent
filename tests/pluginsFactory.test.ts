@@ -1180,6 +1180,10 @@ test('plugins_factory tool execution: assess and scaffold actions work via tool 
 
     assert.equal(costResult.success, true);
     assert.ok(costResult.proposal?.costComparison);
+    assert.match(costResult.message ?? '', /Token cost estimate for service 'mock-weather'/);
+    assert.match(costResult.message ?? '', /- native_plugin: \d+ \/ \d+ \/ [\d.]+x/);
+    assert.match(costResult.message ?? '', /- mcp_server: \d+ \/ \d+ \/ [\d.]+x/);
+    assert.doesNotMatch(assessResult.message ?? '', /Token cost estimate/);
 
     // 3. Dry run scaffold
     const dryRunResult = await pluginsFactoryTool.execute({

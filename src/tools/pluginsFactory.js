@@ -255,6 +255,15 @@ export const pluginsFactoryTool = {
             const service = normalizeServiceDescriptor(args);
             const proposal = factory.assess(service, args.userPreferredRoute);
             if (args.action === 'assess' || args.action === 'estimate_cost') {
+                const cost = proposal.costComparison;
+                const costLines = args.action === 'estimate_cost'
+                    ? [
+                        `Token cost estimate for service '${service.name}' (schema tokens / per-call tokens / relative cost):`,
+                        `- native_plugin: ${cost.nativePlugin.estimatedSchemaTokens} / ${cost.nativePlugin.estimatedPerCallTokens} / ${cost.nativePlugin.relativeCostMultiplier}x`,
+                        `- python_bridge: ${cost.pythonBridge.estimatedSchemaTokens} / ${cost.pythonBridge.estimatedPerCallTokens} / ${cost.pythonBridge.relativeCostMultiplier}x`,
+                        `- mcp_server: ${cost.mcpServer.estimatedSchemaTokens} / ${cost.mcpServer.estimatedPerCallTokens} / ${cost.mcpServer.relativeCostMultiplier}x`
+                    ]
+                    : [];
                 const res = {
                     success: true,
                     action: args.action,
@@ -262,6 +271,7 @@ export const pluginsFactoryTool = {
                     message: [
                         `Assessment complete for service '${service.name}'.`,
                         `Recommended Route: ${proposal.recommendedRoute} (${proposal.reason})`,
+                        ...costLines,
                         proposal.mcpDisclosure ? `\n${proposal.mcpDisclosure}` : ''
                     ].filter(Boolean).join('\n')
                 };
