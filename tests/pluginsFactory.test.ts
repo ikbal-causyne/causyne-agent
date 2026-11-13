@@ -12,7 +12,8 @@ import {
   estimateToolSchemaTokens,
   formatMcpDisclosure,
   findExistingCapability,
-  type ServiceDescriptor
+  type ServiceDescriptor,
+  type RouteKind
 } from '../src/pluginsFactory/index.js';
 import { pluginsFactoryTool } from '../src/tools/pluginsFactory.js';
 
@@ -179,6 +180,22 @@ test('PluginsFactory: discovery ignores substrings inside unrelated words', () =
     assert.equal(match.covered, false, `${query} should not match a native tool`);
   }
   assert.equal(findExistingCapability('web search').matchName, 'web_search');
+});
+
+test('PluginsFactory: invalid route preferences fall back to heuristics', () => {
+  const service: ServiceDescriptor = {
+    name: 'preference-probe',
+    description: 'Plain HTTP integration',
+    serviceKind: 'http_api',
+    endpoint: 'https://api.example.com',
+    tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+  };
+  const proposal = assessRoute(service, 'bogus' as RouteKind);
+  assert.equal(proposal.recommendedRoute, 'native_plugin');
+  assert.equal(proposal.userConfirmedRoute, undefined);
+
+  const stored: ServiceDescriptor = { ...service, userPreferredRoute: 'bogus' as RouteKind };
+  assert.equal(assessRoute(stored).recommendedRoute, 'native_plugin');
 });
 
 test('PluginsFactory: explicit service kinds outrank Python keyword heuristics', () => {

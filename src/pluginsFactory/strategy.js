@@ -37,12 +37,14 @@ function isPythonSpecific(service) {
     const descLower = (service.description || '').toLowerCase();
     return PYTHON_KEYWORDS.some(kw => nameLower.includes(kw) || descLower.includes(kw));
 }
+const ROUTE_KINDS = ['native_plugin', 'python_bridge', 'mcp_server'];
 export function assessRoute(service, userPreference) {
     const costComparison = estimateServiceCosts(service);
     const capabilityQuery = [service.name, ...service.tools.map(tool => tool.name)].join(' ');
     const existingCapability = findExistingCapability(capabilityQuery);
-    // 1. User Preference Override
-    const chosenRoute = userPreference ?? service.userPreferredRoute;
+    // 1. User Preference Override (invalid runtime values fall back to heuristics)
+    const requestedRoute = userPreference ?? service.userPreferredRoute;
+    const chosenRoute = requestedRoute && ROUTE_KINDS.includes(requestedRoute) ? requestedRoute : undefined;
     if (chosenRoute) {
         const isMcp = chosenRoute === 'mcp_server';
         const proposal = {
