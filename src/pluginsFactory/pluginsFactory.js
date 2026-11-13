@@ -232,6 +232,9 @@ export class PluginsFactory {
                 return `Duplicate tool name "${tool.name}".`;
             }
             seen.add(tool.name);
+            if (!tool.parameters || tool.parameters.type !== 'object') {
+                return `Tool "${tool.name}" parameters must be an object JSON schema.`;
+            }
         }
         return null;
     }

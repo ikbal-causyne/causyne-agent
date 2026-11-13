@@ -218,6 +218,32 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: rejects non-object tool parameter schemas', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-params-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'bad-parameters',
+      description: 'Parameter schema probe',
+      serviceKind: 'http_api',
+      tools: [{
+        name: 'get_item',
+        description: 'Invalid parameters',
+        parameters: { type: 'string' } as unknown as ServiceDescriptor['tools'][number]['parameters']
+      }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service));
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /object JSON schema/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: rejects plugins with too many tools', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-too-many-'));
   try {
