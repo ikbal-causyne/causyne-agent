@@ -12,22 +12,26 @@ export function extractCoordinateNumbers(raw) {
     const clean = String(raw || '').replace(/[()[\]]/g, ' ').trim();
     if (!clean)
         return [];
-    return clean
-        .split(/[\s,]+/)
-        .map((s) => Number.parseFloat(s))
-        .filter((n) => Number.isFinite(n));
+    const values = clean.split(/[\s,]+/).map((part) => Number(part));
+    return values.every(Number.isFinite) ? values : [];
 }
 /**
  * Ground normalized coordinates (0-1000) to actual screen units.
  * Defaults to OS logical points on macOS/modern desktop actuators to prevent double-scaling.
  */
 export function groundPoint(nums, screen = { width: 1920, height: 1080, scaleFactor: 1 }, factor = DEFAULT_FACTOR) {
-    if (nums.length < 2)
+    if (!Array.isArray(nums) || nums.length !== 2 || !nums.every(Number.isFinite))
+        return null;
+    if (!Number.isFinite(screen.width) || screen.width <= 0 || !Number.isFinite(screen.height) || screen.height <= 0)
+        return null;
+    if (!factor.every(value => Number.isFinite(value) && value > 0))
         return null;
     const rawX = nums[0] ?? 0;
     const rawY = nums[1] ?? 0;
     const targetSpace = screen.targetSpace ?? 'logical';
-    const scale = targetSpace === 'physical' ? (screen.scaleFactor || 1) : 1;
+    const scale = targetSpace === 'physical' ? (screen.scaleFactor ?? 1) : 1;
+    if (!Number.isFinite(scale) || scale <= 0)
+        return null;
     const normX = Math.max(0, Math.min(1, rawX / factor[0]));
     const normY = Math.max(0, Math.min(1, rawY / factor[1]));
     return {
@@ -39,7 +43,7 @@ export function groundPoint(nums, screen = { width: 1920, height: 1080, scaleFac
  * Ground a bounding box (x1, y1, x2, y2) into its midpoint (center click).
  */
 export function groundBoxCenter(nums, screen = { width: 1920, height: 1080, scaleFactor: 1 }, factor = DEFAULT_FACTOR) {
-    if (nums.length < 2)
+    if (!Array.isArray(nums) || (nums.length !== 2 && nums.length !== 4) || !nums.every(Number.isFinite))
         return null;
     if (nums.length === 2) {
         return groundPoint(nums, screen, factor);
