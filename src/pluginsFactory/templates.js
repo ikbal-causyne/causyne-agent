@@ -281,7 +281,7 @@ export async function ${fnName}(args = {}, context = {}) {
 
   const bin = ${JSON.stringify(binary)};
   const cliArgs = [];
-  ${tool.cliSubcommand ? `cliArgs.push(${JSON.stringify(tool.cliSubcommand)});` : ''}
+  ${tool.cliSubcommand ? `cliArgs.push(...${JSON.stringify(tool.cliSubcommand)}.split(/\\s+/).filter(Boolean));` : ''}
 
   for (const [key, val] of Object.entries(args || {})) {
     if (val === true) cliArgs.push(\`--\${key}\`);

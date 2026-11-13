@@ -261,6 +261,42 @@ test('E2E: generated Native CLI plugin runs system binary and captures stdout/st
   }
 });
 
+test('E2E: generated Native CLI plugin splits a multi-word cliSubcommand into separate arguments', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cli-multiword-e2e-'));
+
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+
+    const service: ServiceDescriptor = {
+      name: 'node-two-flags',
+      description: 'Node wrapper with a two-token subcommand',
+      serviceKind: 'cli',
+      cliBinary: 'node',
+      tools: [
+        {
+          name: 'print_version',
+          description: 'Print Node version',
+          parameters: { type: 'object', properties: {} },
+          cliSubcommand: '--no-warnings   -v'
+        }
+      ]
+    };
+
+    const scaffold = await factory.scaffold(factory.assess(service));
+    assert.equal(scaffold.success, true);
+
+    const imported = await import(`file://${path.join(scaffold.targetDirectory, 'index.js')}`);
+    const runResult = await imported.execute({}, { workspaceRoot: tmpDir });
+    assert.equal(runResult.success, true, `multi-word subcommand must be split: ${runResult.error ?? ''}`);
+    assert.ok(runResult.stdout.startsWith('v'));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('E2E: python module text cannot inject bridge.py statements', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-python-inject-'));
   try {
