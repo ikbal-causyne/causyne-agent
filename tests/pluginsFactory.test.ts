@@ -946,6 +946,51 @@ test('plugins_factory tool rejects malformed tool descriptors', async () => {
   assert.match(missingDescription.error ?? '', /non-empty description/);
 });
 
+test('plugins_factory tool rejects malformed string and capability fields', async () => {
+  const blankName = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: '   '
+  });
+  assert.equal(blankName.success, false);
+  assert.match(blankName.error ?? '', /serviceName.*non-empty/);
+
+  const numericEndpoint = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'numeric-endpoint',
+    endpoint: 42 as unknown as string
+  });
+  assert.equal(numericEndpoint.success, false);
+  assert.match(numericEndpoint.error ?? '', /"endpoint" must be a string/);
+
+  const badCapabilities = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'bad-capabilities',
+    capabilities: 'network' as unknown as []
+  });
+  assert.equal(badCapabilities.success, false);
+  assert.match(badCapabilities.error ?? '', /"capabilities" must be an array/);
+
+  const unknownCapability = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'unknown-capability',
+    capabilities: ['root' as never]
+  });
+  assert.equal(unknownCapability.success, false);
+  assert.match(unknownCapability.error ?? '', /Unknown capability/);
+
+  const numericPath = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'numeric-path',
+    tools: [{
+      name: 'get_item',
+      description: 'Get item',
+      httpPath: 7 as unknown as string
+    }]
+  });
+  assert.equal(numericPath.success, false);
+  assert.match(numericPath.error ?? '', /"httpPath" must be a string/);
+});
+
 test('plugins_factory tool rejects non-boolean flags', async () => {
   const badForce = await pluginsFactoryTool.execute({
     action: 'scaffold',

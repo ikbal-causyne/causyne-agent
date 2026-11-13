@@ -56,8 +56,37 @@ const SERVICE_KINDS = new Set(['http_api', 'cli', 'python_sdk', 'mcp_only', 'cus
 const AUTH_TYPES = new Set(['none', 'bearer', 'apiKey', 'basic', 'env']);
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']);
 const ROUTE_KINDS = new Set(['native_plugin', 'python_bridge', 'mcp_server']);
+const CAPABILITY_NAMES = new Set(['workspace:read', 'workspace:write', 'network', 'subprocess']);
+const ACTIONS = new Set(['assess', 'estimate_cost', 'scaffold']);
+
+function assertOptionalString(value: unknown, field: string): void {
+  if (value !== undefined && typeof value !== 'string') {
+    throw new Error(`"${field}" must be a string.`);
+  }
+}
 
 function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor {
+  if (typeof args.action !== 'string' || !ACTIONS.has(args.action)) {
+    throw new Error(`Unrecognized action: "${String(args.action)}". Allowed: assess, estimate_cost, scaffold`);
+  }
+  if (typeof args.serviceName !== 'string' || !args.serviceName.trim()) {
+    throw new Error('"serviceName" must be a non-empty string.');
+  }
+  assertOptionalString(args.serviceDescription, 'serviceDescription');
+  assertOptionalString(args.endpoint, 'endpoint');
+  assertOptionalString(args.authEnvVar, 'authEnvVar');
+  assertOptionalString(args.cliBinary, 'cliBinary');
+  assertOptionalString(args.pythonModule, 'pythonModule');
+  if (args.capabilities !== undefined) {
+    if (!Array.isArray(args.capabilities)) {
+      throw new Error('"capabilities" must be an array.');
+    }
+    for (const capability of args.capabilities) {
+      if (!CAPABILITY_NAMES.has(capability)) {
+        throw new Error(`Unknown capability "${String(capability)}".`);
+      }
+    }
+  }
   if (args.serviceKind !== undefined && !SERVICE_KINDS.has(args.serviceKind)) {
     throw new Error(`Invalid serviceKind "${String(args.serviceKind)}".`);
   }
@@ -88,6 +117,12 @@ function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor
     }
     if (t.httpMethod !== undefined && !HTTP_METHODS.has(t.httpMethod)) {
       throw new Error(`Tool "${t.name}" has invalid httpMethod "${String(t.httpMethod)}".`);
+    }
+    for (const field of ['httpPath', 'cliSubcommand', 'pythonMethod'] as const) {
+      const value = t[field];
+      if (value !== undefined && typeof value !== 'string') {
+        throw new Error(`Tool "${t.name}" field "${field}" must be a string.`);
+      }
     }
     const rawParams = t.parameters ?? {};
     if (rawParams['type'] !== undefined && rawParams['type'] !== 'object') {
