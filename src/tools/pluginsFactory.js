@@ -7,8 +7,31 @@
  */
 import { PluginsFactory } from '../pluginsFactory/index.js';
 function normalizeServiceDescriptor(args) {
+    if (args.tools !== undefined && !Array.isArray(args.tools)) {
+        throw new Error('"tools" must be an array of tool descriptors.');
+    }
     const tools = (args.tools || []).map((t, idx) => {
-        const rawParams = (t.parameters && typeof t.parameters === 'object') ? t.parameters : {};
+        if (!t || typeof t !== 'object' || Array.isArray(t)) {
+            throw new Error(`Tool at index ${idx} must be an object.`);
+        }
+        if (typeof t.name !== 'string' || !t.name.trim()) {
+            throw new Error(`Tool at index ${idx} requires a non-empty name.`);
+        }
+        if (typeof t.description !== 'string' || !t.description.trim()) {
+            throw new Error(`Tool "${t.name}" requires a non-empty description.`);
+        }
+        if (t.parameters !== undefined &&
+            (t.parameters === null || typeof t.parameters !== 'object' || Array.isArray(t.parameters))) {
+            throw new Error(`Tool "${t.name}" parameters must be an object JSON schema.`);
+        }
+        const rawParams = t.parameters ?? {};
+        if (rawParams['type'] !== undefined && rawParams['type'] !== 'object') {
+            throw new Error(`Tool "${t.name}" parameters must declare type "object".`);
+        }
+        if (rawParams['properties'] !== undefined &&
+            (rawParams['properties'] === null || typeof rawParams['properties'] !== 'object' || Array.isArray(rawParams['properties']))) {
+            throw new Error(`Tool "${t.name}" parameters.properties must be an object.`);
+        }
         const { type: _discardType, ...restParams } = rawParams;
         const parameters = {
             ...restParams,
@@ -18,8 +41,8 @@ function normalizeServiceDescriptor(args) {
                 : {}
         };
         const tool = {
-            name: t.name || `tool_${idx + 1}`,
-            description: t.description || `Tool ${t.name || idx + 1}`,
+            name: t.name.trim(),
+            description: t.description.trim(),
             parameters
         };
         if (t.httpMethod !== undefined)

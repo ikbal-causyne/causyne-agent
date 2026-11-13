@@ -904,6 +904,48 @@ test('PluginsFactory: path containment prevents writing outside target directory
   }
 });
 
+test('plugins_factory tool rejects malformed tool descriptors', async () => {
+  const invalidTools = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'malformed-tools',
+    tools: 'not-an-array' as unknown as NonNullable<Parameters<typeof pluginsFactoryTool.execute>[0]['tools']>
+  });
+  assert.equal(invalidTools.success, false);
+  assert.match(invalidTools.error ?? '', /must be an array/);
+
+  const arrayParameters = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'malformed-parameters',
+    tools: [{
+      name: 'get_item',
+      description: 'Get item',
+      parameters: [] as unknown as Record<string, unknown>
+    }]
+  });
+  assert.equal(arrayParameters.success, false);
+  assert.match(arrayParameters.error ?? '', /parameters must be an object/);
+
+  const nonObjectSchema = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'malformed-schema',
+    tools: [{
+      name: 'get_item',
+      description: 'Get item',
+      parameters: { type: 'string' }
+    }]
+  });
+  assert.equal(nonObjectSchema.success, false);
+  assert.match(nonObjectSchema.error ?? '', /type "object"/);
+
+  const missingDescription = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'missing-description',
+    tools: [{ name: 'get_item', description: '   ' }]
+  });
+  assert.equal(missingDescription.success, false);
+  assert.match(missingDescription.error ?? '', /non-empty description/);
+});
+
 test('plugins_factory tool execution: assess and scaffold actions work via tool interface', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-tool-test-'));
 
