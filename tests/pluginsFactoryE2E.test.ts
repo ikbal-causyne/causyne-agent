@@ -219,6 +219,56 @@ test('E2E: generated MCP stdio server handles JSON-RPC 2.0 handshake, tools/list
   }
 });
 
+test('E2E: generated MCP server answers unknown tools with -32602 and non-object requests with -32600', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-mcp-errors-e2e-'));
+
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+
+    const service: ServiceDescriptor = {
+      name: 'error-codes-daemon',
+      description: 'MCP error code conformance',
+      serviceKind: 'mcp_only',
+      tools: [{ name: 'known_tool', description: 'Known tool', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const scaffold = await factory.scaffold(factory.assess(service));
+    assert.equal(scaffold.success, true);
+
+    const input = [
+      'null',
+      '123',
+      '[1,2]',
+      JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'missing_tool' } })
+    ].join('\n') + '\n';
+
+    const output = await new Promise<string>((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(scaffold.targetDirectory, 'server.js')], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+      let stdout = '';
+      child.stdout.on('data', chunk => { stdout += chunk; });
+      child.on('error', reject);
+      child.on('close', () => resolve(stdout));
+      child.stdin.end(input);
+    });
+
+    const replies = output.trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(replies.length, 4, 'every malformed or failing request receives exactly one reply');
+    for (const reply of replies.slice(0, 3)) {
+      assert.equal(reply.id, null);
+      assert.equal(reply.error.code, -32600);
+    }
+    assert.equal(replies[3].id, 7);
+    assert.equal(replies[3].error.code, -32602);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('E2E: generated Native CLI plugin runs system binary and captures stdout/stderr', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cli-e2e-'));
 

@@ -656,7 +656,7 @@ function handleRequest(request) {
         return {
           id,
           jsonrpc: '2.0',
-          error: { code: -32601, message: \`Tool '\${toolName}' not found\` }
+          error: { code: -32602, message: \`Unknown tool: '\${toolName}'\` }
         };
       }
 
@@ -699,6 +699,10 @@ rl.on('line', (line) => {
   if (!trimmed) return;
   try {
     const request = JSON.parse(trimmed);
+    if (!request || typeof request !== 'object' || Array.isArray(request)) {
+      send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } });
+      return;
+    }
     const response = handleRequest(request);
     if (response) send(response);
   } catch (err) {
