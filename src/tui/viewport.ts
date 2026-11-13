@@ -200,7 +200,8 @@ export class Viewport {
   }
 
   contentHeight(): number {
-    return this.transcript ? this.transcript.height(this.viewWidth) : 0;
+    const measured = this.transcript ? this.transcript.height(this.viewWidth) : 0;
+    return Number.isFinite(measured) ? Math.max(0, Math.floor(measured)) : 0;
   }
 
   maxScrollTop(): number {
