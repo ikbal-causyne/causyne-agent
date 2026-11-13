@@ -245,6 +245,21 @@ export class PluginsFactory {
             for (const file of payload.files) {
                 const filePath = path.join(targetDir, file.relativePath);
                 const fileDir = path.dirname(filePath);
+                if (fs.existsSync(fileDir)) {
+                    const dirStat = fs.lstatSync(fileDir);
+                    if (dirStat.isSymbolicLink()) {
+                        throw new Error(`Refusing to write through symlinked directory: ${fileDir}`);
+                    }
+                }
+                if (fs.existsSync(filePath)) {
+                    const fileStat = fs.lstatSync(filePath);
+                    if (fileStat.isSymbolicLink()) {
+                        throw new Error(`Refusing to overwrite symlinked file: ${filePath}`);
+                    }
+                    if (!fileStat.isFile()) {
+                        throw new Error(`Refusing to overwrite non-file path: ${filePath}`);
+                    }
+                }
                 if (!fs.existsSync(fileDir)) {
                     fs.mkdirSync(fileDir, { recursive: true, mode: 0o700 });
                 }

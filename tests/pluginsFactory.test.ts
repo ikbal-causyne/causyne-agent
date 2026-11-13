@@ -298,6 +298,42 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: refuses to overwrite symlinked plugin files', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-filelink-'));
+  try {
+    const pluginsDir = path.join(tmpDir, 'plugins');
+    const targetDir = path.join(pluginsDir, 'linked-file');
+    const outside = path.join(tmpDir, 'outside.js');
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(outside, 'do not overwrite');
+    try {
+      fs.symlinkSync(outside, path.join(targetDir, 'index.js'), 'file');
+    } catch {
+      t.skip('symlinks are not available on this platform');
+      return;
+    }
+
+    const factory = new PluginsFactory({
+      pluginsDir,
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'linked-file',
+      description: 'File symlink probe',
+      serviceKind: 'http_api',
+      endpoint: 'https://api.example.com',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+
+    const result = await factory.scaffold(factory.assess(service), { force: true });
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /symlinked file/);
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'do not overwrite');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: rejects non-HTTP endpoints before scaffolding', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-endpoint-'));
   try {
