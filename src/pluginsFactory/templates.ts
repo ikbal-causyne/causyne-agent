@@ -41,6 +41,18 @@ export function sanitizeIdentifier(name: string): string {
 }
 
 /**
+ * Keeps user-supplied text inside a generated comment. A description that
+ * contains a comment terminator would otherwise escape the docblock and run
+ * as generated JavaScript.
+ */
+export function sanitizeComment(text: string): string {
+  return String(text ?? '')
+    .replace(/\*\//g, '*\\/')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .trim();
+}
+
+/**
  * Computes canonical export names for every tool in a module.
  * The primary tool is always exported as "execute" (the default runner
  * contract). Additional tools receive sanitized identifiers, disambiguated
@@ -94,7 +106,7 @@ export function generateHttpPluginScaffold(service: ServiceDescriptor): Scaffold
     const httpPath = tool.httpPath || '/';
     return `
 /**
- * ${tool.description}
+ * ${sanitizeComment(tool.description)}
  */
 export async function ${fnName}(args = {}, context = {}) {
   const endpoint = ${JSON.stringify(service.endpoint || 'https://api.example.com')};
@@ -217,7 +229,7 @@ export function generateCliPluginScaffold(service: ServiceDescriptor): Scaffoldi
     const binary = service.cliBinary || service.name;
     return `
 /**
- * ${tool.description}
+ * ${sanitizeComment(tool.description)}
  */
 export async function ${fnName}(args = {}, context = {}) {
   const { execFile } = await import('node:child_process');
@@ -326,7 +338,7 @@ export function generatePythonBridgeScaffold(service: ServiceDescriptor): Scaffo
     const pythonMethod = tool.pythonMethod || tool.name;
     return `
 /**
- * ${tool.description}
+ * ${sanitizeComment(tool.description)}
  */
 export async function ${fnName}(args = {}, context = {}) {
   return invokePythonBridge(${JSON.stringify(pythonMethod)}, args, context);

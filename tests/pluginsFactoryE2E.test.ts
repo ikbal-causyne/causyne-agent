@@ -243,6 +243,35 @@ test('E2E: generated Native CLI plugin runs system binary and captures stdout/st
   }
 });
 
+test('E2E: comment terminators in tool descriptions cannot escape generated code', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-comment-e2e-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'comment-safe',
+      description: 'Comment safety probe',
+      serviceKind: 'http_api',
+      tools: [
+        {
+          name: 'get_item',
+          description: 'End comment */ throw new Error("escaped"); /*',
+          parameters: { type: 'object', properties: {} }
+        }
+      ]
+    };
+
+    const scaffold = await factory.scaffold(factory.assess(service));
+    assert.equal(scaffold.success, true);
+    const module = await import(`file://${path.join(scaffold.targetDirectory, 'index.js')}`);
+    assert.equal(typeof module.execute, 'function');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('E2E: colliding sanitized tool names receive unique exports', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-collision-e2e-'));
   try {
