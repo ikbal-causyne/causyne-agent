@@ -23,6 +23,7 @@ import { generateCliPluginScaffold, generateHttpPluginScaffold, generateMcpServe
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_TOOLS = 32;
+const CAPABILITIES = new Set(['workspace:read', 'workspace:write', 'network', 'subprocess']);
 /**
  * Computes the exact SHA-256 directory digest matching Causyne's pluginManager.
  */
@@ -105,6 +106,17 @@ export class PluginsFactory {
                 createdFiles: [],
                 instructions: '',
                 error: toolError
+            };
+        }
+        const capabilityError = this.validateCapabilities(service.capabilities || []);
+        if (capabilityError) {
+            return {
+                success: false,
+                route,
+                targetDirectory: '',
+                createdFiles: [],
+                instructions: '',
+                error: capabilityError
             };
         }
         const baseDir = options.baseDir
@@ -234,6 +246,14 @@ export class PluginsFactory {
             seen.add(tool.name);
             if (!tool.parameters || tool.parameters.type !== 'object') {
                 return `Tool "${tool.name}" parameters must be an object JSON schema.`;
+            }
+        }
+        return null;
+    }
+    validateCapabilities(capabilities) {
+        for (const capability of capabilities) {
+            if (!CAPABILITIES.has(capability)) {
+                return `Unknown capability "${capability}".`;
             }
         }
         return null;
