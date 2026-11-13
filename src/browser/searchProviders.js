@@ -60,7 +60,7 @@ export function parseBingRss(xml) {
 export function parseDuckDuckGoHtml(html) {
     const results = [];
     const seen = new Set();
-    const anchors = [...html.matchAll(/<a\b[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const anchors = [...html.matchAll(/<a\b(?=[^>]*\bclass=["'][^"']*\bresult__a\b[^"']*["'])[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
     for (const [index, anchor] of anchors.entries()) {
         let href = decodeEntities(anchor[1] ?? '');
         try {

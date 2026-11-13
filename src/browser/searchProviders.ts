@@ -71,7 +71,7 @@ export function parseBingRss(xml: string): SearchResult[] {
 export function parseDuckDuckGoHtml(html: string): SearchResult[] {
   const results: SearchResult[] = [];
   const seen = new Set<string>();
-  const anchors = [...html.matchAll(/<a\b[^>]*class=["'][^"']*result__a[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  const anchors = [...html.matchAll(/<a\b(?=[^>]*\bclass=["'][^"']*\bresult__a\b[^"']*["'])[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
   for (const [index, anchor] of anchors.entries()) {
     let href = decodeEntities(anchor[1] ?? '');
     try {
