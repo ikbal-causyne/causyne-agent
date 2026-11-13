@@ -75,6 +75,9 @@ function normalizeServiceDescriptor(args: PluginsFactoryArgs): ServiceDescriptor
   assertOptionalString(args.serviceDescription, 'serviceDescription');
   assertOptionalString(args.endpoint, 'endpoint');
   assertOptionalString(args.authEnvVar, 'authEnvVar');
+  if (args.authEnvVar !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(args.authEnvVar)) {
+    throw new Error('"authEnvVar" must be a valid environment variable name.');
+  }
   assertOptionalString(args.cliBinary, 'cliBinary');
   assertOptionalString(args.pythonModule, 'pythonModule');
   if (args.capabilities !== undefined) {
@@ -196,6 +199,9 @@ export const pluginsFactoryTool = {
         },
         serviceName: {
           type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$',
           description: 'Name of the service or plugin (lowercase alphanumeric and hyphens, e.g. "notion-api", "blender-cycles").'
         },
         serviceDescription: {
@@ -218,6 +224,7 @@ export const pluginsFactoryTool = {
         },
         authEnvVar: {
           type: 'string',
+          pattern: '^[A-Za-z_][A-Za-z0-9_]*$',
           description: 'Environment variable name holding the API token (e.g. "NOTION_API_KEY").'
         },
         cliBinary: {
@@ -230,11 +237,18 @@ export const pluginsFactoryTool = {
         },
         tools: {
           type: 'array',
+          maxItems: 32,
           items: {
             type: 'object',
             properties: {
-              name: { type: 'string', description: 'Tool name' },
-              description: { type: 'string', description: 'What the tool does' },
+              name: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 64,
+                pattern: '^[a-z][a-z0-9_-]{0,63}$',
+                description: 'Tool name'
+              },
+              description: { type: 'string', minLength: 1, description: 'What the tool does' },
               parameters: { type: 'object', description: 'JSON schema for tool parameters' },
               httpMethod: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
               httpPath: { type: 'string', description: 'HTTP relative path' },

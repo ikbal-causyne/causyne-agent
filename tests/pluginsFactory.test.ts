@@ -946,6 +946,14 @@ test('plugins_factory tool rejects malformed tool descriptors', async () => {
   assert.match(missingDescription.error ?? '', /non-empty description/);
 });
 
+test('plugins_factory schema constrains service names and tool limits', () => {
+  const params = pluginsFactoryTool.schema.parameters;
+  assert.equal(params.properties.serviceName.pattern, '^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$');
+  assert.equal(params.properties.tools.maxItems, 32);
+  assert.equal(params.properties.tools.items.properties.name.pattern, '^[a-z][a-z0-9_-]{0,63}$');
+  assert.equal(params.properties.authEnvVar.pattern, '^[A-Za-z_][A-Za-z0-9_]*$');
+});
+
 test('plugins_factory tool rejects malformed string and capability fields', async () => {
   const blankName = await pluginsFactoryTool.execute({
     action: 'assess',
@@ -989,6 +997,14 @@ test('plugins_factory tool rejects malformed string and capability fields', asyn
   });
   assert.equal(numericPath.success, false);
   assert.match(numericPath.error ?? '', /"httpPath" must be a string/);
+
+  const badEnvVar = await pluginsFactoryTool.execute({
+    action: 'assess',
+    serviceName: 'bad-env-var',
+    authEnvVar: 'NOT-VALID'
+  });
+  assert.equal(badEnvVar.success, false);
+  assert.match(badEnvVar.error ?? '', /valid environment variable name/);
 });
 
 test('plugins_factory tool rejects non-boolean flags', async () => {
