@@ -39,7 +39,8 @@ function isPythonSpecific(service) {
 }
 export function assessRoute(service, userPreference) {
     const costComparison = estimateServiceCosts(service);
-    const existingCapability = findExistingCapability(service.name);
+    const capabilityQuery = [service.name, ...service.tools.map(tool => tool.name)].join(' ');
+    const existingCapability = findExistingCapability(capabilityQuery);
     // 1. User Preference Override
     const chosenRoute = userPreference ?? service.userPreferredRoute;
     if (chosenRoute) {

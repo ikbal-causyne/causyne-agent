@@ -45,7 +45,8 @@ export function assessRoute(
   userPreference?: RouteKind
 ): FactoryRouteProposal {
   const costComparison = estimateServiceCosts(service);
-  const existingCapability = findExistingCapability(service.name);
+  const capabilityQuery = [service.name, ...service.tools.map(tool => tool.name)].join(' ');
+  const existingCapability = findExistingCapability(capabilityQuery);
 
   // 1. User Preference Override
   const chosenRoute = userPreference ?? service.userPreferredRoute;

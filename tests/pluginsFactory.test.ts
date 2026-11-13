@@ -181,6 +181,23 @@ test('PluginsFactory: discovery ignores substrings inside unrelated words', () =
   assert.equal(findExistingCapability('web search').matchName, 'web_search');
 });
 
+test('PluginsFactory: assessment discovers capabilities declared by tool names', () => {
+  const service: ServiceDescriptor = {
+    name: 'custom-integration',
+    description: 'Custom integration wrapper',
+    serviceKind: 'http_api',
+    endpoint: 'https://api.example.com',
+    tools: [{
+      name: 'web_search',
+      description: 'Search the web',
+      parameters: { type: 'object', properties: { query: { type: 'string' } } }
+    }]
+  };
+  const proposal = assessRoute(service);
+  assert.equal(proposal.existingCapability?.covered, true);
+  assert.equal(proposal.existingCapability?.matchName, 'web_search');
+});
+
 test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with digest and disabled state', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-test-'));
 
