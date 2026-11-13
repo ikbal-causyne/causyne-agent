@@ -246,6 +246,13 @@ export const pluginsFactoryTool = {
         };
       }
 
+      if (args.force !== undefined && typeof args.force !== 'boolean') {
+        return { success: false, action: args.action, error: '"force" must be a boolean.' };
+      }
+      if (args.dryRun !== undefined && typeof args.dryRun !== 'boolean') {
+        return { success: false, action: args.action, error: '"dryRun" must be a boolean.' };
+      }
+
       const factory = new PluginsFactory();
       const service = normalizeServiceDescriptor(args);
       const proposal = factory.assess(service, args.userPreferredRoute);

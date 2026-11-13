@@ -946,6 +946,24 @@ test('plugins_factory tool rejects malformed tool descriptors', async () => {
   assert.match(missingDescription.error ?? '', /non-empty description/);
 });
 
+test('plugins_factory tool rejects non-boolean flags', async () => {
+  const badForce = await pluginsFactoryTool.execute({
+    action: 'scaffold',
+    serviceName: 'bad-force',
+    force: 'yes' as unknown as boolean
+  });
+  assert.equal(badForce.success, false);
+  assert.match(badForce.error ?? '', /"force" must be a boolean/);
+
+  const badDryRun = await pluginsFactoryTool.execute({
+    action: 'scaffold',
+    serviceName: 'bad-dry-run',
+    dryRun: 1 as unknown as boolean
+  });
+  assert.equal(badDryRun.success, false);
+  assert.match(badDryRun.error ?? '', /"dryRun" must be a boolean/);
+});
+
 test('plugins_factory tool rejects invalid enum values', async () => {
   const badKind = await pluginsFactoryTool.execute({
     action: 'assess',
