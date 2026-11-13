@@ -243,6 +243,39 @@ test('E2E: generated Native CLI plugin runs system binary and captures stdout/st
   }
 });
 
+test('E2E: reserved-word tool names produce a loadable module', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-reserved-e2e-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'reserved-words',
+      description: 'Reserved word export probe',
+      serviceKind: 'http_api',
+      tools: [
+        { name: 'list_items', description: 'Primary tool', parameters: { type: 'object', properties: {} } },
+        { name: 'delete', description: 'Delete an item', parameters: { type: 'object', properties: {} } },
+        { name: 'default', description: 'Default item', parameters: { type: 'object', properties: {} } }
+      ]
+    };
+
+    const scaffold = await factory.scaffold(factory.assess(service));
+    assert.equal(scaffold.success, true);
+
+    const manifest = JSON.parse(fs.readFileSync(path.join(scaffold.targetDirectory, 'plugin.json'), 'utf8'));
+    assert.equal(manifest.tools[1].export, 'delete_');
+    assert.equal(manifest.tools[2].export, 'default_');
+
+    const module = await import(`file://${path.join(scaffold.targetDirectory, 'index.js')}`);
+    assert.equal(typeof module.delete_, 'function');
+    assert.equal(typeof module.default_, 'function');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('E2E: multi-tool plugin with hyphenated tool names exports clean identifiers without syntax error', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-multitool-e2e-'));
 

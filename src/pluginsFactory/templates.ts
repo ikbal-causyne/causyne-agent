@@ -16,12 +16,28 @@ export interface ScaffoldingPayload {
 }
 
 /**
+ * Words that cannot be used as a generated export binding. Modules are always
+ * strict, so `delete`, `default`, `eval`, `arguments`, and friends would make
+ * the generated module fail to parse.
+ */
+const RESERVED_IDENTIFIERS = new Set([
+  'arguments', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
+  'debugger', 'default', 'delete', 'do', 'else', 'enum', 'eval', 'export',
+  'extends', 'false', 'finally', 'for', 'function', 'if', 'implements',
+  'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package',
+  'private', 'protected', 'public', 'return', 'static', 'super', 'switch',
+  'this', 'throw', 'true', 'try', 'typeof', 'var', 'void', 'while', 'with',
+  'yield'
+]);
+
+/**
  * Sanitizes an arbitrary tool or parameter name into a valid JavaScript identifier.
  * Prevents syntax errors when tools contain hyphens (e.g. "get-weather" -> "get_weather").
  */
 export function sanitizeIdentifier(name: string): string {
   const cleaned = name.replace(/[^a-zA-Z0-9_]/g, '_');
-  return /^[0-9]/.test(cleaned) ? `_${cleaned}` : (cleaned || 'fn');
+  const identifier = /^[0-9]/.test(cleaned) ? `_${cleaned}` : (cleaned || 'fn');
+  return RESERVED_IDENTIFIERS.has(identifier) ? `${identifier}_` : identifier;
 }
 
 /**
