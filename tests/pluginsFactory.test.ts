@@ -218,6 +218,28 @@ test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with 
   }
 });
 
+test('PluginsFactory: rejects an unsupported route instead of scaffolding MCP', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-route-'));
+  try {
+    const factory = new PluginsFactory({
+      pluginsDir: path.join(tmpDir, 'plugins'),
+      mcpServersDir: path.join(tmpDir, 'mcp-servers')
+    });
+    const service: ServiceDescriptor = {
+      name: 'bad-route',
+      description: 'Route probe',
+      serviceKind: 'http_api',
+      tools: [{ name: 'get_item', description: 'Get', parameters: { type: 'object', properties: {} } }]
+    };
+    const proposal = factory.assess(service);
+    const result = await factory.scaffold({ ...proposal, recommendedRoute: 'bogus' as typeof proposal.recommendedRoute });
+    assert.equal(result.success, false);
+    assert.match(result.error ?? '', /Unsupported route/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('PluginsFactory: rejects unknown capabilities', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-factory-capability-'));
   try {

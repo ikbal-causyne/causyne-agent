@@ -96,6 +96,16 @@ export class PluginsFactory {
         }
         const normalizedService = { ...service, name: normalizedName };
         const route = proposal.userConfirmedRoute ?? proposal.recommendedRoute;
+        if (route !== 'native_plugin' && route !== 'python_bridge' && route !== 'mcp_server') {
+            return {
+                success: false,
+                route,
+                targetDirectory: '',
+                createdFiles: [],
+                instructions: '',
+                error: `Unsupported route "${String(route)}".`
+            };
+        }
         const isMcp = route === 'mcp_server';
         const toolError = this.validateTools(service.tools);
         if (toolError) {
