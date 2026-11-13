@@ -232,6 +232,8 @@ test('PluginsFactory: assessment discovers capabilities declared by tool names',
   const proposal = assessRoute(service);
   assert.equal(proposal.existingCapability?.covered, true);
   assert.equal(proposal.existingCapability?.matchName, 'web_search');
+  assert.match(proposal.reason, /Existing capability detected/);
+  assert.match(proposal.reason, /web_search/);
 });
 
 test('PluginsFactory: scaffolds native HTTP plugin into isolated directory with digest and disabled state', async () => {

@@ -49,6 +49,10 @@ export function assessRoute(
   const costComparison = estimateServiceCosts(service);
   const capabilityQuery = [service.name, ...service.tools.map(tool => tool.name)].join(' ');
   const existingCapability = findExistingCapability(capabilityQuery);
+  const reasonWithCapability = (reason: string): string => {
+    if (!existingCapability.covered) return reason;
+    return `${reason} Existing capability detected: ${existingCapability.details}. Reuse it unless this integration adds distinct behavior.`;
+  };
 
   // 1. User Preference Override (invalid runtime values fall back to heuristics)
   const requestedRoute = userPreference ?? service.userPreferredRoute;
@@ -58,7 +62,7 @@ export function assessRoute(
     const proposal: FactoryRouteProposal = {
       service,
       recommendedRoute: chosenRoute,
-      reason: `Honoring user explicit preference for route '${chosenRoute}'.`,
+      reason: reasonWithCapability(`Honoring user explicit preference for route '${chosenRoute}'.`),
       costComparison,
       userConsentRequired: false,
       userConfirmedRoute: chosenRoute,
@@ -75,8 +79,9 @@ export function assessRoute(
     return {
       service,
       recommendedRoute: 'mcp_server',
-      reason:
-        'Service exclusively exposes an MCP endpoint or protocol. Recommending MCP server scaffold with token overhead disclosure.',
+      reason: reasonWithCapability(
+        'Service exclusively exposes an MCP endpoint or protocol. Recommending MCP server scaffold with token overhead disclosure.'
+      ),
       costComparison,
       mcpDisclosure: formatMcpDisclosure(service.name, costComparison),
       userConsentRequired: true,
@@ -93,8 +98,9 @@ export function assessRoute(
     return {
       service,
       recommendedRoute: 'python_bridge',
-      reason:
-        'Service depends on Python SDK or specialized scientific/creative modules. A Python bridge provides an on-demand subprocess buffer without full MCP overhead.',
+      reason: reasonWithCapability(
+        'Service depends on Python SDK or specialized scientific/creative modules. A Python bridge provides an on-demand subprocess buffer without full MCP overhead.'
+      ),
       costComparison,
       userConsentRequired: false,
       existingCapability: existingCapability.covered ? existingCapability : undefined
@@ -105,8 +111,9 @@ export function assessRoute(
   return {
     service,
     recommendedRoute: 'native_plugin',
-    reason:
-      'Service supports HTTP/REST API or CLI interface. Native plugin is selected as the most token-lean and cost-effective route.',
+    reason: reasonWithCapability(
+      'Service supports HTTP/REST API or CLI interface. Native plugin is selected as the most token-lean and cost-effective route.'
+    ),
     costComparison,
     userConsentRequired: false,
     existingCapability: existingCapability.covered ? existingCapability : undefined
