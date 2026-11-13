@@ -59,18 +59,7 @@ export function assessRoute(service, userPreference) {
         }
         return proposal;
     }
-    // 2. Python SDK Route (Bridge Buffer)
-    if (isPythonSpecific(service)) {
-        return {
-            service,
-            recommendedRoute: 'python_bridge',
-            reason: 'Service depends on Python SDK or specialized scientific/creative modules. A Python bridge provides an on-demand subprocess buffer without full MCP overhead.',
-            costComparison,
-            userConsentRequired: false,
-            existingCapability: existingCapability.covered ? existingCapability : undefined
-        };
-    }
-    // 3. MCP-Only Service Route
+    // 2. MCP-Only Service Route (explicit kind wins over keyword heuristics)
     if (service.serviceKind === 'mcp_only') {
         return {
             service,
@@ -79,6 +68,19 @@ export function assessRoute(service, userPreference) {
             costComparison,
             mcpDisclosure: formatMcpDisclosure(service.name, costComparison),
             userConsentRequired: true,
+            existingCapability: existingCapability.covered ? existingCapability : undefined
+        };
+    }
+    // 3. Python SDK Route (Bridge Buffer). HTTP and CLI services keep their
+    // declared transport even if their description mentions Python.
+    if (service.serviceKind === 'python_sdk' ||
+        (service.serviceKind === 'custom' && isPythonSpecific(service))) {
+        return {
+            service,
+            recommendedRoute: 'python_bridge',
+            reason: 'Service depends on Python SDK or specialized scientific/creative modules. A Python bridge provides an on-demand subprocess buffer without full MCP overhead.',
+            costComparison,
+            userConsentRequired: false,
             existingCapability: existingCapability.covered ? existingCapability : undefined
         };
     }

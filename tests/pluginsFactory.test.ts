@@ -181,6 +181,25 @@ test('PluginsFactory: discovery ignores substrings inside unrelated words', () =
   assert.equal(findExistingCapability('web search').matchName, 'web_search');
 });
 
+test('PluginsFactory: explicit service kinds outrank Python keyword heuristics', () => {
+  const base: ServiceDescriptor = {
+    name: 'transport-probe',
+    description: 'Python pandas MCP client',
+    serviceKind: 'mcp_only',
+    tools: [{ name: 'query', description: 'Query', parameters: { type: 'object', properties: {} } }]
+  };
+  assert.equal(assessRoute(base).recommendedRoute, 'mcp_server');
+
+  const httpApi: ServiceDescriptor = { ...base, serviceKind: 'http_api', endpoint: 'https://api.example.com' };
+  assert.equal(assessRoute(httpApi).recommendedRoute, 'native_plugin');
+
+  const cli: ServiceDescriptor = { ...base, serviceKind: 'cli', cliBinary: 'echo' };
+  assert.equal(assessRoute(cli).recommendedRoute, 'native_plugin');
+
+  const custom: ServiceDescriptor = { ...base, serviceKind: 'custom' };
+  assert.equal(assessRoute(custom).recommendedRoute, 'python_bridge');
+});
+
 test('PluginsFactory: assessment discovers capabilities declared by tool names', () => {
   const service: ServiceDescriptor = {
     name: 'custom-integration',
