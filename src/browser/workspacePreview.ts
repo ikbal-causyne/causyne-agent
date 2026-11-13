@@ -36,7 +36,12 @@ export class WorkspacePreview {
   }
 
   async response(rawUrl: string): Promise<{ status: number; contentType: string; body: Buffer } | null> {
-    const url = new URL(rawUrl);
+    let url: URL;
+    try {
+      url = new URL(rawUrl);
+    } catch {
+      return null;
+    }
     const root = this.roots.get(url.origin);
     if (!root) return null;
     const deny = { status: 403, contentType: 'text/plain', body: Buffer.from('Preview asset is outside the allowed scope') };

@@ -33,7 +33,13 @@ export class WorkspacePreview {
         return `${origin}/${encodeURIComponent(path.basename(target))}`;
     }
     async response(rawUrl) {
-        const url = new URL(rawUrl);
+        let url;
+        try {
+            url = new URL(rawUrl);
+        }
+        catch {
+            return null;
+        }
         const root = this.roots.get(url.origin);
         if (!root)
             return null;
