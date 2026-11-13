@@ -87,8 +87,9 @@ export async function assertPublicWebUrl(value) {
         throw new Error('URLs containing credentials are not allowed');
     if (blockedHostname(url.hostname))
         throw new Error('Local and internal hostnames are not allowed');
-    const literalVersion = isIP(url.hostname);
-    const addresses = literalVersion ? [url.hostname] : await resolvedAddresses(url.hostname);
+    const literalHost = url.hostname.replace(/^\[|\]$/g, '');
+    const literalVersion = isIP(literalHost);
+    const addresses = literalVersion ? [literalHost] : await resolvedAddresses(url.hostname);
     if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
         throw new Error('Local, private, link-local, multicast, and reserved network addresses are not allowed');
     }
@@ -112,8 +113,9 @@ export async function assertBrowserNavigableUrl(value) {
     }
     if (blockedHostname(url.hostname))
         throw new Error('Local and internal hostnames are not allowed');
-    const literalVersion = isIP(url.hostname);
-    const addresses = literalVersion ? [url.hostname] : await resolvedAddresses(url.hostname);
+    const literalHost = url.hostname.replace(/^\[|\]$/g, '');
+    const literalVersion = isIP(literalHost);
+    const addresses = literalVersion ? [literalHost] : await resolvedAddresses(url.hostname);
     if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
         throw new Error('Local, private, link-local, multicast, and reserved network addresses are not allowed');
     }
