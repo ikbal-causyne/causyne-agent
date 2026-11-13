@@ -12,6 +12,6 @@ test('quoted computer-use typing retains apostrophes and embedded quotes', () =>
 });
 
 test('escaped string delimiters are unescaped before typing', () => {
-  const action = parseSingleAction(String.raw`type(content='it\\'s fine')`);
+  const action = parseSingleAction(String.raw`type(content='it\'s fine')`);
   assert.equal(action?.text, "it's fine");
 });
