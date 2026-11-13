@@ -34,6 +34,7 @@ on run argv
           set report to report & "ok|press|" & elemName & linefeed
         else
           set report to report & "miss|press|" & elemName & linefeed
+          exit repeat -- Never type/click elsewhere after a required target is missing.
         end if
       else if verb is "clickxy" then
         set px to (item 2 of parts) as integer

@@ -198,7 +198,8 @@ export const desktopAct = {
     const report = String(result.stdout || '').trim();
     const missed = (report.match(/^miss\|/gm) || []).length;
     return {
-      success: true,
+      success: missed === 0,
+      ...(missed > 0 ? { error: `${missed} element(s) not found; remaining actions were not executed.` } : {}),
       output: (report || 'No output.')
         + (missed > 0
           ? `\n\n${missed} element(s) were not found by name. Run ax_snapshot to see the current element names before retrying.`
