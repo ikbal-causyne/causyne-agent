@@ -77,6 +77,16 @@ function encodeAction(action, index) {
     return { ok: true, argv: `clickxy::${Math.round(x)}::${Math.round(y)}` };
   }
 
+  if (verb === 'key') {
+    if ((Array.isArray(action.modifiers) && action.modifiers.length > 0) || action.chord) {
+      return { ok: false, error: `action ${index}: modifier key chords are not supported by this actuator; do not send an unmodified keystroke` };
+    }
+    const code = Number(action.keyCode);
+    if (!Number.isInteger(code) || code < 0 || code > 127) {
+      return { ok: false, error: `action ${index}: key requires a valid macOS virtual key code (0-127)` };
+    }
+  }
+
   const value = verb === 'press' ? action.target
     : verb === 'type' ? action.text
       : verb === 'key' ? action.keyCode
