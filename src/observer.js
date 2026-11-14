@@ -249,7 +249,10 @@ export class CausyneObserver {
                     resolve({ verified: false, error: 'Local verification URL must not contain credentials.' });
                     return;
                 }
-                const clientReq = http.get(req.endpoint, { timeout: req.timeoutMs ?? 3000 }, (res) => {
+                const safeTimeoutMs = typeof req.timeoutMs === 'number' && Number.isFinite(req.timeoutMs) && req.timeoutMs > 0
+                    ? Math.max(100, Math.min(30_000, Math.floor(req.timeoutMs)))
+                    : 3000;
+                const clientReq = http.get(req.endpoint, { timeout: safeTimeoutMs }, (res) => {
                     res.resume();
                     const expected = req.expectedStatus ?? 200;
                     const ok = req.expectedStatus === undefined

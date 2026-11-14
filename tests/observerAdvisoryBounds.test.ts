@@ -161,4 +161,25 @@ describe('observer advisory parsing and timeout bounds', () => {
     });
     assert.equal(evaluation.verified, false);
   });
+
+  it('CausyneObserver.verifyLocalWeb sanitizes negative or non-finite timeoutMs instead of failing with ERR_OUT_OF_RANGE', async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    try {
+      const obs = new CausyneObserver();
+      const negRes = await obs.verifyLocalWeb({
+        endpoint: `http://127.0.0.1:${address.port}/`,
+        timeoutMs: -50
+      });
+      assert.equal(negRes.verified, true);
+      assert.equal(negRes.statusCode, 200);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
