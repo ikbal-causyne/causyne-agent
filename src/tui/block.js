@@ -30,6 +30,9 @@ const GUTTER = 1;
 function finiteWidth(width, fallback = 80) {
     return typeof width === 'number' && Number.isFinite(width) ? Math.floor(width) : fallback;
 }
+function collapseLine(value) {
+    return String(value == null ? '' : value).replace(/[\r\n]+/g, ' ');
+}
 /**
  * Render `lines` as one block with a left accent bar.
  * Uses a continuous unbroken box-drawing heavy rule (barHeavy '┃')
@@ -47,10 +50,11 @@ export function barBlock(lines, { width = 80, role = 'accent', filled = true, su
     const body = Math.max(1, finiteWidth(width) - barWidth - GUTTER);
     const bar = paint(role, glyph);
     const gutter = ' '.repeat(GUTTER);
-    return lines.map((line) => {
+    return (Array.isArray(lines) ? lines : []).map((rawLine) => {
         // Clip first, then pad: a line longer than the block would otherwise push
         // the fill past the right edge and wrap, which is the failure ChatPrompt
         // clampRows() exists to prevent one layer up.
+        const line = collapseLine(rawLine);
         const clipped = visibleWidth(line) > body ? truncate(line, body, GLYPHS.ellipsis) : line;
         const padded = padEnd(clipped, body);
         const inner = filled ? fill(surface, gutter + padded) : gutter + padded;
@@ -76,7 +80,8 @@ export function blockOf(text, options = {}) {
 export function panel(rows, { width = 80, title = '', role = 'rule' } = {}) {
     const inner = Math.max(4, finiteWidth(width) - 2);
     const h = GLYPHS.hLine;
-    const label = title ? ` ${title} ` : '';
+    const cleanTitle = collapseLine(title).trim();
+    const label = cleanTitle ? ` ${cleanTitle} ` : '';
     const clippedLabel = visibleWidth(label) > inner - 2 ? '' : label;
     const lead = clippedLabel ? h : '';
     const trail = h.repeat(Math.max(0, inner - visibleWidth(clippedLabel) - visibleWidth(lead)));
@@ -85,7 +90,8 @@ export function panel(rows, { width = 80, title = '', role = 'rule' } = {}) {
         + paint(role, trail + GLYPHS.topRight);
     const bottom = paint(role, GLYPHS.bottomLeft + h.repeat(inner) + GLYPHS.bottomRight);
     const side = paint(role, GLYPHS.vLine);
-    const middle = rows.map((row) => {
+    const middle = (Array.isArray(rows) ? rows : []).map((rawRow) => {
+        const row = collapseLine(rawRow);
         const clipped = visibleWidth(row) > inner ? truncate(row, inner, GLYPHS.ellipsis) : row;
         return side + padEnd(clipped, inner) + side;
     });
@@ -101,11 +107,18 @@ export function contextMeter(usedTokens, limitTokens) {
     const limit = Number.isFinite(rawLimit) ? rawLimit : 0;
     if (used <= 0)
         return '';
-    const compact = used < 1000
-        ? String(Math.round(used))
-        : used < 1000000
-            ? `${(used / 1000).toFixed(used < 10000 ? 1 : 0)}K`
-            : `${(used / 1000000).toFixed(1)}M`;
+    const rounded = Math.round(used);
+    let compact;
+    if (rounded < 1000) {
+        compact = String(rounded);
+    }
+    else if (used < 9995) {
+        compact = `${(used / 1000).toFixed(1)}K`;
+    }
+    else {
+        const thousands = Math.round(used / 1000);
+        compact = thousands < 1000 ? `${thousands}K` : `${(used / 1000000).toFixed(1)}M`;
+    }
     if (limit <= 0)
         return compact;
     return `${compact} (${Math.round((used / limit) * 100)}%)`;
