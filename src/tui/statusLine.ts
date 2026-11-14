@@ -31,11 +31,18 @@ function nonNegativeFinite(value: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+function oneLineDisplay(value: unknown): string {
+  return safeDisplay(value).replace(/[\r\n]+/g, ' ');
+}
+
 /** 1234 -> "1.2k", 1234567 -> "1.2M". Token counts are read, not summed. */
 export function compactCount(value: unknown): string {
   const n = nonNegativeFinite(value);
-  if (n < 1000) return String(Math.round(n));
-  if (n < 1000000) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+  const rounded = Math.round(n);
+  if (rounded < 1000) return String(rounded);
+  if (n < 9995) return `${(n / 1000).toFixed(1)}k`;
+  const thousands = Math.round(n / 1000);
+  if (thousands < 1000) return `${thousands}k`;
   return `${(n / 1000000).toFixed(1)}M`;
 }
 
@@ -65,8 +72,8 @@ export function formatElapsed(ms: number): string {
 
 /** Strip a provider prefix so "anthropic/claude-opus-5" reads as the model. */
 function shortModel(model: unknown): string {
-  const name = String(model || '').split('/').pop() || '';
-  return name.length > 22 ? name.slice(0, 21) + GLYPHS.ellipsis : name;
+  const name = oneLineDisplay(model || '').split('/').pop() || '';
+  return visibleWidth(name) > 22 ? truncate(name, 22, GLYPHS.ellipsis) : name;
 }
 
 export interface StatusLineSessionInfo {
@@ -94,7 +101,7 @@ export interface StatusLineIdleOptions {
 
 function finiteWidth(width: number | undefined): number {
   const numeric = Number(width ?? 80);
-  return Number.isFinite(numeric) ? Math.floor(numeric) : 80;
+  return Number.isFinite(numeric) ? Math.max(2, Math.floor(numeric)) : 80;
 }
 
 export class StatusLine {
@@ -125,9 +132,9 @@ export class StatusLine {
   /** Session-lifetime facts, set once from the same info as the header. */
   setSession(info: StatusLineSessionInfo = {}): this {
     if (info.model !== undefined) this.model = shortModel(info.model);
-    if (info.provider !== undefined) this.provider = info.provider ? String(info.provider) : '';
-    if (info.tier !== undefined) this.tier = info.tier ? String(info.tier) : '';
-    if (info.cwd !== undefined) this.cwd = info.cwd ? String(info.cwd) : '';
+    if (info.provider !== undefined) this.provider = info.provider ? oneLineDisplay(info.provider) : '';
+    if (info.tier !== undefined) this.tier = info.tier ? oneLineDisplay(info.tier) : '';
+    if (info.cwd !== undefined) this.cwd = info.cwd ? oneLineDisplay(info.cwd) : '';
     this.applyContextWindow(info.contextChars, info.contextLimit);
     return this;
   }
@@ -147,14 +154,15 @@ export class StatusLine {
    */
   renderIdle({ width = 80, hint = '' }: StatusLineIdleOptions = {}): string {
     const safeWidth = finiteWidth(width);
-    const budget = Math.max(10, safeWidth - 1);
+    const budget = Math.max(1, safeWidth - 1);
     const meter = contextMeter(
       Math.round(this.contextChars / CHARS_PER_TOKEN),
       Math.round(this.contextLimit / CHARS_PER_TOKEN)
     );
     const segments: string[] = [];
     if (meter) segments.push(meter);
-    if (hint) segments.push(hint);
+    const cleanHint = hint ? oneLineDisplay(hint) : '';
+    if (cleanHint) segments.push(cleanHint);
 
     const separator = `  ${GLYPHS.dot}  `;
     const kept = segments.slice();
@@ -166,9 +174,10 @@ export class StatusLine {
     if (visibleWidth(tail) > budget) tail = '';
 
     const room = tail ? Math.max(0, budget - visibleWidth(tail) - visibleWidth(separator)) : budget;
-    const where = this.cwd ? truncate(shortenHome(this.cwd), room, GLYPHS.ellipsis) : '';
+    const where = this.cwd && room > 0 ? truncate(shortenHome(oneLineDisplay(this.cwd)), room, GLYPHS.ellipsis) : '';
     const left = dim(where);
     if (!tail) return left;
+    if (!where) return dim(tail);
 
     const gap = Math.max(
       visibleWidth(separator),
@@ -199,12 +208,14 @@ export class StatusLine {
     const safeSteps = Math.floor(nonNegativeFinite(steps));
     const safeTick = tick !== undefined && Number.isFinite(tick) ? Math.floor(tick) : undefined;
 
-    const head = spinnerFrame
+    const maxTotal = Math.max(1, safeWidth - 1);
+    const rawHead = spinnerFrame
       ? (typeof spinnerFrame === 'string' && spinnerFrame.includes('\x1b')
           ? `${spinnerFrame} `
-          : `${paint('accent', spinnerFrame)} `)
+          : `${paint('accent', oneLineDisplay(spinnerFrame))} `)
       : '';
-    const budget = Math.max(10, safeWidth - visibleWidth(head) - 1);
+    const head = visibleWidth(rawHead) < maxTotal ? rawHead : '';
+    const budget = Math.max(1, maxTotal - visibleWidth(head));
 
     const segments: string[] = [];
     if (safeElapsedMs > 0) segments.push(formatElapsed(safeElapsedMs));
@@ -218,7 +229,7 @@ export class StatusLine {
     const rawMessage = safeTick !== undefined
       ? formatAnimatedStatus(message || 'working', safeTick)
       : (message || (spinnerFrame ? 'working' : ''));
-    const text = safeDisplay(rawMessage);
+    const text = oneLineDisplay(rawMessage);
 
     const kept = segments.slice();
     const wanted = Math.min(visibleWidth(text), Math.max(18, Math.floor(budget / 2)));
@@ -260,7 +271,7 @@ export class StatusLine {
    * The non-TTY form: no spinner, no elapsed clock, printed once.
    */
   renderStatic(message: string, width = 80): string {
-    const parts = [safeDisplay(message)];
+    const parts = [oneLineDisplay(message)];
     if (this.model) parts.push(this.model);
     return truncate(`${GLYPHS.dot} ${parts.join(`  ${GLYPHS.dot}  `)}`, finiteWidth(width), GLYPHS.ellipsis);
   }
