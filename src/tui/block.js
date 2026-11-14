@@ -92,8 +92,10 @@ export function panel(rows, { width = 80, title = '', role = 'rule' } = {}) {
  * `9.2K (5%)` — what the context window has left, at a glance.
  */
 export function contextMeter(usedTokens, limitTokens) {
-    const used = Number(usedTokens) || 0;
-    const limit = Number(limitTokens) || 0;
+    const rawUsed = Number(usedTokens);
+    const rawLimit = Number(limitTokens);
+    const used = Number.isFinite(rawUsed) ? rawUsed : 0;
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 0;
     if (used <= 0)
         return '';
     const compact = used < 1000
