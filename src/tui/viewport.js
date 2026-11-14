@@ -49,8 +49,8 @@ export class ScrollAcceleration {
     lastTick;
     constructor({ history = 3, streakTimeout = 150, minTickInterval = 6 } = {}) {
         this.historySize = Number.isFinite(history) ? Math.max(0, Math.floor(history)) : 3;
-        this.streakTimeout = streakTimeout;
-        this.minTickInterval = minTickInterval;
+        this.streakTimeout = Number.isFinite(streakTimeout) && streakTimeout >= 0 ? streakTimeout : 150;
+        this.minTickInterval = Number.isFinite(minTickInterval) && minTickInterval >= 0 ? minTickInterval : 6;
         this.intervals = [];
         this.lastTick = 0;
     }
