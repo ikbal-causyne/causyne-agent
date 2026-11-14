@@ -82,4 +82,38 @@ describe('observer advisory parsing and timeout bounds', () => {
       fs.rmSync(tmpWs, { recursive: true, force: true });
     }
   });
+
+  it('scanMutation detects write-large-shrink on top-level fs_edit arguments and clamps shrink percentage to 100%', () => {
+    const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-obs-edit-'));
+    try {
+      const target = path.join(tmpWs, 'module.ts');
+      const original = 'export const line = "x";\n'.repeat(100);
+      fs.writeFileSync(target, original, 'utf8');
+
+      const singleEdit = scanMutation(
+        'fs_edit',
+        { path: 'module.ts', old_string: original, new_string: 'export const x = 1;\n' },
+        { workspaceRoot: tmpWs }
+      );
+      const shrinkEvidence = singleEdit.evidence.find((e) => e.code === 'write-large-shrink');
+      assert.ok(shrinkEvidence, 'expected fs_edit removing >80% of >1KB file to trigger write-large-shrink');
+
+      const overShrink = scanMutation(
+        'MultiEdit',
+        {
+          path: 'module.ts',
+          edits: [
+            { old_string: original, new_string: '' },
+            { old_string: original, new_string: '' }
+          ]
+        },
+        { workspaceRoot: tmpWs }
+      );
+      const overEvidence = overShrink.evidence.find((e) => e.code === 'write-large-shrink');
+      assert.ok(overEvidence);
+      assert.match(overEvidence.detail, /removes about 100%/);
+    } finally {
+      fs.rmSync(tmpWs, { recursive: true, force: true });
+    }
+  });
 });

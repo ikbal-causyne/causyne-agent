@@ -285,7 +285,7 @@ function scanWrite(toolName, args, workspaceRoot, evidence) {
         }
     }
     else {
-        const edits = Array.isArray(args.edits) ? args.edits : [];
+        const edits = Array.isArray(args.edits) && args.edits.length > 0 ? args.edits : [args];
         let delta = 0;
         let sawEdit = false;
         for (const edit of edits) {
@@ -294,20 +294,24 @@ function scanWrite(toolName, args, workspaceRoot, evidence) {
             const record = edit;
             const before = typeof record.old_string === 'string'
                 ? record.old_string
-                : typeof record.searchContent === 'string' ? record.searchContent : null;
+                : typeof record.searchContent === 'string'
+                    ? record.searchContent
+                    : typeof record.oldText === 'string' ? record.oldText : null;
             const after = typeof record.new_string === 'string'
                 ? record.new_string
-                : typeof record.replaceContent === 'string' ? record.replaceContent : null;
+                : typeof record.replaceContent === 'string'
+                    ? record.replaceContent
+                    : typeof record.newText === 'string' ? record.newText : null;
             if (before === null || after === null)
                 continue;
             delta += Buffer.byteLength(after, 'utf8') - Buffer.byteLength(before, 'utf8');
             sawEdit = true;
         }
         if (sawEdit && originalSize !== null)
-            replacementSize = originalSize + delta;
+            replacementSize = Math.max(0, originalSize + delta);
     }
     if (originalSize !== null && replacementSize !== null && originalSize > 1024 && replacementSize < originalSize * 0.2) {
-        const lost = Math.round((1 - replacementSize / originalSize) * 100);
+        const lost = Math.min(100, Math.max(0, Math.round((1 - replacementSize / originalSize) * 100)));
         add(evidence, 'write-large-shrink', 'high', `edit removes about ${lost}% of ${base}`, 0.78);
     }
 }
