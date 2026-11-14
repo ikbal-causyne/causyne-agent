@@ -24,3 +24,21 @@ test('availability agrees with launch discovery for an explicitly configured Chr
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('availability and resolution recognize chromium-browser and relative configured Chromium paths', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-browser-rel-'));
+  const original = process.env.CAUSYNE_BROWSER_EXECUTABLE;
+  const executable = path.join(root, process.platform === 'win32' ? 'chrome.exe' : 'chromium-browser');
+  fs.writeFileSync(executable, '', { mode: 0o755 });
+  try {
+    process.env.CAUSYNE_BROWSER_EXECUTABLE = path.relative(process.cwd(), executable);
+    assert.equal(isBrowserRuntimeInstalled(), true);
+    const runtime = resolveBrowserRuntime();
+    assert.equal(runtime.engine, 'chromium');
+    assert.equal(runtime.executablePath, path.resolve(executable));
+  } finally {
+    if (original === undefined) delete process.env.CAUSYNE_BROWSER_EXECUTABLE;
+    else process.env.CAUSYNE_BROWSER_EXECUTABLE = original;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

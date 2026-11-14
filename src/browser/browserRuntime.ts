@@ -296,6 +296,12 @@ function ensureLaunchShim(resolvedExecutable: string, resourceDirectory: string)
   return shimExecutable;
 }
 
+function isChromiumExecutablePath(filePath: string): boolean {
+  return /^(?:google-chrome|google chrome|chrome|chromium-browser|chromium|msedge|microsoft-edge|microsoft edge)(?:-(?:stable|beta|dev|canary))?(?:\.exe)?$/i.test(
+    path.basename(filePath)
+  );
+}
+
 /** Discover existing installations only. Never downloads or uses a personal profile. */
 export function resolveChromiumRuntime(configured?: string): PreparedBrowserRuntime | null {
   const candidates = configured ? [configured] : process.platform === 'darwin'
@@ -315,12 +321,13 @@ export function resolveChromiumRuntime(configured?: string): PreparedBrowserRunt
 export function resolveBrowserRuntime(): PreparedBrowserRuntime {
   const configured = process.env.CAUSYNE_BROWSER_EXECUTABLE?.trim()
     || process.env.CAMOUFOX_EXECUTABLE_PATH?.trim();
-  const candidates = configured
-    ? [resolveCandidateExecutablePath(path.resolve(configured))]
+  const resolvedConfigured = configured ? path.resolve(configured) : undefined;
+  const candidates = resolvedConfigured
+    ? [resolveCandidateExecutablePath(resolvedConfigured)]
     : candidateExecutables().map(resolveCandidateExecutablePath);
   const executablePath = candidates.find(existsSync);
-  if (configured && /(?:chrome|chromium|msedge)(?:\.exe)?$/i.test(path.basename(configured))) {
-    const chromium = resolveChromiumRuntime(configured);
+  if (resolvedConfigured && isChromiumExecutablePath(resolvedConfigured)) {
+    const chromium = resolveChromiumRuntime(resolvedConfigured);
     if (chromium) return chromium;
   }
   if (!executablePath) {
@@ -377,14 +384,15 @@ export function isBrowserRuntimeInstalled(): boolean {
   try {
     const configured = process.env.CAUSYNE_BROWSER_EXECUTABLE?.trim()
       || process.env.CAMOUFOX_EXECUTABLE_PATH?.trim();
-    const candidates = configured
-      ? [resolveCandidateExecutablePath(path.resolve(configured))]
+    const resolvedConfigured = configured ? path.resolve(configured) : undefined;
+    const candidates = resolvedConfigured
+      ? [resolveCandidateExecutablePath(resolvedConfigured)]
       : candidateExecutables().map(resolveCandidateExecutablePath);
     // Match launch-time discovery: Chromium is a supported installed runtime
     // too. The former Camoufox-only check suppressed host verification even
     // when resolveBrowserRuntime could launch the installed Chrome browser.
-    if (configured && /(?:chrome|chromium|msedge)(?:\.exe)?$/i.test(path.basename(configured))) {
-      return resolveChromiumRuntime(path.resolve(configured)) !== null;
+    if (resolvedConfigured && isChromiumExecutablePath(resolvedConfigured)) {
+      return resolveChromiumRuntime(resolvedConfigured) !== null;
     }
     const hasCamoufox = candidates.some(candidate => {
       try {
