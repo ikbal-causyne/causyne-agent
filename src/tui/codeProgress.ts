@@ -192,7 +192,11 @@ export class NativeCodeObserver {
       this.stop(event.id);
       return;
     }
-    const target = path.resolve(this.workspaceRoot, event.path);
+    const target = this.resolveTarget(event.path);
+    if (!target) {
+      this.stop(event.id);
+      return;
+    }
     if (event.phase === 'working') {
       this.stop(event.id);
       const previous = this.read(target);
@@ -241,13 +245,25 @@ export class NativeCodeObserver {
     this.active.delete(id);
   }
 
+  private resolveTarget(rawPath: string): string | null {
+    const root = path.resolve(this.workspaceRoot);
+    const target = path.resolve(root, rawPath);
+    const rel = path.relative(root, target);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+    return target;
+  }
+
   private read(file: string): string | null {
     try {
       const name = path.basename(file).toLowerCase();
       if (/^(\.env(?:\.|$)|.*\.(?:pem|key|p12|pfx)$)/u.test(name)) return null;
-      const stat = fs.lstatSync(file);
+      const realRoot = fs.realpathSync(this.workspaceRoot);
+      const realFile = fs.realpathSync(file);
+      const rel = path.relative(realRoot, realFile);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+      const stat = fs.lstatSync(realFile);
       if (!stat.isFile() || stat.size > 256_000) return null;
-      const bytes = fs.readFileSync(file);
+      const bytes = fs.readFileSync(realFile);
       if (bytes.includes(0)) return null;
       return bytes.toString('utf8');
     } catch {
@@ -368,14 +384,19 @@ function highlightCode(kind: PreviewLine['kind'], text: string, width: number): 
   return paint(role, marker) + `\x1b[${background}m ${body}\x1b[49m`;
 }
 
+function oneLineCodeText(value: unknown): string {
+  return safeDisplay(value).replace(/\s+/g, ' ').trim();
+}
+
 /** Render a bounded, resize-safe panel. The terminal theme supplies rounded corners. */
 export function renderCodeProgress(event: CodeProgressEvent, width: number, modelNote = '', startLine?: number): string[] {
   const safeWidth = Number.isFinite(width) ? Math.max(12, Math.floor(width)) : 80;
   const inner = safeWidth - 4;
-  const title = `${event.phase === 'done' ? '✓ ' : event.phase === 'failed' ? '× ' : ''}code · ${event.operation.toLowerCase()}`;
-  const rows = [truncate(safeDisplay(event.description), inner)];
-  if (event.path) rows.push(truncate(safeDisplay(event.path), inner));
-  if (modelNote) rows.push(truncate(`model note: ${safeDisplay(modelNote)}`, inner));
+  const operation = oneLineCodeText(event.operation).toLowerCase() || 'code';
+  const title = `${event.phase === 'done' ? '✓ ' : event.phase === 'failed' ? '× ' : ''}code · ${operation}`;
+  const rows = [truncate(oneLineCodeText(event.description), inner)];
+  if (event.path) rows.push(truncate(oneLineCodeText(event.path), inner));
+  if (modelNote) rows.push(truncate(`model note: ${oneLineCodeText(modelNote)}`, inner));
   const codeLines = previewLines(event);
   const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
   const start = startLine === undefined || !Number.isFinite(startLine)
