@@ -1131,4 +1131,31 @@ describe('a completion that matches exactly submits instead of looping', () => {
     p.moveSelectionClamped(-1);
     assert.equal(p.selected, 0);
   });
+
+  test('clicking a completion item selects and accepts that clicked item instead of selected 0', () => {
+    const out = { columns: 80, rows: 24, write() { return true; }, isTTY: false, on() {}, removeListener() {} };
+    const input = { isTTY: false, on() {}, off() {} };
+    const p = new ChatPrompt({ out, input, commands: [] });
+    p.editor.setText('@a');
+    p.editor.moveEnd();
+    p.completion = {
+      kind: 'file',
+      start: 0,
+      end: 2,
+      items: [
+        { value: 'alpha.ts', label: 'alpha.ts' },
+        { value: 'beta.ts', label: 'beta.ts' },
+        { value: 'gamma.ts', label: 'gamma.ts' }
+      ]
+    };
+    p.selected = 0;
+    p.pickerLayout = { pickerStart: 4, pickerCount: 3, totalPromptRows: 8 };
+    // stageHeight = 24, promptTop = 24 - 8 + 1 = 17, pickerTop = 21. Row 22 is index 1 ('beta.ts').
+    const handled = p.handleCompletionKey({
+      name: 'mouse',
+      mouse: { pressed: true, button: 0, row: 22, col: 4 }
+    });
+    assert.equal(handled, true);
+    assert.equal(p.editor.getText(), '@beta.ts ');
+  });
 });

@@ -1504,10 +1504,14 @@ export class ChatPrompt {
           if (key.mouse.row >= pickerTop && key.mouse.row <= pickerBottom) {
             // The picker renders a scrolled window (renderPicker); a click maps
             // to the item under the cursor, not to the first page of items.
-            const total = this.completion.items ? this.completion.items.length : 0;
+            const items = Array.isArray(this.completion.items) ? this.completion.items : [];
+            const total = items.length;
             const windowStart = Math.max(0, Math.min(this.selected - MAX_VISIBLE + 1, total - MAX_VISIBLE));
             const index = windowStart + (key.mouse.row - pickerTop);
-            item = this.completion.items && this.completion.items[index];
+            if (index >= 0 && index < total) {
+              this.selected = index;
+              item = items[index];
+            }
           } else {
             // Click outside picker closes it
             this.completion = null;
@@ -1515,7 +1519,8 @@ export class ChatPrompt {
             return true;
           }
         } else {
-          item = this.completion.items && this.completion.items[this.selected];
+          const items = Array.isArray(this.completion.items) ? this.completion.items : [];
+          item = items[this.selected];
         }
 
         if (item) {
