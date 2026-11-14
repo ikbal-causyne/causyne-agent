@@ -1192,4 +1192,24 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(p.cursorRow, 1);
     assert.equal(writes.join('').includes('[-'), false);
   });
+
+  test('ctrl+x and alt+x cut selection and refresh stale completion picker', () => {
+    const out = { columns: 80, rows: 24, write() { return true; }, isTTY: false, on() {}, removeListener() {} };
+    const input = { isTTY: false, on() {}, off() {} };
+    const p = new ChatPrompt({ out, input, commands: [] });
+    p.active = true;
+    p.editor.insert('/hel');
+    p.completion = { kind: 'command', start: 0, end: 4, items: [{ value: '/help', label: '/help' }] };
+    p.editor.selectAll();
+    p.handleKey({ ctrl: true, name: 'x' });
+    assert.equal(p.editor.getText(), '');
+    assert.equal(p.completion, null, 'ctrl+x must clear stale completion picker');
+
+    p.editor.insert('/hel');
+    p.completion = { kind: 'command', start: 0, end: 4, items: [{ value: '/help', label: '/help' }] };
+    p.editor.selectAll();
+    p.handleKey({ alt: true, name: 'x' });
+    assert.equal(p.editor.getText(), '');
+    assert.equal(p.completion, null, 'alt+x must clear stale completion picker');
+  });
 });

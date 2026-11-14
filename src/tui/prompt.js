@@ -1102,15 +1102,7 @@ export class ChatPrompt {
         case 'w': this.editor.killWordLeft(); return this.refreshCompletion();
         case 'y': this.editor.yank(); return this.refreshCompletion();
         case 'x': {
-          if (this.editor.hasSelection) {
-            const text = this.editor.getSelectedText();
-            writeClipboardSync(text);
-            this.editor.killRing = text;
-            this.editor.deleteSelection();
-            this.notice = `cut selection (${text.length} chars) to clipboard`;
-            this.scheduleDraw();
-            return;
-          }
+          if (this.cutSelection()) return;
           break;
         }
         case 'p': return this.openPalette();
@@ -1127,15 +1119,7 @@ export class ChatPrompt {
       return;
     }
     if (key.alt && key.name === 'x') {
-      if (this.editor.hasSelection) {
-        const text = this.editor.getSelectedText();
-        writeClipboardSync(text);
-        this.editor.killRing = text;
-        this.editor.deleteSelection();
-        this.notice = `cut selection (${text.length} chars) to clipboard`;
-        this.scheduleDraw();
-        return;
-      }
+      if (this.cutSelection()) return;
     }
     if (key.alt && (key.name === 'c' || key.name === 'w')) {
       const text = this.editor.hasSelection
@@ -1320,6 +1304,17 @@ export class ChatPrompt {
       // Their draft is theirs. Say what is there and leave the line alone.
       this.notice = `restore point${step} ${GLYPHS.dot} ${where} ${GLYPHS.dot} run /undo to preview`;
     }
+  }
+
+  cutSelection() {
+    if (!this.editor.hasSelection) return false;
+    const text = this.editor.getSelectedText();
+    writeClipboardSync(text);
+    this.editor.killRing = text;
+    this.editor.deleteSelection();
+    this.notice = `cut selection (${text.length} chars) to clipboard`;
+    this.refreshCompletion();
+    return true;
   }
 
   handleCtrlC() {
