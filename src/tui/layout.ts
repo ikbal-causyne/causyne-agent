@@ -8,20 +8,27 @@ export function composerWidth(columns: number): number {
 
 /** Center one content column without centering each line independently. */
 export function centerRows(rows: string[], columns: number): { rows: string[]; inset: number } {
+  const safeRows = Array.isArray(rows) ? rows : [];
   const available = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80;
-  const occupied = rows.reduce((widest, row) => Math.max(widest, visibleWidth(row)), 0);
+  const maxContent = Math.max(1, available - 1);
+  const occupied = safeRows.reduce((widest, row) => Math.max(widest, Math.min(maxContent, visibleWidth(row))), 0);
   const inset = Math.max(0, Math.floor((available - occupied) / 2));
   const prefix = ' '.repeat(inset);
-  return { rows: rows.map(row => row ? prefix + row : ''), inset };
+  const limit = Math.max(1, available - inset - 1);
+  return {
+    rows: safeRows.map(row => (row ? prefix + truncate(row, limit, '') : '')),
+    inset
+  };
 }
 
 /** Conversation content starts at the left margin while Home stays centered. */
 export function sessionRows(rows: string[], columns: number): { rows: string[]; inset: number } {
+  const safeRows = Array.isArray(rows) ? rows : [];
   const available = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80;
   const inset = Math.min(3, Math.max(0, available - 3));
   const prefix = ' '.repeat(inset);
   return {
-    rows: rows.map(row => row ? prefix + truncate(row, Math.max(1, available - inset - 1), '') : ''),
+    rows: safeRows.map(row => row ? prefix + truncate(row, Math.max(1, available - inset - 1), '') : ''),
     inset
   };
 }
@@ -36,9 +43,11 @@ export function openingTopGap(rows: number, introRows: number): number {
 
 /** Place the home composition as one centered group, with room for the composer below. */
 export function openingRows(rows: string[], columns: number, terminalRows: number): string[] {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  if (safeRows.length === 0) return [];
   return [
-    ...Array<string>(openingTopGap(terminalRows, rows.length)).fill(''),
-    ...centerRows(rows, columns).rows
+    ...Array<string>(openingTopGap(terminalRows, safeRows.length)).fill(''),
+    ...centerRows(safeRows, columns).rows
   ];
 }
 

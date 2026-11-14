@@ -17,6 +17,10 @@ test('opening and composer use one centered readable column', () => {
   assert.deepEqual(centered.rows, ['     hello', '     x']);
   assert.ok(openingRows(['hello'], 156, 78).findIndex(row => row.includes('hello')) > 0);
   assert.deepEqual(openingRows(['hello'], 60, 24), ['                           hello']);
+  const clipped = centerRows(['x'.repeat(40)], 20);
+  assert.equal(clipped.inset, 0);
+  assert.ok(visibleWidth(clipped.rows[0]) < 20, 'centered wide row must not overflow narrow terminal width');
+  assert.deepEqual(openingRows(null as unknown as string[], 40, 20), []);
 });
 
 test('session and MCP command feedback stays in dialogs', () => {
