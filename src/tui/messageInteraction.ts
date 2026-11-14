@@ -12,7 +12,7 @@ import { writeClipboardSync } from './clipboardSync.js';
 import { registerStageConsoleGuard, setTransientNotice } from './consoleGuard.js';
 import { detectLinkAtPoint, openDetectedLink } from './smartLinkClick.js';
 import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
-import { stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
+import { safeDisplay, stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
 import { Layer } from './overlay.js';
 import { type MessageBounds } from './messageActionPlacement.js';
 // @ts-expect-error Legacy theme has no declaration yet.
@@ -86,6 +86,12 @@ export class MessageActionsLayer extends Layer {
     };
   }
 
+  private cleanText(value: unknown): string {
+    return safeDisplay(typeof value === 'string' ? value : String(value ?? ''))
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
+  }
+
   override preferredHeight(): number { return this.items.length + 2; }
 
   preferredWidth(maxWidth: number): number {
@@ -95,8 +101,9 @@ export class MessageActionsLayer extends Layer {
         ? Number.POSITIVE_INFINITY
         : 64;
     const maxItemContent = this.items.reduce((max, item) => {
-      const labelW = visibleWidth(`▸ ${item.label}`);
-      const descW = item.description ? visibleWidth(item.description) + 4 : 0;
+      const labelW = visibleWidth(`▸ ${this.cleanText(item.label)}`);
+      const cleanDesc = item.description ? this.cleanText(item.description) : '';
+      const descW = cleanDesc ? visibleWidth(cleanDesc) + 4 : 0;
       return Math.max(max, labelW + descW);
     }, 0);
     const wanted = Math.max(48, maxItemContent + 6);
@@ -105,11 +112,15 @@ export class MessageActionsLayer extends Layer {
 
   override body(width: number): string[] {
     const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 60;
-    const labelWidth = this.items.reduce(
+    const cleanItems = this.items.map((item) => ({
+      label: this.cleanText(item.label),
+      description: item.description ? this.cleanText(item.description) : ''
+    }));
+    const labelWidth = cleanItems.reduce(
       (max, item) => Math.max(max, visibleWidth(`▸ ${item.label}`)),
       0
     );
-    return this.items.map((item, index) => {
+    return cleanItems.map((item, index) => {
       const selected = index === this.list.selected;
       const rawLabel = `${selected ? '▸' : ' '} ${item.label}`;
       const pad = ' '.repeat(Math.max(0, labelWidth - visibleWidth(rawLabel)));
@@ -124,23 +135,27 @@ export class MessageActionsLayer extends Layer {
     });
   }
 
-  override key(event: { name: string; ctrl?: boolean; alt?: boolean }): string {
-    if (event.name === 'escape') {
+  override key(event: { name?: string; ctrl?: boolean; alt?: boolean } | null | undefined): string {
+    if (!event || typeof event !== 'object') return 'handled';
+    const keyName = typeof event.name === 'string' ? event.name : '';
+    if (keyName === 'escape') {
       this.settled = true;
       this.onPick(null);
       return 'close';
     }
-    if (event.name === 'up' || event.name === 'down') {
-      const delta = event.name === 'up' ? -1 : 1;
-      this.list.moveTo((this.list.selected + delta + this.items.length) % this.items.length);
+    if (keyName === 'up' || keyName === 'down') {
+      if (this.items.length > 0) {
+        const delta = keyName === 'up' ? -1 : 1;
+        this.list.moveTo((this.list.selected + delta + this.items.length) % this.items.length);
+      }
       return 'handled';
     }
-    if (event.name === 'enter' || event.name === 'return') {
+    if (keyName === 'enter' || keyName === 'return') {
       this.settled = true;
       this.onPick(this.items[this.list.selected] ?? null);
       return 'close';
     }
-    if (!event.ctrl && !event.alt && (event.name.length === 1 || event.name === 'space' || event.name === 'backspace')) {
+    if (!event.ctrl && !event.alt && keyName && (keyName.length === 1 || keyName === 'space' || keyName === 'backspace')) {
       this.settled = true;
       this.onPick(null);
       return 'dismiss';

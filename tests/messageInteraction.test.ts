@@ -573,5 +573,22 @@ test('StageSurface keeps actionLayout.y and turnRail stageTop non-negative and r
   assert.ok((surface.turnRailLayout?.stageTop ?? 0) >= 0, 'turnRailLayout.stageTop must not be negative');
 });
 
+test('MessageActionsLayer guards empty items, missing event fields, and control escapes in body()', () => {
+  const empty = new MessageActionsLayer([], () => {});
+  empty.key({ name: 'down' });
+  assert.equal(Number.isFinite(empty.list.selected), true);
+  assert.equal(empty.list.selected, 0);
+  assert.equal(empty.key(null as unknown as { name: string }), 'handled');
+  assert.equal(empty.key({} as unknown as { name: string }), 'handled');
+
+  const dirty = new MessageActionsLayer(
+    [{ label: 'Copy\nNow\x1b[2J', description: 'to\x07\nclipboard', value: 'copy' }],
+    () => {}
+  );
+  const rows = dirty.body(60);
+  assert.equal(rows.length, 1);
+  assert.equal(/\x1b\[2J|\x07|\n/.test(rows[0]!), false);
+});
+
 
 
