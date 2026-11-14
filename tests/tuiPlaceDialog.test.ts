@@ -28,4 +28,11 @@ describe('placeDialog', () => {
       assert.equal(Number.isFinite(infHome.caretCol), true);
     });
   });
+
+  it('placeDialog floors fractional columns and caret coordinates', () => {
+    const placed = placeDialog(['line 1', 'line 2', 'line 3'], 10.9, 6.8, 1.9, 9.8);
+    assert.equal(Number.isInteger(placed.caretRow), true);
+    assert.equal(Number.isInteger(placed.caretCol), true);
+    assert.equal(placed.caretCol, 8);
+  });
 });

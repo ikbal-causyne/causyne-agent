@@ -53,11 +53,10 @@ export function startupDialogView(layer: StartupLayer, columns: number, terminal
 
 /** Center a temporary dialog in the available terminal region. */
 export function placeDialog(rows: string[], columns: number, height: number, caretRow: number, caretCol: number): PlacedView {
-  const safeHeight = Number.isFinite(height) ? height : 1;
-  const safeColumns = Number.isFinite(columns) ? columns : 2;
-  const safeCaretRow = Number.isFinite(caretRow) ? caretRow : 0;
-  const safeCaretCol = Number.isFinite(caretCol) ? caretCol : 0;
-  const available = Math.max(1, Math.floor(safeHeight));
+  const available = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
+  const safeColumns = Number.isFinite(columns) ? Math.floor(columns) : 2;
+  const safeCaretRow = Number.isFinite(caretRow) ? Math.floor(caretRow) : 0;
+  const safeCaretCol = Number.isFinite(caretCol) ? Math.floor(caretCol) : 0;
   const shown = rows.slice(0, available);
   const top = Math.max(0, Math.floor((available - shown.length) / 2));
   return {
