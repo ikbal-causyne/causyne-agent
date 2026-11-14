@@ -11,6 +11,7 @@ import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter } from '../auth/openrouterAuth.js';
 import { setTransientNotice } from './consoleGuard.js';
+import { truncate } from './text.js';
 import { getAvailableProvidersOverview, resolveAvailableProvidersOverview, resolveAvailableModels } from '../dynamicCatalogue.js';
 async function showConfiguringAnimation(providerLabel, promptHost) {
     if (promptHost && typeof promptHost.scheduleDraw === 'function') {
@@ -33,8 +34,11 @@ async function showConfiguringAnimation(providerLabel, promptHost) {
  */
 export function buildModelPickerItems(config, overview, options = {}) {
     const items = [];
-    const activeProvider = config.provider || '';
-    const activeModel = config.model || '';
+    const safeConfig = config && typeof config === 'object' ? config : {};
+    const acpPeers = Array.isArray(overview?.acp) ? overview.acp : [];
+    const byokProviders = Array.isArray(overview?.byok) ? overview.byok : [];
+    const activeProvider = safeConfig.provider || '';
+    const activeModel = safeConfig.model || '';
     const tab = options.tab || 'all';
     const expandedPeers = options.expandedPeers || new Set();
     const defaultMaxAcp = tab === 'all' ? Infinity : 10;
@@ -49,7 +53,7 @@ export function buildModelPickerItems(config, overview, options = {}) {
     }
     // 1. ACP Peer Agents & Sovereign Local Engines
     if (tab === 'all' || tab === 'acp') {
-        for (const peer of overview.acp) {
+        for (const peer of acpPeers) {
             const isCurrentProvider = activeProvider === peer.providerKey;
             const catTitle = peer.installed
                 ? `ACP · ${peer.label} (ready)`
@@ -131,7 +135,7 @@ export function buildModelPickerItems(config, overview, options = {}) {
                     value: {
                         type: 'acp',
                         providerId: peer.providerKey,
-                        modelId: peer.models[0] || peer.id,
+                        modelId: (Array.isArray(peer.models) ? peer.models[0] : undefined) || peer.id,
                         providerLabel: peer.label,
                         installed: false,
                         isCurrent: false,
@@ -144,7 +148,7 @@ export function buildModelPickerItems(config, overview, options = {}) {
     }
     // 2. BYOK Providers (Cloud & Local APIs) — excluding OpenRouter in BYOK tab
     if (tab === 'all' || tab === 'byok') {
-        for (const p of overview.byok) {
+        for (const p of byokProviders) {
             if (p.id === 'openrouter') {
                 continue;
             }
@@ -183,8 +187,8 @@ export function buildModelPickerItems(config, overview, options = {}) {
     }
     // 3. Free Cloud Models (OpenRouter Free)
     if (tab === 'all' || tab === 'free') {
-        const isConfigured = Boolean((config.provider === 'openrouter' && config.apiKey) ||
-            config.providerKeys?.openrouter ||
+        const isConfigured = Boolean((safeConfig.provider === 'openrouter' && safeConfig.apiKey) ||
+            safeConfig.providerKeys?.openrouter ||
             process.env.OPENROUTER_API_KEY);
         const isCurrentProvider = activeProvider === 'openrouter';
         const catTitle = isConfigured
@@ -338,7 +342,7 @@ export class ModelPickerLayer extends SelectLayer {
         const tabACP = this.activeTab === 'acp' ? paint('accent', bold('● ACP')) : dim('ACP');
         const tabBYOK = this.activeTab === 'byok' ? paint('accent', bold('● BYOK')) : dim('BYOK');
         const tabFREE = this.activeTab === 'free' ? paint('accent', bold('● FREE')) : dim('FREE');
-        const tabBar = `  | ${tabACP} | ${tabBYOK} | ${tabFREE} |   ${dim('(Tab / ← → switch tab)')}`;
+        const tabBar = truncate(`  | ${tabACP} | ${tabBYOK} | ${tabFREE} |   ${dim('(Tab / ← → switch tab)')}`, safeWidth, '');
         const separator = paint('rule', GLYPHS.hLine.repeat(safeWidth));
         const listHeight = Math.max(1, safeHeight - 2);
         const { rows } = this.list.render(safeWidth, listHeight);
@@ -414,8 +418,10 @@ export class ModelPickerLayer extends SelectLayer {
                 this.settled = false;
             return result === 'keep' ? 'handled' : 'close';
         }
-        if (action === 'cancel')
+        if (action === 'cancel') {
+            this.settled = true;
             return 'close';
+        }
         return action ? 'handled' : null;
     }
 }

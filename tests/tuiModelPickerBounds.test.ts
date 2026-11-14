@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { visibleWidth } from '../src/tui/text.js';
 import {
   ModelPickerLayer,
   buildModelPickerItems,
@@ -121,5 +122,24 @@ describe('modelPicker finite bounds', () => {
     } finally {
       if (prevEnvKey !== undefined) process.env.OPENROUTER_API_KEY = prevEnvKey;
     }
+  });
+
+  it('guards malformed overview arrays, truncates narrow tabBar, and settles ModelPickerLayer on escape', () => {
+    const items = buildModelPickerItems(null as unknown as Record<string, string>, {
+      acp: [{ id: 'codex', providerKey: 'acp/codex', label: 'Codex', installed: false, models: undefined as unknown as string[], setupInstruction: '' }],
+      byok: undefined as unknown as ProviderOverview['byok']
+    });
+    assert.ok(items.some(i => i.value.providerId === 'acp/codex'));
+
+    const layer = new ModelPickerLayer({
+      config: { provider: 'acp/codex' },
+      overview: sampleOverview,
+      onPick() {}
+    });
+    const narrowRows = layer.body(24, 10);
+    assert.ok(visibleWidth(narrowRows[0] ?? '') <= 24, `tabBar exceeded 24 cols: ${visibleWidth(narrowRows[0] ?? '')}`);
+    const action = layer.key({ name: 'escape' });
+    assert.equal(action, 'close');
+    assert.equal(layer.settled, true);
   });
 });
