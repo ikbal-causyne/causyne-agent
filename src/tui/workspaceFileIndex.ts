@@ -55,11 +55,13 @@ export class WorkspaceFileIndex {
   private readonly refreshMs: number;
 
   constructor(root: string, options: WorkspaceFileIndexOptions = {}) {
-    this.root = path.resolve(root);
-    this.maxEntries = finiteInt(options.maxEntries, DEFAULT_MAX_ENTRIES);
-    this.maxDirs = finiteInt(options.maxDirs, DEFAULT_MAX_DIRS);
-    this.maxDepth = finiteInt(options.maxDepth, DEFAULT_MAX_DEPTH);
-    this.refreshMs = finiteInt(options.refreshMs, DEFAULT_REFRESH_MS, 0);
+    const safeRoot = typeof root === 'string' && root.length > 0 ? root : '.';
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    this.root = path.resolve(safeRoot);
+    this.maxEntries = finiteInt(safeOptions.maxEntries, DEFAULT_MAX_ENTRIES);
+    this.maxDirs = finiteInt(safeOptions.maxDirs, DEFAULT_MAX_DIRS);
+    this.maxDepth = finiteInt(safeOptions.maxDepth, DEFAULT_MAX_DEPTH);
+    this.refreshMs = finiteInt(safeOptions.refreshMs, DEFAULT_REFRESH_MS, 0);
   }
 
   get isReady(): boolean { return this.entries !== null; }
@@ -120,7 +122,7 @@ export class WorkspaceFileIndex {
 
   /** Contiguous matches take priority; fuzzy matching remains the JS fallback. */
   candidates(query: string): string[] {
-    if (!query) return this.entries ?? [];
+    if (typeof query !== 'string' || !query) return this.entries ?? [];
     const needle = query.toLocaleLowerCase();
     const direct = this.indexed.filter(entry => entry.folded.includes(needle));
     return (direct.length > 0 ? direct.map(entry => entry.value) : this.entries ?? []);

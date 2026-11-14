@@ -109,3 +109,11 @@ test('path with spaces remains quoted and is usable as @ context', async t => {
   const completed = applyCompletion(text, text.length, completion, target);
   assert.equal(completed.text, 'open @"assets/my wallpaper.png" ');
 });
+
+test('WorkspaceFileIndex guards nullish options, empty root, and non-string candidates query', async t => {
+  const { root } = workspace(t);
+  const index = new WorkspaceFileIndex(root, null);
+  await index.ensure();
+  assert.deepEqual(index.candidates(123), index.entries);
+  assert.doesNotThrow(() => new WorkspaceFileIndex(null));
+});
