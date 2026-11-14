@@ -328,7 +328,7 @@ export function markHoveredMessage(
   const visible = Math.max(0, Math.min(rows.length, flat.rows.length - scrollTop));
   const padding = rows.length - visible;
   const next = flat.markers[flat.markers.indexOf(marker) + 1];
-  const rawStart = marker.row;
+  const rawStart = flat.markers[mIdx]!.row;
   const rawEnd = next?.row ?? flat.rows.length;
 
   // Skip leading and trailing blank separator lines inside the message frame
