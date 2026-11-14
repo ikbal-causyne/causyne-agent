@@ -26,21 +26,31 @@ export function openModeControl(prompt, loop) {
         }
     }));
 }
+function splitModelVariant(model) {
+    if (!model.endsWith(')'))
+        return null;
+    const openIndex = model.lastIndexOf(' (');
+    if (openIndex < 0)
+        return null;
+    const variant = model.slice(openIndex + 2, -1);
+    if (!variant || variant.includes('(') || variant.includes(')'))
+        return null;
+    return { base: model.slice(0, openIndex), variant };
+}
 /** Only offer sibling variants the selected provider actually advertises. */
 export function availableModelVariants(config) {
-    const current = String(config.model || '');
-    const match = current.match(/^(.*)\s\(([^()]+)\)$/);
-    if (!match)
+    if (!config || typeof config !== 'object')
+        return [];
+    const current = typeof config.model === 'string' ? config.model : String(config.model ?? '');
+    const parsed = splitModelVariant(current);
+    if (!parsed)
         return [];
     const overview = getAvailableProvidersOverview(config);
-    const provider = String(config.provider || '');
+    const provider = typeof config.provider === 'string' ? config.provider : String(config.provider ?? '');
     const advertised = overview.acp.find(peer => peer.providerKey === provider)?.models
         ?? overview.byok.find(item => item.id === provider)?.models
         ?? [];
-    return advertised.filter(model => {
-        const sibling = model.match(/^(.*)\s\(([^()]+)\)$/);
-        return sibling?.[1] === match[1];
-    });
+    return advertised.filter(model => splitModelVariant(model)?.base === parsed.base);
 }
 export function openVariantControl(prompt) {
     const config = loadConfig();
@@ -50,18 +60,19 @@ export function openVariantControl(prompt) {
         prompt.scheduleDraw();
         return;
     }
+    const provider = typeof config.provider === 'string' ? config.provider.trim() : '';
     prompt.openLayer(new SelectLayer({
         title: 'Model variant',
         items: variants.map(model => ({
             id: model,
             label: `${model}${model === config.model ? '  (active)' : ''}`,
-            description: String(config.provider || ''),
+            description: provider,
             value: model
         })),
         onPick: (item) => {
             if (!item?.value || item.value === config.model)
                 return;
-            prompt.deliver(`/model ${String(config.provider)}/${item.value}`);
+            prompt.deliver(provider ? `/model ${provider}/${item.value}` : `/model ${item.value}`);
             prompt.notice = 'Model variant change queued';
             prompt.scheduleDraw();
         }

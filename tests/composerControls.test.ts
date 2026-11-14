@@ -19,6 +19,7 @@ test('variant choices follow the active provider catalogue', () => {
     'Gemini 3.8 Flash (High)'
   ]);
   assert.deepEqual(availableModelVariants({ provider: 'acp/cursor', model: 'cursor' }), []);
+  assert.deepEqual(availableModelVariants(null as unknown as Record<string, unknown>), []);
 });
 
 test('composer shortcuts open controls without modifying the draft', async () => {
