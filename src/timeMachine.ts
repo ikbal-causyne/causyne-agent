@@ -134,7 +134,7 @@ export class TimeMachine {
   observe(tool: string, args: Record<string, unknown>, result: unknown,
     outcomes: readonly ToolOutcome[] = []): RecoveryDecision {
     const value = record(result);
-    const failed = value.success === false || value.ok === false || value.isError === true || (typeof value.error === 'string' && value.error.trim().length > 0)
+    const failed = value.success === false || value.ok === false || value.isError === true || value.requiresConsent === true || value.requiresApproval === true || value.authenticationRequired === true || (typeof value.error === 'string' && value.error.trim().length > 0)
       || (typeof value.exitCode === 'number' && (!Number.isFinite(value.exitCode) || value.exitCode !== 0))
       || value.failureKind === 'site_refusal' || value.status === 'error' || value.status === 'failed'
       || (typeof value.status === 'number' && (!Number.isFinite(value.status) || value.status >= 400))
@@ -166,7 +166,7 @@ export class TimeMachine {
 
     const error = typeof value.error === 'string' ? value.error : '';
     const needsHuman = value.failureKind !== 'site_refusal'
-      && (classification === 'permission' || /user denied|approval required|authentication required/i.test(error));
+      && (classification === 'permission' || value.requiresConsent === true || value.requiresApproval === true || value.authenticationRequired === true || /user denied|approval required|authentication required/i.test(error));
     const attempt = Math.min(TIME_MACHINE_MAX_ATTEMPTS, (this.failures.get(key) || 0) + 1);
     this.failures.set(key, attempt);
     const checkpoint = good ? ` Last successful tool: ${good}.` : '';
