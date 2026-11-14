@@ -9,6 +9,7 @@
  * interval-based renderer.
  */
 import { stdout } from 'node:process';
+import { safeDisplay } from './text.js';
 const BRAILLE_DOTS = [
     [0, 0, 0x01], [0, 1, 0x02], [0, 2, 0x04], [0, 3, 0x40],
     [1, 0, 0x08], [1, 1, 0x10], [1, 2, 0x20], [1, 3, 0x80],
@@ -148,7 +149,10 @@ export function renderCausyneRotor(elapsedMs, options = {}) {
         lines.push(line);
     }
     if (options.label !== '') {
-        const label = options.label ?? 'working';
+        const cleanLabel = options.label === undefined
+            ? 'working'
+            : safeDisplay(options.label).replace(/\s+/g, ' ').trim();
+        const label = cleanLabel || 'working';
         const status = color
             ? `${COLORS.lime}●${COLORS.reset} ${COLORS.text}${label}${COLORS.reset}`
             : `● ${label}`;
@@ -164,7 +168,10 @@ export function renderCausyneRotor(elapsedMs, options = {}) {
 export function startCausyneRotor(options = {}) {
     const color = options.color ?? (Boolean(stdout.isTTY) && !process.env.NO_COLOR && !process.env.CAUSYNE_NO_COLOR);
     if (!stdout.isTTY) {
-        stdout.write((options.label ?? 'working') + '\n');
+        const label = options.label === undefined
+            ? 'working'
+            : safeDisplay(options.label).replace(/\s+/g, ' ').trim();
+        stdout.write(label + '\n');
         return { stop() { } };
     }
     const fps = clampRotorRange(options.fps, 4, 30, 16);
@@ -221,16 +228,18 @@ export function getRotorSpinnerFrames(color = true, unicode = true) {
 }
 export function getRotorSpinnerFrame(tick, color = true, unicode = true) {
     const frames = getRotorSpinnerFrames(color, unicode);
-    const index = Math.abs(Math.floor(tick)) % frames.length;
+    const safeTick = Number.isFinite(tick) ? Math.abs(Math.floor(tick)) : 0;
+    const index = safeTick % frames.length;
     return frames[index] ?? frames[0] ?? '⠇⠙';
 }
 const DOT_FRAMES = ['   ', '.  ', '.. ', '...'];
 export function getAnimatedDots(tick) {
-    const stage = Math.floor(Math.abs(Math.floor(tick)) / 2) % DOT_FRAMES.length;
+    const safeTick = Number.isFinite(tick) ? Math.abs(Math.floor(tick)) : 0;
+    const stage = Math.floor(safeTick / 2) % DOT_FRAMES.length;
     return DOT_FRAMES[stage] ?? '   ';
 }
 export function formatAnimatedStatus(message, tick) {
-    let base = String(message ?? '').trimEnd();
+    let base = safeDisplay(message ?? '').replace(/\s+/g, ' ').trimEnd();
     while (base.endsWith('.') || base.endsWith('…')) {
         base = base.slice(0, -1).trimEnd();
     }

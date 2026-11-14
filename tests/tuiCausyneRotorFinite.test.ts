@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getAngle, renderCausyneRotor, startCausyneRotor } from '../src/tui/CausyneRotor.js';
+import { formatAnimatedStatus, getAngle, renderCausyneRotor, startCausyneRotor } from '../src/tui/CausyneRotor.js';
 
 describe('CausyneRotor finite bounds', () => {
   it('getAngle and renderCausyneRotor sanitize non-finite elapsedMs, columns, and rows', () => {
@@ -41,5 +41,15 @@ describe('CausyneRotor finite bounds', () => {
       globalThis.setInterval = prevSetInterval;
       globalThis.clearInterval = prevClearInterval;
     }
+  });
+
+  it('sanitizes control sequences and non-finite ticks in rotor label and animated status', () => {
+    const frame = renderCausyneRotor(0, { columns: 12, rows: 6, color: false, label: 'run\x1b[2J\nmore' });
+    assert.equal(frame.includes('\x1b[2J'), false);
+    assert.equal(frame.split('\n').length, 7);
+    assert.equal(frame.split('\n').at(-1), '● run more');
+
+    const status = formatAnimatedStatus('sync\x1b[31m\nnext', Number.NaN);
+    assert.equal(status, 'sync next   ');
   });
 });

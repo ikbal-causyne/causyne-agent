@@ -10,6 +10,7 @@
  */
 
 import { stdout } from 'node:process';
+import { safeDisplay } from './text.js';
 
 export type RotorMotion = 'heavy' | 'smooth' | 'pulse';
 
@@ -182,7 +183,10 @@ export function renderCausyneRotor(
   }
 
   if (options.label !== '') {
-    const label = options.label ?? 'working';
+    const cleanLabel = options.label === undefined
+      ? 'working'
+      : safeDisplay(options.label).replace(/\s+/g, ' ').trim();
+    const label = cleanLabel || 'working';
     const status = color
       ? `${COLORS.lime}●${COLORS.reset} ${COLORS.text}${label}${COLORS.reset}`
       : `● ${label}`;
@@ -201,7 +205,10 @@ export function startCausyneRotor(options: RotorOptions & { fps?: number | undef
 } {
   const color = options.color ?? (Boolean(stdout.isTTY) && !process.env.NO_COLOR && !process.env.CAUSYNE_NO_COLOR);
   if (!stdout.isTTY) {
-    stdout.write((options.label ?? 'working') + '\n');
+    const label = options.label === undefined
+      ? 'working'
+      : safeDisplay(options.label).replace(/\s+/g, ' ').trim();
+    stdout.write(label + '\n');
     return { stop() {} };
   }
 
@@ -265,19 +272,21 @@ export function getRotorSpinnerFrames(color = true, unicode = true): readonly st
 
 export function getRotorSpinnerFrame(tick: number, color = true, unicode = true): string {
   const frames = getRotorSpinnerFrames(color, unicode);
-  const index = Math.abs(Math.floor(tick)) % frames.length;
+  const safeTick = Number.isFinite(tick) ? Math.abs(Math.floor(tick)) : 0;
+  const index = safeTick % frames.length;
   return frames[index] ?? frames[0] ?? '⠇⠙';
 }
 
 const DOT_FRAMES = ['   ', '.  ', '.. ', '...'] as const;
 
 export function getAnimatedDots(tick: number): string {
-  const stage = Math.floor(Math.abs(Math.floor(tick)) / 2) % DOT_FRAMES.length;
+  const safeTick = Number.isFinite(tick) ? Math.abs(Math.floor(tick)) : 0;
+  const stage = Math.floor(safeTick / 2) % DOT_FRAMES.length;
   return DOT_FRAMES[stage] ?? '   ';
 }
 
 export function formatAnimatedStatus(message: string, tick: number): string {
-  let base = String(message ?? '').trimEnd();
+  let base = safeDisplay(message ?? '').replace(/\s+/g, ' ').trimEnd();
   while (base.endsWith('.') || base.endsWith('…')) {
     base = base.slice(0, -1).trimEnd();
   }
