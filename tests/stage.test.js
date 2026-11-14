@@ -693,3 +693,14 @@ test('reanchor after terminal reflow resets row tracking without scrolling or ab
   stage.collapse();
   assert.equal(stage.reanchor(), false, 'unreserved stages must never move the cursor');
 });
+
+test('Stage normalize strips carriage returns and paint resets open SGR before ERASE_LINE', () => {
+  const out = sink({ rows: 20, columns: 80 });
+  const stage = new Stage({ out, env: {} });
+  stage.reserve(16);
+  out.reset();
+  stage.paint(['hello\rworld', '\x1b[48;2;20;24;32mstyled'], { row: 0, col: 0 });
+  const written = out.text();
+  assert.equal(stage.prev[0], 'helloworld', 'embedded CR must be stripped before row write');
+  assert.ok(written.includes('\x1b[48;2;20;24;32mstyled\x1b[0m\x1b[K'), 'unclosed SGR must reset before ERASE_LINE to prevent BCE background smear');
+});

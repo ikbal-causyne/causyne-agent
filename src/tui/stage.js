@@ -210,6 +210,8 @@ export class Stage {
         const out = new Array(this.height);
         for (let i = 0; i < this.height; i++) {
             let row = rows && rows[i] != null ? String(rows[i]) : '';
+            if (row.includes('\r'))
+                row = row.replace(/\r/g, '');
             if (row.includes('\n'))
                 row = row.split('\n')[0] ?? '';
             out[i] = visibleWidth(row) <= limit ? row : truncate(row, limit, '');
@@ -251,7 +253,7 @@ export class Stage {
      * idle frame is free.
      */
     paint(rows, caret = null) {
-        if (!this.reserved)
+        if (!this.reserved || this.height <= 0)
             return 0;
         const next = this.normalize(rows);
         const target = caret && Number.isFinite(caret.row)
@@ -270,7 +272,9 @@ export class Stage {
         this.write(SYNC_ON + HIDE_CURSOR + NOWRAP_ON);
         for (const i of changed) {
             this.moveTo(i);
-            this.write('\r' + (next[i] ?? '') + ERASE_LINE);
+            const content = next[i] ?? '';
+            const reset = content.includes('\x1b') && !content.endsWith('\x1b[0m') ? '\x1b[0m' : '';
+            this.write('\r' + content + reset + ERASE_LINE);
         }
         this.moveTo(target.row);
         this.write('\r');
