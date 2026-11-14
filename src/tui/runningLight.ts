@@ -110,7 +110,7 @@ export function runningLightWindow(
   nowMs: number,
   speed: RunningLightSpeed = 'medium'
 ): RunningLightWindow {
-  const len = Math.max(0, Math.floor(runesLen));
+  const len = Number.isFinite(runesLen) ? Math.max(0, Math.floor(runesLen)) : 0;
   const { shortStepMs, longStepMs } = resolveRunningLightSpeed(speed);
   if (len <= 0 || shortStepMs <= 0 || longStepMs <= 0) {
     return { start: 0, width: 0, active: false };

@@ -74,7 +74,7 @@ export function resolveRunningLightSpeed(speed = 'medium') {
  * - For `runesLen >= 25`: bidirectional ping-pong sweep at `longStepMs`.
  */
 export function runningLightWindow(runesLen, nowMs, speed = 'medium') {
-    const len = Math.max(0, Math.floor(runesLen));
+    const len = Number.isFinite(runesLen) ? Math.max(0, Math.floor(runesLen)) : 0;
     const { shortStepMs, longStepMs } = resolveRunningLightSpeed(speed);
     if (len <= 0 || shortStepMs <= 0 || longStepMs <= 0) {
         return { start: 0, width: 0, active: false };
