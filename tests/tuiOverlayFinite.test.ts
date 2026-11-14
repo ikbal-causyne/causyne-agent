@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { Layer, drawPanel, panelRows } from '../src/tui/overlay.js';
+import { Layer, OverlayStack, drawPanel, panelRows } from '../src/tui/overlay.js';
 import { visibleWidth } from '../src/tui/text.js';
 
 describe('overlay drawPanel finite bounds', () => {
@@ -60,5 +60,32 @@ describe('overlay drawPanel finite bounds', () => {
     const fracRect = layer.rect({ x: 1.8, y: 2.9, width: 80.7, height: 24.4 });
     assert.equal(Number.isInteger(fracRect.width), true);
     assert.equal(Number.isInteger(fracRect.height), true);
+  });
+
+  it('OverlayStack.paint skips non-finite cursor coordinates and clamps fractional/out-of-bounds cursor inside inner rect', () => {
+    const cursors: Array<{ x: number; y: number }> = [];
+    const screen = {
+      fill() {},
+      put() {},
+      setCursor(x: number, y: number) {
+        cursors.push({ x, y });
+      }
+    };
+
+    const stack = new OverlayStack();
+    const layer = new Layer({ title: 'T', width: 20, height: 6 });
+    layer.body = () => ['row0', 'row1'];
+    layer.cursor = { x: Number.NaN, y: 1 };
+    stack.push(layer);
+
+    stack.paint(screen, { x: 0, y: 0, width: 40, height: 12 });
+    assert.equal(cursors.length, 0);
+
+    layer.cursor = { x: 2.8, y: -3 };
+    stack.paint(screen, { x: 0, y: 0, width: 40, height: 12 });
+    assert.equal(cursors.length, 1);
+    assert.equal(Number.isInteger(cursors[0]!.x), true);
+    assert.equal(Number.isInteger(cursors[0]!.y), true);
+    assert.ok(cursors[0]!.y >= 0);
   });
 });

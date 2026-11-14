@@ -211,8 +211,15 @@ export class OverlayStack {
                 screen.put(inner.x, inner.y + row, rows[row] ?? '', inner.width);
             }
             // Only the topmost layer may own the caret.
-            if (index === this.layers.length - 1 && layer.cursor) {
-                screen.setCursor(inner.x + layer.cursor.x, inner.y + layer.cursor.y);
+            if (index === this.layers.length - 1 &&
+                layer.cursor &&
+                inner.width > 0 &&
+                inner.height > 0 &&
+                Number.isFinite(layer.cursor.x) &&
+                Number.isFinite(layer.cursor.y)) {
+                const cursorX = Math.max(0, Math.min(inner.width - 1, Math.floor(layer.cursor.x)));
+                const cursorY = Math.max(0, Math.min(inner.height - 1, Math.floor(layer.cursor.y)));
+                screen.setCursor(inner.x + cursorX, inner.y + cursorY);
             }
         }
     }
