@@ -298,11 +298,15 @@ export class LineEditor {
   // memory for. Killed text goes to a ring so Ctrl+Y can put it back.
   // -------------------------------------------------------------------------
 
+  _killSelection() {
+    this.killRing = this.getSelectedText();
+    this.deleteSelection();
+    if (this.killRing) writeClipboardSync(this.killRing);
+  }
+
   killToEnd() {
     if (this.hasSelection) {
-      this.killRing = this.getSelectedText();
-      this.deleteSelection();
-      if (this.killRing) writeClipboardSync(this.killRing);
+      this._killSelection();
       return;
     }
     const line = this.lines[this.line];
@@ -313,9 +317,7 @@ export class LineEditor {
 
   killToStart() {
     if (this.hasSelection) {
-      this.killRing = this.getSelectedText();
-      this.deleteSelection();
-      if (this.killRing) writeClipboardSync(this.killRing);
+      this._killSelection();
       return;
     }
     const line = this.lines[this.line];
@@ -327,9 +329,15 @@ export class LineEditor {
 
   killWordLeft() {
     if (this.hasSelection) {
-      this.killRing = this.getSelectedText();
-      this.deleteSelection();
-      if (this.killRing) writeClipboardSync(this.killRing);
+      this._killSelection();
+      return;
+    }
+    if (this.col === 0) {
+      if (this.line > 0) {
+        this.killRing = '\n';
+        this.backspace();
+        writeClipboardSync(this.killRing);
+      }
       return;
     }
     const start = this.col;

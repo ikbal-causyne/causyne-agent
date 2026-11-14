@@ -189,6 +189,15 @@ describe('lineEditor — a buffer you can actually edit', () => {
     const layout = editor.render(Number.NaN);
     assert.equal(Number.isFinite(layout.cursorRow) && Number.isFinite(layout.cursorCol), true);
   });
+
+  test('killWordLeft at column 0 joins across line boundary instead of clobbering killRing', () => {
+    const editor = new LineEditor('foo\nbar');
+    editor.moveHome();
+    editor.killWordLeft();
+    assert.equal(editor.getText(), 'foobar');
+    assert.equal(editor.line, 0);
+    assert.equal(editor.col, 3);
+  });
 });
 
 // ---------------------------------------------------------------------------
