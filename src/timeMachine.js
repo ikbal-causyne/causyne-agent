@@ -111,6 +111,7 @@ export class TimeMachine {
         return this.extended.has(issueKeyValue);
     }
     observe(tool, args, result, outcomes = []) {
+        const safeArgs = record(args);
         const value = record(result);
         const exitStatus = value.exitCode ?? value.exit_code;
         const failed = result instanceof Error || value.success === false || value.ok === false || value.isError === true || value.requiresConsent === true || value.requiresApproval === true || value.authenticationRequired === true || (typeof value.error === 'string' && value.error.trim().length > 0)
@@ -119,7 +120,7 @@ export class TimeMachine {
             || (typeof value.status === 'number' && (!Number.isFinite(value.status) || value.status >= 400))
             || (value.error !== null && typeof value.error === 'object');
         const classification = failed ? (value.status === 429 ? 'rate_limited' : value.status === 401 ? 'permission' : failureClass(value) || 'failed') : '';
-        const key = issueKey(tool, args);
+        const key = issueKey(tool, safeArgs);
         const good = lastGoodTool(outcomes);
         if (!failed) {
             // A successful check only clears its own failure family. A successful
@@ -135,7 +136,7 @@ export class TimeMachine {
                 issueKey: '',
                 lastGoodTool: good,
                 guidance: hadFailure
-                    ? isVerificationCommand(commandText(args))
+                    ? isVerificationCommand(commandText(safeArgs))
                         ? 'The same verification command now passed. Report that check as evidence; assess the rest of the task separately.'
                         : 'This tool call succeeded. Verify the intended task outcome before reporting success.'
                     : ''
