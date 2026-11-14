@@ -1095,4 +1095,25 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(rendered.includes('\x1b[2J'), false, 'notice must strip terminal control sequences');
     assert.equal(rendered.includes('spoof') && rendered.includes('err\nspoof'), false, 'notice must stay single-line');
   });
+
+  test('drawLayer honors CAUSYNE_SIDEBAR=0 width and guards missing preferredHeight', () => {
+    const out = { columns: 180, rows: 40, write() { return true; }, isTTY: true, on() {}, removeListener() {} };
+    const input = { isTTY: true, setRawMode() {}, resume() {}, pause() {}, on() {}, off() {} };
+    const presented = [];
+    const surface = {
+      width: 180,
+      opened: true,
+      transcript: { isEmpty() { return false; }, frames: [{ kind: 'user' }] },
+      env: { CAUSYNE_SIDEBAR: '0' },
+      homeInfo: null,
+      stage: { maxHeight: 39, height: 39, invalidate() {} },
+      composeWidth() { return 82; },
+      present(rows, caret) { presented.push({ rows, caret }); }
+    };
+    const p = new ChatPrompt({ out, input, surface, commands: [] });
+    p.active = true;
+    p.openLayer({ width: 60, body() { return ['ok']; }, key() {} });
+    assert.equal(presented.length, 1);
+    assert.ok(p.layer.panelGeometry.inset >= 55, `expected full-width centering inset >= 55 on 180 cols with sidebar off, got ${p.layer.panelGeometry.inset}`);
+  });
 });

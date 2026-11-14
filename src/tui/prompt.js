@@ -1875,7 +1875,7 @@ export class ChatPrompt {
     // Park the cursor where the user is typing, not at the end of the picker.
     const availableWidth = this.surface?.composeAvailableWidth
       ? this.surface.composeAvailableWidth()
-      : sessionMainWidth(this.surface?.width || terminalWidth());
+      : sessionMainWidth(this.surface?.width || terminalWidth(), false, this.surface?.env);
     const positioned = this.surface
       ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
       : { rows: all, inset: 0 };
@@ -1946,13 +1946,18 @@ export class ChatPrompt {
 
   /** The live region while a dialog is up: the panel, then the status row. */
   drawLayer(width) {
+    const preferredHeight = typeof this.layer.preferredHeight === 'function'
+      ? this.layer.preferredHeight()
+      : 14;
     if (this.layer.messageActions && this.surface?.presentMessageActions) {
-      const availableWidth = sessionMainWidth(this.surface.width);
+      const availableWidth = this.surface.composeAvailableWidth
+        ? this.surface.composeAvailableWidth()
+        : sessionMainWidth(this.surface.width, false, this.surface.env);
       const requestedWidth = typeof this.layer.preferredWidth === 'function'
         ? this.layer.preferredWidth(Math.max(8, availableWidth - 3))
         : (this.layer.width || 64);
       const panelWidth = dialogWidth(Math.max(8, availableWidth - 3), requestedWidth);
-      const panel = panelRows(this.layer, panelWidth, this.layer.preferredHeight());
+      const panel = panelRows(this.layer, panelWidth, preferredHeight);
       this.surface.presentMessageActions(panel, this.layer);
       return;
     }
@@ -1961,12 +1966,16 @@ export class ChatPrompt {
       return this.present(view.rows, view.caretRow, view.caretCol);
     }
     const inline = this.surface && !this.surface.homeInfo;
-    const availableWidth = inline ? sessionMainWidth(this.surface.width) : width;
+    const availableWidth = inline
+      ? (this.surface.composeAvailableWidth
+        ? this.surface.composeAvailableWidth()
+        : sessionMainWidth(this.surface.width, false, this.surface.env))
+      : width;
     const panelWidth = dialogWidth(availableWidth, this.layer.width || 64);
     const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
     const statusReserve = 2; // status row + margin
     const availableDialogRows = Math.max(4, stageMax - statusReserve);
-    const maxHeight = dialogHeight(availableDialogRows, this.layer.preferredHeight());
+    const maxHeight = dialogHeight(availableDialogRows, preferredHeight);
     const panel = panelRows(this.layer, panelWidth, maxHeight);
     const status = this.statusRow(width);
     const all = this.clampRows(panel.concat(status), width);
