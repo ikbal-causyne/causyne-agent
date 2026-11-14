@@ -37,14 +37,17 @@ export function placeMessageActionPanel(
   count: number,
   options?: MessageActionPlacementOptions
 ): MessageActionPlacement {
-  if (!panel.length || viewportRows.length < panel.length || contentWidth < 8) {
+  if (!panel.length || viewportRows.length < panel.length || !Number.isFinite(contentWidth) || contentWidth < 8) {
     return { rows: viewportRows, layout: null };
   }
 
+  const safeContentWidth = Math.floor(contentWidth);
+  const safeStageTop = Number.isFinite(stageTop) ? Math.floor(stageTop) : 0;
+  const safeCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
   const totalRows = viewportRows.length;
   const panelHeight = panel.length;
-  const width = Math.min(contentWidth, Math.max(...panel.map(visibleWidth)));
-  const x = Math.max(0, Math.floor((contentWidth - width) / 2));
+  const width = Math.min(safeContentWidth, Math.max(...panel.map(visibleWidth)));
+  const x = Math.max(0, Math.floor((safeContentWidth - width) / 2));
 
   // Vertical constraints and comfortable ergonomic margins
   const maxAllowedY = totalRows - panelHeight;
@@ -57,7 +60,8 @@ export function placeMessageActionPanel(
   let targetY: number;
 
   if (options?.messageBounds) {
-    const { startRow, endRow } = options.messageBounds;
+    const startRow = Number.isFinite(options.messageBounds.startRow) ? options.messageBounds.startRow : 0;
+    const endRow = Number.isFinite(options.messageBounds.endRow) ? options.messageBounds.endRow : startRow;
     const msgTop = Math.max(0, Math.min(totalRows - 1, startRow));
     const msgBottom = Math.max(0, Math.min(totalRows - 1, endRow));
     const msgCenter = Math.floor((msgTop + msgBottom) / 2);
@@ -81,8 +85,8 @@ export function placeMessageActionPanel(
       const msgIdealY = msgCenter - Math.floor(panelHeight / 2);
       targetY = Math.round(0.75 * msgIdealY + 0.25 * opticalCenterY);
     }
-  } else if (anchorY !== null) {
-    const anchor = anchorY - stageTop;
+  } else if (anchorY !== null && Number.isFinite(anchorY)) {
+    const anchor = anchorY - safeStageTop;
     if (anchor >= totalRows - 2) {
       // Click at the extreme bottom edge: float upward into the reading zone
       targetY = Math.max(topMargin, Math.min(maxAllowedY - bottomMargin, opticalCenterY + 2));
@@ -94,7 +98,7 @@ export function placeMessageActionPanel(
     targetY = opticalCenterY;
   }
 
-  const y = Math.max(0, Math.min(maxAllowedY, targetY));
+  const y = Math.max(0, Math.min(maxAllowedY, Number.isFinite(targetY) ? targetY : opticalCenterY));
   const shouldDim = options?.dimBackdrop === true;
   const rows = viewportRows.slice();
 
@@ -119,5 +123,5 @@ export function placeMessageActionPanel(
     rows[r] = `${styledLeft}${cardChunk}${styledRight}`;
   }
 
-  return { rows, layout: { x, y: stageTop + y, width, count } };
+  return { rows, layout: { x, y: safeStageTop + y, width, count: safeCount } };
 }
