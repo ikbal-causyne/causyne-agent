@@ -25,16 +25,23 @@ function isPrivateIpv4(address: string): boolean {
 
 function isPrivateIpv6(address: string): boolean {
   const normalized = address.toLowerCase().split('%')[0] ?? '';
-  if (normalized === '::' || normalized === '::1') return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8')
-      || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb')
-      || normalized.startsWith('fec') || normalized.startsWith('fed') || normalized.startsWith('fee')
-      || normalized.startsWith('fef') || normalized.startsWith('ff') || normalized.startsWith('2001:db8:')
-      || normalized === '2001:db8::' || normalized.startsWith('64:ff9b:')) return true;
+  let canonical = normalized;
+  try {
+    canonical = new URL(`http://[${normalized}]/`).hostname.slice(1, -1);
+  } catch {
+    return true;
+  }
+  if (canonical === '::' || canonical === '::1') return true;
+  if (canonical.startsWith('fc') || canonical.startsWith('fd') || canonical.startsWith('fe8')
+      || canonical.startsWith('fe9') || canonical.startsWith('fea') || canonical.startsWith('feb')
+      || canonical.startsWith('fec') || canonical.startsWith('fed') || canonical.startsWith('fee')
+      || canonical.startsWith('fef') || canonical.startsWith('ff') || canonical.startsWith('2001:db8:')
+      || canonical === '2001:db8::' || canonical.startsWith('64:ff9b:')) return true;
   if (normalized.startsWith('::ffff:')) {
     const mapped = normalized.slice('::ffff:'.length);
     return isIP(mapped) === 4 ? isPrivateIpv4(mapped) : true;
   }
+  if (canonical.startsWith('::ffff:')) return true;
   return false;
 }
 
