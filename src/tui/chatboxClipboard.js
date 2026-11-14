@@ -208,7 +208,10 @@ export function runCopyCommand(argv, ctx) {
             return { ok: false, output: 'Chatbox input is currently empty.' };
         }
         const res = copyChatboxInput(ctx.prompt);
-        return { ok: res.success, output: 'Copied chatbox input to clipboard.' };
+        return {
+            ok: res.success,
+            output: res.success ? 'Copied chatbox input to clipboard.' : 'Chatbox input is currently empty.'
+        };
     }
     if (argv.length > 0) {
         const customText = argv.join(' ');

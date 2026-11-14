@@ -290,3 +290,14 @@ test('ChatPrompt Alt+A selects all text in prompt buffer', () => {
   assert.equal(prompt.notice, 'selected all input text');
 });
 
+test('runCopyCommand /copy input does not report Copied when input is whitespace-only', () => {
+  const mockPrompt = {
+    editor: new LineEditor('   '),
+    notice: '',
+    scheduleDraw() {}
+  };
+  const res = runCopyCommand(['input'], { prompt: mockPrompt, loop: { messages: [] } });
+  assert.equal(res.ok, false);
+  assert.doesNotMatch(res.output, /^Copied/);
+});
+
