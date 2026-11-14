@@ -311,6 +311,14 @@ test('explicit site refusal without an error string remains a failure and replan
   assert.match(decision.guidance, /another public source/);
 });
 
+test('Windows package manager shims keep distinct scripts in separate retry budgets', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'exit code 1', exitCode: 1 };
+  const attempts = ['npm.cmd run build', 'npm.cmd run test', 'C:\\nodejs\\pnpm.CMD run lint', 'npm run build']
+    .map(command => machine.observe('exec', { command }, fail).attempt);
+  assert.deepEqual(attempts, [1, 1, 1, 2], 'npm.cmd run build and npm run build are the same operation');
+});
+
 test('rate limits demand backoff immediately while retaining the consent boundary', () => {
   const machine = new TimeMachine();
   const args = { command: 'npm publish' };

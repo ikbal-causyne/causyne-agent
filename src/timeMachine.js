@@ -46,7 +46,8 @@ function operationFamily(args) {
     while (tokens.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0] || ''))
         tokens.shift();
     const words = tokens.slice(0, 3);
-    const executable = (words[0] || '').replace(/^.*[\\/]/, '');
+    // Windows shims (`npm.cmd`, `bun.exe`) are the same tools as their bare names.
+    const executable = (words[0] || '').replace(/^.*[\\/]/, '').replace(/\.(cmd|exe|bat|ps1)$/i, '');
     // Keep common verification commands distinct without retaining paths,
     // source text, environment variables, or credentials in the journal.
     if (/^(npm|pnpm|yarn|bun)$/.test(executable)) {
