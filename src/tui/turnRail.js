@@ -36,6 +36,7 @@ export function collectSessionTurns(transcript, contentWidth = 80) {
     }
     const flat = typeof transcript.flatten === 'function' ? transcript.flatten(contentWidth) : null;
     const markers = flat?.markers || [];
+    const transcriptHeight = Array.isArray(flat?.rows) ? flat.rows.length : undefined;
     const frames = transcript.frames;
     const userFrames = [];
     for (let i = 0; i < frames.length; i++) {
@@ -80,7 +81,8 @@ export function collectSessionTurns(transcript, contentWidth = 80) {
             timestamp: frame.ts || Date.now(),
             formattedDate: formatTurnTimestamp(frame.ts || Date.now()),
             frameId: frame.id,
-            startRow
+            startRow,
+            ...(transcriptHeight !== undefined ? { transcriptHeight } : {})
         });
     }
     return turns;
@@ -176,29 +178,37 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         return { cells, layout: { dotRows, rowToTurn } };
     }
     const count = turns.length;
+    const rawTranscriptHeight = turns[0]?.transcriptHeight;
+    const topOffset = typeof rawTranscriptHeight === 'number' &&
+        Number.isFinite(rawTranscriptHeight) &&
+        rawTranscriptHeight > 0 &&
+        rawTranscriptHeight < safeHeight
+        ? safeHeight - Math.floor(rawTranscriptHeight)
+        : 0;
+    const activeHeight = Math.max(1, safeHeight - topOffset);
     // Dense imported histories may contain hundreds of turns. Show a measured
     // set of quiet milestones, while always retaining active/hovered endpoints.
     // All turn objects are preserved for keyboard navigation and preview.
-    const quietStep = count > Math.max(16, Math.floor(safeHeight / 2))
-        ? Math.max(2, Math.ceil(count / Math.max(12, Math.floor(safeHeight / 3))))
+    const quietStep = count > Math.max(16, Math.floor(activeHeight / 2))
+        ? Math.max(2, Math.ceil(count / Math.max(12, Math.floor(activeHeight / 3))))
         : 1;
     // If count fits comfortably, stack consecutive dots centered or upper-aligned
-    const startRow = count <= safeHeight
-        ? Math.max(0, Math.floor((safeHeight - count) / 3))
-        : 0;
+    const startRow = count <= activeHeight
+        ? topOffset + Math.max(0, Math.floor((activeHeight - count) / 3))
+        : topOffset;
     for (let i = 0; i < count; i++) {
         const turn = turns[i];
         if (!turn)
             continue;
         const turnNum = turn.turnIndex;
         let rowIdx;
-        if (count <= safeHeight) {
+        if (count <= activeHeight) {
             rowIdx = startRow + i;
         }
         else {
-            rowIdx = Math.round((i / (count - 1)) * (safeHeight - 1));
+            rowIdx = topOffset + Math.round((i / (count - 1)) * (activeHeight - 1));
         }
-        rowIdx = Math.max(0, Math.min(safeHeight - 1, rowIdx));
+        rowIdx = Math.max(topOffset, Math.min(safeHeight - 1, rowIdx));
         dotRows.set(turnNum, rowIdx);
         const isHovered = hoveredTurnIndex === turnNum;
         const isActive = activeTurnIndex === turnNum;
