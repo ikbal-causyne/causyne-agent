@@ -100,4 +100,57 @@ describe('usageCard renderProgressBar finite bounds', () => {
     assert.doesNotMatch(text, /\bNaN\b|Infinity/);
     assert.match(text, /\(0 messages\)/);
   });
+
+  it('collectUsageCardData sanitizes non-finite tracker metrics and budgetPercentUsed', async () => {
+    const { collectUsageCardData } = await import('../src/tui/usageCard.js');
+    const { loadConfig, saveConfig } = await import('../src/config.js');
+    const prevConfig = loadConfig();
+    try {
+      saveConfig({
+        ...(prevConfig as Record<string, unknown>),
+        tokenBudget: { enabled: true, maxTokensPerDay: 1000 }
+      });
+      const mockLoop = {
+        tokenTracker: {
+          sessionTokens: Number.POSITIVE_INFINITY,
+          sessionCostUsd: Number.POSITIVE_INFINITY,
+          taskTokens: 10,
+          taskCostUsd: 0.01,
+          async getReportedUsage() {
+            return {};
+          },
+          async getCumulativeUsage() {
+            return {
+              totalTokens: Number.NaN,
+              totalCalls: Number.POSITIVE_INFINITY,
+              totalCostUsd: Number.POSITIVE_INFINITY
+            };
+          },
+          async getDailyUsage() {
+            return {
+              totalTokens: Number.NaN,
+              totalCalls: 1,
+              totalCostUsd: Number.POSITIVE_INFINITY
+            };
+          }
+        },
+        memoryManager: { sessionId: 'finite-test' },
+        messages: []
+      };
+
+      const data = await collectUsageCardData(mockLoop);
+      assert.equal(Number.isFinite(data.sessionTokens), true);
+      assert.equal(Number.isFinite(data.sessionCostUsd), true);
+      assert.equal(Number.isFinite(data.dailyTokens), true);
+      assert.equal(Number.isFinite(data.dailyCostUsd), true);
+      assert.equal(Number.isFinite(data.lifetimeTokens), true);
+      assert.equal(Number.isFinite(data.lifetimeCostUsd), true);
+      assert.equal(Number.isFinite(data.lifetimeCalls), true);
+      assert.equal(Number.isFinite(data.budgetLimitTokens), true);
+      assert.equal(Number.isFinite(data.budgetPercentUsed), true);
+      assert.equal(data.budgetPercentUsed, 0);
+    } finally {
+      saveConfig(prevConfig);
+    }
+  });
 });

@@ -62,9 +62,14 @@ export async function collectUsageCardData(loop) {
     const billingNote = (isAgy || isAcp)
         ? 'Local CLI / ACP peer'
         : 'BYOK (provider billed)';
+    const finiteNonNeg = (value, fallback = 0) => {
+        const n = Number(value);
+        return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
     // Context accounting
     const contextReport = buildContextReport();
-    const poolTokens = Math.max(1, contextReport.approxTokenPool || 250000);
+    const rawPoolTokens = finiteNonNeg(contextReport?.approxTokenPool, 250000);
+    const poolTokens = rawPoolTokens > 0 ? Math.floor(rawPoolTokens) : 250000;
     // Measure active messages tokens
     let messageChars = 0;
     let messageCount = 0;
@@ -86,27 +91,31 @@ export async function collectUsageCardData(loop) {
         }
     }
     const messageTokens = Math.round(messageChars / 4);
-    const coreToolTokens = contextReport.core?.tokens || 5000;
+    const coreToolTokens = Math.floor(finiteNonNeg(contextReport?.core?.tokens, 5000));
     const contextUsed = messageTokens + coreToolTokens;
     const contextPctLeft = Math.max(0, Math.min(100, Math.round(((poolTokens - contextUsed) / poolTokens) * 100)));
     // Budget
     const budget = config.tokenBudget || {};
     const budgetEnabled = Boolean(budget.enabled);
-    const budgetLimitTokens = Number(budget.maxTokensPerDay) || 0;
+    const budgetLimitTokens = Math.floor(finiteNonNeg(budget.maxTokensPerDay, 0));
+    const dailyTokens = finiteNonNeg(daily?.totalTokens, 0);
     const budgetPercentUsed = budgetLimitTokens > 0
-        ? Math.round((daily.totalTokens / budgetLimitTokens) * 100)
+        ? Math.round((dailyTokens / budgetLimitTokens) * 100)
         : 0;
+    const rawCostCeiling = finiteNonNeg(budget.maxCostUsd, 0);
     const sessionId = String(loop?.memoryManager?.sessionId || 'default');
+    const sessionTokens = finiteNonNeg(tracker.sessionTokens, 0) || finiteNonNeg(tracker.taskTokens, 0);
+    const sessionCostUsd = finiteNonNeg(tracker.sessionCostUsd, 0) || finiteNonNeg(tracker.taskCostUsd, 0);
     return {
         sessionId,
         sessionTurns: messageCount,
-        sessionTokens: tracker.sessionTokens || tracker.taskTokens || 0,
-        sessionCostUsd: tracker.sessionCostUsd || tracker.taskCostUsd || 0,
-        dailyTokens: daily.totalTokens,
-        dailyCostUsd: daily.totalCostUsd || 0,
-        lifetimeTokens: cumulative.totalTokens,
-        lifetimeCostUsd: cumulative.totalCostUsd || 0,
-        lifetimeCalls: cumulative.totalCalls || 0,
+        sessionTokens,
+        sessionCostUsd,
+        dailyTokens,
+        dailyCostUsd: finiteNonNeg(daily?.totalCostUsd, 0),
+        lifetimeTokens: finiteNonNeg(cumulative?.totalTokens, 0),
+        lifetimeCostUsd: finiteNonNeg(cumulative?.totalCostUsd, 0),
+        lifetimeCalls: Math.floor(finiteNonNeg(cumulative?.totalCalls, 0)),
         contextUsedTokens: contextUsed,
         contextPoolTokens: poolTokens,
         contextPercentLeft: contextPctLeft,
@@ -115,7 +124,7 @@ export async function collectUsageCardData(loop) {
         billingNote,
         budgetEnabled,
         budgetLimitTokens,
-        budgetCostCeilingUsd: Number(budget.maxCostUsd) || undefined,
+        budgetCostCeilingUsd: rawCostCeiling > 0 ? rawCostCeiling : undefined,
         budgetPercentUsed
     };
 }
