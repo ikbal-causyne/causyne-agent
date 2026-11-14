@@ -218,7 +218,16 @@ export class ColdObserver {
   private static instance: ColdObserver | null = null;
 
   constructor(configPartial?: Partial<ObserverConfig>) {
-    this.config = { ...DEFAULT_CONFIG, ...readStoredConfig(), ...(configPartial || {}) };
+    const base = { ...DEFAULT_CONFIG, ...readStoredConfig() };
+    const partial = configPartial || {};
+    this.config = {
+      enabled: typeof partial.enabled === 'boolean' ? partial.enabled : base.enabled,
+      mode: normalizeMode(partial.mode) ?? base.mode,
+      endpoint: typeof partial.endpoint === 'string' ? partial.endpoint.trim().replace(/\/+$/, '') : base.endpoint,
+      model: typeof partial.model === 'string' ? partial.model.trim().slice(0, 200) : base.model,
+      timeoutMs: boundedTimeout(partial.timeoutMs) ?? base.timeoutMs,
+      strictness: normalizeStrictness(partial.strictness) ?? base.strictness
+    };
   }
 
   static getInstance(): ColdObserver {
@@ -456,10 +465,10 @@ export class ColdObserver {
       && /\.(?:[cm]?[jt]sx?|py|rb|php|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|fs|sh|sql|html|css|scss|sass|vue|svelte)$/i.test(outcome.path);
     const lastCodeChange = outcomes.findLastIndex(isCodeMutation);
     const checks = outcomes.slice(lastCodeChange + 1);
-    const hasTestRun = checks.some((outcome) => outcome.success
-      && (TEST_COMMAND.test(outcome.command) || TEST_COMMAND.test(outcome.tool)));
-    const hasBuildRun = checks.some((outcome) => outcome.success
-      && (BUILD_OR_CHECK_COMMAND.test(outcome.command) || outcome.tool === 'code_verify_syntax'));
+    const testChecks = checks.filter((outcome) => TEST_COMMAND.test(outcome.command) || TEST_COMMAND.test(outcome.tool));
+    const buildChecks = checks.filter((outcome) => BUILD_OR_CHECK_COMMAND.test(outcome.command) || outcome.tool === 'code_verify_syntax');
+    const hasTestRun = testChecks.length > 0 && testChecks[testChecks.length - 1]!.success;
+    const hasBuildRun = buildChecks.length > 0 && buildChecks[buildChecks.length - 1]!.success;
     const isLaunch = isLaunchOnlyPrompt(turnState.userPrompt || '');
     const modifiedCode = lastCodeChange >= 0;
     const declarativeOnly = modifiedCode && outcomes.filter(isCodeMutation).every(outcome => /\.(?:html|css)$/i.test(outcome.path));

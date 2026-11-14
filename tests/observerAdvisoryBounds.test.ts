@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { probeAdvisory, queryAdvisory } from '../src/observer/advisory.js';
+import { ColdObserver } from '../src/observer/coldObserver.js';
 import { scanMutation } from '../src/observer/evidence.js';
 
 describe('observer advisory parsing and timeout bounds', () => {
@@ -115,5 +116,26 @@ describe('observer advisory parsing and timeout bounds', () => {
     } finally {
       fs.rmSync(tmpWs, { recursive: true, force: true });
     }
+  });
+
+  it('ColdObserver.auditTurnVerification flags passing-test claim when the latest test run failed and only fs_read succeeded afterward', async () => {
+    const observer = new ColdObserver({ enabled: true, mode: 'deterministic', timeoutMs: Number.NaN });
+    assert.equal(Number.isFinite(observer.getConfig().timeoutMs), true);
+
+    observer.beginTask('task-latest-test-fail');
+    observer.recordToolOutcome('task-latest-test-fail', 'fs_edit', { path: 'src/app.ts' }, { success: true });
+    observer.recordToolOutcome('task-latest-test-fail', 'sysRun', { command: 'npm test' }, { success: true, exitCode: 0 });
+    observer.recordToolOutcome('task-latest-test-fail', 'sysRun', { command: 'npm test' }, { success: false, exitCode: 1, error: '1 test failed' });
+    observer.recordToolOutcome('task-latest-test-fail', 'fs_read', { path: 'src/app.ts' }, { success: true });
+
+    const audit = await observer.auditTurnVerification({
+      taskId: 'task-latest-test-fail',
+      userPrompt: 'Fix the bug and run tests',
+      agentClaim: 'All tests passed and the bug is fixed.',
+      toolHistory: [],
+      stepsCompleted: 4
+    });
+    assert.equal(audit.verified, false);
+    assert.equal(audit.overconfident, true);
   });
 });
