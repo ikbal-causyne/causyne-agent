@@ -1212,4 +1212,33 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(p.editor.getText(), '');
     assert.equal(p.completion, null, 'alt+x must clear stale completion picker');
   });
+
+  test('offerUndo and control rejection sanitize terminal escapes and newlines from notices', async () => {
+    const out = { columns: 80, rows: 24, write() { return true; }, isTTY: false, on() {}, removeListener() {} };
+    const input = { isTTY: false, on() {}, off() {} };
+    const surface = {
+      viewport: { width: 80, scrollTop: 0, height: 10 },
+      transcript: {
+        markers() {
+          return [{ kind: 'checkpoint', row: 2, meta: { path: '/tmp/\x1b[31mevil\nfile.ts', step: '3\x1b[2J' } }];
+        }
+      }
+    };
+    const p = new ChatPrompt({
+      out,
+      input,
+      surface,
+      commands: [],
+      onOpenMode: async () => { throw new Error('boom\x1b[2J\nnext'); }
+    });
+    p.offerUndo();
+    assert.equal(p.notice.includes('\x1b'), false);
+    assert.equal(p.notice.includes('\n'), false);
+
+    p.handleKey({ ctrl: true, name: 'g' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(p.notice.includes('\x1b'), false);
+    assert.equal(p.notice.includes('\n'), false);
+    assert.ok(p.notice.includes('boom'));
+  });
 });

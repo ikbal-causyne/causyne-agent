@@ -1054,7 +1054,7 @@ export class ChatPrompt {
         this.scheduleDraw();
       } else {
         Promise.resolve(control()).catch(error => {
-          this.notice = error instanceof Error ? error.message : String(error);
+          this.notice = this.sanitizeSingleLine(error instanceof Error ? error.message : String(error));
           this.scheduleDraw();
         });
       }
@@ -1294,8 +1294,9 @@ export class ChatPrompt {
     const mark = onScreen.length ? onScreen[onScreen.length - 1] : (above.pop() || marks[0]);
     const meta = mark.meta || {};
 
-    const where = meta.path ? shortenHome(meta.path) : 'files changed this task';
-    const step = meta.step == null ? '' : ` at step ${meta.step}`;
+    const where = meta.path ? this.sanitizeSingleLine(shortenHome(meta.path)) : 'files changed this task';
+    const rawStep = meta.step == null ? '' : this.sanitizeSingleLine(meta.step);
+    const step = rawStep ? ` at step ${rawStep}` : '';
 
     if (this.editor.isEmpty) {
       this.editor.setText('/undo');
@@ -1304,6 +1305,10 @@ export class ChatPrompt {
       // Their draft is theirs. Say what is there and leave the line alone.
       this.notice = `restore point${step} ${GLYPHS.dot} ${where} ${GLYPHS.dot} run /undo to preview`;
     }
+  }
+
+  sanitizeSingleLine(value) {
+    return value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim();
   }
 
   cutSelection() {
@@ -1863,7 +1868,7 @@ export class ChatPrompt {
       totalPromptRows: 0
     } : null;
     const queuedRows = this.queuedPreviewRows(width);
-    const cleanNotice = this.notice ? safeDisplay(String(this.notice)).replace(/\s+/g, ' ').trim() : '';
+    const cleanNotice = this.notice ? this.sanitizeSingleLine(this.notice) : '';
     const noticeRows = cleanNotice ? [dim(`  ${cleanNotice}`)] : [];
 
     // And a row of air between the box and the footer. The picker and a notice
