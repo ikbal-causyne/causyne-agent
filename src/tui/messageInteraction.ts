@@ -247,26 +247,36 @@ const isMessage = (marker: MessageMarker): boolean =>
   (marker.kind === 'user' || marker.kind === 'assistant')
   && typeof marker.meta?.messageText === 'string';
 
+const positiveDim = (value: unknown, fallback: number): number => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+};
+
 /** Resolve screen coordinates against the painted viewport to find any frame marker. */
 export function markerAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
   if (!surface || surface.stage?.reserved === false || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
-  const surfWidth = surface.width || (surface.viewport as any)?.viewWidth || surface.viewport?.width || 80;
+  const px = Math.floor(point.x);
+  const py = Math.floor(point.y);
+  const rawViewW = (surface.viewport as any)?.viewWidth;
+  const surfWidth = positiveDim(surface.width, positiveDim(rawViewW, positiveDim(surface.viewport?.width, 80)));
   const mainWidth = sidebarVisible(surfWidth) ? sessionMainWidth(surfWidth) : surfWidth;
   const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
-  const viewWidth = (surface.viewport as any)?.viewWidth || surface.viewport?.width || surfWidth;
-  if (point.x < leftGutter || point.x >= Math.min(mainWidth, viewWidth + leftGutter)) return null;
-  const stageHeight = surface.stage?.height ?? 24;
-  const top = Math.max(0, ((surface.out?.rows as number) || stageHeight) - stageHeight);
-  const viewRow = point.y - top;
-  const viewHeight = (surface.viewport as any)?.viewHeight || surface.viewport?.height || stageHeight;
+  const viewWidth = positiveDim(rawViewW, positiveDim(surface.viewport?.width, surfWidth));
+  if (px < leftGutter || px >= Math.min(mainWidth, viewWidth + leftGutter)) return null;
+  const stageHeight = surface.stage?.height === 0 ? 0 : positiveDim(surface.stage?.height, 24);
+  const outRows = positiveDim(surface.out?.rows, stageHeight);
+  const top = Math.max(0, outRows - stageHeight);
+  const viewRow = py - top;
+  const viewHeight = positiveDim((surface.viewport as any)?.viewHeight, positiveDim(surface.viewport?.height, stageHeight));
   if (viewRow < 0 || viewRow >= viewHeight) return null;
   const transcript = surface.transcript || (surface as any).renderer?.transcript;
   if (!transcript) return null;
   const flat = transcript.flatten(viewWidth);
-  const visible = Math.max(0, Math.min(viewHeight, flat.rows.length - surface.viewport.scrollTop));
+  const scrollTop = Number.isFinite(surface.viewport?.scrollTop) ? Math.max(0, Math.floor(surface.viewport.scrollTop)) : 0;
+  const visible = Math.max(0, Math.min(viewHeight, flat.rows.length - scrollTop));
   const padding = viewHeight - visible;
   if (viewRow < padding) return null;
-  const row = surface.viewport.scrollTop + viewRow - padding;
+  const row = scrollTop + viewRow - padding;
   for (let i = flat.markers.length - 1; i >= 0; i--) {
     const marker = flat.markers[i];
     if (!marker || marker.row > row) continue;

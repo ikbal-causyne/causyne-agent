@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MessageActionsLayer, handleMessageActionMenuMouse } from '../src/tui/messageInteraction.js';
+import { MessageActionsLayer, handleMessageActionMenuMouse, markerAt } from '../src/tui/messageInteraction.js';
 
 describe('messageInteraction finite bounds', () => {
   it('handleMessageActionMenuMouse ignores non-finite coordinates and floors fractional row indices', () => {
@@ -62,5 +62,24 @@ describe('messageInteraction finite bounds', () => {
     const rows = layer.body(Number.NaN);
     assert.equal(rows.length, 1);
     assert.ok(rows[0].includes('Copy'));
+  });
+
+  it('markerAt handles non-finite terminal dimensions and floors fractional coordinates', () => {
+    const marker = { id: 7, row: 0, kind: 'user', meta: { messageText: 'hello' } };
+    const surface = {
+      width: 80,
+      out: { rows: Number.POSITIVE_INFINITY },
+      stage: { height: Number.NaN, reserved: true },
+      viewport: { width: 80, height: 10, scrollTop: 0 },
+      transcript: {
+        flatten: () => ({
+          rows: ['  hello', '  world'],
+          markers: [marker]
+        })
+      }
+    };
+
+    const hit = markerAt(surface as never, { x: 5.9, y: 8.8 });
+    assert.equal(hit?.id, 7);
   });
 });
