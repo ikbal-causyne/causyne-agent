@@ -106,3 +106,20 @@ test('wrappedChatRows sanitizes control sequences and clamps long prefix inside 
   assert.ok(rows.every(row => visibleWidth(row) <= chatTextWidth(12)),
     `wrappedChatRows exceeded width ${chatTextWidth(12)}: ${rows.map(r => visibleWidth(r))}`);
 });
+
+test('deeply indented markdown bullets, numbered items, and quotes clamp indentation within narrow scrollback width', () => {
+  const written: string[] = [];
+  const out = { columns: 40, isTTY: false, write: (chunk: string) => { written.push(chunk); return true; } };
+  const renderer = new ChatRenderer({ out });
+  renderer.handle({
+    type: 'agent_message',
+    content: [
+      `${' '.repeat(34)}- bullet item text`,
+      `${' '.repeat(34)}1. numbered item text`,
+      `${' '.repeat(34)}> quoted item text`
+    ].join('\n')
+  });
+  const rows = written.join('').split('\n').map(stripAnsi).filter(Boolean);
+  assert.ok(rows.every((row: string) => visibleWidth(row) <= 40), `overflow row: ${rows.find(r => visibleWidth(r) > 40)}`);
+  assert.ok(rows.length <= 10, `over-wrapped into ${rows.length} tiny fragments`);
+});

@@ -70,7 +70,14 @@ function formatDuration(ms) {
  * inline code, fenced blocks and list bullets. Anything fancier belongs in a
  * pager, not a chat transcript.
  */
+function clampMarkdownIndent(raw, markerCols, targetWidth) {
+  const maxLead = Math.max(0, Math.min(Math.floor(targetWidth / 3), targetWidth - markerCols - 8));
+  const rawCols = visibleWidth(String(raw || '').replace(/\t/g, '  '));
+  return ' '.repeat(Math.min(rawCols, maxLead));
+}
+
 function renderMarkdown(text, width) {
+  const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(12, Math.floor(width)) : 80;
   const lines = [];
   let inFence = false;
 
@@ -80,11 +87,14 @@ function renderMarkdown(text, width) {
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
       const language = line.replace(/^\s*```/, '').trim();
-      lines.push(dim(`${GLYPHS.hLine.repeat(3)}${language ? ' ' + language + ' ' : ' '}${GLYPHS.hLine.repeat(Math.max(0, width - 6 - language.length))}`));
+      const maxLabel = Math.max(0, safeWidth - 8);
+      const safeLang = language.length > maxLabel ? language.slice(0, maxLabel) : language;
+      const trail = Math.max(0, safeWidth - 3 - (safeLang ? safeLang.length + 2 : 1));
+      lines.push(dim(`${GLYPHS.hLine.repeat(3)}${safeLang ? ' ' + safeLang + ' ' : ' '}${GLYPHS.hLine.repeat(trail)}`));
       continue;
     }
     if (inFence) {
-      for (const codeRow of wrapBlock('  ' + line, Math.max(8, width), { hang: 0 })) {
+      for (const codeRow of wrapBlock('  ' + line, Math.max(8, safeWidth), { hang: 0 })) {
         lines.push(paint('accent', codeRow));
       }
       continue;
@@ -93,21 +103,21 @@ function renderMarkdown(text, width) {
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       lines.push('');
-      for (const headingRow of wrap(heading[2], Math.max(8, width))) {
+      for (const headingRow of wrap(heading[2], Math.max(8, safeWidth))) {
         lines.push(bold(paint('ink', headingRow)));
       }
       continue;
     }
 
     if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
-      lines.push(dim(GLYPHS.hLine.repeat(Math.max(4, Math.min(width, 40)))));
+      lines.push(dim(GLYPHS.hLine.repeat(Math.max(4, Math.min(safeWidth, 40)))));
       continue;
     }
 
     const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
     if (bullet) {
-      const indent = bullet[1] + '  ';
-      const wrapped = wrap(inline(bullet[2]), width - indent.length - 2);
+      const indent = clampMarkdownIndent(bullet[1], 4, safeWidth) + '  ';
+      const wrapped = wrap(inline(bullet[2]), Math.max(8, safeWidth - indent.length - 2));
       wrapped.forEach((part, index) => {
         lines.push(index === 0 ? `${indent}${paint('muted', GLYPHS.bullet)} ${part}` : `${indent}  ${part}`);
       });
@@ -116,9 +126,12 @@ function renderMarkdown(text, width) {
 
     const numbered = line.match(/^(\s*)(\d+\.)\s+(.*)$/);
     if (numbered) {
-      const prefix = `${numbered[1]}${bold(numbered[2])} `;
-      const indent = ' '.repeat(visibleWidth(`${numbered[1]}${numbered[2]} `));
-      const wrapped = wrap(inline(numbered[3]), width - indent.length);
+      const markerCols = visibleWidth(numbered[2]) + 1;
+      const lead = clampMarkdownIndent(numbered[1], markerCols, safeWidth);
+      const prefix = `${lead}${bold(numbered[2])} `;
+      const indentCols = visibleWidth(lead) + markerCols;
+      const indent = ' '.repeat(indentCols);
+      const wrapped = wrap(inline(numbered[3]), Math.max(8, safeWidth - indentCols));
       wrapped.forEach((part, index) => {
         lines.push(index === 0 ? `${prefix}${part}` : `${indent}${part}`);
       });
@@ -127,8 +140,9 @@ function renderMarkdown(text, width) {
 
     const quote = line.match(/^(\s*)>\s?(.*)$/);
     if (quote) {
-      const indent = quote[1] + paint('muted', '│ ');
-      const wrapped = wrap(inline(quote[2]), width - visibleWidth(indent));
+      const lead = clampMarkdownIndent(quote[1], 2, safeWidth);
+      const indent = lead + paint('muted', '│ ');
+      const wrapped = wrap(inline(quote[2]), Math.max(8, safeWidth - visibleWidth(lead) - 2));
       wrapped.forEach((part) => {
         lines.push(`${indent}${part}`);
       });
@@ -136,14 +150,14 @@ function renderMarkdown(text, width) {
     }
 
     if (/^\s*\|?(\s*:?-+:?\s*\|)+\s*$/.test(line)) {
-      lines.push(dim('  ' + GLYPHS.hLine.repeat(Math.max(4, Math.min(width - 4, 48)))));
+      lines.push(dim('  ' + GLYPHS.hLine.repeat(Math.max(4, Math.min(safeWidth - 4, 48)))));
       continue;
     }
 
     const tableRow = line.match(/^\s*\|(.+)\|\s*$/);
     if (tableRow) {
       const cells = tableRow[1].split('|').map(c => c.trim());
-      for (const tableLine of wrapBlock('  ' + cells.join(' │ '), Math.max(8, width), { hang: 0 })) {
+      for (const tableLine of wrapBlock('  ' + cells.join(' │ '), Math.max(8, safeWidth), { hang: 0 })) {
         lines.push(inline(tableLine));
       }
       continue;
@@ -152,7 +166,7 @@ function renderMarkdown(text, width) {
     const trimmed = line.trim();
     if (trimmed === '') { lines.push(''); continue; }
     if (trimmed === '[' || trimmed === ']') continue;
-    for (const part of wrap(inline(line), width)) lines.push(part);
+    for (const part of wrap(inline(line), safeWidth)) lines.push(part);
   }
 
   // A fence that never closed.
