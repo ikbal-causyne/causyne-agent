@@ -1019,20 +1019,24 @@ export class ChatRenderer {
   }
 
   onAgentActivity(msg) {
+    if (!msg || typeof msg !== 'object') return;
     const text = String(msg.activity || msg.message || '').trim();
     if (!text) return;
     this.frame('notice', () => {
       const prefix = `${GLYPHS.arrow || '▸'} `;
       for (const [index, row] of activityRows(text, this.width(), prefix).entries()) {
-        this.write(index === 0
-          ? `${paint('accent', GLYPHS.arrow || '▸')} ${dim(row.slice(prefix.length))}`
-          : dim(row));
+        if (index === 0) {
+          const body = row.startsWith(prefix) ? row.slice(prefix.length) : row;
+          this.write(`${paint('accent', GLYPHS.arrow || '▸')} ${dim(body)}`);
+        } else {
+          this.write(dim(row));
+        }
       }
     }, { activity: true });
   }
 
   onAgentPlan(msg) {
-    if (!Array.isArray(msg.plan) || msg.plan.length === 0) return;
+    if (!msg || !Array.isArray(msg.plan) || msg.plan.length === 0) return;
     const plan = msg.plan.slice();
     this.latestPlan = plan;
     const placement = this.onPlanChange?.(plan);
@@ -1042,7 +1046,7 @@ export class ChatRenderer {
 
   onDecisionRequest(msg) {
     if (this.dialogWillAsk) return;
-    const request = msg.request || {};
+    const request = (msg && msg.request) || {};
     this.frame('approval', () => {
       this.write();
       this.write(`${paint('accent', GLYPHS.arrow)} ${bold(safeDisplay(request.header || 'decision required'))}`);
@@ -1052,8 +1056,8 @@ export class ChatRenderer {
   }
 
   onDecisionResult(msg) {
-    const request = msg.request || {};
-    const answer = msg.answer;
+    const request = (msg && msg.request) || {};
+    const answer = msg && msg.answer;
     this.frame('approval', () => {
       if (!answer) {
         this.write(`  ${paint('muted', 'decision dismissed')}  ${safeDisplay(request.header || '')}`);
@@ -1064,10 +1068,12 @@ export class ChatRenderer {
   }
 
   renderPlan(plan) {
+    if (!Array.isArray(plan) || plan.length === 0) return;
     const width = this.width();
     this.write();
     this.write(paint('muted', 'plan'));
     for (const item of plan) {
+      if (!item || typeof item !== 'object') continue;
       const done = item.status === 'completed';
       const active = item.status === 'in_progress';
       const mark = done ? paint('success', GLYPHS.check)
@@ -1075,35 +1081,39 @@ export class ChatRenderer {
         : paint('muted', GLYPHS.dot);
       const text = item.text || item.step || item.content || '';
       const label = done ? dim(safeDisplay(text)) : paint('ink', safeDisplay(text));
-      this.write(`  ${mark} ${truncate(label, width - 5, GLYPHS.ellipsis)}`);
+      this.write(`  ${mark} ${truncate(label, Math.max(8, width - 5), GLYPHS.ellipsis)}`);
     }
     this.write();
   }
 
   onStepStart(msg) {
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
     this.stepStartedAt = Date.now();
     this.stepCount++;
 
-    const { verb, detail } = describeTool(msg.tool, msg.args);
+    const toolLabel = safeDisplay(safeMsg.tool || 'tool') || 'tool';
+    const { verb, detail } = describeTool(safeMsg.tool, safeMsg.args);
     const step = this.stepCount;
 
     this.frame('step', () => {
       const width = this.width();
       const index = paint('muted', String(step).padStart(2, '0'));
-      const name = paint('accent', padEnd(verb || msg.tool, STATUS_GUTTER));
+      const displayVerb = verb || toolLabel;
+      const name = paint('accent', padEnd(displayVerb, STATUS_GUTTER));
 
-      const used = 2 + 2 + 1 + Math.max(visibleWidth(verb || msg.tool), STATUS_GUTTER) + 1;
+      const used = 2 + 2 + 1 + Math.max(visibleWidth(displayVerb), STATUS_GUTTER) + 1;
       const detailText = detail ? paint('ink', truncate(detail, Math.max(10, width - used - 12), GLYPHS.ellipsis)) : '';
 
       this.write(`${paint('muted', GLYPHS.arrow)} ${index} ${name} ${detailText}`);
-    }, { step, tool: msg.tool, verb: verb || msg.tool, detail });
+    }, { step, tool: safeMsg.tool, verb: verb || toolLabel, detail });
   }
 
   onStepComplete(msg) {
-    const elapsed = typeof msg?.elapsed === 'string'
-      ? msg.elapsed
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
+    const elapsed = typeof safeMsg.elapsed === 'string'
+      ? safeMsg.elapsed
       : (this.stepStartedAt ? formatDuration(Date.now() - this.stepStartedAt) : '');
-    const result = msg.result || {};
+    const result = safeMsg.result || {};
 
     // Kept so Ctrl+O can show the whole thing, and set here rather than inside
     // the closure — a reflow must not re-point "the last output" at a tool

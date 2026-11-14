@@ -140,3 +140,15 @@ test('narrow preview, expand, approval, skill, and notice clamp wrap widths and 
   assert.ok(rows.some((r: string) => r.includes('hello world')));
   assert.ok(!rows.some((r: string) => /^ {5}│ [a-z]$/.test(r)), `collapsed 1-char wrap rows detected: ${rows.slice(0, 6).join(' | ')}`);
 });
+
+test('onAgentPlan, onAgentActivity, onStepStart, and onStepComplete guard nullish frames and sparse plan entries', () => {
+  const written: string[] = [];
+  const out = { columns: 40, isTTY: false, write: (chunk: string) => { written.push(chunk); return true; } };
+  const renderer = new ChatRenderer({ out });
+  assert.doesNotThrow(() => renderer.onAgentActivity(null as unknown as Record<string, unknown>));
+  assert.doesNotThrow(() => renderer.onAgentPlan({ plan: [null as unknown as Record<string, unknown>, { status: 'completed', text: 'finish phase' }] }));
+  assert.doesNotThrow(() => renderer.onStepStart({}));
+  assert.doesNotThrow(() => renderer.onStepComplete(null as unknown as Record<string, unknown>));
+  const output = stripAnsi(written.join(''));
+  assert.ok(output.includes('finish phase'));
+});
