@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { placeDialog } from '../src/tui/homeView.js';
+import { placeDialog, placeHome } from '../src/tui/homeView.js';
 
 describe('placeDialog', () => {
   it('never produces negative or NaN caret coordinates when rows are empty or inputs are non-finite', () => {
@@ -13,5 +13,19 @@ describe('placeDialog', () => {
     assert.equal(Number.isFinite(nonFinite.caretCol), true);
     assert.equal(nonFinite.caretRow, 0);
     assert.equal(nonFinite.caretCol, 0);
+  });
+
+  it('placeHome guards non-finite dimensions and caret coordinates without RangeError', () => {
+    assert.doesNotThrow(() => {
+      const nanHome = placeHome({}, ['> '], Number.NaN, Number.NaN, Number.NaN, Number.NaN);
+      assert.ok(nanHome.rows.length > 0);
+      assert.equal(Number.isFinite(nanHome.caretRow), true);
+      assert.equal(Number.isFinite(nanHome.caretCol), true);
+
+      const infHome = placeHome({}, ['> '], Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 0, 2);
+      assert.ok(infHome.rows.length > 0);
+      assert.equal(Number.isFinite(infHome.caretRow), true);
+      assert.equal(Number.isFinite(infHome.caretCol), true);
+    });
   });
 });

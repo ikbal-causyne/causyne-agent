@@ -47,12 +47,15 @@ export function placeDialog(rows, columns, height, caretRow, caretCol) {
 }
 /** A clean first screen; session messages are intentionally absent. */
 export function placeHome(info, promptRows, columns, height, caretRow, caretCol) {
-    const available = Math.max(1, Math.floor(height));
-    const logo = centerRows(sessionBanner(info, columns, { height: available }), columns).rows;
+    const safeColumns = Number.isFinite(columns) ? Math.max(1, Math.floor(columns)) : 80;
+    const available = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 24;
+    const safeCaretRow = Number.isFinite(caretRow) ? Math.floor(caretRow) : 0;
+    const safeCaretCol = Number.isFinite(caretCol) ? Math.floor(caretCol) : 0;
+    const logo = centerRows(sessionBanner(info, safeColumns, { height: available }), safeColumns).rows;
     const spacer = available >= 25 ? 2 : 1;
     // When the window is short, preserve the composer and editing caret first.
     // The logo yields height; it must never push a wrapped draft off-screen.
-    const fitted = fitHomeContent(logo, promptRows, available, caretRow, spacer);
+    const fitted = fitHomeContent(logo, promptRows, available, safeCaretRow, spacer);
     const required = fitted.logoRows.length + fitted.spacer + fitted.promptRows.length;
     const top = Math.max(0, Math.floor((available - required) / 2));
     const rows = [
@@ -64,6 +67,6 @@ export function placeHome(info, promptRows, columns, height, caretRow, caretCol)
     return {
         rows,
         caretRow: top + fitted.logoRows.length + fitted.spacer + fitted.caretRow,
-        caretCol: Math.max(0, Math.min(caretCol, columns - 2))
+        caretCol: Math.max(0, Math.min(safeCaretCol, safeColumns - 2))
     };
 }
