@@ -175,3 +175,18 @@ test('clearTranscript resets streaming/expand state and renderSessionHistory han
   const rows = written.join('').split('\n').map(stripAnsi).filter(Boolean);
   assert.ok(rows.every((r: string) => visibleWidth(r) <= 40), `session divider overflowed 40 cols: ${rows.find(r => visibleWidth(r) > 40)}`);
 });
+
+test('turnFooter duration avoids 1m 60s rollover and step error/checkpoint sanitize and guard nullish frames', () => {
+  const written: string[] = [];
+  const out = { columns: 80, isTTY: false, write: (chunk: string) => { written.push(chunk); return true; } };
+  const renderer = new ChatRenderer({ out });
+  renderer.turnFooter(119800);
+  assert.doesNotThrow(() => renderer.onStepError(null as unknown as Record<string, unknown>));
+  assert.doesNotThrow(() => renderer.onCheckpoint(null as unknown as Record<string, unknown>));
+  renderer.onStepError({ tool: '\x1b[31mweird-tool\nbreak', error: 'boom' });
+  renderer.onCheckpoint({ tool: 'write_file', path: '/tmp/ok\x1b[2Jnext' });
+  const output = stripAnsi(written.join(''));
+  assert.ok(!output.includes('1m 60s'), `unexpected rollover duration in: ${output}`);
+  assert.ok(output.includes('2m 0s'), `expected 2m 0s in: ${output}`);
+  assert.ok(!written.join('').includes('\x1b[2J'));
+});

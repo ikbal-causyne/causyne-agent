@@ -57,9 +57,11 @@ const REASONING_LINES = 12;
 const STATUS_GUTTER = 10;
 
 function formatDuration(ms) {
-  if (ms < 1000) return `${ms}ms`;
+  if (!Number.isFinite(ms) || ms <= 0) return '0ms';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+  const totalSeconds = Math.round(ms / 1000);
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
 /**
@@ -484,7 +486,7 @@ export class ChatRenderer {
 
     this.frame('turn', () => {
       const parts = [];
-      if (model) parts.push(paint('ink', model));
+      if (model) parts.push(paint('ink', safeDisplay(model)));
       parts.push(`${steps} step${steps === 1 ? '' : 's'}`);
       if (durationMs > 0) parts.push(formatDuration(durationMs));
 
@@ -1288,7 +1290,8 @@ export class ChatRenderer {
    * loudly as the work trains the user to read neither.
    */
   onCheckpoint(msg) {
-    const where = typeof msg.path === 'string' ? shortenHome(msg.path) : '';
+    if (!msg || typeof msg !== 'object') return;
+    const where = typeof msg.path === 'string' ? safeDisplay(shortenHome(msg.path)) : '';
     const count = Number(msg.count) || 1;
     this.frame('checkpoint', () => {
       const label = where
@@ -1299,14 +1302,15 @@ export class ChatRenderer {
   }
 
   onStepError(msg) {
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
     // Wrapped and hanging-indented, not written as one long string.
     //
     // Loop-level failures now carry a real explanation across several lines —
     // what could not be reached, why, and what to check. Emitting that as a
     // single write put the continuation lines at column 0, under a marker
     // indented five columns, so the whole block read as unrelated fragments.
-    const label = `${msg.tool || ''}`.trim();
-    const rawError = msg.error || (msg.result && (msg.result.error || msg.result.message)) || '';
+    const label = safeDisplay(`${safeMsg.tool || ''}`.trim());
+    const rawError = safeMsg.error || (safeMsg.result && (safeMsg.result.error || safeMsg.result.message)) || '';
     const detail = safeDisplay(`${rawError}`.trim());
     const head = label && detail ? `${label}  ${detail}` : (detail || label || 'failed');
 
@@ -1314,7 +1318,7 @@ export class ChatRenderer {
       const rows = wrapBlock(head, Math.max(20, this.width() - 7), { hang: 0 });
       this.write(`     ${paint('danger', GLYPHS.cross)} ${paint('danger', rows[0] || '')}`);
       for (const row of rows.slice(1)) this.write(`       ${dim(row)}`);
-    }, { tool: msg.tool });
+    }, { tool: safeMsg.tool });
   }
 
   /**
@@ -1322,7 +1326,8 @@ export class ChatRenderer {
    * L6 in the local-path audit: a bare "Proceed?" is not human-in-the-loop.
    */
   onApprovalRequest(msg) {
-    this.pendingApprovals.set(msg.toolCallId, msg);
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.toolCallId) this.pendingApprovals.set(msg.toolCallId, msg);
 
     // When an interactive dialog will ask the question, DO NOT also print the
     // whole request into the transcript. It shipped doing both: the same risk
