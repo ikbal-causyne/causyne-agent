@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
-import { renderTurnPreviewCard } from '../src/tui/turnRail.js';
+import { renderTurnPreviewCard, overlayTurnPreviewCard } from '../src/tui/turnRail.js';
 
 test('turn rail dots stay anchored to the bottom-aligned transcript in a full-height session instead of floating in upper empty space', () => {
   const out = {
@@ -54,4 +54,26 @@ test('renderTurnPreviewCard keeps footer and body rows strictly within cardWidth
     assert.ok(!card[i]!.includes('\x1b[2J'), 'Card must sanitize terminal control sequences');
   }
 });
+
+test('overlayTurnPreviewCard does not teleport the last character of short transcript rows to the right rail column', () => {
+  const baseRows = [
+    '   ┃ hi',
+    '   ▸ Causyne',
+    '     Short reply',
+    ''
+  ];
+  const card = [
+    '╭────────────────────╮',
+    '│ Turn 1 preview     │',
+    '│ 1 of 1    10:00 AM │',
+    '╰────────────────────╯'
+  ];
+  const overlaid = overlayTurnPreviewCard(baseRows, card, 1, 1, 80);
+  for (let i = 0; i < overlaid.length; i++) {
+    const plain = stripAnsi(overlaid[i]!).trimEnd();
+    assert.ok(plain.endsWith('╮') || plain.endsWith('│') || plain.endsWith('╯'),
+      `Row ${i} should end with card border without teleported character at col 79, got: "${plain}"`);
+  }
+});
+
 

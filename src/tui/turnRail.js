@@ -403,7 +403,7 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
         if (x <= 6) {
             // For left-placed turn cards, preserve the right overview rail without severed text leaks
             const rowLen = visibleWidth(baseRow);
-            const rightCell = rowLen > 0 ? sliceFromColumn(baseRow, rowLen - 1) : ' ';
+            const rightCell = rowLen > x + cardWidth ? sliceFromColumn(baseRow, rowLen - 1) : ' ';
             const rightCellWidth = visibleWidth(rightCell);
             const targetWidth = Math.max(safeScreenWidth, rowLen);
             const gap = Math.max(0, targetWidth - x - cardWidth - rightCellWidth);
