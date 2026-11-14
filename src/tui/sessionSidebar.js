@@ -35,15 +35,17 @@ export function sessionSidebarRows(facts, height) {
     const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
     const inner = SIDEBAR_WIDTH - 4;
     const rows = [];
+    const oneLine = (value) => safeDisplay(value).replace(/[\r\n]+/g, ' ');
     const line = (value = '') => {
-        const text = truncate(safeDisplay(value), inner, '…');
+        const text = truncate(oneLine(value), inner, '…');
         rows.push(fill('surface', `${paint('rule', '│')}  ${padEnd(text, inner)} `));
     };
     const styled = (value) => {
-        rows.push(fill('surface', `${paint('rule', '│')}  ${padEnd(truncate(value, inner, '…'), inner)} `));
+        const clean = String(value == null ? '' : value).replace(/[\r\n]+/g, ' ');
+        rows.push(fill('surface', `${paint('rule', '│')}  ${padEnd(truncate(clean, inner, '…'), inner)} `));
     };
     line();
-    styled(bold(safeDisplay(facts.title?.trim() || 'Untitled')));
+    styled(bold(oneLine(facts.title?.trim() || 'Untitled')));
     if (facts.id)
         line(facts.id);
     line();
@@ -60,7 +62,7 @@ export function sessionSidebarRows(facts, height) {
     }
     line();
     styled(bold('Model'));
-    if (height >= 24 && facts.provider && facts.model) {
+    if (count >= 24 && facts.provider && facts.model) {
         line(facts.provider);
         line(facts.model);
     }
@@ -77,9 +79,9 @@ export function sessionSidebarRows(facts, height) {
         if (skillId) {
             line();
             styled(bold('Active Skill'));
-            styled(paint('accent', `✦ ${truncate(safeDisplay(skillId), inner - 4, '…')}`));
+            styled(paint('accent', `✦ ${truncate(oneLine(skillId), inner - 4, '…')}`));
             if (skillDesc) {
-                line(truncate(skillDesc, inner, '…'));
+                line(truncate(oneLine(skillDesc), inner, '…'));
             }
         }
     }
@@ -128,7 +130,12 @@ function lineFor(rows) {
 export function joinSessionSidebar(mainRows, sideRows, mainWidth) {
     const safeWidth = Number.isFinite(mainWidth) ? Math.max(1, Math.floor(mainWidth)) : 80;
     return mainRows.map((row, index) => {
-        const main = padEnd(truncate(row, safeWidth, ''), safeWidth);
-        return main + (sideRows[index] || ' '.repeat(SIDEBAR_WIDTH));
+        const cleanMain = String(row == null ? '' : row).replace(/[\r\n]+/g, ' ');
+        const main = padEnd(truncate(cleanMain, safeWidth, ''), safeWidth);
+        const rawSide = sideRows[index]
+            ? String(sideRows[index]).replace(/[\r\n]+/g, ' ')
+            : ' '.repeat(SIDEBAR_WIDTH);
+        const side = padEnd(truncate(rawSide, SIDEBAR_WIDTH, ''), SIDEBAR_WIDTH);
+        return main + side;
     });
 }

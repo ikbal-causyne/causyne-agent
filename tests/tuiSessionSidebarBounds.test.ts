@@ -1,20 +1,43 @@
-import { describe, it } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { joinSessionSidebar, SIDEBAR_WIDTH } from '../src/tui/sessionSidebar.js';
+import { sessionSidebarRows, joinSessionSidebar, SIDEBAR_WIDTH } from '../src/tui/sessionSidebar.js';
+import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 
-describe('sessionSidebar bounds', () => {
-  it('joinSessionSidebar normalizes non-finite and fractional mainWidth cleanly', () => {
-    const row = 'x'.repeat(100);
-    const side = '|'.padEnd(SIDEBAR_WIDTH, ' ');
+test('sessionSidebarRows collapses embedded newlines in title, skill description, and plan steps and guards non-finite height', () => {
+  const rows = sessionSidebarRows({
+    title: 'First line\nSecond line',
+    provider: 'acp/opencode',
+    model: 'deepseek\nflash',
+    cwd: '/tmp/work\ndir',
+    activeSkill: {
+      id: 'domain/skill\nid',
+      description: 'Multi-line\nskill description\nfrom frontmatter'
+    },
+    plan: [
+      { text: 'Step one\nwith newline', status: 'in_progress' }
+    ]
+  }, 30);
 
-    const [nanJoined] = joinSessionSidebar([row], [side], Number.NaN);
-    assert.equal(nanJoined.length, 80 + SIDEBAR_WIDTH);
+  assert.equal(rows.length, 30);
+  for (let i = 0; i < rows.length; i++) {
+    assert.ok(!rows[i]!.includes('\n') && !rows[i]!.includes('\r'), `Row ${i} must not contain raw newline`);
+    assert.equal(visibleWidth(rows[i]!), SIDEBAR_WIDTH, `Row ${i} must be exactly ${SIDEBAR_WIDTH} columns`);
+  }
+  const plain = stripAnsi(rows.join('\n'));
+  assert.match(plain, /First line Second line/);
+  assert.match(plain, /Step one with newline/);
 
-    const [shortNanJoined] = joinSessionSidebar(['hi'], [side], Number.NaN);
-    assert.equal(shortNanJoined.length, 80 + SIDEBAR_WIDTH);
+  const infRows = sessionSidebarRows({
+    title: 'Test',
+    provider: 'prov',
+    model: 'mod'
+  }, Number.POSITIVE_INFINITY);
+  assert.equal(infRows.length, 1);
+});
 
-    const [fracJoined] = joinSessionSidebar(['abcdef'], [side], 3.9);
-    assert.equal(fracJoined.slice(0, 3), 'abc');
-    assert.equal(fracJoined.length, 3 + SIDEBAR_WIDTH);
-  });
+test('joinSessionSidebar normalizes sideRows width and strips embedded newlines', () => {
+  const joined = joinSessionSidebar(['hello\nworld'], ['side\nrow'], 20);
+  assert.equal(joined.length, 1);
+  assert.ok(!joined[0]!.includes('\n'));
+  assert.equal(visibleWidth(joined[0]!), 20 + SIDEBAR_WIDTH);
 });
