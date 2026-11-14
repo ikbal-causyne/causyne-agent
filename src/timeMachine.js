@@ -23,14 +23,16 @@ function record(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
         ? value : {};
 }
+function firstText(values) {
+    return values.find((value) => typeof value === 'string' && value.trim().length > 0) ?? '';
+}
 function commandText(args) {
-    return [args.command, args.cmd, args.CommandLine, args.commandLine, args.script]
-        .find((value) => typeof value === 'string' && value.trim().length > 0) ?? '';
+    return firstText([args.command, args.cmd, args.CommandLine, args.commandLine, args.script]);
 }
 function operationFamily(args) {
     const command = commandText(args);
     if (!command) {
-        const endpoint = typeof args.url === 'string' ? args.url : typeof args.endpoint === 'string' ? args.endpoint : '';
+        const endpoint = firstText([args.url, args.endpoint]);
         if (endpoint) {
             try {
                 return new URL(endpoint).hostname.toLowerCase();
@@ -59,7 +61,7 @@ function operationFamily(args) {
 }
 function issueKey(tool, args) {
     const family = operationFamily(args);
-    const target = String(args.path ?? args.file_path ?? args.filePath ?? args.target ?? args.endpoint ?? args.url ?? '');
+    const target = firstText([args.path, args.file_path, args.filePath, args.target, args.endpoint, args.url]);
     const workspace = String(args.cwd ?? '');
     // Changing error text/class does not buy another three attempts at the same
     // operation. Targets are hashed and never included in recovery messages.

@@ -269,6 +269,15 @@ test('distinct endpoints and working directories have independent retry budgets'
   assert.equal(machine.observe('web_fetch', { url: 'https://example.org/b' }, fail).attempt, 1);
 });
 
+test('blank primary target or url aliases do not mask distinct fallback targets', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'read failed' };
+  assert.equal(machine.observe('fs_read', { path: '', file_path: 'src/a.ts' }, fail).attempt, 1);
+  assert.equal(machine.observe('fs_read', { path: '', file_path: 'src/b.ts' }, fail).attempt, 1);
+  assert.equal(machine.observe('web_fetch', { url: '  ', endpoint: 'https://one.example.org' }, fail).attempt, 1);
+  assert.equal(machine.observe('web_fetch', { url: '  ', endpoint: 'https://two.example.org' }, fail).attempt, 1);
+});
+
 test('lastGoodTool ignores outcomes with nonzero exit codes or error text', () => {
   const machine = new TimeMachine();
   const corruptExit = { ...priorSuccess, tool: 'failed_test', success: true, exitCode: 1, at: 2 };
