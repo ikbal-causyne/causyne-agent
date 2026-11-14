@@ -161,7 +161,7 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
   // Header row
   const title = ` ${bold(paint('accent', 'Usage & Context'))} `;
   const closeHint = ` ${dim('esc close')} `;
-  const hLineLength = Math.max(0, frameWidth - 2 - visibleWidth(title) - visibleWidth(closeHint));
+  const hLineLength = Math.max(0, frameWidth - 3 - visibleWidth(title) - visibleWidth(closeHint));
   const topBorder = paint(borderRole, FRAME.tl + FRAME.h)
     + title
     + paint(borderRole, FRAME.h.repeat(hLineLength))
