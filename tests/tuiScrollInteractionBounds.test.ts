@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleScrollbarMouse, AdaptiveWheelDampener } from '../src/tui/scrollInteraction.js';
+import { handleViewportWheel, handleScrollbarMouse, AdaptiveWheelDampener } from '../src/tui/scrollInteraction.js';
 
 describe('scrollInteraction finite bounds', () => {
   it('handleScrollbarMouse ignores non-finite mouse coordinates and non-finite terminal dimensions', () => {
@@ -156,6 +156,51 @@ describe('scrollInteraction finite bounds', () => {
     assert.equal(validRailClick, true);
     assert.equal(scrolled, 1);
     assert.equal(surface.activeTurnIndex, null);
+  });
+
+  it('guards undefined host.notice on detached recovery, empty pickerLayout, and non-finite maxScrollTop', () => {
+    const scrollToCalls: number[] = [];
+    let toBottomCalls = 0;
+    const viewport: any = {
+      height: 20,
+      maxScrollTop: () => Number.NaN,
+      wheel: () => 0,
+      scrollTo: (n: number) => {
+        scrollToCalls.push(n);
+        return n;
+      },
+      toBottom: () => {
+        toBottomCalls++;
+        return 0;
+      }
+    };
+    const surface: any = {
+      width: 80,
+      stage: { height: 24, width: () => 80 },
+      detached: true,
+      captureMouse: () => true,
+      railEnabled: () => true
+    };
+    const host: any = {
+      out: { rows: 24 },
+      notice: undefined,
+      pickerLayout: { pickerStart: 1, pickerCount: 0, totalPromptRows: 3 },
+      draw: () => {}
+    };
+
+    assert.equal(
+      handleViewportWheel({ name: 'wheel', wheel: { direction: 'up' } }, viewport, surface, host, 1000),
+      true
+    );
+    const clicked = handleScrollbarMouse(
+      { name: 'mouse', mouse: { x: 79, y: 10, pressed: true, button: 0 } },
+      viewport,
+      surface,
+      host
+    );
+    assert.equal(clicked, true);
+    assert.ok(scrollToCalls.every(Number.isFinite), `expected finite scrollTo targets, got ${scrollToCalls}`);
+    assert.ok(scrollToCalls.length + toBottomCalls >= 1);
   });
 });
 

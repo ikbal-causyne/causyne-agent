@@ -112,7 +112,7 @@ export function handleViewportWheel(key, viewport, surface, host, now = Date.now
     // so the session stays responsive and never freezes.
     if (surface && typeof surface.captureMouse === 'function' && surface.detached) {
         surface.captureMouse();
-        if (host.notice.startsWith('top of this view')) {
+        if (typeof host.notice === 'string' && host.notice.startsWith('top of this view')) {
             host.notice = '';
         }
     }
@@ -151,11 +151,17 @@ export function handleScrollbarMouse(key, viewport, surface, host) {
     const stageH = Number.isFinite(rawStageH) && rawStageH > 0 ? Math.floor(rawStageH) : termRows;
     // If completion picker is active, check if click was on the picker
     if (host.pickerLayout) {
-        const promptTop = Math.max(1, stageH - host.pickerLayout.totalPromptRows + 1);
-        const pickerTop = promptTop + host.pickerLayout.pickerStart - 1;
-        const pickerBottom = pickerTop + host.pickerLayout.pickerCount;
-        if (mouseY >= pickerTop && mouseY <= pickerBottom) {
-            return false; // Leave to completion handler
+        const { pickerStart, pickerCount, totalPromptRows } = host.pickerLayout;
+        if (Number.isFinite(pickerStart) &&
+            Number.isFinite(pickerCount) &&
+            Number.isFinite(totalPromptRows) &&
+            pickerCount > 0) {
+            const promptTop = Math.max(1, stageH - Math.floor(totalPromptRows) + 1);
+            const pickerTop = promptTop + Math.floor(pickerStart) - 1;
+            const pickerBottom = pickerTop + Math.floor(pickerCount) - 1;
+            if (mouseY >= pickerTop && mouseY <= pickerBottom) {
+                return false; // Leave to completion handler
+            }
         }
     }
     const stageTop = Math.max(0, termRows - stageH);
@@ -175,8 +181,9 @@ export function handleScrollbarMouse(key, viewport, surface, host) {
         // Auto-heal if detached
         if (typeof surface.captureMouse === 'function' && surface.detached) {
             surface.captureMouse();
-            if (host.notice.startsWith('top of this view'))
+            if (typeof host.notice === 'string' && host.notice.startsWith('top of this view')) {
                 host.notice = '';
+            }
         }
         // Boundary clamping:
         // Clicks preceding/above chat box clamp to top (0)
@@ -195,8 +202,10 @@ export function handleScrollbarMouse(key, viewport, surface, host) {
         const relY = mouseY - stageTop;
         const fraction = viewportH > 1 ? relY / (viewportH - 1) : 0;
         const clampedFraction = Math.max(0, Math.min(1, fraction));
-        const target = Math.round(clampedFraction * viewport.maxScrollTop());
-        if (target >= viewport.maxScrollTop()) {
+        const rawMax = Number(viewport.maxScrollTop());
+        const maxScroll = Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : 0;
+        const target = Math.round(clampedFraction * maxScroll);
+        if (target >= maxScroll) {
             viewport.toBottom();
         }
         else {
