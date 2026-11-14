@@ -265,4 +265,16 @@ describe('TUI Scroll Isolation & OpenCode Parity', () => {
     assert.equal(handled, true);
     assert.equal(viewport.scrollTop, 20, 'horizontal wheel must not modify vertical scroll position');
   });
+
+  test('AdaptiveWheelDampener ignores non-finite timestamps or speeds and tracks zero timestamps accurately', () => {
+    const dampener = new AdaptiveWheelDampener();
+    dampener.computeNotches('down', 0);
+    const dampedAfterZero = dampener.computeNotches('down', 20);
+    assert.ok(dampedAfterZero < 1.0, `expected < 1.0 after 20ms from t=0, got ${dampedAfterZero}`);
+
+    const afterNaN = dampener.computeNotches('down', Number.NaN);
+    assert.equal(Number.isFinite(afterNaN), true);
+    assert.equal(dampener.stepRows('down', Number.NaN, 40), 0);
+    assert.equal(Number.isFinite(dampener.stepRows('down', 3, 60)), true);
+  });
 });

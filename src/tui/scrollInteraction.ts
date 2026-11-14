@@ -106,7 +106,7 @@ export class AdaptiveWheelDampener {
   readonly minTickInterval: number;
   readonly burstWindowMs: number;
   readonly maxBurstNotches: number;
-  private lastTick = 0;
+  private lastTick: number | null = null;
   private lastDirection: 'up' | 'down' | null = null;
   private rowAccumulator = 0;
   private recentBursts: Array<{ time: number; notches: number }> = [];
@@ -124,14 +124,17 @@ export class AdaptiveWheelDampener {
    * their own sub-row accumulator (e.g. Viewport).
    */
   computeNotches(direction: 'up' | 'down', now: number = Date.now()): number {
+    if (!Number.isFinite(now)) {
+      return 1.0;
+    }
     if (this.lastDirection && this.lastDirection !== direction) {
       this.recentBursts = [];
-      this.lastTick = 0;
+      this.lastTick = null;
       this.rowAccumulator = 0;
     }
     this.lastDirection = direction;
 
-    const gap = this.lastTick ? Math.max(0, now - this.lastTick) : Infinity;
+    const gap = this.lastTick !== null ? Math.max(0, now - this.lastTick) : Infinity;
     this.lastTick = now;
 
     if (gap === Infinity || gap > 150) {
@@ -143,7 +146,8 @@ export class AdaptiveWheelDampener {
       return 1.0;
     }
 
-    let damping = Math.max(this.minDamping, Math.min(1.0, gap / this.thresholdMs));
+    const ratio = this.thresholdMs > 0 ? gap / this.thresholdMs : 1.0;
+    let damping = Math.max(this.minDamping, Math.min(1.0, ratio));
 
     const windowStart = now - this.burstWindowMs;
     this.recentBursts = this.recentBursts.filter(b => b.time >= windowStart);
@@ -162,6 +166,9 @@ export class AdaptiveWheelDampener {
    * (e.g. Code panel and Thinking box previews).
    */
   stepRows(direction: 'up' | 'down', baseSpeed: number = 3, now: number = Date.now()): number {
+    if (!Number.isFinite(baseSpeed) || baseSpeed <= 0) {
+      return 0;
+    }
     const notch = this.computeNotches(direction, now);
     this.rowAccumulator += baseSpeed * notch;
     const whole = Math.trunc(this.rowAccumulator);
@@ -173,7 +180,7 @@ export class AdaptiveWheelDampener {
   }
 
   reset(): void {
-    this.lastTick = 0;
+    this.lastTick = null;
     this.lastDirection = null;
     this.rowAccumulator = 0;
     this.recentBursts = [];
