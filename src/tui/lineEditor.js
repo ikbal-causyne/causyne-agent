@@ -14,7 +14,7 @@
 //
 // Pure Node. No dependency, no shell.
 
-import { visibleWidth } from './text.js';
+import { truncate, visibleWidth } from './text.js';
 import { writeClipboardSync, readClipboardSync } from './clipboardSync.js';
 
 /** Split into code points, so one emoji is one editable unit. */
@@ -74,14 +74,25 @@ export class LineEditor {
     );
   }
 
+  _clampPos(pos) {
+    const maxLine = Math.max(0, this.lines.length - 1);
+    const rawLine = Number.isFinite(pos?.line) ? Math.floor(pos.line) : 0;
+    const line = Math.max(0, Math.min(maxLine, rawLine));
+    const maxCol = this.lines[line]?.length ?? 0;
+    const rawCol = Number.isFinite(pos?.col) ? Math.floor(pos.col) : 0;
+    const col = Math.max(0, Math.min(maxCol, rawCol));
+    return { line, col };
+  }
+
   getSelectionRange() {
     if (!this.hasSelection || !this.selectionAnchor) return null;
-    const a = this.selectionAnchor;
-    const b = { line: this.line, col: this.col };
+    const a = this._clampPos(this.selectionAnchor);
+    const b = this._clampPos({ line: this.line, col: this.col });
+    if (a.line === b.line && a.col === b.col) return null;
     if (a.line < b.line || (a.line === b.line && a.col <= b.col)) {
-      return { start: { line: a.line, col: a.col }, end: { line: b.line, col: b.col } };
+      return { start: a, end: b };
     }
-    return { start: { line: b.line, col: b.col }, end: { line: a.line, col: a.col } };
+    return { start: b, end: a };
   }
 
   getSelectedText() {
@@ -376,7 +387,8 @@ export class LineEditor {
     const range = this.getSelectionRange();
 
     for (let index = 0; index < this.lines.length; index++) {
-      const prefix = index === 0 ? '' : continuation;
+      const rawPrefix = index === 0 ? '' : String(continuation ?? '');
+      const prefix = visibleWidth(rawPrefix) >= usable ? truncate(rawPrefix, usable - 1, '') : rawPrefix;
       const prefixWidth = visibleWidth(prefix);
       const budget = Math.max(1, usable - prefixWidth);
       const line = this.lines[index];
@@ -399,7 +411,7 @@ export class LineEditor {
               used = 0;
             }
             cursorRow = rows.length;
-            cursorCol = prefixWidth + used;
+            cursorCol = Math.min(usable - 1, prefixWidth + used);
             placed = true;
           }
           break;
@@ -432,7 +444,7 @@ export class LineEditor {
 
           if (isCurrentLine && pos === this.col && !placed) {
             cursorRow = rows.length;
-            cursorCol = prefixWidth + used;
+            cursorCol = Math.min(usable - 1, prefixWidth + used);
             placed = true;
           }
 
@@ -446,7 +458,7 @@ export class LineEditor {
       rows.push(row);
       if (isCurrentLine && !placed) {
         cursorRow = rows.length - 1;
-        cursorCol = prefixWidth + used;
+        cursorCol = Math.min(usable - 1, prefixWidth + used);
       }
     }
 

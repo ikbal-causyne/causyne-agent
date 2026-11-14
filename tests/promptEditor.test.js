@@ -198,6 +198,16 @@ describe('lineEditor — a buffer you can actually edit', () => {
     assert.equal(editor.line, 0);
     assert.equal(editor.col, 3);
   });
+
+  test('getSelectionRange clamps stale anchor bounds and render clamps wide continuation', () => {
+    const editor = new LineEditor('one\ntwo');
+    editor.selectionAnchor = { line: 99, col: 99 };
+    assert.equal(editor.getSelectionRange(), null);
+    assert.equal(editor.getSelectedText(), '');
+    const layout = editor.render(8, '            ');
+    assert.ok(layout.cursorCol < 8);
+    assert.ok(layout.rows.every((row) => row.length <= 8));
+  });
 });
 
 // ---------------------------------------------------------------------------
