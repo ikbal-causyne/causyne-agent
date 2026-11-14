@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModelPickerItems, type ProviderOverview } from '../src/tui/modelPicker.js';
+import {
+  ModelPickerLayer,
+  buildModelPickerItems,
+  type ProviderOverview
+} from '../src/tui/modelPicker.js';
 
 const sampleOverview: ProviderOverview = {
   acp: [
@@ -39,5 +43,17 @@ describe('modelPicker finite bounds', () => {
     });
     const fracToggle = fracItems.find((item) => item.value.type === 'toggle');
     assert.equal(fracToggle?.label, '▶ Load more (2 more models)...');
+  });
+
+  it('ModelPickerLayer.body clamps non-finite width and height without RangeError', () => {
+    const layer = new ModelPickerLayer({
+      config: { provider: 'acp/codex' },
+      overview: sampleOverview,
+      onPick() {}
+    });
+    assert.doesNotThrow(() => {
+      const infRows = layer.body(Number.POSITIVE_INFINITY, Number.NaN);
+      assert.ok(infRows.length >= 3);
+    });
   });
 });

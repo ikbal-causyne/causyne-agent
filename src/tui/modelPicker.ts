@@ -422,14 +422,16 @@ export class ModelPickerLayer extends SelectLayer {
   }
 
   body(width: number, height: number): string[] {
+    const safeWidth = Number.isFinite(width) ? Math.max(4, Math.floor(width)) : 64;
+    const safeHeight = Number.isFinite(height) ? Math.max(3, Math.floor(height)) : 12;
     const tabACP = this.activeTab === 'acp' ? paint('accent', bold('● ACP')) : dim('ACP');
     const tabBYOK = this.activeTab === 'byok' ? paint('accent', bold('● BYOK')) : dim('BYOK');
     const tabFREE = this.activeTab === 'free' ? paint('accent', bold('● FREE')) : dim('FREE');
     const tabBar = `  | ${tabACP} | ${tabBYOK} | ${tabFREE} |   ${dim('(Tab / ← → switch tab)')}`;
-    const separator = paint('rule', GLYPHS.hLine.repeat(Math.max(4, width)));
+    const separator = paint('rule', GLYPHS.hLine.repeat(safeWidth));
 
-    const listHeight = Math.max(1, height - 2);
-    const { rows } = this.list.render(width, listHeight);
+    const listHeight = Math.max(1, safeHeight - 2);
+    const { rows } = this.list.render(safeWidth, listHeight);
 
     this.cursor = { x: this.list.cursorColumn(), y: 2 };
     return [tabBar, separator, ...rows];
