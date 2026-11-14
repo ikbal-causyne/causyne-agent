@@ -23,9 +23,10 @@ export interface ClipboardImageAttachment {
  * Format bytes into readable string: '128 KB', '1.5 MB'.
  */
 export function formatByteSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const safe = Number.isFinite(bytes) ? Math.max(0, Math.floor(bytes)) : 0;
+  if (safe < 1024) return `${safe} B`;
+  if (safe < 1024 * 1024) return `${Math.round(safe / 1024)} KB`;
+  return `${(safe / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**
