@@ -32,19 +32,24 @@ export function isStartupDialog(surface: StartupSurface | null | undefined): boo
 
 /** Keep startup pickers readable without letting a long catalogue resize the UI. */
 export function startupDialogView(layer: StartupLayer, columns: number, terminalRows: number): PlacedView {
+  const safeLayer: Partial<StartupLayer> = layer && typeof layer === 'object' ? layer : {};
   const availableWidth = Number.isFinite(columns) ? Math.max(8, Math.floor(columns) - 1) : 79;
   const availableHeight = Number.isFinite(terminalRows) ? Math.max(4, Math.floor(terminalRows) - 2) : 20;
-  const requestedWidth = typeof layer.width === 'number' && Number.isFinite(layer.width) ? Math.floor(layer.width) : 0;
+  const requestedWidth = typeof safeLayer.width === 'number' && Number.isFinite(safeLayer.width) ? Math.floor(safeLayer.width) : 0;
   const width = Math.min(availableWidth, 96, Math.max(88, requestedWidth));
   const height = Math.min(availableHeight, 30);
   const measuredLayer = {
-    title: layer.title,
-    footer: layer.footer,
-    preferredHeight: () => Math.max(10, layer.preferredHeight()),
-    body: (innerWidth: number, bodyHeight: number) => layer.body(innerWidth, bodyHeight)
+    title: safeLayer.title,
+    footer: safeLayer.footer,
+    preferredHeight: () => {
+      const raw = typeof safeLayer.preferredHeight === 'function' ? safeLayer.preferredHeight() : 14;
+      return Math.max(10, Number.isFinite(raw) ? raw : 14);
+    },
+    body: (innerWidth: number, bodyHeight: number) =>
+      typeof safeLayer.body === 'function' ? safeLayer.body(innerWidth, bodyHeight) : []
   };
   const centered = centerRows(panelRows(measuredLayer, width, height) as string[], availableWidth + 1);
-  const cursor = layer.cursor;
+  const cursor = safeLayer.cursor;
   const safeCursorY = cursor && Number.isFinite(cursor.y) ? Math.max(0, Math.floor(cursor.y)) : null;
   const safeCursorX = cursor && Number.isFinite(cursor.x) ? Math.max(0, Math.floor(cursor.x)) : null;
   const maxRow = Math.max(0, centered.rows.length - 1);

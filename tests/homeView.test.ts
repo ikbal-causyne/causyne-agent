@@ -170,3 +170,13 @@ test('startupDialogView and placeDialog clamp cursor coordinates inside rendered
   assert.equal(tinyDialog.caretCol, 0);
   assert.equal(tinyDialog.caretRow >= 0 && tinyDialog.caretRow < tinyDialog.rows.length, true);
 });
+
+test('startupDialogView guards missing preferredHeight, body, and nullish layer', () => {
+  const view = startupDialogView({
+    title: 'Quick dialog',
+    body: () => ['alpha']
+  } as any, 80, 24);
+  assert.ok(view.rows.some(row => row.includes('alpha')));
+  const emptyView = startupDialogView(null as any, 80, 24);
+  assert.ok(emptyView.rows.length >= 10);
+});
