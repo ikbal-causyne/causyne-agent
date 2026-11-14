@@ -79,4 +79,32 @@ describe('sessionPickerView bounds', () => {
     layer.body(80, 18);
     assert.equal(Number.isFinite(layer.list.offset), true);
   });
+
+  it('collapses embedded newlines in session title/category/description/query and syncs clamped selected index for footer details', () => {
+    const multilineItem = {
+      ...sampleItem(),
+      category: 'Today\nInjected',
+      description: '2 msgs\nsecond line',
+      value: {
+        ...sampleItem().value,
+        title: 'First line\nSecond line'
+      }
+    };
+    const layer = new SessionPickerLayer({
+      items: [multilineItem],
+      currentWorkspace: '/tmp/ws',
+      activeId: 's-1',
+      onPick() {}
+    });
+    layer.list.selected = 99;
+    layer.list.query = '';
+    const rows = layer.body(80, 18);
+    for (const r of rows) {
+      assert.ok(!r.includes('\n') && !r.includes('\r'), 'modal row must not contain embedded newlines');
+    }
+    const plain = rows.map(stripAnsi).join('\n');
+    assert.match(plain, /First line Second line/);
+    assert.doesNotMatch(plain, /No session selected/, 'clamped selection must populate footer details');
+    assert.equal(layer.list.selected, 0);
+  });
 });

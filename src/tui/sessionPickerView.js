@@ -12,7 +12,7 @@ const INNER_HEADER_ROWS = 3; // scope, search, divider
 const INNER_DETAIL_ROWS = 3; // divider, selected title, metadata
 const MAX_PANEL_HEIGHT = 28;
 function clean(value) {
-    return safeDisplay(typeof value === 'string' ? value : String(value ?? ''));
+    return safeDisplay(typeof value === 'string' ? value : String(value ?? '')).replace(/[\r\n]+/g, ' ');
 }
 function sameWorkspace(first, second) {
     if (!first || !second)
@@ -22,7 +22,7 @@ function sameWorkspace(first, second) {
     return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 function rowPair(left, right, width) {
-    const room = Math.max(0, Math.floor(width));
+    const room = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 60;
     const rightWidth = visibleWidth(right);
     if (rightWidth >= room - 5)
         return truncate(left, room, '…');
@@ -165,7 +165,7 @@ export class SessionPickerLayer extends SelectLayer {
         const total = this.allItems.filter(item => item.value.type === 'switch').length;
         const count = this.countSessions();
         rows.push(rowPair(`  ${paint('accent', scopeLabel)}`, w >= 52 ? dim(`${count} / ${total} sessions`) : '', w));
-        const query = String(this.list.query || '');
+        const query = clean(this.list.query || '');
         const lead = `  ${paint('accent', GLYPHS.arrow)} `;
         const maxInput = Math.max(1, w - visibleWidth(lead) - 1);
         // Show the tail of long queries without splitting UTF-16 surrogate pairs.
@@ -173,7 +173,7 @@ export class SessionPickerLayer extends SelectLayer {
         while (runes.length > 0 && visibleWidth(runes.join('')) > maxInput)
             runes.shift();
         const visibleQuery = runes.join('');
-        const shown = query ? clean(visibleQuery) : dim('Search by title, workspace or ID…');
+        const shown = query ? visibleQuery : dim('Search by title, workspace or ID…');
         rows.push(lead + truncate(shown, maxInput, '…'));
         this.cursor = { x: Math.min(w - 1, visibleWidth(lead) + (query ? visibleWidth(visibleQuery) : 0)), y: 1 };
         rows.push(paint('rule', '─'.repeat(w)));
@@ -191,6 +191,7 @@ export class SessionPickerLayer extends SelectLayer {
                 const rawSel = Number.isFinite(this.list.selected) ? Math.floor(this.list.selected) : 0;
                 const rawOff = Number.isFinite(this.list.offset) ? Math.floor(this.list.offset) : 0;
                 const selected = Math.max(0, Math.min(rawSel, entries.length - 1));
+                this.list.selected = selected;
                 let start = Math.max(0, Math.min(rawOff, selected));
                 let output = renderSessionRows(entries, start, selected, w, available);
                 while (output.lastIndex < selected && start < selected) {
