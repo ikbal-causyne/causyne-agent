@@ -131,7 +131,9 @@ export class TimeMachine {
     const value = record(result);
     const failed = value.success === false || value.ok === false || value.isError === true || (typeof value.error === 'string' && value.error.trim().length > 0)
       || (typeof value.exitCode === 'number' && (!Number.isFinite(value.exitCode) || value.exitCode !== 0))
-      || value.failureKind === 'site_refusal';
+      || value.failureKind === 'site_refusal' || value.status === 'error' || value.status === 'failed'
+      || (typeof value.status === 'number' && (!Number.isFinite(value.status) || value.status >= 400))
+      || (value.error !== null && typeof value.error === 'object');
     const classification = failed ? failureClass(value) || 'failed' : '';
     const key = issueKey(tool, args);
     const good = lastGoodTool(outcomes);
