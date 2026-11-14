@@ -107,7 +107,7 @@ export class Stage {
         // it has something to put in and grows from there. Sizing it to the screen
         // is free on an alternate screen — which is what opencode is — and on a
         // reserved band it is 73 rows of void and a banner scrolled out of sight.
-        this.maxHeight = height > 0 ? Math.floor(height) : stageHeight(out, env);
+        this.maxHeight = Number.isFinite(height) && height > 0 ? Math.floor(height) : stageHeight(out, env);
         // Rows actually claimed. Zero until reserve().
         this.height = 0;
         this.reserved = false;
@@ -155,7 +155,8 @@ export class Stage {
     reserve(rows = this.maxHeight) {
         if (this.reserved || this.maxHeight < 1)
             return false;
-        const claim = Math.max(1, Math.min(Math.floor(rows), this.maxHeight));
+        const requested = Number.isFinite(rows) ? Math.floor(rows) : this.maxHeight;
+        const claim = Math.max(1, Math.min(requested, this.maxHeight));
         this.write('\n'.repeat(claim));
         this.stats.claimed += claim;
         this.reserved = true;
@@ -331,7 +332,7 @@ export class Stage {
      * (ChatPrompt already settles resize at 60ms).
      */
     resize(height = 0, claim = 0) {
-        const next = height > 0 ? Math.floor(height) : stageHeight(this.out, this.env);
+        const next = Number.isFinite(height) && height > 0 ? Math.floor(height) : stageHeight(this.out, this.env);
         const wasReserved = this.reserved;
         if (wasReserved)
             this.collapse();
@@ -339,8 +340,9 @@ export class Stage {
         this.height = 0;
         if (next < 1)
             return false;
+        const nextClaim = Number.isFinite(claim) && claim > 0 ? Math.floor(claim) : next;
         if (wasReserved)
-            return this.reserve(claim > 0 ? claim : next);
+            return this.reserve(nextClaim);
         return false;
     }
     /**
