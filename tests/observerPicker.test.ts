@@ -148,3 +148,54 @@ test('/observer status continues to return non-interactive text status when argv
   assert.match(result.output, /Status:/);
   assert.match(result.output, /Subcommands:/);
 });
+
+test('runInteractiveObserverPicker audit view omits non-finite riskScore values', async () => {
+  const originalGetAuditHistory = coldObserver.getAuditHistory.bind(coldObserver);
+  let detailLayer: any = null;
+  let openedLayer: any = null;
+  const mockPrompt = {
+    notice: '',
+    openLayer(layer: any) {
+      if (openedLayer && layer?.lines) {
+        detailLayer = layer;
+      } else {
+        openedLayer = layer;
+      }
+      return layer;
+    },
+    closeLayer() {},
+    draw() {}
+  };
+
+  coldObserver.getAuditHistory = () => [
+    {
+      timestamp: Date.now(),
+      type: 'mutation',
+      tool: 'bash',
+      riskScore: Number.NaN,
+      veto: false,
+      details: 'nan risk'
+    },
+    {
+      timestamp: Date.now(),
+      type: 'verification',
+      riskScore: Number.POSITIVE_INFINITY,
+      veto: false,
+      details: 'inf risk'
+    }
+  ] as any;
+
+  try {
+    const promise = runInteractiveObserverPicker(mockPrompt);
+    const auditItem = openedLayer.list.all.find((i: ObserverPickerItem) => i.id === 'audit');
+    assert.ok(auditItem);
+    await openedLayer.onPick(auditItem);
+    assert.ok(detailLayer);
+    const rendered = detailLayer.lines.join('\n');
+    assert.doesNotMatch(rendered, /\bNaN\b|Infinity/);
+    await openedLayer.onPick(null);
+    await promise;
+  } finally {
+    coldObserver.getAuditHistory = originalGetAuditHistory;
+  }
+});

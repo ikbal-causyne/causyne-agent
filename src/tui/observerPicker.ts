@@ -330,7 +330,9 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
               : recentAudits.slice(-12).map((a: ColdObserverAuditRecord) => {
                   const time = new Date(a.timestamp).toLocaleTimeString();
                   const tag = a.type === 'mutation' ? `[mutation ${a.tool || ''}]` : '[verification]';
-                  const score = typeof a.riskScore === 'number' ? `(${(a.riskScore * 100).toFixed(0)}% risk)` : '';
+                  const score = typeof a.riskScore === 'number' && Number.isFinite(a.riskScore)
+                    ? `(${(a.riskScore * 100).toFixed(0)}% risk)`
+                    : '';
                   const veto = a.veto ? paint('danger', 'VETO') : paint('success', 'PASS');
                   return `${time} ${tag} ${veto} ${score} ${a.details}`;
                 });
