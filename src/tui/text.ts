@@ -346,7 +346,17 @@ export function expandTabs(text: unknown, tabWidth = TAB_WIDTH): string {
   const step = Number.isFinite(tabWidth) && tabWidth >= 1 ? Math.floor(tabWidth) : TAB_WIDTH;
   let out = '';
   let column = 0;
-  for (const char of source) {
+  let index = 0;
+  while (index < source.length) {
+    const esc = matchEscapeSequenceAt(source, index);
+    if (esc) {
+      out += esc;
+      index += esc.length;
+      continue;
+    }
+    const code = source.codePointAt(index);
+    if (code === undefined) break;
+    const char = String.fromCodePoint(code);
     if (char === '\t') {
       const advance = step - (column % step);
       out += ' '.repeat(advance);
@@ -356,8 +366,9 @@ export function expandTabs(text: unknown, tabWidth = TAB_WIDTH): string {
       column = 0;
     } else {
       out += char;
-      column += 1;
+      column += columnsFor(code);
     }
+    index += char.length;
   }
   return out;
 }

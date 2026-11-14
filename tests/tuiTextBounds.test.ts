@@ -55,4 +55,14 @@ describe('tui/text finite bounds', () => {
     const cjkWrapped = wrap('a中b', 2);
     assert.deepEqual(cjkWrapped, ['a', '中', 'b']);
   });
+
+  it('expandTabs aligns tab stops using visible column widths and ignores ANSI escapes', () => {
+    const cjkExpanded = expandTabs('中\tb', 8);
+    assert.equal(cjkExpanded, '中      b');
+    assert.equal(visibleWidth(cjkExpanded), 9);
+
+    const ansiExpanded = expandTabs('\x1b[31mab\x1b[0m\tc', 8);
+    assert.equal(stripAnsi(ansiExpanded), 'ab      c');
+    assert.equal(visibleWidth(ansiExpanded), 9);
+  });
 });
