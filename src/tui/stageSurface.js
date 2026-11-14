@@ -537,14 +537,18 @@ export class StageSurface {
           const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
           rows = overlayTurnPreviewCard(rows, card, anchorY, this.turnRailLayout?.railX ?? 1, mainWidth);
           if (this.turnRailLayout) {
-            const cardWidth = 52;
+            const cardWidth = visibleWidth(card[0] || '') || 52;
             const railX = this.turnRailLayout.railX ?? 1;
+            const safeAnchorY = Number.isFinite(anchorY) ? Math.floor(anchorY) : Math.floor(rows.length / 2);
             let cardX = railX - cardWidth - 1;
-            if (cardX < 0 || (railX <= 4 && railX + 2 + cardWidth <= mainWidth)) {
+            if (railX <= 4 && railX + 2 < mainWidth) {
+              cardX = railX + 2;
+            } else if (cardX < 0) {
               cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 2));
             }
-            const startY = Math.max(0, Math.min(rows.length - card.length, anchorY - Math.floor(card.length / 2)));
-            this.turnRailLayout.cardRect = { x: cardX, y: startY, width: cardWidth, height: card.length, turnIndex: hoveredTurn.turnIndex };
+            const effectiveCardWidth = Math.max(1, Math.min(cardWidth, Math.max(1, mainWidth - cardX)));
+            const startY = Math.max(0, Math.min(rows.length - card.length, safeAnchorY - Math.floor(card.length / 2)));
+            this.turnRailLayout.cardRect = { x: cardX, y: startY, width: effectiveCardWidth, height: card.length, turnIndex: hoveredTurn.turnIndex };
           }
         }
       } else if (this.turnRailLayout) {
@@ -552,8 +556,9 @@ export class StageSurface {
       }
       if (this.messageActionOverlay) {
         const overlay = this.messageActionOverlay;
-        const placed = placeMessageActionPanel(rows, overlay.panel, contentWidth,
-          (this.out.rows || height) - height, overlay.layer.anchorY,
+        const overlayWidth = rail ? Math.max(contentWidth, mainWidth - RAIL_BUDGET) : contentWidth;
+        const placed = placeMessageActionPanel(rows, overlay.panel, overlayWidth,
+          Math.max(0, (this.out.rows || height) - height), overlay.layer.anchorY,
           overlay.layer.items.length, {
             messageBounds: overlay.layer.messageBounds,
             dimBackdrop: true
@@ -776,7 +781,7 @@ export class StageSurface {
 
     this.turnRailLayout = {
       railX: hasTurns ? 1 : contentWidth + 1,
-      stageTop: (this.out.rows || this.stage.height) - this.stage.height,
+      stageTop: Math.max(0, (this.out.rows || this.stage.height) - this.stage.height),
       viewportHeight: rows.length,
       dotRows: railResult?.layout?.dotRows || new Map(),
       rowToTurn: railResult?.layout?.rowToTurn || new Map(),

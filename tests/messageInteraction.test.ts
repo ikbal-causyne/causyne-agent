@@ -9,6 +9,7 @@ import {
   type MessageMarker
 } from '../src/tui/messageInteraction.js';
 import { placeMessageActionPanel } from '../src/tui/messageActionPlacement.js';
+import { StageSurface } from '../src/tui/stageSurface.js';
 import {
   extractRowLinks, detectLinkAtPoint, openDetectedLink, resetLinkOpenDebounceForTests
 } from '../src/tui/smartLinkClick.js';
@@ -527,6 +528,49 @@ test('extractRowLinks preserves back-to-back OSC 8 links and detectLinkAtPoint h
   };
   const detected = detectLinkAtPoint(wideSurface, { x: 171, y: 19 });
   assert.equal(detected?.url, 'https://causyne.com/docs');
+});
+
+test('StageSurface keeps actionLayout.y and turnRail stageTop non-negative and rail intact on narrow or shrinking viewports', () => {
+  const writes: string[] = [];
+  const out = {
+    columns: 60,
+    rows: 20,
+    isTTY: true,
+    write(chunk: string) { writes.push(String(chunk)); return true; },
+    on() {},
+    removeListener() {}
+  };
+  const surface = new StageSurface({ out, env: { TERM: 'xterm', CAUSYNE_SIDEBAR: 'off', CAUSYNE_RAIL: '1' } });
+  surface.open();
+  surface.transcript.append({
+    kind: 'user',
+    produce: () => Array.from({ length: 8 }, (_, i) => `   ┃ user line ${i}`),
+    meta: { messageText: 'hello world' }
+  });
+  surface.transcript.append({
+    kind: 'assistant',
+    produce: () => Array.from({ length: 8 }, (_, i) => `   reply line ${i}`),
+    meta: { messageText: 'reply line' }
+  });
+  surface.hoveredTurnIndex = 1;
+  surface.present(['> '], { row: 0, col: 2 });
+
+  const rect = surface.turnRailLayout?.cardRect;
+  assert.ok(rect !== null && rect !== undefined, 'cardRect should be computed');
+  assert.equal(rect.x, 3, 'turn preview card should stay flush at railX + 2');
+  assert.ok(rect.x + rect.width <= 60, `cardRect right edge (${rect.x + rect.width}) must fit within 60 cols`);
+
+  surface.hoveredTurnIndex = null;
+  out.rows = 8; // transient shrink below current stage.height
+  const layer = new MessageActionsLayer([
+    { label: 'Copy message', description: 'to clipboard', value: 'copy' },
+    { label: 'Fork from here', description: 'fresh', value: 'fork' }
+  ], () => {}, 4);
+  const panel = panelRows(layer, 36, layer.preferredHeight());
+  surface.presentMessageActions(panel, layer);
+  assert.ok(layer.actionLayout !== null);
+  assert.ok(layer.actionLayout.y >= 0, `actionLayout.y must not be negative during transient shrink, got ${layer.actionLayout.y}`);
+  assert.ok((surface.turnRailLayout?.stageTop ?? 0) >= 0, 'turnRailLayout.stageTop must not be negative');
 });
 
 
