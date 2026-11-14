@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTurnRailCells,
+  formatTurnTimestamp,
   handleTurnRailMouse,
   overlayTurnPreviewCard,
   renderTurnPreviewCard,
@@ -91,5 +92,10 @@ describe('turnRail finite bounds', () => {
     if (surface._turnRailSuppressTimer) clearTimeout(surface._turnRailSuppressTimer);
     assert.equal(fracHandled, true);
     assert.equal(scrolledTo, 0);
+  });
+
+  it('formatTurnTimestamp returns empty string when finite timestamp overflows JS Date bounds', () => {
+    assert.equal(formatTurnTimestamp(1e18), '');
+    assert.equal(formatTurnTimestamp(-1e18), '');
   });
 });

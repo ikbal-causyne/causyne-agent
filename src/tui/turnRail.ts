@@ -26,6 +26,7 @@ export interface TurnRailLayout {
 export function formatTurnTimestamp(ts: number): string {
   if (!ts || !Number.isFinite(ts)) return '';
   const date = new Date(ts);
+  if (!Number.isFinite(date.getTime())) return '';
   const now = new Date();
   const sameDay = date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
