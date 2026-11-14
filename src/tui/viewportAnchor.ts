@@ -86,8 +86,8 @@ export function restoreReadingAnchor(
   let selected = anchor.id == null
     ? -1
     : entries.findIndex(marker => marker.id === anchor.id);
-  if (selected < 0 && anchor.id == null && entries[anchor.index]?.originalIndex === anchor.index) {
-    selected = anchor.index;
+  if (selected < 0 && anchor.id == null) {
+    selected = entries.findIndex(marker => marker.originalIndex === anchor.index);
   }
   if (selected < 0) {
     // When the anchored frame was evicted, recover in the surviving transcript.
