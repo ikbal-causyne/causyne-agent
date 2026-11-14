@@ -5,6 +5,7 @@ import {
   renderThinkingFrame,
   renderCollapsedThinkingBadge,
   buildThinkingBoxBorders,
+  resolveActivityLabels,
   DEFAULT_MAX_STREAMING_LINES,
   DEFAULT_MAX_EXPANDED_LINES
 } from '../src/tui/thinkingBox.js';
@@ -717,5 +718,27 @@ describe('thinkingBox component', () => {
     );
     assert.equal(scrolled, true, 'scrollThinkingPanel must compute line count at the frame renderedWidth, not unadjusted out.columns');
     assert.ok((frame.meta!.scrollStart as number) > 0);
+  });
+
+  test('thinkingBox handles nullish options safely, strips unsafe escapes from borders, and closes unclosed SGR in wrapRow', () => {
+    const labels = resolveActivityLabels(null as any);
+    assert.equal(labels.activeLabel, 'thinking…');
+    assert.equal(labels.completedLabel, 'Thought');
+
+    const badge = renderCollapsedThinkingBadge(null as any, 5);
+    assert.match(stripAnsi(badge), /Thought/);
+
+    const frame = renderThinkingFrame('hello', null as any);
+    assert.ok(frame.length >= 3);
+
+    const { top, bottom, wrapRow } = buildThinkingBoxBorders('\x1b[2JTitle', 'Footer\x1b[2J', 30);
+    assert.ok(!top.includes('\x1b[2J'), 'top border must strip unsafe CSI sequences');
+    assert.ok(!bottom.includes('\x1b[2J'), 'bottom border must strip unsafe CSI sequences');
+    assert.equal(visibleWidth(top), 30);
+    assert.equal(visibleWidth(bottom), 30);
+
+    const wrapped = wrapRow('\x1b[31munclosed');
+    assert.equal(visibleWidth(wrapped), 30);
+    assert.match(wrapped, /\x1b\[0m/);
   });
 });

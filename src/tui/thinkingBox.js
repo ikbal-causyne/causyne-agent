@@ -51,55 +51,30 @@ function stripTrailingEllipsis(value) {
     }
     return text.trim();
 }
+const COMPLETED_ACTIVITY_LABELS = new Map([
+    ['thinking', 'Thought'],
+    ['analyzing', 'Analyzed'],
+    ['executing', 'Executed'],
+    ['editing', 'Edited'],
+    ['planning', 'Planned'],
+    ['researching', 'Researched'],
+    ['synthesizing', 'Synthesized'],
+    ['processing', 'Processed']
+]);
 /**
  * Resolves dynamic contextual activity labels for streaming and completed badges.
  */
 export function resolveActivityLabels(options) {
-    const cleanedActivity = stripTrailingEllipsis(options.activity);
-    const cleanedTitle = stripTrailingEllipsis(options.title);
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    const cleanedActivity = stripTrailingEllipsis(safeOptions.activity);
+    const cleanedTitle = stripTrailingEllipsis(safeOptions.title);
     const raw = (cleanedActivity || cleanedTitle || 'thinking').toLowerCase();
-    const rawTitle = cleanedTitle && options.title ? cleanSingleLine(options.title) : '';
-    let active = rawTitle || `${raw}…`;
-    if (!rawTitle) {
-        if (raw === 'thinking')
-            active = 'thinking…';
-        else if (raw === 'analyzing')
-            active = 'analyzing…';
-        else if (raw === 'executing')
-            active = 'executing…';
-        else if (raw === 'editing')
-            active = 'editing…';
-        else if (raw === 'planning')
-            active = 'planning…';
-        else if (raw === 'researching')
-            active = 'researching…';
-        else if (raw === 'synthesizing')
-            active = 'synthesizing…';
-        else if (raw === 'processing')
-            active = 'processing…';
-        else
-            active = `${raw}…`;
-    }
-    let completed = options.completedTitle ? cleanSingleLine(options.completedTitle) : '';
+    const rawTitle = cleanedTitle && safeOptions.title ? cleanSingleLine(safeOptions.title) : '';
+    const active = rawTitle || `${raw}…`;
+    let completed = safeOptions.completedTitle ? cleanSingleLine(safeOptions.completedTitle) : '';
     if (!completed) {
-        if (raw === 'thinking')
-            completed = 'Thought';
-        else if (raw === 'analyzing')
-            completed = 'Analyzed';
-        else if (raw === 'executing')
-            completed = 'Executed';
-        else if (raw === 'editing')
-            completed = 'Edited';
-        else if (raw === 'planning')
-            completed = 'Planned';
-        else if (raw === 'researching')
-            completed = 'Researched';
-        else if (raw === 'synthesizing')
-            completed = 'Synthesized';
-        else if (raw === 'processing')
-            completed = 'Processed';
-        else
-            completed = raw.charAt(0).toUpperCase() + raw.slice(1);
+        completed =
+            COMPLETED_ACTIVITY_LABELS.get(raw) ?? raw.charAt(0).toUpperCase() + raw.slice(1);
     }
     return { activeLabel: active, completedLabel: completed };
 }
@@ -107,6 +82,7 @@ export function resolveActivityLabels(options) {
  * Single-line compact badge for collapsed reasoning frames.
  */
 export function renderCollapsedThinkingBadge(options, totalLines) {
+    options = options && typeof options === 'object' ? options : {};
     const isStreaming = Boolean(options.streaming);
     const durationText = options.durationText ? cleanSingleLine(options.durationText) : '';
     const arrow = HAS_UNICODE ? '▸' : '>';
@@ -138,28 +114,23 @@ export function buildThinkingBoxBorders(title, footer, width, role = 'rule') {
     const tr = GLYPHS.topRight || '╮';
     const bl = GLYPHS.bottomLeft || '╰';
     const br = GLYPHS.bottomRight || '╯';
+    const buildBorderRow = (leftCorner, rightCorner, rawText) => {
+        const cleanText = safeDisplay(String(rawText ?? '')).replace(/[\r\n]+/g, ' ');
+        const paddedText = cleanText ? ` ${cleanText} ` : '';
+        const textVis = visibleWidth(paddedText);
+        const maxTextVis = Math.max(0, inner - 4); // reserve at least 1 leading hLine and 2 trailing hLines
+        const safeText = textVis > maxTextVis
+            ? (paddedText ? ` ${truncate(cleanText, Math.max(4, maxTextVis - 2), GLYPHS.ellipsis || '…')} ` : '')
+            : paddedText;
+        const closedText = safeText.includes('\x1b[') && !safeText.endsWith('\x1b[0m') ? `${safeText}\x1b[0m` : safeText;
+        const safeTextVis = visibleWidth(closedText);
+        const trailCount = Math.max(0, inner - 1 - safeTextVis);
+        return paint(role, leftCorner + h) + closedText + paint(role, h.repeat(trailCount) + rightCorner);
+    };
     // --- Top Border ---
-    const cleanTitle = String(title ?? '').replace(/[\r\n]+/g, ' ');
-    const rawTitle = cleanTitle ? ` ${cleanTitle} ` : '';
-    const titleVis = visibleWidth(rawTitle);
-    const maxTitleVis = Math.max(0, inner - 4); // reserve at least 1 leading hLine and 2 trailing hLines
-    const safeTitle = titleVis > maxTitleVis ? (rawTitle ? ` ${truncate(cleanTitle, Math.max(4, maxTitleVis - 2), GLYPHS.ellipsis || '…')} ` : '') : rawTitle;
-    const safeTitleVis = visibleWidth(safeTitle);
-    const topLead = h;
-    const topTrailCount = Math.max(0, inner - 1 - safeTitleVis);
-    const topTrail = h.repeat(topTrailCount);
-    const top = paint(role, tl + topLead) + safeTitle + paint(role, topTrail + tr);
+    const top = buildBorderRow(tl, tr, title);
     // --- Bottom Border ---
-    const cleanFooter = String(footer ?? '').replace(/[\r\n]+/g, ' ');
-    const rawFooter = cleanFooter ? ` ${cleanFooter} ` : '';
-    const footerVis = visibleWidth(rawFooter);
-    const maxFooterVis = Math.max(0, inner - 4);
-    const safeFooter = footerVis > maxFooterVis ? (rawFooter ? ` ${truncate(cleanFooter, Math.max(4, maxFooterVis - 2), GLYPHS.ellipsis || '…')} ` : '') : rawFooter;
-    const safeFooterVis = visibleWidth(safeFooter);
-    const bottomLead = h;
-    const bottomTrailCount = Math.max(0, inner - 1 - safeFooterVis);
-    const bottomTrail = h.repeat(bottomTrailCount);
-    const bottom = paint(role, bl + bottomLead) + safeFooter + paint(role, bottomTrail + br);
+    const bottom = buildBorderRow(bl, br, footer);
     // --- Middle Row Wrapper ---
     // Format: "│ " + content + " │"
     // content column width = inner - 2 = w - 4
@@ -167,7 +138,10 @@ export function buildThinkingBoxBorders(title, footer, width, role = 'rule') {
     const side = paint(role, v);
     const wrapRow = (line) => {
         const truncated = truncate(line, contentWidth, GLYPHS.ellipsis || '…');
-        const padded = padEnd(truncated, contentWidth);
+        const closed = truncated.includes('\x1b[') && !truncated.endsWith('\x1b[0m')
+            ? `${truncated}\x1b[0m`
+            : truncated;
+        const padded = padEnd(closed, contentWidth);
         return `${side} ${padded} ${side}`;
     };
     return { top, bottom, wrapRow };
@@ -179,6 +153,7 @@ export function renderThinkingFrame(content, options = {}) {
     const text = safeDisplay(String(content ?? '')).trim();
     if (!text)
         return [];
+    options = options && typeof options === 'object' ? options : {};
     const width = clampThinkingWidth(options.width);
     const isStreaming = Boolean(options.streaming);
     const isCollapsed = Boolean(options.collapsed);
