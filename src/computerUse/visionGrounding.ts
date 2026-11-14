@@ -320,13 +320,13 @@ export function visionGroundingToDesktopAct(actions: VisionAction[]): DesktopAct
       case 'triple_click': {
         const point = act.coordinates;
         if (point) {
-          result.push({
-            verb: 'clickxy',
-            x: point.x,
-            y: point.y
-          });
-          if (act.action === 'double_click') {
-            result.push({ verb: 'clickxy', x: point.x, y: point.y });
+          const clicks = act.action === 'triple_click' ? 3 : act.action === 'double_click' ? 2 : 1;
+          for (let i = 0; i < clicks; i++) {
+            result.push({
+              verb: 'clickxy',
+              x: point.x,
+              y: point.y
+            });
           }
         }
         break;
