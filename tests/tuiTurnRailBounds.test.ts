@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTurnRailCells,
+  overlayTurnPreviewCard,
   renderTurnPreviewCard,
   resolveActiveTurnIndex,
   sliceFromColumn,
@@ -44,5 +45,19 @@ describe('turnRail finite bounds', () => {
   it('renderTurnPreviewCard falls back safely on non-finite maxCardWidth', () => {
     const rows = renderTurnPreviewCard(sampleTurn(1, 0), Number.NaN);
     assert.equal(visibleWidth(rows[0]!), 50);
+  });
+
+  it('overlayTurnPreviewCard handles non-finite and fractional coordinates without corruption or RangeError', () => {
+    const viewport = Array.from({ length: 12 }, (_, i) => `row-${i}`.padEnd(80, ' '));
+    const card = renderTurnPreviewCard(sampleTurn(1, 0), 40);
+    assert.doesNotThrow(() => {
+      const infScreen = overlayTurnPreviewCard(viewport, card, 4, 1, Number.POSITIVE_INFINITY);
+      assert.deepEqual(infScreen, viewport);
+    });
+    const nanAnchor = overlayTurnPreviewCard(viewport, card, Number.NaN, 1, 80);
+    assert.equal(Object.prototype.hasOwnProperty.call(nanAnchor, 'NaN'), false);
+    const fractional = overlayTurnPreviewCard(viewport, card, 6.8, 1.4, 80);
+    assert.equal(Object.keys(fractional).length, viewport.length);
+    assert.ok(fractional.some((row) => row.includes('Turn 1')));
   });
 });

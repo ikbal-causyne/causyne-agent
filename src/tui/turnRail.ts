@@ -407,20 +407,33 @@ export function overlayTurnPreviewCard(
   railX: number,
   screenWidth: number
 ): string[] {
-  if (cardRows.length === 0 || viewportRows.length === 0) return viewportRows;
+  if (
+    cardRows.length === 0 ||
+    viewportRows.length === 0 ||
+    !Number.isFinite(anchorY) ||
+    !Number.isFinite(railX) ||
+    !Number.isFinite(screenWidth) ||
+    screenWidth <= 0
+  ) {
+    return viewportRows;
+  }
+
+  const safeAnchorY = Math.floor(anchorY);
+  const safeRailX = Math.max(0, Math.floor(railX));
+  const safeScreenWidth = Math.floor(screenWidth);
 
   const cardWidth = visibleWidth(cardRows[0] || '');
   // Clamp card placement horizontally: flush-left with transcript baseline at column 3
   const cardSpacing = 2; // railX + 2 gives x = 3, perfectly flush left with transcript content
-  let x = railX - cardWidth - 1;
-  if (x < 0 || (railX <= 4 && railX + cardSpacing + cardWidth <= screenWidth)) {
-    x = Math.max(0, Math.min(screenWidth - cardWidth - 1, railX + cardSpacing));
+  let x = safeRailX - cardWidth - 1;
+  if (x < 0 || (safeRailX <= 4 && safeRailX + cardSpacing + cardWidth <= safeScreenWidth)) {
+    x = Math.max(0, Math.min(safeScreenWidth - cardWidth - 1, safeRailX + cardSpacing));
   }
 
   // Center vertically around anchorY
   const startY = Math.max(
     0,
-    Math.min(viewportRows.length - cardRows.length, anchorY - Math.floor(cardRows.length / 2))
+    Math.min(viewportRows.length - cardRows.length, safeAnchorY - Math.floor(cardRows.length / 2))
   );
 
   const out = viewportRows.slice();
@@ -435,9 +448,9 @@ export function overlayTurnPreviewCard(
     // Maintain a perfectly clean, flush, symmetrical margin:
     // Only preserve the rail dot (if present at railX) and whitespace padding up to column x.
     let beforePart = '';
-    if (x <= 6 && railX <= 4) {
+    if (x <= 6 && safeRailX <= 4) {
       const plainBase = stripAnsi(baseRow);
-      const dotChar = plainBase[railX] || ' ';
+      const dotChar = plainBase[safeRailX] || ' ';
       const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·';
       let dotCell = ' ';
       if (isDot) {
@@ -451,8 +464,8 @@ export function overlayTurnPreviewCard(
           dotCell = dotChar;
         }
       }
-      const leadingSpace = ' '.repeat(Math.max(0, railX));
-      const trailingSpace = ' '.repeat(Math.max(0, x - railX - 1));
+      const leadingSpace = ' '.repeat(Math.max(0, safeRailX));
+      const trailingSpace = ' '.repeat(Math.max(0, x - safeRailX - 1));
       beforePart = `${leadingSpace}${dotCell}${trailingSpace}`;
     } else {
       beforePart = padEnd(truncate(baseRow, x, ''), x);
@@ -464,7 +477,7 @@ export function overlayTurnPreviewCard(
       const rowLen = visibleWidth(baseRow);
       const rightCell = rowLen > 0 ? sliceFromColumn(baseRow, rowLen - 1) : ' ';
       const rightCellWidth = visibleWidth(rightCell);
-      const targetWidth = Math.max(screenWidth, rowLen);
+      const targetWidth = Math.max(safeScreenWidth, rowLen);
       const gap = Math.max(0, targetWidth - x - cardWidth - rightCellWidth);
       restOfRow = `${' '.repeat(gap)}${rightCell}`;
     } else {
