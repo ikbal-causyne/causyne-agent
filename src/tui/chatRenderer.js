@@ -654,10 +654,9 @@ export class ChatRenderer {
         info.messagesCount = safeMessages.filter(m => m && m.role !== 'system').length;
       }
       const measuredChars = measureMessages(safeMessages);
-      if (measuredChars > 0) {
-        this.status.contextChars = measuredChars;
-        info.contextChars = measuredChars;
-      }
+      // Loading an empty session must clear usage from the previous chat.
+      this.status.contextChars = measuredChars;
+      info.contextChars = measuredChars;
 
       if (info.title || info.id) {
         this.renderSessionDivider(info);
