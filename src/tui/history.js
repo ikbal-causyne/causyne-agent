@@ -51,7 +51,7 @@ export class PromptHistory {
             return null;
           }
         })
-        .filter((entry) => typeof entry === 'string' && entry.length > 0);
+        .filter((entry) => typeof entry === 'string' && entry.length > 0 && !looksSensitive(entry));
     } catch (e) {
       this.entries = []; // no history yet is the normal first run
     }
@@ -90,7 +90,7 @@ export class PromptHistory {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const body = this.entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
       // Write then rename: a crash mid-write must not truncate the history.
-      const temporary = this.file + '.tmp';
+      const temporary = `${this.file}.${process.pid}.tmp`;
       fs.writeFileSync(temporary, body, { mode: 0o600 });
       fs.renameSync(temporary, this.file);
     } catch (e) {
@@ -104,13 +104,14 @@ export class PromptHistory {
    * Typing `npm ` then pressing Up should walk npm prompts, not everything.
    */
   matching(prefix) {
-    if (!prefix) return this.entries.slice().reverse();
-    return this.entries.filter((entry) => entry.startsWith(prefix)).reverse();
+    const query = String(prefix == null ? '' : prefix);
+    if (!query) return this.entries.slice().reverse();
+    return this.entries.filter((entry) => entry.startsWith(query)).reverse();
   }
 
   /** Older entry, or null at the end. `draft` is the line being edited. */
   previous(draft) {
-    if (this.cursor === -1) this.draft = draft;
+    if (this.cursor === -1) this.draft = String(draft == null ? '' : draft);
     const pool = this.matching(this.draft);
     if (pool.length === 0) return null;
     const next = Math.min(this.cursor + 1, pool.length - 1);

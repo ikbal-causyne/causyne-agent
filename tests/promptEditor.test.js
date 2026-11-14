@@ -452,6 +452,20 @@ describe('history — remembered, but never a place a key leaks', () => {
     assert.equal(history.previous('npm '), 'npm test', 'git status is skipped');
     fs.rmSync(file, { force: true });
   });
+
+  test('load skips sensitive lines on disk and previous(undefined)/next returns string draft', () => {
+    const file = tempFile();
+    const fakeKey = 'sk-' + 'proj-' + 'abc123456789012345678901234567890';
+    fs.writeFileSync(file, [
+      JSON.stringify('safe first command'),
+      JSON.stringify(`OPENAI_API_KEY=${fakeKey}`)
+    ].join('\n') + '\n');
+    const history = new PromptHistory({ file });
+    assert.deepEqual(history.entries, ['safe first command']);
+    assert.equal(history.previous(undefined), 'safe first command');
+    assert.equal(history.next(), '');
+    fs.rmSync(file, { force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------
