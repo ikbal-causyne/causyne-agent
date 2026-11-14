@@ -728,18 +728,19 @@ export class ConfirmLayer extends Layer {
 
 /** The command palette — every command in the app, fuzzy-searchable. */
 export function commandPalette(commands, onRun) {
+  const safeCommands = Array.isArray(commands) ? commands.filter(Boolean) : [];
   return new SelectLayer({
     title: 'commands',
     placeholder: 'search commands',
     emptyText: 'no command matches',
     width: 72,
     height: 20,
-    items: commands.map((command) => ({
-      label: command.name,
-      description: command.description || '',
-      category: command.category || '',
-      hint: command.hint || '',
-      searchText: command.description || '',
+    items: safeCommands.map((command) => ({
+      label: cleanDialogText(command.name || ''),
+      description: cleanDialogText(command.description || ''),
+      category: cleanDialogText(command.category || ''),
+      hint: cleanDialogText(command.hint || ''),
+      searchText: cleanDialogText(command.description || ''),
       value: command
     })),
     onPick: (item) => { if (item && onRun) onRun(item.value); }
@@ -757,17 +758,18 @@ export function commandPalette(commands, onRun) {
  * the pane rather than to the terminal, so overflow is structurally impossible.
  */
 export function skillPicker(skills, onOpen) {
+  const safeSkills = Array.isArray(skills) ? skills.filter(Boolean) : [];
   return new SelectLayer({
-    title: `skills (${skills.length})`,
+    title: `skills (${safeSkills.length})`,
     placeholder: 'search skills',
     emptyText: 'no skill matches',
     width: 76,
     height: 22,
-    items: skills.map((skill) => ({
-      label: `${skill.domain}/${skill.id}`,
-      description: skill.description || '',
-      category: skill.domain,
-      searchText: `${skill.name} ${skill.description || ''}`,
+    items: safeSkills.map((skill) => ({
+      label: `${cleanDialogText(skill.domain || '')}/${cleanDialogText(skill.id || '')}`,
+      description: cleanDialogText(skill.description || ''),
+      category: cleanDialogText(skill.domain || ''),
+      searchText: cleanDialogText(`${skill.name || ''} ${skill.description || ''}`),
       value: skill
     })),
     onPick: (item) => { if (item && onOpen) onOpen(item.value); }
@@ -776,10 +778,15 @@ export function skillPicker(skills, onOpen) {
 
 /** Help: the keys, grouped, in a scrolling pane. */
 export function helpLayer(sections) {
+  const safeSections = Array.isArray(sections) ? sections.filter(Boolean) : [];
   const lines = [];
-  for (const section of sections) {
-    lines.push(bold(paint('ink', section.title)));
-    for (const [keys, what] of section.rows) {
+  for (const section of safeSections) {
+    lines.push(bold(paint('ink', cleanDialogText(section.title || ''))));
+    const rows = Array.isArray(section.rows) ? section.rows : [];
+    for (const pair of rows) {
+      if (!Array.isArray(pair)) continue;
+      const keys = cleanDialogText(pair[0] || '');
+      const what = cleanDialogText(pair[1] || '');
       lines.push(`  ${paint('accent', keys.padEnd(18))}${dim(what)}`);
     }
     lines.push('');
@@ -789,12 +796,16 @@ export function helpLayer(sections) {
 
 /** A status pane: session facts that would otherwise need a scrollback hunt. */
 export function statusLayer(rows) {
-  const width = rows.reduce((max, row) => Math.max(max, row[0].length), 0);
-  const lines = rows.map(([label, value]) => (
-    label === ''
+  const safeRows = (Array.isArray(rows) ? rows : []).filter(row => Array.isArray(row));
+  const labels = safeRows.map(row => cleanDialogText(row[0] == null ? '' : String(row[0])));
+  const width = labels.reduce((max, label) => Math.max(max, label.length), 0);
+  const lines = safeRows.map((row, index) => {
+    const label = labels[index];
+    const value = cleanDialogText(row[1] == null ? '' : String(row[1]));
+    return label === ''
       ? ''
-      : `${paint('muted', String(label).padEnd(width + 2))}${paint('ink', safeDisplay(String(value)))}`
-  ));
+      : `${paint('muted', label.padEnd(width + 2))}${paint('ink', value)}`;
+  });
   return new TextLayer({ title: 'session', lines, width: 74, height: Math.min(24, lines.length + 3) });
 }
 

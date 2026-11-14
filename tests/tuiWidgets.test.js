@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 
 import { SelectList, fuzzyScore, fuzzyFilter } from '../src/tui/selectList.js';
 import { OverlayStack, Layer, drawPanel } from '../src/tui/overlay.js';
-import { ApprovalLayer, TextLayer, commandPalette, skillPicker } from '../src/tui/dialogs.js';
+import { ApprovalLayer, TextLayer, commandPalette, skillPicker, helpLayer, statusLayer } from '../src/tui/dialogs.js';
 import { listCompiledSkills } from '../src/skillsManager.js';
 import { renderBanner, wordmark } from '../src/tui/banner.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
@@ -472,5 +472,18 @@ describe('the skills behind the names are real', () => {
       `${chosen.domain}/${chosen.id} returned ${body.length} characters — that is a stub, not a skill`);
     assert.match(body, /Done when:/, 'a skill body must carry checkable criteria');
     assert.match(body, /##\s+Verification/i, 'a skill body must close with verification');
+  });
+
+  test('dialog builders guard nullish or malformed inputs and sanitize help and status labels', () => {
+    const emptyPalette = commandPalette(null, () => {});
+    assert.equal(emptyPalette.list.filtered.length, 0);
+    const emptySkills = skillPicker(null, () => {});
+    assert.equal(emptySkills.list.filtered.length, 0);
+
+    const help = helpLayer([{ title: 'Keys\x1b[2J\nTitle', rows: null }]);
+    assert.equal(help.lines.join(' ').includes('\x1b[2J'), false);
+
+    const status = statusLayer([null, ['Key\x1b[2J', 'val\nline']]);
+    assert.equal(status.lines.join(' ').includes('\x1b[2J'), false);
   });
 });
