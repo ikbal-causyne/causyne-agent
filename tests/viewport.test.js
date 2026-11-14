@@ -580,3 +580,21 @@ describe('ChatPrompt on the Stage', () => {
     assert.equal(surface.stage.reserved, false, 'the band was given back');
   });
 });
+
+test('Viewport guards nullish options, non-finite jump directions/markers, and clamps restored scrollTop', () => {
+  assert.doesNotThrow(() => {
+    const nullVp = new Viewport(null);
+    nullVp.resize(null);
+    nullVp.scrollTo(0, null);
+  });
+  const transcript = {
+    height: () => 50,
+    markers: () => [null, { row: Number.NaN, kind: 'user' }, { row: 10, kind: 'user' }, { row: 30, kind: 'user' }],
+    slice: (_w, from, count) => Array.from({ length: count }, (_, i) => `row ${from + i}`)
+  };
+  const vp = new Viewport({ transcript, height: 10, width: 80 });
+  vp.scrollTo(5);
+  assert.equal(vp.jump(0), 5);
+  assert.equal(vp.jump(Number.NaN), 5);
+  assert.equal(vp.jump(1), 10);
+});

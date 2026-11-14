@@ -102,7 +102,8 @@ export class Viewport {
     unseen;
     lastWheelMoved;
     lastWheelDirection;
-    constructor({ transcript = null, height = 20, width = 80, speed = DEFAULT_SCROLL_SPEED, acceleration = null } = {}) {
+    constructor(options = {}) {
+        const { transcript = null, height = 20, width = 80, speed = DEFAULT_SCROLL_SPEED, acceleration = null } = options || {};
         this.transcript = transcript;
         this.viewHeight = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 20;
         this.viewWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 80;
@@ -121,7 +122,8 @@ export class Viewport {
     /**
      * Geometry changed — a resize, or the input box growing under the viewport.
      */
-    resize({ height, width } = {}) {
+    resize(options = {}) {
+        const { height, width } = options || {};
         const nextHeight = height !== undefined && Number.isFinite(height) && height > 0
             ? Math.max(1, Math.floor(height)) : this.viewHeight;
         const nextWidth = width !== undefined && Number.isFinite(width) && width > 0
@@ -132,8 +134,9 @@ export class Viewport {
         this.viewHeight = nextHeight;
         this.viewWidth = nextWidth;
         if (anchor && this.transcript?.markers) {
-            this.scrollTop = restoreReadingAnchor(anchor, this.transcript.markers(nextWidth), this.transcript.height(nextWidth), nextHeight);
+            const restored = restoreReadingAnchor(anchor, this.transcript.markers(nextWidth), this.transcript.height(nextWidth), nextHeight);
             const max = this.maxScrollTop();
+            this.scrollTop = Number.isFinite(restored) ? Math.max(0, Math.min(max, Math.floor(restored))) : max;
             // A deliberate scroll must not suddenly become follow-mode just because
             // a paragraph gained or lost wrapped rows during resize.
             this.manual = max > 0 && this.scrollTop < max;
@@ -206,7 +209,8 @@ export class Viewport {
             this.applyingSticky = wasApplying;
         }
     }
-    scrollTo(position, { snap = false } = {}) {
+    scrollTo(position, options = {}) {
+        const { snap = false } = options || {};
         if (!Number.isFinite(position))
             return this.scrollTop;
         const max = this.maxScrollTop();
@@ -266,10 +270,12 @@ export class Viewport {
         return this.scrollTop;
     }
     jump(direction, kinds = null) {
+        if (!Number.isFinite(direction) || direction === 0)
+            return this.scrollTop;
         if (!this.transcript || typeof this.transcript.markers !== 'function')
             return this.scrollTop;
         const markers = this.transcript.markers(this.viewWidth)
-            .filter((m) => !kinds || kinds.includes(m.kind));
+            .filter((m) => Boolean(m && Number.isFinite(m.row) && (!kinds || kinds.includes(m.kind))));
         if (markers.length === 0)
             return this.scrollTop;
         if (direction < 0) {
