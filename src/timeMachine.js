@@ -57,6 +57,11 @@ function operationFamily(args) {
         // Script names are case-sensitive; a passing `build` cannot resolve `Build`.
         return [executable, ...words.slice(1, words[1] === 'run' ? 3 : 2)].join(' ');
     }
+    if (/^(git|gh|docker|podman|kubectl)$/.test(executable)) {
+        // Distinct subcommands must have distinct recovery histories: a passing
+        // git status is not evidence that an earlier git push succeeded.
+        return [executable, (words[1] || '').toLowerCase().slice(0, 32)].filter(Boolean).join(' ');
+    }
     return executable.slice(0, 32);
 }
 function issueKey(tool, args) {
