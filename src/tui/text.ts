@@ -119,7 +119,21 @@ export const AMBIGUOUS_IS_WIDE: boolean = detectAmbiguousWide();
 
 /** Columns one code point occupies, under the active ambiguous-width policy. */
 function columnsFor(code: number): number {
-  if (code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f)) return 0;
+  if (
+    code < 32 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    (code >= 0x0300 && code <= 0x036f) ||
+    (code >= 0x1ab0 && code <= 0x1aff) ||
+    (code >= 0x1dc0 && code <= 0x1dff) ||
+    (code >= 0x200b && code <= 0x200f) ||
+    (code >= 0x20d0 && code <= 0x20ff) ||
+    (code >= 0xfe00 && code <= 0xfe0f) ||
+    (code >= 0xfe20 && code <= 0xfe2f) ||
+    code === 0xfeff ||
+    (code >= 0xe0100 && code <= 0xe01ef)
+  ) {
+    return 0;
+  }
   if (isWideCodePoint(code)) return 2;
   if (AMBIGUOUS_IS_WIDE && isAmbiguousCodePoint(code)) return 2;
   return 1;
@@ -236,8 +250,8 @@ export function wrap(text: unknown, width: number, _options?: { hang?: number })
 
       let remainder = word;
       while (visibleWidth(remainder) > safeWidth) {
-        lines.push(truncate(remainder, safeWidth, ''));
-        // truncate() gives us the head; drop the exact prefix, skipping escapes.
+        const chunk = truncate(remainder, safeWidth, '');
+        // Drop the exact prefix, skipping escapes.
         let consumed = 0;
         let cut = 0;
         while (cut < remainder.length) {
@@ -259,6 +273,7 @@ export function wrap(text: unknown, width: number, _options?: { hang?: number })
           cut += String.fromCodePoint(code).length;
         }
         if (cut === 0) break;
+        lines.push(visibleWidth(chunk) > 0 ? chunk : remainder.slice(0, cut));
         remainder = remainder.slice(cut);
       }
       current = remainder;

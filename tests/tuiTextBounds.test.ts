@@ -65,4 +65,10 @@ describe('tui/text finite bounds', () => {
     assert.equal(stripAnsi(ansiExpanded), 'ab      c');
     assert.equal(visibleWidth(ansiExpanded), 9);
   });
+
+  it('visibleWidth counts combining marks and C0 controls as zero width and wrap preserves wide chars at width 1', () => {
+    assert.equal(visibleWidth('e\u0301'), 1);
+    assert.equal(visibleWidth('a\rb\x00'), 2);
+    assert.deepEqual(wrap('中a', 1), ['中', 'a']);
+  });
 });
