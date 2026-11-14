@@ -94,3 +94,9 @@ test('CausyneRotor: statusLine renders rotor frames and animated dots', () => {
   assert.ok(line.includes('working.'));
   assert.ok(visibleWidth(line) <= 79);
 });
+
+test('CausyneRotor: formatAnimatedStatus falls back to working when message trims or strips to empty', () => {
+  assert.equal(formatAnimatedStatus('...', 2), 'working.  ');
+  assert.equal(formatAnimatedStatus('…', 4), 'working.. ');
+  assert.equal(formatAnimatedStatus('   ', 6), 'working...');
+});

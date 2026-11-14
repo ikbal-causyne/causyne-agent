@@ -230,9 +230,10 @@ export function getAnimatedDots(tick) {
     return DOT_FRAMES[stage] ?? '   ';
 }
 export function formatAnimatedStatus(message, tick) {
-    let base = (message || 'working').trimEnd();
+    let base = String(message ?? '').trimEnd();
     while (base.endsWith('.') || base.endsWith('…')) {
         base = base.slice(0, -1).trimEnd();
     }
-    return `${base}${getAnimatedDots(tick)}`;
+    const label = base.trim().length > 0 ? base : 'working';
+    return `${label}${getAnimatedDots(tick)}`;
 }
