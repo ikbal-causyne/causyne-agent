@@ -149,7 +149,12 @@ function pickVariant(c: Pick<Caps, 'width' | 'height' | 'unicode'>): Variant {
 }
 export function detect(o: BannerOptions = {}, stream: TermStream = process.stdout): Caps {
   const env = process.env, tty = Boolean(stream.isTTY);
-  const width = o.width || stream.columns || 80, height = o.height || stream.rows || 24;
+  const positiveDim = (v: unknown, fallback: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+  };
+  const width = positiveDim(o.width, positiveDim(stream.columns, 80));
+  const height = positiveDim(o.height, positiveDim(stream.rows, 24));
   const want = o.color;
   let color: ColorMode;
   if (want === true) color = 'truecolor';
