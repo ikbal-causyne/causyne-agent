@@ -459,12 +459,17 @@ export function applyCompletion(text, cursor, trigger, item) {
 
 /** Rows for the picker, already bounded and safe to print. */
 export function renderPicker(items, selected, width) {
-  const start = Math.max(0, Math.min(selected - MAX_VISIBLE + 1, items.length - MAX_VISIBLE));
-  const window = items.slice(Math.max(0, start), Math.max(0, start) + MAX_VISIBLE);
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const safeSelected = Number.isFinite(selected)
+    ? Math.max(0, Math.min(items.length - 1, Math.floor(selected)))
+    : 0;
+  const start = Math.max(0, Math.min(safeSelected - MAX_VISIBLE + 1, items.length - MAX_VISIBLE));
+  const window = items.slice(start, start + MAX_VISIBLE);
+  const cleanSingleLine = (text) => sanitize(String(text == null ? '' : text)).replace(/[\r\n]+/g, ' ');
   return window.map((item, offset) => ({
     item,
-    selected: Math.max(0, start) + offset === selected,
-    label: shortenHome(item.label),
-    description: item.description || ''
+    selected: start + offset === safeSelected,
+    label: cleanSingleLine(shortenHome(String(item?.label ?? item?.value ?? ''))),
+    description: cleanSingleLine(item?.description ?? '')
   }));
 }

@@ -16,7 +16,7 @@ import { EventEmitter } from 'node:events';
 import { KeyDecoder, bracketedPaste, PASTE_START, PASTE_END } from '../src/tui/keys.js';
 import { LineEditor } from '../src/tui/lineEditor.js';
 import {
-  suggest, detectTrigger, applyCompletion, isTerminalSafe, score, FileIndex
+  suggest, detectTrigger, applyCompletion, isTerminalSafe, score, FileIndex, renderPicker
 } from '../src/tui/completion.js';
 import { PromptHistory, looksSensitive, MAX_ENTRIES } from '../src/tui/history.js';
 import { ChatPrompt, isInteractive, keyHints } from '../src/tui/prompt.js';
@@ -1268,5 +1268,21 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(p.notice.includes('\x1b'), false);
     assert.equal(p.notice.includes('\n'), false);
     assert.ok(p.notice.includes('boom'));
+  });
+
+  test('renderPicker guards empty items, clamps non-finite selected, and sanitizes labels', () => {
+    assert.deepEqual(renderPicker(null, 0, 80), []);
+    const items = [
+      { label: 'safe\x1b[31m', description: 'line1\n\x1b[2Jline2' },
+      { label: 'two', description: null }
+    ];
+    const nanRows = renderPicker(items, Number.NaN, 80);
+    assert.equal(nanRows.length, 2);
+    assert.equal(nanRows[0].selected, true);
+    assert.equal(nanRows[0].label.includes('\x1b'), false);
+    assert.equal(nanRows[0].description.includes('\x1b'), false);
+    assert.equal(nanRows[0].description.includes('\n'), false);
+    const highRows = renderPicker(items, 99, 80);
+    assert.equal(highRows[1].selected, true);
   });
 });
