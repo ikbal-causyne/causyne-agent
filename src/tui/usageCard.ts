@@ -44,9 +44,11 @@ function formatNumber(value: number | undefined | null): string {
  * Render a visual progress bar for context capacity or token budget.
  */
 export function renderProgressBar(percent: number, barLength: number = 24, invertColors: boolean = false): string {
-  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
-  const filledChars = Math.max(0, Math.min(barLength, Math.round((clamped / 100) * barLength)));
-  const emptyChars = Math.max(0, barLength - filledChars);
+  const safePercent = Number.isFinite(percent) ? percent : 0;
+  const safeLength = Number.isFinite(barLength) ? Math.max(1, Math.floor(barLength)) : 24;
+  const clamped = Math.max(0, Math.min(100, Math.round(safePercent)));
+  const filledChars = Math.max(0, Math.min(safeLength, Math.round((clamped / 100) * safeLength)));
+  const emptyChars = Math.max(0, safeLength - filledChars);
 
   let role: string;
   if (!invertColors) {
