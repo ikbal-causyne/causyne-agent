@@ -229,6 +229,34 @@ test('coldObserver recognizes test run via CommandLine and avoids overconfident 
   assert.equal(assessment.verified, true);
 });
 
+test('coldObserver rejects unjournaled TurnToolEvidence with nonzero result exitCode or whitespace error', async () => {
+  const failing = await coldObserver.auditTurnVerification({
+    taskId: 'turn-evidence-nonzero-exit',
+    userPrompt: 'Fix parser bug and verify tests pass',
+    agentClaim: 'Fixed the parser and all tests passed.',
+    toolHistory: [
+      { tool: 'fs_write', success: true, args: { path: 'parser.ts' }, path: 'parser.ts' },
+      { tool: 'exec', success: true, command: 'npm test', result: { exitCode: 1 } }
+    ],
+    stepsCompleted: 2
+  });
+  assert.equal(failing.overconfident, true);
+  assert.equal(failing.verified, false);
+
+  const blankErrPass = await coldObserver.auditTurnVerification({
+    taskId: 'turn-evidence-blank-error',
+    userPrompt: 'Fix parser bug and verify tests pass',
+    agentClaim: 'Fixed the parser and all tests passed.',
+    toolHistory: [
+      { tool: 'fs_write', success: true, args: { path: 'parser.ts' }, path: 'parser.ts' },
+      { tool: 'exec', success: true, command: 'npm test', result: { success: true, error: '   ', exitCode: 0 } }
+    ],
+    stepsCompleted: 2
+  });
+  assert.equal(blankErrPass.overconfident, false);
+  assert.equal(blankErrPass.verified, true);
+});
+
 test('coldObserver does not force test checks on launch-only prompts ("open it ")', async () => {
   const taskId = 'task-launch-only-1';
   coldObserver.recordToolOutcome(taskId, 'run_command', { CommandLine: 'open /tmp/project/index.html' }, { success: true, exitCode: 0 });

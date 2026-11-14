@@ -4,7 +4,7 @@ import path from 'node:path';
 import { auditLog } from '../auditLog.js';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { causyneHome } from '../utils/paths.js';
-import { boundedArgs, outcomeFromResult, scanMutation } from './evidence.js';
+import { outcomeFromResult, scanMutation } from './evidence.js';
 import { isLoopbackEndpoint, probeAdvisory, queryAdvisory } from './advisory.js';
 const CONFIG_FILE = path.join(causyneHome(), 'observer.json');
 const MAX_AUDIT_RECORDS = 200;
@@ -122,39 +122,18 @@ function confirmThreshold(strictness) {
         return 0.45;
     return 0.62;
 }
-function nestedError(result) {
-    if (result === null || typeof result !== 'object' || Array.isArray(result))
-        return '';
-    const record = result;
-    return typeof record.error === 'string' ? record.error : '';
-}
 function normalizeOutcome(entry) {
     const args = entry.args && typeof entry.args === 'object' && !Array.isArray(entry.args)
         ? entry.args
         : {};
-    const result = entry.result;
-    const error = nestedError(result);
-    const command = entry.command
-        || (typeof args.command === 'string' ? args.command : '')
-        || (typeof args.CommandLine === 'string' ? args.CommandLine : '')
-        || (typeof args.commandLine === 'string' ? args.commandLine : '')
-        || (typeof args.cmd === 'string' ? args.cmd : '')
-        || (typeof args.script === 'string' ? args.script : '')
-        || (['run_command', 'run', 'execute', 'exec', 'bash', 'terminal', 'sh', 'zsh', 'sysrun'].includes(String(entry.tool || '').toLowerCase()) && typeof args.detail === 'string' ? args.detail : '');
+    const normalized = outcomeFromResult(entry.tool, args, entry.result, 0);
+    const command = typeof entry.command === 'string' && entry.command.trim() ? entry.command : normalized.command;
+    const targetPath = typeof entry.path === 'string' && entry.path.trim() ? entry.path : normalized.path;
     return {
-        tool: entry.tool,
-        args: boundedArgs(args),
-        success: entry.success === true && !error,
-        error: error.slice(0, 600),
-        exitCode: result !== null && typeof result === 'object' && !Array.isArray(result)
-            && typeof result.exitCode === 'number'
-            ? result.exitCode
-            : null,
+        ...normalized,
+        success: entry.success === true && normalized.success,
         command: command.slice(0, 600),
-        path: entry.path
-            || (typeof args.path === 'string' ? args.path : '')
-            || (typeof args.file_path === 'string' ? args.file_path : ''),
-        at: 0
+        path: targetPath.slice(0, 400)
     };
 }
 function claimText(agentClaim) {
