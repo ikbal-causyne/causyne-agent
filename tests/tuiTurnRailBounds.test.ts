@@ -98,4 +98,16 @@ describe('turnRail finite bounds', () => {
     assert.equal(formatTurnTimestamp(1e18), '');
     assert.equal(formatTurnTimestamp(-1e18), '');
   });
+
+  it('guards nullish turn cards/events and resets SGR when overlayTurnPreviewCard clips a wide card', () => {
+    assert.doesNotThrow(() => renderTurnPreviewCard(null as any));
+    assert.deepEqual(overlayTurnPreviewCard(['row'], null as any, 0, 1, 20), ['row']);
+    const fakeSurface = { turnRailLayout: { railX: 1, stageTop: 0, viewportHeight: 10, dotRows: new Map(), rowToTurn: new Map() } };
+    assert.equal(handleTurnRailMouse(null as any, fakeSurface, {}), false);
+
+    const card = renderTurnPreviewCard(sampleTurn(1, 0), 42);
+    const viewport = Array.from({ length: card.length }, () => ' '.repeat(24));
+    const overlaid = overlayTurnPreviewCard(viewport, card, 0, 1, 20);
+    assert.ok(overlaid[1]!.includes('\x1b[0m'), 'truncated card row must emit SGR reset to prevent background bleed');
+  });
 });

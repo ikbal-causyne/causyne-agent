@@ -345,6 +345,7 @@ export function formatPreviewCardMarkdown(raw: string): string {
  * - Footer: Left 'X of Y', Right timestamp
  */
 export function renderTurnPreviewCard(turn: SessionTurn, maxCardWidth = 50): string[] {
+  const safeTurn: Partial<SessionTurn> = turn && typeof turn === 'object' ? turn : {};
   const safeWidth = Number.isFinite(maxCardWidth) ? Math.floor(maxCardWidth) : 50;
   const cardWidth = Math.max(38, Math.min(60, safeWidth));
   const innerWidth = cardWidth - 4; // 2 border chars + 2 padding chars
@@ -354,7 +355,7 @@ export function renderTurnPreviewCard(turn: SessionTurn, maxCardWidth = 50): str
   const reset = '\x1b[0m';
 
   // Format header: User Prompt (bold primary) rendered cleanly without raw markdown, strictly flush-left with hang: 0
-  const rawPrompt = formatPreviewCardMarkdown(turn.userPrompt || 'User request');
+  const rawPrompt = formatPreviewCardMarkdown(safeTurn.userPrompt || 'User request');
   const promptLines = wrapBlock(rawPrompt, innerWidth, { hang: 0 }).slice(0, 2);
   if (promptLines.length === 2 && promptLines[1]) {
     promptLines[1] = truncate(promptLines[1], innerWidth - 3, '...');
@@ -362,8 +363,8 @@ export function renderTurnPreviewCard(turn: SessionTurn, maxCardWidth = 50): str
 
   // Format body: Assistant Summary (muted secondary) rendered cleanly without raw markdown, strictly flush-left with hang: 0
   let bodyLines: string[] = [];
-  if (turn.assistantSummary) {
-    const formattedSummary = formatPreviewCardMarkdown(turn.assistantSummary);
+  if (safeTurn.assistantSummary) {
+    const formattedSummary = formatPreviewCardMarkdown(safeTurn.assistantSummary);
     bodyLines = wrapBlock(formattedSummary, innerWidth, { hang: 0 }).slice(0, 3);
     if (bodyLines.length === 3 && bodyLines[2]) {
       bodyLines[2] = truncate(bodyLines[2], innerWidth - 3, '...');
@@ -371,8 +372,10 @@ export function renderTurnPreviewCard(turn: SessionTurn, maxCardWidth = 50): str
   }
 
   // Format footer: 'X of Y' on left, timestamp on right
-  const counterText = truncate(safeDisplay(`${turn.turnIndex} of ${turn.totalTurns}`), innerWidth, '');
-  const rawDateText = safeDisplay(turn.formattedDate || '');
+  const turnNum = Number.isFinite(safeTurn.turnIndex) ? safeTurn.turnIndex : 1;
+  const totalTurns = Number.isFinite(safeTurn.totalTurns) ? safeTurn.totalTurns : 1;
+  const counterText = truncate(safeDisplay(`${turnNum} of ${totalTurns}`), innerWidth, '');
+  const rawDateText = safeDisplay(safeTurn.formattedDate || '');
   const maxDateWidth = Math.max(0, innerWidth - visibleWidth(counterText) - 2);
   const dateText = maxDateWidth > 0 ? truncate(rawDateText, maxDateWidth, '…') : '';
   const footerSpace = Math.max(0, innerWidth - visibleWidth(counterText) - visibleWidth(dateText));
@@ -421,7 +424,9 @@ export function overlayTurnPreviewCard(
   railX: number,
   screenWidth: number
 ): string[] {
+  if (!Array.isArray(viewportRows)) return [];
   if (
+    !Array.isArray(cardRows) ||
     cardRows.length === 0 ||
     viewportRows.length === 0 ||
     !Number.isFinite(anchorY) ||
@@ -461,7 +466,7 @@ export function overlayTurnPreviewCard(
     const baseRow = out[targetY] || '';
     const rawCardRow = cardRows[i] || '';
     const cardRow = visibleWidth(rawCardRow) > effectiveCardWidth
-      ? padEnd(truncate(rawCardRow, effectiveCardWidth, ''), effectiveCardWidth)
+      ? `${padEnd(truncate(rawCardRow, effectiveCardWidth, ''), effectiveCardWidth)}${rawCardRow.includes('\x1b[') ? '\x1b[0m' : ''}`
       : rawCardRow;
 
     // Composite cardRow onto baseRow at column x.
@@ -518,6 +523,11 @@ export function isMouseMotion(sequence: string | undefined): boolean {
   return Number.isFinite(code) && (code & 32) !== 0;
 }
 
+function redrawHost(host: any): void {
+  if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
+  else if (typeof host?.draw === 'function') host.draw();
+}
+
 /**
  * Handle mouse interaction (hover and click) for the Turn Rail.
  */
@@ -528,7 +538,7 @@ export function handleTurnRailMouse(
 ): boolean {
   if (
     !surface?.turnRailLayout ||
-    !event.mouse ||
+    !event?.mouse ||
     !Number.isFinite(event.mouse.x) ||
     !Number.isFinite(event.mouse.y)
   ) {
@@ -582,13 +592,14 @@ export function handleTurnRailMouse(
       if (!surface._turnCardLeaveTimer) {
         surface._turnCardLeaveTimer = setTimeout(() => {
           surface._turnCardLeaveTimer = null;
+          if (surface.stage?.reserved === false) return;
           if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
             surface.hoveredTurnIndex = null;
             surface.hoveredTurnAnchorY = null;
-            if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
-            else if (typeof host?.draw === 'function') host.draw();
+            redrawHost(host);
           }
         }, 120);
+        surface._turnCardLeaveTimer.unref?.();
       }
     }
     return false;
@@ -638,16 +649,14 @@ export function handleTurnRailMouse(
         if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
           surface.hoveredTurnIndex = null;
           surface.hoveredTurnAnchorY = null;
-          if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
-          else if (typeof host?.draw === 'function') host.draw();
+          redrawHost(host);
         }
         return true;
       }
       if (surface.hoveredTurnIndex !== turnNum) {
         surface.hoveredTurnIndex = turnNum;
         surface.hoveredTurnAnchorY = anchorY;
-        if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
-        else if (typeof host?.draw === 'function') host.draw();
+        redrawHost(host);
       }
       return true;
     }
@@ -673,6 +682,7 @@ export function handleTurnRailMouse(
       surface._turnRailSuppressTimer = setTimeout(() => {
         surface.turnRailHoverSuppressed = false;
       }, 400);
+      surface._turnRailSuppressTimer.unref?.();
 
       if (typeof host?.draw === 'function') host.draw();
       else if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
@@ -681,8 +691,7 @@ export function handleTurnRailMouse(
   } else if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
     surface.hoveredTurnIndex = null;
     surface.hoveredTurnAnchorY = null;
-    if (typeof host?.scheduleDraw === 'function') host.scheduleDraw();
-    else if (typeof host?.draw === 'function') host.draw();
+    redrawHost(host);
   }
 
   return false;
