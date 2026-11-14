@@ -15,7 +15,10 @@
 // Pure Node over ./screen.js, ./theme.js and ./text.js. No dependency, no shell.
 // @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, bold, dim, fill, GLYPHS, HAS_COLOR, HAS_UNICODE } from './theme.js';
-import { truncate, visibleWidth } from './text.js';
+import { safeDisplay, truncate, visibleWidth } from './text.js';
+function cleanSingleLine(value) {
+    return safeDisplay(typeof value === 'string' ? value : String(value ?? '')).replace(/[\r\n]+/g, ' ');
+}
 // Box-drawing set, degrading with the rest of the glyphs.
 export const FRAME = HAS_UNICODE
     ? { tl: '╭', tr: '╮', bl: '╰', br: '╯', h: '─', v: '│' }
@@ -72,14 +75,16 @@ export function drawPanel(screen, rect, { title = '', footer = '' } = {}) {
     const line = FRAME.h.repeat(inner);
     // Title sits in the top border, the way every terminal dialog has since curses.
     let top = FRAME.tl + line + FRAME.tr;
-    if (title) {
-        const label = ` ${truncate(title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+    const cleanTitle = cleanSingleLine(title).trim();
+    if (cleanTitle) {
+        const label = ` ${truncate(cleanTitle, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
         const width = visibleWidth(label);
         top = FRAME.tl + FRAME.h + label + FRAME.h.repeat(Math.max(0, inner - width - 1)) + FRAME.tr;
     }
     let bottom = FRAME.bl + line + FRAME.br;
-    if (footer) {
-        const label = ` ${truncate(footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+    const cleanFooter = cleanSingleLine(footer).trim();
+    if (cleanFooter) {
+        const label = ` ${truncate(cleanFooter, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
         const width = visibleWidth(label);
         bottom = FRAME.bl + FRAME.h.repeat(Math.max(0, inner - width - 1)) + label + FRAME.h + FRAME.br;
     }
@@ -136,15 +141,17 @@ export class Layer {
     rect(viewport) {
         const vx = Number.isFinite(viewport.x) ? Math.floor(viewport.x) : 0;
         const vy = Number.isFinite(viewport.y) ? Math.floor(viewport.y) : 0;
-        const vw = Number.isFinite(viewport.width) ? Math.floor(viewport.width) : 80;
-        const vh = Number.isFinite(viewport.height) ? Math.floor(viewport.height) : 24;
-        const layerWidth = Number.isFinite(this.width) ? Math.floor(this.width) : 64;
-        const layerHeight = Number.isFinite(this.height) ? Math.floor(this.height) : 16;
+        const vw = Number.isFinite(viewport.width) ? Math.max(4, Math.floor(viewport.width)) : 80;
+        const vh = Number.isFinite(viewport.height) ? Math.max(3, Math.floor(viewport.height)) : 24;
+        const layerWidth = Number.isFinite(this.width) ? Math.max(4, Math.floor(this.width)) : 64;
+        const layerHeight = Number.isFinite(this.height) ? Math.max(3, Math.floor(this.height)) : 16;
         const rawPreferred = this.preferredHeight();
         const safePreferred = Number.isFinite(rawPreferred) ? Math.floor(rawPreferred) : layerHeight;
-        const width = Math.min(layerWidth, Math.max(20, vw - 4));
-        const wanted = Math.max(5, Math.min(safePreferred, layerHeight));
-        const height = Math.min(wanted, Math.max(5, vh - 4));
+        const maxW = vw - 4 >= 20 ? vw - 4 : vw;
+        const width = Math.min(layerWidth, Math.max(4, maxW));
+        const maxH = vh - 4 >= 5 ? vh - 4 : vh;
+        const wanted = Math.max(3, Math.min(safePreferred, layerHeight));
+        const height = Math.min(wanted, Math.max(3, maxH));
         return {
             x: vx + Math.floor((vw - width) / 2),
             // A quarter down reads as centred; dead centre sits visually too low.
@@ -247,26 +254,30 @@ export function panelRows(layer, width, maxHeight) {
     const frameWidth = Math.max(8, safeWidth);
     const inner = frameWidth - 4; // two borders, one pad each side
     const bodyHeight = Math.max(1, Math.min(preferred, safeMaxHeight) - 2);
-    const body = layer.body(inner, bodyHeight);
+    const rawBody = layer.body(inner, bodyHeight);
+    const body = Array.isArray(rawBody) ? rawBody : [];
     const borderRole = layer.borderRole || 'rule';
     const surfaceRole = layer.surfaceRole || 'surface';
     const line = FRAME.h.repeat(frameWidth - 2);
     let top = paint(borderRole, FRAME.tl + line + FRAME.tr);
-    if (layer.title) {
-        const label = ` ${truncate(layer.title, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+    const cleanTitle = cleanSingleLine(layer.title || '').trim();
+    if (cleanTitle) {
+        const label = ` ${truncate(cleanTitle, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
         const trail = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
         top = paint(borderRole, FRAME.tl + FRAME.h) + bold(paint('ink', label)) + paint(borderRole, trail + FRAME.tr);
     }
     let bottom = paint(borderRole, FRAME.bl + line + FRAME.br);
-    if (layer.footer) {
-        const label = ` ${truncate(layer.footer, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+    const cleanFooter = cleanSingleLine(layer.footer || '').trim();
+    if (cleanFooter) {
+        const label = ` ${truncate(cleanFooter, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
         const lead = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
         bottom = paint(borderRole, FRAME.bl + lead) + dim(label) + paint(borderRole, FRAME.h + FRAME.br);
     }
     const edge = paint(borderRole, FRAME.v);
     const rows = [fill(surfaceRole, top)];
     for (let index = 0; index < bodyHeight; index++) {
-        const content = truncate(body[index] || '', inner, GLYPHS.ellipsis);
+        const cleanRow = body[index] == null ? '' : cleanSingleLine(body[index]);
+        const content = truncate(cleanRow, inner, GLYPHS.ellipsis);
         const pad = ' '.repeat(Math.max(0, inner - visibleWidth(content)));
         rows.push(fill(surfaceRole, `${edge} ${content}${pad} ${edge}`));
     }
