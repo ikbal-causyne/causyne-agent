@@ -26,3 +26,20 @@ test('BUG-03 baseline: drag action must emit continuous drag sequence, not two i
     `drag action was degraded into two independent clicks! Continuous drag sequence required (BUG-03).`
   );
 });
+
+test('drag action without valid start and end coordinates does not fabricate a drag from (0, 0)', () => {
+  const missingStart = parseSingleAction("Action: drag(start_box='(invalid)', end_box='(300, 300)')", {
+    width: 1000,
+    height: 1000,
+    scaleFactor: 1
+  });
+  const missingEnd = parseSingleAction("Action: drag(start_box='(100, 100)')", {
+    width: 1000,
+    height: 1000,
+    scaleFactor: 1
+  });
+  assert.ok(missingStart !== null);
+  assert.ok(missingEnd !== null);
+  assert.deepEqual(visionGroundingToDesktopAct([missingStart]), []);
+  assert.deepEqual(visionGroundingToDesktopAct([missingEnd]), []);
+});

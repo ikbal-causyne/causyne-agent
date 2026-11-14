@@ -287,18 +287,18 @@ export function visionGroundingToDesktopAct(actions) {
                 break;
             }
             case 'drag': {
-                const fromX = act.startCoordinates?.x ?? act.coordinates?.x ?? 0;
-                const fromY = act.startCoordinates?.y ?? act.coordinates?.y ?? 0;
-                const toX = act.endCoordinates?.x ?? fromX;
-                const toY = act.endCoordinates?.y ?? fromY;
+                const start = act.startCoordinates ?? act.coordinates;
+                const end = act.endCoordinates;
+                if (!start || !end)
+                    break;
                 result.push({
                     verb: 'drag',
-                    fromX,
-                    fromY,
-                    toX,
-                    toY,
-                    x: toX,
-                    y: toY
+                    fromX: start.x,
+                    fromY: start.y,
+                    toX: end.x,
+                    toY: end.y,
+                    x: end.x,
+                    y: end.y
                 });
                 break;
             }
