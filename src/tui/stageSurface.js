@@ -728,8 +728,12 @@ export class StageSurface {
    * Returns `height` single-column strings.
    */
   buildRail(height, contentWidth) {
-    const total = Math.max(1, this.transcript.height(contentWidth));
-    const slotOf = (row) => Math.max(0, Math.min(height - 1, Math.floor((row / total) * height)));
+    const rawTotal = Math.max(0, this.transcript.height(contentWidth));
+    const total = Math.max(1, rawTotal);
+    const padding = rawTotal <= height ? Math.max(0, height - rawTotal) : 0;
+    const slotOf = (row) => (rawTotal <= height
+      ? Math.max(0, Math.min(height - 1, padding + row))
+      : Math.max(0, Math.min(height - 1, Math.floor((row / total) * height))));
 
     const kinds = new Array(height).fill(null);
     for (const marker of this.transcript.markers(contentWidth)) {

@@ -435,4 +435,27 @@ describe('restore points are announced', () => {
     assert.match(stripAnsi(surface.transcript.rows(90).join('')), /2 files/,
       'with no path it still says how much is covered');
   });
+
+  test('short unscrollable transcript places right-rail markers beside its bottom-aligned rows, never stranded in empty top space', () => {
+    const { surface } = surfaceOn({ columns: 193, rows: 78 });
+    surface.enterHome({ cwd: '/tmp' });
+    surface.leaveHome();
+    surface.transcript.append({ kind: 'user', produce: () => ['  ┃ hi'] });
+    surface.transcript.append({ kind: 'assistant', produce: () => ['  ▸ Causyne', '  Hi there'] });
+    surface.transcript.append({ kind: 'turn', produce: () => [''] });
+    surface.present(['INPUT'], { row: 0, col: 0 });
+    const viewportRows = surface.viewport.height;
+    const mainWidth = surface.composeAvailableWidth();
+    const rail = surface.stage.prev.slice(0, viewportRows).map((row) => stripAnsi(row)[mainWidth - 2] || ' ');
+    const flatHeight = surface.transcript.height(surface.viewport.width);
+    const padding = rail.length - flatHeight;
+    assert.ok(padding > 40, `expected padding > 40, got ${padding}`);
+    const topStrandedMarks = rail.slice(0, padding).filter(c => c.trim() !== '');
+    assert.deepEqual(
+      topStrandedMarks,
+      [],
+      `expected zero overview rail markers in the ${padding} blank padding rows above a short conversation, got ${JSON.stringify(topStrandedMarks)}`
+    );
+    assert.ok(rail.slice(padding).some(c => c.trim() !== ''), 'expected markers aligned beside bottom-aligned rows');
+  });
 });
