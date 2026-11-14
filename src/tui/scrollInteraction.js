@@ -165,7 +165,6 @@ export function handleScrollbarMouse(key, viewport, surface, host) {
             }
         }
     }
-
     const rawViewportH = Number(viewport.height);
     const viewportH = Number.isFinite(rawViewportH) && rawViewportH > 0 ? Math.floor(rawViewportH) : 1;
     const rawStageW = Number(typeof surface.stage?.width === 'function' ? surface.stage.width() : surface.width);
