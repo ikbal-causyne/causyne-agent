@@ -177,6 +177,12 @@ export function validateExtractSchema(schema: unknown): { ok: boolean; error?: s
   return { ok: true };
 }
 
+function boundedFiniteInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const numeric = typeof value === 'string' && !value.trim() ? Number.NaN : Number(value ?? fallback);
+  const base = Number.isFinite(numeric) ? Math.floor(numeric) : fallback;
+  return Math.max(min, Math.min(max, base));
+}
+
 function coerceSchemaValue(raw: string | null, type?: string): unknown {
   if (raw == null) return null;
   if (type === 'string' || !type) return String(raw).trim();
@@ -1770,7 +1776,7 @@ export class CausyneBrowser {
       return { action: action.type, tabId: state.id, url: state.page.url(), output: `Pressed ${normalizedKey}` };
     }
     if (action.type === 'scroll') {
-      const amount = Math.max(1, Math.min(10_000, Math.floor(action.amount ?? 700)));
+      const amount = boundedFiniteInteger(action.amount, 700, 1, 10_000);
       const direction = action.direction ?? 'down';
       const x = direction === 'left' ? -amount : direction === 'right' ? amount : 0;
       const y = direction === 'up' ? -amount : direction === 'down' ? amount : 0;
@@ -1778,7 +1784,7 @@ export class CausyneBrowser {
       return { action: action.type, tabId: state.id, url: state.page.url(), output: `Scrolled ${direction} ${amount}px` };
     }
     if (action.type === 'wait') {
-      const waitTimeout = Math.max(50, Math.min(30_000, Number(action.timeout ?? action.amount ?? 1_000)));
+      const waitTimeout = boundedFiniteInteger(action.timeout ?? action.amount, 1_000, 50, 30_000);
       if (action.selector) {
         const validationErr = selectorValidationError(action.selector);
         if (validationErr) throw new Error(validationErr);
