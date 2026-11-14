@@ -664,4 +664,58 @@ describe('thinkingBox component', () => {
     const joined = stripAnsi(rows.join('\n'));
     assert.match(joined, /Line 3/, 'streaming box with maxVisibleLines=1 must still show the latest line');
   });
+
+  test('CodeStreamRenderer scrollThinkingPanel uses rendered frame width under sidebar and sanitizes agent_activity status', async () => {
+    const { CodeStreamRenderer } = await import('../src/tui/codeStreamRenderer.js');
+    const { Transcript } = await import('../src/tui/transcript.js');
+
+    const transcript = new Transcript();
+    const statusUpdates: string[] = [];
+    const out = { columns: 140, rows: 35, isTTY: true, write() { return true; } };
+    const renderer = new CodeStreamRenderer({
+      out,
+      transcript,
+      quietStatus: true,
+      onStatusChange: (s: string) => statusUpdates.push(s)
+    });
+
+    // 1. Mid-string ellipsis preserved while trailing ellipsis and control sequences are cleaned
+    renderer.handle({
+      type: 'agent_activity',
+      activity: 'step 1…2\ninjected\x1b[2J...'
+    });
+    assert.equal((renderer as any).currentActivity, 'step 1…2 injected');
+    assert.ok(statusUpdates.length > 0);
+    for (const s of statusUpdates) {
+      assert.ok(!s.includes('\n') && !s.includes('\x1b[2J'), 'status update must not contain raw newline or CSI');
+    }
+
+    // 2. Render a completed reasoning block whose line count exceeds 12 ONLY at narrow sidebar-adjusted width (82 cols),
+    //    not at full 140-col terminal width.
+    const longParagraphs = Array.from({ length: 8 }, (_, i) =>
+      `Paragraph ${i + 1}: ` + 'alpha beta gamma delta epsilon zeta eta theta iota kappa lambda '.repeat(2)
+    ).join('\n');
+    renderer.onAgentReasoning({ content: longParagraphs, streaming: false, elapsedMs: 1200 });
+    const frame = transcript.frames.find(f => f.kind === 'reasoning')!;
+    frame.meta!.collapsed = false;
+    frame.meta!.userInteracted = true;
+
+    const mainWidth = 70;
+    const flat = transcript.flatten(mainWidth);
+    const surface = {
+      out: { columns: 140, rows: 25 },
+      width: 140,
+      stage: { height: 25 },
+      viewport: { viewWidth: mainWidth, viewHeight: 25, scrollTop: 0 },
+      transcript
+    };
+    const padding = Math.max(0, 25 - flat.rows.length);
+    const screenY = padding + (flat.markers[0]?.row ?? 0) + 2;
+    const scrolled = renderer.scrollThinkingPanel(
+      { name: 'wheel', wheel: { direction: 'down', x: 10, y: screenY } },
+      surface as any
+    );
+    assert.equal(scrolled, true, 'scrollThinkingPanel must compute line count at the frame renderedWidth, not unadjusted out.columns');
+    assert.ok((frame.meta!.scrollStart as number) > 0);
+  });
 });

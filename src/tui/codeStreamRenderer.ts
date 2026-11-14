@@ -4,6 +4,15 @@ import { calculateThinkingLineCount, DEFAULT_MAX_EXPANDED_LINES, renderThinkingF
 import { formatElapsed, type StatusLine } from './statusLine.js';
 import { markerAt } from './messageInteraction.js';
 import { AdaptiveWheelDampener } from './scrollInteraction.js';
+import { safeDisplay } from './text.js';
+
+function stripTrailingEllipsisText(value: string): string {
+  let text = value.trim();
+  while (text.endsWith('…') || text.endsWith('...')) {
+    text = (text.endsWith('...') ? text.slice(0, -3) : text.slice(0, -1)).trimEnd();
+  }
+  return text;
+}
 
 type RendererEvent = { type: string; [key: string]: unknown };
 type CodePanelState = {
@@ -172,8 +181,27 @@ export class CodeStreamRenderer extends ChatRenderer {
     if (!frame || frame.meta?.reasoning !== true || frame.meta?.collapsed) return false;
 
     const content = typeof frame.meta.content === 'string' ? frame.meta.content : '';
-    const totalLines = calculateThinkingLineCount(content, this.measure());
-    const limit = Math.max(0, totalLines - DEFAULT_MAX_EXPANDED_LINES);
+    const renderedMainWidth = (typeof frame.renderedWidth === 'number' && Number.isFinite(frame.renderedWidth) && frame.renderedWidth > 0)
+      ? frame.renderedWidth
+      : (typeof surface?.viewport?.viewWidth === 'number' && Number.isFinite(surface.viewport.viewWidth) && surface.viewport.viewWidth > 0)
+        ? surface.viewport.viewWidth
+        : 0;
+    const prevForcedWidth = (this as any).forcedWidth;
+    if (renderedMainWidth > 0 && !prevForcedWidth) {
+      (this as any).forcedWidth = renderedMainWidth;
+    }
+    let measureWidth: number;
+    try {
+      measureWidth = this.measure();
+    } finally {
+      (this as any).forcedWidth = prevForcedWidth;
+    }
+    const totalLines = calculateThinkingLineCount(content, measureWidth);
+    const rawMaxVisible = Number(frame.meta.maxVisibleLines);
+    const maxVisibleLines = Number.isFinite(rawMaxVisible) && rawMaxVisible >= 1
+      ? Math.floor(rawMaxVisible)
+      : DEFAULT_MAX_EXPANDED_LINES;
+    const limit = Math.max(0, totalLines - maxVisibleLines);
     if (limit === 0) return false;
 
     if (!frame.meta._dampener) {
@@ -242,9 +270,9 @@ export class CodeStreamRenderer extends ChatRenderer {
     };
 
     if (message?.type === 'agent_activity') {
-      const rawActivity = String((message as any).activity || (message as any).message || '').trim();
+      const rawActivity = safeDisplay(String((message as any).activity || (message as any).message || '')).replace(/\s+/g, ' ').trim();
       if (rawActivity) {
-        this.currentActivity = rawActivity.replace(/…|\.\.\.$/, '').trim();
+        this.currentActivity = stripTrailingEllipsisText(rawActivity);
         if (this._activeReasoning && this.lastReasoning) {
           super.onAgentReasoning({
             content: this.lastReasoning,
@@ -258,7 +286,11 @@ export class CodeStreamRenderer extends ChatRenderer {
           }
           return true;
         }
-        const handled = super.handle(message);
+        const handled = super.handle({
+          ...message,
+          activity: rawActivity,
+          message: rawActivity
+        });
         if (selfStatus.quietStatus) {
           selfStatus.currentStatus = rawActivity;
           selfStatus.onStatusChange?.(rawActivity);
@@ -269,7 +301,7 @@ export class CodeStreamRenderer extends ChatRenderer {
 
     if (message?.type === 'notice' && message.nativeStep === true) {
       this.stepCount = (this.stepCount || 0) + 1;
-      const stepLine = String(message.message || '').trim();
+      const stepLine = safeDisplay(String(message.message || '')).replace(/\s+/g, ' ').trim();
       if (stepLine) {
         const actionName = String((message as any).actionName || stepLine).toLowerCase();
         let activity = this.currentActivity || 'processing';
@@ -317,8 +349,8 @@ export class CodeStreamRenderer extends ChatRenderer {
         this._activeReasoning = false;
       }
       if (this.activeCode && this.transcript) {
-        const note = content.trim().split('\n').at(-1) || '';
-        this.modelNote = note.slice(-140);
+        const note = safeDisplay(content).trim().split('\n').at(-1) || '';
+        this.modelNote = Array.from(note).slice(-140).join('');
         this.paintCodePanel(this.activeCode);
         if (message.streaming === false) {
           this.lastReasoning = '';
@@ -376,7 +408,8 @@ export class CodeStreamRenderer extends ChatRenderer {
       || typeof event.description !== 'string' || !['draft', 'working', 'done', 'failed'].includes(event.phase)) return;
     if (!this.transcript && event.phase === 'draft') return;
     if (this.lastReasoning && !this.modelNote) {
-      this.modelNote = (this.lastReasoning.trim().split('\n').at(-1) || '').slice(-140);
+      const lastLine = safeDisplay(this.lastReasoning).trim().split('\n').at(-1) || '';
+      this.modelNote = Array.from(lastLine).slice(-140).join('');
     }
     if (this._activeReasoning) {
       super.onAgentReasoning({ content: this.lastReasoning, streaming: false });
