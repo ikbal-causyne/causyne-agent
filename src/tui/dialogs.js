@@ -22,7 +22,7 @@ import { LineEditor } from './lineEditor.js';
 import { paint, bold, dim, badge, GLYPHS } from './theme.js';
 import { truncate, wrap, visibleWidth, safeDisplay, shortenHome } from './text.js';
 import { approvalDiff } from './diff.js';
-import { isChar } from './keys.js';
+import { isChar, isMouseMotion } from './keys.js';
 import { readClipboardSync } from './clipboardSync.js';
 
 const cleanDialogText = (value) => (
@@ -342,6 +342,7 @@ export class TextLayer extends Layer {
       case 'pagedown': this.scroll += page; return 'handled';
       case 'home':     this.scroll = 0; return 'handled';
       case 'end':      this.scroll = this.lines.length; return 'handled';
+      case 'enter':
       case 'return':   return 'close';
       default:         return 'handled';
     }
@@ -532,16 +533,27 @@ export class ApprovalLayer extends Layer {
       return 'close';
     }
 
-    if (event.name === 'mouse' && event.mouse && event.mouse.pressed && event.mouse.button === 0) {
+    if (event.name === 'mouse' && event.mouse && event.mouse.pressed && event.mouse.button === 0 && !isMouseMotion(event.sequence)) {
       if (!Array.isArray(this.optionBounds) || this.optionBounds.length === 0) {
         this.optionRow();
       }
       const geom = this.panelGeometry;
-      if (geom && Number.isFinite(event.mouse.row) && Number.isFinite(geom.optionScreenRow)) {
-        if (Math.abs(event.mouse.row - geom.optionScreenRow) > 1) return 'handled';
+      const hasZeroRow = Number.isFinite(event.mouse.y);
+      const rawRow = hasZeroRow
+        ? Math.floor(event.mouse.y)
+        : (Number.isFinite(event.mouse.row) ? Math.floor(event.mouse.row) : NaN);
+      if (geom && Number.isFinite(rawRow) && Number.isFinite(geom.optionScreenRow)) {
+        // drawLayer() computes 0-based screen rows; legacy synthetic callers send 1-based row.
+        const zeroBasedRow = hasZeroRow ? rawRow : rawRow - 1;
+        if (Math.abs(zeroBasedRow - geom.optionScreenRow) > 1) return 'handled';
       }
-      const rawCol = Number.isFinite(event.mouse.col) ? event.mouse.col : -1;
-      const bodyCol = geom ? rawCol - 1 - (geom.inset || 0) - 2 : rawCol;
+      const hasZeroCol = Number.isFinite(event.mouse.x);
+      const rawCol = hasZeroCol
+        ? Math.floor(event.mouse.x)
+        : (Number.isFinite(event.mouse.col) ? Math.floor(event.mouse.col) : -1);
+      const bodyCol = geom
+        ? rawCol - (hasZeroCol ? 0 : 1) - (geom.inset || 0) - 2
+        : rawCol;
       const hit = (this.optionBounds || []).find(b => bodyCol >= b.startCol && bodyCol <= b.endCol);
       if (hit) {
         this.selected = hit.index;

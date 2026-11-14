@@ -222,6 +222,11 @@ export class ChatPrompt {
   stop() {
     if (!this.active) return;
     this.active = false;
+    if (this.layer) {
+      const layer = this.layer;
+      this.layer = null;
+      if (typeof layer.answer === 'function') layer.answer(false);
+    }
     this.stopTick();
     if (this.inputFrameTimer) { clearTimeout(this.inputFrameTimer); this.inputFrameTimer = null; }
     if (this.decoderRecoveryTimer) { clearTimeout(this.decoderRecoveryTimer); this.decoderRecoveryTimer = null; }
@@ -1513,21 +1518,36 @@ export class ChatPrompt {
       return true;
     }
     if (key.name === 'mouse') {
-      if (key.mouse && key.mouse.pressed && key.mouse.button === 0) {
+      if (key.mouse && key.mouse.pressed && key.mouse.button === 0 && !isMouseMotion(key.sequence)) {
         let item = null;
-        if (this.pickerLayout && Number.isFinite(key.mouse.row)) {
-          const stageHeight = this.surface?.stage?.height || process.stdout.rows || 24;
-          const promptTop = Math.max(1, stageHeight - this.pickerLayout.totalPromptRows + 1);
+        const hasZeroY = Number.isFinite(key.mouse.y);
+        const rawMouseRow = hasZeroY
+          ? Math.floor(key.mouse.y)
+          : (Number.isFinite(key.mouse.row) ? Math.floor(key.mouse.row) : NaN);
+        if (this.pickerLayout && Number.isFinite(rawMouseRow)) {
+          const stageHeight = this.surface?.stage?.height || this.out?.rows || process.stdout.rows || 24;
+          const termRows = Number.isFinite(this.out?.rows) && this.out.rows > 0
+            ? Math.floor(this.out.rows)
+            : stageHeight;
+          // KeyDecoder emits 0-based x/y screen coordinates; legacy unit tests pass 1-based row/col.
+          const promptTop = hasZeroY
+            ? Math.max(0, termRows - this.pickerLayout.totalPromptRows)
+            : Math.max(1, stageHeight - this.pickerLayout.totalPromptRows + 1);
           const pickerTop = promptTop + this.pickerLayout.pickerStart;
           const pickerBottom = pickerTop + this.pickerLayout.pickerCount - 1;
+          const mouseX = Number.isFinite(key.mouse.x) ? Math.floor(key.mouse.x) : NaN;
+          const mainW = this.surface
+            ? sessionMainWidth(this.surface.width, Boolean(this.surface.homeInfo), this.surface.env)
+            : Infinity;
+          const inMainColumn = !Number.isFinite(mouseX) || (mouseX >= 0 && mouseX < mainW);
 
-          if (key.mouse.row >= pickerTop && key.mouse.row <= pickerBottom) {
+          if (inMainColumn && rawMouseRow >= pickerTop && rawMouseRow <= pickerBottom) {
             // The picker renders a scrolled window (renderPicker); a click maps
             // to the item under the cursor, not to the first page of items.
             const items = Array.isArray(this.completion.items) ? this.completion.items : [];
             const total = items.length;
             const windowStart = Math.max(0, Math.min(this.selected - MAX_VISIBLE + 1, total - MAX_VISIBLE));
-            const index = windowStart + (key.mouse.row - pickerTop);
+            const index = windowStart + (rawMouseRow - pickerTop);
             if (index >= 0 && index < total) {
               this.selected = index;
               item = items[index];
@@ -2014,9 +2034,13 @@ export class ChatPrompt {
     const cursor = this.layer.cursor;
     const centered = this.surface ? centerRows(all, availableWidth) : { rows: all, inset: 0 };
     const stageHeight = this.surface?.stage?.height || this.out?.rows || all.length;
+    const outRows = Number.isFinite(this.out?.rows) && this.out.rows > 0
+      ? Math.floor(this.out.rows)
+      : stageHeight;
     this.layer.panelGeometry = {
       inset: centered.inset,
-      optionScreenRow: stageHeight - status.length - 1
+      // Anchor at the panel's last body row above the bottom border and status rows (0-based screen row).
+      optionScreenRow: Math.max(0, outRows - status.length - 2)
     };
     this.present(centered.rows, cursor ? 1 + cursor.y : 0,
       (cursor ? 2 + cursor.x : 0) + centered.inset);

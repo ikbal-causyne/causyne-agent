@@ -130,13 +130,16 @@ export function buildObserverPickerItems(config, auditCount, vetoCount) {
 export function runInteractiveObserverPicker(prompt) {
     return new Promise((resolve) => {
         let settled = false;
+        let menuVersion = 0;
         const finish = (msg) => {
             if (settled)
                 return;
             settled = true;
+            menuVersion++;
             resolve(msg);
         };
         function openMenu() {
+            menuVersion++;
             const cfg = coldObserver.getConfig();
             const audits = coldObserver.getAuditHistory();
             const vetoes = audits.filter((a) => a.veto).length;
@@ -249,8 +252,11 @@ export function runInteractiveObserverPicker(prompt) {
                     }
                     // 6. Test Advisory Endpoint
                     if (action === 'test') {
+                        const probeVersion = menuVersion;
                         void coldObserver.healthCheck()
                             .then((health) => {
+                            if (settled || menuVersion !== probeVersion)
+                                return;
                             const endpoint = cleanSingleLine(health.endpoint);
                             const model = cleanSingleLine(health.model) || '(unset)';
                             const detail = cleanSingleLine(health.detail);
@@ -279,6 +285,8 @@ export function runInteractiveObserverPicker(prompt) {
                             }));
                         })
                             .catch((err) => {
+                            if (settled || menuVersion !== probeVersion)
+                                return;
                             const detail = cleanSingleLine(err instanceof Error ? err.message : err) || 'Health probe failed';
                             prompt.openLayer(new DetailTextLayer({
                                 title: 'Advisory Endpoint Health Check',

@@ -20,6 +20,7 @@ type CodePanelState = {
   modelNote: string;
   start: number;
   followTail: boolean;
+  userScrolled?: boolean;
   dampener?: AdaptiveWheelDampener;
 };
 type CodeFrame = { id: number; meta?: Record<string, unknown> | null; rows?: string[] | null; renderedWidth?: number; produce?: (width: number) => string[] };
@@ -157,6 +158,7 @@ export class CodeStreamRenderer extends ChatRenderer {
     if (next === state.start) return true;
 
     state.start = next;
+    state.userScrolled = true;
     state.followTail = next === limit;
     frame.rows = null;
     frame.renderedWidth = -1;
@@ -444,6 +446,7 @@ export class CodeStreamRenderer extends ChatRenderer {
     }
 
     const state = targetFrame ? this.codePanels.get(targetFrame) : undefined;
+    const transitionedToEdit = Boolean(state && event.operation === 'Editing' && state.event.operation !== 'Editing');
     const panelState: CodePanelState = state || {
       event,
       modelNote: this.modelNote,
@@ -452,7 +455,12 @@ export class CodeStreamRenderer extends ChatRenderer {
     };
     panelState.event = event;
     panelState.modelNote = this.modelNote;
-    panelState.start = panelState.followTail ? lastStart(event) : Math.min(panelState.start, lastStart(event));
+    if (transitionedToEdit && !panelState.userScrolled) {
+      panelState.followTail = false;
+      panelState.start = defaultPreviewStart(event);
+    } else {
+      panelState.start = panelState.followTail ? lastStart(event) : Math.min(panelState.start, lastStart(event));
+    }
     const produce = (): void => {
       for (const row of renderCodeProgress(panelState.event, this.measure(), panelState.modelNote, panelState.start)) this.write(row);
     };

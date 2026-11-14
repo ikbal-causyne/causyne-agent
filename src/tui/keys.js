@@ -512,6 +512,11 @@ export function bracketedPaste(enabled) {
  * @param   {string} letter  Single character to test, case-insensitive.
  * @returns {boolean}
  */
+export function isMouseMotion(sequence) {
+  const code = Number(/^\x1b\[<(\d+);/.exec(sequence || '')?.[1]);
+  return Number.isFinite(code) && (code & 32) !== 0;
+}
+
 export function isChar(event, letter) {
   if (!event || event.ctrl || event.alt || event.meta) return false;
   const typed = typeof event.text === 'string' && event.text.length > 0
