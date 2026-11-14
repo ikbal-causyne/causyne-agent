@@ -47,4 +47,17 @@ describe('usageCard renderProgressBar finite bounds', () => {
     const rows = renderUsageCardRows(sampleUsageData(), 80);
     assert.equal(visibleWidth(rows[0]!), 80);
   });
+
+  it('renderUsageCardRows sanitizes non-finite metrics instead of printing NaN or Infinity', () => {
+    const data = {
+      ...sampleUsageData(),
+      contextUsedTokens: Number.POSITIVE_INFINITY,
+      contextPercentLeft: Number.NaN,
+      sessionCostUsd: Number.POSITIVE_INFINITY,
+      dailyCostUsd: Number.NaN,
+      lifetimeCostUsd: Number.POSITIVE_INFINITY
+    };
+    const text = renderUsageCardRows(data, 80).join('\n');
+    assert.doesNotMatch(text, /\bNaN\b|Infinity|∞/);
+  });
 });

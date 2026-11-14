@@ -37,7 +37,13 @@ export interface UsageCardData {
 }
 
 function formatNumber(value: number | undefined | null): string {
-  return Number(value || 0).toLocaleString('en-US');
+  const num = Number(value);
+  return (Number.isFinite(num) ? num : 0).toLocaleString('en-US');
+}
+
+function formatCostEstimate(costUsd: number): string {
+  const num = Number(costUsd);
+  return Number.isFinite(num) && num > 0 ? `  ${dim(`$${num.toFixed(4)} est`)}` : '';
 }
 
 /**
@@ -180,33 +186,27 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
   );
 
   // 2. Context Window & Progress bar
-  const pBar = renderProgressBar(data.contextPercentLeft, 22, false);
+  const safePercentLeft = Number.isFinite(data.contextPercentLeft)
+    ? Math.max(0, Math.min(100, data.contextPercentLeft))
+    : 0;
+  const pBar = renderProgressBar(safePercentLeft, 22, false);
   lines.push(
-    `${dim('Context      :')} ${bold(`${data.contextPercentLeft}% left`)} ${dim(`(${formatNumber(data.contextUsedTokens)} used / ${formatNumber(data.contextPoolTokens)})`)}  ${pBar}`
+    `${dim('Context      :')} ${bold(`${safePercentLeft}% left`)} ${dim(`(${formatNumber(data.contextUsedTokens)} used / ${formatNumber(data.contextPoolTokens)})`)}  ${pBar}`
   );
 
   // 3. This Session Usage
-  const sessionSpend = data.sessionCostUsd > 0
-    ? `  ${dim(`$${data.sessionCostUsd.toFixed(4)} est`)}`
-    : '';
   lines.push(
-    `${dim('This Session :')} ${bold(formatNumber(data.sessionTokens))} tokens${sessionSpend}`
+    `${dim('This Session :')} ${bold(formatNumber(data.sessionTokens))} tokens${formatCostEstimate(data.sessionCostUsd)}`
   );
 
   // 4. Daily Usage (Today)
-  const dailySpend = data.dailyCostUsd > 0
-    ? `  ${dim(`$${data.dailyCostUsd.toFixed(4)} est`)}`
-    : '';
   lines.push(
-    `${dim('Today (24h)  :')} ${bold(formatNumber(data.dailyTokens))} tokens${dailySpend}`
+    `${dim('Today (24h)  :')} ${bold(formatNumber(data.dailyTokens))} tokens${formatCostEstimate(data.dailyCostUsd)}`
   );
 
   // 5. All-Time / Lifetime Usage
-  const lifeSpend = data.lifetimeCostUsd > 0
-    ? `  ${dim(`$${data.lifetimeCostUsd.toFixed(4)} est`)}`
-    : '';
   lines.push(
-    `${dim('All-Time     :')} ${bold(formatNumber(data.lifetimeTokens))} tokens${lifeSpend}  ${dim(`(${formatNumber(data.lifetimeCalls)} calls)`)}`
+    `${dim('All-Time     :')} ${bold(formatNumber(data.lifetimeTokens))} tokens${formatCostEstimate(data.lifetimeCostUsd)}  ${dim(`(${formatNumber(data.lifetimeCalls)} calls)`)}`
   );
 
   // 6. Model & Provider

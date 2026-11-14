@@ -13,7 +13,12 @@ import { buildContextReport } from '../reporting.js';
 import { isAntigravityProvider } from '../providers/antigravity.js';
 import { isAcpProvider } from '../providers/acp.js';
 function formatNumber(value) {
-    return Number(value || 0).toLocaleString('en-US');
+    const num = Number(value);
+    return (Number.isFinite(num) ? num : 0).toLocaleString('en-US');
+}
+function formatCostEstimate(costUsd) {
+    const num = Number(costUsd);
+    return Number.isFinite(num) && num > 0 ? `  ${dim(`$${num.toFixed(4)} est`)}` : '';
 }
 /**
  * Render a visual progress bar for context capacity or token budget.
@@ -140,23 +145,17 @@ export function renderUsageCardRows(data, width) {
         : data.sessionId;
     lines.push(`${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${data.sessionTurns} messages)`)}`);
     // 2. Context Window & Progress bar
-    const pBar = renderProgressBar(data.contextPercentLeft, 22, false);
-    lines.push(`${dim('Context      :')} ${bold(`${data.contextPercentLeft}% left`)} ${dim(`(${formatNumber(data.contextUsedTokens)} used / ${formatNumber(data.contextPoolTokens)})`)}  ${pBar}`);
+    const safePercentLeft = Number.isFinite(data.contextPercentLeft)
+        ? Math.max(0, Math.min(100, data.contextPercentLeft))
+        : 0;
+    const pBar = renderProgressBar(safePercentLeft, 22, false);
+    lines.push(`${dim('Context      :')} ${bold(`${safePercentLeft}% left`)} ${dim(`(${formatNumber(data.contextUsedTokens)} used / ${formatNumber(data.contextPoolTokens)})`)}  ${pBar}`);
     // 3. This Session Usage
-    const sessionSpend = data.sessionCostUsd > 0
-        ? `  ${dim(`$${data.sessionCostUsd.toFixed(4)} est`)}`
-        : '';
-    lines.push(`${dim('This Session :')} ${bold(formatNumber(data.sessionTokens))} tokens${sessionSpend}`);
+    lines.push(`${dim('This Session :')} ${bold(formatNumber(data.sessionTokens))} tokens${formatCostEstimate(data.sessionCostUsd)}`);
     // 4. Daily Usage (Today)
-    const dailySpend = data.dailyCostUsd > 0
-        ? `  ${dim(`$${data.dailyCostUsd.toFixed(4)} est`)}`
-        : '';
-    lines.push(`${dim('Today (24h)  :')} ${bold(formatNumber(data.dailyTokens))} tokens${dailySpend}`);
+    lines.push(`${dim('Today (24h)  :')} ${bold(formatNumber(data.dailyTokens))} tokens${formatCostEstimate(data.dailyCostUsd)}`);
     // 5. All-Time / Lifetime Usage
-    const lifeSpend = data.lifetimeCostUsd > 0
-        ? `  ${dim(`$${data.lifetimeCostUsd.toFixed(4)} est`)}`
-        : '';
-    lines.push(`${dim('All-Time     :')} ${bold(formatNumber(data.lifetimeTokens))} tokens${lifeSpend}  ${dim(`(${formatNumber(data.lifetimeCalls)} calls)`)}`);
+    lines.push(`${dim('All-Time     :')} ${bold(formatNumber(data.lifetimeTokens))} tokens${formatCostEstimate(data.lifetimeCostUsd)}  ${dim(`(${formatNumber(data.lifetimeCalls)} calls)`)}`);
     // 6. Model & Provider
     lines.push(`${dim('Active Model :')} ${paint('accent', `${data.provider} / ${data.model}`)}  ${dim(`(${data.billingNote})`)}`);
     // 7. Optional Budget
