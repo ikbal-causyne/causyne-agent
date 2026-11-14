@@ -76,4 +76,37 @@ test('overlayTurnPreviewCard does not teleport the last character of short trans
   }
 });
 
+test('overlayTurnPreviewCard keeps right overview rail aligned at rowLen - 1 and clamps wide cards to screenWidth', () => {
+  // With sidebar/rail, attachRail pads rows to mainWidth - 1 (79 cols when mainWidth = 80)
+  const paddedRow = '   ' + 'a'.repeat(75) + '┃';
+  assert.equal(visibleWidth(paddedRow), 79);
+  const card = [
+    '╭────────────────────╮',
+    '│ Turn 1 preview     │',
+    '╰────────────────────╯'
+  ];
+  const overlaid = overlayTurnPreviewCard([paddedRow, paddedRow, paddedRow], card, 1, 1, 80);
+  for (let i = 0; i < overlaid.length; i++) {
+    assert.equal(visibleWidth(overlaid[i]!), 79, `Row ${i} width must stay aligned at 79, not shift rail to 80`);
+    assert.equal(stripAnsi(overlaid[i]!)[78], '┃');
+  }
+
+  // Narrow viewport: card wider than screenWidth must be clipped so it never spills into sidebar
+  const narrowBase = ['   hi', '   there', '   ok'];
+  const wideCard = renderTurnPreviewCard({
+    turnIndex: 1,
+    totalTurns: 1,
+    userPrompt: 'hello world',
+    assistantSummary: 'response',
+    timestamp: 1000,
+    formattedDate: 'Today',
+    frameId: 1,
+    startRow: 0
+  }, 52);
+  const narrowOut = overlayTurnPreviewCard(narrowBase, wideCard, 1, 1, 40);
+  for (let i = 0; i < narrowOut.length; i++) {
+    assert.ok(visibleWidth(narrowOut[i]!) <= 40, `Row ${i} width ${visibleWidth(narrowOut[i]!)} must not exceed screenWidth 40`);
+  }
+});
+
 

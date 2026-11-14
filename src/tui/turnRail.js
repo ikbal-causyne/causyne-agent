@@ -357,9 +357,13 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
     // Clamp card placement horizontally: flush-left with transcript baseline at column 3
     const cardSpacing = 2; // railX + 2 gives x = 3, perfectly flush left with transcript content
     let x = safeRailX - cardWidth - 1;
-    if (x < 0 || (safeRailX <= 4 && safeRailX + cardSpacing + cardWidth <= safeScreenWidth)) {
+    if (safeRailX <= 4 && safeRailX + cardSpacing < safeScreenWidth) {
+        x = safeRailX + cardSpacing;
+    }
+    else if (x < 0) {
         x = Math.max(0, Math.min(safeScreenWidth - cardWidth - 1, safeRailX + cardSpacing));
     }
+    const effectiveCardWidth = Math.max(1, Math.min(cardWidth, Math.max(1, safeScreenWidth - x)));
     // Center vertically around anchorY
     const startY = Math.max(0, Math.min(viewportRows.length - cardRows.length, safeAnchorY - Math.floor(cardRows.length / 2)));
     const out = viewportRows.slice();
@@ -368,13 +372,16 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
         if (targetY >= out.length)
             break;
         const baseRow = out[targetY] || '';
-        const cardRow = cardRows[i] || '';
+        const rawCardRow = cardRows[i] || '';
+        const cardRow = visibleWidth(rawCardRow) > effectiveCardWidth
+            ? padEnd(truncate(rawCardRow, effectiveCardWidth, ''), effectiveCardWidth)
+            : rawCardRow;
         // Composite cardRow onto baseRow at column x.
         // To the left of the card, NEVER allow severed underlying characters (like '▸' or text) to leak!
         // Maintain a perfectly clean, flush, symmetrical margin:
         // Only preserve the rail dot (if present at railX) and whitespace padding up to column x.
         let beforePart = '';
-        if (x <= 6 && safeRailX <= 4) {
+        if (x <= 6 && safeRailX <= 4 && x > safeRailX) {
             const plainBase = stripAnsi(baseRow);
             const dotChar = plainBase[safeRailX] || ' ';
             const isDot = dotChar === '●' || dotChar === '•' || dotChar === '·';
@@ -403,14 +410,18 @@ export function overlayTurnPreviewCard(viewportRows, cardRows, anchorY, railX, s
         if (x <= 6) {
             // For left-placed turn cards, preserve the right overview rail without severed text leaks
             const rowLen = visibleWidth(baseRow);
-            const rightCell = rowLen > x + cardWidth ? sliceFromColumn(baseRow, rowLen - 1) : ' ';
-            const rightCellWidth = visibleWidth(rightCell);
-            const targetWidth = Math.max(safeScreenWidth, rowLen);
-            const gap = Math.max(0, targetWidth - x - cardWidth - rightCellWidth);
-            restOfRow = `${' '.repeat(gap)}${rightCell}`;
+            if (rowLen > x + effectiveCardWidth) {
+                const rightCell = sliceFromColumn(baseRow, rowLen - 1);
+                const rightCellWidth = visibleWidth(rightCell);
+                const gap = Math.max(0, rowLen - x - effectiveCardWidth - rightCellWidth);
+                restOfRow = `${' '.repeat(gap)}${rightCell}`;
+            }
+            else {
+                restOfRow = '';
+            }
         }
         else {
-            restOfRow = sliceFromColumn(baseRow, x + cardWidth);
+            restOfRow = sliceFromColumn(baseRow, x + effectiveCardWidth);
         }
         out[targetY] = `${beforePart}${cardRow}${restOfRow}`;
     }
