@@ -305,17 +305,19 @@ export class TextLayer extends Layer {
   preferredHeight() { return this.lines.length + 2; }
 
   body(width, height) {
-    this.viewHeight = height;
-    const maximum = Math.max(0, this.lines.length - height);
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.floor(width) : 8;
+    const safeHeight = Number.isFinite(height) && height > 0 ? Math.floor(height) : 1;
+    this.viewHeight = safeHeight;
+    const maximum = Math.max(0, this.lines.length - safeHeight);
     this.scroll = Math.max(0, Math.min(this.scroll, maximum));
 
-    const window = this.lines.slice(this.scroll, this.scroll + height)
-      .map((line) => truncate(line, width, GLYPHS.ellipsis));
+    const window = this.lines.slice(this.scroll, this.scroll + safeHeight)
+      .map((line) => truncate(line == null ? '' : safeDisplay(String(line)), safeWidth, GLYPHS.ellipsis));
 
-    if (this.lines.length > height) {
-      const position = `${this.scroll + 1}-${Math.min(this.lines.length, this.scroll + height)}/${this.lines.length}`;
-      while (window.length < height) window.push('');
-      window[height - 1] = dim(position.padStart(width));
+    if (this.lines.length > safeHeight) {
+      const position = `${this.scroll + 1}-${Math.min(this.lines.length, this.scroll + safeHeight)}/${this.lines.length}`;
+      while (window.length < safeHeight) window.push('');
+      window[safeHeight - 1] = dim(position.padStart(safeWidth));
     }
     this.cursor = null;
     return window;
@@ -327,9 +329,9 @@ export class TextLayer extends Layer {
     switch (event.name) {
       case 'escape':
       case 'q':        return 'close';
-      case 'up':       this.scroll--; return 'handled';
+      case 'up':       this.scroll = Math.max(0, this.scroll - 1); return 'handled';
       case 'down':     this.scroll++; return 'handled';
-      case 'pageup':   this.scroll -= page; return 'handled';
+      case 'pageup':   this.scroll = Math.max(0, this.scroll - page); return 'handled';
       case 'pagedown': this.scroll += page; return 'handled';
       case 'home':     this.scroll = 0; return 'handled';
       case 'end':      this.scroll = this.lines.length; return 'handled';

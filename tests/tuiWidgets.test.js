@@ -120,6 +120,16 @@ describe('the modal stack', () => {
     assert.ok(inner.width < 30 && inner.height < 8);
     assert.ok(inner.x >= 2 && inner.y >= 1);
   });
+
+  test('TextLayer clamps scroll at 0 and guards non-finite render dimensions', () => {
+    const layer = new TextLayer({ lines: ['line 1', 'line 2', 'line 3'] });
+    layer.key({ name: 'up' });
+    layer.key({ name: 'pageup' });
+    assert.equal(layer.scroll, 0);
+    const rows = layer.body(Number.NaN, 0);
+    assert.equal(rows.length, 1);
+    assert.equal(Number.isFinite(layer.scroll), true);
+  });
 });
 
 describe('approval as a modal', () => {
