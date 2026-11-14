@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { Stage } from '../src/tui/stage.js';
+import { Stage, stageHeight } from '../src/tui/stage.js';
 
 describe('Stage finite bounds', () => {
   it('Stage constructor, reserve, and resize handle non-finite height and rows without RangeError', () => {
@@ -33,5 +33,10 @@ describe('Stage finite bounds', () => {
 
     stage.moveTo(2.9);
     assert.equal(stage.cursor, 2);
+  });
+
+  it('stageHeight floors fractional terminal rows', () => {
+    const h = stageHeight({ rows: 24.9, isTTY: true, write: () => true }, {});
+    assert.equal(h, 23);
   });
 });

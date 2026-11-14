@@ -57,9 +57,10 @@ export function stageHeight(out = process.stdout, env = process.env) {
     const setting = String(env.CAUSYNE_STAGE ?? 'auto').trim().toLowerCase();
     if (setting === 'off' || setting === '0' || setting === 'false')
         return 0;
-    const rows = Number(out && out.rows);
-    if (!Number.isFinite(rows) || rows <= 0)
+    const rawRows = Number(out && out.rows);
+    if (!Number.isFinite(rawRows) || rawRows <= 0)
         return 0;
+    const rows = Math.floor(rawRows);
     // The seam: never take the last row of the user's screen. It costs one row
     // and it is the difference between "a region" and "the screen".
     const ceiling = rows - 1;
