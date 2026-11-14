@@ -275,7 +275,19 @@ export class StageSurface {
   }
 
   setSessionInfo(info) {
-    this.sessionInfo = { ...this.sessionInfo, ...info };
+    const changedSession = info?.id && this.sessionInfo?.id && info.id !== this.sessionInfo.id;
+    if (changedSession) {
+      // Sidebar plans and turn hover coordinates belong to the previous chat.
+      this.sidebarPlan = [];
+      this.hoveredTurnIndex = null;
+      this.hoveredTurnAnchorY = null;
+      this.activeTurnIndex = null;
+      this.hoveredMessageFrameId = null;
+      this.turnRailLayout = null;
+    }
+    this.sessionInfo = changedSession
+      ? { ...this.sessionInfo, activeSkill: null, contextChars: 0, ...info }
+      : { ...this.sessionInfo, ...info };
     this.stage.invalidate();
   }
 
