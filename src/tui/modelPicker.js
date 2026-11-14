@@ -282,7 +282,8 @@ export class ModelPickerLayer extends SelectLayer {
                 maxAcpPerPeer: isSearching ? Infinity : 10
             });
             this.filtered = fuzzyFilter(tabItems, this.query);
-            this.selected = Math.min(this.selected || 0, Math.max(0, this.filtered.length - 1));
+            const prevSelected = Number.isFinite(this.selected) ? Math.max(0, Math.floor(this.selected)) : 0;
+            this.selected = Math.min(prevSelected, Math.max(0, this.filtered.length - 1));
             this.offset = 0;
             return this;
         };
@@ -396,7 +397,10 @@ export class ModelPickerLayer extends SelectLayer {
             return 'handled';
         }
         // 2. Delegate to SelectList for navigation / query typing
-        const visibleRows = this.list.lastItemRows || Math.max(1, this.height - 7);
+        const fallbackRows = Number.isFinite(this.height) ? Math.max(1, Math.floor(this.height) - 7) : 10;
+        const visibleRows = Number.isFinite(this.list.lastItemRows) && this.list.lastItemRows > 0
+            ? Math.floor(this.list.lastItemRows)
+            : fallbackRows;
         const action = this.list.handleKey(event, visibleRows);
         if (action === 'select') {
             const item = this.list.current;

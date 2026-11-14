@@ -56,4 +56,21 @@ describe('modelPicker finite bounds', () => {
       assert.ok(infRows.length >= 3);
     });
   });
+
+  it('ModelPickerLayer clamps negative/non-finite list.selected in refilter and non-finite height in key()', () => {
+    const layer = new ModelPickerLayer({
+      config: { provider: 'acp/codex' },
+      overview: sampleOverview,
+      onPick() {}
+    });
+    layer.list.selected = -3;
+    layer.list.refilter();
+    assert.equal(layer.list.selected, 0);
+
+    layer.height = Number.POSITIVE_INFINITY;
+    layer.key({ name: 'pagedown' });
+    assert.ok(Number.isFinite(layer.list.selected));
+    assert.ok(Number.isFinite(layer.list.offset));
+    assert.ok(layer.list.offset >= 0);
+  });
 });
