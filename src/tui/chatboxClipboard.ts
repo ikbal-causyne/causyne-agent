@@ -225,9 +225,12 @@ export function extractLastAssistantTurn(loop?: ChatboxLoop): string {
   for (let i = loop.messages.length - 1; i >= 0; i--) {
     const msg = loop.messages[i];
     if (msg && msg.role === 'assistant') {
-      if (typeof msg.content === 'string') return msg.content;
+      if (typeof msg.content === 'string') {
+        if (msg.content.trim()) return msg.content;
+        continue;
+      }
       if (Array.isArray(msg.content)) {
-        return msg.content
+        const joined = msg.content
           .map((part: unknown) => {
             if (typeof part === 'string') return part;
             if (part && typeof part === 'object' && 'text' in part && typeof (part as { text: unknown }).text === 'string') {
@@ -237,6 +240,7 @@ export function extractLastAssistantTurn(loop?: ChatboxLoop): string {
           })
           .filter(Boolean)
           .join('\n');
+        if (joined.trim()) return joined;
       }
     }
   }

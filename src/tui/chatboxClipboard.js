@@ -167,10 +167,13 @@ export function extractLastAssistantTurn(loop) {
     for (let i = loop.messages.length - 1; i >= 0; i--) {
         const msg = loop.messages[i];
         if (msg && msg.role === 'assistant') {
-            if (typeof msg.content === 'string')
-                return msg.content;
+            if (typeof msg.content === 'string') {
+                if (msg.content.trim())
+                    return msg.content;
+                continue;
+            }
             if (Array.isArray(msg.content)) {
-                return msg.content
+                const joined = msg.content
                     .map((part) => {
                     if (typeof part === 'string')
                         return part;
@@ -181,6 +184,8 @@ export function extractLastAssistantTurn(loop) {
                 })
                     .filter(Boolean)
                     .join('\n');
+                if (joined.trim())
+                    return joined;
             }
         }
     }

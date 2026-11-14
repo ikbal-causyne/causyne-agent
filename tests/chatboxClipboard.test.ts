@@ -107,6 +107,16 @@ test('extractLastAssistantTurn correctly finds the latest assistant response', (
   };
 
   assert.equal(extractLastAssistantTurn(loop), 'You can run it via terminal CLI.');
+
+  const loopWithTrailingToolCall = {
+    messages: [
+      { role: 'user', content: 'Explain and run' },
+      { role: 'assistant', content: 'Here is the explanation.' },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1' }] },
+      { role: 'assistant', content: '   ' }
+    ]
+  };
+  assert.equal(extractLastAssistantTurn(loopWithTrailingToolCall), 'Here is the explanation.');
 });
 
 test('runCopyCommand handles /copy, /copy last, and /copy <text>', () => {
