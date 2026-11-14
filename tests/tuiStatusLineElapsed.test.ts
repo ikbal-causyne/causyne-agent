@@ -38,4 +38,28 @@ describe('formatElapsed', () => {
       assert.ok(liveNaN.includes('  '));
     });
   });
+
+  it('setSession and onUsage ignore non-finite and negative counters', () => {
+    const status = new StatusLine().setSession({
+      contextLimit: 10000,
+      contextChars: 2000
+    });
+    status.onUsage({ taskTokens: 500, costUsd: 0.02, cachedTokens: 100 });
+    status.setSession({
+      contextLimit: Number.POSITIVE_INFINITY,
+      contextChars: -50
+    });
+    status.onUsage({
+      taskTokens: Number.POSITIVE_INFINITY,
+      costUsd: Number.POSITIVE_INFINITY,
+      cachedTokens: Number.NaN,
+      contextChars: Number.POSITIVE_INFINITY,
+      contextLimitChars: Number.NaN
+    });
+    assert.equal(status.contextLimit, 10000);
+    assert.equal(status.contextChars, 2000);
+    assert.equal(status.turnTokens, 500);
+    assert.equal(status.turnCost, 0.02);
+    assert.equal(status.cachedTokens, 0);
+  });
 });

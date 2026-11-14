@@ -115,14 +115,20 @@ export class StatusLine {
     this.reset();
   }
 
+  private applyContextWindow(chars: unknown, limit: unknown): void {
+    const safeChars = nonNegativeFinite(chars);
+    if (safeChars > 0) this.contextChars = safeChars;
+    const safeLimit = nonNegativeFinite(limit);
+    if (safeLimit > 0) this.contextLimit = safeLimit;
+  }
+
   /** Session-lifetime facts, set once from the same info as the header. */
   setSession(info: StatusLineSessionInfo = {}): this {
     if (info.model !== undefined) this.model = shortModel(info.model);
     if (info.provider !== undefined) this.provider = info.provider ? String(info.provider) : '';
     if (info.tier !== undefined) this.tier = info.tier ? String(info.tier) : '';
     if (info.cwd !== undefined) this.cwd = info.cwd ? String(info.cwd) : '';
-    if (Number(info.contextLimit) > 0) this.contextLimit = Number(info.contextLimit);
-    if (Number(info.contextChars) > 0) this.contextChars = Number(info.contextChars);
+    this.applyContextWindow(info.contextChars, info.contextLimit);
     return this;
   }
 
@@ -175,13 +181,12 @@ export class StatusLine {
    * Consume a `usage_update` frame.
    */
   onUsage(msg: Record<string, unknown> = {}): this {
-    this.turnTokens = Number(msg.taskTokens) || Number(msg.usedTokens) || this.turnTokens;
-    if (Number(msg.contextChars) > 0) this.contextChars = Number(msg.contextChars);
-    if (Number(msg.contextLimitChars) > 0) this.contextLimit = Number(msg.contextLimitChars);
-    const responseCost = Number(msg.costUsd) || 0;
-    const taskCost = Number(msg.taskCostUsd) || 0;
+    this.turnTokens = nonNegativeFinite(msg.taskTokens) || nonNegativeFinite(msg.usedTokens) || this.turnTokens;
+    this.applyContextWindow(msg.contextChars, msg.contextLimitChars);
+    const responseCost = nonNegativeFinite(msg.costUsd);
+    const taskCost = nonNegativeFinite(msg.taskCostUsd);
     this.turnCost = taskCost > 0 ? taskCost : this.turnCost + responseCost;
-    this.cachedTokens = Number(msg.cachedTokens) || 0;
+    this.cachedTokens = nonNegativeFinite(msg.cachedTokens);
     return this;
   }
 
