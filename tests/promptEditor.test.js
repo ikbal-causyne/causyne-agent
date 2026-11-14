@@ -1027,4 +1027,30 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(layerReceivedPaste, 'causyne-modal-pasted-content', 'modal layer must receive paste event');
     assert.equal(editor.editor.getText(), '', 'prompt line editor must NOT receive pasted content while modal is active');
   });
+
+  test('char batching in handleFramedData recaptures mouse, clears stale notice, and dismisses turn hover', () => {
+    const out = { columns: 100, rows: 30, write() { return true; }, isTTY: true, on() {}, removeListener() {} };
+    const input = { isTTY: true, setRawMode() {}, resume() {}, pause() {}, on() {}, off() {} };
+    let captured = 0;
+    const surface = {
+      detached: true,
+      hoveredTurnIndex: 2,
+      hoveredTurnAnchorY: 10,
+      turnRailHoverSuppressed: true,
+      captureMouse() {
+        this.detached = false;
+        captured++;
+        return true;
+      }
+    };
+    const editor = new ChatPrompt({ out, input, surface, commands: [] });
+    editor.notice = 'top of this view';
+    editor.handleData('hello');
+    assert.equal(editor.editor.getText(), 'hello');
+    assert.equal(captured, 1, 'typing characters must re-capture mouse when detached');
+    assert.equal(surface.detached, false);
+    assert.equal(editor.notice, '', 'typing characters must clear stale notice');
+    assert.equal(surface.hoveredTurnIndex, null, 'typing characters must dismiss open turn preview card');
+    assert.equal(surface.turnRailHoverSuppressed, false);
+  });
 });

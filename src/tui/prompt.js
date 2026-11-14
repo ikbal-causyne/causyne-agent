@@ -297,6 +297,35 @@ export class ChatPrompt {
     }
   };
 
+  flushCharBatch(charBatch) {
+    if (!charBatch) return '';
+    this.prepareKeyboardState(true);
+    this.editor.insert(charBatch);
+    if (charBatch.length < 60 && !charBatch.includes('\n')) {
+      this.refreshCompletion();
+    } else {
+      this.completion = null;
+    }
+    return '';
+  }
+
+  prepareKeyboardState(clearNotice) {
+    if (clearNotice && this.notice && !this.layer) this.notice = '';
+    if (this.surface && typeof this.surface.captureMouse === 'function') {
+      if (this.surface.captureMouse() && typeof this.notice === 'string' && this.notice.startsWith('top of this view')) {
+        this.notice = '';
+      }
+    }
+    if (this.surface) {
+      this.surface.turnRailHoverSuppressed = false;
+      if (this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
+        this.surface.hoveredTurnIndex = null;
+        this.surface.hoveredTurnAnchorY = null;
+        this.scheduleDraw();
+      }
+    }
+  }
+
   handleFramedData = (chunk) => {
     let motionOnly = true;
     const str = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : '';
@@ -338,13 +367,7 @@ export class ChatPrompt {
         continue;
       }
       if (charBatch.length > 0) {
-        this.editor.insert(charBatch);
-        if (charBatch.length < 60 && !charBatch.includes('\n')) {
-          this.refreshCompletion();
-        } else {
-          this.completion = null;
-        }
-        charBatch = '';
+        charBatch = this.flushCharBatch(charBatch);
       }
       if (key.name !== 'mouse' || !isMouseMotion(key.sequence)) motionOnly = false;
       try {
@@ -358,13 +381,7 @@ export class ChatPrompt {
     }
 
     if (charBatch.length > 0) {
-      this.editor.insert(charBatch);
-      if (charBatch.length < 60 && !charBatch.includes('\n')) {
-        this.refreshCompletion();
-      } else {
-        this.completion = null;
-      }
-      charBatch = '';
+      charBatch = this.flushCharBatch(charBatch);
     }
 
     // All-motion chunks repaint only when the hovered message actually changes.
@@ -962,28 +979,15 @@ export class ChatPrompt {
   // -------------------------------------------------------------------------
 
   handleKey(key) {
-    // A notice reports the result of the last action. Once the user edits the
-    // line again it is stale, and leaving it up made "copied ..." follow every
-    // later keystroke for the rest of the session.
-    if (this.notice && !this.layer
-        && (key.name === 'char' || key.name === 'paste' || key.name === 'backspace' || key.name === 'delete')) {
+    const clearNotice = key.name === 'char' || key.name === 'paste' || key.name === 'backspace' || key.name === 'delete';
+    if (clearNotice && this.notice && !this.layer) {
       this.notice = '';
     }
 
     // The wheel was handed to the terminal at the top of the band; the moment
     // the user types again they are driving this prompt, so take it back.
     if (key.name !== 'wheel' && key.name !== 'mouse') {
-      if (this.surface && typeof this.surface.captureMouse === 'function') {
-        if (this.surface.captureMouse() && this.notice.startsWith('top of this view')) this.notice = '';
-      }
-      if (this.surface) {
-        this.surface.turnRailHoverSuppressed = false;
-        if (this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
-          this.surface.hoveredTurnIndex = null;
-          this.surface.hoveredTurnAnchorY = null;
-          this.scheduleDraw();
-        }
-      }
+      this.prepareKeyboardState(false);
     }
 
     if (key.ctrl && key.name === 'c') {
