@@ -61,6 +61,7 @@ function visibleHistoryCount(messages: Array<{ role: string; content?: unknown }
 }
 
 function formatTimeAgo(timestamp: number): string {
+  if (!Number.isFinite(timestamp)) return 'unknown';
   const diffMs = Math.max(0, Date.now() - timestamp);
   const minutes = Math.floor(diffMs / (60 * 1000));
   if (minutes < 1) return 'just now';
