@@ -319,8 +319,10 @@ let lastOpenedAt = 0;
 export function openDetectedLink(url, options = {}) {
     if (!url || !/^(?:https?|file):\/\//i.test(url))
         return false;
-    const now = options.now ?? Date.now();
-    const debounceMs = options.debounceMs ?? 800;
+    const now = typeof options.now === 'number' && Number.isFinite(options.now) ? options.now : Date.now();
+    const debounceMs = typeof options.debounceMs === 'number' && Number.isFinite(options.debounceMs)
+        ? Math.max(0, options.debounceMs)
+        : 800;
     if (url === lastOpenedUrl && now - lastOpenedAt < debounceMs) {
         return true;
     }

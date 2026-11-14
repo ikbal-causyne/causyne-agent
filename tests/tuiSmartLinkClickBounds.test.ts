@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   detectLinkAtPoint,
+  openDetectedLink,
+  resetLinkOpenDebounceForTests,
   type SmartLinkSurface
 } from '../src/tui/smartLinkClick.js';
 import type { MessageMarker } from '../src/tui/messageInteraction.js';
@@ -35,5 +37,27 @@ describe('smartLinkClick finite and integer bounds', () => {
       marker
     );
     assert.equal(infOutRowsHit?.url, 'https://example.com/demo');
+  });
+
+  it('openDetectedLink falls back safely when now or debounceMs is non-finite', () => {
+    resetLinkOpenDebounceForTests();
+    let launches = 0;
+    const spawnStub = (() => {
+      launches++;
+      return { on() {}, unref() {} };
+    }) as never;
+
+    openDetectedLink('https://example.com/debounce-test', {
+      platform: 'darwin',
+      now: Number.NaN,
+      spawnImpl: spawnStub
+    });
+    // Second rapid click with valid clock or NaN debounceMs should still be debounced.
+    openDetectedLink('https://example.com/debounce-test', {
+      platform: 'darwin',
+      debounceMs: Number.NaN,
+      spawnImpl: spawnStub
+    });
+    assert.equal(launches, 1);
   });
 });
