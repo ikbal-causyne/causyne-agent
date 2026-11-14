@@ -258,6 +258,7 @@ export function handleScrollbarMouse(
   const termRows = Number.isFinite(rawTermRows) && rawTermRows > 0 ? Math.floor(rawTermRows) : 24;
   const rawStageH = Number(surface.stage?.height);
   const stageH = Number.isFinite(rawStageH) && rawStageH > 0 ? Math.floor(rawStageH) : termRows;
+  const stageTop = Math.max(0, termRows - stageH);
 
   // If completion picker is active, check if click was on the picker
   if (host.pickerLayout) {
@@ -269,7 +270,7 @@ export function handleScrollbarMouse(
       pickerCount > 0
     ) {
       const promptTop = Math.max(1, stageH - Math.floor(totalPromptRows) + 1);
-      const pickerTop = promptTop + Math.floor(pickerStart) - 1;
+      const pickerTop = stageTop + promptTop + Math.floor(pickerStart) - 1;
       const pickerBottom = pickerTop + Math.floor(pickerCount) - 1;
       if (mouseY >= pickerTop && mouseY <= pickerBottom) {
         return false; // Leave to completion handler
@@ -277,7 +278,7 @@ export function handleScrollbarMouse(
     }
   }
 
-  const stageTop = Math.max(0, termRows - stageH);
+
   const rawViewportH = Number(viewport.height);
   const viewportH = Number.isFinite(rawViewportH) && rawViewportH > 0 ? Math.floor(rawViewportH) : 1;
   const rawStageW = Number(typeof surface.stage?.width === 'function' ? surface.stage.width() : surface.width);
