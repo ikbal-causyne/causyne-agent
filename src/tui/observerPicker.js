@@ -271,7 +271,8 @@ export function runInteractiveObserverPicker(prompt) {
                         const lines = recentAudits.length === 0
                             ? ['No Cold Observer audit records yet.', '', 'Press Esc or Enter to return to Observer setup.']
                             : recentAudits.slice(-12).map((a) => {
-                                const time = new Date(a.timestamp).toLocaleTimeString();
+                                const dt = typeof a.timestamp === 'number' && Number.isFinite(a.timestamp) ? new Date(a.timestamp) : null;
+                                const time = dt && Number.isFinite(dt.getTime()) ? dt.toLocaleTimeString() : '--:--:--';
                                 const tag = a.type === 'mutation' ? `[mutation ${a.tool || ''}]` : '[verification]';
                                 const score = typeof a.riskScore === 'number' && Number.isFinite(a.riskScore)
                                     ? `(${(a.riskScore * 100).toFixed(0)}% risk)`

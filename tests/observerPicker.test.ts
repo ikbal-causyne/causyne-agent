@@ -169,7 +169,7 @@ test('runInteractiveObserverPicker audit view omits non-finite riskScore values'
 
   coldObserver.getAuditHistory = () => [
     {
-      timestamp: Date.now(),
+      timestamp: Number.NaN,
       type: 'mutation',
       tool: 'bash',
       riskScore: Number.NaN,
@@ -192,7 +192,7 @@ test('runInteractiveObserverPicker audit view omits non-finite riskScore values'
     await openedLayer.onPick(auditItem);
     assert.ok(detailLayer);
     const rendered = detailLayer.lines.join('\n');
-    assert.doesNotMatch(rendered, /\bNaN\b|Infinity/);
+    assert.doesNotMatch(rendered, /\bNaN\b|Infinity|Invalid Date/);
     await openedLayer.onPick(null);
     await promise;
   } finally {
