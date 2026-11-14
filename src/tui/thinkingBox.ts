@@ -51,6 +51,14 @@ export function calculateThinkingLineCount(content: string, width: number): numb
   return wrapBlock(text, contentBudget, { hang: 0 }).length;
 }
 
+function stripTrailingEllipsis(value: string | undefined): string {
+  let text = String(value ?? '').trim();
+  while (text.endsWith('…') || text.endsWith('...')) {
+    text = (text.endsWith('...') ? text.slice(0, -3) : text.slice(0, -1)).trimEnd();
+  }
+  return text.trim();
+}
+
 /**
  * Resolves dynamic contextual activity labels for streaming and completed badges.
  */
@@ -58,13 +66,13 @@ export function resolveActivityLabels(options: ThinkingFrameOptions): {
   activeLabel: string;
   completedLabel: string;
 } {
-  const raw = (options.activity || options.title || 'thinking')
-    .replace(/…|\.\.\.$/, '')
-    .trim()
-    .toLowerCase();
+  const cleanedActivity = stripTrailingEllipsis(options.activity);
+  const cleanedTitle = stripTrailingEllipsis(options.title);
+  const raw = (cleanedActivity || cleanedTitle || 'thinking').toLowerCase();
 
-  let active = options.title ? options.title.trim() : `${raw}…`;
-  if (!options.title) {
+  const rawTitle = cleanedTitle && options.title ? options.title.trim() : '';
+  let active = rawTitle || `${raw}…`;
+  if (!rawTitle) {
     if (raw === 'thinking') active = 'thinking…';
     else if (raw === 'analyzing') active = 'analyzing…';
     else if (raw === 'executing') active = 'executing…';
@@ -248,7 +256,8 @@ export function renderThinkingFrame(
     if (totalLines > maxLines) {
       const hiddenCount = totalLines - (maxLines - 1);
       const scrollIndicator = HAS_UNICODE ? '↑' : '^';
-      const activityWord = options.activity || options.title ? `${(options.activity || options.title || '').replace(/…|\.\.\.$/, '').trim()} ` : 'thinking ';
+      const cleanedLabel = stripTrailingEllipsis(options.activity) || stripTrailingEllipsis(options.title) || 'thinking';
+      const activityWord = `${cleanedLabel} `;
       const hiddenNotice = `${paint('rule', scrollIndicator)} ${dim(`${hiddenCount} earlier ${activityWord}line${hiddenCount === 1 ? '' : 's'} scrolled`)}`;
       rows.push(wrapRow(hiddenNotice));
 
@@ -269,12 +278,10 @@ export function renderThinkingFrame(
   // Completed Expanded Mode
   const maxLines = clampMaxVisibleLines(options.maxVisibleLines, DEFAULT_MAX_EXPANDED_LINES);
   const timePart = durationText ? ` · ${durationText}` : '';
-  const raw = (options.activity || options.title || 'thinking')
-    .replace(/…|\.\.\.$/, '')
-    .trim()
-    .toLowerCase();
-  const expandedTitleLabel = options.completedTitle
-    ? options.completedTitle.toLowerCase()
+  const raw = (stripTrailingEllipsis(options.activity) || stripTrailingEllipsis(options.title) || 'thinking').toLowerCase();
+  const trimmedCompleted = options.completedTitle ? options.completedTitle.trim() : '';
+  const expandedTitleLabel = trimmedCompleted
+    ? trimmedCompleted.toLowerCase()
     : (raw === 'thinking' ? 'thinking' : raw);
   const title = `${paint('muted', expandedTitleLabel)}${dim(timePart)} ${dim(`(${totalLines} line${totalLines === 1 ? '' : 's'})`)}`;
 

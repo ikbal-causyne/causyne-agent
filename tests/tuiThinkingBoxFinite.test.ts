@@ -45,4 +45,30 @@ describe('thinkingBox finite bounds', () => {
     assert.ok(nanStartCompleted.length >= 6);
     assert.match(nanStartCompleted.join('\n'), /thought line 1\b/);
   });
+
+  it('falls back to default activity label when activity or title trims to empty', () => {
+    const content = Array.from({ length: 12 }, (_, i) => `thought line ${i + 1}`).join('\n');
+    const streamingBlank = renderThinkingFrame(content, {
+      streaming: true,
+      maxVisibleLines: 4,
+      title: '...',
+      activity: '   '
+    }).join('\n');
+    assert.match(streamingBlank, /earlier thinking lines scrolled/);
+    assert.doesNotMatch(streamingBlank, /earlier\s{2,}lines/);
+
+    const collapsedBlank = renderThinkingFrame(content, {
+      streaming: false,
+      collapsed: true,
+      title: '...'
+    }).join('\n');
+    assert.match(collapsedBlank, /Thought/);
+
+    const expandedBlank = renderThinkingFrame(content, {
+      streaming: false,
+      title: '   ',
+      activity: '...'
+    }).join('\n');
+    assert.match(expandedBlank, /thinking/);
+  });
 });
