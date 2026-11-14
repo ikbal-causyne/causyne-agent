@@ -58,4 +58,24 @@ describe('overlay bounds and sanitization', () => {
       assert.ok(!p.text.includes('\n') && !p.text.includes('\r'), 'drawPanel output must be single-line');
     }
   });
+
+  it('drawPanel never overflows narrow rects (width 4..6) with empty title/footer gaps and guards null rects', () => {
+    const puts: Array<{ x: number; y: number; text: string }> = [];
+    const mockScreen: any = {
+      width: 10,
+      height: 10,
+      cells: [],
+      fill() {},
+      put(x: number, y: number, text: string) { puts.push({ x, y, text }); },
+      setCursor() {}
+    };
+    drawPanel(mockScreen, { x: 0, y: 0, width: 4, height: 3 }, { title: 'Title', footer: 'Footer' });
+    for (const p of puts) {
+      assert.ok(visibleWidth(p.text) <= 4, `drawPanel border width ${visibleWidth(p.text)} exceeded rect width 4`);
+    }
+    assert.deepEqual(drawPanel(mockScreen, null as any), { x: 0, y: 0, width: 0, height: 0 });
+    const layer = new Layer({ width: 20, height: 6 });
+    const fallbackRect = layer.rect(null as any);
+    assert.ok(fallbackRect.width > 0 && fallbackRect.height > 0);
+  });
 });

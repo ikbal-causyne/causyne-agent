@@ -61,6 +61,9 @@ export function dimBackdrop(screen, viewport, hole) {
  * the transcript bleeding through the gaps between its rows.
  */
 export function drawPanel(screen, rect, { title = '', footer = '' } = {}) {
+    if (!screen || !rect || typeof screen.fill !== 'function' || typeof screen.put !== 'function') {
+        return { x: 0, y: 0, width: 0, height: 0 };
+    }
     const x = Number.isFinite(rect.x) ? Math.floor(rect.x) : 0;
     const y = Number.isFinite(rect.y) ? Math.floor(rect.y) : 0;
     if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y) || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
@@ -76,15 +79,15 @@ export function drawPanel(screen, rect, { title = '', footer = '' } = {}) {
     // Title sits in the top border, the way every terminal dialog has since curses.
     let top = FRAME.tl + line + FRAME.tr;
     const cleanTitle = cleanSingleLine(title).trim();
-    if (cleanTitle) {
-        const label = ` ${truncate(cleanTitle, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+    if (cleanTitle && inner > 4) {
+        const label = ` ${truncate(cleanTitle, inner - 4, GLYPHS.ellipsis)} `;
         const width = visibleWidth(label);
         top = FRAME.tl + FRAME.h + label + FRAME.h.repeat(Math.max(0, inner - width - 1)) + FRAME.tr;
     }
     let bottom = FRAME.bl + line + FRAME.br;
     const cleanFooter = cleanSingleLine(footer).trim();
-    if (cleanFooter) {
-        const label = ` ${truncate(cleanFooter, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
+    if (cleanFooter && inner > 4) {
+        const label = ` ${truncate(cleanFooter, inner - 4, GLYPHS.ellipsis)} `;
         const width = visibleWidth(label);
         bottom = FRAME.bl + FRAME.h.repeat(Math.max(0, inner - width - 1)) + label + FRAME.h + FRAME.br;
     }
@@ -139,10 +142,11 @@ export class Layer {
     preferredHeight() { return this.height; }
     /** Panel rect, centred and clamped to the viewport. */
     rect(viewport) {
-        const vx = Number.isFinite(viewport.x) ? Math.floor(viewport.x) : 0;
-        const vy = Number.isFinite(viewport.y) ? Math.floor(viewport.y) : 0;
-        const vw = Number.isFinite(viewport.width) ? Math.max(4, Math.floor(viewport.width)) : 80;
-        const vh = Number.isFinite(viewport.height) ? Math.max(3, Math.floor(viewport.height)) : 24;
+        const vp = viewport && typeof viewport === 'object' ? viewport : { x: 0, y: 0, width: 80, height: 24 };
+        const vx = Number.isFinite(vp.x) ? Math.floor(vp.x) : 0;
+        const vy = Number.isFinite(vp.y) ? Math.floor(vp.y) : 0;
+        const vw = Number.isFinite(vp.width) ? Math.max(4, Math.floor(vp.width)) : 80;
+        const vh = Number.isFinite(vp.height) ? Math.max(3, Math.floor(vp.height)) : 24;
         const layerWidth = Number.isFinite(this.width) ? Math.max(4, Math.floor(this.width)) : 64;
         const layerHeight = Number.isFinite(this.height) ? Math.max(3, Math.floor(this.height)) : 16;
         const rawPreferred = this.preferredHeight();
