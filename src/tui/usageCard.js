@@ -159,9 +159,12 @@ export function renderUsageCardRows(data, width) {
     // 6. Model & Provider
     lines.push(`${dim('Active Model :')} ${paint('accent', `${data.provider} / ${data.model}`)}  ${dim(`(${data.billingNote})`)}`);
     // 7. Optional Budget
-    if (data.budgetEnabled && data.budgetLimitTokens) {
-        const bBar = renderProgressBar(data.budgetPercentUsed || 0, 16, true);
-        lines.push(`${dim('Daily Budget :')} ${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tokens (${data.budgetPercentUsed}% used)  ${bBar}`);
+    if (data.budgetEnabled && typeof data.budgetLimitTokens === 'number' && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
+        const safeBudgetPercent = typeof data.budgetPercentUsed === 'number' && Number.isFinite(data.budgetPercentUsed)
+            ? Math.max(0, Math.round(data.budgetPercentUsed))
+            : 0;
+        const bBar = renderProgressBar(safeBudgetPercent, 16, true);
+        lines.push(`${dim('Daily Budget :')} ${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tokens (${safeBudgetPercent}% used)  ${bBar}`);
     }
     // Construct boxed rows
     const edge = paint(borderRole, FRAME.v);

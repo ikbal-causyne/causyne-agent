@@ -60,4 +60,34 @@ describe('usageCard renderProgressBar finite bounds', () => {
     const text = renderUsageCardRows(data, 80).join('\n');
     assert.doesNotMatch(text, /\bNaN\b|Infinity|∞/);
   });
+
+  it('renderUsageCardRows sanitizes non-finite or missing budgetPercentUsed and budgetLimitTokens', () => {
+    const nanBudget = {
+      ...sampleUsageData(),
+      budgetEnabled: true,
+      budgetLimitTokens: 1000,
+      budgetPercentUsed: Number.NaN
+    };
+    const nanText = renderUsageCardRows(nanBudget, 80).join('\n');
+    assert.doesNotMatch(nanText, /\bNaN\b|undefined|Infinity/);
+    assert.match(nanText, /0% used/);
+
+    const missingBudgetPct = {
+      ...sampleUsageData(),
+      budgetEnabled: true,
+      budgetLimitTokens: 1000
+    };
+    const missingText = renderUsageCardRows(missingBudgetPct, 80).join('\n');
+    assert.doesNotMatch(missingText, /undefined/);
+    assert.match(missingText, /0% used/);
+
+    const infLimit = {
+      ...sampleUsageData(),
+      budgetEnabled: true,
+      budgetLimitTokens: Number.POSITIVE_INFINITY,
+      budgetPercentUsed: 10
+    };
+    const infText = renderUsageCardRows(infLimit, 80).join('\n');
+    assert.doesNotMatch(infText, /Daily Budget/);
+  });
 });
