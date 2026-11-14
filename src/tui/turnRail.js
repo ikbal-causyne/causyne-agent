@@ -166,22 +166,23 @@ export function sliceFromColumn(source, startCol) {
  * - Proportional scaling when turn count exceeds available height.
  */
 export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex) {
-    const cells = new Array(Math.max(0, height)).fill(' ');
+    const safeHeight = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
+    const cells = new Array(safeHeight).fill(' ');
     const dotRows = new Map();
     const rowToTurn = new Map();
-    if (turns.length === 0 || height <= 0) {
+    if (turns.length === 0 || safeHeight <= 0) {
         return { cells, layout: { dotRows, rowToTurn } };
     }
     const count = turns.length;
     // Dense imported histories may contain hundreds of turns. Show a measured
     // set of quiet milestones, while always retaining active/hovered endpoints.
     // All turn objects are preserved for keyboard navigation and preview.
-    const quietStep = count > Math.max(16, Math.floor(height / 2))
-        ? Math.max(2, Math.ceil(count / Math.max(12, Math.floor(height / 3))))
+    const quietStep = count > Math.max(16, Math.floor(safeHeight / 2))
+        ? Math.max(2, Math.ceil(count / Math.max(12, Math.floor(safeHeight / 3))))
         : 1;
     // If count fits comfortably, stack consecutive dots centered or upper-aligned
-    const startRow = count <= height
-        ? Math.max(0, Math.floor((height - count) / 3))
+    const startRow = count <= safeHeight
+        ? Math.max(0, Math.floor((safeHeight - count) / 3))
         : 0;
     for (let i = 0; i < count; i++) {
         const turn = turns[i];
@@ -189,13 +190,13 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
             continue;
         const turnNum = turn.turnIndex;
         let rowIdx;
-        if (count <= height) {
+        if (count <= safeHeight) {
             rowIdx = startRow + i;
         }
         else {
-            rowIdx = Math.round((i / (count - 1)) * (height - 1));
+            rowIdx = Math.round((i / (count - 1)) * (safeHeight - 1));
         }
-        rowIdx = Math.max(0, Math.min(height - 1, rowIdx));
+        rowIdx = Math.max(0, Math.min(safeHeight - 1, rowIdx));
         dotRows.set(turnNum, rowIdx);
         const isHovered = hoveredTurnIndex === turnNum;
         const isActive = activeTurnIndex === turnNum;

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveActiveTurnIndex, sliceFromColumn, type SessionTurn } from '../src/tui/turnRail.js';
+import { buildTurnRailCells, resolveActiveTurnIndex, sliceFromColumn, type SessionTurn } from '../src/tui/turnRail.js';
 
 const sampleTurn = (turnIndex: number, startRow: number): SessionTurn => ({
   turnIndex,
@@ -23,5 +23,14 @@ describe('turnRail finite bounds', () => {
   it('sliceFromColumn treats NaN startCol as 0 and Infinity as empty slice', () => {
     assert.equal(sliceFromColumn('hello world', Number.NaN), 'hello world');
     assert.equal(sliceFromColumn('hello world', Number.POSITIVE_INFINITY), '');
+  });
+
+  it('buildTurnRailCells handles fractional and non-finite height without RangeError', () => {
+    const turns = [sampleTurn(1, 0), sampleTurn(2, 20)];
+    assert.doesNotThrow(() => {
+      assert.deepEqual(buildTurnRailCells(turns, Number.NaN, 1, null).cells, []);
+      assert.deepEqual(buildTurnRailCells(turns, Number.POSITIVE_INFINITY, 1, null).cells, []);
+      assert.equal(buildTurnRailCells(turns, 5.7, 1, null).cells.length, 5);
+    });
   });
 });
