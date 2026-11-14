@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandTabs, padEnd, stripAnsi, truncate, visibleWidth, wrap, wrapBlock } from '../src/tui/text.js';
+import os from 'node:os';
+import { expandTabs, padEnd, shortenHome, stripAnsi, truncate, visibleWidth, wrap, wrapBlock } from '../src/tui/text.js';
 
 describe('tui/text finite bounds', () => {
   it('truncate handles non-finite width without overflowing input', () => {
@@ -70,5 +71,20 @@ describe('tui/text finite bounds', () => {
     assert.equal(visibleWidth('e\u0301'), 1);
     assert.equal(visibleWidth('a\rb\x00'), 2);
     assert.deepEqual(wrap('中a', 1), ['中', 'a']);
+  });
+
+  it('shortenHome requires path boundary, truncate respects narrow ellipsis width, and wrapBlock stays within narrow indented widths', () => {
+    const home = os.homedir();
+    assert.equal(shortenHome(home), '~');
+    assert.equal(shortenHome(`${home}/work`), '~/work');
+    assert.equal(shortenHome(`${home}-other/work`), `${home}-other/work`);
+
+    assert.ok(visibleWidth(truncate('Hello world', 2, '...')) <= 2);
+    assert.equal(visibleWidth(truncate('Hello world', 0.5)), 0);
+
+    const wrapped = wrapBlock('      alpha beta gamma', 14, { hang: 2 });
+    for (const row of wrapped) {
+      assert.ok(visibleWidth(row) <= 14, `row width ${visibleWidth(row)} exceeded 14: ${row}`);
+    }
   });
 });

@@ -16,6 +16,9 @@ import os from 'node:os';
 const CSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
 const OTHER_ESCAPE_PATTERN = /\x1b[@-Z\\-_]/g;
+const CSI_STICKY = /\x1b\[[0-?]*[ -/]*[@-~]/y;
+const OSC_STICKY = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/y;
+const OTHER_ESCAPE_STICKY = /\x1b[@-Z\\-_]/y;
 const OSC8_SEQUENCE = /^\x1b\]8;[^;]*;([^\x07\x1b]*)(\x07|\x1b\\)/;
 /** Everything that is an escape sequence rather than visible text. */
 export function stripAnsi(text) {
@@ -133,11 +136,17 @@ function columnsFor(code) {
 function matchEscapeSequenceAt(source, index) {
     if (source[index] !== '\x1b')
         return null;
-    const rest = source.slice(index);
-    const match = rest.match(/^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/)
-        || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
-        || rest.match(/^\x1b[@-Z\\-_]/);
-    return match ? match[0] : null;
+    OSC_STICKY.lastIndex = index;
+    const osc = OSC_STICKY.exec(source);
+    if (osc)
+        return osc[0];
+    CSI_STICKY.lastIndex = index;
+    const csi = CSI_STICKY.exec(source);
+    if (csi)
+        return csi[0];
+    OTHER_ESCAPE_STICKY.lastIndex = index;
+    const other = OTHER_ESCAPE_STICKY.exec(source);
+    return other ? other[0] : null;
 }
 /** Columns this string will occupy once printed. Escapes count for nothing. */
 export function visibleWidth(text) {
@@ -163,12 +172,17 @@ export function truncate(text, width, ellipsis = '…') {
     const source = String(text == null ? '' : text);
     if (width === Number.POSITIVE_INFINITY)
         return source;
-    if (!Number.isFinite(width) || width <= 0)
+    const safeWidth = Number.isFinite(width) ? Math.floor(width) : 0;
+    if (safeWidth <= 0)
         return '';
-    if (visibleWidth(source) <= width)
+    if (visibleWidth(source) <= safeWidth)
         return source;
-    const ellipsisWidth = visibleWidth(ellipsis);
-    const budget = Math.max(0, width - ellipsisWidth);
+    const rawEllipsis = String(ellipsis == null ? '' : ellipsis);
+    const safeEllipsis = visibleWidth(rawEllipsis) <= safeWidth
+        ? rawEllipsis
+        : (rawEllipsis ? truncate(rawEllipsis, safeWidth, '') : '');
+    const ellipsisWidth = visibleWidth(safeEllipsis);
+    const budget = Math.max(0, safeWidth - ellipsisWidth);
     let out = '';
     let used = 0;
     let sawEscape = false;
@@ -201,7 +215,7 @@ export function truncate(text, width, ellipsis = '…') {
         index += character.length;
     }
     const osc8Reset = openOsc8Term ? `\x1b]8;;${openOsc8Term}` : '';
-    return out + osc8Reset + (sawEscape ? RESET : '') + ellipsis;
+    return out + osc8Reset + (sawEscape ? RESET : '') + safeEllipsis;
 }
 /** Pad to an exact column count, measuring visible width rather than bytes. */
 export function padEnd(text, width) {
@@ -284,17 +298,19 @@ export function wrapBlock(text, width, { hang = 2 } = {}) {
     const safeHang = Number.isFinite(hang) ? Math.max(0, Math.floor(hang)) : 2;
     const safeWidth = Number.isFinite(width) ? Math.floor(width) : 80;
     const rows = [];
-    for (const line of String(text == null ? '' : text).split('\n')) {
-        const indent = (line.match(/^[ \t]*/) || [''])[0];
+    for (const rawLine of String(text == null ? '' : text).split('\n')) {
+        const line = expandTabs(rawLine.replace(/\r$/, ''));
+        const indent = (line.match(/^ */) || [''])[0];
         const body = line.slice(indent.length);
         if (!body) {
             rows.push('');
             continue;
         }
-        const continuation = indent + ' '.repeat(safeHang);
+        const rawContinuation = indent + ' '.repeat(safeHang);
+        const continuation = visibleWidth(rawContinuation) < safeWidth ? rawContinuation : indent;
         // Wrap at the NARROWER of the two budgets so neither the first row nor a
         // continuation row can exceed `width`.
-        const budget = Math.max(8, safeWidth - visibleWidth(continuation));
+        const budget = Math.max(1, safeWidth - visibleWidth(continuation));
         const parts = wrap(body, budget);
         rows.push(indent + (parts[0] ?? ''));
         for (const part of parts.slice(1))
@@ -392,8 +408,14 @@ export function sanitize(text) {
 export function shortenHome(value) {
     const home = os.homedir();
     const text = String(value == null ? '' : value);
-    if (home && text.startsWith(home))
-        return '~' + text.slice(home.length);
+    const cleanHome = home.length > 1 ? home.replace(/[\\/]+$/, '') : home;
+    if (cleanHome && cleanHome !== '/') {
+        if (text === cleanHome)
+            return '~';
+        if (text.startsWith(`${cleanHome}/`) || text.startsWith(`${cleanHome}\\`)) {
+            return `~${text.slice(cleanHome.length)}`;
+        }
+    }
     return text;
 }
 const SECRET_PATTERNS = [
