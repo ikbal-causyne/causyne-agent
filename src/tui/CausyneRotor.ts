@@ -205,7 +205,7 @@ export function startCausyneRotor(options: RotorOptions & { fps?: number | undef
     return { stop() {} };
   }
 
-  const fps = Math.max(4, Math.min(30, options.fps ?? 16));
+  const fps = clampRotorRange(options.fps, 4, 30, 16);
   const started = Date.now();
   let stopped = false;
   let lastLines = 0;
