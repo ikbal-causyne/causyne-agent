@@ -25,6 +25,10 @@ import { approvalDiff } from './diff.js';
 import { isChar } from './keys.js';
 import { readClipboardSync } from './clipboardSync.js';
 
+const cleanDialogText = (value) => (
+  value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim()
+);
+
 /**
  * A picker. `items` are SelectList items; `onPick(item)` fires on enter.
  *
@@ -227,8 +231,12 @@ export class HomeLayer extends Layer {
     // The hint column is right-padded from the widest label so the two columns
     // line up, but it is computed from the ACTUAL labels rather than a constant:
     // a hardcoded inset is what makes a menu look off by one at some widths.
-    const labelWidth = this.items.reduce((max, item) => Math.max(max, visibleWidth(item.label)), 0);
-    return this.items.map((item, i) => {
+    const cleanItems = this.items.map((item) => ({
+      label: cleanDialogText(item?.label || ''),
+      hint: cleanDialogText(item?.hint || '')
+    }));
+    const labelWidth = cleanItems.reduce((max, item) => Math.max(max, visibleWidth(item.label)), 0);
+    return cleanItems.map((item, i) => {
       const selected = i === this.index;
       const marker = selected ? paint('accent', GLYPHS.arrow) : ' ';
       const label = selected ? bold(paint('accent', item.label)) : item.label;
@@ -244,8 +252,14 @@ export class HomeLayer extends Layer {
     if (!event) return null;
 
     switch (event.name) {
-      case 'up':   this.index = (this.index - 1 + this.items.length) % this.items.length; return 'handled';
-      case 'down': this.index = (this.index + 1) % this.items.length; return 'handled';
+      case 'up':
+        if (this.items.length === 0) return 'handled';
+        this.index = (this.index - 1 + this.items.length) % this.items.length;
+        return 'handled';
+      case 'down':
+        if (this.items.length === 0) return 'handled';
+        this.index = (this.index + 1) % this.items.length;
+        return 'handled';
       case 'enter':
       case 'return': {
         const item = this.current;

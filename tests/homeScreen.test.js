@@ -70,6 +70,21 @@ describe('HomeLayer key ownership', () => {
       }
     }
   });
+
+  test('guards empty item list against NaN index and sanitizes item labels and hints', () => {
+    const empty = new HomeLayer({ items: [] });
+    assert.equal(empty.key(key('up')), 'handled');
+    assert.equal(Number.isNaN(empty.index), false);
+    assert.equal(empty.key(key('down')), 'handled');
+    assert.equal(empty.index, 0);
+
+    const unsafe = new HomeLayer({
+      items: [{ label: 'run\x1b[2J\nnext', hint: 'help\x1b[31m\nhint' }]
+    });
+    const rendered = unsafe.body(60).join(' | ');
+    assert.equal(rendered.includes('\x1b[2J'), false);
+    assert.equal(rendered.includes('\n'), false);
+  });
 });
 
 describe('the menu is wired to real commands', () => {
