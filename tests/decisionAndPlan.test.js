@@ -10,6 +10,8 @@ import { normalizePlanUpdate } from '../src/implementationPlan.js';
 import { requestDecision } from '../src/tools/requestDecision.js';
 import { updatePlan } from '../src/tools/updatePlan.js';
 import { DecisionLayer } from '../src/tui/dialogs.js';
+import { askSelect, askDecision, fallbackQuestion } from '../src/tui/ask.js';
+import { PassThrough } from 'node:stream';
 import { AgentLoop } from '../src/agentLoop.js';
 
 const REQUEST = {
@@ -162,5 +164,17 @@ describe('structured decision interaction', () => {
     assert.equal(rows.some(row => row.includes('\x1b[2J')), false);
     assert.ok(layer.cursor.x <= 23, `expected cursor.x <= 23, got ${layer.cursor.x}`);
     assert.ok(layer.cursor.y < rows.length, `expected cursor.y < ${rows.length}, got ${layer.cursor.y}`);
+  });
+
+  test('ask helpers guard nullish requests/items and fallbackQuestion resolves null on EOF', async () => {
+    assert.equal(await askSelect(null), null);
+    assert.equal(await askSelect({ items: null }), null);
+    assert.equal(await askDecision(null), null);
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const pending = fallbackQuestion('Continue?', { input, output });
+    input.end();
+    const result = await pending;
+    assert.equal(result, null);
   });
 });

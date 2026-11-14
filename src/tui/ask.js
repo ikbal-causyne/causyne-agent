@@ -72,10 +72,20 @@ export function canAskInPanel() {
 }
 
 /** Plain readline, for pipes, CI and any terminal that refuses raw mode. */
-function fallbackQuestion(question, { mask = false } = {}) {
+export function fallbackQuestion(question, { mask = false, input = process.stdin, output = process.stdout } = {}) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(`${question} `, (answer) => { rl.close(); resolve(answer); });
+    let settled = false;
+    const rl = readline.createInterface({ input, output });
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    rl.once('close', () => done(null));
+    rl.question(`${question} `, (answer) => {
+      rl.close();
+      done(answer);
+    });
     if (mask) {
       // Suppress the echo of what is typed. `_writeToOutput` is readline's own
       // hook for exactly this; the prompt itself still has to be drawn or the
@@ -95,8 +105,9 @@ function fallbackQuestion(question, { mask = false } = {}) {
  * @param {Array}  options.items  `{ id, label, description }`
  * @returns {Promise<object|null>} the chosen item, or null if dismissed
  */
-export async function askSelect({ title = '', items = [] } = {}) {
-  if (items.length === 0) return null;
+export async function askSelect(options = {}) {
+  const { title = '', items = [] } = options && typeof options === 'object' ? options : {};
+  if (!Array.isArray(items) || items.length === 0) return null;
 
   if (canAskInPanel()) {
     const answer = await hostOneLayer((resolve) => new SelectLayer({
@@ -113,6 +124,7 @@ export async function askSelect({ title = '', items = [] } = {}) {
     console.log(`  ${String(index + 1).padStart(2)}. ${item.label}${item.description ? `  — ${item.description}` : ''}`);
   });
   const raw = await fallbackQuestion(`Choose 1-${items.length}:`);
+  if (raw === null) return null;
   const choice = Number(String(raw).trim());
   return Number.isInteger(choice) && choice >= 1 && choice <= items.length ? items[choice - 1] : null;
 }
@@ -122,7 +134,10 @@ export async function askSelect({ title = '', items = [] } = {}) {
  *
  * @returns {Promise<string|null>} the answer, or null if dismissed
  */
-export async function askText({ title = '', lines = [], value = '', placeholder = '', mask = false, validate = null } = {}) {
+export async function askText(options = {}) {
+  let { title = '', lines = [], value = '', placeholder = '', mask = false, validate = null } =
+    options && typeof options === 'object' ? options : {};
+  lines = Array.isArray(lines) ? lines : [];
   while (true) {
     let answer;
 
@@ -160,6 +175,7 @@ export async function askConfirm(message) {
     if (answer !== undefined) return Boolean(answer);
   }
   const raw = await fallbackQuestion(`${message} [y/N]`);
+  if (raw === null) return false;
   return /^y(es)?$/i.test(String(raw).trim());
 }
 
@@ -170,33 +186,37 @@ export async function askConfirm(message) {
  * never grants a tool the right to mutate files or execute a command.
  */
 export async function askDecision(request = {}) {
-  const options = Array.isArray(request.options) ? request.options : [];
+  const safeRequest = request && typeof request === 'object' ? request : {};
+  const options = Array.isArray(safeRequest.options) ? safeRequest.options : [];
+  if (options.length === 0 && safeRequest.allowCustom === false) return null;
 
   if (canAskInPanel()) {
     const answer = await hostOneLayer((resolve) => new DecisionLayer({
-      request,
+      request: safeRequest,
       onAnswer: resolve
     }));
     if (answer !== undefined) return answer;
   }
 
   const custom = { id: '__custom__', label: 'Type your own answer', description: '' };
+  const items = safeRequest.allowCustom === false ? options : [...options, custom];
+  if (items.length === 0 || (options.length === 0 && !safeRequest.id && !safeRequest.question)) return null;
   const selected = await askSelect({
-    title: request.header || 'Decision required',
-    items: [...options, custom]
+    title: safeRequest.header || 'Decision required',
+    items
   });
   if (!selected) return null;
   if (selected.id === custom.id) {
     const label = await askText({
-      title: request.question || 'Describe the direction you want',
-      lines: request.reason ? [request.reason] : [],
+      title: safeRequest.question || 'Describe the direction you want',
+      lines: safeRequest.reason ? [safeRequest.reason] : [],
       validate: (value) => String(value).trim() ? null : 'An answer is required.'
     });
     if (!label) return null;
-    return { requestId: request.id, optionId: null, label: String(label).trim(), custom: true };
+    return { requestId: safeRequest.id, optionId: null, label: String(label).trim(), custom: true };
   }
   return {
-    requestId: request.id,
+    requestId: safeRequest.id,
     optionId: selected.id,
     label: selected.label,
     custom: false
