@@ -25,3 +25,19 @@ test('ScrollAcceleration falls back cleanly when streakTimeout or minTickInterva
   assert.equal(accel.tick(1020), 1);
   assert.equal(accel.tick(1520), 1);
 });
+
+test('Viewport.refresh ignores non-finite grownBy without setting unseen to Infinity', () => {
+  const viewport = new Viewport({ transcript: { height: () => 200 }, height: 20, width: 80 });
+  viewport.scrollTo(10);
+  assert.equal(viewport.manual, true);
+
+  viewport.refresh(Number.POSITIVE_INFINITY);
+  assert.equal(viewport.unseen, 0);
+  assert.equal(viewport.manual, true);
+
+  viewport.refresh(Number.NaN);
+  assert.equal(viewport.unseen, 0);
+
+  viewport.refresh(3);
+  assert.equal(viewport.unseen, 3);
+});

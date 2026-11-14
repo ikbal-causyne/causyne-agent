@@ -245,11 +245,12 @@ export class Viewport {
    * evicted. This is where auto-scroll actually happens.
    */
   refresh(grownBy: number = 0): void {
+    const safeGrownBy = Number.isFinite(grownBy) && grownBy > 0 ? grownBy : 0;
     const wasApplying = this.applyingSticky;
     this.applyingSticky = true;
     try {
       const max = this.maxScrollTop();
-      const tolerance = grownBy > 0 ? REENGAGE_TOLERANCE : 0;
+      const tolerance = safeGrownBy > 0 ? REENGAGE_TOLERANCE : 0;
 
       if (!this.manual) {
         this.scrollTop = max;
@@ -260,7 +261,7 @@ export class Viewport {
         this.unseen = 0;
       } else {
         this.scrollTop = Math.min(this.scrollTop, max);
-        if (grownBy > 0) this.unseen += grownBy;
+        if (safeGrownBy > 0) this.unseen += safeGrownBy;
       }
     } finally {
       this.applyingSticky = wasApplying;
