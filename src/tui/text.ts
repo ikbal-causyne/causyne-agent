@@ -263,16 +263,18 @@ export function wrap(text: unknown, width: number, _options?: { hang?: number })
  * terminal broke it at the right edge, mid-word, at column 0.
  */
 export function wrapBlock(text: unknown, width: number, { hang = 2 }: { hang?: number } = {}): string[] {
+  const safeHang = Number.isFinite(hang) ? Math.max(0, Math.floor(hang)) : 2;
+  const safeWidth = Number.isFinite(width) ? Math.floor(width) : 80;
   const rows: string[] = [];
   for (const line of String(text == null ? '' : text).split('\n')) {
     const indent = (line.match(/^[ \t]*/) || [''])[0];
     const body = line.slice(indent.length);
     if (!body) { rows.push(''); continue; }
 
-    const continuation = indent + ' '.repeat(hang);
+    const continuation = indent + ' '.repeat(safeHang);
     // Wrap at the NARROWER of the two budgets so neither the first row nor a
     // continuation row can exceed `width`.
-    const budget = Math.max(8, width - visibleWidth(continuation));
+    const budget = Math.max(8, safeWidth - visibleWidth(continuation));
     const parts = wrap(body, budget);
     rows.push(indent + (parts[0] ?? ''));
     for (const part of parts.slice(1)) rows.push(continuation + part);
