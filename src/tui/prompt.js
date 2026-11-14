@@ -1904,23 +1904,27 @@ export class ChatPrompt {
    * nothing of ours is on the terminal for erase() to walk back over.
    */
   present(all, caretRow, caretCol) {
+    const rows = Array.isArray(all) ? all : [];
+    const maxRow = Math.max(0, rows.length - 1);
+    const safeRow = Number.isFinite(caretRow) ? Math.max(0, Math.min(maxRow, Math.floor(caretRow))) : 0;
+    const safeCol = Number.isFinite(caretCol) ? Math.max(0, Math.floor(caretCol)) : 0;
     const hideCursor = Boolean(this.busy && this.editor.isEmpty);
     if (this.surface) {
       this.drawnRows = 0;
       this.cursorRow = 0;
-      this.surface.present(all, { row: caretRow, col: caretCol, hideCursor,
+      this.surface.present(rows, { row: safeRow, col: safeCol, hideCursor,
         modal: Boolean(this.layer), inline: Boolean(this.layer && !isStartupDialog(this.surface)) });
       return;
     }
 
-    this.out.write(all.join('\n'));
-    this.drawnRows = all.length;
+    this.out.write(rows.join('\n'));
+    this.drawnRows = rows.length;
 
-    const below = all.length - 1 - caretRow;
+    const below = rows.length - 1 - safeRow;
     if (below > 0) this.out.write(`\x1b[${below}A`);
-    this.cursorRow = caretRow;
+    this.cursorRow = safeRow;
     this.out.write('\r');
-    if (caretCol > 0) this.out.write(`\x1b[${caretCol}C`);
+    if (safeCol > 0) this.out.write(`\x1b[${safeCol}C`);
     if (hideCursor) {
       this.out.write('\x1b[?25l');
     } else {

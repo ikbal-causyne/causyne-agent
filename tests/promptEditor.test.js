@@ -1178,4 +1178,18 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(surface.activeTurnIndex, null);
     assert.equal(jumped.length, 2);
   });
+
+  test('present clamps non-finite and out-of-range caretRow and caretCol coordinates', () => {
+    const writes = [];
+    const out = { columns: 80, rows: 24, write(s) { writes.push(String(s)); return true; }, isTTY: true, on() {}, removeListener() {} };
+    const input = { isTTY: true, on() {}, off() {} };
+    const p = new ChatPrompt({ out, input, commands: [] });
+    p.present(['hello'], Number.NaN, Number.NaN);
+    assert.equal(p.cursorRow, 0);
+    assert.equal(writes.join('').includes('NaN'), false);
+
+    p.present(['row0', 'row1'], 10, -4);
+    assert.equal(p.cursorRow, 1);
+    assert.equal(writes.join('').includes('[-'), false);
+  });
 });
