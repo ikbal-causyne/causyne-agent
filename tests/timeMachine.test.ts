@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TimeMachine } from '../src/timeMachine.js';
+import { TimeMachine, recoveryUserMessage } from '../src/timeMachine.js';
 import type { ToolOutcome } from '../src/observer/evidence.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -317,6 +317,20 @@ test('Windows package manager shims keep distinct scripts in separate retry budg
   const attempts = ['npm.cmd run build', 'npm.cmd run test', 'C:\\nodejs\\pnpm.CMD run lint', 'npm run build']
     .map(command => machine.observe('exec', { command }, fail).attempt);
   assert.deepEqual(attempts, [1, 1, 1, 2], 'npm.cmd run build and npm run build are the same operation');
+});
+
+test('an unapproved stop after the consent point is reported as not approved', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'exit code 1', exitCode: 1 };
+  let decision = machine.observe('exec', { command: 'make' }, fail);
+  for (let i = 0; i < 3; i++) decision = machine.observe('exec', { command: 'make' }, fail);
+  assert.equal(decision.kind, 'stop');
+  assert.equal(decision.attempt, 4);
+  assert.match(recoveryUserMessage(decision, 'exec'), /not approved/);
+  machine.observe('exec', { command: 'make' }, fail);
+  const final = machine.observe('exec', { command: 'make' }, fail);
+  assert.equal(final.attempt, 6);
+  assert.match(recoveryUserMessage(final, 'exec'), /still failed after 6 attempts/);
 });
 
 test('rate limits demand backoff immediately while retaining the consent boundary', () => {

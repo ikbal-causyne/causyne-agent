@@ -13,7 +13,8 @@ export function recoveryUserMessage(decision, tool) {
     if (decision.kind === 'human') {
         return `${tool} needs approval or authentication. Review the last tool error, then provide the needed access or choose another route. No success is claimed.`;
     }
-    if (decision.attempt <= TIME_MACHINE_CONSENT_AT && decision.kind === 'stop') {
+    // A stop before the hard maximum only happens when further attempts were not approved.
+    if (decision.attempt < TIME_MACHINE_MAX_ATTEMPTS && decision.kind === 'stop') {
         return `${tool} failed ${decision.attempt} times (${decision.failureClass}) and more attempts were not approved. The task stopped without verified success.`;
     }
     return `${tool} still failed after ${decision.attempt} attempts (${decision.failureClass}). The task stopped without verified success.`;
