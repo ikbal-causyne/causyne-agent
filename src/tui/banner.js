@@ -407,9 +407,14 @@ export function pickExample() {
 /** Drop complete hint fragments until the remaining line fits. */
 export function fitHints(parts, width, fallback) {
     const separator = '  ·  ';
+    if (!Number.isFinite(width))
+        return width === Number.POSITIVE_INFINITY ? parts.join(separator) : '';
+    const limit = Math.floor(width);
+    if (limit <= 0)
+        return '';
     const kept = parts.slice();
-    while (kept.length > 1 && kept.join(separator).length > width)
+    while (kept.length > 1 && kept.join(separator).length > limit)
         kept.pop();
     const line = kept.join(separator);
-    return line.length <= width ? line : fallback;
+    return line.length <= limit ? line : fallback;
 }

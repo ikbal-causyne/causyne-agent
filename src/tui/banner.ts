@@ -412,8 +412,11 @@ export function pickExample(): string {
 /** Drop complete hint fragments until the remaining line fits. */
 export function fitHints(parts: string[], width: number, fallback: string): string {
   const separator = '  ·  ';
+  if (!Number.isFinite(width)) return width === Number.POSITIVE_INFINITY ? parts.join(separator) : '';
+  const limit = Math.floor(width);
+  if (limit <= 0) return '';
   const kept = parts.slice();
-  while (kept.length > 1 && kept.join(separator).length > width) kept.pop();
+  while (kept.length > 1 && kept.join(separator).length > limit) kept.pop();
   const line = kept.join(separator);
-  return line.length <= width ? line : fallback;
+  return line.length <= limit ? line : fallback;
 }

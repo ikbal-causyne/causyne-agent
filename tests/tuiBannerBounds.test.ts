@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderBanner } from '../src/tui/banner.js';
+import { renderBanner, fitHints } from '../src/tui/banner.js';
 
 describe('banner bounds', () => {
   it('renderBanner does not emit ellipsis tail characters when available metadata width maxw <= 0', () => {
@@ -17,5 +17,12 @@ describe('banner bounds', () => {
 
     assert.equal(out.includes('…'), false);
     assert.equal(out.includes('~'), false);
+  });
+
+  it('fitHints returns empty string when width is non-finite or non-positive', () => {
+    assert.equal(fitHints(['/ commands', '@ files'], 0, 'ask anything'), '');
+    assert.equal(fitHints(['/ commands', '@ files'], -4, 'ask anything'), '');
+    assert.equal(fitHints(['/ commands', '@ files'], Number.NaN, 'ask anything'), '');
+    assert.equal(fitHints(['/ commands', '@ files'], Number.POSITIVE_INFINITY, 'ask anything'), '/ commands  ·  @ files');
   });
 });
