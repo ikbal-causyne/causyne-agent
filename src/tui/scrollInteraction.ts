@@ -112,11 +112,16 @@ export class AdaptiveWheelDampener {
   private recentBursts: Array<{ time: number; notches: number }> = [];
 
   constructor(options: WheelDampenerOptions = {}) {
-    this.minDamping = options.minDamping ?? 0.28;
-    this.thresholdMs = options.thresholdMs ?? 85;
-    this.minTickInterval = options.minTickInterval ?? 6;
-    this.burstWindowMs = options.burstWindowMs ?? 120;
-    this.maxBurstNotches = options.maxBurstNotches ?? 5.0;
+    const finiteNonNeg = (value: number | undefined, fallback: number): number =>
+      value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
+    const rawMinDamping = options.minDamping;
+    this.minDamping = rawMinDamping !== undefined && Number.isFinite(rawMinDamping)
+      ? Math.min(1, Math.max(0, rawMinDamping))
+      : 0.28;
+    this.thresholdMs = finiteNonNeg(options.thresholdMs, 85);
+    this.minTickInterval = finiteNonNeg(options.minTickInterval, 6);
+    this.burstWindowMs = finiteNonNeg(options.burstWindowMs, 120);
+    this.maxBurstNotches = finiteNonNeg(options.maxBurstNotches, 5.0);
   }
 
   /**

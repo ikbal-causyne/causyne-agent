@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleScrollbarMouse } from '../src/tui/scrollInteraction.js';
+import { handleScrollbarMouse, AdaptiveWheelDampener } from '../src/tui/scrollInteraction.js';
 
 describe('scrollInteraction finite bounds', () => {
   it('handleScrollbarMouse ignores non-finite mouse coordinates and non-finite terminal dimensions', () => {
@@ -71,5 +71,25 @@ describe('scrollInteraction finite bounds', () => {
     assert.equal(scrollToCalls.length, 1);
     assert.equal(Number.isFinite(scrollToCalls[0]), true);
     assert.equal(drawCalls, 1);
+  });
+
+  it('AdaptiveWheelDampener guards non-finite constructor options without poisoning computeNotches or stepRows', () => {
+    const dampener = new AdaptiveWheelDampener({
+      minDamping: Number.NaN,
+      thresholdMs: Number.NaN,
+      minTickInterval: Number.NaN,
+      burstWindowMs: Number.NaN,
+      maxBurstNotches: Number.POSITIVE_INFINITY
+    });
+
+    assert.equal(dampener.computeNotches('down', 1000), 1.0);
+    const second = dampener.computeNotches('down', 1020);
+    assert.equal(Number.isFinite(second), true);
+    assert.ok(second > 0 && second <= 1.0);
+
+    const rows = dampener.stepRows('down', 3, 1040);
+    assert.equal(Number.isFinite(rows), true);
+    const followUp = dampener.stepRows('down', 3, 1060);
+    assert.equal(Number.isFinite(followUp), true);
   });
 });
