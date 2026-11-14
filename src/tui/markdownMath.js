@@ -134,6 +134,8 @@ const SUPERSCRIPT_DIGITS = {
  * Convert the interior of a LaTeX math expression into readable terminal text.
  */
 export function renderLatexExpression(rawExpr) {
+    if (typeof rawExpr !== 'string')
+        return '';
     let out = rawExpr.trim();
     if (!out)
         return '';
@@ -174,7 +176,7 @@ export function renderLatexExpression(rawExpr) {
         if (FUNCTION_MACROS.has(name)) {
             return name + (trailingSpace || '');
         }
-        const sym = GREEK_AND_SYMBOLS[name];
+        const sym = Object.hasOwn(GREEK_AND_SYMBOLS, name) ? GREEK_AND_SYMBOLS[name] : undefined;
         if (sym !== undefined) {
             // Preserve a space if the symbol is a binary relation/operator and had trailing space,
             // or if the next character would otherwise run into an operator.
@@ -230,11 +232,12 @@ function isLikelyInlineMath(inner) {
  * links have already been stashed).
  */
 export function formatMarkdownMath(text) {
-    if (!text || (!text.includes('$') && !text.includes('\\')))
-        return text;
+    if (typeof text !== 'string' || !text || (!text.includes('$') && !text.includes('\\'))) {
+        return typeof text === 'string' ? text : '';
+    }
     let out = text;
-    // 1. Display math $$...$$
-    out = out.replace(/\$\$((?:[^$]|\\\$)+?)\$\$/g, (_m, expr) => renderLatexExpression(expr));
+    // 1. Display math $$...$$ (disjoint alternation prevents polynomial ReDoS)
+    out = out.replace(/\$\$((?:[^$\\]|\\[\s\S]|\$(?!\$))+?)\$\$/g, (_m, expr) => renderLatexExpression(expr));
     // 2. Explicit LaTeX delimiters \[...\] and \(...\)
     out = out.replace(/\\\[([\s\S]+?)\\\]/g, (_m, expr) => renderLatexExpression(expr));
     out = out.replace(/\\\(([\s\S]+?)\\\)/g, (_m, expr) => renderLatexExpression(expr));

@@ -253,3 +253,15 @@ test('sanitizeSequences drops orphan tool messages whose tool_call_id does not b
   assert.equal(cleaned[1]?.tool_call_id, 'call_a');
 });
 
+test('formatMarkdownMath ignores Object.prototype macro keys and avoids ReDoS on unclosed display delimiters', () => {
+  const protoText = formatMarkdownMath('$\\toString + \\constructor$');
+  assert.equal(protoText.includes('function'), false, 'prototype keys must not stringify functions into output');
+  assert.equal(protoText, '\\toString + \\constructor');
+
+  const start = Date.now();
+  const adversarial = '$$' + '\\'.repeat(4000) + '$$ $$' + 'a$'.repeat(400);
+  const out = formatMarkdownMath(adversarial);
+  assert.ok(Date.now() - start < 200, 'formatMarkdownMath must complete linearly without regex backtracking');
+  assert.equal(typeof out, 'string');
+});
+
