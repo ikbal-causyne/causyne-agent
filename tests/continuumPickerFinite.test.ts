@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildContinuumItems, openContinuumPreview } from '../src/continuum/ui/continuumPicker.js';
-import { ContinuumPickerLayer, renderContinuumWindow } from '../src/continuum/ui/continuumPickerView.js';
+import { ContinuumPickerLayer, renderContinuumWindow, sortContinuumItems } from '../src/continuum/ui/continuumPickerView.js';
 
 describe('continuumPicker bounds and sanitization', () => {
   it('buildContinuumItems handles non-finite updatedAt, non-finite messageCount, and trailing/Windows slashes in workspacePath', () => {
@@ -98,5 +98,37 @@ describe('continuumPicker bounds and sanitization', () => {
 
     const win = renderContinuumWindow(layer.list.filtered, Number.NaN, Number.NaN, Number.NaN, Number.NaN);
     assert.ok(Array.isArray(win.rows));
+  });
+
+  it('sortContinuumItems handles Infinity updatedAt and ContinuumPickerLayer.key recovers from NaN list.selected on pagedown', () => {
+    const items = buildContinuumItems([
+      {
+        id: 'b',
+        sourcePlatform: 'codex',
+        sourceLabel: 'Codex',
+        title: 'B',
+        workspacePath: '/ws',
+        updatedAt: Number.POSITIVE_INFINITY,
+        messageCount: 2,
+        snippet: ''
+      },
+      {
+        id: 'a',
+        sourcePlatform: 'codex',
+        sourceLabel: 'Codex',
+        title: 'A',
+        workspacePath: '/ws',
+        updatedAt: Number.POSITIVE_INFINITY,
+        messageCount: 2,
+        snippet: ''
+      }
+    ]);
+    const sorted = sortContinuumItems(items);
+    assert.deepEqual(sorted.map(i => i.value.id), ['a', 'b']);
+
+    const layer = new ContinuumPickerLayer({ sessions: sorted, onPick() {} });
+    layer.list.selected = Number.NaN;
+    layer.key({ name: 'pagedown' });
+    assert.equal(Number.isFinite(layer.list.selected), true);
   });
 });

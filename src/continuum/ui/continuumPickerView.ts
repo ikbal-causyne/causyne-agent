@@ -108,9 +108,11 @@ export function sortContinuumItems(items: ContinuumPickerItem[]): ContinuumPicke
   return [...items].sort((a, b) => {
     const groupA = order.get(a.value.sourcePlatform) ?? SOURCE_ORDER.length;
     const groupB = order.get(b.value.sourcePlatform) ?? SOURCE_ORDER.length;
+    const timeA = Number.isFinite(Number(a.value.updatedAt)) ? Number(a.value.updatedAt) : 0;
+    const timeB = Number.isFinite(Number(b.value.updatedAt)) ? Number(b.value.updatedAt) : 0;
     return groupA - groupB
-      || (Number(b.value.updatedAt) || 0) - (Number(a.value.updatedAt) || 0)
-      || a.value.id.localeCompare(b.value.id);
+      || timeB - timeA
+      || String(a.value.id ?? '').localeCompare(String(b.value.id ?? ''));
   });
 }
 
@@ -241,8 +243,9 @@ export class ContinuumPickerLayer extends SelectLayer {
     }
     if (event.name === 'pageup' || event.name === 'pagedown') {
       const direction = event.name === 'pageup' ? -1 : 1;
-      this.list.moveTo(this.list.selected + direction * Math.max(1, this.visibleItems - 1),
-        Math.max(1, this.visibleItems));
+      const curSelected = Number.isFinite(this.list.selected) ? Math.max(0, Math.floor(this.list.selected)) : 0;
+      const safeVisible = Number.isFinite(this.visibleItems) ? Math.max(1, Math.floor(this.visibleItems)) : 5;
+      this.list.moveTo(curSelected + direction * Math.max(1, safeVisible - 1), safeVisible);
       return 'handled';
     }
     const query = this.list.query;
