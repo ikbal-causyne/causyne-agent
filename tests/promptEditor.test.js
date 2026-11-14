@@ -61,6 +61,14 @@ describe('keys — decoding what a terminal actually sends', () => {
     assert.deepEqual({ x: events[2].mouse.x, y: events[2].mouse.y }, { x: 0, y: 0 });
   });
 
+  test('invalid UTF-8 lead or broken continuation byte never wedges subsequent ASCII keys', () => {
+    const decoder = new KeyDecoder();
+    const events = decoder.decode(Buffer.from([0xff, 0x61, 0xc3, 0x62]));
+    const chars = events.filter((e) => e.name === 'char').map((e) => e.text);
+    assert.equal(chars.includes('a'), true);
+    assert.equal(chars.includes('b'), true);
+  });
+
   test('a multi-byte character split across chunks is reassembled', () => {
     // stdin delivers whatever the OS gives it. Decoding each chunk eagerly turns
     // one emoji into replacement characters.

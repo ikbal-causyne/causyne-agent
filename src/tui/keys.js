@@ -64,11 +64,16 @@ function applyModifier(key, modifier) {
  */
 function utf8Length(buffer, offset) {
   const byte = buffer[offset];
-  let needed = 1;
-  if (byte >= 0xf0) needed = 4;
-  else if (byte >= 0xe0) needed = 3;
-  else if (byte >= 0xc0) needed = 2;
-  return offset + needed <= buffer.length ? needed : 0;
+  if (byte < 0x80) return 1;
+  // Continuation bytes, overlong C0/C1, and > U+10FFFF lead bytes (>= F5)
+  // are never valid multi-byte starts; consume one byte rather than wedging input.
+  if (byte < 0xc2 || byte > 0xf4) return 1;
+  const needed = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : 2;
+  for (let i = 1; i < needed; i++) {
+    if (offset + i >= buffer.length) return 0;
+    if ((buffer[offset + i] & 0xc0) !== 0x80) return 1;
+  }
+  return needed;
 }
 
 /**
@@ -311,20 +316,21 @@ export class KeyDecoder {
     const final = text[index];
     const params = text.slice(2, index);
     const sequence = text.slice(0, index + 1);
+    const byteLength = Buffer.byteLength(sequence, 'utf8');
     const numbers = params.split(/[;:]/).map((part) => parseInt(part, 10));
 
     // SGR mouse: ESC [ < b ; x ; y M|m. `<` is 0x3C, outside the @..~ final
     // range, so the scan above already found the right final byte.
     if ((final === 'M' || final === 'm') && params.startsWith('<')) {
       return this.emitMouse(params.slice(1).split(';').map((n) => parseInt(n, 10)),
-        final === 'M', sequence, events);
+        final === 'M', sequence, events, byteLength);
     }
 
     if (final === '~') {
       const name = CSI_TILDE_NAMES[numbers[0]];
       if (name) {
         events.push(applyModifier(makeKey(name, { sequence }), numbers[1]));
-        return sequence.length;
+        return byteLength;
       }
     } else if (final === 'u') {
       // Kitty keyboard protocol: ESC [ codepoint ; modifiers u
@@ -338,7 +344,7 @@ export class KeyDecoder {
       }[codepoint];
       if (controlName) {
         events.push(applyModifier(makeKey(controlName, { sequence }), numbers[1]));
-        return sequence.length;
+        return byteLength;
       }
       if (
         Number.isFinite(codepoint) &&
@@ -355,7 +361,7 @@ export class KeyDecoder {
         if (key.ctrl || key.alt) key.text = '';
         if (key.name === 'char' && !key.text) key.name = character.toLowerCase();
         events.push(key);
-        return sequence.length;
+        return byteLength;
       }
     } else if (CSI_FINAL_NAMES[final]) {
       const key = applyModifier(
@@ -365,13 +371,13 @@ export class KeyDecoder {
       // ESC [ Z is Shift+Tab and carries no modifier parameter of its own.
       if (final === 'Z') key.shift = true;
       events.push(key);
-      return sequence.length;
+      return byteLength;
     }
 
     // Unknown but well-formed: consume it so it can never reach the buffer as
     // literal text and corrupt the line the user is editing.
     events.push(makeKey('unknown', { sequence }));
-    return sequence.length;
+    return byteLength;
   }
 
   stepX10Mouse(buffer, offset, events) {
@@ -394,11 +400,11 @@ export class KeyDecoder {
    * reaching the line the user is editing, and naming it lets a caller act on
    * it later without another decoder change.
    */
-  emitMouse(numbers, pressed, sequence, events) {
+  emitMouse(numbers, pressed, sequence, events, byteLength = sequence.length) {
     const [code, column, row] = numbers;
     if (!Number.isFinite(code) || !Number.isFinite(column) || !Number.isFinite(row)) {
       events.push(makeKey('unknown', { sequence }));
-      return sequence.length;
+      return byteLength;
     }
 
     // Modifier bits live in the button code for mouse reports, not in a CSI
@@ -416,7 +422,7 @@ export class KeyDecoder {
       // A wheel report arrives as a press; there is no release to pair it with.
       if (pressed) {
         events.push(makeKey('wheel', { sequence, ...modifiers, wheel: { direction, ...at } }));
-        return sequence.length;
+        return byteLength;
       }
     }
 
@@ -424,7 +430,7 @@ export class KeyDecoder {
       sequence, ...modifiers,
       mouse: { button: code & 3, pressed, ...at }
     }));
-    return sequence.length;
+    return byteLength;
   }
 
   stepSS3(buffer, offset, events) {
