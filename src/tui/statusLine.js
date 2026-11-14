@@ -65,6 +65,10 @@ function shortModel(model) {
     const name = String(model || '').split('/').pop() || '';
     return name.length > 22 ? name.slice(0, 21) + GLYPHS.ellipsis : name;
 }
+function finiteWidth(width) {
+    const numeric = Number(width ?? 80);
+    return Number.isFinite(numeric) ? Math.floor(numeric) : 80;
+}
 export class StatusLine {
     model = '';
     provider = '';
@@ -109,7 +113,8 @@ export class StatusLine {
      * The idle footer: where you are, and how much context is left.
      */
     renderIdle({ width = 80, hint = '' } = {}) {
-        const budget = Math.max(10, width - 1);
+        const safeWidth = finiteWidth(width);
+        const budget = Math.max(10, safeWidth - 1);
         const meter = contextMeter(Math.round(this.contextChars / CHARS_PER_TOKEN), Math.round(this.contextLimit / CHARS_PER_TOKEN));
         const segments = [];
         if (meter)
@@ -130,7 +135,7 @@ export class StatusLine {
         const left = dim(where);
         if (!tail)
             return left;
-        const gap = Math.max(visibleWidth(separator), width - 1 - visibleWidth(left) - visibleWidth(tail));
+        const gap = Math.max(visibleWidth(separator), safeWidth - 1 - visibleWidth(left) - visibleWidth(tail));
         return `${left}${' '.repeat(gap)}${dim(tail)}`;
     }
     /**
@@ -152,12 +157,13 @@ export class StatusLine {
      * Build the line.
      */
     render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick } = {}) {
+        const safeWidth = finiteWidth(width);
         const head = spinnerFrame
             ? (typeof spinnerFrame === 'string' && spinnerFrame.includes('\x1b')
                 ? `${spinnerFrame} `
                 : `${paint('accent', spinnerFrame)} `)
             : '';
-        const budget = Math.max(10, width - visibleWidth(head) - 1);
+        const budget = Math.max(10, safeWidth - visibleWidth(head) - 1);
         const segments = [];
         if (elapsedMs > 0)
             segments.push(formatElapsed(elapsedMs));
@@ -205,7 +211,7 @@ export class StatusLine {
         const left = `${head}${styledBody}`;
         if (!tail)
             return left;
-        const gap = Math.max(visibleWidth(separator), width - 1 - visibleWidth(left) - visibleWidth(tail));
+        const gap = Math.max(visibleWidth(separator), safeWidth - 1 - visibleWidth(left) - visibleWidth(tail));
         return `${left}${' '.repeat(gap)}${dim(tail)}`;
     }
     /**
@@ -215,6 +221,6 @@ export class StatusLine {
         const parts = [safeDisplay(message)];
         if (this.model)
             parts.push(this.model);
-        return truncate(`${GLYPHS.dot} ${parts.join(`  ${GLYPHS.dot}  `)}`, width, GLYPHS.ellipsis);
+        return truncate(`${GLYPHS.dot} ${parts.join(`  ${GLYPHS.dot}  `)}`, finiteWidth(width), GLYPHS.ellipsis);
     }
 }
