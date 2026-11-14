@@ -62,14 +62,14 @@ function operationFamily(args: Record<string, unknown>): string {
   while (tokens.length > 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0] || '')) tokens.shift();
   const words = tokens.slice(0, 3);
   // Windows shims (`npm.cmd`, `bun.exe`) are the same tools as their bare names.
-  const executable = (words[0] || '').replace(/^.*[\\/]/, '').replace(/\.(cmd|exe|bat|ps1)$/i, '');
+  const executable = (words[0] || '').replace(/^.*[\\/]/, '').replace(/\.(cmd|exe|bat|ps1)$/i, '').toLowerCase();
   // Keep common verification commands distinct without retaining paths,
   // source text, environment variables, or credentials in the journal.
   if (/^(npm|pnpm|yarn|bun)$/.test(executable)) {
     // Script names are case-sensitive; a passing `build` cannot resolve `Build`.
     return [executable, ...words.slice(1, words[1] === 'run' ? 3 : 2)].join(' ');
   }
-  return (words[0] || '').replace(/^.*[\\/]/, '').toLowerCase().slice(0, 32);
+  return executable.slice(0, 32);
 }
 
 function issueKey(tool: string, args: Record<string, unknown>): string {

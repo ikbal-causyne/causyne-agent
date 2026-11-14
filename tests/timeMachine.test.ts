@@ -319,6 +319,16 @@ test('Windows package manager shims keep distinct scripts in separate retry budg
   assert.deepEqual(attempts, [1, 1, 1, 2], 'npm.cmd run build and npm run build are the same operation');
 });
 
+test('uppercase Windows shims and non-manager executables share budgets with bare names', () => {
+  const machine = new TimeMachine();
+  const fail = { success: false, error: 'exit code 1', exitCode: 1 };
+  assert.equal(machine.observe('exec', { command: 'NPM.CMD run build' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { command: 'NPM.CMD run lint' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { command: 'npm run build' }, fail).attempt, 2);
+  assert.equal(machine.observe('exec', { command: 'C:\\Python\\pytest.exe tests/a.py' }, fail).attempt, 1);
+  assert.equal(machine.observe('exec', { command: 'pytest tests/a.py' }, fail).attempt, 2);
+});
+
 test('an unapproved stop after the consent point is reported as not approved', () => {
   const machine = new TimeMachine();
   const fail = { success: false, error: 'exit code 1', exitCode: 1 };
