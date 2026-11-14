@@ -50,9 +50,10 @@ export function formatCost(value) {
     return `$${n.toFixed(2)}`;
 }
 export function formatElapsed(ms) {
-    const total = Math.max(0, Math.round(ms / 1000));
+    const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+    const total = Math.round(safeMs / 1000);
     if (total < 60)
-        return `${(ms / 1000).toFixed(1)}s`;
+        return `${(safeMs / 1000).toFixed(1)}s`;
     const minutes = Math.floor(total / 60);
     const seconds = total % 60;
     if (minutes < 60)
