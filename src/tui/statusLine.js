@@ -105,6 +105,8 @@ export class StatusLine {
     }
     /** Session-lifetime facts, set once from the same info as the header. */
     setSession(info = {}) {
+        if (!info || typeof info !== 'object')
+            return this;
         if (info.model !== undefined)
             this.model = shortModel(info.model);
         if (info.provider !== undefined)
