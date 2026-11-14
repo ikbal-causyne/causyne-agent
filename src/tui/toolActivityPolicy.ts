@@ -34,7 +34,13 @@ export function compactSuccessfulToolResult(
   if (tail.meta.step !== stepCount || String(tail.meta.tool ?? '') !== String(toolName ?? '')) return false;
 
   for (const [key, value] of Object.entries(record)) {
-    if (METADATA_ONLY.has(key)) continue;
+    if (METADATA_ONLY.has(key)) {
+      if ((key === 'exitCode' || key === 'exit_code') && value != null
+          && (typeof value !== 'number' || !Number.isFinite(value) || value !== 0)) return false;
+      if ((key === 'statusCode' || key === 'status_code') && value != null
+          && (typeof value !== 'number' || !Number.isFinite(value) || value < 200 || value >= 400)) return false;
+      continue;
+    }
     if (value == null || value === '' || (Array.isArray(value) && value.length === 0)) continue;
     return false;
   }
