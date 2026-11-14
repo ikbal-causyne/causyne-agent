@@ -78,4 +78,15 @@ describe('overlay bounds and sanitization', () => {
     const fallbackRect = layer.rect(null as any);
     assert.ok(fallbackRect.width > 0 && fallbackRect.height > 0);
   });
+
+  it('panelRows guards missing preferredHeight, body, and nullish layer', () => {
+    const fallbackRows = panelRows({
+      title: 'Minimal',
+      body: () => ['hello']
+    } as any, 30, 8);
+    assert.ok(fallbackRows.length >= 3);
+    assert.ok(fallbackRows.some(r => r.includes('hello')));
+    const bare = panelRows(null as any, 20, 5);
+    assert.equal(bare.length, 3);
+  });
 });

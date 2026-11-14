@@ -249,8 +249,9 @@ export class OverlayStack {
  * opaque surface background and legible header/footer typography.
  */
 export function panelRows(layer, width, maxHeight) {
+    const safeLayer = layer && typeof layer === 'object' ? layer : {};
     const safeWidth = Number.isFinite(width) ? Math.floor(width) : 8;
-    const rawPreferred = layer.preferredHeight();
+    const rawPreferred = typeof safeLayer.preferredHeight === 'function' ? safeLayer.preferredHeight() : 3;
     const preferred = Number.isFinite(rawPreferred) ? Math.floor(rawPreferred) : 3;
     const safeMaxHeight = Number.isFinite(maxHeight)
         ? Math.floor(maxHeight)
@@ -258,20 +259,20 @@ export function panelRows(layer, width, maxHeight) {
     const frameWidth = Math.max(8, safeWidth);
     const inner = frameWidth - 4; // two borders, one pad each side
     const bodyHeight = Math.max(1, Math.min(preferred, safeMaxHeight) - 2);
-    const rawBody = layer.body(inner, bodyHeight);
+    const rawBody = typeof safeLayer.body === 'function' ? safeLayer.body(inner, bodyHeight) : [];
     const body = Array.isArray(rawBody) ? rawBody : [];
-    const borderRole = layer.borderRole || 'rule';
-    const surfaceRole = layer.surfaceRole || 'surface';
+    const borderRole = safeLayer.borderRole || 'rule';
+    const surfaceRole = safeLayer.surfaceRole || 'surface';
     const line = FRAME.h.repeat(frameWidth - 2);
     let top = paint(borderRole, FRAME.tl + line + FRAME.tr);
-    const cleanTitle = cleanSingleLine(layer.title || '').trim();
+    const cleanTitle = cleanSingleLine(safeLayer.title || '').trim();
     if (cleanTitle) {
         const label = ` ${truncate(cleanTitle, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
         const trail = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
         top = paint(borderRole, FRAME.tl + FRAME.h) + bold(paint('ink', label)) + paint(borderRole, trail + FRAME.tr);
     }
     let bottom = paint(borderRole, FRAME.bl + line + FRAME.br);
-    const cleanFooter = cleanSingleLine(layer.footer || '').trim();
+    const cleanFooter = cleanSingleLine(safeLayer.footer || '').trim();
     if (cleanFooter) {
         const label = ` ${truncate(cleanFooter, Math.max(0, inner - 4), GLYPHS.ellipsis)} `;
         const lead = FRAME.h.repeat(Math.max(0, frameWidth - 3 - visibleWidth(label)));
