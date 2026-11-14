@@ -87,16 +87,22 @@ export class MessageActionsLayer extends Layer {
   override preferredHeight(): number { return this.items.length + 2; }
 
   preferredWidth(maxWidth: number): number {
+    const safeMax = Number.isFinite(maxWidth)
+      ? Math.floor(maxWidth)
+      : maxWidth === Number.POSITIVE_INFINITY
+        ? Number.POSITIVE_INFINITY
+        : 64;
     const maxItemContent = this.items.reduce((max, item) => {
       const labelW = visibleWidth(`▸ ${item.label}`);
       const descW = item.description ? visibleWidth(item.description) + 4 : 0;
       return Math.max(max, labelW + descW);
     }, 0);
     const wanted = Math.max(48, maxItemContent + 6);
-    return Math.max(36, Math.min(maxWidth, wanted));
+    return Math.max(36, Math.min(safeMax, wanted));
   }
 
   override body(width: number): string[] {
+    const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 60;
     const labelWidth = this.items.reduce(
       (max, item) => Math.max(max, visibleWidth(`▸ ${item.label}`)),
       0
@@ -108,11 +114,11 @@ export class MessageActionsLayer extends Layer {
       const styledLabel = selected
         ? `${paint('accent', bold(rawLabel))}${pad}`
         : `${paint('ink', rawLabel)}${pad}`;
-      const descBudget = Math.max(0, width - labelWidth - 2);
+      const descBudget = Math.max(0, safeWidth - labelWidth - 2);
       const description = item.description && descBudget > 3
         ? `  ${dim(truncate(item.description, descBudget, '…'))}`
         : '';
-      return truncate(`${styledLabel}${description}`, width, '…');
+      return truncate(`${styledLabel}${description}`, safeWidth, '…');
     });
   }
 

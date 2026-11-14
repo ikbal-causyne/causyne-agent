@@ -48,4 +48,19 @@ describe('messageInteraction finite bounds', () => {
     layer.list.moveTo(0.9);
     assert.equal(layer.list.selected, 0);
   });
+
+  it('MessageActionsLayer.preferredWidth and body guard non-finite widths cleanly', () => {
+    const layer = new MessageActionsLayer(
+      [{ label: 'Copy message', description: 'to clipboard', value: 'copy' }],
+      () => {}
+    );
+
+    const w = layer.preferredWidth(Number.NaN);
+    assert.equal(Number.isFinite(w), true);
+    assert.ok(w >= 36);
+
+    const rows = layer.body(Number.NaN);
+    assert.equal(rows.length, 1);
+    assert.ok(rows[0].includes('Copy'));
+  });
 });
