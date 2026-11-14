@@ -83,8 +83,13 @@ function smoothstep(t: number): number {
   return x * x * (3 - 2 * x);
 }
 
+function clampRotorRange(value: number | undefined, min: number, max: number, fallback: number): number {
+  const numeric = Number(value ?? fallback);
+  return Number.isFinite(numeric) ? Math.max(min, Math.min(max, Math.floor(numeric))) : fallback;
+}
+
 export function getAngle(elapsedMs: number, motion: RotorMotion = 'heavy'): number {
-  const t = Math.max(0, elapsedMs);
+  const t = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0;
   if (motion === 'smooth') return (t / 4200) * TAU;
   if (motion === 'pulse') {
     const cycle = t / 1000;
@@ -129,8 +134,8 @@ export function renderCausyneRotor(
   elapsedMs: number,
   options: RotorOptions = {},
 ): string {
-  const columns = Math.max(12, Math.min(56, Math.floor(options.columns ?? 24)));
-  const rows = Math.max(6, Math.min(28, Math.floor(options.rows ?? 12)));
+  const columns = clampRotorRange(options.columns, 12, 56, 24);
+  const rows = clampRotorRange(options.rows, 6, 28, 12);
   const color = options.color ?? true;
   const angle = getAngle(elapsedMs, options.motion ?? 'heavy');
   const blades = Array.from({ length: 6 }, (_, i) => {
