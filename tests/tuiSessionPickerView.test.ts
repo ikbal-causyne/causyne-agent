@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionPickerLayer, renderSessionRows } from '../src/tui/sessionPickerView.js';
+import { stripAnsi } from '../src/tui/text.js';
 
 const sampleItem = () => ({
   id: 's-1',
@@ -50,5 +51,32 @@ describe('sessionPickerView bounds', () => {
     const narrowRows = layer.body(14, 10);
     const inputRow = narrowRows[1] ?? '';
     assert.equal(Buffer.from(inputRow, 'utf8').toString('utf8'), inputRow);
+  });
+
+  it('omits dangling separator for non-finite updatedAt/messageCount and sanitizes NaN selected/offset', () => {
+    const badItem = {
+      ...sampleItem(),
+      value: {
+        ...sampleItem().value,
+        messageCount: Number.NaN,
+        updatedAt: Number.NaN,
+        isCurrent: true
+      }
+    };
+    const rendered = renderSessionRows([{ item: badItem }], 0, 0, 80, 5);
+    const plain = rendered.rows.map(stripAnsi).join('\n');
+    assert.doesNotMatch(plain, /\bNaN\b/);
+    assert.match(plain, /0 msgs\s+ACTIVE/);
+
+    const layer = new SessionPickerLayer({
+      items: [sampleItem()],
+      currentWorkspace: '/tmp/ws',
+      activeId: 's-1',
+      onPick() {}
+    });
+    layer.list.selected = Number.NaN;
+    layer.list.offset = Number.NaN;
+    layer.body(80, 18);
+    assert.equal(Number.isFinite(layer.list.offset), true);
   });
 });

@@ -64,9 +64,13 @@ function actionOrSessionText(item: SessionPickerItem, selected: boolean, width: 
   const marker = selected ? paint('accent', GLYPHS.arrow) : ' ';
   const leftPrefix = ` ${marker} `;
   const rawName = itemTitle(item);
+  const rawMsgs = Number(item.value.messageCount);
+  const safeMsgs = Number.isFinite(rawMsgs) ? Math.max(0, Math.floor(rawMsgs)) : 0;
+  const timeText = shortTime(item);
+  const metaCore = timeText ? `${safeMsgs} msgs  ${GLYPHS.dot}  ${timeText}` : `${safeMsgs} msgs`;
   const right = isAction
     ? dim(item.value.type === 'new' ? 'create' : 'branch')
-    : dim(`${item.value.messageCount ?? 0} msgs  ${GLYPHS.dot}  ${shortTime(item)}${item.value.isCurrent ? '  ACTIVE' : ''}`);
+    : dim(`${metaCore}${item.value.isCurrent ? '  ACTIVE' : ''}`);
   const available = Math.max(1, width - visibleWidth(leftPrefix) - 1);
   // Keep titles legible on small terminals instead of allowing metadata to eat them.
   const showMeta = available >= 42;
@@ -220,8 +224,10 @@ export class SessionPickerLayer extends SelectLayer {
         if (rows.length < h - INNER_DETAIL_ROWS) rows.push(dim('  No sessions match this search.'));
         if (rows.length < h - INNER_DETAIL_ROWS) rows.push(dim('  Try another title, ID, or workspace.'));
       } else {
-        const selected = Math.max(0, Math.min(this.list.selected, entries.length - 1));
-        let start = Math.max(0, Math.min(this.list.offset, selected));
+        const rawSel = Number.isFinite(this.list.selected) ? Math.floor(this.list.selected) : 0;
+        const rawOff = Number.isFinite(this.list.offset) ? Math.floor(this.list.offset) : 0;
+        const selected = Math.max(0, Math.min(rawSel, entries.length - 1));
+        let start = Math.max(0, Math.min(rawOff, selected));
         let output = renderSessionRows(entries, start, selected, w, available);
         while (output.lastIndex < selected && start < selected) {
           start++;
