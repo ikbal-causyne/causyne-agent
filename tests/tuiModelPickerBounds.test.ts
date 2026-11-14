@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ModelPickerLayer,
   buildModelPickerItems,
+  runInteractiveModelPicker,
   type ProviderOverview
 } from '../src/tui/modelPicker.js';
 
@@ -72,5 +73,53 @@ describe('modelPicker finite bounds', () => {
     assert.ok(Number.isFinite(layer.list.selected));
     assert.ok(Number.isFinite(layer.list.offset));
     assert.ok(layer.list.offset >= 0);
+  });
+
+  it('runInteractiveModelPicker preserves selected OpenRouter modelId when saving a new API key', async () => {
+    const prevEnvKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      let storedConfig: Record<string, any> = { provider: 'antigravity', model: 'Gemini 3.8 Flash (Low)' };
+      const mockStore = {
+        loadConfig: () => ({ ...storedConfig }),
+        saveConfig: (c: Record<string, any>) => {
+          storedConfig = { ...c };
+        }
+      };
+      const mockLoop: any = { config: { ...storedConfig } };
+      const mockPrompt = {
+        openLayer(layer: any) {
+          if (layer instanceof ModelPickerLayer) {
+            layer.onPick({
+              id: 'free-r1',
+              label: 'deepseek/deepseek-r1:free',
+              category: 'FREE',
+              description: '',
+              value: {
+                type: 'free',
+                providerId: 'openrouter',
+                modelId: 'deepseek/deepseek-r1:free',
+                providerLabel: 'OpenRouter Free',
+                installed: true,
+                isCurrent: false,
+                isConfigured: false
+              }
+            });
+          } else if (typeof layer.onSubmit === 'function') {
+            layer.onSubmit('test-openrouter-placeholder-token');
+          }
+        }
+      };
+
+      const msg = await runInteractiveModelPicker(mockPrompt, mockStore, {
+        loop: mockLoop
+      });
+      assert.match(msg, /deepseek\/deepseek-r1:free/);
+      assert.equal(storedConfig.provider, 'openrouter');
+      assert.equal(storedConfig.model, 'deepseek/deepseek-r1:free');
+      assert.equal(mockLoop.config.model, 'deepseek/deepseek-r1:free');
+    } finally {
+      if (prevEnvKey !== undefined) process.env.OPENROUTER_API_KEY = prevEnvKey;
+    }
   });
 });

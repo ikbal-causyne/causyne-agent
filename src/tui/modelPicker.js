@@ -557,6 +557,10 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
                 const { apiKey } = await startLoopbackAuth({ timeoutMs: 120_000, openBrowser: true });
                 saveOpenRouterKey(apiKey, { setAsActive: true, store });
                 const updatedConfig = store.loadConfig();
+                if (target.modelId && updatedConfig.model !== target.modelId) {
+                    updatedConfig.model = target.modelId;
+                    store.saveConfig(updatedConfig);
+                }
                 if (options.loop) {
                     options.loop.config = updatedConfig;
                     if (typeof options.loop.updateTierLimits === 'function') {
@@ -587,6 +591,10 @@ export async function runInteractiveModelPicker(prompt, store = { loadConfig, sa
         await showConfiguringAnimation('OpenRouter', prompt);
         saveOpenRouterKey(cleanInput, { setAsActive: true, store });
         const updatedConfig = store.loadConfig();
+        if (target.modelId && updatedConfig.model !== target.modelId) {
+            updatedConfig.model = target.modelId;
+            store.saveConfig(updatedConfig);
+        }
         if (options.loop) {
             options.loop.config = updatedConfig;
             if (typeof options.loop.updateTierLimits === 'function') {
