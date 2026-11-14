@@ -72,7 +72,7 @@ export function placeMessageActionPanel(viewportRows, panel, contentWidth, stage
     else {
         targetY = opticalCenterY;
     }
-    const y = Math.max(0, Math.min(maxAllowedY, Number.isFinite(targetY) ? targetY : opticalCenterY));
+    const y = Math.max(0, Math.min(maxAllowedY, Number.isFinite(targetY) ? Math.floor(targetY) : opticalCenterY));
     const shouldDim = options?.dimBackdrop === true;
     const rows = viewportRows.slice();
     for (let r = 0; r < rows.length; r++) {

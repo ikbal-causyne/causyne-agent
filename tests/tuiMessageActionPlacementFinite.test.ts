@@ -22,4 +22,11 @@ describe('placeMessageActionPanel finite bounds', () => {
     assert.equal(Number.isFinite(withNaNBounds.layout.y), true);
     assert.ok(withNaNBounds.rows.some(row => row.includes('| ok |')));
   });
+
+  it('floors fractional anchorY so panel rows index cleanly and stay non-blank', () => {
+    const placed = placeMessageActionPanel(viewport, panel, 60, 0, 5.7, 1);
+    assert.ok(placed.layout);
+    assert.equal(Number.isInteger(placed.layout.y), true);
+    assert.ok(placed.rows.some(row => row.includes('| ok |')));
+  });
 });

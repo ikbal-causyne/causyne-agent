@@ -98,7 +98,7 @@ export function placeMessageActionPanel(
     targetY = opticalCenterY;
   }
 
-  const y = Math.max(0, Math.min(maxAllowedY, Number.isFinite(targetY) ? targetY : opticalCenterY));
+  const y = Math.max(0, Math.min(maxAllowedY, Number.isFinite(targetY) ? Math.floor(targetY) : opticalCenterY));
   const shouldDim = options?.dimBackdrop === true;
   const rows = viewportRows.slice();
 
