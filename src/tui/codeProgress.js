@@ -354,7 +354,9 @@ export function renderCodeProgress(event, width, modelNote = '', startLine) {
         rows.push(truncate(`model note: ${safeDisplay(modelNote)}`, inner));
     const codeLines = previewLines(event);
     const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
-    const start = startLine === undefined ? defaultPreviewStart(event) : Math.max(0, Math.min(Math.floor(startLine), maxStart));
+    const start = startLine === undefined || !Number.isFinite(startLine)
+        ? defaultPreviewStart(event)
+        : Math.max(0, Math.min(Math.floor(startLine), maxStart));
     const visible = codeLines.slice(start, start + CODE_PANEL_LINES);
     if (visible.length) {
         rows.push('');

@@ -24,4 +24,15 @@ describe('codeProgress finite bounds', () => {
       assert.equal(visibleWidth(tinyRows[0]!), 12);
     });
   });
+
+  it('renderCodeProgress falls back to defaultPreviewStart when startLine is non-finite', () => {
+    const event = codeProgressFromAction('fs_write', {
+      path: 'src/app.ts',
+      content: 'export const alpha = 1;\nexport const beta = 2;\n'
+    });
+    assert.ok(event);
+    const nanStart = renderCodeProgress(event, 80, '', Number.NaN).join('\n');
+    assert.match(nanStart, /export const alpha = 1;/);
+    assert.doesNotMatch(nanStart, /\bNaN\b/);
+  });
 });
