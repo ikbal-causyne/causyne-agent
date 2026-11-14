@@ -28,6 +28,11 @@ test('session and MCP command feedback stays in dialogs', () => {
   });
   assert.equal(commandDialog('/mcp', { effect: 'pick-mcp' }), null);
   assert.equal(commandDialog('/help', { output: 'help' }), null);
+  assert.equal(commandDialog(null as unknown as string, null as unknown as { output: string }), null);
+  assert.deepEqual(
+    commandDialog('/mcp status', { title: '\x1b[2JMCP\nHeader', output: 'line1\x1b]0;pwn\x07\nline2' }),
+    { title: 'MCP Header', text: 'line1\nline2', danger: false }
+  );
 });
 
 test('a submitted multiline message is a single readable transcript frame', () => {

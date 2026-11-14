@@ -1,3 +1,5 @@
+import { safeDisplay } from './text.js';
+
 export interface CommandPresentationResult {
   ok?: boolean;
   effect?: string;
@@ -8,11 +10,16 @@ export interface CommandPresentationResult {
 /** Local session and MCP feedback belongs in a dialog, never a chat turn. */
 export function commandDialog(input: string, result: CommandPresentationResult):
   { title: string; text: string; danger: boolean } | null {
+  if (typeof input !== 'string' || !result || typeof result !== 'object') return null;
   const command = /^\/(sessions?|mcp)(?:\s|$)/iu.exec(input.trim())?.[1]?.toLowerCase();
   if (!command || ['silent', 'pick-session', 'pick-mcp', 'invoke-skill', 'exit'].includes(result.effect || '')) return null;
+  const defaultTitle = command === 'mcp' ? 'MCP servers' : 'Sessions';
+  const cleanTitle = typeof result.title === 'string'
+    ? safeDisplay(result.title).replace(/\s+/g, ' ').trim()
+    : '';
   return {
-    title: result.title || (command === 'mcp' ? 'MCP servers' : 'Sessions'),
-    text: result.output || '',
+    title: cleanTitle || defaultTitle,
+    text: typeof result.output === 'string' ? safeDisplay(result.output) : '',
     danger: result.ok === false
   };
 }
