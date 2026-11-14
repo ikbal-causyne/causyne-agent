@@ -182,7 +182,7 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
     ? `${data.sessionId.slice(0, 10)}…${data.sessionId.slice(-10)}`
     : data.sessionId;
   lines.push(
-    `${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${data.sessionTurns} messages)`)}`
+    `${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`
   );
 
   // 2. Context Window & Progress bar

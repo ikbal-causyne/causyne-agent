@@ -143,7 +143,7 @@ export function renderUsageCardRows(data, width) {
     const shortSession = data.sessionId.length > 24
         ? `${data.sessionId.slice(0, 10)}…${data.sessionId.slice(-10)}`
         : data.sessionId;
-    lines.push(`${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${data.sessionTurns} messages)`)}`);
+    lines.push(`${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`);
     // 2. Context Window & Progress bar
     const safePercentLeft = Number.isFinite(data.contextPercentLeft)
         ? Math.max(0, Math.min(100, data.contextPercentLeft))

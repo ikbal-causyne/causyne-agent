@@ -90,4 +90,14 @@ describe('usageCard renderProgressBar finite bounds', () => {
     const infText = renderUsageCardRows(infLimit, 80).join('\n');
     assert.doesNotMatch(infText, /Daily Budget/);
   });
+
+  it('renderUsageCardRows sanitizes non-finite sessionTurns cleanly', () => {
+    const data = {
+      ...sampleUsageData(),
+      sessionTurns: Number.NaN
+    };
+    const text = renderUsageCardRows(data, 80).join('\n');
+    assert.doesNotMatch(text, /\bNaN\b|Infinity/);
+    assert.match(text, /\(0 messages\)/);
+  });
 });
