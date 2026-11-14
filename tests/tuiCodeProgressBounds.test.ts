@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { StreamingCodePreview, NativeCodeObserver, codeProgressFromAction, renderCodeProgress } from '../src/tui/codeProgress.js';
+import {
+  StreamingCodePreview,
+  NativeCodeObserver,
+  codeProgressFromAction,
+  codePreviewLineCount,
+  defaultPreviewStart,
+  renderCodeProgress
+} from '../src/tui/codeProgress.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 
 describe('codeProgress finite bounds', () => {
@@ -94,5 +101,43 @@ describe('codeProgress finite bounds', () => {
       assert.ok(!row.includes('\x1b[2J'));
       assert.equal(visibleWidth(row), 60);
     }
+  });
+
+  it('ignores Object.prototype tool keys, guards nullish args/events and non-string chunks', () => {
+    assert.equal(codeProgressFromAction('constructor', { path: 'a.ts' }, 'p1'), null);
+    assert.equal(codeProgressFromAction('toString', { path: 'a.ts' }, 'p2'), null);
+
+    const nullArgs = codeProgressFromAction('fs_write', null as any, 'p3');
+    assert.ok(nullArgs);
+    assert.equal(nullArgs.description, 'Creating file');
+
+    assert.equal(codePreviewLineCount(null as any), 0);
+    assert.equal(defaultPreviewStart(null as any), 0);
+    assert.doesNotThrow(() => {
+      const obs = new NativeCodeObserver('/tmp', () => {});
+      obs.handle(null as any);
+      obs.dispose();
+    });
+
+    const stream = new StreamingCodePreview();
+    assert.equal(stream.accept(123 as any), null);
+
+    const nullRows = renderCodeProgress(null as any, 40);
+    assert.ok(nullRows.length >= 2);
+    assert.equal(visibleWidth(nullRows[0]!), 40);
+
+    const sgrRows = renderCodeProgress({
+      type: 'code_progress',
+      id: 'sgr-1',
+      phase: 'working',
+      operation: 'Creating',
+      description: 'Creating a.ts',
+      code: '\x1b[31munclosed',
+      source: 'tool'
+    }, 40);
+    const codeRow = sgrRows.find(r => stripAnsi(r).includes('unclosed'))!;
+    assert.ok(codeRow);
+    assert.equal(visibleWidth(codeRow), 40);
+    assert.ok(!codeRow.includes('\x1b[31m'));
   });
 });

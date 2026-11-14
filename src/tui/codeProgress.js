@@ -68,17 +68,18 @@ function previousCodeFromArgs(args) {
     return previous.length && previous.every(value => value !== undefined) ? previous.join('\n') : undefined;
 }
 export function codeProgressFromAction(tool, args, id, phase = 'working', source = 'tool') {
-    const operation = FILE_TOOLS[tool];
-    if (!operation)
+    if (typeof tool !== 'string' || !Object.hasOwn(FILE_TOOLS, tool))
         return null;
-    const path = stringField(args.path ?? args.Path ?? args.file_path ?? args.FilePath ?? args.AbsolutePath ?? args.TargetFile ?? args.source);
-    const destination = stringField(args.destination);
+    const operation = FILE_TOOLS[tool];
+    const safeArgs = args && typeof args === 'object' ? args : {};
+    const path = stringField(safeArgs.path ?? safeArgs.Path ?? safeArgs.file_path ?? safeArgs.FilePath ?? safeArgs.AbsolutePath ?? safeArgs.TargetFile ?? safeArgs.source);
+    const destination = stringField(safeArgs.destination);
     const label = path ? path.split(/[/\\]/).pop() || path : 'file';
     const description = operation === 'Moving' && destination
         ? `Moving ${label} to ${destination}`
         : `${operation} ${label}`;
-    const before = previousCodeFromArgs(args);
-    const code = codeFromArgs(args);
+    const before = previousCodeFromArgs(safeArgs);
+    const code = codeFromArgs(safeArgs);
     return {
         type: 'code_progress', id, phase, operation,
         ...(path ? { path } : {}), description,
@@ -91,7 +92,7 @@ export class StreamingCodePreview {
     lastSentAt = null;
     truncated = false;
     accept(chunk, now = Date.now()) {
-        if (!chunk)
+        if (!chunk || typeof chunk !== 'string')
             return null;
         this.buffer += chunk;
         if (this.buffer.length > MAX_STREAM_PREVIEW_CHARS) {
@@ -170,7 +171,7 @@ export class NativeCodeObserver {
         this.emit = emit;
     }
     handle(event) {
-        if (!event.path || !['Creating', 'Editing'].includes(event.operation))
+        if (!event || typeof event !== 'object' || !event.path || !['Creating', 'Editing'].includes(event.operation))
             return;
         if (event.code !== undefined || event.phase === 'failed') {
             this.stop(event.id);
@@ -220,7 +221,7 @@ export class NativeCodeObserver {
         });
     }
     dispose() {
-        for (const id of this.active.keys())
+        for (const id of [...this.active.keys()])
             this.stop(id);
     }
     stop(id) {
@@ -269,7 +270,7 @@ function splitCodeLines(code) {
     return lines;
 }
 function previewLines(event) {
-    if (event.code === undefined)
+    if (!event || typeof event !== 'object' || event.code === undefined)
         return [];
     // When creating or drafting code, every line is new code (addition).
     // Even if a previous file existed on disk, the action is Creating/Drafting.
@@ -336,6 +337,8 @@ export function codePreviewLineCount(event) {
     return previewLines(event).length;
 }
 export function defaultPreviewStart(event) {
+    if (!event || typeof event !== 'object')
+        return 0;
     const codeLines = previewLines(event);
     const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
     if (event.operation === 'Editing') {
@@ -366,19 +369,22 @@ function oneLineCodeText(value) {
 }
 /** Render a bounded, resize-safe panel. The terminal theme supplies rounded corners. */
 export function renderCodeProgress(event, width, modelNote = '', startLine) {
+    const safeEvent = event && typeof event === 'object'
+        ? event
+        : { type: 'code_progress', id: 'unknown', phase: 'working', operation: 'code', description: '', source: 'tool' };
     const safeWidth = Number.isFinite(width) ? Math.max(12, Math.floor(width)) : 80;
     const inner = safeWidth - 4;
-    const operation = oneLineCodeText(event.operation).toLowerCase() || 'code';
-    const title = `${event.phase === 'done' ? '✓ ' : event.phase === 'failed' ? '× ' : ''}code · ${operation}`;
-    const rows = [truncate(oneLineCodeText(event.description), inner)];
-    if (event.path)
-        rows.push(truncate(oneLineCodeText(event.path), inner));
+    const operation = oneLineCodeText(safeEvent.operation).toLowerCase() || 'code';
+    const title = `${safeEvent.phase === 'done' ? '✓ ' : safeEvent.phase === 'failed' ? '× ' : ''}code · ${operation}`;
+    const rows = [truncate(oneLineCodeText(safeEvent.description), inner)];
+    if (safeEvent.path)
+        rows.push(truncate(oneLineCodeText(safeEvent.path), inner));
     if (modelNote)
         rows.push(truncate(`model note: ${oneLineCodeText(modelNote)}`, inner));
-    const codeLines = previewLines(event);
+    const codeLines = previewLines(safeEvent);
     const maxStart = Math.max(0, codeLines.length - CODE_PANEL_LINES);
     const start = startLine === undefined || !Number.isFinite(startLine)
-        ? defaultPreviewStart(event)
+        ? defaultPreviewStart(safeEvent)
         : Math.max(0, Math.min(Math.floor(startLine), maxStart));
     const visible = codeLines.slice(start, start + CODE_PANEL_LINES);
     if (visible.length) {
@@ -388,8 +394,8 @@ export function renderCodeProgress(event, width, modelNote = '', startLine) {
         if (codeLines.length > CODE_PANEL_LINES) {
             rows.push(truncate(`lines ${start + 1}-${start + visible.length} of ${codeLines.length} · scroll over code`, inner));
         }
-        if (event.codeTruncated)
+        if (safeEvent.codeTruncated)
             rows.push(truncate('Earlier draft content exceeded the preview limit', inner));
     }
-    return panel(rows, { width: safeWidth, title, role: event.phase === 'failed' ? 'danger' : 'rule' });
+    return panel(rows, { width: safeWidth, title, role: safeEvent.phase === 'failed' ? 'danger' : 'rule' });
 }
