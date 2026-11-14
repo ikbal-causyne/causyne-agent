@@ -43,4 +43,22 @@ describe('overlay drawPanel finite bounds', () => {
       assert.equal(visibleWidth(fracRows[1]!), 20);
     });
   });
+
+  it('Layer.rect sanitizes non-finite and fractional viewport coordinates', () => {
+    const layer = new Layer({ title: 'T', width: 40, height: 10 });
+    const badRect = layer.rect({
+      x: Number.NaN,
+      y: Number.NaN,
+      width: Number.POSITIVE_INFINITY,
+      height: Number.NaN
+    });
+    assert.ok(Number.isFinite(badRect.x));
+    assert.ok(Number.isFinite(badRect.y));
+    assert.ok(Number.isFinite(badRect.width));
+    assert.ok(Number.isFinite(badRect.height));
+
+    const fracRect = layer.rect({ x: 1.8, y: 2.9, width: 80.7, height: 24.4 });
+    assert.equal(Number.isInteger(fracRect.width), true);
+    assert.equal(Number.isInteger(fracRect.height), true);
+  });
 });

@@ -134,13 +134,21 @@ export class Layer {
     preferredHeight() { return this.height; }
     /** Panel rect, centred and clamped to the viewport. */
     rect(viewport) {
-        const width = Math.min(this.width, Math.max(20, viewport.width - 4));
-        const wanted = Math.max(5, Math.min(this.preferredHeight(), this.height));
-        const height = Math.min(wanted, Math.max(5, viewport.height - 4));
+        const vx = Number.isFinite(viewport.x) ? Math.floor(viewport.x) : 0;
+        const vy = Number.isFinite(viewport.y) ? Math.floor(viewport.y) : 0;
+        const vw = Number.isFinite(viewport.width) ? Math.floor(viewport.width) : 80;
+        const vh = Number.isFinite(viewport.height) ? Math.floor(viewport.height) : 24;
+        const layerWidth = Number.isFinite(this.width) ? Math.floor(this.width) : 64;
+        const layerHeight = Number.isFinite(this.height) ? Math.floor(this.height) : 16;
+        const rawPreferred = this.preferredHeight();
+        const safePreferred = Number.isFinite(rawPreferred) ? Math.floor(rawPreferred) : layerHeight;
+        const width = Math.min(layerWidth, Math.max(20, vw - 4));
+        const wanted = Math.max(5, Math.min(safePreferred, layerHeight));
+        const height = Math.min(wanted, Math.max(5, vh - 4));
         return {
-            x: viewport.x + Math.floor((viewport.width - width) / 2),
+            x: vx + Math.floor((vw - width) / 2),
             // A quarter down reads as centred; dead centre sits visually too low.
-            y: viewport.y + Math.max(1, Math.floor((viewport.height - height) / 4)),
+            y: vy + Math.max(1, Math.floor((vh - height) / 4)),
             width,
             height
         };
