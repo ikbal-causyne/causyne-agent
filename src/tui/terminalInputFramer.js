@@ -22,6 +22,7 @@ export class TerminalInputFramer {
   }
 
   push(input) {
+    if (input == null) return [];
     const incoming = Buffer.isBuffer(input) ? input : Buffer.from(String(input), 'utf8');
     if (incoming.length === 0) return [];
     const bytes = this.pending.length ? Buffer.concat([this.pending, incoming]) : incoming;
@@ -66,6 +67,7 @@ const SGR = /\x1b\[[0-9;]*m/g;
  * regression test expects to arrive as a single multiline editor insertion.
  */
 export function shouldTreatAsAtomicPaste(raw, decoder) {
+  if (raw == null) return false;
   let text;
   if (typeof raw === 'string') text = raw;
   else {
@@ -91,8 +93,9 @@ export function shouldTreatAsAtomicPaste(raw, decoder) {
 
 /** Display a short, non-sensitive paste notification (not the pasted content). */
 export function pasteSummary(text) {
-  const lines = 1 + (text.match(/\n/g)?.length ?? 0);
-  const size = Buffer.byteLength(text, 'utf8');
+  const normalized = String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = 1 + (normalized.match(/\n/g)?.length ?? 0);
+  const size = Buffer.byteLength(normalized, 'utf8');
   const sizeLabel = size >= 1024 ? `${Math.round(size / 1024)} KiB` : `${size} B`;
   return `pasted ${lines} ${lines === 1 ? 'line' : 'lines'} · ${sizeLabel}`;
 }

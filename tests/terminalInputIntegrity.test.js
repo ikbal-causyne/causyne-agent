@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { TerminalInputFramer, shouldTreatAsAtomicPaste } from '../src/tui/terminalInputFramer.js';
+import { TerminalInputFramer, shouldTreatAsAtomicPaste, pasteSummary } from '../src/tui/terminalInputFramer.js';
 import { KeyDecoder, PASTE_START, PASTE_END } from '../src/tui/keys.js';
 import { ChatPrompt } from '../src/tui/prompt.js';
 import { normalizeClipboardText } from '../src/tui/chatboxClipboard.js';
@@ -138,4 +138,13 @@ test('unbracketed long UTF-8 input split during emoji remains byte-exact', () =>
   view.handleData(raw.subarray(-2));
   assert.equal(view.editor.getText(), original);
   assert.doesNotMatch(view.editor.getText(), /\uFFFD/);
+});
+
+test('framer.push and pasteSummary handle nullish input and CR/CRLF line endings', () => {
+  const framer = new TerminalInputFramer();
+  assert.deepEqual(framer.push(null), []);
+  assert.deepEqual(framer.push(undefined), []);
+  assert.equal(shouldTreatAsAtomicPaste(null, new KeyDecoder()), false);
+  assert.match(pasteSummary('a\r\nb\rc'), /^pasted 3 lines · \d+ B$/);
+  assert.equal(pasteSummary(null), 'pasted 1 line · 0 B');
 });
