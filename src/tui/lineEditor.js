@@ -22,6 +22,10 @@ function toCodePoints(text) {
   return Array.from(String(text == null ? '' : text));
 }
 
+function normalizeNewlines(text) {
+  return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 // A "word" for word-wise movement. Deliberately generous: an identifier, a
 // path segment and a flag should each move as one unit.
 const WORD_CHARACTER = /[\p{L}\p{N}_-]/u;
@@ -48,7 +52,7 @@ export class LineEditor {
   // -------------------------------------------------------------------------
 
   setText(text) {
-    this.lines = String(text == null ? '' : text).split('\n').map(toCodePoints);
+    this.lines = normalizeNewlines(text).split('\n').map(toCodePoints);
     if (this.lines.length === 0) this.lines = [[]];
     this.line = this.lines.length - 1;
     this.col = this.lines[this.line].length;
@@ -132,7 +136,7 @@ export class LineEditor {
   /** Insert text at the cursor. Embedded newlines split the line, as a paste does. */
   insert(text) {
     if (this.hasSelection) this.deleteSelection();
-    const normalized = String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const normalized = normalizeNewlines(text);
     const parts = normalized.split('\n');
     const current = this.lines[this.line];
     const before = current.slice(0, this.col);
@@ -213,8 +217,10 @@ export class LineEditor {
 
   moveTo(line, col, extend = false) {
     this._trackSelection(extend);
-    this.line = Math.max(0, Math.min(this.lines.length - 1, line));
-    this.col = Math.max(0, Math.min(this.lines[this.line].length, col));
+    const safeLine = Number.isFinite(line) ? Math.floor(line) : this.line;
+    const safeCol = Number.isFinite(col) ? Math.floor(col) : this.col;
+    this.line = Math.max(0, Math.min(this.lines.length - 1, safeLine));
+    this.col = Math.max(0, Math.min(this.lines[this.line].length, safeCol));
   }
 
   moveLeft(extend = false) {
@@ -355,7 +361,7 @@ export class LineEditor {
    * redraw leave debris on screen.
    */
   render(width, continuation = '') {
-    const usable = Math.max(8, width);
+    const usable = Number.isFinite(width) && width > 0 ? Math.max(8, Math.floor(width)) : 8;
     const rows = [];
     let cursorRow = 0;
     let cursorCol = 0;

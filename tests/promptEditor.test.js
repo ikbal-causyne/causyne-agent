@@ -180,6 +180,15 @@ describe('lineEditor — a buffer you can actually edit', () => {
     const layout = editor.render(10);
     assert.ok(layout.rows.length >= 2, 'CJK is double-width: six of them do not fit in ten columns');
   });
+
+  test('setText normalizes CRLF, moveTo and render guard non-finite coordinates', () => {
+    const editor = new LineEditor('one\r\ntwo\rthree');
+    assert.equal(editor.getText(), 'one\ntwo\nthree');
+    editor.moveTo(Number.NaN, Number.NaN);
+    assert.equal(Number.isFinite(editor.line) && Number.isFinite(editor.col), true);
+    const layout = editor.render(Number.NaN);
+    assert.equal(Number.isFinite(layout.cursorRow) && Number.isFinite(layout.cursorCol), true);
+  });
 });
 
 // ---------------------------------------------------------------------------
