@@ -22,12 +22,14 @@ export function startupDialogView(layer, columns, terminalRows) {
         preferredHeight: () => Math.max(10, layer.preferredHeight()),
         body: (innerWidth, bodyHeight) => layer.body(innerWidth, bodyHeight)
     };
-    const centered = centerRows(panelRows(measuredLayer, width, height), columns);
+    const centered = centerRows(panelRows(measuredLayer, width, height), availableWidth + 1);
     const cursor = layer.cursor;
+    const safeCursorY = cursor && Number.isFinite(cursor.y) ? Math.max(0, Math.floor(cursor.y)) : null;
+    const safeCursorX = cursor && Number.isFinite(cursor.x) ? Math.max(0, Math.floor(cursor.x)) : null;
     return {
         rows: centered.rows,
-        caretRow: cursor ? 1 + cursor.y : 0,
-        caretCol: centered.inset + (cursor ? 2 + cursor.x : 0)
+        caretRow: safeCursorY !== null ? 1 + safeCursorY : 0,
+        caretCol: centered.inset + (safeCursorX !== null ? 2 + safeCursorX : 0)
     };
 }
 /** Center a temporary dialog in the available terminal region. */

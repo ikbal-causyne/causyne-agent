@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { placeDialog, placeHome } from '../src/tui/homeView.js';
+import { placeDialog, placeHome, startupDialogView } from '../src/tui/homeView.js';
 
 describe('placeDialog', () => {
   it('never produces negative or NaN caret coordinates when rows are empty or inputs are non-finite', () => {
@@ -34,5 +34,26 @@ describe('placeDialog', () => {
     assert.equal(Number.isInteger(placed.caretRow), true);
     assert.equal(Number.isInteger(placed.caretCol), true);
     assert.equal(placed.caretCol, 8);
+  });
+
+  it('startupDialogView guards non-finite columns and non-finite or fractional cursor coordinates', () => {
+    const view = startupDialogView(
+      {
+        title: 'Test',
+        width: 40,
+        cursor: { x: Number.NaN, y: 1.9 },
+        preferredHeight: () => 12,
+        body: () => ['row 1', 'row 2']
+      },
+      Number.NaN,
+      Number.NaN
+    );
+
+    assert.ok(view.rows.length > 0);
+    assert.equal(Number.isFinite(view.caretRow), true);
+    assert.equal(Number.isFinite(view.caretCol), true);
+    assert.equal(Number.isInteger(view.caretRow), true);
+    assert.equal(Number.isInteger(view.caretCol), true);
+    assert.equal(view.caretRow, 2);
   });
 });
