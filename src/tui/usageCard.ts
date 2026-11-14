@@ -152,7 +152,8 @@ export async function collectUsageCardData(loop?: any): Promise<UsageCardData> {
  * Render the usage card as an array of styled terminal rows, exactly matching `width`.
  */
 export function renderUsageCardRows(data: UsageCardData, width: number): string[] {
-  const frameWidth = Math.max(40, width);
+  const safeWidth = Number.isFinite(width) ? Math.floor(width) : 80;
+  const frameWidth = Math.max(40, safeWidth);
   const innerWidth = Math.max(20, frameWidth - 4); // border (1) + pad (1) on each side
   const borderRole = 'accent';
   const surfaceRole = 'surface';
