@@ -5,7 +5,7 @@ import { HAS_COLOR } from './theme.js';
 function dimBackdropRow(row) {
     if (!row || !row.trim())
         return row;
-    return `\x1b[2m${row.replace(/\x1b\[0m/g, '\x1b[0m\x1b[2m')}\x1b[0m`;
+    return `\x1b[2m${row.replace(/\x1b\[(?:0|22)?m/g, '$&\x1b[2m')}\x1b[0m`;
 }
 /**
  * Overlay a message action menu in the transcript viewport with adaptive,
@@ -30,10 +30,12 @@ export function placeMessageActionPanel(viewportRows, panel, contentWidth, stage
     const opticalCenterY = Math.max(topMargin, Math.floor(maxAllowedY * 0.40));
     let targetY;
     if (options?.messageBounds) {
-        const startRow = Number.isFinite(options.messageBounds.startRow) ? options.messageBounds.startRow : 0;
-        const endRow = Number.isFinite(options.messageBounds.endRow) ? options.messageBounds.endRow : startRow;
-        const msgTop = Math.max(0, Math.min(totalRows - 1, startRow));
-        const msgBottom = Math.max(0, Math.min(totalRows - 1, endRow));
+        const startRow = Number.isFinite(options.messageBounds.startRow) ? Math.floor(options.messageBounds.startRow) : 0;
+        const endRow = Number.isFinite(options.messageBounds.endRow) ? Math.floor(options.messageBounds.endRow) : startRow;
+        const lo = Math.min(startRow, endRow);
+        const hi = Math.max(startRow, endRow);
+        const msgTop = Math.max(0, Math.min(totalRows - 1, lo));
+        const msgBottom = Math.max(0, Math.min(totalRows - 1, hi));
         const msgCenter = Math.floor((msgTop + msgBottom) / 2);
         // If message is near the bottom of viewport (bottom rows or starting below the max panel top):
         // Never squash the popup against the bottom composer! Float upward into the clear reading zone.

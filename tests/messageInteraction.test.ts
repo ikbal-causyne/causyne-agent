@@ -486,3 +486,22 @@ test('markerAt honors surface.env sidebar disablement on wide terminals and mark
   assert.ok(viewportRows[14]!.length > '   ┃ User line across wide screen'.length);
 });
 
+test('placeMessageActionPanel normalizes inverted messageBounds and re-applies dim after SGR 22m or short reset', () => {
+  const layer = new MessageActionsLayer([
+    { label: 'Copy message', description: 'to clipboard', value: 'copy' }
+  ], () => {}, 18);
+  const panel = panelRows(layer, 44, layer.preferredHeight());
+  const base = Array<string>(20).fill('Prefix \x1b[1mBold\x1b[22m Normal \x1b[m Tail');
+
+  // Inverted bounds (e.g. nextM.row - 1 < marker.row on an empty/collapsed frame at bottom row 18)
+  const placed = placeMessageActionPanel(base, panel, 80, 0, 18, 1, {
+    messageBounds: { startRow: 18, endRow: 17 },
+    dimBackdrop: true
+  });
+
+  assert.ok(placed.layout !== null);
+  assert.ok(placed.layout.y < 15, `Expected bottom inverted-bound message to float upward (< 15), got y=${placed.layout.y}`);
+  assert.match(placed.rows[0]!, /\x1b\[22m\x1b\[2m Normal \x1b\[m\x1b\[2m Tail/);
+});
+
+
