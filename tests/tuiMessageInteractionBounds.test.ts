@@ -29,4 +29,23 @@ describe('messageInteraction finite bounds', () => {
     assert.equal(fracHover, 'handled');
     assert.equal(layer.list.selected, 1);
   });
+
+  it('MessageActionsLayer.list.moveTo ignores non-finite indices and floors fractional indices', () => {
+    const layer = new MessageActionsLayer(
+      [
+        { label: 'Copy', description: '', value: 'copy' },
+        { label: 'Fork', description: '', value: 'fork' }
+      ],
+      () => {}
+    );
+
+    layer.list.moveTo(1);
+    assert.equal(layer.list.selected, 1);
+
+    layer.list.moveTo(Number.NaN);
+    assert.equal(layer.list.selected, 1);
+
+    layer.list.moveTo(0.9);
+    assert.equal(layer.list.selected, 0);
+  });
 });

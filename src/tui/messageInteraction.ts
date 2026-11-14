@@ -77,7 +77,10 @@ export class MessageActionsLayer extends Layer {
     this.list = {
       filtered: items,
       selected: 0,
-      moveTo: (index: number) => { this.list.selected = Math.max(0, Math.min(items.length - 1, index)); }
+      moveTo: (index: number) => {
+        if (!Number.isFinite(index) || items.length === 0) return;
+        this.list.selected = Math.max(0, Math.min(items.length - 1, Math.floor(index)));
+      }
     };
   }
 
