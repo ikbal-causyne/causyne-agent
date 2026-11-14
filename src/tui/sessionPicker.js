@@ -83,7 +83,18 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
             });
         }
     }
-    for (const s of [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const sortedSessions = [...sessions].sort((a, b) => {
+        const aValid = Number.isFinite(a.updatedAt);
+        const bValid = Number.isFinite(b.updatedAt);
+        if (!aValid && !bValid)
+            return 0;
+        if (!aValid)
+            return 1;
+        if (!bValid)
+            return -1;
+        return b.updatedAt === a.updatedAt ? 0 : b.updatedAt > a.updatedAt ? 1 : -1;
+    });
+    for (const s of sortedSessions) {
         // A session without any turns has no conversation to resume. Keep the
         // active one available, but do not fill the picker with abandoned starts.
         if (s.messageCount === 0 && s.id !== activeId)
