@@ -493,6 +493,17 @@ describe('the transcript is a model of frames, not a log of rows', () => {
     assert.deepEqual(t.slice(80, 8, 100), ['r8', 'r9'], 'clamped, not thrown');
     assert.equal(t.snapshot(80).length, 10);
   });
+
+  test('guards NaN maxFrames/width, splits CRLF/CR in produced rows, and handles nullish append/replaceTail', () => {
+    const t = new Transcript({ maxFrames: Number.NaN });
+    assert.equal(Number.isFinite(t.maxFrames) && t.maxFrames > 0, true);
+    assert.equal(t.append(null), null);
+    assert.equal(t.replaceTail(null), null);
+    let seenWidth = null;
+    t.append({ kind: 'notice', produce: (w) => { seenWidth = w; return ['a\r\nb\rc']; } });
+    assert.deepEqual(t.rows(Number.POSITIVE_INFINITY), ['a', 'b', 'c']);
+    assert.equal(Number.isFinite(seenWidth), true);
+  });
 });
 
 // ---------------------------------------------------------------------------

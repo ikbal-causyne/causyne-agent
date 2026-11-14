@@ -39,10 +39,10 @@ function normalizeRows(produced) {
   if (!Array.isArray(produced)) return [];
   const rows = [];
   for (const row of produced) {
-    const text = row == null ? '' : String(row);
-    // A frame may never contain a newline: the Stage paints with relative
-    // cursor motion only, and one embedded '\n' would scroll the terminal out
-    // from under the whole block. Split rather than drop, so nothing is lost.
+    const text = (row == null ? '' : String(row)).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // A frame may never contain a newline or carriage return: the Stage paints
+    // with relative cursor motion only, and an embedded '\n' or '\r' corrupts
+    // the terminal band. Split cleanly rather than drop, so nothing is lost.
     if (text.includes('\n')) rows.push(...text.split('\n'));
     else rows.push(text);
   }
@@ -50,9 +50,11 @@ function normalizeRows(produced) {
 }
 
 export class Transcript {
-  constructor({ maxFrames = MAX_FRAMES, onEvict = null, onChange = null } = {}) {
+  constructor(options = {}) {
+    const { maxFrames = MAX_FRAMES, onEvict = null, onChange = null } =
+      options && typeof options === 'object' ? options : {};
     this.frames = [];
-    this.maxFrames = Math.max(1, maxFrames);
+    this.maxFrames = Number.isFinite(maxFrames) ? Math.max(1, Math.floor(maxFrames)) : MAX_FRAMES;
     this.onEvict = typeof onEvict === 'function' ? onEvict : null;
     // Fired after any structural change. In scrollback mode the renderer's
     // onAfterWrite hook is what tells the prompt to repaint; in stage mode no
@@ -88,7 +90,9 @@ export class Transcript {
    * `produce` is called lazily and may be called again at a different width.
    * It must not mutate anything the caller will read later.
    */
-  append({ kind = 'notice', produce, meta = null } = {}) {
+  append(options = {}) {
+    const { kind = 'notice', produce, meta = null } =
+      options && typeof options === 'object' ? options : {};
     if (typeof produce !== 'function') return null;
     const frame = {
       id: this.nextId++,
@@ -114,7 +118,9 @@ export class Transcript {
    * tokens arrive, and appending a frame per token would make the rail useless
    * and the flatten quadratic.
    */
-  replaceTail({ kind, produce, meta } = {}) {
+  replaceTail(options = {}) {
+    const { kind, produce, meta } =
+      options && typeof options === 'object' ? options : {};
     const frame = this.frames[this.frames.length - 1];
     if (!frame || typeof produce !== 'function') return this.append({ kind, produce, meta });
     if (kind && KINDS.includes(kind)) frame.kind = kind;
@@ -189,7 +195,7 @@ export class Transcript {
    * unchanged transcript costs one comparison.
    */
   flatten(width) {
-    const w = Math.max(1, Math.floor(width) || 1);
+    const w = Number.isFinite(width) && width > 0 ? Math.max(1, Math.floor(width)) : this.lastWidth;
     if (this.cache && this.cache.width === w && this.cache.revision === this.revision) {
       return this.cache;
     }
