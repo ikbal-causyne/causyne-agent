@@ -209,11 +209,9 @@ export class StatusLine {
     const safeTick = tick !== undefined && Number.isFinite(tick) ? Math.floor(tick) : undefined;
 
     const maxTotal = Math.max(1, safeWidth - 1);
-    const rawHead = spinnerFrame
-      ? (typeof spinnerFrame === 'string' && spinnerFrame.includes('\x1b')
-          ? `${spinnerFrame} `
-          : `${paint('accent', oneLineDisplay(spinnerFrame))} `)
-      : '';
+    // Even a precolored frame may be supplied by a tool; render only
+    // sanitized glyphs so it cannot move the cursor or clear the screen.
+    const rawHead = spinnerFrame ? `${paint('accent', oneLineDisplay(spinnerFrame))} ` : '';
     const head = visibleWidth(rawHead) < maxTotal ? rawHead : '';
     const budget = Math.max(1, maxTotal - visibleWidth(head));
 
