@@ -163,16 +163,17 @@ function railGlyph(kind) {
  * settled.
  */
 export function scrollSettings(env = process.env, config = null) {
+  const safeEnv = env && typeof env === 'object' ? env : {};
   const tui = (config && typeof config === 'object' && config.tui) || {};
 
-  let speed = Number(env.CAUSYNE_SCROLL_SPEED);
+  let speed = Number(safeEnv.CAUSYNE_SCROLL_SPEED);
   if (!Number.isFinite(speed) || speed <= 0) speed = Number(tui.scrollSpeed);
   if (!Number.isFinite(speed) || speed <= 0) speed = DEFAULT_SCROLL_SPEED;
   // A wheel that moves half the screen per notch is not a preference, it is a
   // misconfiguration; clamp rather than obey it.
   speed = Math.min(speed, 20);
 
-  const raw = env.CAUSYNE_SCROLL_ACCEL;
+  const raw = safeEnv.CAUSYNE_SCROLL_ACCEL;
   const accelerate = raw !== undefined && raw !== ''
     ? raw === '1' || raw === 'true'
     : Boolean(tui.scrollAcceleration);
@@ -479,7 +480,7 @@ export class StageSurface {
       ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
       : mainWidth;
 
-    let block = promptRows;
+    let block = Array.isArray(promptRows) && promptRows.length > 0 ? promptRows : [''];
     let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
     let caretCol = caret ? caret.col : 0;
 
@@ -511,6 +512,7 @@ export class StageSurface {
       block = block.slice(cut);
       caretRow = Math.max(0, caretRow - cut);
     }
+    caretRow = Math.max(0, Math.min(block.length - 1, Math.floor(caretRow)));
 
     if (this.lastBlockLength > 0 && this.lastBlockLength !== block.length) {
       this.stage.invalidate();
@@ -801,7 +803,9 @@ export class StageSurface {
       // Turn markers consume their own three-column lane. Preserve ALL
       // previously rendered command text instead of clipping its last cells.
       const rowWidth = contentWidth + (hasTurns ? TURN_RAIL_BUDGET : 0);
-      rows[i] = `${padEnd(truncate(row, rowWidth, ''), rowWidth)} ${rightCell}`;
+      const paddedRow = padEnd(truncate(row, rowWidth, ''), rowWidth);
+      const railReset = paddedRow.includes('\x1b[') ? '\x1b[0m' : '';
+      rows[i] = `${paddedRow}${railReset} ${rightCell}`;
     }
     return rows;
   }

@@ -32,7 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { Stage, stageHeight, stageEnabled, MIN_STAGE_ROWS } from '../src/tui/stage.js';
-import { StageSurface } from '../src/tui/stageSurface.js';
+import { StageSurface, scrollSettings } from '../src/tui/stageSurface.js';
 import { Transcript } from '../src/tui/transcript.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { visibleWidth, stripAnsi } from '../src/tui/text.js';
@@ -714,4 +714,19 @@ test('Stage normalize strips carriage returns and paint resets open SGR before E
   const written = out.text();
   assert.equal(stage.prev[0], 'helloworld', 'embedded CR must be stripped before row write');
   assert.ok(written.includes('\x1b[48;2;20;24;32mstyled\x1b[0m\x1b[K'), 'unclosed SGR must reset before ERASE_LINE to prevent BCE background smear');
+});
+
+test('StageSurface.present clamps out-of-bounds caret, handles empty promptRows/null env, and attachRail resets SGR before right rail', () => {
+  assert.doesNotThrow(() => scrollSettings(null, null));
+  const out = sink({ rows: 24, columns: 100 });
+  const surface = new StageSurface({ out, env: {} });
+  surface.open();
+  try {
+    surface.present([], { row: 99, col: 0 });
+    assert.ok(surface.stage.caret.row >= 0 && surface.stage.caret.row < surface.stage.height, `caret row out of band: ${surface.stage.caret.row}`);
+    const attached = surface.attachRail(['\x1b[31munclosed styled transcript row'], 60);
+    assert.ok(attached[0].includes('\x1b[0m '), 'attachRail must reset open SGR before the right overview rail');
+  } finally {
+    surface.close();
+  }
 });
