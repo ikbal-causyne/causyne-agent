@@ -229,10 +229,13 @@ export function messageAt(surface, point) {
 /** Highlight only the visible non-empty rows of the hovered message, without altering transcript data. */
 export function markHoveredMessage(rows, surface, contentWidth) {
     registerStageConsoleGuard(surface);
+    if (!Array.isArray(rows) || rows.length === 0 || !surface?.transcript?.flatten)
+        return;
+    const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? Math.floor(contentWidth) : 1;
     const id = surface.hoveredMessageFrameId;
     if (!id)
         return;
-    const flat = surface.transcript.flatten(contentWidth);
+    const flat = surface.transcript.flatten(safeContentWidth);
     const marker = flat.markers.find(item => item.id === id);
     if (!marker || !isMessage(marker))
         return;
@@ -277,7 +280,7 @@ export function markHoveredMessage(rows, surface, contentWidth) {
                 }
             }
         }
-        rows[row] = fill('surfaceHi', padEnd(content, contentWidth));
+        rows[row] = fill('surfaceHi', padEnd(truncate(content, safeContentWidth, ''), safeContentWidth));
     }
 }
 function messageText(content) {
@@ -307,6 +310,8 @@ function messagesMatch(persistedContent, shownText) {
 }
 /** Match in conversation order; never guess a fork point from visual row alone. */
 export function persistedMessageIndex(marker, markers, messages) {
+    if (!marker || !Array.isArray(markers) || !Array.isArray(messages))
+        return null;
     let matched = -1;
     for (const shown of markers) {
         if (!isMessage(shown))
@@ -379,7 +384,11 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
         return;
     const sourceId = loop.memoryManager?.sessionId || getActiveSessionId();
     const source = syncInFlightMessagesToSession(loop, sourceId);
-    const markers = host.surface?.transcript.flatten(host.surface.viewport.width).markers || [];
+    const viewWidth = positiveDim(host.surface?.viewport?.width, 80);
+    const flat = host.surface?.transcript?.flatten
+        ? host.surface.transcript.flatten(viewWidth)
+        : null;
+    const markers = flat?.markers || [];
     const index = source ? persistedMessageIndex(marker, markers, source.messages) : null;
     const canModifySession = Boolean(source && index !== null);
     const options = [
@@ -392,8 +401,7 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
             : [])
     ];
     let messageBounds = null;
-    if (host.surface?.viewport && host.surface?.transcript) {
-        const flat = host.surface.transcript.flatten(host.surface.viewport.width);
+    if (flat && host.surface?.viewport) {
         const mIdx = flat.markers.findIndex(m => m.id === marker.id);
         if (mIdx >= 0) {
             const nextM = flat.markers[mIdx + 1];
@@ -402,8 +410,9 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
             const scrollTop = Number.isFinite(host.surface.viewport.scrollTop)
                 ? Math.max(0, Math.floor(host.surface.viewport.scrollTop))
                 : 0;
-            const visible = Math.max(0, Math.min(host.surface.viewport.height, flat.rows.length - scrollTop));
-            const padding = host.surface.viewport.height - visible;
+            const viewHeight = positiveDim(host.surface.viewport.height, 24);
+            const visible = Math.max(0, Math.min(viewHeight, flat.rows.length - scrollTop));
+            const padding = viewHeight - visible;
             const startRow = rawStart - scrollTop + padding;
             const endRow = rawEnd - scrollTop + padding;
             messageBounds = { startRow, endRow, textLength: text.length };

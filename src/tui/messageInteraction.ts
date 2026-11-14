@@ -317,9 +317,11 @@ export function markHoveredMessage(
   rows: string[], surface: MessageSurface, contentWidth: number
 ): void {
   registerStageConsoleGuard(surface);
+  if (!Array.isArray(rows) || rows.length === 0 || !surface?.transcript?.flatten) return;
+  const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? Math.floor(contentWidth) : 1;
   const id = surface.hoveredMessageFrameId;
   if (!id) return;
-  const flat = surface.transcript.flatten(contentWidth);
+  const flat = surface.transcript.flatten(safeContentWidth);
   const marker = flat.markers.find(item => item.id === id);
   if (!marker || !isMessage(marker)) return;
   const scrollTop = Number.isFinite(surface.viewport?.scrollTop) ? Math.max(0, Math.floor(surface.viewport.scrollTop)) : 0;
@@ -361,7 +363,7 @@ export function markHoveredMessage(
         }
       }
     }
-    rows[row] = fill('surfaceHi', padEnd(content, contentWidth));
+    rows[row] = fill('surfaceHi', padEnd(truncate(content, safeContentWidth, ''), safeContentWidth));
   }
 }
 
@@ -390,6 +392,7 @@ function messagesMatch(persistedContent: unknown, shownText: string | undefined)
 export function persistedMessageIndex(
   marker: MessageMarker, markers: MessageMarker[], messages: SessionRecord['messages']
 ): number | null {
+  if (!marker || !Array.isArray(markers) || !Array.isArray(messages)) return null;
   let matched = -1;
   for (const shown of markers) {
     if (!isMessage(shown)) continue;
@@ -457,7 +460,11 @@ export function openMessageActions(host: MessageHost, loop: MessageLoop, marker:
   if (typeof text !== 'string') return;
   const sourceId = loop.memoryManager?.sessionId || getActiveSessionId();
   const source = syncInFlightMessagesToSession(loop, sourceId);
-  const markers = host.surface?.transcript.flatten(host.surface.viewport.width).markers || [];
+  const viewWidth = positiveDim(host.surface?.viewport?.width, 80);
+  const flat = host.surface?.transcript?.flatten
+    ? host.surface.transcript.flatten(viewWidth)
+    : null;
+  const markers = flat?.markers || [];
   const index = source ? persistedMessageIndex(marker, markers, source.messages) : null;
 
   const canModifySession = Boolean(source && index !== null);
@@ -472,8 +479,7 @@ export function openMessageActions(host: MessageHost, loop: MessageLoop, marker:
   ];
 
   let messageBounds: MessageBounds | null = null;
-  if (host.surface?.viewport && host.surface?.transcript) {
-    const flat = host.surface.transcript.flatten(host.surface.viewport.width);
+  if (flat && host.surface?.viewport) {
     const mIdx = flat.markers.findIndex(m => m.id === marker.id);
     if (mIdx >= 0) {
       const nextM = flat.markers[mIdx + 1];
@@ -482,8 +488,9 @@ export function openMessageActions(host: MessageHost, loop: MessageLoop, marker:
       const scrollTop = Number.isFinite(host.surface.viewport.scrollTop)
         ? Math.max(0, Math.floor(host.surface.viewport.scrollTop))
         : 0;
-      const visible = Math.max(0, Math.min(host.surface.viewport.height, flat.rows.length - scrollTop));
-      const padding = host.surface.viewport.height - visible;
+      const viewHeight = positiveDim(host.surface.viewport.height, 24);
+      const visible = Math.max(0, Math.min(viewHeight, flat.rows.length - scrollTop));
+      const padding = viewHeight - visible;
       const startRow = rawStart - scrollTop + padding;
       const endRow = rawEnd - scrollTop + padding;
       messageBounds = { startRow, endRow, textLength: text.length };

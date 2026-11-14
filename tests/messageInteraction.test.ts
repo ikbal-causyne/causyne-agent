@@ -16,7 +16,7 @@ import {
 import { registerStageConsoleGuard, setTransientNotice } from '../src/tui/consoleGuard.js';
 import { mouseHoverTracking } from '../src/tui/mouseHover.js';
 import { panelRows } from '../src/tui/overlay.js';
-import { stripAnsi, truncate } from '../src/tui/text.js';
+import { stripAnsi, truncate, visibleWidth } from '../src/tui/text.js';
 import { createSession, saveSessionMessages, getSession, deleteSession } from '../src/sessionStore.js';
 import { MemoryManager } from '../src/memoryManager.js';
 import { grantAlways, isAlwaysAllowed, revokeAllAlways } from '../src/approvalGrants.js';
@@ -588,6 +588,27 @@ test('MessageActionsLayer guards empty items, missing event fields, and control 
   const rows = dirty.body(60);
   assert.equal(rows.length, 1);
   assert.equal(/\x1b\[2J|\x07|\n/.test(rows[0]!), false);
+});
+
+test('markHoveredMessage bounds rows to contentWidth and openMessageActions/persistedMessageIndex guard missing transcript or arrays', () => {
+  const frameRows = ['  exact width hovered line padding 123456'];
+  const frameMarkers: MessageMarker[] = [
+    { id: 7, kind: 'assistant', row: 0, meta: { messageText: 'exact width' } }
+  ];
+  const surface = {
+    width: 30,
+    out: { rows: 10 },
+    stage: { height: 5, reserved: true },
+    viewport: { height: 2, width: 30, scrollTop: 0 },
+    transcript: { flatten: () => ({ rows: frameRows, markers: frameMarkers }) },
+    hoveredMessageFrameId: 7
+  };
+  const rows = frameRows.slice();
+  markHoveredMessage(rows, surface as any, 30);
+  assert.ok(visibleWidth(rows[0]!) <= 30, `hovered row overflowed contentWidth 30: ${visibleWidth(rows[0]!)}`);
+
+  assert.doesNotThrow(() => markHoveredMessage([], { hoveredMessageFrameId: 1 } as any, 30));
+  assert.equal(persistedMessageIndex(frameMarkers[0]!, null as any, []), null);
 });
 
 
