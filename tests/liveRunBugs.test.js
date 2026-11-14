@@ -339,3 +339,20 @@ test('tui: the band stops painting while the terminal owns the scroll', async ()
   assert.equal(surface.detached, false, 'coming back did not reattach the band');
   assert.equal(invalidated, 1, 'the diff was trusted after the terminal scrolled — every cached row is stale');
 });
+
+test('StageSurface.present does not grow or emit terminal writes while detached', async () => {
+  const { StageSurface } = await import('../src/tui/stageSurface.js');
+  const writes = [];
+  const out = { columns: 100, rows: 30, isTTY: true, write(s) { writes.push(s); return true; }, on() {}, removeListener() {} };
+  const surface = new StageSurface({ out, env: {} });
+  surface.open();
+  surface.enableMouse();
+  surface.present(['INPUT'], { row: 0, col: 0 });
+  surface.releaseMouse();
+  surface.transcript.append({ kind: 'assistant', produce: () => Array.from({ length: 40 }, (_, i) => `row ${i}`) });
+  writes.length = 0;
+  const painted = surface.present(['INPUT', 'MORE', 'ROWS'], { row: 0, col: 0 });
+  assert.equal(surface.detached, true);
+  assert.equal(painted, false);
+  assert.equal(writes.length, 0, 'present must emit zero terminal writes (including stage.grow) while detached');
+});

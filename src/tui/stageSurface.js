@@ -450,6 +450,11 @@ export class StageSurface {
       this.lastPromptCaret = caret;
     }
 
+    // Do not grow, resize, or invalidate the band while the terminal owns
+    // scrollback; otherwise stage.grow emits newlines that shift the user's
+    // scroll position before the detached repaint guard below.
+    if (this.detached) return false;
+
     const isModal = Boolean(caret?.modal);
     if (isModal !== this.wasModal) {
       this.wasModal = isModal;
@@ -567,21 +572,6 @@ export class StageSurface {
         overlay.layer.actionLayout = placed.layout;
       }
     }
-
-    // DO NOT PAINT WHILE THE TERMINAL OWNS THE SCROLL.
-    //
-    // The Stage repaints by DIFF against the rows it believes are on screen. It
-    // has no way to know the user scrolled the terminal's own scrollback, and
-    // when they do, the band's absolute rows move while the diff keeps writing
-    // to the old coordinates — which is how a session ends up with a stray rail
-    // column down the middle and fragments of old frames at the edges.
-    //
-    // We cannot detect a terminal scroll directly. What we CAN detect is the
-    // moment we handed the wheel over (viewport at its top, mouse reporting
-    // released), and from then until the user types again the terminal is the
-    // thing scrolling. Painting nothing is correct: the band is not where we
-    // left it, so every write would land somewhere wrong.
-    if (this.detached) return false;
 
     const mainRows = rows.concat(block);
     const panelRows = sidebar ? sessionSidebarRows({
