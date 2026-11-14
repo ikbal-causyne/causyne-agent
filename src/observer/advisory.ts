@@ -72,24 +72,33 @@ function compactArguments(args: Record<string, unknown>): string {
 }
 
 function parseVerdict(content: string): AdvisoryVerdict | null {
-  const match = content.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    const parsed: unknown = JSON.parse(match[0]);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const record = parsed as Record<string, unknown>;
-    const risk = record.risk;
-    const confidence = record.confidence;
-    if (typeof risk !== 'number' || !Number.isFinite(risk)) return null;
-    if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return null;
-    return {
-      risk: Math.max(0, Math.min(1, risk)),
-      confidence: Math.max(0, Math.min(1, confidence)),
-      observation: typeof record.observation === 'string' ? record.observation.slice(0, 400) : ''
-    };
-  } catch {
-    return null;
+  const closeIndex = content.lastIndexOf('}');
+  if (closeIndex < 0) return null;
+  let searchEnd = closeIndex;
+  while (searchEnd >= 0) {
+    const openIndex = content.lastIndexOf('{', searchEnd);
+    if (openIndex < 0) break;
+    const candidate = content.slice(openIndex, closeIndex + 1);
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        const risk = record.risk;
+        const confidence = record.confidence;
+        if (typeof risk === 'number' && Number.isFinite(risk) && typeof confidence === 'number' && Number.isFinite(confidence)) {
+          return {
+            risk: Math.max(0, Math.min(1, risk)),
+            confidence: Math.max(0, Math.min(1, confidence)),
+            observation: typeof record.observation === 'string' ? record.observation.slice(0, 400) : ''
+          };
+        }
+      }
+    } catch {
+      // Try an earlier opening brace if the suffix was nested inside outer braces.
+    }
+    searchEnd = openIndex - 1;
   }
+  return null;
 }
 
 export async function queryAdvisory(
@@ -150,7 +159,10 @@ export async function probeAdvisory(options: AdvisoryOptions): Promise<{ healthy
   }
   const start = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(500, options.timeoutMs));
+  const safeTimeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(500, Math.min(30_000, Math.floor(options.timeoutMs)))
+    : 2500;
+  const timer = setTimeout(() => controller.abort(), safeTimeoutMs);
   try {
     const base = options.endpoint.replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
     const response = await fetch(`${base}/models`, { signal: controller.signal });
