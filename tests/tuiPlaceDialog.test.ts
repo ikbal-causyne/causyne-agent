@@ -56,4 +56,14 @@ describe('placeDialog', () => {
     assert.equal(Number.isInteger(view.caretCol), true);
     assert.equal(view.caretRow, 2);
   });
+
+  it('placeHome keeps caretRow inside rendered rows when promptRows is empty or nullish', () => {
+    const emptyPrompt = placeHome({ model: 'x' }, [], 80, 24, 0, 0);
+    assert.ok(emptyPrompt.rows.length > 0);
+    assert.ok(emptyPrompt.caretRow < emptyPrompt.rows.length, `caretRow ${emptyPrompt.caretRow} must be < ${emptyPrompt.rows.length}`);
+
+    const nullPrompt = placeHome(null as never, null as never, 80, 24, 3, 2);
+    assert.ok(nullPrompt.rows.length > 0);
+    assert.ok(nullPrompt.caretRow < nullPrompt.rows.length);
+  });
 });

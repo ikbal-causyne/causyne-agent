@@ -137,6 +137,16 @@ describe('the status row', () => {
     const line = stripAnsi(homeStatusLine({ config: { provider: 'gemini', model: 'g' } }));
     assert.match(line, /no key/);
   });
+
+  test('homeStatusLine sanitizes control sequences/newlines and guards nullish input', () => {
+    const dirty = homeStatusLine({
+      config: { provider: 'openai\x1b[2J', model: 'gpt\n\r4o', apiKey: 'k' }
+    });
+    assert.ok(!dirty.includes('\n') && !dirty.includes('\r'), 'status line must remain single-line');
+    assert.ok(!dirty.includes('\x1b[2J'), 'status line must strip unsafe CSI sequences');
+    assert.doesNotThrow(() => homeStatusLine(null));
+    assert.doesNotThrow(() => homeStatusLine('invalid'));
+  });
 });
 
 describe('InputLayer — the primitive the dialogs were missing', () => {

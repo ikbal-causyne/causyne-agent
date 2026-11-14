@@ -2,6 +2,7 @@
 
 import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, dim, bold, badge, GLYPHS } from './theme.js';
+import { safeDisplay } from './text.js';
 import { runSetup } from './setup.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { isAcpProvider } from '../providers/acp.js';
@@ -9,14 +10,21 @@ import { isAntigravityProvider, resolveAgyBinary } from '../providers/antigravit
 import { isPiProvider, PI_SETUP_PROVIDER } from '../providers/pi.js';
 import { isBinaryOnPath } from '../acp/agentCatalog.js';
 
+function cleanSingleLine(value) {
+  return safeDisplay(typeof value === 'string' ? value : '').replace(/[\r\n]+/g, ' ').trim();
+}
+
 /** Local runtime and provider summary. */
 export function homeStatusLine(arg = {}) {
-  const config = arg?.config || arg || {};
-  const hasProvider = Boolean(config.provider && config.provider !== 'unconfigured');
+  const rawObj = arg && typeof arg === 'object' ? arg : {};
+  const config = rawObj.config && typeof rawObj.config === 'object' ? rawObj.config : rawObj;
+  const provider = cleanSingleLine(config.provider);
+  const modelName = cleanSingleLine(config.model);
+  const hasProvider = Boolean(provider && provider !== 'unconfigured');
   const model = hasProvider
-    ? (config.model ? `${config.provider}/${config.model}` : config.provider)
+    ? (modelName ? `${provider}/${modelName}` : provider)
     : 'no provider configured';
-  const configured = Boolean((hasProvider && config.apiKey) || config.provider === 'ollama' || isAcpProvider(config.provider) || isAntigravityProvider(config.provider) || isPiProvider(config.provider));
+  const configured = Boolean((hasProvider && config.apiKey) || provider === 'ollama' || isAcpProvider(provider) || isAntigravityProvider(provider) || isPiProvider(provider));
   return '  ' + [
     paint('success', `${GLYPHS.bullet} local desktop`),
     configured
@@ -118,7 +126,7 @@ export function moreLayer(onPick) {
       category: action.category,
       value: action
     })),
-    onPick: (item) => onPick(item && item.value)
+    onPick: (item) => { if (typeof onPick === 'function') onPick(item && item.value); }
   });
 }
 
@@ -190,14 +198,18 @@ export async function mcpPicker(prompt, onAction) {
 
   prompt.openLayer(new SelectLayer({
     title: 'MCP servers',
-    items: rows.map((server) => ({
-      id: server.name,
-      label: server.name,
-      description: `${server.granted ? 'granted' : 'not granted'}${server.target ? ` ${GLYPHS.dot} ${server.target}` : ''}`,
-      category: server.granted ? 'granted' : 'available',
-      value: server
-    })),
-    onPick: (item) => { if (item) onAction(item.value); }
+    items: rows.map((server) => {
+      const name = cleanSingleLine(server?.name) || 'server';
+      const target = cleanSingleLine(server?.target);
+      return {
+        id: name,
+        label: name,
+        description: `${server?.granted ? 'granted' : 'not granted'}${target ? ` ${GLYPHS.dot} ${target}` : ''}`,
+        category: server?.granted ? 'granted' : 'available',
+        value: server
+      };
+    }),
+    onPick: (item) => { if (item && typeof onAction === 'function') onAction(item.value); }
   }));
   return { empty: false };
 }
