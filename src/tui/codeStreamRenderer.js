@@ -30,15 +30,19 @@ export class CodeStreamRenderer extends ChatRenderer {
      * so the running-light shimmer advances smoothly across both surfaces.
      */
     onStatusTick(nowMs, tick) {
-        this.streamingNowMs = nowMs;
-        this.streamingTick = tick;
+        if (!Number.isFinite(nowMs))
+            return;
+        this.streamingNowMs = Math.max(0, nowMs);
+        if (tick === undefined || Number.isFinite(tick)) {
+            this.streamingTick = tick === undefined ? undefined : Math.max(0, Math.floor(tick));
+        }
         const transcript = this.transcript;
         if (!transcript || !Array.isArray(transcript.frames))
             return;
         const activeFrame = transcript.frames.findLast((f) => f?.meta?.reasoning === true && f.meta?.streaming === true);
         if (activeFrame && activeFrame.meta) {
-            if (nowMs > 0) {
-                activeFrame.meta.durationText = formatElapsed(nowMs);
+            if (this.streamingNowMs > 0) {
+                activeFrame.meta.durationText = formatElapsed(this.streamingNowMs);
             }
             activeFrame.rows = null;
             activeFrame.renderedWidth = -1;
