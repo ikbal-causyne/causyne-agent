@@ -49,11 +49,12 @@ function relativeTime(timestamp, now) {
 function countLabel(count) {
     if (!Number.isFinite(count) || count < 0)
         return '0 msgs';
-    return `${Math.floor(count).toLocaleString('en-US')} ${count === 1 ? 'msg' : 'msgs'}`;
+    const safeCount = Math.floor(count);
+    return `${safeCount.toLocaleString('en-US')} ${safeCount === 1 ? 'msg' : 'msgs'}`;
 }
 /** Fit two pieces of styled text in one terminal row, retaining the left title. */
 function pairedRow(left, right, columns) {
-    const width = Math.max(1, Math.floor(columns));
+    const width = Number.isFinite(columns) ? Math.max(1, Math.min(512, Math.floor(columns))) : 80;
     const rightWidth = visibleWidth(right);
     if (!right || width < 45 || rightWidth > width - 20)
         return truncate(left, width, '…');
@@ -92,12 +93,14 @@ function renderedItem(item, selected, width, now) {
  */
 export function renderContinuumWindow(entries, start, selected, width, budget, now = Date.now()) {
     const rows = [];
-    const safeWidth = Math.max(1, Math.floor(width));
-    const allowed = Math.max(0, Math.floor(budget));
-    let lastIndex = start - 1;
+    const safeStart = Number.isFinite(start) ? Math.max(0, Math.floor(start)) : 0;
+    const safeSelected = Number.isFinite(selected) ? Math.max(0, Math.floor(selected)) : 0;
+    const safeWidth = Number.isFinite(width) ? Math.max(1, Math.min(512, Math.floor(width))) : 80;
+    const allowed = Number.isFinite(budget) ? Math.max(0, Math.min(200, Math.floor(budget))) : 0;
+    let lastIndex = safeStart - 1;
     let itemCount = 0;
     let previousGroup = null;
-    for (let index = start; index < entries.length; index++) {
+    for (let index = safeStart; index < entries.length; index++) {
         const item = entries[index]?.item;
         if (!item)
             continue;
@@ -112,12 +115,12 @@ export function renderContinuumWindow(entries, start, selected, width, budget, n
         else if (needHeader) {
             rows.push(dim(`   ${truncate(group.toUpperCase(), Math.max(1, safeWidth - 5), '…')}`));
         }
-        rows.push(...renderedItem(item, index === selected, safeWidth, now));
+        rows.push(...renderedItem(item, index === safeSelected, safeWidth, now));
         lastIndex = index;
         itemCount++;
         previousGroup = group;
     }
-    return { rows, firstIndex: start, lastIndex, itemCount };
+    return { rows, firstIndex: safeStart, lastIndex, itemCount };
 }
 export class ContinuumPickerLayer extends SelectLayer {
     items;
@@ -190,8 +193,8 @@ export class ContinuumPickerLayer extends SelectLayer {
         return result;
     }
     body(width, height) {
-        const w = Math.max(8, Math.floor(width));
-        const h = Math.max(1, Math.floor(height));
+        const w = Number.isFinite(width) ? Math.max(8, Math.min(512, Math.floor(width))) : 80;
+        const h = Number.isFinite(height) ? Math.max(1, Math.min(200, Math.floor(height))) : 1;
         const rows = [];
         const scope = this.scope;
         const label = scope === 'all' ? 'ALL SOURCES' : PLATFORM_NAMES[scope];
@@ -222,8 +225,10 @@ export class ContinuumPickerLayer extends SelectLayer {
                 rows.push(dim('  Tab changes source. Ctrl+U clears search.'));
         }
         else if (budget > 0) {
-            const selected = Math.min(Math.max(0, this.list.selected), count - 1);
-            let from = Math.min(Math.max(0, this.list.offset), selected);
+            const rawSelected = Number.isFinite(this.list.selected) ? Math.floor(this.list.selected) : 0;
+            const rawOffset = Number.isFinite(this.list.offset) ? Math.floor(this.list.offset) : 0;
+            const selected = Math.min(Math.max(0, rawSelected), count - 1);
+            let from = Math.min(Math.max(0, rawOffset), selected);
             let output = renderContinuumWindow(filtered, from, selected, w, budget);
             while (output.lastIndex < selected && from < selected) {
                 from++;

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildContinuumItems, openContinuumPreview } from '../src/continuum/ui/continuumPicker.js';
+import { ContinuumPickerLayer, renderContinuumWindow } from '../src/continuum/ui/continuumPickerView.js';
 
 describe('continuumPicker bounds and sanitization', () => {
   it('buildContinuumItems handles non-finite updatedAt, non-finite messageCount, and trailing/Windows slashes in workspacePath', () => {
@@ -64,5 +65,38 @@ describe('continuumPicker bounds and sanitization', () => {
     const bodyText = openedLayer.lines.join('\n');
     assert.equal(bodyText.includes('\x1b'), false);
     assert.match(bodyText, /helloworld/);
+  });
+
+  it('ContinuumPickerLayer.body and renderContinuumWindow handle non-finite dimensions and NaN selected/offset', () => {
+    const items = buildContinuumItems([
+      {
+        id: 's1',
+        sourcePlatform: 'codex',
+        sourceLabel: 'Codex',
+        title: 'Session Alpha',
+        workspacePath: '/Users/dev/alpha',
+        updatedAt: Date.now() - 120_000,
+        messageCount: 1.7,
+        snippet: 'alpha snippet'
+      }
+    ]);
+    const layer = new ContinuumPickerLayer({
+      sessions: items,
+      onPick() {}
+    });
+    layer.list.selected = Number.NaN;
+    layer.list.offset = Number.NaN;
+
+    assert.doesNotThrow(() => {
+      const nanRows = layer.body(Number.NaN, Number.NaN);
+      assert.ok(nanRows.length >= 1);
+      const infRows = layer.body(Number.POSITIVE_INFINITY, 20);
+      assert.equal(infRows.length, 20);
+      assert.match(infRows.join('\n'), /Session Alpha/);
+      assert.match(infRows.join('\n'), /1 msg\b/);
+    });
+
+    const win = renderContinuumWindow(layer.list.filtered, Number.NaN, Number.NaN, Number.NaN, Number.NaN);
+    assert.ok(Array.isArray(win.rows));
   });
 });
