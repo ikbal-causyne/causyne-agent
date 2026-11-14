@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTurnRailCells,
+  handleTurnRailMouse,
   overlayTurnPreviewCard,
   renderTurnPreviewCard,
   resolveActiveTurnIndex,
@@ -59,5 +60,36 @@ describe('turnRail finite bounds', () => {
     const fractional = overlayTurnPreviewCard(viewport, card, 6.8, 1.4, 80);
     assert.equal(Object.keys(fractional).length, viewport.length);
     assert.ok(fractional.some((row) => row.includes('Turn 1')));
+  });
+
+  it('handleTurnRailMouse floors fractional pointer coordinates and ignores non-finite ones', () => {
+    const turns = [sampleTurn(1, 0), sampleTurn(2, 42)];
+    let scrolledTo: number | null = null;
+    const surface: any = {
+      activeTurnIndex: 2,
+      hoveredTurnIndex: null,
+      hoveredTurnAnchorY: null,
+      turnRailLayout: {
+        railX: 1,
+        stageTop: 3,
+        viewportHeight: 10,
+        rowToTurn: new Map([[4, 1]]),
+        dotRows: new Map(),
+        turns
+      },
+      viewport: {
+        scrollTo(row: number) { scrolledTo = row; },
+        toBottom() {}
+      }
+    };
+    const host = { draw() {}, scheduleDraw() {} };
+
+    const badHandled = handleTurnRailMouse({ mouse: { x: Number.NaN, y: 7, button: 0, pressed: true } }, surface, host);
+    assert.equal(badHandled, false);
+
+    const fracHandled = handleTurnRailMouse({ mouse: { x: 1.8, y: 7.9, button: 0, pressed: true } }, surface, host);
+    if (surface._turnRailSuppressTimer) clearTimeout(surface._turnRailSuppressTimer);
+    assert.equal(fracHandled, true);
+    assert.equal(scrolledTo, 0);
   });
 });

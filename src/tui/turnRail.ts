@@ -502,11 +502,18 @@ export function handleTurnRailMouse(
   surface: any,
   host: any
 ): boolean {
-  if (!surface?.turnRailLayout || !event.mouse) return false;
+  if (
+    !surface?.turnRailLayout ||
+    !event.mouse ||
+    !Number.isFinite(event.mouse.x) ||
+    !Number.isFinite(event.mouse.y)
+  ) {
+    return false;
+  }
   const layout = surface.turnRailLayout;
-  const mouseX = event.mouse.x;
-  const mouseY = event.mouse.y;
-  const stageTop = layout.stageTop ?? 0;
+  const mouseX = Math.floor(event.mouse.x);
+  const mouseY = Math.floor(event.mouse.y);
+  const stageTop = Number.isFinite(layout.stageTop) ? Math.floor(layout.stageTop) : 0;
   const relY = mouseY - stageTop;
 
   // Rail hit box: if railX <= 4, check columns 0..5 (left margin); otherwise check [railX - 2, railX + 3]
