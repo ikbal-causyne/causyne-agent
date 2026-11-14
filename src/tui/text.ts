@@ -149,7 +149,8 @@ const RESET = '\x1b[0m';
  */
 export function truncate(text: unknown, width: number, ellipsis = '…'): string {
   const source = String(text == null ? '' : text);
-  if (width <= 0) return '';
+  if (width === Number.POSITIVE_INFINITY) return source;
+  if (!Number.isFinite(width) || width <= 0) return '';
   if (visibleWidth(source) <= width) return source;
 
   const ellipsisWidth = visibleWidth(ellipsis);
