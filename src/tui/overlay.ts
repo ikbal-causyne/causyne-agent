@@ -99,11 +99,18 @@ export function drawPanel(
   rect: OverlayRect,
   { title = '', footer = '' }: { title?: string; footer?: string } = {}
 ): OverlayRect {
-  if (rect.width < 4 || rect.height < 3) return { x: rect.x, y: rect.y, width: 0, height: 0 };
+  const x = Number.isFinite(rect.x) ? Math.floor(rect.x) : 0;
+  const y = Number.isFinite(rect.y) ? Math.floor(rect.y) : 0;
+  if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y) || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
+    return { x, y, width: 0, height: 0 };
+  }
+  const w = Math.floor(rect.width);
+  const h = Math.floor(rect.height);
+  if (w < 4 || h < 3) return { x, y, width: 0, height: 0 };
 
-  screen.fill(rect.x, rect.y, rect.width, rect.height, '');
+  screen.fill(x, y, w, h, '');
 
-  const inner = rect.width - 2;
+  const inner = w - 2;
   const line = FRAME.h.repeat(inner);
 
   // Title sits in the top border, the way every terminal dialog has since curses.
@@ -121,19 +128,19 @@ export function drawPanel(
     bottom = FRAME.bl + FRAME.h.repeat(Math.max(0, inner - width - 1)) + label + FRAME.h + FRAME.br;
   }
 
-  screen.put(rect.x, rect.y, paint('rule', top), rect.width);
-  screen.put(rect.x, rect.y + rect.height - 1, paint('rule', bottom), rect.width);
+  screen.put(x, y, paint('rule', top), w);
+  screen.put(x, y + h - 1, paint('rule', bottom), w);
 
-  for (let row = rect.y + 1; row < rect.y + rect.height - 1; row++) {
-    screen.put(rect.x, row, paint('rule', FRAME.v), 1);
-    screen.put(rect.x + rect.width - 1, row, paint('rule', FRAME.v), 1);
+  for (let row = y + 1; row < y + h - 1; row++) {
+    screen.put(x, row, paint('rule', FRAME.v), 1);
+    screen.put(x + w - 1, row, paint('rule', FRAME.v), 1);
   }
 
   return {
-    x: rect.x + 2,
-    y: rect.y + 1,
-    width: Math.max(0, rect.width - 4),
-    height: Math.max(0, rect.height - 2)
+    x: x + 2,
+    y: y + 1,
+    width: Math.max(0, w - 4),
+    height: Math.max(0, h - 2)
   };
 }
 
