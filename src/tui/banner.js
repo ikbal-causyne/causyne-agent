@@ -220,8 +220,13 @@ function cells(px, caps) {
     return lines;
 }
 function txt(str, key, caps, maxw, bold) {
-    if (maxw !== undefined && str.length > maxw)
-        str = str.slice(0, Math.max(0, maxw - 1)) + (caps.unicode ? '…' : '~');
+    if (maxw !== undefined) {
+        const limit = Number.isFinite(maxw) ? Math.floor(maxw) : maxw === Number.POSITIVE_INFINITY ? str.length : 0;
+        if (limit <= 0)
+            return '';
+        if (str.length > limit)
+            str = str.slice(0, Math.max(0, limit - 1)) + (caps.unicode ? '…' : '~');
+    }
     if (caps.color === 'none')
         return str;
     return ESC + (bold ? '1;' : '') + fgCode(key, caps.color) + 'm' + str + RESET;
