@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 
 import { SelectList, fuzzyScore, fuzzyFilter } from '../src/tui/selectList.js';
 import { OverlayStack, Layer, drawPanel } from '../src/tui/overlay.js';
-import { ApprovalLayer, TextLayer, commandPalette, skillPicker, helpLayer, statusLayer } from '../src/tui/dialogs.js';
+import { SelectLayer, InputLayer, ApprovalLayer, TextLayer, commandPalette, skillPicker, helpLayer, statusLayer } from '../src/tui/dialogs.js';
 import { listCompiledSkills } from '../src/skillsManager.js';
 import { renderBanner, wordmark } from '../src/tui/banner.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
@@ -119,6 +119,31 @@ describe('fuzzy select', () => {
     list.query = 'x'.repeat(60);
     list.render(24, 8);
     assert.ok(list.cursorColumn() <= 23, `expected cursorColumn <= 23, got ${list.cursorColumn()}`);
+  });
+
+  test('SelectList and SelectLayer/InputLayer guard null options, NaN/fractional moves, paste ANSI escapes, and narrow emptyText/counter width', () => {
+    const nullOptsList = new SelectList([{ label: 'one' }], null);
+    assert.equal(nullOptsList.current.label, 'one');
+
+    nullOptsList.move(Number.NaN, 5);
+    assert.equal(nullOptsList.selected, 0);
+    nullOptsList.moveTo(Number.NaN, 5);
+    assert.equal(nullOptsList.selected, 0);
+    nullOptsList.moveTo(0.8, 5);
+    assert.equal(nullOptsList.selected, 0);
+
+    nullOptsList.handleKey({ name: 'paste', text: 'abc\x1b[2J' }, 5);
+    assert.equal(nullOptsList.query.includes('\x1b[2J'), false, 'pasted ANSI escape must be stripped from query');
+
+    const longEmpty = new SelectList([], { emptyText: 'nothing matched your very long query string here' });
+    const renderedEmpty = longEmpty.render(14, 3);
+    assert.ok(renderedEmpty.rows.length <= 3, `empty rows ${renderedEmpty.rows.length} exceeded height 3`);
+    for (const row of renderedEmpty.rows) {
+      assert.ok(visibleWidth(row) <= 14, `row width ${visibleWidth(row)} exceeded 14`);
+    }
+
+    assert.doesNotThrow(() => new SelectLayer(null));
+    assert.doesNotThrow(() => new InputLayer(null));
   });
 });
 

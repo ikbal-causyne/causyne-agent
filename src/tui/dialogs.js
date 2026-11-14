@@ -37,14 +37,16 @@ const cleanDialogText = (value) => (
  */
 export class SelectLayer extends Layer {
   constructor(options = {}) {
-    super({ width: options.width || 68, height: options.height || 18, ...options });
-    this.list = new SelectList(options.items || [], {
-      placeholder: options.placeholder,
-      emptyText: options.emptyText
+    const opts = options && typeof options === 'object' ? options : {};
+    super({ width: opts.width || 68, height: opts.height || 18, ...opts });
+    this.list = new SelectList(opts.items || [], {
+      placeholder: opts.placeholder,
+      emptyText: opts.emptyText,
+      showFilter: opts.showFilter
     });
-    this.onPick = options.onPick || null;
+    this.onPick = opts.onPick || null;
     this.settled = false;
-    this.footer = options.footer || dialogHint();
+    this.footer = opts.footer || dialogHint();
   }
 
   /** Dismissal must resolve pending picker flows, just like text inputs. */
@@ -95,14 +97,15 @@ export class SelectLayer extends Layer {
 
 export class InputLayer extends Layer {
   constructor(options = {}) {
-    super({ width: options.width || 68, height: options.height || 10, ...options });
-    this.editor = new LineEditor(String(options.value == null ? '' : options.value));
-    this.lines = Array.isArray(options.lines) ? options.lines : [];
-    this.mask = options.mask === true;
-    this.placeholder = options.placeholder || '';
-    this.onSubmit = options.onSubmit || null;
-    this.onCancel = options.onCancel || null;
-    this.footer = options.footer || `enter accept  ${GLYPHS.dot}  esc cancel`;
+    const opts = options && typeof options === 'object' ? options : {};
+    super({ width: opts.width || 68, height: opts.height || 10, ...opts });
+    this.editor = new LineEditor(String(opts.value == null ? '' : opts.value));
+    this.lines = Array.isArray(opts.lines) ? opts.lines : [];
+    this.mask = opts.mask === true;
+    this.placeholder = opts.placeholder || '';
+    this.onSubmit = opts.onSubmit || null;
+    this.onCancel = opts.onCancel || null;
+    this.footer = opts.footer || `enter accept  ${GLYPHS.dot}  esc cancel`;
     this.settled = false;
   }
 

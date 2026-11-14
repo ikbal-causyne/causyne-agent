@@ -93,13 +93,14 @@ export class SelectList {
    * items: { label, description, category, hint, value, searchText, disabled }
    */
   constructor(items = [], options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     this.setItems(items);
     this.query = '';
     this.selected = 0;
     this.offset = 0;
-    this.placeholder = options.placeholder || 'type to filter';
-    this.emptyText = options.emptyText || 'no matches';
-    this.showFilter = options.showFilter !== false;
+    this.placeholder = opts.placeholder || 'type to filter';
+    this.emptyText = opts.emptyText || 'no matches';
+    this.showFilter = opts.showFilter !== false;
   }
 
   setItems(items) {
@@ -122,17 +123,18 @@ export class SelectList {
 
   move(delta, visibleRows) {
     const count = this.filtered.length;
-    if (count === 0) return this;
+    if (count === 0 || !Number.isFinite(delta)) return this;
+    const step = Math.trunc(delta);
     // Wrapping is what makes a short list feel responsive: pressing up on the
     // first row lands on the last, instead of doing nothing.
-    this.selected = (((this.selected + delta) % count) + count) % count;
+    this.selected = (((this.selected + step) % count) + count) % count;
     this.ensureVisible(visibleRows);
     return this;
   }
 
   moveTo(index, visibleRows) {
-    if (this.filtered.length === 0) return this;
-    this.selected = Math.max(0, Math.min(index, this.filtered.length - 1));
+    if (this.filtered.length === 0 || !Number.isFinite(index)) return this;
+    this.selected = Math.max(0, Math.min(Math.floor(index), this.filtered.length - 1));
     this.ensureVisible(visibleRows);
     return this;
   }
@@ -166,7 +168,7 @@ export class SelectList {
   }
 
   ensureVisible(visibleRows) {
-    const rows = Math.max(1, visibleRows || 10);
+    const rows = Number.isFinite(visibleRows) && visibleRows > 0 ? Math.max(1, Math.floor(visibleRows)) : 10;
     if (this.filtered.length === 0) { this.offset = 0; return this; }
 
     if (this.selected < this.offset) this.offset = this.selected;
@@ -197,7 +199,7 @@ export class SelectList {
    */
   handleKey(key, visibleRows) {
     if (!key) return null;
-    const rows = Math.max(1, visibleRows || 10);
+    const rows = Number.isFinite(visibleRows) && visibleRows > 0 ? Math.max(1, Math.floor(visibleRows)) : 10;
 
     switch (key.name) {
       case 'up':     this.move(-1, rows); return 'handled';
@@ -231,7 +233,7 @@ export class SelectList {
         }
         return 'cancel';
       case 'paste': {
-        const clean = String(key.text || '').replace(/[\r\n]+/g, ' ').trim();
+        const clean = cleanSelectText(key.text);
         if (clean) {
           this.query += clean;
           this.refilter();
@@ -249,7 +251,7 @@ export class SelectList {
       if (key.name === 'v') {
         const text = readClipboardSync();
         if (text) {
-          const clean = String(text).replace(/[\r\n]+/g, ' ').trim();
+          const clean = cleanSelectText(text);
           if (clean) {
             this.query += clean;
             this.refilter();
@@ -311,8 +313,11 @@ export class SelectList {
     this.ensureVisible(itemRows);
 
     if (this.filtered.length === 0) {
-      rows.push('');
-      rows.push(`  ${dim(this.emptyText)}`);
+      if (rows.length + 1 < safeHeight) rows.push('');
+      if (rows.length < safeHeight) {
+        const cleanEmpty = truncate(cleanSelectText(this.emptyText), Math.max(1, inner - 2), GLYPHS.ellipsis);
+        rows.push(`  ${dim(cleanEmpty)}`);
+      }
       return { rows, listRows: itemRows };
     }
 
@@ -356,7 +361,7 @@ export class SelectList {
     // A count is the cheapest possible scroll indicator and it never lies.
     if (this.filtered.length > itemRows) {
       const position = `${this.selected + 1}/${this.filtered.length}`;
-      const line = dim(position.padStart(inner));
+      const line = dim(truncate(position.padStart(inner), inner, GLYPHS.ellipsis));
       if (rows.length >= safeHeight) rows[safeHeight - 1] = line;
       else rows.push(line);
     }
