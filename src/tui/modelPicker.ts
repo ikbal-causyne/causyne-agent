@@ -96,7 +96,15 @@ export function buildModelPickerItems(
   const activeModel = config.model || '';
   const tab = options.tab || 'all';
   const expandedPeers = options.expandedPeers || new Set<string>();
-  const maxAcp = typeof options.maxAcpPerPeer === 'number' ? options.maxAcpPerPeer : (tab === 'all' ? Infinity : 10);
+  const defaultMaxAcp = tab === 'all' ? Infinity : 10;
+  let maxAcp = defaultMaxAcp;
+  if (typeof options.maxAcpPerPeer === 'number') {
+    if (options.maxAcpPerPeer === Infinity) {
+      maxAcp = Infinity;
+    } else if (Number.isFinite(options.maxAcpPerPeer)) {
+      maxAcp = Math.max(1, Math.floor(options.maxAcpPerPeer));
+    }
+  }
 
   // 1. ACP Peer Agents & Sovereign Local Engines
   if (tab === 'all' || tab === 'acp') {
