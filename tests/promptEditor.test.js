@@ -1158,4 +1158,24 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(handled, true);
     assert.equal(p.editor.getText(), '@beta.ts ');
   });
+
+  test('handleScrollKey jump shortcuts dismiss active turn preview card', () => {
+    const out = { columns: 80, rows: 24, write() { return true; }, isTTY: false, on() {}, removeListener() {} };
+    const input = { isTTY: false, on() {}, off() {} };
+    const jumped = [];
+    const surface = {
+      activeTurnIndex: 2,
+      viewport: {
+        scrollable: true,
+        jump(dir, kinds) { jumped.push({ dir, kinds }); }
+      }
+    };
+    const p = new ChatPrompt({ out, input, surface, commands: [] });
+    assert.equal(p.handleScrollKey({ alt: true, name: ',' }), true);
+    assert.equal(surface.activeTurnIndex, null);
+    surface.activeTurnIndex = 1;
+    assert.equal(p.handleScrollKey({ alt: true, name: '<' }), true);
+    assert.equal(surface.activeTurnIndex, null);
+    assert.equal(jumped.length, 2);
+  });
 });

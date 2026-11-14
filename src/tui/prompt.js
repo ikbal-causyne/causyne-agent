@@ -1255,14 +1255,19 @@ export class ChatPrompt {
     // entitled to type; the plan's `[`/`]` could not be bound at all, and
     // alt+[ is worse than unbound — ESC [ IS the CSI introducer, so it is
     // indistinguishable from the start of an escape sequence.
-    if (key.alt && key.name === ',') { viewport.jump(-1, ['step']); return true; }
-    if (key.alt && key.name === '.') { viewport.jump(1, ['step']); return true; }
+    const jumpViewport = (direction, kinds) => {
+      if (this.surface) this.surface.activeTurnIndex = null;
+      viewport.jump(direction, kinds);
+      return true;
+    };
+    if (key.alt && key.name === ',') return jumpViewport(-1, ['step']);
+    if (key.alt && key.name === '.') return jumpViewport(1, ['step']);
     // Exchanges are marked by the USER's message, not by the turn footer. Both
     // sit at almost the same seam — a footer is immediately followed by the next
     // question — so accepting either made the jump land twice two rows apart
     // instead of once per exchange.
-    if ((key.alt && key.name === '[') || (key.alt && key.name === '<')) { viewport.jump(-1, ['user']); return true; }
-    if ((key.alt && key.name === ']') || (key.alt && key.name === '>')) { viewport.jump(1, ['user']); return true; }
+    if ((key.alt && key.name === '[') || (key.alt && key.name === '<')) return jumpViewport(-1, ['user']);
+    if ((key.alt && key.name === ']') || (key.alt && key.name === '>')) return jumpViewport(1, ['user']);
 
     if (key.alt && key.name === 'u') { this.offerUndo(); return true; }
 
