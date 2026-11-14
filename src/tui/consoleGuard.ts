@@ -137,7 +137,10 @@ export function setTransientNotice(host: TransientNoticeHost, message: string, t
   }
   host.notice = message;
   host.scheduleDraw();
-  if (!message || ttlMs <= 0) return;
+  const safeTtlMs = !Number.isFinite(ttlMs)
+    ? (Number.isNaN(ttlMs) ? 4000 : 0)
+    : Math.min(Math.floor(ttlMs), 2_147_483_647);
+  if (!message || safeTtlMs <= 0) return;
 
   const timer = setTimeout(() => {
     noticeTimers.delete(host);
@@ -145,7 +148,7 @@ export function setTransientNotice(host: TransientNoticeHost, message: string, t
       host.notice = '';
       host.scheduleDraw();
     }
-  }, ttlMs);
+  }, safeTtlMs);
   timer.unref?.();
   noticeTimers.set(host, timer);
 }
