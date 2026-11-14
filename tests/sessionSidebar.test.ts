@@ -343,3 +343,49 @@ test('sidebar-disabled sessions keep the active plan in the main TUI', () => {
     surface.close();
   }
 });
+
+test('composer fills available space across sidebar toggle breakpoints without dead gap or user-prompt truncation', async () => {
+  const { ChatRenderer } = await import('../src/tui/chatRenderer.js');
+  const widths = [90, 95, 100, 101, 120, 140, 156, 187, 200];
+  const out = { columns: 187, rows: 40, isTTY: true, write: () => true, on() {}, removeListener() {} };
+  const surface = new StageSurface({ out, env: { CAUSYNE_MOUSE: '0' } });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome({ version: 'v1', provider: 'acp/opencode', model: 'm', cwd: '/tmp/work' });
+    surface.leaveHome(true);
+    const renderer = new ChatRenderer({ out, transcript: surface.transcript });
+    const sentinel = 'A'.repeat(132) + 'XYZEND';
+    renderer.renderUserMessage(sentinel);
+    const prompt = new ChatPrompt({ out, surface });
+    prompt.active = true;
+
+    for (const columns of widths) {
+      out.columns = columns;
+      surface.resize();
+      prompt.draw();
+      const mainW = sessionMainWidth(columns);
+      const expectedComp = sessionComposerWidth(mainW);
+      assert.equal(surface.composeWidth(), expectedComp, `composeWidth must fill mainWidth at ${columns}`);
+      assert.equal(mainW - expectedComp, 4, `composer must sit cleanly beside rail/margin without dead gap at ${columns}`);
+      if (columns <= 100) {
+        assert.equal(sidebarVisible(columns), false, `sidebar must stay hidden at ${columns}`);
+        assert.equal(mainW, columns, `main pane must reclaim full terminal width at ${columns}`);
+      } else {
+        assert.equal(sidebarVisible(columns), true, `sidebar must appear starting at ${columns}`);
+      }
+      const bandText = stripAnsi(surface.stage.prev.join('\n')).replace(/\s+/g, '');
+      assert.ok(bandText.includes('XYZEND'), `user prompt tail must not clip at ${columns} columns`);
+    }
+
+    // Shrinking back from wide sidebar layout to below threshold eliminates phantom gap cleanly
+    for (const columns of [187, 120, 100, 90]) {
+      out.columns = columns;
+      surface.resize();
+      prompt.draw();
+      const expected = columns <= 100 ? columns - 4 : sessionMainWidth(columns) - 4;
+      assert.equal(surface.composeWidth(), expected, `shrinking to ${columns} must remove phantom sidebar gap`);
+    }
+  } finally {
+    surface.close();
+  }
+});

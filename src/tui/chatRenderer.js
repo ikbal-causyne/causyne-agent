@@ -580,10 +580,17 @@ export class ChatRenderer {
     if (!text.trim()) return;
 
     this.frame('user', () => {
-      const width = this.transcript
-        ? (this.transcript.surface?.composeWidth?.() ?? sessionComposerWidth(this.width()))
+      const measured = this.width();
+      const maxCaptureWidth = Math.max(8, Math.min(
+        measured,
+        this.transcript?.surface?.composeAvailableWidth?.() ?? measured
+      ) - 4);
+      const preferred = this.transcript
+        ? (this.transcript.surface?.composeWidth?.() ?? sessionComposerWidth(measured))
         : composerWidth(this.measure());
-      const blockWidth = Math.max(8, width);
+      const blockWidth = this.transcript
+        ? Math.max(8, Math.min(preferred, maxCaptureWidth))
+        : Math.max(8, preferred);
       const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - 1);
       const rows = barBlock(
         wrapBlock(safeDisplay(text), innerWidth, { hang: 0 }),

@@ -48,7 +48,7 @@ describe('TUI Prompt & Transcript Alignment and Symmetry', () => {
       const renderer = new ChatRenderer({ out, transcript: surface.transcript });
       const prompt = new ChatPrompt({ out, surface, renderer });
 
-      const mainWidth = sessionMainWidth(120);
+      const mainWidth = sessionMainWidth(120, false, surface.env);
       const expectedWidth = sessionComposerWidth(mainWidth);
 
       // Verify established composeWidth matches sessionComposerWidth
