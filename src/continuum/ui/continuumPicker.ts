@@ -5,13 +5,15 @@
 import { TextLayer } from '../../tui/dialogs.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from '../../tui/theme.js';
+import { safeDisplay } from '../../tui/text.js';
 import { ContinuumPickerLayer } from './continuumPickerView.js';
 import type { ContinuumSessionSummary } from '../types.js';
 import { ContinuumScanner } from '../scanner.js';
 import { adoptContinuumSession } from '../ingest.js';
 
 function formatTimeAgo(timestamp: number): string {
-  const diffMs = Date.now() - timestamp;
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'unknown';
+  const diffMs = Math.max(0, Date.now() - timestamp);
   const minutes = Math.floor(diffMs / (60 * 1000));
   if (minutes < 60) return `${Math.max(1, minutes)}m ago`;
   const hours = Math.floor(minutes / 60);
@@ -23,8 +25,10 @@ function formatTimeAgo(timestamp: number): string {
 export function buildContinuumItems(sessions: ContinuumSessionSummary[]) {
   return sessions.map(s => {
     const timeAgo = formatTimeAgo(s.updatedAt);
-    const ws = s.workspacePath ? s.workspacePath.split('/').pop() || s.workspacePath : '';
-    const desc = `${s.messageCount} msg${s.messageCount === 1 ? '' : 's'}  ${GLYPHS.dot}  ${timeAgo}${ws ? `  ${GLYPHS.dot}  ${ws}` : ''}`;
+    const trimmedWs = s.workspacePath ? s.workspacePath.replace(/[/\\]+$/, '') : '';
+    const ws = trimmedWs ? trimmedWs.split(/[/\\]/).filter(Boolean).pop() || trimmedWs : '';
+    const safeMessageCount = Number.isFinite(s.messageCount) ? Math.max(0, Math.floor(s.messageCount)) : 0;
+    const desc = `${safeMessageCount} msg${safeMessageCount === 1 ? '' : 's'}  ${GLYPHS.dot}  ${timeAgo}${ws ? `  ${GLYPHS.dot}  ${ws}` : ''}`;
 
     return {
       label: s.title,
@@ -146,8 +150,11 @@ export async function openContinuumPreview(
     return false;
   }
 
+  const safeSource = safeDisplay(String(detail.sourceLabel ?? '')).replace(/\s+/g, ' ').trim();
+  const safeWorkspace = safeDisplay(String(detail.workspacePath || '(default)')).replace(/\s+/g, ' ').trim();
+  const safeTitle = safeDisplay(String(detail.title ?? '')).replace(/\s+/g, ' ').trim();
   const lines: string[] = [
-    `Source: ${detail.sourceLabel} · Messages: ${detail.messages.length} · Workspace: ${detail.workspacePath || '(default)'}`,
+    `Source: ${safeSource} · Messages: ${detail.messages.length} · Workspace: ${safeWorkspace}`,
     '─'.repeat(70),
     ''
   ];
@@ -155,14 +162,14 @@ export async function openContinuumPreview(
   for (const msg of detail.messages) {
     const rolePrefix = msg.role === 'user' ? 'USER' : 'ASSISTANT';
     lines.push(`${rolePrefix}:`);
-    for (const textLine of msg.content.split('\n')) {
+    for (const textLine of safeDisplay(String(msg.content ?? '')).split('\n')) {
       lines.push(`  ${textLine}`);
     }
     lines.push('');
   }
 
   const layer = new TextLayer({
-    title: `Preview: ${detail.title}`,
+    title: `Preview: ${safeTitle}`,
     lines,
     width: 76,
     height: 22
