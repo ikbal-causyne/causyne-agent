@@ -148,6 +148,8 @@ export function resolveActiveTurnIndex(
  * ANSI-safe column slicing: skips the first startCol visible columns while preserving active styles.
  */
 export function sliceFromColumn(source: string, startCol: number): string {
+  if (startCol === Number.POSITIVE_INFINITY) return '';
+  const targetCol = Number.isFinite(startCol) ? Math.max(0, Math.floor(startCol)) : 0;
   let col = 0;
   let index = 0;
   let activeStyles = '';
@@ -159,7 +161,7 @@ export function sliceFromColumn(source: string, startCol: number): string {
         || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
         || rest.match(/^\x1b[@-Z\\-_]/);
       if (match) {
-        if (col < startCol) {
+        if (col < targetCol) {
           if (match[0] === '\x1b[0m' || match[0] === '\x1b[m') {
             activeStyles = '';
           } else if (match[0].startsWith('\x1b[')) {
@@ -171,7 +173,7 @@ export function sliceFromColumn(source: string, startCol: number): string {
       }
     }
 
-    if (col >= startCol) {
+    if (col >= targetCol) {
       const tail = source.slice(index);
       // Ensure any OSC 8 hyperlink opened inside `tail` is closed at the end of the slice
       let openOsc8Term = '';
