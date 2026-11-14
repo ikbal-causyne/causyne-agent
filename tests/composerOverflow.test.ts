@@ -140,4 +140,12 @@ describe('Causyne composer right-edge and resize regressions', () => {
     assert.equal(b.promptRows.length, 1);
     assert.equal(b.caretRow, 0);
   });
+
+  test('fitHomeContent handles nullish logoRows and promptRows arrays gracefully', () => {
+    const c = fitHomeContent(null as unknown as string[], undefined as unknown as string[], 10, 0, 2);
+    assert.deepEqual(c.logoRows, []);
+    assert.deepEqual(c.promptRows, ['']);
+    assert.equal(c.spacer, 0);
+    assert.equal(c.caretRow, 0);
+  });
 });

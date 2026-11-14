@@ -16,10 +16,12 @@ export function composerGeometry(requestedWidth, barColumns, gutterColumns) {
  * The ordinary roomy Home composition is unchanged.
  */
 export function fitHomeContent(logoRows, promptRows, stageHeight, caretRow, requestedSpacer) {
+    const safeLogoRows = Array.isArray(logoRows) ? logoRows : [];
+    const safePromptRows = Array.isArray(promptRows) ? promptRows : [];
     const available = Number.isFinite(stageHeight)
         ? Math.max(1, Math.trunc(stageHeight))
         : 24;
-    const prompt = promptRows.length ? [...promptRows] : [''];
+    const prompt = safePromptRows.length ? [...safePromptRows] : [''];
     const caret = Number.isFinite(caretRow)
         ? Math.max(0, Math.min(prompt.length - 1, Math.trunc(caretRow)))
         : 0;
@@ -31,10 +33,10 @@ export function fitHomeContent(logoRows, promptRows, stageHeight, caretRow, requ
     const remaining = available - visiblePrompt.length;
     // A cropped rotor/wordmark looks broken. On cramped terminals, hide the
     // banner as a whole rather than displaying an arbitrary bottom fragment.
-    const showLogo = logoRows.length > 0 && remaining >= logoRows.length;
-    const visibleLogo = showLogo ? [...logoRows] : [];
+    const showLogo = safeLogoRows.length > 0 && remaining >= safeLogoRows.length;
+    const visibleLogo = showLogo ? [...safeLogoRows] : [];
     const spacer = showLogo
-        ? Math.min(Math.max(0, Number.isFinite(requestedSpacer) ? Math.trunc(requestedSpacer) : 0), remaining - logoRows.length)
+        ? Math.min(Math.max(0, Number.isFinite(requestedSpacer) ? Math.trunc(requestedSpacer) : 0), remaining - safeLogoRows.length)
         : 0;
     return {
         logoRows: visibleLogo,
