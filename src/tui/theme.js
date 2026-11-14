@@ -233,16 +233,20 @@ export function fill(role, text) {
 
 /** A filled badge — used for risk banners, where a fill reads faster than text. */
 export function badge(role, text) {
-  if (!HAS_COLOR) return `[${text}]`;
-  const rgb = PALETTE[role];
-  const label = ` ${text} `;
+  const value = text == null ? '' : String(text);
+  const rgb = typeof role === 'string' && Object.prototype.hasOwnProperty.call(PALETTE, role)
+    ? PALETTE[role]
+    : null;
+  if (!HAS_COLOR || !rgb) return `[${value}]`;
+  const label = ` ${value} `;
   if (COLOR_DEPTH >= 16777216) {
     return `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m\x1b[38;2;16;16;20m\x1b[1m${label}${RESET}`;
   }
   if (COLOR_DEPTH >= 256) {
     return `\x1b[48;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m\x1b[30m\x1b[1m${label}${RESET}`;
   }
-  return `\x1b[${(BASIC_CODES[role] || 39) + 10}m\x1b[30m${label}${RESET}`;
+  const basicCode = Object.prototype.hasOwnProperty.call(BASIC_CODES, role) ? BASIC_CODES[role] : 39;
+  return `\x1b[${basicCode + 10}m\x1b[30m${label}${RESET}`;
 }
 
 /** Glyph set, degrading to ASCII where Unicode is unsafe. */
@@ -364,8 +368,10 @@ export function safeLink(text, url) {
 
 /** A file path as a clickable file:// link, absolute as OSC 8 requires. */
 export function fileLink(text, absolutePath) {
-  if (!HAS_HYPERLINKS || !absolutePath) return String(text);
-  return link(text, 'file://' + encodeURI(absolutePath));
+  const pathText = typeof absolutePath === 'string' ? absolutePath : '';
+  // eslint-disable-next-line no-control-regex
+  if (!HAS_HYPERLINKS || !pathText || /[\x00-\x1f\x7f]/.test(pathText)) return String(text);
+  return link(text, 'file://' + encodeURI(pathText));
 }
 
 /**
@@ -378,7 +384,9 @@ export function fileLink(text, absolutePath) {
  * the box is that it is the surface they are typing into.
  */
 export function terminalWidth() {
-  const raw = process.stdout.columns || 80;
+  const raw = Number.isFinite(process.stdout.columns) && process.stdout.columns > 0
+    ? Math.floor(process.stdout.columns)
+    : 80;
   return Math.max(40, raw);
 }
 
@@ -398,7 +406,8 @@ export function terminalWidth() {
 export const READABLE_MAX = 100;
 
 export function readableWidth(available = terminalWidth()) {
-  return Math.max(40, Math.min(available, READABLE_MAX));
+  const width = Number.isFinite(available) ? Math.floor(available) : terminalWidth();
+  return Math.max(40, Math.min(width, READABLE_MAX));
 }
 
 export { getEngineFrames, getEngineFrame };

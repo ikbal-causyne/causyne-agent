@@ -20,7 +20,7 @@ import path from 'node:path';
 
 import { diffLines, diffStat, renderDiff, renderDiffOps, approvalDiff, MAX_SIDE_LINES } from '../src/tui/diff.js';
 import { StatusLine, compactCount, formatCost, formatElapsed } from '../src/tui/statusLine.js';
-import { safeLink, HAS_HYPERLINKS } from '../src/tui/theme.js';
+import { safeLink, HAS_HYPERLINKS, readableWidth, badge, fileLink } from '../src/tui/theme.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 
 describe('line diff', () => {
@@ -285,5 +285,19 @@ describe('link safety', () => {
     const rendered = safeLink('LABEL', 'https://ok.dev/guide');
     assert.ok(rendered.includes('\x1b]8;;https://ok.dev/guide'));
     assert.ok(rendered.endsWith('\x1b]8;;\x1b\\'));
+  });
+
+  test('readableWidth guards NaN/negative values and badge/fileLink stay safe on unknown role or control bytes', async () => {
+    assert.equal(readableWidth(Number.NaN), 80);
+    assert.equal(readableWidth(-10), 40);
+    assert.equal(badge('unknown-role', null), '[]');
+    assert.equal(fileLink('LABEL', '/tmp/\x1b[2J'), 'LABEL');
+    const { execFileSync } = await import('node:child_process');
+    const out = execFileSync(
+      process.execPath,
+      ['-e', "import('./src/tui/theme.js').then(m => console.log(m.badge('unknown-role', 'OK')))"],
+      { env: { ...process.env, NO_COLOR: '', CAUSYNE_NO_COLOR: '', FORCE_COLOR: '3' }, encoding: 'utf8' }
+    );
+    assert.equal(out.trim(), '[OK]');
   });
 });
