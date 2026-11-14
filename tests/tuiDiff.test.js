@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { diffLines, diffStat, renderDiff, approvalDiff, MAX_SIDE_LINES } from '../src/tui/diff.js';
+import { diffLines, diffStat, renderDiff, renderDiffOps, approvalDiff, MAX_SIDE_LINES } from '../src/tui/diff.js';
 import { StatusLine, compactCount, formatCost, formatElapsed } from '../src/tui/statusLine.js';
 import { safeLink, HAS_HYPERLINKS } from '../src/tui/theme.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
@@ -184,6 +184,20 @@ describe('approval diff for the file-mutating tools', () => {
 
   test('a directory given as a path does not break the prompt', () => {
     assert.doesNotThrow(() => approvalDiff('fs_write', { path: os.tmpdir(), content: 'x' }, { width: 80 }));
+  });
+
+  test('renderDiffOps guards nullish/NaN options and approvalDiff sanitizes path escapes', () => {
+    assert.deepEqual(renderDiffOps(null), { rows: [], clipped: false });
+    const nanRendered = renderDiff('old line\n', 'new line\n', { width: Number.NaN, maxLines: Number.NaN });
+    assert.ok(nanRendered.rows.length > 0);
+    assert.ok(nanRendered.rows.some((r) => stripAnsi(r).includes('new line')));
+    const evilDiff = approvalDiff('fs_edit', {
+      path: '/tmp/\x1b[31mevil\nfile.ts',
+      edits: [{ old_string: 'a', new_string: 'b' }]
+    }, { width: 80 });
+    assert.ok(evilDiff);
+    assert.equal(evilDiff.path.includes('\x1b'), false);
+    assert.equal(evilDiff.path.includes('\n'), false);
   });
 });
 

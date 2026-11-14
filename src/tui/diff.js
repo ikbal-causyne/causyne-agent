@@ -156,8 +156,12 @@ function collapse(ops) {
  * meaning on their own, which is what makes the no-colour output still readable.
  */
 export function renderDiffOps(ops, options = {}) {
-  const width = Math.max(20, (options.width || 80) - 8);
-  const maxLines = options.maxLines || MAX_RENDER_LINES;
+  if (!Array.isArray(ops)) return { rows: [], clipped: false };
+  const safeWidth = Number.isFinite(options?.width) && options.width > 0 ? Math.floor(options.width) : 80;
+  const width = Math.max(20, safeWidth - 8);
+  const maxLines = Number.isFinite(options?.maxLines) && options.maxLines > 0
+    ? Math.floor(options.maxLines)
+    : MAX_RENDER_LINES;
   const collapsed = collapse(ops);
   const rendered = [];
 
@@ -281,8 +285,8 @@ export function approvalDiff(toolName, args, options = {}) {
     if (rows.length === 0) return null;
 
     return {
-      path: plan.path ? shortenHome(plan.path) : '',
-      note: plan.note,
+      path: plan.path ? safeDisplay(shortenHome(plan.path)).replace(/[\r\n]+/g, ' ') : '',
+      note: plan.note ? safeDisplay(plan.note).replace(/[\r\n]+/g, ' ') : '',
       rows,
       added: stat.added,
       removed: stat.removed,
