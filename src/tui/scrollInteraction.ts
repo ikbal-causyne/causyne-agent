@@ -61,6 +61,8 @@ export interface SurfaceContract {
   };
   viewport?: ViewportContract;
   width?: number;
+  env?: { CAUSYNE_SIDEBAR?: string };
+  homeInfo?: unknown;
   mouseCaptured?: boolean;
   detached?: boolean;
   releaseMouse?(): boolean;
@@ -252,10 +254,6 @@ export function handleScrollbarMouse(
   const mouseX = Math.floor(key.mouse.x);
   const mouseY = Math.floor(key.mouse.y);
 
-  if (surface) {
-    (surface as any).activeTurnIndex = null;
-  }
-
   const rawTermRows = Number(host.out?.rows);
   const termRows = Number.isFinite(rawTermRows) && rawTermRows > 0 ? Math.floor(rawTermRows) : 24;
   const rawStageH = Number(surface.stage?.height);
@@ -276,14 +274,16 @@ export function handleScrollbarMouse(
   const viewportH = Number.isFinite(rawViewportH) && rawViewportH > 0 ? Math.floor(rawViewportH) : 1;
   const rawStageW = Number(typeof surface.stage?.width === 'function' ? surface.stage.width() : surface.width);
   const stageW = Number.isFinite(rawStageW) && rawStageW > 0 ? Math.floor(rawStageW) : 80;
-  const mainW = sessionMainWidth(stageW);
+  const mainW = sessionMainWidth(stageW, Boolean(surface.homeInfo), surface.env);
   const hasRail = typeof surface.railEnabled === 'function' ? surface.railEnabled(mainW) : true;
-  const contentW = hasRail ? Math.max(20, mainW - 3) : mainW;
+  if (!hasRail) return false;
+  const contentW = Math.max(20, mainW - 3);
 
   // Rail occupies column contentW - 1 through mainW
   const isRailColumn = mouseX >= contentW - 1 && mouseX <= mainW;
 
   if (isRailColumn) {
+    (surface as any).activeTurnIndex = null;
     // Auto-heal if detached
     if (typeof surface.captureMouse === 'function' && surface.detached) {
       surface.captureMouse();

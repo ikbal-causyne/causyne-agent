@@ -92,4 +92,70 @@ describe('scrollInteraction finite bounds', () => {
     const followUp = dampener.stepRows('down', 3, 1060);
     assert.equal(Number.isFinite(followUp), true);
   });
+
+  it('handleScrollbarMouse preserves activeTurnIndex on non-rail clicks, respects railEnabled=false, and honors surface.env sidebar disablement', () => {
+    let scrolled = 0;
+    const viewport: any = {
+      height: 20,
+      maxScrollTop: () => 50,
+      scrollTo: () => { scrolled++; },
+      toBottom: () => { scrolled++; }
+    };
+    const host: any = {
+      out: { rows: 24 },
+      notice: '',
+      draw: () => {}
+    };
+    const surface: any = {
+      width: 200,
+      env: { CAUSYNE_SIDEBAR: 'off' },
+      stage: { height: 24, width: () => 200 },
+      railEnabled: () => true,
+      activeTurnIndex: 4
+    };
+
+    // 1. Click in chat body (x = 10) must not wipe activeTurnIndex
+    const bodyClick = handleScrollbarMouse(
+      { name: 'mouse', mouse: { x: 10, y: 10, pressed: true, button: 0 } },
+      viewport,
+      surface,
+      host
+    );
+    assert.equal(bodyClick, false);
+    assert.equal(surface.activeTurnIndex, 4);
+
+    // 2. Click at x = 156 with CAUSYNE_SIDEBAR=off on a 200-col screen is inside chat body, not the disabled sidebar rail
+    const midClick = handleScrollbarMouse(
+      { name: 'mouse', mouse: { x: 156, y: 10, pressed: true, button: 0 } },
+      viewport,
+      surface,
+      host
+    );
+    assert.equal(midClick, false);
+    assert.equal(surface.activeTurnIndex, 4);
+
+    // 3. When railEnabled returns false, clicks at the right edge must not trigger scrollbar scrolling
+    surface.railEnabled = () => false;
+    const disabledRailClick = handleScrollbarMouse(
+      { name: 'mouse', mouse: { x: 199, y: 10, pressed: true, button: 0 } },
+      viewport,
+      surface,
+      host
+    );
+    assert.equal(disabledRailClick, false);
+    assert.equal(scrolled, 0);
+
+    // 4. When railEnabled returns true, clicking at x = 199 scrolls and clears activeTurnIndex
+    surface.railEnabled = () => true;
+    const validRailClick = handleScrollbarMouse(
+      { name: 'mouse', mouse: { x: 199, y: 10, pressed: true, button: 0 } },
+      viewport,
+      surface,
+      host
+    );
+    assert.equal(validRailClick, true);
+    assert.equal(scrolled, 1);
+    assert.equal(surface.activeTurnIndex, null);
+  });
 });
+
