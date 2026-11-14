@@ -5,7 +5,7 @@
 
 // @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, fill, bold, dim, GLYPHS, HAS_COLOR } from './theme.js';
-import { visibleWidth, padEnd, truncate } from './text.js';
+import { visibleWidth, padEnd, safeDisplay, truncate } from './text.js';
 import { FRAME } from './overlay.js';
 import { TokenTracker } from '../tokenTracker.js';
 import { loadConfig } from '../config.js';
@@ -36,9 +36,13 @@ export interface UsageCardData {
   budgetPercentUsed?: number | undefined;
 }
 
+function oneLineText(value: unknown): string {
+  return safeDisplay(value).replace(/\s+/g, ' ').trim();
+}
+
 function formatNumber(value: number | undefined | null): string {
   const num = Number(value);
-  return (Number.isFinite(num) ? num : 0).toLocaleString('en-US');
+  return (Number.isFinite(num) ? Math.max(0, Math.round(num)) : 0).toLocaleString('en-US');
 }
 
 function formatCostEstimate(costUsd: number): string {
@@ -86,8 +90,8 @@ export async function collectUsageCardData(loop?: any): Promise<UsageCardData> {
   const daily = await tracker.getDailyUsage();
   const config = loadConfig() as Record<string, any>;
 
-  const provider = String(config.provider || 'default');
-  const model = String(config.model || 'default');
+  const provider = oneLineText(config.provider || 'default') || 'default';
+  const model = oneLineText(config.model || 'default') || 'default';
   const isAgy = isAntigravityProvider(provider);
   const isAcp = isAcpProvider(provider);
   const billingNote = (isAgy || isAcp)
@@ -107,10 +111,20 @@ export async function collectUsageCardData(loop?: any): Promise<UsageCardData> {
   // Measure active messages tokens
   let messageChars = 0;
   let messageCount = 0;
-  const rawMessages = loop?.messages || (loop?.memoryManager ? loop.memoryManager.loadHistory() : []);
+  let rawMessages: unknown[] = [];
+  if (Array.isArray(loop?.messages)) {
+    rawMessages = loop.messages;
+  } else if (typeof loop?.memoryManager?.loadHistory === 'function') {
+    try {
+      const loaded = loop.memoryManager.loadHistory();
+      if (Array.isArray(loaded)) rawMessages = loaded;
+    } catch {
+      rawMessages = [];
+    }
+  }
   if (Array.isArray(rawMessages)) {
     messageCount = rawMessages.length;
-    for (const msg of rawMessages) {
+    for (const msg of rawMessages as Array<Record<string, any>>) {
       if (typeof msg?.content === 'string') {
         messageChars += msg.content.length;
       } else if (Array.isArray(msg?.content)) {
@@ -137,7 +151,7 @@ export async function collectUsageCardData(loop?: any): Promise<UsageCardData> {
     : 0;
   const rawCostCeiling = finiteNonNeg(budget.maxCostUsd, 0);
 
-  const sessionId = String(loop?.memoryManager?.sessionId || 'default');
+  const sessionId = oneLineText(loop?.memoryManager?.sessionId || 'default') || 'default';
   const sessionTokens = finiteNonNeg(tracker.sessionTokens, 0) || finiteNonNeg(tracker.taskTokens, 0);
   const sessionCostUsd = finiteNonNeg(tracker.sessionCostUsd, 0) || finiteNonNeg(tracker.taskCostUsd, 0);
 
@@ -188,16 +202,18 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
   const lines: string[] = [];
 
   // 1. Session ID & Message count
-  const shortSession = data.sessionId.length > 24
-    ? `${data.sessionId.slice(0, 10)}…${data.sessionId.slice(-10)}`
-    : data.sessionId;
+  const cleanSession = oneLineText(data.sessionId || 'default') || 'default';
+  const sessionChars = Array.from(cleanSession);
+  const shortSession = sessionChars.length > 24
+    ? `${sessionChars.slice(0, 10).join('')}…${sessionChars.slice(-10).join('')}`
+    : cleanSession;
   lines.push(
     `${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`
   );
 
   // 2. Context Window & Progress bar
   const safePercentLeft = Number.isFinite(data.contextPercentLeft)
-    ? Math.max(0, Math.min(100, data.contextPercentLeft))
+    ? Math.max(0, Math.min(100, Math.round(data.contextPercentLeft)))
     : 0;
   const pBar = renderProgressBar(safePercentLeft, 22, false);
   lines.push(
@@ -220,8 +236,11 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
   );
 
   // 6. Model & Provider
+  const cleanProvider = oneLineText(data.provider || 'default') || 'default';
+  const cleanModel = oneLineText(data.model || 'default') || 'default';
+  const cleanBilling = oneLineText(data.billingNote || '');
   lines.push(
-    `${dim('Active Model :')} ${paint('accent', `${data.provider} / ${data.model}`)}  ${dim(`(${data.billingNote})`)}`
+    `${dim('Active Model :')} ${paint('accent', `${cleanProvider} / ${cleanModel}`)}${cleanBilling ? `  ${dim(`(${cleanBilling})`)}` : ''}`
   );
 
   // 7. Optional Budget

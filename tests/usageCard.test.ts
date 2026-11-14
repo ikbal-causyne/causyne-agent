@@ -140,3 +140,45 @@ test('/usage command toggles usageCard in interactive prompt and produces report
   assert.match(cliResult.output, /This task/);
   assert.match(cliResult.output, /Lifetime/);
 });
+
+test('renderUsageCardRows sanitizes multiline/CSI metadata, clamps negative counts, and collectUsageCardData survives loadHistory throw', async () => {
+  const rows = renderUsageCardRows({
+    sessionId: 'sess\ninjected\x1b[2J-12345678901234567890',
+    sessionTurns: -5.8,
+    sessionTokens: -100,
+    sessionCostUsd: -1,
+    dailyTokens: 12.6,
+    dailyCostUsd: 0,
+    lifetimeTokens: 100.2,
+    lifetimeCostUsd: 0,
+    lifetimeCalls: -3,
+    contextUsedTokens: 100,
+    contextPoolTokens: 1000,
+    contextPercentLeft: 90.4,
+    provider: 'custom\nprov\x1b[2J',
+    model: 'model\nname\x1b[2J',
+    billingNote: 'note\nline\x1b[2J',
+    budgetEnabled: false
+  }, 70);
+
+  for (let i = 0; i < rows.length - 1; i++) {
+    const r = rows[i] ?? '';
+    assert.ok(!r.includes('\n') && !r.includes('\r'), `row ${i} must not contain newline`);
+    assert.ok(!r.includes('\x1b[2J'), `row ${i} must strip unsafe CSI`);
+  }
+  const text = rows.join('\n');
+  assert.match(text, /\(0 messages\)/);
+  assert.match(text, /90% left/);
+
+  const throwingLoop = {
+    memoryManager: {
+      sessionId: 'safe\nsess\x1b[2J',
+      loadHistory() {
+        throw new Error('disk read failed');
+      }
+    }
+  };
+  const data = await collectUsageCardData(throwingLoop);
+  assert.equal(data.sessionTurns, 0);
+  assert.ok(!data.sessionId.includes('\n') && !data.sessionId.includes('\x1b[2J'));
+});
