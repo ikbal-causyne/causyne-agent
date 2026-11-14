@@ -1,7 +1,11 @@
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { probeAdvisory, queryAdvisory } from '../src/observer/advisory.js';
+import { scanMutation } from '../src/observer/evidence.js';
 
 describe('observer advisory parsing and timeout bounds', () => {
   it('queryAdvisory parses valid JSON verdict even when earlier prose contains braces', async () => {
@@ -61,6 +65,21 @@ describe('observer advisory parsing and timeout bounds', () => {
       assert.equal(result.healthy, true);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('scanMutation resolves relative target paths against context.workspaceRoot instead of process.cwd()', () => {
+    const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-obs-ws-'));
+    try {
+      const scan = scanMutation(
+        'fs_write',
+        { path: 'src/index.ts', content: 'export const ok = true;\n' },
+        { workspaceRoot: tmpWs }
+      );
+      assert.equal(scan.evidence.some((e) => e.code === 'write-outside-workspace'), false);
+      assert.equal(scan.evidence.some((e) => e.code === 'write-temporary'), false);
+    } finally {
+      fs.rmSync(tmpWs, { recursive: true, force: true });
     }
   });
 });

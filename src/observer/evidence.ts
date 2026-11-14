@@ -147,7 +147,10 @@ function physicalRoot(workspaceRoot: string): string {
 }
 
 function resolveTarget(workspaceRoot: string, raw: string): { lexical: string; physical: string; inside: boolean } {
-  const lexical = resolveUserPath(raw);
+  const trimmed = String(raw ?? '').trim();
+  const lexical = trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\') || path.isAbsolute(trimmed)
+    ? resolveUserPath(trimmed)
+    : path.resolve(workspaceRoot, trimmed);
   const physical = realpathLoose(lexical);
   const root = physicalRoot(workspaceRoot);
   const relative = path.relative(root, physical);
