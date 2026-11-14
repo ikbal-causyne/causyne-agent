@@ -281,8 +281,11 @@ export class SelectList {
    * is the only place a caret belongs in a picker.
    */
   render(width, height) {
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.floor(width) : 8;
+    const safeHeight = Number.isFinite(height) && height > 0 ? Math.floor(height) : 4;
     const rows = [];
-    const inner = Math.max(4, width);
+    const inner = Math.max(4, safeWidth);
+    this.lastInnerWidth = inner;
 
     if (this.showFilter) {
       const shown = cleanSelectText(this.query) || dim(cleanSelectText(this.placeholder));
@@ -298,7 +301,7 @@ export class SelectList {
     // Letting the loop fill that row meant the counter could clobber the very
     // item the marker was on, which is a second, independent way for the
     // selection to vanish.
-    const itemRows = Math.max(1, height - rows.length - 1);
+    const itemRows = Math.max(1, safeHeight - rows.length - 1);
 
     // Remember what the renderer actually budgeted, so key handling scrolls by
     // the same number of rows it draws. SelectLayer used to derive its own
@@ -315,7 +318,7 @@ export class SelectList {
 
     const window = this.filtered.slice(this.offset, this.offset + itemRows);
     // The last row belongs to the position counter whenever one is shown.
-    const ceiling = this.filtered.length > itemRows ? height - 1 : height;
+    const ceiling = this.filtered.length > itemRows ? Math.max(rows.length + 1, safeHeight - 1) : safeHeight;
     let lastCategory = null;
 
     for (let index = 0; index < window.length; index++) {
@@ -324,9 +327,9 @@ export class SelectList {
       const isSelected = this.offset + index === this.selected;
 
       if (item.category && item.category !== lastCategory) {
+        if (rows.length + 2 > ceiling) break;
         lastCategory = item.category;
         rows.push(truncate(dim(`  ${cleanSelectText(item.category)}`), inner, GLYPHS.ellipsis));
-        if (rows.length >= ceiling) break;
       }
 
       const marker = isSelected ? paint('accent', GLYPHS.arrow) : ' ';
@@ -354,7 +357,7 @@ export class SelectList {
     if (this.filtered.length > itemRows) {
       const position = `${this.selected + 1}/${this.filtered.length}`;
       const line = dim(position.padStart(inner));
-      if (rows.length >= height) rows[height - 1] = line;
+      if (rows.length >= safeHeight) rows[safeHeight - 1] = line;
       else rows.push(line);
     }
 
@@ -363,6 +366,7 @@ export class SelectList {
 
   /** Column the caret sits at within the filter row. */
   cursorColumn() {
-    return 2 + visibleWidth(this.query);
+    const maxCol = Math.max(2, (this.lastInnerWidth || 40) - 1);
+    return Math.min(maxCol, 2 + visibleWidth(cleanSelectText(this.query)));
   }
 }

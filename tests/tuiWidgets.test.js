@@ -102,6 +102,24 @@ describe('fuzzy select', () => {
     assert.equal(list.handleKey({ name: 'char', text: 'b' }, 5), 'handled');
     assert.equal(list.query, 'b');
   });
+
+  test('render avoids orphan trailing category header and caps cursorColumn inside width', () => {
+    const list = new SelectList([
+      { label: 'one', category: 'GroupA' },
+      { label: 'two', category: 'GroupA' },
+      { label: 'three', category: 'GroupB' }
+    ]);
+    list.handleKey({ name: 'paste', text: 'x'.repeat(60) }, 5);
+    list.query = '';
+    list.refilter();
+    const { rows } = list.render(30, 6);
+    const plain = rows.map(stripAnsi);
+    assert.equal(plain.some(r => r.includes('GroupB')), false, 'must not render orphan GroupB category header without its item');
+
+    list.query = 'x'.repeat(60);
+    list.render(24, 8);
+    assert.ok(list.cursorColumn() <= 23, `expected cursorColumn <= 23, got ${list.cursorColumn()}`);
+  });
 });
 
 describe('the modal stack', () => {
