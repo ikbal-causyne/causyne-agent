@@ -195,6 +195,10 @@ export class StatusLine {
    */
   render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick }: StatusLineRenderOptions = {}): string {
     const safeWidth = finiteWidth(width);
+    const safeElapsedMs = nonNegativeFinite(elapsedMs);
+    const safeSteps = Math.floor(nonNegativeFinite(steps));
+    const safeTick = tick !== undefined && Number.isFinite(tick) ? Math.floor(tick) : undefined;
+
     const head = spinnerFrame
       ? (typeof spinnerFrame === 'string' && spinnerFrame.includes('\x1b')
           ? `${spinnerFrame} `
@@ -203,16 +207,16 @@ export class StatusLine {
     const budget = Math.max(10, safeWidth - visibleWidth(head) - 1);
 
     const segments: string[] = [];
-    if (elapsedMs > 0) segments.push(formatElapsed(elapsedMs));
-    if (steps > 0) segments.push(`step ${steps}`);
+    if (safeElapsedMs > 0) segments.push(formatElapsed(safeElapsedMs));
+    if (safeSteps > 0) segments.push(`step ${safeSteps}`);
     if (this.turnTokens > 0) segments.push(`${compactCount(this.turnTokens)} tok`);
     if (this.turnCost > 0) segments.push(formatCost(this.turnCost));
     if (this.cachedTokens > 0) segments.push(`${compactCount(this.cachedTokens)} cached`);
     if (this.model) segments.push(this.model);
 
     const separator = `  ${GLYPHS.dot}  `;
-    const rawMessage = tick !== undefined
-      ? formatAnimatedStatus(message || 'working', tick)
+    const rawMessage = safeTick !== undefined
+      ? formatAnimatedStatus(message || 'working', safeTick)
       : (message || (spinnerFrame ? 'working' : ''));
     const text = safeDisplay(rawMessage);
 
@@ -230,11 +234,11 @@ export class StatusLine {
       : budget;
     const body = truncate(text, messageBudget, GLYPHS.ellipsis);
 
-    const isAnimating = tick !== undefined || elapsedMs > 0 || Boolean(spinnerFrame);
-    const shimmerNowMs = elapsedMs > 0 ? elapsedMs : (tick !== undefined ? tick * 80 : 320);
+    const isAnimating = safeTick !== undefined || safeElapsedMs > 0 || Boolean(spinnerFrame);
+    const shimmerNowMs = safeElapsedMs > 0 ? safeElapsedMs : (safeTick !== undefined ? Math.max(0, safeTick) * 80 : 320);
     if (isAnimating && this.onTick) {
       try {
-        this.onTick(shimmerNowMs, tick);
+        this.onTick(shimmerNowMs, safeTick);
       } catch {
         // Never allow a tick observer to disrupt status rendering
       }

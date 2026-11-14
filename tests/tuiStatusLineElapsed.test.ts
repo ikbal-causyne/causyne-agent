@@ -62,4 +62,32 @@ describe('formatElapsed', () => {
     assert.equal(status.turnCost, 0.02);
     assert.equal(status.cachedTokens, 0);
   });
+
+  it('StatusLine.render omits non-finite elapsedMs/steps and floors fractional steps', () => {
+    const status = new StatusLine();
+    let recordedNowMs: number | undefined;
+    status.onTick = (nowMs) => {
+      recordedNowMs = nowMs;
+    };
+
+    const renderedInf = status.render({
+      message: 'working',
+      elapsedMs: Number.POSITIVE_INFINITY,
+      steps: Number.POSITIVE_INFINITY,
+      tick: Number.NaN,
+      width: 100
+    });
+    assert.doesNotMatch(renderedInf, /Infinity|\bNaN\b|0\.0s|step /);
+    assert.equal(recordedNowMs, undefined);
+
+    const renderedFrac = status.render({
+      message: 'working',
+      elapsedMs: 1200,
+      steps: 2.9,
+      width: 100
+    });
+    assert.match(renderedFrac, /1\.2s/);
+    assert.match(renderedFrac, /step 2\b/);
+    assert.equal(recordedNowMs, 1200);
+  });
 });
