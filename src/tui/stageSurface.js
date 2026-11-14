@@ -304,7 +304,7 @@ export class StageSurface {
   }
 
   enableMouse() {
-    if (!this.mouseWanted || this.mouseOn || !this.stage.reserved) return false;
+    if (this.homeInfo || !this.mouseWanted || this.mouseOn || !this.stage.reserved) return false;
     this.out.write(mouseTracking(true));
     this.out.write(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;

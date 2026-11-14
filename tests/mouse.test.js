@@ -274,6 +274,19 @@ describe('UX-02 — the terminal is handed back', () => {
     assert.equal(surface.stage.reserved, true);
   });
 
+  test('resume does not arm mouse reporting while Home view is active', () => {
+    const out = sink({ rows: 30 });
+    const surface = new StageSurface({ out, env: {} });
+    surface.open();
+    surface.enterHome({ cwd: '/tmp' });
+    surface.suspend();
+    out.reset();
+    surface.resume();
+    assert.equal(out.text().includes('\x1b[?1000h'), false);
+    assert.equal(surface.mouseOn, false);
+    surface.close();
+  });
+
   test('handlers are registered for the signals that do not emit exit', () => {
     const before = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((s) => process.listenerCount(s));
     const surface = new StageSurface({ out: sink({ rows: 30 }), env: {} });
