@@ -124,9 +124,9 @@ export class StatusLine {
 
   private applyContextWindow(chars: unknown, limit: unknown): void {
     const safeChars = nonNegativeFinite(chars);
-    if (safeChars > 0) this.contextChars = safeChars;
+    if (safeChars > 0 || chars === 0) this.contextChars = safeChars;
     const safeLimit = nonNegativeFinite(limit);
-    if (safeLimit > 0) this.contextLimit = safeLimit;
+    if (safeLimit > 0 || limit === 0) this.contextLimit = safeLimit;
   }
 
   /** Session-lifetime facts, set once from the same info as the header. */
