@@ -7,11 +7,17 @@ function dimBackdropRow(row) {
         return row;
     return `\x1b[2m${row.replace(/\x1b\[(?:0|22)?m/g, '$&\x1b[2m')}\x1b[0m`;
 }
+function closeSgr(row) {
+    return row.includes('\x1b[') && !row.endsWith('\x1b[0m') ? `${row}\x1b[0m` : row;
+}
 /**
  * Overlay a message action menu in the transcript viewport with adaptive,
  * context-aware positioning and elevated backdrop isolation.
  */
 export function placeMessageActionPanel(viewportRows, panel, contentWidth, stageTop, anchorY, count, options) {
+    if (!Array.isArray(viewportRows) || !Array.isArray(panel)) {
+        return { rows: Array.isArray(viewportRows) ? viewportRows : [], layout: null };
+    }
     if (!panel.length || viewportRows.length < panel.length || !Number.isFinite(contentWidth) || contentWidth < 8) {
         return { rows: viewportRows, layout: null };
     }
@@ -20,7 +26,9 @@ export function placeMessageActionPanel(viewportRows, panel, contentWidth, stage
     const safeCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     const totalRows = viewportRows.length;
     const panelHeight = panel.length;
-    const width = Math.min(safeContentWidth, Math.max(...panel.map(visibleWidth)));
+    const width = Math.min(safeContentWidth, Math.max(0, ...panel.map(r => visibleWidth(r ?? ''))));
+    if (width <= 0)
+        return { rows: viewportRows, layout: null };
     const x = Math.max(0, Math.floor((safeContentWidth - width) / 2));
     // Vertical constraints and comfortable ergonomic margins
     const maxAllowedY = totalRows - panelHeight;
@@ -90,9 +98,10 @@ export function placeMessageActionPanel(viewportRows, panel, contentWidth, stage
         const leftPrefix = padEnd(truncate(baseRow, x, ''), x);
         const cardChunk = padEnd(truncate(panel[panelIdx] ?? '', width, ''), width);
         const rightSuffix = sliceFromColumn(baseRow, x + width);
-        const styledLeft = shouldDim ? dimBackdropRow(leftPrefix) : leftPrefix;
+        const styledLeft = shouldDim ? dimBackdropRow(leftPrefix) : closeSgr(leftPrefix);
+        const styledCard = closeSgr(cardChunk);
         const styledRight = shouldDim ? dimBackdropRow(rightSuffix) : rightSuffix;
-        rows[r] = `${styledLeft}${cardChunk}${styledRight}`;
+        rows[r] = `${styledLeft}${styledCard}${styledRight}`;
     }
     return { rows, layout: { x, y: safeStageTop + y, width, count: safeCount } };
 }

@@ -57,7 +57,8 @@ export class MessageActionsLayer extends Layer {
             return Math.max(max, labelW + descW);
         }, 0);
         const wanted = Math.max(48, maxItemContent + 6);
-        return Math.max(36, Math.min(safeMax, wanted));
+        const minWidth = safeMax < 36 ? Math.max(1, safeMax) : 36;
+        return Math.max(minWidth, Math.min(safeMax, wanted));
     }
     body(width) {
         const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 60;
@@ -120,8 +121,8 @@ export function isMouseMotion(sequence) {
     return Number.isFinite(code) && (code & 32) !== 0;
 }
 export function handleMessageMouse(host, loop, event) {
-    const mouse = event.mouse;
-    const surface = host.surface;
+    const mouse = event && typeof event === 'object' ? event.mouse : undefined;
+    const surface = host && typeof host === 'object' ? host.surface : null;
     if (!mouse || !surface)
         return false;
     const marker = messageAt(surface, mouse);
@@ -180,8 +181,14 @@ const positiveDim = (value, fallback) => {
 };
 /** Resolve screen coordinates against the painted viewport to find any frame marker. */
 export function markerAt(surface, point) {
-    if (!surface || surface.stage?.reserved === false || !Number.isFinite(point.x) || !Number.isFinite(point.y))
+    if (!surface
+        || surface.stage?.reserved === false
+        || !point
+        || typeof point !== 'object'
+        || !Number.isFinite(point.x)
+        || !Number.isFinite(point.y)) {
         return null;
+    }
     const px = Math.floor(point.x);
     const py = Math.floor(point.y);
     const rawViewW = surface.viewport?.viewWidth;
@@ -233,7 +240,7 @@ export function markHoveredMessage(rows, surface, contentWidth) {
         return;
     const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? Math.floor(contentWidth) : 1;
     const id = surface.hoveredMessageFrameId;
-    if (!id)
+    if (id === null || id === undefined)
         return;
     const flat = surface.transcript.flatten(safeContentWidth);
     const marker = flat.markers.find(item => item.id === id);
@@ -498,7 +505,7 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
 }
 /** Mouse selection for the small message menu; other dialogs retain their own input handling. */
 export function handleMessageActionMenuMouse(layer, event) {
-    if (!layer.messageActions || !layer.actionLayout || !event.mouse)
+    if (!layer || !event || !layer.messageActions || !layer.actionLayout || !event.mouse)
         return null;
     const { x, y, width, count } = layer.actionLayout;
     const { mouse } = event;

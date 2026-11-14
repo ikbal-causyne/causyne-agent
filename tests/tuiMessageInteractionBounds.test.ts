@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MessageActionsLayer, handleMessageActionMenuMouse, markerAt } from '../src/tui/messageInteraction.js';
+import {
+  MessageActionsLayer,
+  handleMessageMouse,
+  handleMessageActionMenuMouse,
+  markerAt
+} from '../src/tui/messageInteraction.js';
 
 describe('messageInteraction finite bounds', () => {
   it('handleMessageActionMenuMouse ignores non-finite coordinates and floors fractional row indices', () => {
@@ -81,5 +86,16 @@ describe('messageInteraction finite bounds', () => {
 
     const hit = markerAt(surface as never, { x: 5.9, y: 8.8 });
     assert.equal(hit?.id, 7);
+  });
+
+  it('clamps MessageActionsLayer.preferredWidth under narrow viewports and guards nullish inputs', () => {
+    const layer = new MessageActionsLayer(
+      [{ label: 'Copy message', description: 'to clipboard', value: 'copy' }],
+      () => {}
+    );
+    assert.ok(layer.preferredWidth(24) <= 24, 'preferredWidth must never exceed maxWidth on narrow terminals');
+    assert.equal(markerAt({} as never, null as never), null);
+    assert.equal(handleMessageMouse({ surface: null } as never, {}, null as never), false);
+    assert.equal(handleMessageActionMenuMouse(null as never, null as never), null);
   });
 });

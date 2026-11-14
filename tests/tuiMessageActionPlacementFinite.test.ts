@@ -29,4 +29,15 @@ describe('placeMessageActionPanel finite bounds', () => {
     assert.equal(Number.isInteger(placed.layout.y), true);
     assert.ok(placed.rows.some(row => row.includes('| ok |')));
   });
+
+  it('guards nullish arrays and isolates unclosed SGR across modal left/right boundaries', () => {
+    assert.equal(placeMessageActionPanel(null as any, panel, 60, 0, 5, 1).layout, null);
+    assert.equal(placeMessageActionPanel(viewport, null as any, 60, 0, 5, 1).layout, null);
+
+    const coloredViewport = Array.from({ length: 8 }, () => '\x1b[31m' + 'x'.repeat(40));
+    const placed = placeMessageActionPanel(coloredViewport, ['\x1b[32m|ok|'], 40, 0, 3, 1);
+    assert.ok(placed.layout);
+    const panelRow = placed.rows[placed.layout.y]!;
+    assert.match(panelRow, /\x1b\[0m\x1b\[32m\|ok\|\x1b\[0m/);
+  });
 });

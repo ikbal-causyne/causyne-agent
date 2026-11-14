@@ -107,7 +107,8 @@ export class MessageActionsLayer extends Layer {
       return Math.max(max, labelW + descW);
     }, 0);
     const wanted = Math.max(48, maxItemContent + 6);
-    return Math.max(36, Math.min(safeMax, wanted));
+    const minWidth = safeMax < 36 ? Math.max(1, safeMax) : 36;
+    return Math.max(minWidth, Math.min(safeMax, wanted));
   }
 
   override body(width: number): string[] {
@@ -197,8 +198,8 @@ export function handleMessageMouse(
     shift?: boolean;
   }
 ): boolean {
-  const mouse = event.mouse;
-  const surface = host.surface;
+  const mouse = event && typeof event === 'object' ? event.mouse : undefined;
+  const surface = host && typeof host === 'object' ? host.surface : null;
   if (!mouse || !surface) return false;
   const marker = messageAt(surface, mouse);
   if (surface.hoveredMessageFrameId !== (marker?.id ?? null)) {
@@ -271,7 +272,16 @@ const positiveDim = (value: unknown, fallback: number): number => {
 
 /** Resolve screen coordinates against the painted viewport to find any frame marker. */
 export function markerAt(surface: MessageSurface | null, point: MousePoint): MessageMarker | null {
-  if (!surface || surface.stage?.reserved === false || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  if (
+    !surface
+    || surface.stage?.reserved === false
+    || !point
+    || typeof point !== 'object'
+    || !Number.isFinite(point.x)
+    || !Number.isFinite(point.y)
+  ) {
+    return null;
+  }
   const px = Math.floor(point.x);
   const py = Math.floor(point.y);
   const rawViewW = (surface.viewport as any)?.viewWidth;
@@ -320,7 +330,7 @@ export function markHoveredMessage(
   if (!Array.isArray(rows) || rows.length === 0 || !surface?.transcript?.flatten) return;
   const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? Math.floor(contentWidth) : 1;
   const id = surface.hoveredMessageFrameId;
-  if (!id) return;
+  if (id === null || id === undefined) return;
   const flat = surface.transcript.flatten(safeContentWidth);
   const marker = flat.markers.find(item => item.id === id);
   if (!marker || !isMessage(marker)) return;
@@ -584,7 +594,7 @@ export function handleMessageActionMenuMouse(
     list?: { moveTo(index: number): unknown }; key(event: { name: string }): string | null },
   event: { mouse?: MousePoint & { button?: number; pressed?: boolean }; sequence?: string }
 ): string | null {
-  if (!layer.messageActions || !layer.actionLayout || !event.mouse) return null;
+  if (!layer || !event || !layer.messageActions || !layer.actionLayout || !event.mouse) return null;
   const { x, y, width, count } = layer.actionLayout;
   const { mouse } = event;
   if (!Number.isFinite(mouse.x) || !Number.isFinite(mouse.y)
