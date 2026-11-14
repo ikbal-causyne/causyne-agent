@@ -17,19 +17,20 @@ const COMMAND = /(?:^|[ \t\r\n])\/([a-z0-9_?-]*)$/i;
 export function detectInlineSlashTrigger(text, cursor) {
     if (typeof text !== 'string' || !Number.isFinite(cursor))
         return null;
-    if (cursor < 0 || cursor > text.length)
+    const position = Math.trunc(cursor);
+    if (position < 0 || position > text.length)
         return null;
-    const before = text.slice(0, cursor);
+    const before = text.slice(0, position);
     const argument = ARGUMENT.exec(before);
     if (argument) {
         const fragment = argument[0];
-        const offset = cursor - fragment.length + fragment.indexOf('/');
+        const offset = position - fragment.length + fragment.indexOf('/');
         const query = argument[2] ?? '';
         return {
             kind: 'command-argument',
             command: argument[1] ?? '',
             query,
-            start: cursor - query.length,
+            start: position - query.length,
             tokenStart: offset,
             inline: before.slice(0, offset).trim().length > 0
         };
@@ -38,7 +39,7 @@ export function detectInlineSlashTrigger(text, cursor) {
     if (!command)
         return null;
     const fragment = command[0];
-    const offset = cursor - fragment.length + fragment.indexOf('/');
+    const offset = position - fragment.length + fragment.indexOf('/');
     return {
         kind: 'command',
         query: command[1] ?? '',
