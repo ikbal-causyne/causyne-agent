@@ -1116,4 +1116,19 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(presented.length, 1);
     assert.ok(p.layer.panelGeometry.inset >= 55, `expected full-width centering inset >= 55 on 180 cols with sidebar off, got ${p.layer.panelGeometry.inset}`);
   });
+
+  test('moveSelection and moveSelectionClamped guard empty or missing completion items', () => {
+    const out = { columns: 80, rows: 24, write() { return true; }, isTTY: false, on() {}, removeListener() {} };
+    const input = { isTTY: false, on() {}, off() {} };
+    const p = new ChatPrompt({ out, input, commands: [] });
+    p.completion = { items: [] };
+    p.selected = 0;
+    p.moveSelection(1);
+    assert.equal(Number.isNaN(p.selected), false, 'moveSelection on empty items must not produce NaN');
+    assert.equal(p.selected, 0);
+    p.completion = null;
+    p.moveSelection(1);
+    p.moveSelectionClamped(-1);
+    assert.equal(p.selected, 0);
+  });
 });

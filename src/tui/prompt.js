@@ -1596,13 +1596,14 @@ export class ChatPrompt {
   }
 
   moveSelection(direction) {
-    const count = this.completion.items.length;
-    this.selected = (this.selected + direction + count) % count;
+    const count = Array.isArray(this.completion?.items) ? this.completion.items.length : 0;
+    if (count === 0) return;
+    this.selected = (((this.selected + direction) % count) + count) % count;
   }
 
   /** Move without wrapping: a wheel or page key stops at either end. */
   moveSelectionClamped(delta) {
-    const count = this.completion.items.length;
+    const count = Array.isArray(this.completion?.items) ? this.completion.items.length : 0;
     if (count === 0) return;
     this.selected = Math.max(0, Math.min(count - 1, this.selected + delta));
   }
