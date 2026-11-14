@@ -124,8 +124,14 @@ function fallbackDisplay(toolName, args) {
  *
  * Never throws: a display helper must not be able to break the transcript.
  */
+function cleanSingleLine(text) {
+    return safeDisplay(text).replace(/\s+/g, ' ').trim();
+}
+function normalizeRecordArgs(args) {
+    return args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+}
 export function describeTool(toolName, args) {
-    const safeArgs = args && typeof args === 'object' ? args : {};
+    const safeArgs = normalizeRecordArgs(args);
     const safeName = typeof toolName === 'string' ? toolName : '';
     let display;
     try {
@@ -136,9 +142,9 @@ export function describeTool(toolName, args) {
         display = fallbackDisplay(safeName, safeArgs);
     }
     return {
-        verb: safeDisplay(display.verb || ''),
+        verb: cleanSingleLine(display.verb || ''),
         // Untrusted: an argument can carry escapes or a credential the model echoed.
-        detail: safeDisplay(display.detail || '').replace(/\s+/g, ' ').trim()
+        detail: cleanSingleLine(display.detail || '')
     };
 }
 /** True when a curated entry exists — used by tests and by /help style output. */
@@ -150,13 +156,16 @@ export function hasCuratedDisplay(toolName) {
  * row. Reuses the same ordering and the same redaction.
  */
 export function describeToolForApproval(args) {
-    const safeArgs = args && typeof args === 'object' ? args : {};
+    const safeArgs = normalizeRecordArgs(args);
     const lines = [];
     for (const key of FALLBACK_KEYS) {
         const value = safeArgs[key];
         if (typeof value !== 'string' || value.length === 0)
             continue;
-        lines.push(`${key}: ${safeDisplay(shortenHome(value))}`);
+        const cleaned = cleanSingleLine(shortenHome(value));
+        if (!cleaned)
+            continue;
+        lines.push(`${key}: ${cleaned}`);
         if (lines.length >= 4)
             break;
     }
@@ -164,7 +173,7 @@ export function describeToolForApproval(args) {
         try {
             const compact = JSON.stringify(safeArgs);
             if (compact && compact !== '{}')
-                lines.push(safeDisplay(compact));
+                lines.push(cleanSingleLine(compact));
         }
         catch { /* nothing showable */ }
     }

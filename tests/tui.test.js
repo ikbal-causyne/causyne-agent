@@ -230,6 +230,15 @@ describe('tool rows say what the tool is doing', () => {
     const lines = describeToolForApproval({ cwd: '/tmp', command: 'rm -rf /tmp/x' });
     assert.match(lines[0], /^command:/, 'the command must come first, not the cwd');
   });
+
+  test('describeTool and describeToolForApproval collapse newlines and reject array args', () => {
+    const tool = describeTool('evil\nverb', { path: '/tmp/ok' });
+    assert.ok(!/[\r\n]/.test(tool.verb), 'verb must stay single-line');
+    const lines = describeToolForApproval({ command: 'echo hi\ncwd: /spoofed' });
+    assert.equal(lines.length, 1);
+    assert.ok(!/[\r\n]/.test(lines[0]), 'approval line must collapse embedded newlines');
+    assert.deepEqual(describeToolForApproval(['not-an-object']), []);
+  });
 });
 
 describe('the renderer', () => {
