@@ -32,6 +32,7 @@ export function sessionComposerWidth(columns) {
 }
 /** Render only facts the runtime can actually report. */
 export function sessionSidebarRows(facts, height) {
+    const safeFacts = facts && typeof facts === 'object' ? facts : {};
     const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
     const inner = SIDEBAR_WIDTH - 4;
     const rows = [];
@@ -45,13 +46,13 @@ export function sessionSidebarRows(facts, height) {
         rows.push(fill('surface', `${paint('rule', '│')}  ${padEnd(truncate(clean, inner, '…'), inner)} `));
     };
     line();
-    styled(bold(oneLine(facts.title?.trim() || 'Untitled')));
-    if (facts.id)
-        line(facts.id);
+    styled(bold(oneLine(safeFacts.title).trim() || 'Untitled'));
+    if (safeFacts.id)
+        line(safeFacts.id);
     line();
     styled(bold('Context'));
-    const limit = Number.isFinite(facts.contextLimit) ? Number(facts.contextLimit) : 0;
-    const used = Number.isFinite(facts.contextChars) ? Number(facts.contextChars) : 0;
+    const limit = Number.isFinite(safeFacts.contextLimit) ? Number(safeFacts.contextLimit) : 0;
+    const used = Number.isFinite(safeFacts.contextChars) ? Number(safeFacts.contextChars) : 0;
     if (limit > 0 && used > 0) {
         const rawPercent = (used / limit) * 100;
         const percent = Math.max(1, Math.min(100, Math.round(rawPercent)));
@@ -62,18 +63,18 @@ export function sessionSidebarRows(facts, height) {
     }
     line();
     styled(bold('Model'));
-    if (count >= 24 && facts.provider && facts.model) {
-        line(facts.provider);
-        line(facts.model);
+    if (count >= 24 && safeFacts.provider && safeFacts.model) {
+        line(safeFacts.provider);
+        line(safeFacts.model);
     }
     else {
-        line([facts.provider, facts.model].filter(Boolean).join(' / ') || 'Not configured');
+        line([safeFacts.provider, safeFacts.model].filter(Boolean).join(' / ') || 'Not configured');
     }
     line();
     styled(bold('Workspace'));
-    line(facts.cwd || 'Unknown');
-    if (facts.activeSkill) {
-        const raw = facts.activeSkill;
+    line(safeFacts.cwd || 'Unknown');
+    if (safeFacts.activeSkill) {
+        const raw = safeFacts.activeSkill;
         const skillId = typeof raw === 'string' ? raw : (raw.id || raw.name || '');
         const skillDesc = typeof raw === 'object' && raw ? raw.description || '' : '';
         if (skillId) {
@@ -85,8 +86,8 @@ export function sessionSidebarRows(facts, height) {
             }
         }
     }
-    const validPlan = Array.isArray(facts.plan)
-        ? facts.plan.filter((item) => Boolean(item && typeof item === 'object'))
+    const validPlan = Array.isArray(safeFacts.plan)
+        ? safeFacts.plan.filter((item) => Boolean(item && typeof item === 'object'))
         : [];
     if (validPlan.length) {
         const completed = validPlan.filter(item => item.status === 'completed').length;
@@ -131,12 +132,15 @@ function lineFor(rows) {
 }
 /** Compose the panel beside the viewport and input without exceeding terminal width. */
 export function joinSessionSidebar(mainRows, sideRows, mainWidth) {
+    if (!Array.isArray(mainRows))
+        return [];
+    const safeSide = Array.isArray(sideRows) ? sideRows : [];
     const safeWidth = Number.isFinite(mainWidth) ? Math.max(1, Math.floor(mainWidth)) : 80;
     return mainRows.map((row, index) => {
         const cleanMain = String(row == null ? '' : row).replace(/[\r\n]+/g, ' ');
         const main = padEnd(truncate(cleanMain, safeWidth, ''), safeWidth);
-        const rawSide = sideRows[index]
-            ? String(sideRows[index]).replace(/[\r\n]+/g, ' ')
+        const rawSide = safeSide[index]
+            ? String(safeSide[index]).replace(/[\r\n]+/g, ' ')
             : ' '.repeat(SIDEBAR_WIDTH);
         const side = padEnd(truncate(rawSide, SIDEBAR_WIDTH, ''), SIDEBAR_WIDTH);
         return main + side;

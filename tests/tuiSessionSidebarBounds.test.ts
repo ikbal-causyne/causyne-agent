@@ -57,3 +57,17 @@ test('sessionSidebarRows filters malformed plan entries and preserves the active
   assert.match(plain, /▸ Step 2/);
 });
 
+test('sessionSidebarRows and joinSessionSidebar handle nullish facts, ANSI-only titles, and nullish arrays', () => {
+  const nullFactsRows = sessionSidebarRows(null as unknown as Record<string, unknown>, 12);
+  assert.equal(nullFactsRows.length, 12);
+  assert.match(stripAnsi(nullFactsRows.join('\n')), /Untitled/);
+
+  const ansiOnlyTitleRows = sessionSidebarRows({ title: '\x1b[2J   ' }, 12);
+  assert.match(stripAnsi(ansiOnlyTitleRows.join('\n')), /Untitled/);
+
+  assert.deepEqual(joinSessionSidebar(null as unknown as string[], null as unknown as string[], 20), []);
+  const partial = joinSessionSidebar(['abc'], null as unknown as string[], 20);
+  assert.equal(partial.length, 1);
+  assert.equal(visibleWidth(partial[0]!), 20 + SIDEBAR_WIDTH);
+});
+
