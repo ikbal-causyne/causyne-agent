@@ -72,22 +72,27 @@ function actionOrSessionText(item, selected, width) {
  */
 export function renderSessionRows(entries, start, selected, width, budget) {
     const rows = [];
-    let lastIndex = start - 1;
+    const safeStart = Number.isFinite(start) ? Math.max(0, Math.floor(start)) : 0;
+    const safeWidth = Number.isFinite(width) ? Math.max(4, Math.floor(width)) : 60;
+    const safeBudget = budget === Number.POSITIVE_INFINITY
+        ? entries.length
+        : (Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0);
+    let lastIndex = safeStart - 1;
     let previousCategory = null;
-    for (let i = start; i < entries.length && rows.length < budget; i++) {
+    for (let i = safeStart; i < entries.length && rows.length < safeBudget; i++) {
         const item = entries[i].item;
         const category = clean(item.category || 'Sessions');
         const isNewGroup = category !== previousCategory;
         // Avoid leaving an orphaned header in the final available row.
-        if (isNewGroup && budget - rows.length >= 2) {
-            rows.push(dim(`  ${truncate(category.toUpperCase(), Math.max(1, width - 4), '…')}`));
+        if (isNewGroup && safeBudget - rows.length >= 2) {
+            rows.push(dim(`  ${truncate(category.toUpperCase(), Math.max(1, safeWidth - 4), '…')}`));
         }
         else if (isNewGroup && rows.length > 0) {
             break;
         }
-        if (rows.length >= budget)
+        if (rows.length >= safeBudget)
             break;
-        rows.push(actionOrSessionText(item, i === selected, width));
+        rows.push(actionOrSessionText(item, i === selected, safeWidth));
         lastIndex = i;
         previousCategory = category;
     }
