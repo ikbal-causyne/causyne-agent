@@ -67,8 +67,9 @@ export function persistImageBuffer(buffer, preferredName) {
             : mimeType === 'image/gif' ? 'gif'
                 : 'png';
     const timestamp = Date.now();
-    const filename = preferredName
-        ? path.basename(preferredName)
+    const basePreferred = preferredName ? path.basename(preferredName.trim()) : '';
+    const filename = basePreferred && basePreferred !== '.' && basePreferred !== '..'
+        ? basePreferred
         : `screenshot_${timestamp}.${ext}`;
     const attachmentsDir = getAttachmentsDirectory();
     const filePath = path.join(attachmentsDir, filename);
