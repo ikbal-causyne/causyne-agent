@@ -201,7 +201,7 @@ export class Stage {
    * (b) permits to move it.
    */
   grow(delta: number): number {
-    if (!this.reserved || delta <= 0) return 0;
+    if (!this.reserved || !Number.isFinite(delta) || delta <= 0) return 0;
     const room = this.maxHeight - this.height;
     const claim = Math.min(Math.floor(delta), room);
     if (claim <= 0) return 0;
@@ -236,7 +236,8 @@ export class Stage {
   }
 
   moveTo(row: number): void {
-    const target = Math.max(0, Math.min(row, this.height - 1));
+    if (!Number.isFinite(row)) return;
+    const target = Math.max(0, Math.min(Math.floor(row), this.height - 1));
     const delta = target - this.cursor;
     // CUU/CUD only. Never a newline: on the band's last row a newline scrolls
     // the terminal, which would move the whole block out from under the diff.

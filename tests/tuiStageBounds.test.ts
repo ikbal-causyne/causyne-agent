@@ -18,4 +18,20 @@ describe('Stage finite bounds', () => {
       assert.equal(Number.isFinite(stageInf.height), true);
     });
   });
+
+  it('Stage.grow and Stage.moveTo ignore non-finite deltas and floor fractional moveTo rows', () => {
+    const out = { columns: 80, rows: 30, isTTY: true, write: () => true };
+    const stage = new Stage({ out, height: 20 });
+    stage.reserve(5);
+
+    assert.equal(stage.grow(Number.NaN), 0);
+    assert.equal(stage.height, 5);
+    assert.equal(Number.isFinite(stage.cursor), true);
+
+    stage.moveTo(Number.NaN);
+    assert.equal(Number.isFinite(stage.cursor), true);
+
+    stage.moveTo(2.9);
+    assert.equal(stage.cursor, 2);
+  });
 });
