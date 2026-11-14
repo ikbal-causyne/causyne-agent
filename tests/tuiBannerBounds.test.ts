@@ -34,4 +34,24 @@ describe('banner bounds', () => {
     assert.equal(fromInf.width, 100);
     assert.equal(fromInf.height, 24);
   });
+
+  it('renderBanner strips control escapes from metadata and fitHints never exceeds width via fallback', () => {
+    const out = renderBanner({
+      variant: 'compact',
+      width: 90,
+      height: 24,
+      color: 'none',
+      unicode: true,
+      version: '1.0\x1b[2J',
+      provider: 'openai',
+      model: 'gpt\x07-5',
+      mode: 'safe\nmode',
+      cwd: '/tmp/\x1b]0;pwn\x07work\ninject'
+    });
+    assert.equal(/\x1b\[2J|\x1b\]0;|\x07/.test(out), false, 'control escapes leaked into banner output');
+    assert.equal(out.includes('\ninject'), false, 'embedded newline leaked out of cwd field');
+
+    const hint = fitHints(['very long first hint'], 6, 'too long fallback');
+    assert.ok(hint.length <= 6, `fitHints returned ${hint.length} chars exceeding limit 6`);
+  });
 });

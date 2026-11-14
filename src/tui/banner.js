@@ -7,6 +7,12 @@
  * CAUSYNE_ASCII=1 (7-bit only), and CAUSYNE_NO_ANIM=1.
  */
 import { homedir } from 'node:os';
+import { safeDisplay } from './text.js';
+function cleanMeta(value) {
+    return safeDisplay(typeof value === 'string' ? value : String(value ?? ''))
+        .replace(/[\r\n]+/g, ' ')
+        .trim();
+}
 export const TAGLINE = 'From intention to meaningful progress.';
 // ---- Logo -----------------------------------------------------------------------------------------------
 // One character = one "pixel". A terminal cell holds two stacked pixels (drawn with the half blocks ▀ ▄ █).
@@ -247,13 +253,18 @@ function shortPath(p, maxw) {
 }
 function statusLine(info, maxw, unicode) {
     const sep = unicode ? '  ·  ' : '  |  ';
-    const providerModel = [info.provider, info.model].filter(Boolean).join('/');
+    const safeProvider = cleanMeta(info.provider);
+    const safeModel = cleanMeta(info.model);
+    const safeVersion = cleanMeta(info.version).replace(/^v/, '');
+    const safeMode = cleanMeta(info.mode);
+    const safeCwd = cleanMeta(info.cwd);
+    const providerModel = [safeProvider, safeModel].filter(Boolean).join('/');
     const providerPart = providerModel || 'select provider';
-    const parts = [info.version ? 'v' + String(info.version).replace(/^v/, '') : '', providerPart, info.mode ?? '', info.cwd ?? ''].filter(Boolean);
+    const parts = [safeVersion ? 'v' + safeVersion : '', providerPart, safeMode, safeCwd].filter(Boolean);
     const fits = () => parts.join(sep).length <= maxw;
-    if (!fits() && info.cwd) {
+    if (!fits() && safeCwd) {
         const others = parts.slice(0, -1).join(sep).length + (parts.length > 1 ? sep.length : 0);
-        parts[parts.length - 1] = shortPath(info.cwd, Math.max(8, maxw - others));
+        parts[parts.length - 1] = shortPath(safeCwd, Math.max(8, maxw - others));
     }
     while (!fits() && parts.length > 1)
         parts.pop();
@@ -293,7 +304,8 @@ function layoutCompact(caps, info, active) {
     });
 }
 function layoutMini(caps, info) {
-    const ver = info.version ? '  v' + String(info.version).replace(/^v/, '') : '';
+    const safeVer = cleanMeta(info.version).replace(/^v/, '');
+    const ver = safeVer ? '  v' + safeVer : '';
     let line = txt(caps.unicode ? '■' : '#', 'lime', caps) + ' ' + txt('CAUSYNE', 'white', caps, undefined, true) + txt(' AGENT', 'lime', caps, undefined, true);
     if (ver && 'x CAUSYNE AGENT'.length + ver.length <= caps.width - 2)
         line += txt(ver, 'dim', caps);
@@ -412,14 +424,18 @@ export function pickExample() {
 /** Drop complete hint fragments until the remaining line fits. */
 export function fitHints(parts, width, fallback) {
     const separator = '  ·  ';
+    const safeParts = Array.isArray(parts) ? parts : [];
     if (!Number.isFinite(width))
-        return width === Number.POSITIVE_INFINITY ? parts.join(separator) : '';
+        return width === Number.POSITIVE_INFINITY ? safeParts.join(separator) : '';
     const limit = Math.floor(width);
     if (limit <= 0)
         return '';
-    const kept = parts.slice();
+    const kept = safeParts.slice();
     while (kept.length > 1 && kept.join(separator).length > limit)
         kept.pop();
     const line = kept.join(separator);
-    return line.length <= limit ? line : fallback;
+    if (line.length <= limit)
+        return line;
+    const safeFallback = typeof fallback === 'string' ? fallback : '';
+    return safeFallback.length <= limit ? safeFallback : safeFallback.slice(0, limit);
 }
