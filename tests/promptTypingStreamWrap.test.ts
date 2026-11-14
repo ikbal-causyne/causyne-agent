@@ -29,7 +29,7 @@ function createSink(columns = 140, rows = 35) {
 describe('Prompt typing stream wrapping and vertical stretching', () => {
   test('LineEditor renders word-wrapped lines and tracks caret correctly', () => {
     const editor = new LineEditor();
-    const sentence = 'dokumen sudah diubah kedalam bahasa indonesia dan juga sudah di verifikasi oleh tim ahli bahasa indonesia dan tidak ada lagi sisa bahasa inggris';
+    const sentence = 'documentation has been converted into clean English and also thoroughly verified by technical reviewers with zero remaining layout gaps';
     editor.insert(sentence);
 
     const layout = editor.render(70, '');
@@ -41,18 +41,13 @@ describe('Prompt typing stream wrapping and vertical stretching', () => {
     assert.ok(layout.cursorCol > 0, 'Caret column is tracked on the active display row');
   });
 
-  test('Composer width conforms dynamically using smart scaling algorithm on wide terminals', () => {
-    // Normal columns reserve three cells of inset and one final safety column
+  test('Composer width fills the available conversation column across narrow and wide terminals without dead gaps', () => {
+    // Normal and wide panes reserve three cells of left inset and one final safety column
     assert.equal(sessionComposerWidth(80), 76);
     assert.equal(sessionComposerWidth(100), 96);
     assert.equal(sessionComposerWidth(111), 107);
-
-    // Wide terminals: widens smoothly without stretching excessively across hundreds of columns
-    const width140 = sessionComposerWidth(140);
-    const width200 = sessionComposerWidth(200);
-
-    assert.ok(width140 > 108 && width140 < 137, `Width at 140 columns (${width140}) is bounded and comfortable`);
-    assert.ok(width200 > width140 && width200 < 150, `Width at 200 columns (${width200}) preserves readable measure`);
+    assert.equal(sessionComposerWidth(140), 136);
+    assert.equal(sessionComposerWidth(200), 196);
   });
 
   test('Typing in a live session stretches composer vertically downwards without truncating edge characters', () => {
@@ -71,7 +66,7 @@ describe('Prompt typing stream wrapping and vertical stretching', () => {
       const initialHeight = initialPrev.length;
 
       // 2. Type a sentence that wraps into 2 lines
-      const sentence = 'dokumen sudah diubah kedalam bahasa indonesia dan diverifikasi oleh tim ahli bahasa indonesia dan tidak ada lagi sisa bahasa inggris';
+      const sentence = 'documentation has been converted into clean English and thoroughly verified by engineering reviewers with no truncated tail edge';
       prompt.editor.insert(sentence);
       prompt.draw();
 
@@ -79,11 +74,11 @@ describe('Prompt typing stream wrapping and vertical stretching', () => {
       const wrappedScreen = stripAnsi(wrappedPrev.join('\n'));
 
       // Both halves of sentence must be visible on screen
-      assert.ok(wrappedScreen.includes('dokumen sudah diubah'), 'First part of text is present on screen');
-      assert.ok(wrappedScreen.includes('sisa bahasa inggris'), 'Last part of text is present on screen and not truncated');
+      assert.ok(wrappedScreen.includes('documentation has been'), 'First part of text is present on screen');
+      assert.ok(wrappedScreen.includes('no truncated tail edge'), 'Last part of text is present on screen and not truncated');
 
       // The rightmost characters must not be clipped off
-      assert.ok(!wrappedScreen.includes('sisa bahasa inggri\n'), 'Last character must not be truncated to inggri');
+      assert.ok(!wrappedScreen.includes('no truncated tail edg\n'), 'Last character must not be truncated to edg');
     } finally {
       surface.close();
     }
