@@ -1068,4 +1068,31 @@ describe('a completion that matches exactly submits instead of looping', () => {
     editor.handleKey({ name: 'enter', alt: true });
     assert.equal(editor.completion, null, 'alt+enter inserting a newline must close stale slash picker');
   });
+
+  test('bindFileIndex never sets notice to null and noticeRows sanitizes escapes and newlines', () => {
+    const writes = [];
+    const out = { columns: 100, rows: 30, write(s) { writes.push(s); return true; }, isTTY: true, on() {}, removeListener() {} };
+    const input = { isTTY: true, setRawMode() {}, resume() {}, pause() {}, on() {}, off() {} };
+    const listeners = new Set();
+    const fakeIndex = {
+      truncated: false,
+      subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+      ensure() { return Promise.resolve([]); }
+    };
+    const p = new ChatPrompt({ out, input, commands: [] });
+    p.active = true;
+    p.index = fakeIndex;
+    p.bindFileIndex(fakeIndex);
+    p.editor.setText('@app');
+    p.notice = 'Indexing workspace files…';
+    for (const fn of listeners) fn();
+    assert.equal(typeof p.notice, 'string', 'bindFileIndex must clear notice to empty string, never null');
+
+    writes.length = 0;
+    p.notice = 'err\x1b[2J\nspoof';
+    p.draw();
+    const rendered = writes.join('');
+    assert.equal(rendered.includes('\x1b[2J'), false, 'notice must strip terminal control sequences');
+    assert.equal(rendered.includes('spoof') && rendered.includes('err\nspoof'), false, 'notice must stay single-line');
+  });
 });

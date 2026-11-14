@@ -1389,7 +1389,7 @@ export class ChatPrompt {
       if (!trigger || trigger.kind !== 'file') return;
       this.openCompletion(false);
       if (index.truncated) this.notice = 'Workspace file index reached its safety limit; narrow the project root.';
-      else if (this.notice === 'Indexing workspace files…') this.notice = null;
+      else if (this.notice === 'Indexing workspace files…') this.notice = '';
       this.scheduleDraw();
     });
     void index.ensure();
@@ -1857,7 +1857,8 @@ export class ChatPrompt {
       totalPromptRows: 0
     } : null;
     const queuedRows = this.queuedPreviewRows(width);
-    const noticeRows = this.notice ? [dim(`  ${this.notice}`)] : [];
+    const cleanNotice = this.notice ? safeDisplay(String(this.notice)).replace(/\s+/g, ' ').trim() : '';
+    const noticeRows = cleanNotice ? [dim(`  ${cleanNotice}`)] : [];
 
     // And a row of air between the box and the footer. The picker and a notice
     // belong to the input and stay welded to it — opencode floats its
