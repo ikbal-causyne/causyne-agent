@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatElapsed, StatusLine } from '../src/tui/statusLine.js';
+import { compactCount, formatCost, formatElapsed, StatusLine } from '../src/tui/statusLine.js';
 import { visibleWidth } from '../src/tui/text.js';
 
 describe('formatElapsed', () => {
@@ -10,6 +10,13 @@ describe('formatElapsed', () => {
     assert.equal(formatElapsed(Number.NaN), '0.0s');
     assert.equal(formatElapsed(Number.POSITIVE_INFINITY), '0.0s');
     assert.equal(formatElapsed(1500), '1.5s');
+  });
+
+  it('compactCount and formatCost clamp negative and non-finite inputs', () => {
+    assert.equal(compactCount(Number.POSITIVE_INFINITY), '0');
+    assert.equal(compactCount(-10), '0');
+    assert.equal(formatCost(Number.POSITIVE_INFINITY), '$0');
+    assert.equal(formatCost(Number.NaN), '$0');
   });
 
   it('StatusLine clamps non-finite widths without throwing RangeError', () => {

@@ -26,9 +26,14 @@ import { CHARS_PER_TOKEN } from '../contextManager.js';
 import { formatAnimatedStatus } from './engineSpinner.js';
 import { renderRunningLight } from './runningLight.js';
 
+function nonNegativeFinite(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /** 1234 -> "1.2k", 1234567 -> "1.2M". Token counts are read, not summed. */
 export function compactCount(value: unknown): string {
-  const n = Number(value) || 0;
+  const n = nonNegativeFinite(value);
   if (n < 1000) return String(Math.round(n));
   if (n < 1000000) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
   return `${(n / 1000000).toFixed(1)}M`;
@@ -41,7 +46,7 @@ export function compactCount(value: unknown): string {
  * to look at the cost at all.
  */
 export function formatCost(value: unknown): string {
-  const n = Number(value) || 0;
+  const n = nonNegativeFinite(value);
   if (n <= 0) return '$0';
   if (n < 0.01) return `$${n.toFixed(4)}`;
   if (n < 1) return `$${n.toFixed(3)}`;
@@ -49,7 +54,7 @@ export function formatCost(value: unknown): string {
 }
 
 export function formatElapsed(ms: number): string {
-  const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  const safeMs = nonNegativeFinite(ms);
   const total = Math.round(safeMs / 1000);
   if (total < 60) return `${(safeMs / 1000).toFixed(1)}s`;
   const minutes = Math.floor(total / 60);
