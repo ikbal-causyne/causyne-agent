@@ -60,4 +60,40 @@ describe('smartLinkClick finite and integer bounds', () => {
     });
     assert.equal(launches, 1);
   });
+
+  it('openDetectedLink does not poison debounce when spawn throws or clock moves backward', () => {
+    resetLinkOpenDebounceForTests();
+    const throwingSpawn = (() => {
+      throw new Error('spawn failed');
+    }) as never;
+
+    const first = openDetectedLink('https://example.com/retry-test', {
+      platform: 'darwin',
+      now: 1000,
+      spawnImpl: throwingSpawn
+    });
+    assert.equal(first, false);
+
+    let launches = 0;
+    const workingSpawn = (() => {
+      launches++;
+      return { on() {}, unref() {} };
+    }) as never;
+
+    const retry = openDetectedLink('https://example.com/retry-test', {
+      platform: 'darwin',
+      now: 1050,
+      spawnImpl: workingSpawn
+    });
+    assert.equal(retry, true);
+    assert.equal(launches, 1);
+
+    const earlierClock = openDetectedLink('https://example.com/retry-test', {
+      platform: 'darwin',
+      now: 500,
+      spawnImpl: workingSpawn
+    });
+    assert.equal(earlierClock, true);
+    assert.equal(launches, 2);
+  });
 });

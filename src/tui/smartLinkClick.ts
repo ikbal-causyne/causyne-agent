@@ -382,11 +382,9 @@ export function openDetectedLink(url: string, options: OpenLinkOptions = {}): bo
   const debounceMs = typeof options.debounceMs === 'number' && Number.isFinite(options.debounceMs)
     ? Math.max(0, options.debounceMs)
     : 800;
-  if (url === lastOpenedUrl && now - lastOpenedAt < debounceMs) {
+  if (url === lastOpenedUrl && now >= lastOpenedAt && now - lastOpenedAt < debounceMs) {
     return true;
   }
-  lastOpenedUrl = url;
-  lastOpenedAt = now;
 
   const platform = options.platform ?? process.platform;
   const spawnFn = options.spawnImpl ?? spawn;
@@ -415,6 +413,8 @@ export function openDetectedLink(url: string, options: OpenLinkOptions = {}): bo
       // Ignore missing browser opener errors on headless hosts.
     });
     child.unref?.();
+    lastOpenedUrl = url;
+    lastOpenedAt = now;
     return true;
   } catch {
     return false;
