@@ -3,6 +3,7 @@
 // and terminal emulator OSC 52 escape sequences across SSH and local sessions.
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { runWithStageWrite } from './consoleGuard.js';
 
 /**
  * Emit OSC 52 escape sequence to synchronize terminal emulator clipboard.
@@ -10,9 +11,16 @@ import { execFileSync, spawnSync } from 'node:child_process';
  */
 export function emitOsc52Copy(text: string, stream: NodeJS.WritableStream = process.stdout): boolean {
   if (typeof text !== 'string' || text.length === 0 || Buffer.byteLength(text) > 100_000) return false;
+  if (!stream || typeof stream.write !== 'function') return false;
+  if (stream === process.stdout && !process.stdout?.isTTY) return false;
   try {
     const base64 = Buffer.from(text, 'utf8').toString('base64');
-    stream.write(`\x1b]52;c;${base64}\x07`);
+    const payload = `\x1b]52;c;${base64}\x07`;
+    if (stream === process.stdout) {
+      runWithStageWrite(() => stream.write(payload));
+    } else {
+      stream.write(payload);
+    }
     return true;
   } catch {
     return false;

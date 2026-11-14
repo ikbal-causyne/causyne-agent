@@ -24,7 +24,6 @@ export function normalizeClipboardText(raw) {
 export function copyToClipboard(text) {
     if (typeof text !== 'string' || text.length === 0)
         return false;
-    emitOsc52Copy(text);
     return writeClipboardSync(text);
 }
 /**

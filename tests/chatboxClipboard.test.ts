@@ -311,3 +311,27 @@ test('runCopyCommand /copy input does not report Copied when input is whitespace
   assert.doesNotMatch(res.output, /^Copied/);
 });
 
+test('emitOsc52Copy skips non-TTY default stdout without throwing and emits to explicit writable stream', () => {
+  const chunks: string[] = [];
+  const customStream = {
+    write(chunk: string) { chunks.push(chunk); return true; }
+  } as unknown as NodeJS.WritableStream;
+
+  assert.equal(emitOsc52Copy('abc', customStream), true);
+  assert.deepEqual(chunks, [`\x1b]52;c;${Buffer.from('abc').toString('base64')}\x07`]);
+
+  // Capture any default process.stdout write when running under non-TTY test runner
+  const origWrite = process.stdout.write.bind(process.stdout);
+  const origIsTTY = process.stdout.isTTY;
+  const leaked: string[] = [];
+  process.stdout.write = ((chunk: string) => { leaked.push(String(chunk)); return true; }) as typeof process.stdout.write;
+  Object.defineProperty(process.stdout, 'isTTY', { value: false, configurable: true });
+  try {
+    assert.equal(emitOsc52Copy('secret-or-noise'), false);
+    assert.equal(leaked.length, 0, 'emitOsc52Copy must not write OSC 52 bytes to non-TTY stdout');
+  } finally {
+    process.stdout.write = origWrite;
+    Object.defineProperty(process.stdout, 'isTTY', { value: origIsTTY, configurable: true });
+  }
+});
+

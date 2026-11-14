@@ -73,7 +73,6 @@ export function normalizeClipboardText(raw: unknown): string {
  */
 export function copyToClipboard(text: string): boolean {
   if (typeof text !== 'string' || text.length === 0) return false;
-  emitOsc52Copy(text);
   return writeClipboardSync(text);
 }
 
