@@ -1,7 +1,8 @@
 import { writeUserSkill, validateSegment, skillTemplate } from '../userSkills.js';
 import { invalidateUserSkills } from '../skillsManager.js';
+import { safeDisplay } from './text.js';
 // @ts-expect-error theme.js has no TypeScript declaration yet.
-import { paint, bold, dim } from './theme.js';
+import { paint } from './theme.js';
 // @ts-expect-error dialogs.js is awaiting TypeScript migration.
 import { InputLayer, SelectLayer } from './dialogs.js';
 // @ts-expect-error prompt.js is awaiting TypeScript migration.
@@ -34,10 +35,15 @@ const COMMON_DOMAINS: CommonDomainChoice[] = [
   { value: '__other__', label: '+ Enter custom category...', description: 'Specify any category name' }
 ];
 
+function trimInput(val: unknown): string {
+  return typeof val === 'string' ? val.trim() : '';
+}
+
 /**
  * Interactive wizard hosted on ChatPrompt to scaffold and create a new skill.
  */
 export async function runInteractiveSkillWizard(prompt: ChatPrompt): Promise<CreatedUserSkill | null> {
+  if (!prompt || typeof prompt.openLayer !== 'function') return null;
   // Step 1: Select or enter domain/category
   const chosenDomain = await new Promise<string | null>((resolve) => {
     let resolved = false;
@@ -76,7 +82,7 @@ export async function runInteractiveSkillWizard(prompt: ChatPrompt): Promise<Cre
         title: 'create skill · category name',
         lines: ['Category / domain name (e.g. data, analytics, cloud, tools):'],
         placeholder: 'category-name',
-        onSubmit: (val: string) => finish(val.trim().toLowerCase()),
+        onSubmit: (val: unknown) => finish(trimInput(val).toLowerCase()),
         onCancel: () => finish(null)
       });
       prompt.openLayer(layer);
@@ -108,7 +114,7 @@ export async function runInteractiveSkillWizard(prompt: ChatPrompt): Promise<Cre
         'Skill name (lowercase letters, numbers, hyphens — e.g. play-store-release, pr-review):'
       ],
       placeholder: 'my-new-skill',
-      onSubmit: (val: string) => finish(val.trim().toLowerCase()),
+      onSubmit: (val: unknown) => finish(trimInput(val).toLowerCase()),
       onCancel: () => finish(null)
     });
     prompt.openLayer(layer);
@@ -139,7 +145,7 @@ export async function runInteractiveSkillWizard(prompt: ChatPrompt): Promise<Cre
         'Short description: what this skill does and when the agent should use it:'
       ],
       placeholder: 'e.g. Prepares and validates Android app bundles for Google Play Store release.',
-      onSubmit: (val: string) => finish(val.trim()),
+      onSubmit: (val: unknown) => finish(trimInput(val)),
       onCancel: () => finish(null)
     });
     prompt.openLayer(layer);
@@ -152,7 +158,7 @@ export async function runInteractiveSkillWizard(prompt: ChatPrompt): Promise<Cre
   const written = writeUserSkill({ domain, name: skillName, content, overwrite: false });
   if (!written.ok) {
     if (typeof prompt.showText === 'function') {
-      prompt.showText('Skill Creation Failed', written.error || 'Failed to write skill file', { danger: true });
+      prompt.showText('Skill Creation Failed', safeDisplay(written.error || 'Failed to write skill file'), { danger: true });
     }
     return null;
   }

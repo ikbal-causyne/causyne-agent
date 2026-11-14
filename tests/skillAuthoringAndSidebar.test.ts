@@ -120,4 +120,19 @@ describe('Interactive Skill Authoring Wizard', () => {
     assert.equal(created?.description, 'Runs comprehensive smoke tests before release deployments.');
     assert.ok(created?.content.includes('smoke-test-flow'));
   });
+
+  test('runInteractiveSkillWizard guards missing prompt and non-string onSubmit values cleanly', async () => {
+    assert.equal(await runInteractiveSkillWizard(null as any), null);
+    const mockPrompt = {
+      openLayer(layer: any) {
+        if (layer.title?.includes('category name')) {
+          layer.onSubmit(undefined);
+        } else if (layer.title?.includes('category')) {
+          layer.onPick({ value: '__other__' });
+        }
+      },
+      showText() {}
+    };
+    assert.equal(await runInteractiveSkillWizard(mockPrompt as any), null);
+  });
 });
