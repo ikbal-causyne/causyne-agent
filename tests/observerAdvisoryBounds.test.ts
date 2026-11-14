@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { probeAdvisory, queryAdvisory } from '../src/observer/advisory.js';
 import { ColdObserver } from '../src/observer/coldObserver.js';
 import { scanMutation } from '../src/observer/evidence.js';
+import { CausyneObserver, extractClaimedLocalUrls } from '../src/observer.js';
 
 describe('observer advisory parsing and timeout bounds', () => {
   it('queryAdvisory parses valid JSON verdict even when earlier prose contains braces', async () => {
@@ -137,5 +138,27 @@ describe('observer advisory parsing and timeout bounds', () => {
     });
     assert.equal(audit.verified, false);
     assert.equal(audit.overconfident, true);
+  });
+
+  it('extractClaimedLocalUrls strips unmatched closing bracket and CausyneObserver rejects stale verification after failed test', async () => {
+    assert.deepEqual(
+      extractClaimedLocalUrls('Server running at [http://localhost:3000/health]. Also [http://[::1]:8080/status]'),
+      ['http://localhost:3000/health', 'http://[::1]:8080/status']
+    );
+
+    const obs = new CausyneObserver();
+    const evaluation = obs.evaluate({
+      taskId: 't1',
+      workspaceRoot: '/tmp',
+      userGoal: 'fix bug',
+      agentClaim: 'The bug is fixed and complete.',
+      toolHistory: [
+        { tool: 'fs_edit', args: {}, success: true, error: '', exitCode: null, command: '', path: 'src/a.ts', at: 1 },
+        { tool: 'sysRun', args: {}, success: true, error: '', exitCode: 0, command: 'npm test', path: '', at: 2 },
+        { tool: 'sysRun', args: {}, success: false, error: 'fail', exitCode: 1, command: 'npm test', path: '', at: 3 },
+        { tool: 'fs_read', args: {}, success: true, error: '', exitCode: null, command: '', path: 'src/a.ts', at: 4 }
+      ]
+    });
+    assert.equal(evaluation.verified, false);
   });
 });

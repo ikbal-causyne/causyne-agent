@@ -11,8 +11,22 @@ export function extractClaimedLocalUrls(text) {
     const unique = new Set();
     for (const raw of matches) {
         let end = raw.length;
-        while (end > 0 && '.,;:!?'.includes(raw[end - 1])) {
-            end--;
+        while (end > 0) {
+            const ch = raw[end - 1];
+            if ('.,;:!?'.includes(ch)) {
+                end--;
+                continue;
+            }
+            if (ch === ']') {
+                const prefix = raw.slice(0, end);
+                const opens = prefix.split('[').length - 1;
+                const closes = prefix.split(']').length - 1;
+                if (closes > opens) {
+                    end--;
+                    continue;
+                }
+            }
+            break;
         }
         const cleaned = raw.slice(0, end);
         if (!cleaned)
@@ -112,9 +126,11 @@ export class CausyneObserver {
                 // Run deterministic verification checks based on domain
                 const lastMutationIndex = outcomes.findLastIndex(o => FILE_MUTATION_TOOLS.has(o.tool));
                 const hasMutations = lastMutationIndex >= 0;
-                const hasPassingVerification = outcomes.slice(lastMutationIndex + 1).some(o => o.success && (o.exitCode == null || o.exitCode === 0) && (o.rendered === true ||
+                const verifications = outcomes.slice(lastMutationIndex + 1).filter(o => o.rendered === true ||
                     o.tool === 'verify_local_web' ||
-                    (o.command && isVerificationCommand(o.command))));
+                    Boolean(o.command && isVerificationCommand(o.command)));
+                const lastVerif = verifications[verifications.length - 1];
+                const hasPassingVerification = Boolean(lastVerif && lastVerif.success && (lastVerif.exitCode == null || lastVerif.exitCode === 0));
                 if (!hasPassingVerification) {
                     return {
                         status: hasMutations ? 'ready-to-verify' : 'progressing',
