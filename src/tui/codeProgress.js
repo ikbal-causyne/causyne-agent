@@ -88,7 +88,7 @@ export function codeProgressFromAction(tool, args, id, phase = 'working', source
 export class StreamingCodePreview {
     buffer = '';
     lastCode = '';
-    lastSentAt = 0;
+    lastSentAt = null;
     truncated = false;
     accept(chunk, now = Date.now()) {
         if (!chunk)
@@ -98,13 +98,15 @@ export class StreamingCodePreview {
             this.buffer = this.buffer.slice(-MAX_STREAM_PREVIEW_CHARS);
             this.truncated = true;
         }
-        if (now - this.lastSentAt < 100 && !chunk.includes('\n'))
+        const safeNow = Number.isFinite(now) ? now : Date.now();
+        if (this.lastSentAt !== null && safeNow >= this.lastSentAt && safeNow - this.lastSentAt < 100 && !chunk.includes('\n')) {
             return null;
+        }
         const code = this.draftCode();
         if (!code.trim() || code === this.lastCode)
             return null;
         this.lastCode = code;
-        this.lastSentAt = now;
+        this.lastSentAt = safeNow;
         return { type: 'code_progress', id: 'model-draft', phase: 'draft',
             operation: 'Drafting', description: 'Writing code from the model stream', code,
             ...(this.truncated ? { codeTruncated: true } : {}), source: 'model' };

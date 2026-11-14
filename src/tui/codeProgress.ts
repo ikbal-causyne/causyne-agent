@@ -113,7 +113,7 @@ export function codeProgressFromAction(
 export class StreamingCodePreview {
   private buffer = '';
   private lastCode = '';
-  private lastSentAt = 0;
+  private lastSentAt: number | null = null;
   private truncated = false;
 
   accept(chunk: string, now = Date.now()): CodeProgressEvent | null {
@@ -123,11 +123,14 @@ export class StreamingCodePreview {
       this.buffer = this.buffer.slice(-MAX_STREAM_PREVIEW_CHARS);
       this.truncated = true;
     }
-    if (now - this.lastSentAt < 100 && !chunk.includes('\n')) return null;
+    const safeNow = Number.isFinite(now) ? now : Date.now();
+    if (this.lastSentAt !== null && safeNow >= this.lastSentAt && safeNow - this.lastSentAt < 100 && !chunk.includes('\n')) {
+      return null;
+    }
     const code = this.draftCode();
     if (!code.trim() || code === this.lastCode) return null;
     this.lastCode = code;
-    this.lastSentAt = now;
+    this.lastSentAt = safeNow;
     return { type: 'code_progress', id: 'model-draft', phase: 'draft',
       operation: 'Drafting', description: 'Writing code from the model stream', code,
       ...(this.truncated ? { codeTruncated: true } : {}), source: 'model' };
