@@ -52,6 +52,15 @@ describe('keys — decoding what a terminal actually sends', () => {
     assert.equal(ctrlRight.ctrl, true, 'word-wise movement depends on the modifier parameter');
   });
 
+  test('out-of-range Kitty codepoints do not throw and mouse coordinates clamp at zero', () => {
+    const decoder = new KeyDecoder();
+    const events = decoder.decode(bytes('\x1b[9999999u\x1b[55296u\x1b[<0;0;0M'));
+    assert.equal(events[0].name, 'unknown');
+    assert.equal(events[1].name, 'unknown');
+    assert.equal(events[2].name, 'mouse');
+    assert.deepEqual({ x: events[2].mouse.x, y: events[2].mouse.y }, { x: 0, y: 0 });
+  });
+
   test('a multi-byte character split across chunks is reassembled', () => {
     // stdin delivers whatever the OS gives it. Decoding each chunk eagerly turns
     // one emoji into replacement characters.

@@ -340,7 +340,12 @@ export class KeyDecoder {
         events.push(applyModifier(makeKey(controlName, { sequence }), numbers[1]));
         return sequence.length;
       }
-      if (Number.isFinite(codepoint) && codepoint >= 32) {
+      if (
+        Number.isFinite(codepoint) &&
+        codepoint >= 32 &&
+        codepoint <= 0x10ffff &&
+        (codepoint < 0xd800 || codepoint > 0xdfff)
+      ) {
         const character = String.fromCodePoint(codepoint);
         const key = applyModifier(
           makeKey('char', { sequence, text: character }),
@@ -404,7 +409,7 @@ export class KeyDecoder {
       ctrl: (code & 16) !== 0
     };
     // Wire coordinates are 1-based.
-    const at = { x: column - 1, y: row - 1 };
+    const at = { x: Math.max(0, column - 1), y: Math.max(0, row - 1) };
 
     if ((code & 64) !== 0) {
       const direction = ['up', 'down', 'left', 'right'][code & 3];
