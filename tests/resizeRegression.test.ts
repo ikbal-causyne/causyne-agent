@@ -63,7 +63,7 @@ test('streaming conversation survives repeated width and height changes across t
   surface.leaveHome(true);
   try {
     for (let pass = 0; pass < 3; pass++) {
-      for (const [columns, rows] of [[200, 50], [161, 24], [160, 18], [80, 40], [24, 18], [180, 50]]) {
+      for (const [columns, rows] of [[200, 50], [161, 24], [160, 18], [120, 24], [101, 24], [100, 18], [80, 40], [24, 18], [180, 50]]) {
         out.columns = columns!;
         out.rows = rows!;
         assert.equal(surface.resize(), true);

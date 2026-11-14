@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows } from '../src/tui/sessionSidebar.js';
+import { sidebarVisible, sessionSidebarWidth, sessionMainWidth, sessionComposerWidth, sessionSidebarRows } from '../src/tui/sessionSidebar.js';
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { stripAnsi, visibleWidth } from '../src/tui/text.js';
 import { isStartupDialog, startupDialogView } from '../src/tui/homeView.js';
@@ -20,18 +20,25 @@ function createSurface(columns: number, rows = 40) {
 }
 
 test('the sidebar appears only when its conversation column can remain readable', () => {
-  assert.equal(sidebarVisible(120), false);
-  assert.equal(sidebarVisible(121), false);
-  assert.equal(sidebarVisible(160), false);
-  assert.equal(sidebarVisible(161), true);
+  assert.equal(sidebarVisible(80), false);
+  assert.equal(sidebarVisible(100), false);
+  assert.equal(sidebarVisible(101), true);
+  assert.equal(sidebarVisible(120), true);
   assert.equal(sidebarVisible(154, true), false);
   process.env.CAUSYNE_SIDEBAR = 'off';
   assert.equal(sidebarVisible(154), false);
   delete process.env.CAUSYNE_SIDEBAR;
-  assert.equal(sessionMainWidth(154), 154);
-  assert.equal(sessionMainWidth(200), 157);
+  assert.equal(sessionSidebarWidth(100), 0);
+  assert.equal(sessionSidebarWidth(101), 28);
+  assert.equal(sessionSidebarWidth(120), 30);
+  assert.equal(sessionSidebarWidth(154), 34);
+  assert.equal(sessionSidebarWidth(200), 42);
   assert.equal(sessionMainWidth(100), 100);
-  assert.ok(sessionComposerWidth(sessionMainWidth(154)) <= 150);
+  assert.equal(sessionMainWidth(120), 89);
+  assert.equal(sessionMainWidth(154), 119);
+  assert.equal(sessionMainWidth(200), 157);
+  assert.equal(sessionComposerWidth(sessionMainWidth(154)), 115);
+  assert.equal(sessionComposerWidth(sessionMainWidth(100)), 96);
   const rows = sessionSidebarRows({ title: 'Work', cwd: '/tmp/work', contextChars: 250, contextLimit: 1000 }, 30);
   assert.equal(rows.length, 30);
   assert.ok(rows.every(row => visibleWidth(row) === 42));
@@ -203,7 +210,7 @@ test('repeated sidebar breakpoint resizing reflows in place without scrolling or
     };
     surface.present(['TYPE HERE'], { row: 0, col: 3 });
     const initialClaims = surface.stage.stats.claimed;
-    for (const columns of [160, 158, 130, 161, 163, 159, 200, 95, 163]) {
+    for (const columns of [100, 99, 80, 101, 120, 100, 200, 95, 145]) {
       out.columns = columns;
       const beforeWrite = writes.length;
       assert.equal(surface.resize(), true);
@@ -215,7 +222,7 @@ test('repeated sidebar breakpoint resizing reflows in place without scrolling or
       const rendered = surface.stage.prev.map(row => stripAnsi(row || ''));
       assert.ok(rendered.every(row => visibleWidth(row) < columns), 'rows must not wrap');
       assert.match(rendered.at(-1) || '', /TYPE HERE/, 'composer stays visible');
-      if (columns > 160) {
+      if (columns > 100) {
         assert.match(rendered.join('\n'), /Context/, 'sidebar must be repainted after reopening');
         assert.match(rendered.join('\n'), /suika-game/);
       } else {

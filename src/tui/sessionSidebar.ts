@@ -4,9 +4,11 @@ import { padEnd, safeDisplay, stripAnsi, truncate } from './text.js';
 import { bold, dim, fill, paint } from './theme.js';
 
 export const SIDEBAR_WIDTH = 42;
-// A 42-column sidebar is only useful if the conversation retains a readable width.
-// Narrow IDE terminals should prioritize the user's complete message over metadata.
-export const SIDEBAR_THRESHOLD = 160;
+export const COMPACT_SIDEBAR_WIDTH = 28;
+// Show a compact responsive sidebar once past 100 columns so ordinary terminals
+// and cmd windows do not have to be dragged excessively wide, while keeping <=100
+// column IDE splits full-width for conversation readability.
+export const SIDEBAR_THRESHOLD = 100;
 
 export interface SidebarFacts {
   title?: string;
@@ -29,10 +31,25 @@ export function sidebarVisible(columns: number, home = false, env: { CAUSYNE_SID
   return !home && Number.isFinite(columns) && columns > SIDEBAR_THRESHOLD;
 }
 
+/** Select a compact sidebar width on medium terminals and full width on wide screens. */
+export function sessionSidebarWidth(
+  columns: number,
+  home = false,
+  env: { CAUSYNE_SIDEBAR?: string } = typeof process !== 'undefined' ? process.env : {}
+): number {
+  if (!sidebarVisible(columns, home, env)) return 0;
+  const width = Number.isFinite(columns) ? Math.max(20, Math.floor(columns)) : 80;
+  if (width < 120) return COMPACT_SIDEBAR_WIDTH;
+  if (width < 150) return 30;
+  if (width < 180) return 34;
+  return SIDEBAR_WIDTH;
+}
+
 /** Reserve the last terminal column so a wide row cannot wrap the stage. */
 export function sessionMainWidth(columns: number, home = false, env: { CAUSYNE_SIDEBAR?: string } = typeof process !== 'undefined' ? process.env : {}): number {
   const width = Number.isFinite(columns) ? Math.max(20, Math.floor(columns)) : 80;
-  return sidebarVisible(width, home, env) ? width - SIDEBAR_WIDTH - 1 : width;
+  const panelWidth = sessionSidebarWidth(width, home, env);
+  return panelWidth > 0 ? width - panelWidth - 1 : width;
 }
 
 /** The session input uses the available conversation column, with a small inset. */
@@ -42,10 +59,11 @@ export function sessionComposerWidth(columns: number): number {
 }
 
 /** Render only facts the runtime can actually report. */
-export function sessionSidebarRows(facts: SidebarFacts, height: number): string[] {
+export function sessionSidebarRows(facts: SidebarFacts, height: number, width: number = SIDEBAR_WIDTH): string[] {
   const safeFacts: SidebarFacts = facts && typeof facts === 'object' ? facts : {};
   const count = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
-  const inner = SIDEBAR_WIDTH - 4;
+  const panelWidth = Number.isFinite(width) ? Math.max(20, Math.floor(width)) : SIDEBAR_WIDTH;
+  const inner = panelWidth - 4;
   const rows: string[] = [];
   const oneLine = (value: unknown): string => safeDisplay(value).replace(/[\r\n]+/g, ' ');
   const pushCell = (clean: string): void => {
@@ -128,27 +146,35 @@ export function sessionSidebarRows(facts: SidebarFacts, height: number): string[
   }
 
   const visible = rows.slice(0, bodyLimit);
-  while (visible.length < count - 1) lineFor(visible);
-  if (visible.length < count) visible.push(fill('surface', `${paint('rule', '│')}  ${padEnd(dim('Causyne Agent'), inner)} `));
+  while (visible.length < count - 1) lineFor(visible, panelWidth);
+  if (visible.length < count) {
+    visible.push(fill('surface', `${paint('rule', '│')}  ${padEnd(dim(truncate('Causyne Agent', inner, '…')), inner)} `));
+  }
   return visible;
 }
 
-function lineFor(rows: string[]): void {
-  rows.push(fill('surface', `${paint('rule', '│')}${' '.repeat(SIDEBAR_WIDTH - 1)}`));
+function lineFor(rows: string[], panelWidth: number = SIDEBAR_WIDTH): void {
+  rows.push(fill('surface', `${paint('rule', '│')}${' '.repeat(Math.max(0, panelWidth - 1))}`));
 }
 
 /** Compose the panel beside the viewport and input without exceeding terminal width. */
-export function joinSessionSidebar(mainRows: string[], sideRows: string[], mainWidth: number): string[] {
+export function joinSessionSidebar(
+  mainRows: string[],
+  sideRows: string[],
+  mainWidth: number,
+  sideWidth: number = SIDEBAR_WIDTH
+): string[] {
   if (!Array.isArray(mainRows)) return [];
   const safeSide = Array.isArray(sideRows) ? sideRows : [];
   const safeWidth = Number.isFinite(mainWidth) ? Math.max(1, Math.floor(mainWidth)) : 80;
+  const targetSide = Number.isFinite(sideWidth) ? Math.max(1, Math.floor(sideWidth)) : SIDEBAR_WIDTH;
   return mainRows.map((row, index) => {
     const cleanMain = String(row == null ? '' : row).replace(/[\r\n]+/g, ' ');
     const main = padEnd(truncate(cleanMain, safeWidth, ''), safeWidth);
     const rawSide = safeSide[index]
       ? String(safeSide[index]).replace(/[\r\n]+/g, ' ')
-      : ' '.repeat(SIDEBAR_WIDTH);
-    const side = padEnd(truncate(rawSide, SIDEBAR_WIDTH, ''), SIDEBAR_WIDTH);
+      : ' '.repeat(targetSide);
+    const side = padEnd(truncate(rawSide, targetSide, ''), targetSide);
     // Reset any open SGR sequence from chat prose before entering the sidebar pane.
     const boundaryReset = main.includes('\x1b[') ? '\x1b[0m' : '';
     return main + boundaryReset + side;

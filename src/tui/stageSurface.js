@@ -32,7 +32,7 @@ import { mouseHoverTracking } from './mouseHover.js';
 import { truncate, padEnd, visibleWidth, stripAnsi } from './text.js';
 import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
-import { sidebarVisible, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
+import { sidebarVisible, sessionSidebarWidth, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
 import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
 import { registerStageConsoleGuard, setStageConsoleGuardActive } from './consoleGuard.js';
@@ -588,6 +588,7 @@ export class StageSurface {
     }
 
     const mainRows = rows.concat(block);
+    const panelWidth = sidebar ? sessionSidebarWidth(width, false, this.env) : 0;
     const panelRows = sidebar ? sessionSidebarRows({
       ...this.sessionInfo,
       cwd: this.sidebarStatus?.cwd || this.sessionInfo?.cwd,
@@ -597,8 +598,8 @@ export class StageSurface {
       contextLimit: this.sidebarStatus?.contextLimit ?? this.sessionInfo?.contextLimit,
       plan: this.sidebarPlan,
       activeSkill: this.sessionInfo?.activeSkill
-    }, mainRows.length) : [];
-    const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth) : mainRows;
+    }, mainRows.length, panelWidth) : [];
+    const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth, panelWidth) : mainRows;
     return this.stage.paint(painted, {
       row: rows.length + caretRow,
       // The composer may never put its caret into the sidebar or the reserved

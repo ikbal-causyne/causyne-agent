@@ -112,7 +112,7 @@ describe('the rail is one column and never costs a wrap', () => {
   });
 
   test('CAUSYNE_RAIL=0 turns it off at any width', () => {
-    const { surface } = surfaceOn({ columns: 120, env: { CAUSYNE_RAIL: '0' } });
+    const { surface } = surfaceOn({ columns: 120, env: { CAUSYNE_RAIL: '0', CAUSYNE_SIDEBAR: '0' } });
     surface.transcript.append({ kind: 'step', produce: () => ['x'] });
     surface.present(['status'], { row: 0, col: 0 });
     assert.equal(surface.viewport.width, 120);

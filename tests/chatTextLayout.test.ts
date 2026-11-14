@@ -69,14 +69,17 @@ test('the complete error remains above the input through a 155x78 to 234x76 resi
   }
 });
 
-test('responsive sidebar yields the full chat width in narrow VS Code terminals', () => {
-  for (const columns of [70, 90, 120, 130, 155, 160]) {
+test('responsive sidebar yields the full chat width in narrow VS Code terminals and compacts cleanly at medium widths', () => {
+  for (const columns of [70, 80, 90, 100]) {
     assert.equal(sidebarVisible(columns), false, `sidebar should collapse at ${columns} columns`);
     assert.equal(sessionMainWidth(columns), columns);
-    assert.ok(sessionComposerWidth(columns) <= columns - 4);
+    assert.equal(sessionComposerWidth(columns), columns - 4);
   }
-  assert.equal(sidebarVisible(161), true);
-  assert.equal(sessionMainWidth(161), 161 - 42 - 1);
+  assert.equal(sidebarVisible(101), true);
+  assert.equal(sessionMainWidth(101), 101 - 28 - 1);
+  assert.equal(sessionMainWidth(120), 120 - 30 - 1);
+  assert.equal(sessionMainWidth(155), 155 - 34 - 1);
+  assert.equal(sessionMainWidth(187), 187 - 42 - 1);
 });
 
 test('long assistant code, headings and table cells reflow without losing content', () => {
