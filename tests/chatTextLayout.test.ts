@@ -152,3 +152,26 @@ test('onAgentPlan, onAgentActivity, onStepStart, and onStepComplete guard nullis
   const output = stripAnsi(written.join(''));
   assert.ok(output.includes('finish phase'));
 });
+
+test('clearTranscript resets streaming/expand state and renderSessionHistory handles nullish messages and long titles', () => {
+  const written: string[] = [];
+  const out = { columns: 32, isTTY: false, write: (chunk: string) => { written.push(chunk); return true; } };
+  const renderer = new ChatRenderer({ out });
+  renderer.captureLastOutput({ output: 'stale session output' });
+  renderer.clearTranscript();
+  assert.equal(renderer.expandLastOutput(), false);
+
+  assert.doesNotThrow(() => renderer.renderSessionHistory(null as unknown as [], { title: 'VeryLongSessionTitleThatExceedsFortyColumnsCompletelyRightNow', messagesCount: 5 }));
+  assert.doesNotThrow(() => renderer.renderSessionHistory([
+    {
+      role: 'assistant',
+      tool_calls: [
+        null as unknown as Record<string, unknown>,
+        { id: '1', function: { name: 'update_plan', arguments: JSON.stringify({ plan: [null, { status: 'pending', text: 'next' }] }) } }
+      ],
+      content: null
+    }
+  ], { title: 'Ok' }));
+  const rows = written.join('').split('\n').map(stripAnsi).filter(Boolean);
+  assert.ok(rows.every((r: string) => visibleWidth(r) <= 40), `session divider overflowed 40 cols: ${rows.find(r => visibleWidth(r) > 40)}`);
+});

@@ -500,6 +500,7 @@ export class ChatRenderer {
     this.stepCount = 0;
     this.stepStartedAt = null;
     this.turnStartedAt = Date.now();
+    this._activeAssistant = false;
     this._activeReasoning = false;
     this.status.reset();
   }
@@ -608,19 +609,26 @@ export class ChatRenderer {
   renderSessionDivider(info = {}) {
     this.transcript?.surface?.setSessionInfo?.(info);
     this.frame('session', () => {
-      const width = this.measure();
-      const title = safeDisplay(info.title || 'Session');
-      const count = info.messagesCount ?? 0;
-      const countText = count > 0 ? ` (${count} message${count === 1 ? '' : 's'})` : '';
+      const width = Math.max(12, this.measure());
+      const rawTitle = safeDisplay((info && info.title) || 'Session');
+      const count = (info && info.messagesCount) ?? 0;
+      const rawCount = count > 0 ? ` (${count} message${count === 1 ? '' : 's'})` : '';
+      const countText = visibleWidth(rawCount) <= Math.max(0, width - 10) ? rawCount : '';
+      const title = truncate(rawTitle, Math.max(4, width - visibleWidth(countText) - 6), GLYPHS.ellipsis);
       const badgeText = `${title}${countText}`;
-      const ruleWidth = Math.max(2, Math.floor((width - visibleWidth(badgeText) - 4) / 2));
+      const remaining = Math.max(2, width - visibleWidth(badgeText) - 2);
+      const leftRule = Math.max(1, Math.floor(remaining / 2));
+      const rightRule = Math.max(1, remaining - leftRule);
       this.write();
-      this.write(`${paint('rule', GLYPHS.hLine.repeat(ruleWidth))} ${bold(paint('accent', title))}${dim(countText)} ${paint('rule', GLYPHS.hLine.repeat(ruleWidth))}`);
+      this.write(`${paint('rule', GLYPHS.hLine.repeat(leftRule))} ${bold(paint('accent', title))}${dim(countText)} ${paint('rule', GLYPHS.hLine.repeat(rightRule))}`);
       this.write();
     });
   }
 
   clearTranscript() {
+    this._activeAssistant = false;
+    this._activeReasoning = false;
+    this.lastOutput = null;
     if (this.transcript && typeof this.transcript.clear === 'function') {
       this.transcript.clear();
     }
@@ -631,6 +639,7 @@ export class ChatRenderer {
    * Mirrors OpenCode's session conversation loader so prior turns are visible in viewport.
    */
   renderSessionHistory(messages = [], sessionInfo = null) {
+    const safeMessages = Array.isArray(messages) ? messages : [];
     const renderContent = () => {
       this.transcript?.surface?.leaveHome?.(true);
       this.clearTranscript();
@@ -639,32 +648,32 @@ export class ChatRenderer {
       this.resetTurn();
 
       const info = sessionInfo ? { ...sessionInfo } : {};
-    if (info.messagesCount === undefined || info.messagesCount === null) {
-      info.messagesCount = messages.filter(m => m && m.role !== 'system').length;
-    }
-    const measuredChars = measureMessages(messages);
-    if (measuredChars > 0) {
-      this.status.contextChars = measuredChars;
-      info.contextChars = measuredChars;
-    }
-
-    if (info.title || info.id) {
-      this.renderSessionDivider(info);
-    }
-
-    // Index tool results by tool_call_id to pair them with assistant tool_calls
-    const toolResultsById = new Map();
-    for (const m of messages) {
-      if (m && m.role === 'tool' && m.tool_call_id) {
-        toolResultsById.set(m.tool_call_id, m);
+      if (info.messagesCount === undefined || info.messagesCount === null) {
+        info.messagesCount = safeMessages.filter(m => m && m.role !== 'system').length;
       }
-    }
+      const measuredChars = measureMessages(safeMessages);
+      if (measuredChars > 0) {
+        this.status.contextChars = measuredChars;
+        info.contextChars = measuredChars;
+      }
 
-    const renderedToolMessages = new Set();
+      if (info.title || info.id) {
+        this.renderSessionDivider(info);
+      }
 
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg) continue;
+      // Index tool results by tool_call_id to pair them with assistant tool_calls
+      const toolResultsById = new Map();
+      for (const m of safeMessages) {
+        if (m && m.role === 'tool' && m.tool_call_id) {
+          toolResultsById.set(m.tool_call_id, m);
+        }
+      }
+
+      const renderedToolMessages = new Set();
+
+      for (let i = 0; i < safeMessages.length; i++) {
+        const msg = safeMessages[i];
+        if (!msg) continue;
       const role = String(msg.role || '').toLowerCase();
 
       if (role === 'user') {
@@ -707,6 +716,7 @@ export class ChatRenderer {
         // 3. If assistant invoked tool calls, render each tool step and pair with its result
         if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
           for (const call of msg.tool_calls) {
+            if (!call || typeof call !== 'object') continue;
             const toolName = call.function?.name || call.name || 'tool';
             let args = {};
             try {
@@ -720,7 +730,7 @@ export class ChatRenderer {
             // Restore active implementation plan if update_plan was called
             if (toolName === 'update_plan' && args && Array.isArray(args.plan)) {
               this.onAgentPlan({
-                plan: args.plan.map(item => ({
+                plan: args.plan.filter(Boolean).map(item => ({
                   ...item,
                   text: item.text || item.step || item.content || ''
                 }))
@@ -738,7 +748,7 @@ export class ChatRenderer {
               }
               if (toolName === 'update_plan' && Array.isArray(normalized.plan)) {
                 this.onAgentPlan({
-                  plan: normalized.plan.map(item => ({
+                  plan: normalized.plan.filter(Boolean).map(item => ({
                     ...item,
                     text: item.text || item.step || item.content || ''
                   }))
@@ -757,7 +767,7 @@ export class ChatRenderer {
           ? msg.content
           : (Array.isArray(msg.content)
               ? msg.content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
-              : String(msg.content || ''));
+              : (msg.content == null ? '' : String(msg.content)));
         // The agent loop stores a protocol placeholder when a peer emits no
         // final reply. Restoring it as a Causyne message falsely implies an
         // answer was given. Older histories have the literal but no marker.
@@ -765,7 +775,7 @@ export class ChatRenderer {
           || (text.trim() === 'No final response was provided.'
               && (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0));
         if (syntheticNoFinal) {
-          const isLatestTurn = !messages.slice(i + 1).some(next =>
+          const isLatestTurn = !safeMessages.slice(i + 1).some(next =>
             next && (next.role === 'assistant' || next.role === 'user'));
           if (isLatestTurn) {
             this.frame('notice', () => {
@@ -799,7 +809,7 @@ export class ChatRenderer {
       }
     }
 
-    const finalMeasured = measureMessages(messages);
+    const finalMeasured = measureMessages(safeMessages);
     if (finalMeasured > 0) {
       this.status.contextChars = finalMeasured;
     }
