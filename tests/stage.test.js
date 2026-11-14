@@ -730,3 +730,23 @@ test('StageSurface.present clamps out-of-bounds caret, handles empty promptRows/
     surface.close();
   }
 });
+
+test('Stage guards nullish options/env, resets height/caret on collapse, ignores non-finite caret.col, and closes open OSC 8 links', () => {
+  const out = sink({ rows: 24, columns: 80 });
+  assert.doesNotThrow(() => stageHeight(out, null));
+  assert.doesNotThrow(() => stageEnabled(out, null));
+  assert.doesNotThrow(() => new Stage(null));
+
+  const stage = new Stage({ out, env: {} });
+  stage.moveTo(0);
+  assert.equal(out.text(), '', 'moveTo on unreserved zero-height stage must not move cursor');
+
+  stage.reserve(16);
+  stage.paint(['\x1b]8;;https://example.com\x07unclosed link'], { row: 2, col: Number.POSITIVE_INFINITY });
+  assert.equal(stage.caret.col, 0, 'non-finite caret.col must fall back to 0 rather than jumping to right margin');
+  assert.ok(out.text().includes('\x1b]8;;\x1b\\') || out.text().includes('\x1b]8;;\x07'), 'open OSC 8 link must be terminated before ERASE_LINE');
+
+  stage.collapse();
+  assert.equal(stage.height, 0);
+  assert.deepEqual(stage.caret, { row: 0, col: 0 });
+});

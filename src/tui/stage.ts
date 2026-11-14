@@ -71,8 +71,12 @@ const ERASE_BELOW = '\x1b[J';
  *
  * CAUSYNE_STAGE: off | auto | <rows> | <pct>%
  */
-export function stageHeight(out: StageOutput = process.stdout, env: StageEnvironment = process.env): number {
-  const setting = String(env.CAUSYNE_STAGE ?? 'auto').trim().toLowerCase();
+export function stageHeight(
+  out: StageOutput = process.stdout,
+  env: StageEnvironment | null | undefined = process.env
+): number {
+  const safeEnv: StageEnvironment = env && typeof env === 'object' ? env : {};
+  const setting = String(safeEnv.CAUSYNE_STAGE ?? 'auto').trim().toLowerCase();
   if (setting === 'off' || setting === '0' || setting === 'false') return 0;
 
   const rawRows = Number(out && out.rows);
@@ -99,11 +103,15 @@ export function stageHeight(out: StageOutput = process.stdout, env: StageEnviron
  * Everything here is a reason the region could not be repainted safely, so the
  * answer is the scrollback renderer rather than a stage that misbehaves.
  */
-export function stageEnabled(out: StageOutput = process.stdout, env: StageEnvironment = process.env): boolean {
+export function stageEnabled(
+  out: StageOutput = process.stdout,
+  env: StageEnvironment | null | undefined = process.env
+): boolean {
+  const safeEnv: StageEnvironment = env && typeof env === 'object' ? env : {};
   if (!out || !out.isTTY) return false;
-  if (String(env.TERM || '') === 'dumb') return false;
-  if (env.CAUSYNE_SIMPLE_INPUT === '1') return false;
-  return stageHeight(out, env) > 0;
+  if (String(safeEnv.TERM || '') === 'dumb') return false;
+  if (safeEnv.CAUSYNE_SIMPLE_INPUT === '1') return false;
+  return stageHeight(out, safeEnv) > 0;
 }
 
 export class Stage {
@@ -116,7 +124,11 @@ export class Stage {
   prev: Array<string | null>;
   caret: StageCaret;
   stats: { paints: number; rowsWritten: number; bytes: number; claimed: number };
-  constructor({ out = process.stdout, env = process.env, height = 0 }: StageOptions = {}) {
+  constructor(options: StageOptions | null = {}) {
+    const opts: StageOptions = options && typeof options === 'object' ? options : {};
+    const out = opts.out ?? process.stdout;
+    const env = opts.env && typeof opts.env === 'object' ? opts.env : process.env;
+    const height = opts.height ?? 0;
     this.out = out;
     this.env = env;
 
@@ -238,7 +250,7 @@ export class Stage {
   }
 
   moveTo(row: number): void {
-    if (!Number.isFinite(row)) return;
+    if (!Number.isFinite(row) || this.height <= 0) return;
     const target = Math.max(0, Math.min(Math.floor(row), this.height - 1));
     const delta = target - this.cursor;
     // CUU/CUD only. Never a newline: on the band's last row a newline scrolls
@@ -263,6 +275,17 @@ export class Stage {
     return true;
   }
 
+  private unclosedOsc8Term(row: string): string {
+    if (!row.includes('\x1b]8;')) return '';
+    const osc8Re = /\x1b\]8;[^;]*;([^\x07\x1b]*)(\x07|\x1b\\)/g;
+    let active = '';
+    let match: RegExpExecArray | null;
+    while ((match = osc8Re.exec(row)) !== null) {
+      active = (match[1] ?? '').length > 0 ? (match[2] ?? '\x1b\\') : '';
+    }
+    return active;
+  }
+
   /**
    * Repaint the band. Rows that did not change cost nothing.
    *
@@ -273,8 +296,9 @@ export class Stage {
     if (!this.reserved || this.height <= 0) return 0;
 
     const next = this.normalize(rows);
+    const rawCol = caret && Number.isFinite(caret.col) ? Math.floor(caret.col) : 0;
     const target = caret && Number.isFinite(caret.row)
-      ? { row: Math.max(0, Math.min(Math.floor(caret.row), this.height - 1)), col: Math.max(0, Math.min(Math.max(0, this.width() - 2), Math.floor(caret.col) || 0)), hideCursor: Boolean(caret.hideCursor) }
+      ? { row: Math.max(0, Math.min(Math.floor(caret.row), this.height - 1)), col: Math.max(0, Math.min(Math.max(0, this.width() - 2), rawCol)), hideCursor: Boolean(caret.hideCursor) }
       : { row: this.height - 1, col: 0, hideCursor: Boolean(caret?.hideCursor) };
 
     const changed = [];
@@ -291,8 +315,10 @@ export class Stage {
     for (const i of changed) {
       this.moveTo(i);
       const content = next[i] ?? '';
+      const osc8Term = this.unclosedOsc8Term(content);
+      const osc8Reset = osc8Term ? `\x1b]8;;${osc8Term}` : '';
       const reset = content.includes('\x1b') && !content.endsWith('\x1b[0m') ? '\x1b[0m' : '';
-      this.write('\r' + content + reset + ERASE_LINE);
+      this.write('\r' + content + osc8Reset + reset + ERASE_LINE);
     }
     this.moveTo(target.row);
     this.write('\r');
@@ -320,7 +346,9 @@ export class Stage {
     this.moveTo(0);
     this.write('\r' + ERASE_BELOW + SHOW_CURSOR + '\x1b[0 q' + SYNC_OFF);
     this.reserved = false;
+    this.height = 0;
     this.cursor = 0;
+    this.caret = { row: 0, col: 0 };
     this.prev = [];
   }
 
