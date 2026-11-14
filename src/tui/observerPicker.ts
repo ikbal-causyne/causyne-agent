@@ -6,6 +6,7 @@
 import { SelectLayer, InputLayer, TextLayer } from './dialogs.js';
 // @ts-expect-error untyped local TUI theme
 import { paint, bold, dim, GLYPHS } from './theme.js';
+import { safeDisplay } from './text.js';
 import {
   coldObserver,
   type ObserverConfig,
@@ -13,6 +14,15 @@ import {
   type ObserverStrictness,
   type ColdObserverAuditRecord
 } from '../observer/coldObserver.js';
+
+function cleanSingleLine(value: unknown): string {
+  return safeDisplay(typeof value === 'string' ? value : String(value ?? '')).replace(/[\r\n]+/g, ' ').trim();
+}
+
+function clampCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
 
 export interface ObserverPickerItemValue {
   action: 'toggle' | 'mode' | 'strictness' | 'endpoint' | 'model' | 'test' | 'audit' | 'reset';
@@ -110,7 +120,7 @@ export function buildObserverPickerItems(
   });
 
   // 4. Advisory Loopback Endpoint
-  const endpointDisplay = config.endpoint || '(not configured)';
+  const endpointDisplay = cleanSingleLine(config.endpoint) || '(not configured)';
   items.push({
     id: 'endpoint',
     label: `Advisory Endpoint: ${endpointDisplay}`,
@@ -121,7 +131,7 @@ export function buildObserverPickerItems(
   });
 
   // 5. Advisory Model Name
-  const modelDisplay = config.model || '(unset)';
+  const modelDisplay = cleanSingleLine(config.model) || '(unset)';
   items.push({
     id: 'model',
     label: `Advisory Model: ${modelDisplay}`,
@@ -142,9 +152,11 @@ export function buildObserverPickerItems(
   });
 
   // 7. Audit History
+  const safeAudits = clampCount(auditCount);
+  const safeVetoes = clampCount(vetoCount);
   items.push({
     id: 'audit',
-    label: `Audit History (${auditCount} events recorded, ${vetoCount} vetoes)`,
+    label: `Audit History (${safeAudits} events recorded, ${safeVetoes} vetoes)`,
     category: 'Diagnostics',
     description: 'Inspect recent mutation reviews and safety veto records',
     searchText: 'audit history logs events vetoes inspect recent records',
@@ -294,31 +306,51 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
 
           // 6. Test Advisory Endpoint
           if (action === 'test') {
-            void coldObserver.healthCheck().then((health) => {
-              const textLines = health.endpoint
-                ? [
-                    `Endpoint: ${health.endpoint}`,
-                    `Model:    ${health.model || '(unset)'}`,
-                    `Status:   ${health.healthy ? 'HEALTHY' : 'UNREACHABLE'} (${health.latencyMs}ms latency)`,
-                    `Detail:   ${health.detail}`,
-                    '',
-                    'Press Esc or Enter to return to Observer setup.'
-                  ]
-                : [
-                    'No advisory endpoint configured.',
-                    'The deterministic observer requires no endpoint and remains fully active.',
-                    '',
-                    'Press Esc or Enter to return to Observer setup.'
-                  ];
+            void coldObserver.healthCheck()
+              .then((health) => {
+                const endpoint = cleanSingleLine(health.endpoint);
+                const model = cleanSingleLine(health.model) || '(unset)';
+                const detail = cleanSingleLine(health.detail);
+                const latency = clampCount(health.latencyMs);
+                const textLines = endpoint
+                  ? [
+                      `Endpoint: ${endpoint}`,
+                      `Model:    ${model}`,
+                      `Status:   ${health.healthy ? 'HEALTHY' : 'UNREACHABLE'} (${latency}ms latency)`,
+                      `Detail:   ${detail}`,
+                      '',
+                      'Press Esc or Enter to return to Observer setup.'
+                    ]
+                  : [
+                      'No advisory endpoint configured.',
+                      'The deterministic observer requires no endpoint and remains fully active.',
+                      '',
+                      'Press Esc or Enter to return to Observer setup.'
+                    ];
 
-              prompt.openLayer(new DetailTextLayer({
-                title: 'Advisory Endpoint Health Check',
-                lines: textLines,
-                width: 70,
-                height: 12,
-                onDismiss: () => openMenu()
-              }));
-            });
+                prompt.openLayer(new DetailTextLayer({
+                  title: 'Advisory Endpoint Health Check',
+                  lines: textLines,
+                  width: 70,
+                  height: 12,
+                  onDismiss: () => openMenu()
+                }));
+              })
+              .catch((err) => {
+                const detail = cleanSingleLine(err instanceof Error ? err.message : err) || 'Health probe failed';
+                prompt.openLayer(new DetailTextLayer({
+                  title: 'Advisory Endpoint Health Check',
+                  lines: [
+                    `Status:   UNREACHABLE`,
+                    `Detail:   ${detail}`,
+                    '',
+                    'Press Esc or Enter to return to Observer setup.'
+                  ],
+                  width: 70,
+                  height: 12,
+                  onDismiss: () => openMenu()
+                }));
+              });
             return 'handled';
           }
 
@@ -330,12 +362,14 @@ export function runInteractiveObserverPicker(prompt: PromptHost): Promise<string
               : recentAudits.slice(-12).map((a: ColdObserverAuditRecord) => {
                   const dt = typeof a.timestamp === 'number' && Number.isFinite(a.timestamp) ? new Date(a.timestamp) : null;
                   const time = dt && Number.isFinite(dt.getTime()) ? dt.toLocaleTimeString() : '--:--:--';
-                  const tag = a.type === 'mutation' ? `[mutation ${a.tool || ''}]` : '[verification]';
+                  const toolName = cleanSingleLine(a.tool);
+                  const tag = a.type === 'mutation' ? `[mutation${toolName ? ` ${toolName}` : ''}]` : '[verification]';
                   const score = typeof a.riskScore === 'number' && Number.isFinite(a.riskScore)
-                    ? `(${(a.riskScore * 100).toFixed(0)}% risk)`
+                    ? `(${Math.max(0, Math.min(100, Math.round(a.riskScore * 100)))}% risk)`
                     : '';
                   const veto = a.veto ? paint('danger', 'VETO') : paint('success', 'PASS');
-                  return `${time} ${tag} ${veto} ${score} ${a.details}`;
+                  const details = cleanSingleLine(a.details);
+                  return `${time} ${tag} ${veto}${score ? ` ${score}` : ''} ${details}`.trim();
                 });
 
             prompt.openLayer(new DetailTextLayer({

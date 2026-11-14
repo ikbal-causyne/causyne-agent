@@ -199,3 +199,71 @@ test('runInteractiveObserverPicker audit view omits non-finite riskScore values'
     coldObserver.getAuditHistory = originalGetAuditHistory;
   }
 });
+
+test('observerPicker sanitizes multiline/CSI metadata, clamps counts, and handles rejected healthCheck', async () => {
+  const items = buildObserverPickerItems({
+    enabled: true,
+    mode: 'advisory',
+    endpoint: 'http://localhost:11434\ninjected\x1b[2J',
+    model: 'qwen\nline\x1b[2J',
+    timeoutMs: 800,
+    strictness: 'standard'
+  }, -3.4, Number.NaN);
+
+  const ep = items.find(i => i.id === 'endpoint')!;
+  const md = items.find(i => i.id === 'model')!;
+  const au = items.find(i => i.id === 'audit')!;
+  assert.ok(!ep.label.includes('\n') && !ep.label.includes('\x1b[2J'));
+  assert.ok(!md.label.includes('\n') && !md.label.includes('\x1b[2J'));
+  assert.match(au.label, /0 events recorded, 0 vetoes/);
+
+  const originalHealthCheck = coldObserver.healthCheck.bind(coldObserver);
+  const originalGetAuditHistory = coldObserver.getAuditHistory.bind(coldObserver);
+  let detailLayer: any = null;
+  let openedLayer: any = null;
+  const mockPrompt = {
+    notice: '',
+    openLayer(layer: any) {
+      if (layer?.lines) detailLayer = layer;
+      else openedLayer = layer;
+      return layer;
+    },
+    closeLayer() {},
+    draw() {}
+  };
+
+  coldObserver.healthCheck = async () => {
+    throw new Error('ECONNREFUSED\n127.0.0.1\x1b[2J');
+  };
+  coldObserver.getAuditHistory = () => [{
+    timestamp: Date.now(),
+    type: 'mutation',
+    tool: 'edit\nfile\x1b[2J',
+    riskScore: 0.5,
+    veto: false,
+    details: 'ok\nnext line\x1b[2J'
+  }] as any;
+
+  try {
+    const promise = runInteractiveObserverPicker(mockPrompt);
+    const auditItem = openedLayer.list.all.find((i: ObserverPickerItem) => i.id === 'audit');
+    await openedLayer.onPick(auditItem);
+    const auditLines = detailLayer.lines.join('|');
+    assert.ok(!auditLines.includes('\n') && !auditLines.includes('\x1b[2J'), 'audit detail lines must sanitize newlines and CSI');
+    detailLayer.answer();
+
+    detailLayer = null;
+    const testItem = openedLayer.list.all.find((i: ObserverPickerItem) => i.id === 'test');
+    await openedLayer.onPick(testItem);
+    await new Promise(r => setTimeout(r, 15));
+    assert.ok(detailLayer, 'rejected healthCheck must still open DetailTextLayer instead of hanging');
+    const healthText = detailLayer.lines.join('|');
+    assert.ok(!healthText.includes('\n') && !healthText.includes('\x1b[2J'), 'error detail must sanitize newlines and CSI');
+
+    await openedLayer.onPick(null);
+    await promise;
+  } finally {
+    coldObserver.healthCheck = originalHealthCheck;
+    coldObserver.getAuditHistory = originalGetAuditHistory;
+  }
+});
