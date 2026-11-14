@@ -67,7 +67,7 @@ function operationFamily(args) {
 function issueKey(tool, args) {
     const family = operationFamily(args);
     const target = firstText([args.path, args.file_path, args.filePath, args.target, args.endpoint, args.url]);
-    const workspace = String(args.cwd ?? '');
+    const workspace = String(args.cwd ?? args.workingDirectory ?? args.workingDir ?? args.workspaceRoot ?? '');
     // Changing error text/class does not buy another three attempts at the same
     // operation. Targets are hashed and never included in recovery messages.
     return createHash('sha256').update(`${tool}\0${family}\0${target}\0${workspace}`).digest('hex');
