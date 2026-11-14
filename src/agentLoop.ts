@@ -122,11 +122,22 @@ export function noncachedTokens(usage: any): number {
   return input + finite(usage.completionTokens);
 }
 
+function nonEmptyErrorText(result: any): string | undefined {
+  return typeof result?.error === 'string' && result.error.trim().length > 0
+    ? result.error
+    : undefined;
+}
+
 export function isToolErrorResult(result: any): boolean {
   if (!result || typeof result !== 'object') return false;
   return result.success === false
-    || (typeof result.error === 'string' && result.error.trim().length > 0)
+    || nonEmptyErrorText(result) !== undefined
     || (typeof result.exitCode === 'number' && (!Number.isFinite(result.exitCode) || result.exitCode !== 0));
+}
+
+function spillErrorField(result: any): { error?: string } {
+  const error = nonEmptyErrorText(result);
+  return error !== undefined ? { error: error.slice(0, 500) } : {};
 }
 
 export interface AgentLoopEvent {
@@ -4671,9 +4682,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           const eventResult = result?._is_image_marker
             ? { success: !isErrorOutcome, output: result.output || `Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'})` }
             : result;
-          const rawErrorMsg = typeof eventResult?.error === 'string' && eventResult.error.trim().length > 0
-            ? eventResult.error
-            : (typeof result?.error === 'string' && result.error.trim().length > 0 ? result.error : undefined);
+          const rawErrorMsg = nonEmptyErrorText(eventResult) ?? nonEmptyErrorText(result);
           this.emitEvent({
             type: isErrorOutcome ? 'step_error' : 'step_complete',
             tool: functionName,
@@ -4880,7 +4889,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 spill = { path: stored.diskPath };
                 resultString = JSON.stringify({
                   ...(typeof result?.success === 'boolean' ? { success: result.success } : {}),
-                  ...(typeof result?.error === 'string' && result.error.trim().length > 0 ? { error: result.error.slice(0, 500) } : {}),
+                  ...spillErrorField(result),
                   output: stored.contentForModel
                 });
               } else if (document.length > inlineLimit) {
