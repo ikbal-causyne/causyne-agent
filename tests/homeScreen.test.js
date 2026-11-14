@@ -168,6 +168,15 @@ describe('InputLayer — the primitive the dialogs were missing', () => {
     const layer = new InputLayer({});
     assert.equal(layer.key(key('f5')), 'handled', 'a stray key must not reach the input line behind it');
   });
+
+  test('InputLayer keeps cursor within panel width and sanitizes prompt lines', () => {
+    const layer = new InputLayer({ lines: ['Enter value\n\x1b[2Jevil'], placeholder: 'p\x1b[31m' });
+    for (let i = 0; i < 60; i++) layer.key(key('char', 'a'));
+    const rows = layer.body(24);
+    assert.ok(layer.cursor.x <= 23, `expected cursor.x <= 23 for width 24, got ${layer.cursor.x}`);
+    assert.equal(rows.join(' | ').includes('\x1b[2J'), false);
+    assert.equal(rows.join(' | ').includes('\n'), false);
+  });
 });
 
 describe('there is one provider list', () => {

@@ -117,19 +117,26 @@ export class InputLayer extends Layer {
   }
 
   body(width) {
-    const rows = this.lines.map((line) => truncate(line, width, GLYPHS.ellipsis));
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.floor(width) : 8;
+    const rows = this.lines.map((line) => truncate(cleanDialogText(line), safeWidth, GLYPHS.ellipsis));
     if (rows.length) rows.push('');
 
     const raw = this.editor.getText();
-    const shown = this.mask ? GLYPHS.bullet.repeat(raw.length) : raw;
-    const text = shown.length === 0 && this.placeholder ? dim(this.placeholder) : shown;
+    const shown = this.mask ? GLYPHS.bullet.repeat(Array.from(raw).length) : cleanDialogText(raw);
+    const cleanPlaceholder = cleanDialogText(this.placeholder);
+    const text = shown.length === 0 && cleanPlaceholder ? dim(cleanPlaceholder) : shown;
 
     const prefix = paint('accent', `${GLYPHS.arrow} `);
-    rows.push(truncate(prefix + text, width, GLYPHS.ellipsis));
+    rows.push(truncate(prefix + text, safeWidth, GLYPHS.ellipsis));
 
     // Park the caret after what is displayed — which for a masked field is the
-    // dot count, not the character count, or the caret drifts off the value.
-    this.cursor = { x: 2 + (this.mask ? this.editor.col : visibleWidth(raw.slice(0, this.editor.col))), y: rows.length - 1 };
+    // dot count, not the character count, or the caret drifts off the value —
+    // and never past the rightmost body column.
+    const before = this.mask
+      ? Array.from(raw.slice(0, this.editor.col)).length
+      : visibleWidth(cleanDialogText(raw.slice(0, this.editor.col)));
+    const maxCol = Math.max(0, safeWidth - 1);
+    this.cursor = { x: Math.min(maxCol, 2 + before), y: rows.length - 1 };
     return rows;
   }
 
