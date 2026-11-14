@@ -97,12 +97,13 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
     for (const s of sortedSessions) {
         // A session without any turns has no conversation to resume. Keep the
         // active one available, but do not fill the picker with abandoned starts.
-        if (s.messageCount === 0 && s.id !== activeId)
+        const safeMessageCount = Number.isFinite(s.messageCount) ? Math.max(0, Math.floor(s.messageCount)) : 0;
+        if (safeMessageCount === 0 && s.id !== activeId)
             continue;
         const isCurrent = s.id === activeId;
         const timeAgo = formatTimeAgo(s.updatedAt);
         const wsLabel = shortenPath(s.workspace);
-        const msgCount = `${s.messageCount} msg${s.messageCount === 1 ? '' : 's'}`;
+        const msgCount = `${safeMessageCount} msg${safeMessageCount === 1 ? '' : 's'}`;
         const category = dateGroup(s.updatedAt);
         const mark = isCurrent ? `● ` : `  `;
         const tag = isCurrent ? ` [active]` : '';
@@ -117,7 +118,7 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
                 id: s.id,
                 title: s.title,
                 workspace: s.workspace,
-                messageCount: s.messageCount,
+                messageCount: safeMessageCount,
                 updatedAt: s.updatedAt,
                 isCurrent
             }

@@ -61,4 +61,36 @@ describe('sessionPicker finite timestamps', () => {
     const orderedIds = items.filter((item) => item.id.startsWith('s-')).map((item) => item.id);
     assert.deepEqual(orderedIds, ['s-newest', 's-oldest', 's-corrupt']);
   });
+
+  it('buildSessionPickerItems normalizes non-finite or negative messageCount and skips non-active zero-count sessions', () => {
+    const items = buildSessionPickerItems(
+      [
+        {
+          id: 's-nan-inactive',
+          workspace: '/tmp/ws',
+          workspaceKey: 'k',
+          title: 'Inactive NaN',
+          createdAt: 0,
+          updatedAt: 1000,
+          messageCount: Number.NaN
+        },
+        {
+          id: 's-nan-active',
+          workspace: '/tmp/ws',
+          workspaceKey: 'k',
+          title: 'Active NaN',
+          createdAt: 0,
+          updatedAt: 2000,
+          messageCount: Number.NaN
+        }
+      ],
+      's-nan-active',
+      '/tmp/ws'
+    );
+    assert.equal(items.some((item) => item.id === 's-nan-inactive'), false);
+    const activeEntry = items.find((item) => item.id === 's-nan-active');
+    assert.ok(activeEntry);
+    assert.doesNotMatch(activeEntry.description, /\bNaN\b/);
+    assert.equal(activeEntry.value.messageCount, 0);
+  });
 });
