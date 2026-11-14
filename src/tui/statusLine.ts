@@ -190,12 +190,13 @@ export class StatusLine {
    * Consume a `usage_update` frame.
    */
   onUsage(msg: Record<string, unknown> = {}): this {
-    this.turnTokens = nonNegativeFinite(msg.taskTokens) || nonNegativeFinite(msg.usedTokens) || this.turnTokens;
-    this.applyContextWindow(msg.contextChars, msg.contextLimitChars);
-    const responseCost = nonNegativeFinite(msg.costUsd);
-    const taskCost = nonNegativeFinite(msg.taskCostUsd);
+    const usage = msg && typeof msg === 'object' ? msg : {};
+    this.turnTokens = nonNegativeFinite(usage.taskTokens) || nonNegativeFinite(usage.usedTokens) || this.turnTokens;
+    this.applyContextWindow(usage.contextChars, usage.contextLimitChars);
+    const responseCost = nonNegativeFinite(usage.costUsd);
+    const taskCost = nonNegativeFinite(usage.taskCostUsd);
     this.turnCost = taskCost > 0 ? taskCost : this.turnCost + responseCost;
-    this.cachedTokens = nonNegativeFinite(msg.cachedTokens);
+    this.cachedTokens = nonNegativeFinite(usage.cachedTokens);
     return this;
   }
 
