@@ -154,36 +154,43 @@ function pickVariant(c: Pick<Caps, 'width' | 'height' | 'unicode'>): Variant {
   if (c.width < 80 || c.height < 24 || !c.unicode) return 'compact';
   return 'full';
 }
+const VALID_COLORS = new Set<ColorMode>(['truecolor', '256', '16', 'none']);
+const VALID_VARIANTS = new Set<Variant>(['full', 'compact', 'mini']);
+
 export function detect(o: BannerOptions = {}, stream: TermStream = process.stdout): Caps {
-  const env = process.env, tty = Boolean(stream.isTTY);
+  const opts: BannerOptions = o && typeof o === 'object' ? o : {};
+  const safeStream: Partial<TermStream> = stream && typeof stream === 'object' ? stream : {};
+  const env = process.env, tty = Boolean(safeStream.isTTY);
   const positiveDim = (v: unknown, fallback: number): number => {
     const n = Number(v);
     return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
   };
-  const width = positiveDim(o.width, positiveDim(stream.columns, 80));
-  const height = positiveDim(o.height, positiveDim(stream.rows, 24));
-  const want = o.color;
+  const width = positiveDim(opts.width, positiveDim(safeStream.columns, 80));
+  const height = positiveDim(opts.height, positiveDim(safeStream.rows, 24));
+  const want = opts.color;
   let color: ColorMode;
   if (want === true) color = 'truecolor';
   else if (want === false) color = 'none';
-  else if (want !== undefined && want !== 'auto') color = want;
+  else if (typeof want === 'string' && VALID_COLORS.has(want as ColorMode)) color = want as ColorMode;
   else {
     const f = env['FORCE_COLOR'];
     if (f !== undefined && f !== '') color = FORCE[f] ?? '16';
     else if (env['NO_COLOR'] || env['CAUSYNE_NO_COLOR'] === '1') color = 'none';
     else if (!tty || env['TERM'] === 'dumb') color = 'none';
     else {
-      const d = stream.getColorDepth?.() ?? 4;
+      const d = safeStream.getColorDepth?.() ?? 4;
       color = /truecolor|24bit/i.test(env['COLORTERM'] ?? '') || d >= 24 ? 'truecolor' : d >= 8 ? '256' : d >= 4 ? '16' : 'none';
     }
   }
-  let unicode = o.unicode;
+  let unicode = opts.unicode;
   if (unicode === undefined) {
     const loc = env['LC_ALL'] || env['LC_CTYPE'] || env['LANG'] || '', ascii = env['CAUSYNE_ASCII'];
     unicode = !(ascii && ascii !== '0') && !(process.platform !== 'win32' && loc !== '' && !/utf-?8/i.test(loc));
   }
-  const caps: Caps = { tty, width, height, color, unicode, variant: 'full' };
-  caps.variant = o.variant && o.variant !== 'auto' ? o.variant : pickVariant(caps);
+  const caps: Caps = { tty, width, height, color, unicode: Boolean(unicode), variant: 'full' };
+  caps.variant = typeof opts.variant === 'string' && VALID_VARIANTS.has(opts.variant as Variant)
+    ? (opts.variant as Variant)
+    : pickVariant(caps);
   return caps;
 }
 

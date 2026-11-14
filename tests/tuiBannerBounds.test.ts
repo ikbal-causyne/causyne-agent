@@ -54,4 +54,15 @@ describe('banner bounds', () => {
     const hint = fitHints(['very long first hint'], 6, 'too long fallback');
     assert.ok(hint.length <= 6, `fitHints returned ${hint.length} chars exceeding limit 6`);
   });
+
+  it('detect handles nullish options/stream and unknown color/variant modes safely', () => {
+    const nullFallback = detect(null as any, null as any);
+    assert.equal(nullFallback.width, 80);
+    assert.equal(nullFallback.height, 24);
+    assert.equal(nullFallback.variant, 'full');
+
+    const badModes = detect({ color: 'invalid' as any, variant: 'invalid' as any }, { columns: 90, rows: 25, isTTY: false });
+    assert.equal(badModes.color, 'none');
+    assert.equal(badModes.variant, 'full');
+  });
 });
