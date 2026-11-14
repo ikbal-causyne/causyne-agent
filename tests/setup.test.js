@@ -20,9 +20,11 @@ function harness(choices, texts, initial = {}) {
 }
 test('provider change cannot inherit a credential or old endpoint', async () => {
   const h = harness(['anthropic', 'B', 'save'], ['model-b', 'new-key'],
-    { provider: 'openai', apiKey: 'old-key', baseUrl: 'https://old.test/chat', tokenBudget: { maxCostUsd: 3 } });
+    { provider: 'openai', apiKey: 'old-key', providerKeys: { anthropic: 'stale-key', openai: 'old-key' }, baseUrl: 'https://old.test/chat', tokenBudget: { maxCostUsd: 3 } });
   await h.run();
   assert.equal(h.saved[0].apiKey, 'new-key');
+  assert.equal(h.saved[0].providerKeys?.anthropic, 'new-key');
+  assert.equal(h.saved[0].providerKeys?.openai, 'old-key');
   assert.equal(h.saved[0].baseUrl, undefined);
   assert.deepEqual(h.saved[0].tokenBudget, { maxCostUsd: 3 });
   assert.ok(!JSON.stringify(h.questions).includes('old-key'));
@@ -32,8 +34,10 @@ test('same provider keeps its key while changed custom endpoint drops it', async
   const same = harness(['openai', 'B', 'save'], ['model-a', ''], { provider: 'openai', apiKey: 'old-key' });
   await same.run(); assert.equal(same.saved[0].apiKey, 'old-key');
   const moved = harness(['openai-compatible', 'B', 'save'], ['https://new.test/chat', 'custom', ''],
-    { provider: 'openai-compatible', baseUrl: 'https://old.test/chat', apiKey: 'old-key' });
-  await moved.run(); assert.equal(moved.saved[0].apiKey, '');
+    { provider: 'openai-compatible', baseUrl: 'https://old.test/chat', apiKey: 'old-key', providerKeys: { 'openai-compatible': 'old-key' } });
+  await moved.run();
+  assert.equal(moved.saved[0].apiKey, '');
+  assert.equal(moved.saved[0].providerKeys?.['openai-compatible'], undefined);
 });
 test('Ollama skips credentials and review cancellation writes nothing', async () => {
   const h = harness(['ollama', 'C', 'cancel'], ['http://localhost:11434/api/chat', 'local'], { provider: 'openai', apiKey: 'old' });

@@ -130,6 +130,18 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
             saved.baseUrl = baseUrl;
         else
             delete saved.baseUrl;
+        if (provider.id !== 'ollama' && !isLocalAgent(provider.id)) {
+            const existingProviderKeys = saved.providerKeys && typeof saved.providerKeys === 'object' && !Array.isArray(saved.providerKeys)
+                ? { ...saved.providerKeys }
+                : null;
+            if (apiKey) {
+                saved.providerKeys = { ...(existingProviderKeys || {}), [provider.id]: apiKey };
+            }
+            else if (existingProviderKeys && provider.id in existingProviderKeys) {
+                delete existingProviderKeys[provider.id];
+                saved.providerKeys = existingProviderKeys;
+            }
+        }
         store.saveConfig(saved);
         if (apiKey || provider.id === 'ollama' || isLocalAgent(provider.id)) {
             void resolveAvailableModels(provider.id, saved, true).catch(() => { });

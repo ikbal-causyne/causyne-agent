@@ -125,6 +125,18 @@ export async function runSetup(ui: SetupUI, providers: SetupProvider[], store: {
     const next = { ...store.loadConfig(), provider: draft.provider, model, apiKey, autonomyMode: mode.id };
     const saved: Config = next;
     if (baseUrl) saved.baseUrl = baseUrl; else delete saved.baseUrl;
+    if (provider.id !== 'ollama' && !isLocalAgent(provider.id)) {
+      const existingProviderKeys =
+        saved.providerKeys && typeof saved.providerKeys === 'object' && !Array.isArray(saved.providerKeys)
+          ? { ...(saved.providerKeys as Record<string, string>) }
+          : null;
+      if (apiKey) {
+        saved.providerKeys = { ...(existingProviderKeys || {}), [provider.id]: apiKey };
+      } else if (existingProviderKeys && provider.id in existingProviderKeys) {
+        delete existingProviderKeys[provider.id];
+        saved.providerKeys = existingProviderKeys;
+      }
+    }
     store.saveConfig(saved);
     if (apiKey || provider.id === 'ollama' || isLocalAgent(provider.id)) {
       void resolveAvailableModels(provider.id, saved, true).catch(() => {});
