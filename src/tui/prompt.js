@@ -1064,7 +1064,7 @@ export class ChatPrompt {
     switch (key.name) {
       case 'escape': return this.handleEscape();
       case 'enter':
-        if (key.alt || key.shift) { this.editor.newline(); return; }
+        if (key.alt || key.shift) { this.editor.newline(); return this.refreshCompletion(); }
         return this.submit();
       case 'tab':
         if (key.shift) return;
@@ -1097,8 +1097,8 @@ export class ChatPrompt {
       switch (key.name) {
         case 'a': return this.editor.moveHome();
         case 'e': return this.editor.moveEnd();
-        case 'k': return this.editor.killToEnd();
-        case 'u': return this.editor.killToStart();
+        case 'k': this.editor.killToEnd(); return this.refreshCompletion();
+        case 'u': this.editor.killToStart(); return this.refreshCompletion();
         case 'w': this.editor.killWordLeft(); return this.refreshCompletion();
         case 'y': this.editor.yank(); return this.refreshCompletion();
         case 'x': {

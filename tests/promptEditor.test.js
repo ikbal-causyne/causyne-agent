@@ -1053,4 +1053,19 @@ describe('a completion that matches exactly submits instead of looping', () => {
     assert.equal(surface.hoveredTurnIndex, null, 'typing characters must dismiss open turn preview card');
     assert.equal(surface.turnRailHoverSuppressed, false);
   });
+
+  test('ctrl+u, ctrl+k, and alt+enter refresh and dismiss stale completion picker', () => {
+    const editor = prompt();
+    for (const ch of '/skills') editor.handleKey({ name: 'char', text: ch });
+    assert.ok(editor.completion, 'slash picker should be open');
+
+    editor.handleKey({ name: 'u', ctrl: true });
+    assert.equal(editor.editor.getText(), '');
+    assert.equal(editor.completion, null, 'ctrl+u clearing the trigger must close the picker');
+
+    for (const ch of '/he') editor.handleKey({ name: 'char', text: ch });
+    assert.ok(editor.completion);
+    editor.handleKey({ name: 'enter', alt: true });
+    assert.equal(editor.completion, null, 'alt+enter inserting a newline must close stale slash picker');
+  });
 });
