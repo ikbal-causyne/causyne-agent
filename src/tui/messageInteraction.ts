@@ -536,8 +536,15 @@ export function handleMessageActionMenuMouse(
   if (!layer.messageActions || !layer.actionLayout || !event.mouse) return null;
   const { x, y, width, count } = layer.actionLayout;
   const { mouse } = event;
-  const index = mouse.y - (y + 1); // only the frame precedes the action rows
-  if (mouse.x < x || mouse.x >= x + width || index < 0 || index >= count) {
+  if (!Number.isFinite(mouse.x) || !Number.isFinite(mouse.y)
+    || !Number.isFinite(x) || !Number.isFinite(y)
+    || !Number.isFinite(width) || !Number.isFinite(count)) {
+    return 'handled';
+  }
+  const mouseX = Math.floor(mouse.x);
+  const mouseY = Math.floor(mouse.y);
+  const index = mouseY - (Math.floor(y) + 1); // only the frame precedes the action rows
+  if (mouseX < x || mouseX >= x + width || index < 0 || index >= count) {
     return mouse.button === 0 && mouse.pressed ? 'close' : 'handled';
   }
   layer.list?.moveTo(index);
