@@ -71,3 +71,24 @@ test('sessionSidebarRows and joinSessionSidebar handle nullish facts, ANSI-only 
   assert.equal(visibleWidth(partial[0]!), 20 + SIDEBAR_WIDTH);
 });
 
+test('sessionSidebarRows retains footer under dense plan metadata and joinSessionSidebar isolates chat SGR', () => {
+  const plan = Array.from({ length: 10 }, (_, idx) => ({
+    text: `Step ${idx + 1}`,
+    status: idx < 4 ? 'completed' : idx === 4 ? 'in_progress' : 'pending'
+  }));
+  const rows = sessionSidebarRows({
+    title: 'Busy session',
+    provider: 'acp/opencode',
+    model: 'model-v1',
+    cwd: '/tmp/project',
+    activeSkill: { id: 'skill-one', description: 'active' },
+    plan
+  }, 16);
+  assert.equal(rows.length, 16);
+  assert.match(stripAnsi(rows[15]!), /Causyne Agent/);
+
+  const joined = joinSessionSidebar(['\x1b[31munclosed chat style'], ['│  side'], 24);
+  assert.equal(joined.length, 1);
+  assert.ok(joined[0]!.includes('\x1b[0m│  side') || joined[0]!.includes('\x1b[0m\x1b['), 'expected SGR reset before sidebar column');
+});
+

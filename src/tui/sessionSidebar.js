@@ -37,14 +37,11 @@ export function sessionSidebarRows(facts, height) {
     const inner = SIDEBAR_WIDTH - 4;
     const rows = [];
     const oneLine = (value) => safeDisplay(value).replace(/[\r\n]+/g, ' ');
-    const line = (value = '') => {
-        const text = truncate(oneLine(value), inner, '…');
-        rows.push(fill('surface', `${paint('rule', '│')}  ${padEnd(text, inner)} `));
-    };
-    const styled = (value) => {
-        const clean = String(value == null ? '' : value).replace(/[\r\n]+/g, ' ');
+    const pushCell = (clean) => {
         rows.push(fill('surface', `${paint('rule', '│')}  ${padEnd(truncate(clean, inner, '…'), inner)} `));
     };
+    const line = (value = '') => pushCell(oneLine(value));
+    const styled = (value) => pushCell(String(value == null ? '' : value).replace(/[\r\n]+/g, ' '));
     line();
     styled(bold(oneLine(safeFacts.title).trim() || 'Untitled'));
     if (safeFacts.id)
@@ -82,45 +79,47 @@ export function sessionSidebarRows(facts, height) {
             styled(bold('Active Skill'));
             styled(paint('accent', `✦ ${truncate(oneLine(skillId), inner - 4, '…')}`));
             if (skillDesc) {
-                line(truncate(oneLine(skillDesc), inner, '…'));
+                line(skillDesc);
             }
         }
     }
     const validPlan = Array.isArray(safeFacts.plan)
         ? safeFacts.plan.filter((item) => Boolean(item && typeof item === 'object'))
         : [];
+    const footerReserved = count >= 8 ? 1 : 0;
+    const bodyLimit = count - footerReserved;
     if (validPlan.length) {
         const completed = validPlan.filter(item => item.status === 'completed').length;
         // Budget from the actual metadata, including optional skill/model rows.
         // Preserve space for the focused step and overflow summaries on short panes.
-        const planBudget = Math.min(6, Math.max(0, count - 3));
-        while (rows.length > count - planBudget) {
+        const planBudget = Math.min(6, Math.max(0, bodyLimit - 3));
+        while (rows.length > bodyLimit - planBudget) {
             const blank = rows.findIndex(row => stripAnsi(row).replace('│', '').trim() === '');
             if (blank < 0)
                 break;
             rows.splice(blank, 1);
         }
-        if (rows.length > count - planBudget)
-            rows.length = Math.max(0, count - planBudget);
+        if (rows.length > bodyLimit - planBudget)
+            rows.length = Math.max(0, bodyLimit - planBudget);
         styled(bold(`Plan  ${completed}/${validPlan.length}`));
         // Keep plan steps in execution order and keep the active step in view.
-        const maxSteps = Math.max(1, Math.min(10, count - rows.length - 3));
+        const maxSteps = Math.max(1, Math.min(10, bodyLimit - rows.length - 2));
         const activeIndex = validPlan.findIndex(item => item.status === 'in_progress');
         const pendingIndex = validPlan.findIndex(item => item.status !== 'completed');
         const focus = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : validPlan.length - 1;
         const start = Math.max(0, Math.min(focus - Math.min(2, maxSteps - 1), validPlan.length - maxSteps));
         const planItems = validPlan.slice(start, start + maxSteps);
-        if (start > 0 && count - rows.length > planItems.length)
+        if (start > 0 && bodyLimit - rows.length > planItems.length)
             line(`${start} earlier plan steps`);
         for (const item of planItems) {
             const mark = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▸' : '·';
             line(`${mark} ${item.text || item.step || item.content || ''}`);
         }
         const remaining = validPlan.length - start - planItems.length;
-        if (remaining > 0)
+        if (remaining > 0 && rows.length < bodyLimit)
             line(`${remaining} later plan steps`);
     }
-    const visible = rows.slice(0, count);
+    const visible = rows.slice(0, bodyLimit);
     while (visible.length < count - 1)
         lineFor(visible);
     if (visible.length < count)
@@ -143,6 +142,8 @@ export function joinSessionSidebar(mainRows, sideRows, mainWidth) {
             ? String(safeSide[index]).replace(/[\r\n]+/g, ' ')
             : ' '.repeat(SIDEBAR_WIDTH);
         const side = padEnd(truncate(rawSide, SIDEBAR_WIDTH, ''), SIDEBAR_WIDTH);
-        return main + side;
+        // Reset any open SGR sequence from chat prose before entering the sidebar pane.
+        const boundaryReset = main.includes('\x1b[') ? '\x1b[0m' : '';
+        return main + boundaryReset + side;
     });
 }
