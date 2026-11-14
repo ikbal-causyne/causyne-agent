@@ -190,6 +190,9 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
             renderer.setSessionInfo(sessionMeta);
         }
         if (surface && typeof surface === 'object') {
+            if ('homeInfo' in surface && surface.homeInfo && typeof surface.leaveHome === 'function') {
+                surface.leaveHome(true);
+            }
             if ('activeTurnIndex' in surface)
                 surface.activeTurnIndex = null;
             if ('hoveredTurnIndex' in surface)

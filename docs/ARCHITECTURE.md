@@ -79,6 +79,35 @@ Runtime validation is still required at model, filesystem, subprocess and
 extension boundaries. Rust is reserved for a measured, narrow native worker;
 no Rust rewrite is underway.
 
+### Terminal mode and scroll isolation
+
+Interactive TUI chat runs inside the normal terminal buffer via `StageSurface`
+(`src/tui/stageSurface.js`) rather than switching to the alternate screen
+(`\x1b[?1049h`). While any `Stage` on `process.stdout` is reserved,
+`consoleGuard` (`src/tui/consoleGuard.ts`) suppresses unmanaged writes containing
+`\n`, `\r`, or `\x1b` on `process.stdout.write` so stray logs cannot scroll or
+corrupt the live region.
+
+Every Stage-authorized terminal escape write MUST execute inside
+`runWithStageWrite()` (`src/tui/consoleGuard.ts`):
+
+- `Stage.write()` (`src/tui/stage.ts`) for band reservation, painting, and
+  collapse/print-through.
+- `ClipboardSync` (`src/tui/clipboardSync.ts`) for OSC 52 clipboard payloads.
+- `StageSurface` (`src/tui/stageSurface.js`) mouse mode transitions (`?1000h`/`l`,
+  `?1006h`/`l`, optional `?1003h`/`l`) in `enableMouse()`, `disableMouse()`,
+  `releaseMouse()`, and `captureMouse()`.
+- `ChatPrompt` (`src/tui/prompt.js`) bracketed paste toggles (`?2004h`/`l`) and
+  explicit `Ctrl+L` clears.
+
+If any mouse-reporting toggle omits `runWithStageWrite()` while a Stage is
+reserved on `process.stdout`, `?1000h\x1b[?1006h` is silently dropped, causing
+terminals such as macOS Terminal to scroll their own scrollback buffer instead
+of sending SGR wheel events to the chat viewport. Unit tests using mock streams
+(`out !== process.stdout`) do not exercise `consoleGuard`; tests covering TUI
+mode transitions must assert real `process.stdout` (`isTTY: true`) byte output
+with `consoleGuard` active.
+
 ## Planning and durable decisions
 
 Complex implementation uses `update_plan` to maintain a validated checklist in

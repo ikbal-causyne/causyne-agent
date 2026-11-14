@@ -332,6 +332,10 @@ export class TextLayer extends Layer {
     switch (event.name) {
       case 'escape':
       case 'q':        return 'close';
+      case 'wheel':
+        if (event.wheel?.direction === 'up') this.scroll = Math.max(0, this.scroll - 1);
+        else if (event.wheel?.direction === 'down') this.scroll++;
+        return 'handled';
       case 'up':       this.scroll = Math.max(0, this.scroll - 1); return 'handled';
       case 'down':     this.scroll++; return 'handled';
       case 'pageup':   this.scroll = Math.max(0, this.scroll - page); return 'handled';

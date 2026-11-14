@@ -35,7 +35,7 @@ import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionSidebarWidth, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
 import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
-import { registerStageConsoleGuard, setStageConsoleGuardActive } from './consoleGuard.js';
+import { registerStageConsoleGuard, setStageConsoleGuardActive, runWithStageWrite } from './consoleGuard.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
@@ -317,10 +317,17 @@ export class StageSurface {
     return true;
   }
 
+  writeModeControl(sequence) {
+    if (!sequence) return;
+    runWithStageWrite(() => {
+      this.out.write(sequence);
+    });
+  }
+
   enableMouse() {
     if (this.homeInfo || !this.mouseWanted || this.mouseOn || !this.stage.reserved) return false;
-    this.out.write(mouseTracking(true));
-    this.out.write(mouseHoverTracking(true, this.env));
+    this.writeModeControl(mouseTracking(true));
+    this.writeModeControl(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.mouseOn = true;
     return true;
@@ -329,8 +336,8 @@ export class StageSurface {
   disableMouse(force = false) {
     if (!force && !this.mouseOn && !this.mouseCaptured) return false;
     // Restore terminal motion modes, including stale tracking from an interrupted turn.
-    this.out.write(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
-    this.out.write(mouseTracking(false));
+    this.writeModeControl(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
+    this.writeModeControl(mouseTracking(false));
     this.mouseCaptured = false;
     this.mouseOn = false;
     this.detached = false;
@@ -883,8 +890,8 @@ export class StageSurface {
    */
   releaseMouse() {
     if (!this.mouseCaptured) return false;
-    this.out.write(mouseHoverTracking(false, this.env));
-    this.out.write(mouseTracking(false));
+    this.writeModeControl(mouseHoverTracking(false, this.env));
+    this.writeModeControl(mouseTracking(false));
     this.mouseCaptured = false;
     this.detached = true;
     return true;
@@ -894,8 +901,8 @@ export class StageSurface {
   captureMouse() {
     // Home and suspended stages must not arm modes their teardown cannot observe.
     if (!this.mouseWanted || !this.mouseOn || !this.stage.reserved || this.mouseCaptured) return false;
-    this.out.write(mouseTracking(true));
-    this.out.write(mouseHoverTracking(true, this.env));
+    this.writeModeControl(mouseTracking(true));
+    this.writeModeControl(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.detached = false;
     // After native scrollback, the former physical cursor location is unknown.

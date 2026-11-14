@@ -204,6 +204,12 @@ export class SelectList {
     switch (key.name) {
       case 'up':     this.move(-1, rows); return 'handled';
       case 'down':   this.move(1, rows); return 'handled';
+      case 'wheel': {
+        const direction = key.wheel && key.wheel.direction;
+        if (direction === 'up') this.moveTo(this.selected - 1, rows);
+        else if (direction === 'down') this.moveTo(this.selected + 1, rows);
+        return 'handled';
+      }
       // A page is the number of ITEMS on screen, not the number of rows.
       // Category headers spend rows without being selectable, so paging by the
       // row budget jumped further than a screenful and left a band of items that

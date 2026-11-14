@@ -42,6 +42,7 @@ import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { isStartupDialog, startupDialogView } from './homeView.js';
 import { handleMessageMouse, handleMessageActionMenuMouse, isMouseMotion } from './messageInteraction.js';
 import { handleTurnRailMouse } from './turnRail.js';
+import { runWithStageWrite } from './consoleGuard.js';
 import {
   resetTurnInterruptState,
   shouldAcceptStatusUpdate,
@@ -190,6 +191,13 @@ export class ChatPrompt {
   // Lifecycle
   // -------------------------------------------------------------------------
 
+  writeControl(sequence) {
+    if (!sequence) return;
+    runWithStageWrite(() => {
+      this.out.write(sequence);
+    });
+  }
+
   start() {
     if (this.active) return;
     this.active = true;
@@ -197,11 +205,11 @@ export class ChatPrompt {
     this.input.setRawMode(true);
     this.input.resume();
     this.input.on('data', this.handleData);
-    this.out.write(bracketedPaste(true));
+    this.writeControl(bracketedPaste(true));
     // Node's normal exit does not guarantee ChatPrompt.stop() is called.
     // Always restore bracketed paste and raw stdin when the process exits.
     this.exitHook = () => {
-      try { this.out.write(bracketedPaste(false)); } catch { /* terminal already closed */ }
+      try { this.writeControl(bracketedPaste(false)); } catch { /* terminal already closed */ }
       try { this.input.setRawMode(false); } catch { /* stdin already closed */ }
     };
     process.once('exit', this.exitHook);
@@ -225,7 +233,7 @@ export class ChatPrompt {
     // session is flushed into real terminal scrollback, so leaving Causyne leaves
     // a transcript behind exactly as it always has.
     if (this.surface) this.surface.close();
-    this.out.write(bracketedPaste(false));
+    this.writeControl(bracketedPaste(false));
     if (typeof this.out.removeListener === 'function') this.out.removeListener('resize', this.handleResize);
     this.input.off('data', this.handleData);
     try { this.input.setRawMode(false); } catch (e) { /* already closed */ }
@@ -1369,7 +1377,7 @@ export class ChatPrompt {
     this.erase();
     // The one clear Causyne may perform: the user pressed ctrl+L and asked for it.
     // UX-01 forbids clearing the terminal on the app's own initiative.
-    this.out.write('\x1b[2J\x1b[H');
+    this.writeControl('\x1b[2J\x1b[H');
     this.drawnRows = 0;
     this.cursorRow = 0;
   }

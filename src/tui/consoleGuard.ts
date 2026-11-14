@@ -33,6 +33,11 @@ let stageInternalWriting = false;
 
 /**
  * Run a write operation with permission to write to stdout during Stage sessions.
+ *
+ * Every TUI-owned terminal control write (Stage band diffs, OSC 52 clipboard sync,
+ * StageSurface mouse mode toggles ?1000/?1006/?1003, and ChatPrompt bracketed
+ * paste ?2004 / Ctrl+L clear) MUST execute inside runWithStageWrite(); otherwise
+ * the process.stdout guard drops escape sequences while a Stage is reserved.
  */
 export function runWithStageWrite<T>(fn: () => T): T {
   const prev = stageInternalWriting;
@@ -42,6 +47,14 @@ export function runWithStageWrite<T>(fn: () => T): T {
   } finally {
     stageInternalWriting = prev;
   }
+}
+
+function chunkToText(chunk: unknown, encodingOrCb?: unknown): string {
+  if (typeof chunk === 'string') return chunk;
+  const encoding = typeof encodingOrCb === 'string' ? encodingOrCb as BufferEncoding : 'utf8';
+  if (Buffer.isBuffer(chunk)) return chunk.toString(encoding);
+  if (chunk instanceof Uint8Array) return Buffer.from(chunk).toString(encoding);
+  return String(chunk ?? '');
 }
 
 export function isAnyStageReservedOnStdout(): boolean {
@@ -90,7 +103,7 @@ function ensureConsoleGuardInstalled(): void {
     process.stdout.write = ((chunk: unknown, encodingOrCb?: unknown, cb?: unknown): boolean => {
       if (isAnyStageReservedOnStdout() && !stageInternalWriting) {
         // Prevent rogue unmanaged writes from emitting newlines, CRs, or escape codes that corrupt the stage
-        const text = String(chunk ?? '');
+        const text = chunkToText(chunk, encodingOrCb);
         if (text.includes('\n') || text.includes('\r') || text.includes('\x1b')) {
           if (typeof encodingOrCb === 'function') (encodingOrCb as () => void)();
           else if (typeof cb === 'function') (cb as () => void)();
