@@ -581,8 +581,8 @@ export class StageSurface {
       cwd: this.sidebarStatus?.cwd || this.sessionInfo?.cwd,
       provider: this.sidebarStatus?.provider || this.sessionInfo?.provider,
       model: this.sidebarStatus?.model || this.sessionInfo?.model,
-      contextChars: this.sidebarStatus?.contextChars,
-      contextLimit: this.sidebarStatus?.contextLimit,
+      contextChars: this.sidebarStatus?.contextChars ?? this.sessionInfo?.contextChars,
+      contextLimit: this.sidebarStatus?.contextLimit ?? this.sessionInfo?.contextLimit,
       plan: this.sidebarPlan,
       activeSkill: this.sessionInfo?.activeSkill
     }, mainRows.length) : [];
