@@ -314,11 +314,12 @@ export function expandTabs(text, tabWidth = TAB_WIDTH) {
     const source = String(text == null ? '' : text);
     if (!source.includes('\t'))
         return source;
+    const step = Number.isFinite(tabWidth) && tabWidth >= 1 ? Math.floor(tabWidth) : TAB_WIDTH;
     let out = '';
     let column = 0;
     for (const char of source) {
         if (char === '\t') {
-            const advance = tabWidth - (column % tabWidth);
+            const advance = step - (column % step);
             out += ' '.repeat(advance);
             column += advance;
         }

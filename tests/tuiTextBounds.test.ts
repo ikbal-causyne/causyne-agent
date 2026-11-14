@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { padEnd, truncate, wrapBlock } from '../src/tui/text.js';
+import { expandTabs, padEnd, truncate, wrapBlock } from '../src/tui/text.js';
 
 describe('tui/text finite bounds', () => {
   it('truncate handles non-finite width without overflowing input', () => {
@@ -26,6 +26,15 @@ describe('tui/text finite bounds', () => {
 
       const nanWidth = wrapBlock('alpha beta', Number.NaN);
       assert.deepEqual(nanWidth, ['alpha beta']);
+    });
+  });
+
+  it('expandTabs falls back to TAB_WIDTH when tabWidth is < 1 or non-finite', () => {
+    assert.doesNotThrow(() => {
+      assert.equal(expandTabs('a\tb', 0), 'a       b');
+      assert.equal(expandTabs('a\tb', -4), 'a       b');
+      assert.equal(expandTabs('a\tb', Number.NaN), 'a       b');
+      assert.equal(expandTabs('a\tb', Number.POSITIVE_INFINITY), 'a       b');
     });
   });
 });
