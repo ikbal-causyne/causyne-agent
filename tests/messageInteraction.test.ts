@@ -504,4 +504,30 @@ test('placeMessageActionPanel normalizes inverted messageBounds and re-applies d
   assert.match(placed.rows[0]!, /\x1b\[22m\x1b\[2m Normal \x1b\[m\x1b\[2m Tail/);
 });
 
+test('extractRowLinks preserves back-to-back OSC 8 links and detectLinkAtPoint honors surface.env sidebar disablement', () => {
+  const row = '\x1b]8;;https://first.example.com\x07First\x1b]8;;https://second.example.com\x07Second\x1b]8;;\x07';
+  const links = extractRowLinks(row, 0);
+  assert.equal(links.length, 2, 'Both back-to-back OSC 8 links must be preserved');
+  assert.equal(links[0]?.url, 'https://first.example.com');
+  assert.equal(links[1]?.url, 'https://second.example.com');
+
+  const wideLinkRow = `${' '.repeat(170)}\x1b]8;;https://causyne.com/docs\x07docs\x1b]8;;\x07`;
+  const wideSurface: any = {
+    width: 200,
+    env: { CAUSYNE_SIDEBAR: 'off' },
+    out: { rows: 25 },
+    stage: { height: 20, reserved: true },
+    viewport: { viewHeight: 15, viewWidth: 200, scrollTop: 0 },
+    transcript: {
+      flatten: () => ({
+        rows: [wideLinkRow],
+        markers: [{ id: 1, kind: 'assistant', row: 0, meta: { messageText: 'https://causyne.com/docs' } }]
+      })
+    }
+  };
+  const detected = detectLinkAtPoint(wideSurface, { x: 171, y: 19 });
+  assert.equal(detected?.url, 'https://causyne.com/docs');
+});
+
+
 

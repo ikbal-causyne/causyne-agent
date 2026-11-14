@@ -14,9 +14,11 @@ export interface DetectedLink {
 
 export interface SmartLinkSurface {
   width: number;
+  env?: { CAUSYNE_SIDEBAR?: string };
+  homeInfo?: unknown;
   out: { rows?: number };
   stage: { height: number; reserved: boolean };
-  viewport: { height: number; width: number; scrollTop: number };
+  viewport: { height?: number; width?: number; viewHeight?: number; viewWidth?: number; scrollTop: number };
   transcript: { flatten(width: number): { rows: string[]; markers: MessageMarker[] } };
   turnRailLayout?: { turns?: unknown[] } | null;
 }
@@ -206,6 +208,20 @@ export function extractRowLinks(
         if (endOffset !== -1) {
           const urlParam = afterParams.slice(0, endOffset);
           if (urlParam.length > 0) {
+            if (activeOsc8Url && col > osc8StartCol) {
+              const resolvedPrev = resolveFullUrlFromMessage(
+                activeOsc8Url.endsWith('…') ? osc8Label || activeOsc8Url : activeOsc8Url,
+                rawMessageText
+              );
+              links.push({
+                url: resolvedPrev,
+                label: osc8Label,
+                startCol: osc8StartCol,
+                endCol: col - 1,
+                row: rowIndex,
+                isOsc8: true
+              });
+            }
             activeOsc8Url = urlParam;
             osc8StartCol = col;
             osc8Label = '';
@@ -320,14 +336,19 @@ export function detectLinkAtPoint(
 ): DetectedLink | null {
   if (!surface?.stage.reserved || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
   const surfaceWidth = Number.isFinite(surface.width) ? Math.floor(surface.width) : 0;
-  const viewportWidth = Number.isFinite(surface.viewport.width) ? Math.floor(surface.viewport.width) : 0;
-  const viewportHeight = Number.isFinite(surface.viewport.height) ? Math.floor(surface.viewport.height) : 0;
+  const rawViewW = Number.isFinite(surface.viewport?.viewWidth) ? surface.viewport.viewWidth : surface.viewport?.width;
+  const rawViewH = Number.isFinite(surface.viewport?.viewHeight) ? surface.viewport.viewHeight : surface.viewport?.height;
+  const viewportWidth = Number.isFinite(rawViewW) ? Math.floor(rawViewW as number) : 0;
+  const viewportHeight = Number.isFinite(rawViewH) ? Math.floor(rawViewH as number) : 0;
   const stageHeight = Number.isFinite(surface.stage.height) ? Math.floor(surface.stage.height) : 0;
   if (surfaceWidth <= 0 || viewportWidth <= 0 || viewportHeight <= 0 || stageHeight <= 0) return null;
 
   const px = Math.floor(point.x);
   const py = Math.floor(point.y);
-  const mainWidth = sidebarVisible(surfaceWidth) ? sessionMainWidth(surfaceWidth) : surfaceWidth;
+  const isHome = Boolean(surface.homeInfo);
+  const mainWidth = sidebarVisible(surfaceWidth, isHome, surface.env)
+    ? sessionMainWidth(surfaceWidth, isHome, surface.env)
+    : surfaceWidth;
   const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
   if (px < leftGutter || px >= Math.min(mainWidth, viewportWidth + leftGutter)) return null;
 
