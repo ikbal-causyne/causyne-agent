@@ -11,13 +11,19 @@ import { padEnd, truncate, visibleWidth, wrapBlock } from './text.js';
 import { renderRunningLight } from './runningLight.js';
 export const DEFAULT_MAX_STREAMING_LINES = 8;
 export const DEFAULT_MAX_EXPANDED_LINES = 12;
-/**
- * Calculates total wrapped lines for reasoning content under the thinking box budget.
- */
 function clampThinkingWidth(width) {
     const numeric = Number(width ?? 80);
     return Number.isFinite(numeric) ? Math.max(20, Math.floor(numeric)) : 80;
 }
+function clampMaxVisibleLines(value, fallback) {
+    if (value === Number.POSITIVE_INFINITY)
+        return Number.POSITIVE_INFINITY;
+    const numeric = Number(value ?? fallback);
+    return Number.isFinite(numeric) ? Math.max(1, Math.floor(numeric)) : fallback;
+}
+/**
+ * Calculates total wrapped lines for reasoning content under the thinking box budget.
+ */
 export function calculateThinkingLineCount(content, width) {
     const text = String(content ?? '').trim();
     if (!text)
@@ -171,7 +177,7 @@ export function renderThinkingFrame(content, options = {}) {
     const collapseIndicator = HAS_UNICODE ? '▾' : 'v';
     const collapseHint = dim(`${collapseIndicator} click to collapse`);
     if (isStreaming) {
-        const maxLines = options.maxVisibleLines ?? DEFAULT_MAX_STREAMING_LINES;
+        const maxLines = clampMaxVisibleLines(options.maxVisibleLines, DEFAULT_MAX_STREAMING_LINES);
         const timePart = durationText ? ` · ${durationText}` : '';
         const { activeLabel } = resolveActivityLabels(options);
         const shimmerNowMs = options.nowMs !== undefined
@@ -218,7 +224,7 @@ export function renderThinkingFrame(content, options = {}) {
         return rows;
     }
     // Completed Expanded Mode
-    const maxLines = options.maxVisibleLines ?? DEFAULT_MAX_EXPANDED_LINES;
+    const maxLines = clampMaxVisibleLines(options.maxVisibleLines, DEFAULT_MAX_EXPANDED_LINES);
     const timePart = durationText ? ` · ${durationText}` : '';
     const raw = (options.activity || options.title || 'thinking')
         .replace(/…|\.\.\.$/, '')
@@ -232,7 +238,8 @@ export function renderThinkingFrame(content, options = {}) {
     const rows = [top];
     if (totalLines > maxLines) {
         const limit = Math.max(0, totalLines - maxLines);
-        const start = Math.max(0, Math.min(limit, Math.floor(options.startLine ?? 0)));
+        const rawStart = Number(options.startLine ?? 0);
+        const start = Math.max(0, Math.min(limit, Number.isFinite(rawStart) ? Math.floor(rawStart) : 0));
         const visible = allRows.slice(start, start + maxLines);
         for (const row of visible) {
             rows.push(wrapRow(dim(row)));

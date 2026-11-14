@@ -27,4 +27,22 @@ describe('thinkingBox finite bounds', () => {
       assert.equal(visibleWidth(frameNaN[0]!), 80);
     });
   });
+
+  it('guards maxVisibleLines and non-finite startLine in renderThinkingFrame', () => {
+    const content = Array.from({ length: 12 }, (_, i) => `thought line ${i + 1}`).join('\n');
+
+    const zeroStreaming = renderThinkingFrame(content, {
+      streaming: true,
+      maxVisibleLines: 0
+    }).join('\n');
+    assert.doesNotMatch(zeroStreaming, /13 earlier/);
+
+    const nanStartCompleted = renderThinkingFrame(content, {
+      streaming: false,
+      maxVisibleLines: 4,
+      startLine: Number.NaN
+    });
+    assert.ok(nanStartCompleted.length >= 6);
+    assert.match(nanStartCompleted.join('\n'), /thought line 1\b/);
+  });
 });
