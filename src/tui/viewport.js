@@ -48,7 +48,7 @@ export class ScrollAcceleration {
     intervals;
     lastTick;
     constructor({ history = 3, streakTimeout = 150, minTickInterval = 6 } = {}) {
-        this.historySize = history;
+        this.historySize = Number.isFinite(history) ? Math.max(0, Math.floor(history)) : 3;
         this.streakTimeout = streakTimeout;
         this.minTickInterval = minTickInterval;
         this.intervals = [];
@@ -59,6 +59,8 @@ export class ScrollAcceleration {
         this.lastTick = 0;
     }
     tick(now = Date.now()) {
+        if (!Number.isFinite(now))
+            return 1;
         const A = 0.8;
         const tau = 3;
         const maxMultiplier = 6;
@@ -68,12 +70,16 @@ export class ScrollAcceleration {
             this.intervals = [];
             return 1;
         }
-        if (gap < this.minTickInterval)
+        if (gap < Math.max(0, this.minTickInterval))
             return 1;
         this.lastTick = now;
-        this.intervals.push(gap);
-        if (this.intervals.length > this.historySize)
-            this.intervals.shift();
+        if (this.historySize > 0) {
+            this.intervals.push(gap);
+            while (this.intervals.length > this.historySize)
+                this.intervals.shift();
+        }
+        if (this.intervals.length === 0)
+            return 1;
         const average = this.intervals.reduce((sum, v) => sum + v, 0) / this.intervals.length;
         const velocity = 100 / average;
         return Math.min(1 + A * (Math.exp(velocity / tau) - 1), maxMultiplier);
