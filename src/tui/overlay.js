@@ -223,9 +223,15 @@ export class OverlayStack {
  * opaque surface background and legible header/footer typography.
  */
 export function panelRows(layer, width, maxHeight) {
-    const frameWidth = Math.max(8, width);
+    const safeWidth = Number.isFinite(width) ? Math.floor(width) : 8;
+    const rawPreferred = layer.preferredHeight();
+    const preferred = Number.isFinite(rawPreferred) ? Math.floor(rawPreferred) : 3;
+    const safeMaxHeight = Number.isFinite(maxHeight)
+        ? Math.floor(maxHeight)
+        : (maxHeight === Infinity ? preferred : 3);
+    const frameWidth = Math.max(8, safeWidth);
     const inner = frameWidth - 4; // two borders, one pad each side
-    const bodyHeight = Math.max(1, Math.min(layer.preferredHeight(), maxHeight) - 2);
+    const bodyHeight = Math.max(1, Math.min(preferred, safeMaxHeight) - 2);
     const body = layer.body(inner, bodyHeight);
     const borderRole = layer.borderRole || 'rule';
     const surfaceRole = layer.surfaceRole || 'surface';

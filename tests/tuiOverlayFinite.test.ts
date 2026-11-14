@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { drawPanel } from '../src/tui/overlay.js';
+import { Layer, drawPanel, panelRows } from '../src/tui/overlay.js';
+import { visibleWidth } from '../src/tui/text.js';
 
 describe('overlay drawPanel finite bounds', () => {
   it('returns empty rect without throwing or looping on non-finite rect dimensions', () => {
@@ -22,5 +23,24 @@ describe('overlay drawPanel finite bounds', () => {
     });
 
     assert.equal(writes, 0);
+  });
+
+  it('panelRows clamps non-finite and fractional dimensions without RangeError', () => {
+    const layer = new Layer({ title: 'Title', footer: 'Footer', width: 40, height: 10 });
+    layer.body = () => ['hello'];
+
+    assert.doesNotThrow(() => {
+      const infRows = panelRows(layer, Number.POSITIVE_INFINITY, 10);
+      assert.ok(infRows.length >= 3);
+      assert.ok(Number.isFinite(visibleWidth(infRows[0]!)));
+
+      const nanRows = panelRows(layer, Number.NaN, Number.NaN);
+      assert.equal(nanRows.length, 3);
+      assert.equal(visibleWidth(nanRows[0]!), 8);
+
+      const fracRows = panelRows(layer, 20.9, 6.9);
+      assert.equal(visibleWidth(fracRows[0]!), 20);
+      assert.equal(visibleWidth(fracRows[1]!), 20);
+    });
   });
 });
