@@ -81,6 +81,13 @@ export function noncachedTokens(usage) {
             : Math.max(0, finite(usage.promptTokens) - finite(usage.cachedPromptTokens));
     return input + finite(usage.completionTokens);
 }
+export function isToolErrorResult(result) {
+    if (!result || typeof result !== 'object')
+        return false;
+    return result.success === false
+        || (typeof result.error === 'string' && result.error.trim().length > 0)
+        || (typeof result.exitCode === 'number' && (!Number.isFinite(result.exitCode) || result.exitCode !== 0));
+}
 export function isActionableTaskPrompt(text) {
     const t = (text || '').trim();
     if (!t)
@@ -4411,7 +4418,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     catch { /* never block tool execution on episodic recording */ }
                     const recovery = this.timeMachine.observe(functionName, args, observedResult, coldObserver.getToolOutcomes(this.taskId));
                     const verdict = await this.handleRecovery(recovery, functionName);
-                    if (result && (result.success === false || typeof result.error === 'string')) {
+                    if (isToolErrorResult(result)) {
                         result = { ...result, timeMachine: verdict.guidance };
                     }
                     if (this.stopRequested) {
@@ -4434,23 +4441,25 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     }
                     // Buffer output for disconnect resilience
                     await this.taskBuffer.appendOutput(this.taskId, { tool: functionName, result: observedResult });
+                    const isErrorOutcome = isToolErrorResult(result);
                     if (codeAction)
                         this.emitEvent({ ...codeAction,
-                            phase: result?.success === false || typeof result?.error === 'string' ? 'failed' : 'done' });
+                            phase: isErrorOutcome ? 'failed' : 'done' });
                     const eventResult = result?._is_image_marker
-                        ? { success: result.success !== false && !result.error, output: result.output || `Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'})` }
+                        ? { success: !isErrorOutcome, output: result.output || `Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'})` }
                         : result;
-                    const isErrorOutcome = result?.success === false || typeof result?.error === 'string';
-                    const errorMsg = eventResult?.error || (typeof result?.error === 'string' ? result.error : undefined);
+                    const rawErrorMsg = typeof eventResult?.error === 'string' && eventResult.error.trim().length > 0
+                        ? eventResult.error
+                        : (typeof result?.error === 'string' && result.error.trim().length > 0 ? result.error : undefined);
                     this.emitEvent({
                         type: isErrorOutcome ? 'step_error' : 'step_complete',
                         tool: functionName,
-                        ...(isErrorOutcome && errorMsg ? { error: errorMsg } : {}),
+                        ...(isErrorOutcome && rawErrorMsg ? { error: rawErrorMsg } : {}),
                         result: eventResult,
                         toolCallId: toolCall.id
                     });
                     this.stepsCompleted++;
-                    if (this._implementationPlanSeeded && result?.success !== false && !result?.error && functionName !== 'update_plan') {
+                    if (this._implementationPlanSeeded && !isErrorOutcome && functionName !== 'update_plan') {
                         this.advanceImplementationPlanProgress('mutation');
                     }
                     // The procedure, as it actually ran. Tool name plus a whitelisted
@@ -4639,7 +4648,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 spill = { path: stored.diskPath };
                                 resultString = JSON.stringify({
                                     ...(typeof result?.success === 'boolean' ? { success: result.success } : {}),
-                                    ...(typeof result?.error === 'string' ? { error: result.error.slice(0, 500) } : {}),
+                                    ...(typeof result?.error === 'string' && result.error.trim().length > 0 ? { error: result.error.slice(0, 500) } : {}),
                                     output: stored.contentForModel
                                 });
                             }
@@ -4673,7 +4682,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 this._observationDigests.set(digest, this.stepsCompleted + 1);
                             }
                         }
-                        const isCallFailed = Boolean(result && (result.success === false || typeof result.error === 'string'));
+                        const isCallFailed = isToolErrorResult(result);
                         const stallObservation = this.stallGuard.observeCall(functionName, args || {}, result, toolCall.id, isCallFailed);
                         if (stallObservation.stub && resultString.length >= 256) {
                             resultString = stallObservation.stub;
