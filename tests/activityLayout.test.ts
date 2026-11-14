@@ -60,3 +60,9 @@ test('activity rows honor narrow terminal widths instead of forcing 20 columns',
     assert.ok(rows.every(row => visibleWidth(row) < width), `activity row escaped ${width}-column terminal`);
   }
 });
+
+test('activityRows sanitizes and clamps long or control-injected prefixes inside columns', () => {
+  const rows = activityRows('done', 10, '\x1b[2Jvery-long-prefix\nnext: ');
+  assert.ok(rows.every(row => !/[\x00-\x1f]/.test(row)));
+  assert.ok(rows.every(row => visibleWidth(row) < 10), `expected every row < 10 cols, got ${rows.map(r => visibleWidth(r))}`);
+});
