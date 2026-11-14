@@ -14,7 +14,8 @@ export function isStartupDialog(surface) {
 export function startupDialogView(layer, columns, terminalRows) {
     const availableWidth = Number.isFinite(columns) ? Math.max(8, Math.floor(columns) - 1) : 79;
     const availableHeight = Number.isFinite(terminalRows) ? Math.max(4, Math.floor(terminalRows) - 2) : 20;
-    const width = Math.min(availableWidth, 96, Math.max(88, Math.floor(layer.width || 0)));
+    const requestedWidth = typeof layer.width === 'number' && Number.isFinite(layer.width) ? Math.floor(layer.width) : 0;
+    const width = Math.min(availableWidth, 96, Math.max(88, requestedWidth));
     const height = Math.min(availableHeight, 30);
     const measuredLayer = {
         title: layer.title,
@@ -26,23 +27,26 @@ export function startupDialogView(layer, columns, terminalRows) {
     const cursor = layer.cursor;
     const safeCursorY = cursor && Number.isFinite(cursor.y) ? Math.max(0, Math.floor(cursor.y)) : null;
     const safeCursorX = cursor && Number.isFinite(cursor.x) ? Math.max(0, Math.floor(cursor.x)) : null;
+    const maxRow = Math.max(0, centered.rows.length - 1);
+    const maxCol = Math.max(0, availableWidth - 1);
     return {
         rows: centered.rows,
-        caretRow: safeCursorY !== null ? 1 + safeCursorY : 0,
-        caretCol: centered.inset + (safeCursorX !== null ? 2 + safeCursorX : 0)
+        caretRow: safeCursorY !== null ? Math.min(maxRow, 1 + safeCursorY) : 0,
+        caretCol: Math.max(0, Math.min(maxCol, centered.inset + (safeCursorX !== null ? 2 + safeCursorX : 0)))
     };
 }
 /** Center a temporary dialog in the available terminal region. */
 export function placeDialog(rows, columns, height, caretRow, caretCol) {
     const available = Number.isFinite(height) ? Math.max(1, Math.floor(height)) : 1;
-    const safeColumns = Number.isFinite(columns) ? Math.floor(columns) : 2;
+    const safeColumns = Number.isFinite(columns) ? Math.max(2, Math.floor(columns)) : 80;
     const safeCaretRow = Number.isFinite(caretRow) ? Math.floor(caretRow) : 0;
     const safeCaretCol = Number.isFinite(caretCol) ? Math.floor(caretCol) : 0;
-    const shown = rows.slice(0, available);
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const shown = safeRows.slice(0, available);
     const top = Math.max(0, Math.floor((available - shown.length) / 2));
     return {
         rows: [...Array(top).fill(''), ...shown],
-        caretRow: top + Math.max(0, Math.min(safeCaretRow, shown.length - 1)),
+        caretRow: top + Math.max(0, Math.min(safeCaretRow, Math.max(0, shown.length - 1))),
         caretCol: Math.max(0, Math.min(safeCaretCol, safeColumns - 2))
     };
 }

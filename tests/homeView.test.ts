@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { placeHome, placeDialog } from '../src/tui/homeView.js';
+import { placeHome, placeDialog, startupDialogView } from '../src/tui/homeView.js';
 import { HomeTransition } from '../src/tui/homeTransition.js';
 import { settleStageResize } from '../src/tui/resizeRecovery.js';
 import { dialogWidth, dialogHeight } from '../src/tui/layout.js';
@@ -153,4 +153,20 @@ test('dialogWidth and dialogHeight fall back when requested dimensions are non-p
   assert.equal(dialogHeight(40, -10), 20);
   assert.equal(dialogHeight(40, Number.NEGATIVE_INFINITY), 20);
   assert.equal(dialogHeight(40, Number.NaN), 20);
+});
+
+test('startupDialogView and placeDialog clamp cursor coordinates inside rendered rows and safe terminal columns', () => {
+  const view = startupDialogView({
+    title: 'Sessions',
+    width: Number.NaN,
+    cursor: { x: 200, y: 200 },
+    preferredHeight: () => 5,
+    body: () => ['row 1', 'row 2']
+  }, 40, 8);
+  assert.ok(view.caretRow <= view.rows.length - 1, `caretRow ${view.caretRow} must be <= ${view.rows.length - 1}`);
+  assert.ok(view.caretCol <= 39, `caretCol ${view.caretCol} must fit inside 40 columns`);
+
+  const tinyDialog = placeDialog(['item'], -5, 4, 2, 10);
+  assert.equal(tinyDialog.caretCol, 0);
+  assert.equal(tinyDialog.caretRow >= 0 && tinyDialog.caretRow < tinyDialog.rows.length, true);
 });
