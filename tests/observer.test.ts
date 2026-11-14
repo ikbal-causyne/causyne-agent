@@ -337,6 +337,23 @@ test('observer does not reuse test evidence from before the latest edit', () => 
   assert.equal(obs.verified, false);
 });
 
+test('observer invalidates prior test evidence after delete, move, or peer edit tools', () => {
+  for (const tool of ['fs_delete', 'fs_move', 'replace_file_content', 'write_to_file']) {
+    const obs = defaultObserver.evaluate({
+      taskId: `stale-${tool}`,
+      workspaceRoot: '/tmp',
+      userGoal: 'Clean up module',
+      agentClaim: 'Done',
+      toolHistory: [
+        { tool: 'sysRun', args: {}, success: true, error: '', exitCode: 0, path: '', command: 'npm test', at: 1 },
+        { tool, args: {}, success: true, error: '', exitCode: null, path: 'module.ts', command: '', at: 2 }
+      ]
+    });
+    assert.equal(obs.status, 'ready-to-verify', tool);
+    assert.equal(obs.verified, false, tool);
+  }
+});
+
 test('observer does not treat a browser action without rendered evidence as verification', () => {
   const obs = defaultObserver.evaluate({ taskId: 'no-render', workspaceRoot: '/tmp', userGoal: 'Build UI', agentClaim: 'Implemented', toolHistory: [
     { tool: 'fs_edit', args: {}, success: true, error: '', exitCode: null, path: 'ui.ts', command: '', at: 1 },

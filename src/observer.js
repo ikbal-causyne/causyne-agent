@@ -29,6 +29,11 @@ export function extractClaimedLocalUrls(text) {
     }
     return [...unique];
 }
+const FILE_MUTATION_TOOLS = new Set([
+    'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move',
+    'write_file', 'write_to_file', 'edit_file', 'replace_file_content',
+    'multi_replace_file_content', 'write', 'edit', 'multiedit'
+]);
 function isWorkspaceArtifact(workspaceRoot, targetPath) {
     try {
         const root = fs.realpathSync(workspaceRoot);
@@ -105,8 +110,9 @@ export class CausyneObserver {
             const claimsCompletion = /\b(?:done|complete|completed|finished|implemented|fixed|verified)\b|\b(?:is\s+(?:running|live|available|listening|served)\s+(?:at|on)|application\s+is\s+running)\b/i.test(claim);
             if (claimsCompletion) {
                 // Run deterministic verification checks based on domain
-                const hasMutations = outcomes.some(o => ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool));
-                const hasPassingVerification = outcomes.slice(outcomes.findLastIndex(o => ['fs_write', 'fs_edit', 'MultiEdit', 'write_file', 'edit_file'].includes(o.tool)) + 1).some(o => o.success && (o.exitCode == null || o.exitCode === 0) && (o.rendered === true ||
+                const lastMutationIndex = outcomes.findLastIndex(o => FILE_MUTATION_TOOLS.has(o.tool));
+                const hasMutations = lastMutationIndex >= 0;
+                const hasPassingVerification = outcomes.slice(lastMutationIndex + 1).some(o => o.success && (o.exitCode == null || o.exitCode === 0) && (o.rendered === true ||
                     o.tool === 'verify_local_web' ||
                     (o.command && isVerificationCommand(o.command))));
                 if (!hasPassingVerification) {
