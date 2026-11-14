@@ -344,7 +344,7 @@ function highlightCode(kind, text, width) {
 }
 /** Render a bounded, resize-safe panel. The terminal theme supplies rounded corners. */
 export function renderCodeProgress(event, width, modelNote = '', startLine) {
-    const safeWidth = Math.max(12, Math.floor(width) || 80);
+    const safeWidth = Number.isFinite(width) ? Math.max(12, Math.floor(width)) : 80;
     const inner = safeWidth - 4;
     const title = `${event.phase === 'done' ? '✓ ' : event.phase === 'failed' ? '× ' : ''}code · ${event.operation.toLowerCase()}`;
     const rows = [truncate(safeDisplay(event.description), inner)];
