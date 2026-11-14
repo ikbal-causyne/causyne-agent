@@ -243,7 +243,7 @@ export function markHoveredMessage(rows, surface, contentWidth) {
     const visible = Math.max(0, Math.min(rows.length, flat.rows.length - scrollTop));
     const padding = rows.length - visible;
     const next = flat.markers[flat.markers.indexOf(marker) + 1];
-    const rawStart = flat.markers[mIdx].row;
+    const rawStart = marker.row;
     const rawEnd = next?.row ?? flat.rows.length;
     // Skip leading and trailing blank separator lines inside the message frame
     // so we never paint a stray '▸' on an empty spacing row above '▸ Causyne'.
@@ -405,7 +405,7 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
         const mIdx = flat.markers.findIndex(m => m.id === marker.id);
         if (mIdx >= 0) {
             const nextM = flat.markers[mIdx + 1];
-            const rawStart = marker.row;
+            const rawStart = flat.markers[mIdx].row;
             const rawEnd = nextM ? nextM.row - 1 : flat.rows.length - 1;
             const scrollTop = Number.isFinite(host.surface.viewport.scrollTop)
                 ? Math.max(0, Math.floor(host.surface.viewport.scrollTop))
