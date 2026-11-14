@@ -79,6 +79,19 @@ describe('fuzzy select', () => {
     const list = new SelectList([{ label: 'a' }]);
     assert.equal(list.handleKey({ name: 'backspace' }, 5), 'cancel');
   });
+
+  test('render clamps long label+hint rows inside width and sanitizes escapes and newlines', () => {
+    const list = new SelectList([
+      { label: 'very-long-command-identifier', hint: 'ctrl+shift+k', category: 'cat\x1b[2J\nheader' },
+      { label: 'evil\x1b[2J\nlabel', description: 'desc\x1b[31m\nmore' }
+    ]);
+    const { rows } = list.render(24, 10);
+    for (const row of rows) {
+      assert.ok(visibleWidth(row) <= 24, `expected row width <= 24, got ${visibleWidth(row)}`);
+      assert.equal(row.includes('\n'), false);
+      assert.equal(row.includes('\x1b[2J'), false);
+    }
+  });
 });
 
 describe('the modal stack', () => {

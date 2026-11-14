@@ -18,6 +18,10 @@ import { paint, bold, dim, GLYPHS } from './theme.js';
 import { truncate, visibleWidth, safeDisplay } from './text.js';
 import { readClipboardSync } from './clipboardSync.js';
 
+const cleanSelectText = (value) => (
+  value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim()
+);
+
 /**
  * Score `query` against `text` as a fuzzy subsequence.
  *
@@ -273,7 +277,7 @@ export class SelectList {
     const inner = Math.max(4, width);
 
     if (this.showFilter) {
-      const shown = this.query || dim(this.placeholder);
+      const shown = cleanSelectText(this.query) || dim(cleanSelectText(this.placeholder));
       rows.push(`${paint('accent', GLYPHS.arrow)} ${truncate(shown, inner - 2, GLYPHS.ellipsis)}`);
       rows.push(paint('rule', GLYPHS.hLine.repeat(inner)));
     }
@@ -313,14 +317,15 @@ export class SelectList {
 
       if (item.category && item.category !== lastCategory) {
         lastCategory = item.category;
-        rows.push(dim(`  ${safeDisplay(item.category)}`));
+        rows.push(truncate(dim(`  ${cleanSelectText(item.category)}`), inner, GLYPHS.ellipsis));
         if (rows.length >= ceiling) break;
       }
 
       const marker = isSelected ? paint('accent', GLYPHS.arrow) : ' ';
-      const label = safeDisplay(item.label || '');
-      const hint = item.hint ? dim(` ${safeDisplay(item.hint)}`) : '';
-      const description = item.description ? safeDisplay(item.description) : '';
+      const label = cleanSelectText(item.label || '');
+      const cleanHint = cleanSelectText(item.hint || '');
+      const hint = cleanHint ? dim(` ${cleanHint}`) : '';
+      const description = item.description ? cleanSelectText(item.description) : '';
 
       // The hint (a keybinding) is right-aligned, which is what makes a palette
       // scannable: the names line up on the left, the keys on the right.
@@ -333,7 +338,7 @@ export class SelectList {
         : '';
       const padding = Math.max(0, inner - visibleWidth(left) - visibleWidth(middle) - hintWidth);
 
-      rows.push(left + middle + ' '.repeat(padding) + hint);
+      rows.push(truncate(left + middle + ' '.repeat(padding) + hint, inner, GLYPHS.ellipsis));
       if (rows.length >= ceiling) break;
     }
 
