@@ -222,6 +222,8 @@ export function handleViewportWheel(
   // Clear manual turn override on wheel scroll so active indicator syncs with viewport
   if (surface) {
     (surface as any).activeTurnIndex = null;
+    (surface as any).hoveredTurnIndex = null;
+    (surface as any).hoveredTurnAnchorY = null;
   }
 
   const dir: 'up' | 'down' = key.wheel.direction === 'down' ? 'down' : 'up';
@@ -288,11 +290,13 @@ export function handleScrollbarMouse(
   if (!hasRail) return false;
   const contentW = Math.max(20, mainW - 3);
 
-  // Rail occupies column contentW - 1 through mainW
-  const isRailColumn = mouseX >= contentW - 1 && mouseX <= mainW;
+  // Rail occupies column mainW - 3 through mainW (spacer, glyph column, outer margin)
+  const isRailColumn = mouseX >= Math.max(contentW, mainW - 3) && mouseX <= mainW;
 
   if (isRailColumn) {
     (surface as any).activeTurnIndex = null;
+    (surface as any).hoveredTurnIndex = null;
+    (surface as any).hoveredTurnAnchorY = null;
     // Auto-heal if detached
     if (typeof surface.captureMouse === 'function' && surface.detached) {
       surface.captureMouse();

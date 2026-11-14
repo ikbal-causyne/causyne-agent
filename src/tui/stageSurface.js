@@ -239,6 +239,7 @@ export class StageSurface {
     this.unregisterConsoleGuard = null;
     this.wasModal = false;
     this.lastBlockLength = 0;
+    this.lastUserTurnCount = 0;
   }
 
   get width() {
@@ -426,6 +427,16 @@ export class StageSurface {
 
   handleChange() {
     if (!this.transcript.isEmpty()) this.opened = true;
+    let userTurns = 0;
+    for (const frame of this.transcript.frames) {
+      if (frame && frame.kind === 'user') userTurns++;
+    }
+    if (userTurns > this.lastUserTurnCount) {
+      this.activeTurnIndex = null;
+      this.hoveredTurnIndex = null;
+      this.hoveredTurnAnchorY = null;
+    }
+    this.lastUserTurnCount = userTurns;
     const before = this.lastHeight;
     const mainWidth = sessionMainWidth(this.width, false, this.env);
     const contentWidth = this.railEnabled(mainWidth)
@@ -475,6 +486,9 @@ export class StageSurface {
     }
 
     if (this.homeInfo || (caret?.modal && !caret?.inline)) {
+      this.turnRailLayout = null;
+      this.hoveredTurnIndex = null;
+      this.hoveredTurnAnchorY = null;
       if (this.stage.height < this.stage.maxHeight) {
         this.stage.grow(this.stage.maxHeight - this.stage.height);
       }
@@ -548,7 +562,13 @@ export class StageSurface {
       }
       this.decorate(rows, contentWidth);
       markHoveredMessage(rows, this, contentWidth);
-      if (rail) this.attachRail(rows, contentWidth);
+      if (rail) {
+        this.attachRail(rows, contentWidth);
+      } else {
+        this.turnRailLayout = null;
+        this.hoveredTurnIndex = null;
+        this.hoveredTurnAnchorY = null;
+      }
       if (this.hoveredTurnIndex && this.turnRailLayout?.turns?.length) {
         const hoveredTurn = this.turnRailLayout.turns.find(t => t.turnIndex === this.hoveredTurnIndex);
         if (hoveredTurn) {
@@ -567,7 +587,8 @@ export class StageSurface {
             }
             const effectiveCardWidth = Math.max(1, Math.min(cardWidth, Math.max(1, mainWidth - cardX)));
             const startY = Math.max(0, Math.min(rows.length - card.length, safeAnchorY - Math.floor(card.length / 2)));
-            this.turnRailLayout.cardRect = { x: cardX, y: startY, width: effectiveCardWidth, height: card.length, turnIndex: hoveredTurn.turnIndex };
+            const visibleCardHeight = Math.min(card.length, Math.max(0, rows.length - startY));
+            this.turnRailLayout.cardRect = { x: cardX, y: startY, width: effectiveCardWidth, height: visibleCardHeight, turnIndex: hoveredTurn.turnIndex };
           }
         }
       } else if (this.turnRailLayout) {
@@ -585,6 +606,10 @@ export class StageSurface {
         rows = placed.rows;
         overlay.layer.actionLayout = placed.layout;
       }
+    } else {
+      this.turnRailLayout = null;
+      this.hoveredTurnIndex = null;
+      this.hoveredTurnAnchorY = null;
     }
 
     const mainRows = rows.concat(block);
@@ -665,6 +690,11 @@ export class StageSurface {
     this.evicted = [];
     this.transcript.clear();
     this.lastHeight = 0;
+    this.lastUserTurnCount = 0;
+    this.activeTurnIndex = null;
+    this.hoveredTurnIndex = null;
+    this.hoveredTurnAnchorY = null;
+    this.turnRailLayout = null;
     this.stage.invalidate();
     if (this.viewport) {
       this.viewport.manual = false;
@@ -692,6 +722,10 @@ export class StageSurface {
     // The existing rows are already reserved: repaint them in place with
     // their new width, clearing trailing cells through Stage.paint().
     const columns = this.stage.width();
+    if (columns !== this.lastColumns || next !== this.stage.maxHeight) {
+      this.hoveredTurnIndex = null;
+      this.hoveredTurnAnchorY = null;
+    }
     if (!this.stage.reserved || next !== this.stage.maxHeight) {
       this.stage.resize(next, 1);
     } else if (columns !== this.lastColumns && !this.detached) {
@@ -733,7 +767,10 @@ export class StageSurface {
    * Returns `height` single-column strings.
    */
   buildRail(height, contentWidth) {
-    const rawTotal = Math.max(0, this.transcript.height(contentWidth));
+    const flat = typeof this.transcript.flatten === 'function' ? this.transcript.flatten(contentWidth) : null;
+    const flatRows = Array.isArray(flat?.rows) ? flat.rows : [];
+    const markers = Array.isArray(flat?.markers) ? flat.markers : this.transcript.markers(contentWidth);
+    const rawTotal = Math.max(0, flat ? flatRows.length : this.transcript.height(contentWidth));
     const total = Math.max(1, rawTotal);
     const padding = rawTotal <= height ? Math.max(0, height - rawTotal) : 0;
     const slotOf = (row) => (rawTotal <= height
@@ -741,11 +778,21 @@ export class StageSurface {
       : Math.max(0, Math.min(height - 1, Math.floor((row / total) * height))));
 
     const kinds = new Array(height).fill(null);
-    for (const marker of this.transcript.markers(contentWidth)) {
+    for (let mIdx = 0; mIdx < markers.length; mIdx++) {
+      const marker = markers[mIdx];
       // Suppress repetitive step/result/reasoning noise on the overview rail.
       // Checkpoints, user turns, approvals, and errors remain discoverable.
       if ((RAIL_PRIORITY[marker.kind] || 0) < 50) continue;
-      const slot = slotOf(marker.row);
+      let markerRow = marker.row;
+      if (marker.kind === 'user' && flatRows.length > 0) {
+        const nextRow = mIdx + 1 < markers.length ? markers[mIdx + 1].row : flatRows.length;
+        if (markerRow + 1 < nextRow && markerRow + 1 < flatRows.length) {
+          const firstLine = stripAnsi(String(flatRows[markerRow] ?? '')).trim();
+          const secondLine = stripAnsi(String(flatRows[markerRow + 1] ?? '')).trim();
+          if (firstLine === '' && secondLine !== '') markerRow += 1;
+        }
+      }
+      const slot = slotOf(markerRow);
       const held = kinds[slot];
       if (!held || (RAIL_PRIORITY[marker.kind] || 0) > (RAIL_PRIORITY[held] || 0)) {
         kinds[slot] = marker.kind;
@@ -783,9 +830,10 @@ export class StageSurface {
     const turns = collectSessionTurns(this.transcript, contentWidth);
     const hasTurns = turns.length > 0;
     const isAtBottom = typeof this.viewport?.atBottom === 'function' ? this.viewport.atBottom() : false;
-    const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, this.viewport.state().scrollTop, rows.length, isAtBottom);
+    const scrollTop = this.viewport.state().scrollTop;
+    const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, scrollTop, rows.length, isAtBottom);
     const railResult = hasTurns
-      ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex)
+      ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex, scrollTop)
       : null;
 
     this.turnRailLayout = {

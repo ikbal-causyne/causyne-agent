@@ -119,6 +119,8 @@ export function handleViewportWheel(key, viewport, surface, host, now = Date.now
     // Clear manual turn override on wheel scroll so active indicator syncs with viewport
     if (surface) {
         surface.activeTurnIndex = null;
+        surface.hoveredTurnIndex = null;
+        surface.hoveredTurnAnchorY = null;
     }
     const dir = key.wheel.direction === 'down' ? 'down' : 'up';
     const notches = defaultViewportDampener.computeNotches(dir, now);
@@ -174,10 +176,12 @@ export function handleScrollbarMouse(key, viewport, surface, host) {
     if (!hasRail)
         return false;
     const contentW = Math.max(20, mainW - 3);
-    // Rail occupies column contentW - 1 through mainW
-    const isRailColumn = mouseX >= contentW - 1 && mouseX <= mainW;
+    // Rail occupies column mainW - 3 through mainW (spacer, glyph column, outer margin)
+    const isRailColumn = mouseX >= Math.max(contentW, mainW - 3) && mouseX <= mainW;
     if (isRailColumn) {
         surface.activeTurnIndex = null;
+        surface.hoveredTurnIndex = null;
+        surface.hoveredTurnAnchorY = null;
         // Auto-heal if detached
         if (typeof surface.captureMouse === 'function' && surface.detached) {
             surface.captureMouse();

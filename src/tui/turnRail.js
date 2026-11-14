@@ -71,8 +71,20 @@ export function collectSessionTurns(transcript, contentWidth = 80) {
                 break;
             }
         }
-        const marker = markers.find((m) => m.id === frame.id);
+        const markerIdx = markers.findIndex((m) => m.id === frame.id);
+        const marker = markerIdx >= 0 ? markers[markerIdx] : undefined;
         const startRow = marker ? marker.row : 0;
+        const nextMarkerRow = markerIdx >= 0 && markerIdx + 1 < markers.length
+            ? markers[markerIdx + 1].row
+            : (Array.isArray(flat?.rows) ? flat.rows.length : 0);
+        let promptRow = startRow;
+        if (Array.isArray(flat?.rows) && startRow + 1 < nextMarkerRow && startRow + 1 < flat.rows.length) {
+            const firstLine = stripAnsi(String(flat.rows[startRow] ?? '')).trim();
+            const secondLine = stripAnsi(String(flat.rows[startRow + 1] ?? '')).trim();
+            if (firstLine === '' && secondLine !== '') {
+                promptRow = startRow + 1;
+            }
+        }
         turns.push({
             turnIndex,
             totalTurns,
@@ -82,6 +94,7 @@ export function collectSessionTurns(transcript, contentWidth = 80) {
             formattedDate: formatTurnTimestamp(frame.ts || Date.now()),
             frameId: frame.id,
             startRow,
+            promptRow,
             ...(transcriptHeight !== undefined ? { transcriptHeight } : {})
         });
     }
@@ -169,7 +182,7 @@ export function sliceFromColumn(source, startCol) {
  * - Consecutive vertical pillar when turns fit within viewport height.
  * - Proportional scaling when turn count exceeds available height.
  */
-export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex) {
+export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIndex, scrollTop) {
     const safeHeight = Number.isFinite(height) ? Math.max(0, Math.floor(height)) : 0;
     const cells = new Array(safeHeight).fill(' ');
     const dotRows = new Map();
@@ -179,10 +192,10 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
     }
     const count = turns.length;
     const rawTranscriptHeight = turns[0]?.transcriptHeight;
-    const topOffset = typeof rawTranscriptHeight === 'number' &&
+    const hasTranscriptHeight = typeof rawTranscriptHeight === 'number' &&
         Number.isFinite(rawTranscriptHeight) &&
-        rawTranscriptHeight > 0 &&
-        rawTranscriptHeight < safeHeight
+        rawTranscriptHeight > 0;
+    const topOffset = hasTranscriptHeight && rawTranscriptHeight < safeHeight
         ? safeHeight - Math.floor(rawTranscriptHeight)
         : 0;
     const activeHeight = Math.max(1, safeHeight - topOffset);
@@ -202,7 +215,29 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
             continue;
         const turnNum = turn.turnIndex;
         let rowIdx;
-        if (count <= activeHeight) {
+        if (count === 1 && hasTranscriptHeight) {
+            const rawAnchor = Number.isFinite(turn.promptRow) ? turn.promptRow : turn.startRow;
+            const anchorRow = Number.isFinite(rawAnchor) ? Math.max(0, Math.floor(rawAnchor)) : 0;
+            if (topOffset > 0) {
+                rowIdx = topOffset + anchorRow;
+            }
+            else if (typeof scrollTop === 'number' && Number.isFinite(scrollTop)) {
+                const safeScrollTop = Math.max(0, Math.floor(scrollTop));
+                if (anchorRow >= safeScrollTop && anchorRow < safeScrollTop + safeHeight) {
+                    rowIdx = anchorRow - safeScrollTop;
+                }
+                else if (anchorRow < safeScrollTop) {
+                    rowIdx = 0;
+                }
+                else {
+                    rowIdx = safeHeight - 1;
+                }
+            }
+            else {
+                rowIdx = Math.round((anchorRow / Math.max(1, Math.floor(rawTranscriptHeight) - 1)) * (safeHeight - 1));
+            }
+        }
+        else if (count <= activeHeight) {
             rowIdx = startRow + i;
         }
         else {
@@ -213,19 +248,24 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         const isHovered = hoveredTurnIndex === turnNum;
         const isActive = activeTurnIndex === turnNum;
         const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0;
-        if (isHovered || isActive || showQuiet)
-            rowToTurn.set(rowIdx, turnNum);
+        const rowHasHovered = cells[rowIdx]?.includes('230;235;245m');
+        const rowHasDot = cells[rowIdx]?.includes('●');
         if (isHovered) {
             // Hovered dot: bright silver highlighted circle
             cells[rowIdx] = '\x1b[1m\x1b[38;2;230;235;245m●\x1b[0m';
+            rowToTurn.set(rowIdx, turnNum);
         }
-        else if (isActive && !cells[rowIdx]?.includes('230;235;245m')) {
+        else if (isActive && !rowHasHovered) {
             // Active / current turn: bright white circle
             cells[rowIdx] = '\x1b[1m\x1b[38;2;250;250;250m●\x1b[0m';
+            rowToTurn.set(rowIdx, turnNum);
         }
-        else if (showQuiet && !cells[rowIdx]?.includes('●')) {
+        else if (showQuiet && !rowHasDot) {
             // Muted inactive turns: sparse gray dot in long sessions
             cells[rowIdx] = '\x1b[38;2;115;115;120m•\x1b[0m';
+            if (!rowToTurn.has(rowIdx)) {
+                rowToTurn.set(rowIdx, turnNum);
+            }
         }
     }
     return { cells, layout: { dotRows, rowToTurn } };

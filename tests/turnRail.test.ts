@@ -470,6 +470,49 @@ test('handleTurnRailMouse suppresses hover card when host is busy', () => {
   assert.equal(scheduled, true);
 });
 
+test('buildTurnRailCells aligns single-turn dot with promptRow across short and scrolled transcripts and keeps rowToTurn precedence on dense rails', () => {
+  const shortSingleTurn = [{
+    turnIndex: 1,
+    totalTurns: 1,
+    userPrompt: 'g',
+    assistantSummary: 'What would you like me to do?',
+    timestamp: 1000,
+    formattedDate: '10:00 AM',
+    frameId: 1,
+    startRow: 0,
+    promptRow: 1,
+    transcriptHeight: 14
+  }];
+  const shortRes = buildTurnRailCells(shortSingleTurn, 75, 1, null, 0);
+  assert.equal(shortRes.layout.dotRows.get(1), (75 - 14) + 1);
+
+  const longSingleTurn = [{
+    ...shortSingleTurn[0]!,
+    transcriptHeight: 90
+  }];
+  const topViewRes = buildTurnRailCells(longSingleTurn, 27, 1, null, 0);
+  assert.equal(topViewRes.layout.dotRows.get(1), 1, 'visible single promptRow aligns horizontally at row 1');
+  const scrolledRes = buildTurnRailCells(longSingleTurn, 27, 1, null, 40);
+  assert.equal(scrolledRes.layout.dotRows.get(1), 0, 'scrolled past single prompt pins dot cleanly at row 0 instead of floating');
+
+  // Dense history: 60 turns onto 12 rows where turn 2 is active and shares a cell with quiet turns
+  const denseTurns = Array.from({ length: 60 }, (_, idx) => ({
+    turnIndex: idx + 1,
+    totalTurns: 60,
+    userPrompt: `T${idx + 1}`,
+    assistantSummary: '',
+    timestamp: 1000 + idx,
+    formattedDate: '10:00 AM',
+    frameId: idx + 1,
+    startRow: idx * 4,
+    transcriptHeight: 240
+  }));
+  const activeTurn = 2;
+  const denseRes = buildTurnRailCells(denseTurns, 12, activeTurn, null);
+  const activeRow = denseRes.layout.dotRows.get(activeTurn)!;
+  assert.equal(denseRes.layout.rowToTurn.get(activeRow), activeTurn, 'active dot click target must not be overwritten by colliding quiet dot');
+});
+
 
 
 

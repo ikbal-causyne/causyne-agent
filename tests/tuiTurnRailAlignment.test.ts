@@ -109,4 +109,52 @@ test('overlayTurnPreviewCard keeps right overview rail aligned at rowLen - 1 and
   }
 });
 
+test('single-turn left dot and right overview marker share exact prompt row, narrow resize clears turnRailLayout, and new user turns clear stale activeTurnIndex', () => {
+  const out = {
+    columns: 187,
+    rows: 78,
+    isTTY: true,
+    write: () => true,
+    on() {},
+    removeListener() {}
+  };
+  const surface = new StageSurface({ out, env: { CAUSYNE_MOUSE: '0', CAUSYNE_RAIL: '1' } });
+  assert.equal(surface.open(), true);
+  try {
+    surface.enterHome({ version: 'v1', provider: 'acp/opencode', model: 'deepseek', cwd: '/tmp/work' });
+    surface.leaveHome(true);
+
+    const renderer = new ChatRenderer({ out, transcript: surface.transcript });
+    renderer.renderUserMessage('g');
+    renderer.onNotice({ text: 'Analyzing & planning..' });
+    renderer.renderAssistantMessage('What would you like me to do?\nDetail row');
+
+    surface.present(['   ┃ prompt', '   Build C'], { row: 0, col: 4 });
+    const mainW = surface.composeAvailableWidth();
+    const vpRows = surface.stage.prev.slice(0, surface.viewport.height).map((r: string) => stripAnsi(r));
+    const userRowIdx = vpRows.findIndex((r: string) => r.includes('g') && /[┃|]/.test(r));
+    assert.ok(userRowIdx > 40, `expected bottom-aligned user prompt row, got ${userRowIdx}`);
+    assert.equal(vpRows[userRowIdx]?.[1], '●', `left turn rail dot must sit on exact user prompt row ${userRowIdx}`);
+    assert.notEqual(vpRows[userRowIdx]?.[mainW - 2]?.trim(), '', `right overview marker must align on exact user prompt row ${userRowIdx}`);
+
+    // Shrinking below rail threshold clears stale turnRailLayout and hover card state
+    surface.hoveredTurnIndex = 1;
+    surface.hoveredTurnAnchorY = userRowIdx;
+    out.columns = 50;
+    surface.resize();
+    surface.present(['   ┃ prompt', '   Build C'], { row: 0, col: 4 });
+    assert.equal(surface.turnRailLayout, null, 'turnRailLayout must clear below RAIL_MIN_WIDTH');
+    assert.equal(surface.hoveredTurnIndex, null, 'hoveredTurnIndex must clear on resize/disablement');
+
+    // Restore wide layout and verify a newly appended user turn clears sticky activeTurnIndex
+    out.columns = 187;
+    surface.resize();
+    surface.activeTurnIndex = 1;
+    renderer.renderUserMessage('second turn');
+    assert.equal(surface.activeTurnIndex, null, 'new user turn must clear prior manual activeTurnIndex selection');
+  } finally {
+    surface.close();
+  }
+});
+
 

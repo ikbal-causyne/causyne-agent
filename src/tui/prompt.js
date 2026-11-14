@@ -1195,13 +1195,20 @@ export class ChatPrompt {
 
     if (!viewport) return false;
 
+    const clearTurnRailFocus = () => {
+      if (!this.surface) return;
+      this.surface.activeTurnIndex = null;
+      this.surface.hoveredTurnIndex = null;
+      this.surface.hoveredTurnAnchorY = null;
+    };
+
     if (key.name === 'pageup') {
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       if (key.shift) viewport.toTop(); else viewport.pageUp();
       return true;
     }
     if (key.name === 'pagedown') {
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       // Shift+PgDn is the way back to following, and it is spelled out in the
       // affordance the surface draws while the view is held away.
       if (key.shift) viewport.toBottom(); else viewport.pageDown();
@@ -1209,23 +1216,23 @@ export class ChatPrompt {
     }
     if (key.shift && key.name === 'up') {
       if (!this.editor.isEmpty) return false;
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       viewport.lineUp();
       return true;
     }
     if (key.shift && key.name === 'down') {
       if (!this.editor.isEmpty) return false;
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       viewport.lineDown();
       return true;
     }
     if (key.alt && key.ctrl && key.name === 'u') {
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       viewport.halfPageUp();
       return true;
     }
     if (key.alt && key.ctrl && key.name === 'd') {
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       viewport.halfPageDown();
       return true;
     }
@@ -1240,7 +1247,7 @@ export class ChatPrompt {
     // alt+[ is worse than unbound — ESC [ IS the CSI introducer, so it is
     // indistinguishable from the start of an escape sequence.
     const jumpViewport = (direction, kinds) => {
-      if (this.surface) this.surface.activeTurnIndex = null;
+      clearTurnRailFocus();
       viewport.jump(direction, kinds);
       return true;
     };
