@@ -114,7 +114,7 @@ import { isPlanReviewHandoff, isPlanningOnlyRequest } from './taskContinuation.j
 export function noncachedTokens(usage: any): number {
   if (!usage) return 0;
   const finite = (value: number | undefined): number => Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
-  const input = usage.uncachedPromptTokens !== undefined
+  const input = typeof usage.uncachedPromptTokens === 'number' && Number.isFinite(usage.uncachedPromptTokens)
     ? finite(usage.uncachedPromptTokens)
     : finite(usage.cachedPromptTokens) > finite(usage.promptTokens)
       ? finite(usage.promptTokens)

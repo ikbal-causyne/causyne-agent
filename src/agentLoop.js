@@ -74,7 +74,7 @@ export function noncachedTokens(usage) {
     if (!usage)
         return 0;
     const finite = (value) => Number.isFinite(value) ? Math.max(0, value ?? 0) : 0;
-    const input = usage.uncachedPromptTokens !== undefined
+    const input = typeof usage.uncachedPromptTokens === 'number' && Number.isFinite(usage.uncachedPromptTokens)
         ? finite(usage.uncachedPromptTokens)
         : finite(usage.cachedPromptTokens) > finite(usage.promptTokens)
             ? finite(usage.promptTokens)

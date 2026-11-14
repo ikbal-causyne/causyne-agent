@@ -33,6 +33,8 @@ test('horse-run replay cannot subtract 627289 cache reads from 94500 fresh input
     completionTokens: 52810, cachedPromptTokens: 627289 }), 147310);
   assert.equal(noncachedTokens({ promptTokens: 94500,
     completionTokens: 52810, cachedPromptTokens: 627289 }), 147310);
+  assert.equal(noncachedTokens({ promptTokens: 94500, uncachedPromptTokens: null,
+    completionTokens: 52810, cachedPromptTokens: 627289 }), 147310);
 });
 
 
