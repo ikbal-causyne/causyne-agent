@@ -192,8 +192,10 @@ export function truncate(text, width, ellipsis = '…') {
 }
 /** Pad to an exact column count, measuring visible width rather than bytes. */
 export function padEnd(text, width) {
-    const gap = width - visibleWidth(text);
-    return gap > 0 ? String(text) + ' '.repeat(gap) : String(text);
+    const source = String(text == null ? '' : text);
+    const safeWidth = Number.isFinite(width) ? Math.floor(width) : 0;
+    const gap = safeWidth - visibleWidth(source);
+    return gap > 0 ? source + ' '.repeat(gap) : source;
 }
 export function wrap(text, width, _options) {
     if (width <= 0)

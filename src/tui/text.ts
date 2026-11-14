@@ -200,8 +200,10 @@ export function truncate(text: unknown, width: number, ellipsis = '…'): string
 
 /** Pad to an exact column count, measuring visible width rather than bytes. */
 export function padEnd(text: unknown, width: number): string {
-  const gap = width - visibleWidth(text);
-  return gap > 0 ? String(text) + ' '.repeat(gap) : String(text);
+  const source = String(text == null ? '' : text);
+  const safeWidth = Number.isFinite(width) ? Math.floor(width) : 0;
+  const gap = safeWidth - visibleWidth(source);
+  return gap > 0 ? source + ' '.repeat(gap) : source;
 }
 
 export function wrap(text: unknown, width: number, _options?: { hang?: number }): string[] {
