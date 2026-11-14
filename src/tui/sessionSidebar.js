@@ -85,8 +85,11 @@ export function sessionSidebarRows(facts, height) {
             }
         }
     }
-    if (facts.plan?.length) {
-        const completed = facts.plan.filter(item => item.status === 'completed').length;
+    const validPlan = Array.isArray(facts.plan)
+        ? facts.plan.filter((item) => Boolean(item && typeof item === 'object'))
+        : [];
+    if (validPlan.length) {
+        const completed = validPlan.filter(item => item.status === 'completed').length;
         // Budget from the actual metadata, including optional skill/model rows.
         // Preserve space for the focused step and overflow summaries on short panes.
         const planBudget = Math.min(6, Math.max(0, count - 3));
@@ -98,21 +101,21 @@ export function sessionSidebarRows(facts, height) {
         }
         if (rows.length > count - planBudget)
             rows.length = Math.max(0, count - planBudget);
-        styled(bold(`Plan  ${completed}/${facts.plan.length}`));
+        styled(bold(`Plan  ${completed}/${validPlan.length}`));
         // Keep plan steps in execution order and keep the active step in view.
         const maxSteps = Math.max(1, Math.min(10, count - rows.length - 3));
-        const activeIndex = facts.plan.findIndex(item => item.status === 'in_progress');
-        const pendingIndex = facts.plan.findIndex(item => item.status !== 'completed');
-        const focus = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : facts.plan.length - 1;
-        const start = Math.max(0, Math.min(focus - Math.min(2, maxSteps - 1), facts.plan.length - maxSteps));
-        const planItems = facts.plan.slice(start, start + maxSteps);
-        if (start > 0)
+        const activeIndex = validPlan.findIndex(item => item.status === 'in_progress');
+        const pendingIndex = validPlan.findIndex(item => item.status !== 'completed');
+        const focus = activeIndex >= 0 ? activeIndex : pendingIndex >= 0 ? pendingIndex : validPlan.length - 1;
+        const start = Math.max(0, Math.min(focus - Math.min(2, maxSteps - 1), validPlan.length - maxSteps));
+        const planItems = validPlan.slice(start, start + maxSteps);
+        if (start > 0 && count - rows.length > planItems.length)
             line(`${start} earlier plan steps`);
         for (const item of planItems) {
             const mark = item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '▸' : '·';
             line(`${mark} ${item.text || item.step || item.content || ''}`);
         }
-        const remaining = facts.plan.length - start - planItems.length;
+        const remaining = validPlan.length - start - planItems.length;
         if (remaining > 0)
             line(`${remaining} later plan steps`);
     }

@@ -41,3 +41,19 @@ test('joinSessionSidebar normalizes sideRows width and strips embedded newlines'
   assert.ok(!joined[0]!.includes('\n'));
   assert.equal(visibleWidth(joined[0]!), 20 + SIDEBAR_WIDTH);
 });
+
+test('sessionSidebarRows filters malformed plan entries and preserves the active step on compact heights', () => {
+  const plan: any[] = [
+    null,
+    { text: 'Step 1', status: 'completed' },
+    undefined,
+    { text: 'Step 2', status: 'in_progress' },
+    { text: 'Step 3', status: 'pending' }
+  ];
+  const rows = sessionSidebarRows({ title: 'Compact', plan }, 5);
+  assert.equal(rows.length, 5);
+  const plain = stripAnsi(rows.join('\n'));
+  assert.match(plain, /Plan  1\/3/);
+  assert.match(plain, /▸ Step 2/);
+});
+
