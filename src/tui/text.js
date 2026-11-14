@@ -198,18 +198,20 @@ export function padEnd(text, width) {
     return gap > 0 ? source + ' '.repeat(gap) : source;
 }
 export function wrap(text, width, _options) {
-    if (width <= 0)
-        return [String(text)];
+    const source = String(text == null ? '' : text);
+    const safeWidth = Number.isFinite(width) ? Math.floor(width) : (width === Infinity ? Infinity : 0);
+    if (safeWidth <= 0)
+        return [source];
     const lines = [];
-    for (const paragraph of String(text == null ? '' : text).split('\n')) {
-        if (visibleWidth(paragraph) <= width) {
+    for (const paragraph of source.split('\n')) {
+        if (visibleWidth(paragraph) <= safeWidth) {
             lines.push(paragraph);
             continue;
         }
         let current = '';
         for (const word of paragraph.split(' ')) {
             const candidate = current ? `${current} ${word}` : word;
-            if (visibleWidth(candidate) <= width) {
+            if (visibleWidth(candidate) <= safeWidth) {
                 current = candidate;
                 continue;
             }
@@ -218,12 +220,12 @@ export function wrap(text, width, _options) {
                 current = '';
             }
             let remainder = word;
-            while (visibleWidth(remainder) > width) {
-                lines.push(truncate(remainder, width, ''));
+            while (visibleWidth(remainder) > safeWidth) {
+                lines.push(truncate(remainder, safeWidth, ''));
                 // truncate() gives us the head; drop the same number of characters.
                 let consumed = 0;
                 let cut = 0;
-                while (cut < remainder.length && consumed < width) {
+                while (cut < remainder.length && consumed < safeWidth) {
                     const code = remainder.codePointAt(cut);
                     if (code === undefined)
                         break;
