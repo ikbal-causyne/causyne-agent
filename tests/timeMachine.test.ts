@@ -311,6 +311,17 @@ test('explicit site refusal without an error string remains a failure and replan
   assert.match(decision.guidance, /another public source/);
 });
 
+test('site refusals with Forbidden or Access denied errors replan instead of aborting as human permission blocks', () => {
+  const machine = new TimeMachine();
+  for (const error of ['HTTP 403 Forbidden', 'Access denied by remote server']) {
+    const decision = machine.observe('web_fetch', { url: `https://example.org/${encodeURIComponent(error)}` }, {
+      success: false, status: 403, failureKind: 'site_refusal', error
+    });
+    assert.equal(decision.kind, 'replan', error);
+    assert.match(decision.guidance, /another public source/, error);
+  }
+});
+
 test('Windows package manager shims keep distinct scripts in separate retry budgets', () => {
   const machine = new TimeMachine();
   const fail = { success: false, error: 'exit code 1', exitCode: 1 };

@@ -132,7 +132,8 @@ export class TimeMachine {
             };
         }
         const error = typeof value.error === 'string' ? value.error : '';
-        const needsHuman = classification === 'permission' || /user denied|approval required|authentication required/i.test(error);
+        const needsHuman = value.failureKind !== 'site_refusal'
+            && (classification === 'permission' || /user denied|approval required|authentication required/i.test(error));
         const attempt = Math.min(TIME_MACHINE_MAX_ATTEMPTS, (this.failures.get(key) || 0) + 1);
         this.failures.set(key, attempt);
         const checkpoint = good ? ` Last successful tool: ${good}.` : '';
