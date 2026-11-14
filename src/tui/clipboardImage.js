@@ -8,6 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
+import { stripAnsi } from './text.js';
 /**
  * Format bytes into readable string: '128 KB', '1.5 MB'.
  */
@@ -67,7 +68,10 @@ export function persistImageBuffer(buffer, preferredName) {
             : mimeType === 'image/gif' ? 'gif'
                 : 'png';
     const timestamp = Date.now();
-    const basePreferred = preferredName ? path.basename(preferredName.trim()) : '';
+    const cleanedPreferred = preferredName
+        ? stripAnsi(preferredName).replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim()
+        : '';
+    const basePreferred = cleanedPreferred ? path.basename(cleanedPreferred) : '';
     const filename = basePreferred && basePreferred !== '.' && basePreferred !== '..'
         ? basePreferred
         : `screenshot_${timestamp}.${ext}`;
@@ -88,36 +92,39 @@ export function persistImageBuffer(buffer, preferredName) {
  * Supports both PNG and JPEG image data placed on clipboard by macOS, browsers, and terminals.
  */
 function readDarwinClipboardImageSync() {
-    const tempFile = path.join('/tmp', `causyne_clip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`);
-    // Script uses standard AppleScript POSIX file API with safe error handling and file descriptor close guard
-    const script = [
-        'try',
-        '  set imageData to (the clipboard as "PNGf")',
-        `  set fileRef to open for access POSIX file "${tempFile}" with write permission`,
-        '  set eof fileRef to 0',
-        '  write imageData to fileRef',
-        '  close access fileRef',
-        '  return "ok"',
-        'on error',
-        '  try',
-        `    close access (POSIX file "${tempFile}")`,
-        '  end try',
-        '  try',
-        '    set imageData to (the clipboard as JPEG picture)',
-        `    set fileRef to open for access POSIX file "${tempFile}" with write permission`,
-        '    set eof fileRef to 0',
-        '    write imageData to fileRef',
-        '    close access fileRef',
-        '    return "ok"',
-        '  on error',
-        '    try',
-        `      close access (POSIX file "${tempFile}")`,
-        '    end try',
-        '    return ""',
-        '  end try',
-        'end try'
-    ].join('\n');
+    let tempDir = '';
     try {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-clip-'));
+        const tempFile = path.join(tempDir, 'clip.png');
+        const quotedFile = JSON.stringify(tempFile);
+        // Script uses standard AppleScript POSIX file API with safe error handling and file descriptor close guard
+        const script = [
+            'try',
+            '  set imageData to (the clipboard as "PNGf")',
+            `  set fileRef to open for access POSIX file ${quotedFile} with write permission`,
+            '  set eof fileRef to 0',
+            '  write imageData to fileRef',
+            '  close access fileRef',
+            '  return "ok"',
+            'on error',
+            '  try',
+            `    close access (POSIX file ${quotedFile})`,
+            '  end try',
+            '  try',
+            '    set imageData to (the clipboard as JPEG picture)',
+            `    set fileRef to open for access POSIX file ${quotedFile} with write permission`,
+            '    set eof fileRef to 0',
+            '    write imageData to fileRef',
+            '    close access fileRef',
+            '    return "ok"',
+            '  on error',
+            '    try',
+            `      close access (POSIX file ${quotedFile})`,
+            '    end try',
+            '    return ""',
+            '  end try',
+            'end try'
+        ].join('\n');
         const res = spawnSync('osascript', ['-e', script], {
             encoding: 'utf8',
             timeout: 3000,
@@ -132,12 +139,13 @@ function readDarwinClipboardImageSync() {
         // osascript clipboard read is best-effort
     }
     finally {
-        try {
-            if (fs.existsSync(tempFile))
-                fs.unlinkSync(tempFile);
-        }
-        catch {
-            // Ignore cleanup error
+        if (tempDir) {
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+            catch {
+                // Ignore cleanup error
+            }
         }
     }
     return null;

@@ -18,4 +18,12 @@ describe('clipboardImage bounds and path safety', () => {
       assert.match(path.basename(attachment.path), /^screenshot_\d+\.png$/);
     }
   });
+
+  it('persistImageBuffer strips control characters and escape sequences from preferredName', () => {
+    const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const attachment = persistImageBuffer(pngHeader, 'shot\x1b[2J\n1.png');
+    assert.ok(attachment);
+    assert.equal(/[\x00-\x1f\x7f-\x9f]/.test(attachment.name), false, 'attachment name must not carry control bytes');
+    assert.equal(attachment.name, 'shot1.png');
+  });
 });
