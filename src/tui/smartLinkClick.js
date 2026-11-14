@@ -269,20 +269,32 @@ export function extractRowLinks(rawRow, rowIndex = 0, rawMessageText, prevRawRow
 export function detectLinkAtPoint(surface, point, marker) {
     if (!surface?.stage.reserved || !Number.isFinite(point.x) || !Number.isFinite(point.y))
         return null;
-    const mainWidth = sidebarVisible(surface.width) ? sessionMainWidth(surface.width) : surface.width;
+    const surfaceWidth = Number.isFinite(surface.width) ? Math.floor(surface.width) : 0;
+    const viewportWidth = Number.isFinite(surface.viewport.width) ? Math.floor(surface.viewport.width) : 0;
+    const viewportHeight = Number.isFinite(surface.viewport.height) ? Math.floor(surface.viewport.height) : 0;
+    const stageHeight = Number.isFinite(surface.stage.height) ? Math.floor(surface.stage.height) : 0;
+    if (surfaceWidth <= 0 || viewportWidth <= 0 || viewportHeight <= 0 || stageHeight <= 0)
+        return null;
+    const px = Math.floor(point.x);
+    const py = Math.floor(point.y);
+    const mainWidth = sidebarVisible(surfaceWidth) ? sessionMainWidth(surfaceWidth) : surfaceWidth;
     const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
-    if (point.x < leftGutter || point.x >= Math.min(mainWidth, surface.viewport.width + leftGutter))
+    if (px < leftGutter || px >= Math.min(mainWidth, viewportWidth + leftGutter))
         return null;
-    const top = Math.max(0, (surface.out.rows || surface.stage.height) - surface.stage.height);
-    const viewRow = point.y - top;
-    if (viewRow < 0 || viewRow >= surface.viewport.height)
+    const outRows = Number.isFinite(surface.out.rows) && surface.out.rows > 0
+        ? Math.floor(surface.out.rows)
+        : stageHeight;
+    const top = Math.max(0, outRows - stageHeight);
+    const viewRow = py - top;
+    if (viewRow < 0 || viewRow >= viewportHeight)
         return null;
-    const flat = surface.transcript.flatten(surface.viewport.width);
-    const visible = Math.max(0, Math.min(surface.viewport.height, flat.rows.length - surface.viewport.scrollTop));
-    const padding = surface.viewport.height - visible;
+    const scrollTop = Number.isFinite(surface.viewport.scrollTop) ? Math.max(0, Math.floor(surface.viewport.scrollTop)) : 0;
+    const flat = surface.transcript.flatten(viewportWidth);
+    const visible = Math.max(0, Math.min(viewportHeight, flat.rows.length - scrollTop));
+    const padding = viewportHeight - visible;
     if (viewRow < padding)
         return null;
-    const row = surface.viewport.scrollTop + viewRow - padding;
+    const row = scrollTop + viewRow - padding;
     const rawRow = flat.rows[row];
     if (!rawRow)
         return null;
@@ -291,7 +303,7 @@ export function detectLinkAtPoint(surface, point, marker) {
     const links = extractRowLinks(rawRow, row, rawMessageText, prevRawRow);
     if (!links.length)
         return null;
-    const col = point.x - leftGutter;
+    const col = px - leftGutter;
     for (const link of links) {
         if (col >= link.startCol && col <= link.endCol) {
             return link;
