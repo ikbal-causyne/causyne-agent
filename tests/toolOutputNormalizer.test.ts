@@ -265,3 +265,21 @@ test('formatMarkdownMath ignores Object.prototype macro keys and avoids ReDoS on
   assert.equal(typeof out, 'string');
 });
 
+test('normalizeHistoricalToolResult guards null messages and recovers decay spill paths containing spaces', () => {
+  const safeEmpty = normalizeHistoricalToolResult('fs_read', null as unknown as { content?: unknown });
+  assert.deepEqual(safeEmpty, { skipStep: false, result: { success: true, output: '' } });
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne spaced dir-'));
+  try {
+    const spillFile = path.join(dir, 'tool-output.log');
+    fs.writeFileSync(spillFile, 'recovered preview payload', 'utf8');
+    const res = normalizeHistoricalToolResult('sysRun', {
+      content: `[decayed] sysRun: reported success (200 chars). Full output at ${spillFile} — read or search`
+    });
+    assert.equal(res.result.spillPath, spillFile);
+    assert.equal(res.result.output, 'recovered preview payload');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+

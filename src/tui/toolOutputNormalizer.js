@@ -100,8 +100,17 @@ function readSpillPreview(spillPath, maxBytes = 4096) {
     }
 }
 function extractSpillPathFromDecay(content) {
-    const match = /\bat (\/[^\s]+)\s+—\s+read or search\b/.exec(content);
-    return match?.[1];
+    const markerIndex = content.indexOf('— read or search');
+    if (markerIndex < 0)
+        return undefined;
+    const prefix = content.slice(0, markerIndex).trimEnd();
+    const atIndex = prefix.lastIndexOf(' at ');
+    if (atIndex < 0)
+        return undefined;
+    const candidate = prefix.slice(atIndex + 4).trim();
+    if (!candidate || candidate.includes('\n') || candidate.includes('\r'))
+        return undefined;
+    return candidate.startsWith('/') || /^[A-Za-z]:[\\/]/.test(candidate) ? candidate : undefined;
 }
 function recoverBrokenJsonOutput(raw, spillPath) {
     const prefixMatch = /^\s*\{\s*"success"\s*:\s*(true|false)\b/.exec(raw);
@@ -140,6 +149,10 @@ function recoverBrokenJsonOutput(raw, spillPath) {
  * `[decayed]` or shortened tool observations.
  */
 export function normalizeHistoricalToolResult(toolName, toolMsg, options = {}) {
+    if (!toolMsg || typeof toolMsg !== 'object') {
+        return { skipStep: false, result: { success: true, output: '' } };
+    }
+    const safeOptions = options && typeof options === 'object' ? options : {};
     const explicitSpill = typeof toolMsg.spillPath === 'string' && toolMsg.spillPath.trim()
         ? toolMsg.spillPath.trim()
         : undefined;
@@ -151,7 +164,7 @@ export function normalizeHistoricalToolResult(toolName, toolMsg, options = {}) {
             const success = !isFailure;
             if (toolName === 'update_plan') {
                 return {
-                    skipStep: Boolean(options.unpaired),
+                    skipStep: Boolean(safeOptions.unpaired),
                     result: { success: true, output: '' }
                 };
             }
