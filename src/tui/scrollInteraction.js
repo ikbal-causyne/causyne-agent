@@ -137,30 +137,34 @@ export function handleScrollbarMouse(key, viewport, surface, host) {
         return false;
     if (key.mouse.button !== 0)
         return false; // Left click only
+    if (!Number.isFinite(key.mouse.x) || !Number.isFinite(key.mouse.y))
+        return false;
+    const mouseX = Math.floor(key.mouse.x);
+    const mouseY = Math.floor(key.mouse.y);
     if (surface) {
         surface.activeTurnIndex = null;
     }
+    const rawTermRows = Number(host.out?.rows);
+    const termRows = Number.isFinite(rawTermRows) && rawTermRows > 0 ? Math.floor(rawTermRows) : 24;
+    const rawStageH = Number(surface.stage?.height);
+    const stageH = Number.isFinite(rawStageH) && rawStageH > 0 ? Math.floor(rawStageH) : termRows;
     // If completion picker is active, check if click was on the picker
-    if (host.pickerLayout && Number.isFinite(key.mouse.y)) {
-        const termRows = host.out?.rows || 24;
-        const stageH = surface.stage?.height || termRows;
+    if (host.pickerLayout) {
         const promptTop = Math.max(1, stageH - host.pickerLayout.totalPromptRows + 1);
         const pickerTop = promptTop + host.pickerLayout.pickerStart - 1;
         const pickerBottom = pickerTop + host.pickerLayout.pickerCount;
-        if (key.mouse.y >= pickerTop && key.mouse.y <= pickerBottom) {
+        if (mouseY >= pickerTop && mouseY <= pickerBottom) {
             return false; // Leave to completion handler
         }
     }
-    const termRows = host.out?.rows || 24;
-    const stageH = surface.stage?.height || termRows;
     const stageTop = Math.max(0, termRows - stageH);
-    const viewportH = viewport.height;
-    const stageW = typeof surface.stage?.width === 'function' ? surface.stage.width() : (surface.width || 80);
+    const rawViewportH = Number(viewport.height);
+    const viewportH = Number.isFinite(rawViewportH) && rawViewportH > 0 ? Math.floor(rawViewportH) : 1;
+    const rawStageW = Number(typeof surface.stage?.width === 'function' ? surface.stage.width() : surface.width);
+    const stageW = Number.isFinite(rawStageW) && rawStageW > 0 ? Math.floor(rawStageW) : 80;
     const mainW = sessionMainWidth(stageW);
     const hasRail = typeof surface.railEnabled === 'function' ? surface.railEnabled(mainW) : true;
     const contentW = hasRail ? Math.max(20, mainW - 3) : mainW;
-    const mouseX = key.mouse.x;
-    const mouseY = key.mouse.y;
     // Rail occupies column contentW - 1 through mainW
     const isRailColumn = mouseX >= contentW - 1 && mouseX <= mainW;
     if (isRailColumn) {
