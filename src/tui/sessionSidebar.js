@@ -126,8 +126,9 @@ function lineFor(rows) {
 }
 /** Compose the panel beside the viewport and input without exceeding terminal width. */
 export function joinSessionSidebar(mainRows, sideRows, mainWidth) {
+    const safeWidth = Number.isFinite(mainWidth) ? Math.max(1, Math.floor(mainWidth)) : 80;
     return mainRows.map((row, index) => {
-        const main = padEnd(truncate(row, Math.max(1, mainWidth), ''), mainWidth);
+        const main = padEnd(truncate(row, safeWidth, ''), safeWidth);
         return main + (sideRows[index] || ' '.repeat(SIDEBAR_WIDTH));
     });
 }
