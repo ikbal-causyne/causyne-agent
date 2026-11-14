@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
-import { stripAnsi } from '../src/tui/text.js';
+import { stripAnsi, visibleWidth } from '../src/tui/text.js';
+import { renderTurnPreviewCard } from '../src/tui/turnRail.js';
 
 test('turn rail dots stay anchored to the bottom-aligned transcript in a full-height session instead of floating in upper empty space', () => {
   const out = {
@@ -35,3 +36,22 @@ test('turn rail dots stay anchored to the bottom-aligned transcript in a full-he
     surface.close();
   }
 });
+
+test('renderTurnPreviewCard keeps footer and body rows strictly within cardWidth when counter and date overflow innerWidth', () => {
+  const card = renderTurnPreviewCard({
+    turnIndex: 12,
+    totalTurns: 25,
+    userPrompt: 'Check\x1b[2J prompt',
+    assistantSummary: 'Summary\x1b[31m text',
+    timestamp: 1000,
+    formattedDate: 'September 30, 2026 at 11:45 PM',
+    frameId: 1,
+    startRow: 0
+  }, 38);
+
+  for (let i = 0; i < card.length; i++) {
+    assert.equal(visibleWidth(card[i]!), 38, `Row ${i} visibleWidth (${visibleWidth(card[i]!)}) must equal cardWidth 38`);
+    assert.ok(!card[i]!.includes('\x1b[2J'), 'Card must sanitize terminal control sequences');
+  }
+});
+

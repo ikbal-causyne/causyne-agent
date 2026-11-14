@@ -1,4 +1,4 @@
-import { truncate, visibleWidth, wrapBlock, stripAnsi, padEnd } from './text.js';
+import { truncate, visibleWidth, wrapBlock, stripAnsi, padEnd, safeDisplay } from './text.js';
 // @ts-expect-error untyped local TUI theme
 import { paint, bold, dim, GLYPHS } from './theme.js';
 export function formatTurnTimestamp(ts) {
@@ -238,7 +238,7 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
 export function formatPreviewCardMarkdown(raw) {
     if (!raw)
         return '';
-    let text = String(raw);
+    let text = safeDisplay(String(raw));
     // Strip code block fences
     text = text.replace(/```[a-zA-Z0-9_-]*\n?/g, ' ');
     // Strip headings: ### Heading -> Heading
@@ -306,10 +306,12 @@ export function renderTurnPreviewCard(turn, maxCardWidth = 50) {
         }
     }
     // Format footer: 'X of Y' on left, timestamp on right
-    const counterText = `${turn.turnIndex} of ${turn.totalTurns}`;
-    const dateText = turn.formattedDate;
-    const footerSpace = Math.max(2, innerWidth - counterText.length - dateText.length);
-    const footerLine = `${counterText}${' '.repeat(footerSpace)}${dateText}`;
+    const counterText = truncate(safeDisplay(`${turn.turnIndex} of ${turn.totalTurns}`), innerWidth, '');
+    const rawDateText = safeDisplay(turn.formattedDate || '');
+    const maxDateWidth = Math.max(0, innerWidth - visibleWidth(counterText) - 2);
+    const dateText = maxDateWidth > 0 ? truncate(rawDateText, maxDateWidth, '…') : '';
+    const footerSpace = Math.max(0, innerWidth - visibleWidth(counterText) - visibleWidth(dateText));
+    const footerLine = truncate(`${counterText}${' '.repeat(footerSpace)}${dateText}`, innerWidth, '');
     // Assemble rows
     const rows = [];
     const topBorder = `${borderStyle}╭${'─'.repeat(cardWidth - 2)}╮${reset}`;
