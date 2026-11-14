@@ -73,11 +73,12 @@ export function fuzzyScore(query, text) {
 
 /** Filter and rank items. Items keep their original order when the query is empty. */
 export function fuzzyFilter(items, query) {
-  if (!query) return items.map((item, index) => ({ item, score: 0, positions: [], index }));
+  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!query) return safeItems.map((item, index) => ({ item, score: 0, positions: [], index }));
 
   const scored = [];
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
+  for (let index = 0; index < safeItems.length; index++) {
+    const item = safeItems[index];
     const subject = `${item.label || ''} ${item.searchText || ''} ${item.category || ''}`.trim();
     const result = fuzzyScore(query, subject);
     if (result) scored.push({ item, score: result.score, positions: result.positions, index });
@@ -120,10 +121,11 @@ export class SelectList {
   }
 
   move(delta, visibleRows) {
-    if (this.filtered.length === 0) return this;
+    const count = this.filtered.length;
+    if (count === 0) return this;
     // Wrapping is what makes a short list feel responsive: pressing up on the
     // first row lands on the last, instead of doing nothing.
-    this.selected = (this.selected + delta + this.filtered.length) % this.filtered.length;
+    this.selected = (((this.selected + delta) % count) + count) % count;
     this.ensureVisible(visibleRows);
     return this;
   }
@@ -258,9 +260,15 @@ export class SelectList {
       return null;
     }
 
-    if (key.sequence && key.sequence.length === 1 && key.sequence >= ' ' && !key.meta) {
-      this.query += key.sequence;
-      this.refilter();
+    const typed = key.name === 'char' && !key.ctrl && !key.alt && !key.meta && typeof key.text === 'string'
+      ? key.text
+      : (key.sequence && key.sequence.length === 1 && key.sequence >= ' ' && !key.meta ? key.sequence : '');
+    if (typed) {
+      const safe = safeDisplay(typed).replace(/[\r\n\t]+/g, ' ');
+      if (safe) {
+        this.query += safe;
+        this.refilter();
+      }
       return 'handled';
     }
     return null;

@@ -92,6 +92,16 @@ describe('fuzzy select', () => {
       assert.equal(row.includes('\x1b[2J'), false);
     }
   });
+
+  test('move wraps large negative deltas safely, fuzzyFilter guards null, and handleKey accepts char.text', () => {
+    assert.deepEqual(fuzzyFilter(null, 'abc'), []);
+    const list = new SelectList([{ label: 'alpha' }, { label: 'beta' }, { label: 'gamma' }]);
+    list.move(-10, 5);
+    assert.equal(list.selected >= 0 && list.selected < 3, true);
+    assert.equal(list.selected, 2);
+    assert.equal(list.handleKey({ name: 'char', text: 'b' }, 5), 'handled');
+    assert.equal(list.query, 'b');
+  });
 });
 
 describe('the modal stack', () => {
