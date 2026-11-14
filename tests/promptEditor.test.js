@@ -1285,4 +1285,29 @@ describe('a completion that matches exactly submits instead of looping', () => {
     const highRows = renderPicker(items, 99, 80);
     assert.equal(highRows[1].selected, true);
   });
+
+  test('suggest filters terminal-unsafe candidates from ready FileIndex and normalizes trailing slash in focusDir', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-comp-'));
+    try {
+      fs.mkdirSync(path.join(tmpDir, 'sub'));
+      fs.writeFileSync(path.join(tmpDir, 'sub', 'alpha.txt'), 'ok');
+      const fakeIndex = {
+        isReady: true,
+        ensure() {},
+        candidates() {
+          return ['evil\x1b[31m.txt', 'safe.txt'];
+        }
+      };
+      const indexed = suggest('@', 1, { root: tmpDir, focusDir: 'sub/', index: fakeIndex });
+      assert.ok(indexed);
+      assert.equal(indexed.items.some((i) => i.value.startsWith('sub//')), false);
+
+      const queried = suggest('@s', 2, { root: tmpDir, index: fakeIndex });
+      assert.ok(queried);
+      assert.equal(queried.items.some((i) => i.value.includes('\x1b')), false);
+      assert.equal(queried.items[0].value, 'safe.txt');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

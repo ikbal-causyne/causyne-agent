@@ -184,7 +184,11 @@ function commandItems(query = '') {
   const needle = query.toLowerCase();
   if (needle.length < SKILL_QUERY_MIN) return commands;
   const skills = listSkillsForCompletion()
-    .filter((skill) => String(skill.id || '').toLowerCase().includes(needle))
+    .filter((skill) =>
+      isTerminalSafe(skill.id) &&
+      isTerminalSafe(skill.domain) &&
+      String(skill.id || '').toLowerCase().includes(needle)
+    )
     .map((skill) => ({
       value: `/skills ${skill.domain}/${skill.id}`,
       match: skill.id,
@@ -373,17 +377,20 @@ export function suggest(text, cursor, options = {}) {
 
   const root = options.root || process.cwd();
   const index = options.index;
-  const focusDir = options.focusDir || null;
+  const rawFocusDir = options.focusDir ? String(options.focusDir).replace(/\/+$/, '') : null;
+  const focusDir = rawFocusDir && isTerminalSafe(rawFocusDir) ? rawFocusDir : null;
   if (index) void index.ensure();
 
   let pool;
   if (index && index.isReady && trigger.query) {
-    pool = index.candidates(trigger.query).map((relative) => ({
-      value: relative,
-      match: relative,
-      label: relative,
-      description: relative.endsWith('/') ? 'directory' : ''
-    }));
+    pool = index.candidates(trigger.query)
+      .filter((relative) => isTerminalSafe(relative))
+      .map((relative) => ({
+        value: relative,
+        match: relative,
+        label: relative,
+        description: relative.endsWith('/') ? 'directory' : ''
+      }));
   } else {
     pool = directoryItems(root, trigger.query);
     if (focusDir) {
