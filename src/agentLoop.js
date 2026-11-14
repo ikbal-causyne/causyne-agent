@@ -1010,7 +1010,7 @@ export class AgentLoop {
         let universalSkillsContext = '';
         try {
             const detectedDomains = detectWorkspaceDomains(this.workspaceRoot);
-            const promptText = (this.taskPrompt || '').toLowerCase();
+            const promptText = (this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '').toLowerCase();
             if (!detectedDomains.includes('android') && /\b(android|apk|adb|emulator|gradle|gradlew|compose|kotlin)\b/i.test(promptText)) {
                 detectedDomains.push('android');
             }
@@ -1591,6 +1591,8 @@ export class AgentLoop {
         }
     }
     async requestDecision(request) {
+        if (this.stopRequested || this.abortController?.signal?.aborted)
+            return null;
         const fingerprint = createHash('sha256')
             .update(JSON.stringify({ kind: request.kind, question: request.question, options: request.options.map((option) => option.id) }))
             .digest('hex');
@@ -1608,6 +1610,8 @@ export class AgentLoop {
         finally {
             this._entitlementGate?.resume();
         }
+        if (this.stopRequested || this.abortController?.signal?.aborted)
+            return null;
         if (!answer || typeof answer.label !== 'string' || !answer.label.trim()) {
             this.emitEvent({ type: 'decision_result', request, answer: null });
             return null;
@@ -2097,6 +2101,8 @@ export class AgentLoop {
         this._observationDigests = new Map();
         this.consecutiveThinkingSteps = 0;
         this.consecutiveBlockedActions = 0;
+        this.consecutiveFailures = 0;
+        this.lastFailureType = null;
         this.consecutiveCommands = 0;
         this.circuitBreakerUnlocked = false;
         this.recentActionSignatures = [];
@@ -2106,6 +2112,7 @@ export class AgentLoop {
         this._pendingConsent = null;
         this._recoveryNote = null;
         this._verificationNudges = 0;
+        this._nonMutationNudges = 0;
         this._verificationPlanFired = false;
         const effectivePrompt = (this.currentTaskPrompt || this.userPrompt || '').trim();
         if (!this.currentTaskPrompt && this.userPrompt) {
@@ -2123,7 +2130,7 @@ export class AgentLoop {
         let toolRoutingRecoveries = 0;
         let emptyResponseRecoveries = 0;
         // The core loop governed by Sovereign Human-in-the-Loop Checkpoints
-        while (!this.stopRequested) {
+        while (!this.stopRequested && !this.abortController?.signal?.aborted) {
             const desktopTimeLeft = remainingDesktopTime(this._taskWallDeadlineAt);
             if (desktopTimeLeft !== null && desktopTimeLeft <= 0) {
                 this.emitEvent({ type: 'budget_warning', message: 'Desktop task stopped at its 180-second wall-clock ceiling. Progress is preserved; outcome is unverified.' });
@@ -2820,7 +2827,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     }
                 }).catch((error) => {
                     if (this._pendingConsent) {
-                        this.stepsCompleted += completedNativeActionIds.size;
                         const checkpoint = new RetryConsentCheckpoint();
                         if (error && typeof error === 'object' && 'partialUsage' in error) {
                             Object.assign(checkpoint, { partialUsage: error.partialUsage });
@@ -2843,7 +2849,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 if (finalCodePreview)
                     this.emitEvent(finalCodePreview);
                 if (this._pendingConsent) {
-                    this.stepsCompleted += completedNativeActionIds.size;
                     throw Object.assign(new RetryConsentCheckpoint(), { partialUsage: response.usage });
                 }
                 // The call came back. Whatever went wrong before is no longer
@@ -3857,6 +3862,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 this.smartToolsGovernor.beginModelStep();
                 const prefetched = this.prefetchReadOnlyCalls(response.toolCalls);
                 // 3. ACT (Execute tool calls)
+                // Non-tool messages (system nudges, runtime diagnostics, image user turns)
+                // must follow every role:'tool' result of the assistant batch; inserting
+                // them mid-batch triggers sanitizeSequences() to strip remaining tool_calls.
+                const deferredPostBatchMessages = [];
                 for (const toolCall of response.toolCalls) {
                     if (this.stopRequested || this.abortController?.signal?.aborted)
                         break;
@@ -4001,7 +4010,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         break;
                     }
                     if (isAuthoringTask && (this.stallGuard.distinctInspectionCount === 3 || this.stallGuard.distinctInspectionCount === 6)) {
-                        this.messages.push({
+                        deferredPostBatchMessages.push({
                             role: 'system',
                             content: `[CRITICAL ACTION MANDATE: You have performed ${this.stallGuard.distinctInspectionCount} inspection steps without writing code. This is an authoring task. Proceed immediately to creating or editing implementation files using fs_write/fs_edit in the target directory.]`
                         });
@@ -4305,7 +4314,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         this._totalActMs = (this._totalActMs || 0) + (performance.now() - actStart);
                     }
                     catch (toolError) {
-                        if (this.stopRequested || this.abortController?.signal?.aborted || toolError?.name === 'AbortError') {
+                        if (this.stopRequested || this.abortController?.signal?.aborted) {
                             auditLog.log({ event: 'task_interrupted', taskId: this.taskId, tool: functionName });
                             break;
                         }
@@ -4398,7 +4407,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 type: 'status',
                                 message: `△ Browser runtime error(s) detected: ${allRuntimeErrors[0]}`
                             });
-                            this.messages.push({
+                            deferredPostBatchMessages.push({
                                 role: 'system',
                                 content: `[BROWSER RUNTIME ERRORS DETECTED: The page encountered runtime error(s) during preview:\n${allRuntimeErrors.slice(0, 5).join('\n')}\nYou MUST inspect your code, fix these runtime bugs, and re-verify before the task can be completed.]`
                             });
@@ -4431,8 +4440,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         result = { ...result, timeMachine: verdict.guidance };
                     }
                     if (this.stopRequested) {
+                        const stoppedContent = result?._is_image_marker
+                            ? `Image captured: ${result.filename || 'image'} (${result.mimeType || 'image/png'}).`
+                            : JSON.stringify(result);
                         this.messages.push({ role: 'tool', tool_call_id: toolCall.id,
-                            name: functionName, content: JSON.stringify(result) });
+                            name: functionName, content: stoppedContent });
                         this.memoryManager.saveHistory(this.messages);
                         break;
                     }
@@ -4536,14 +4548,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             if (!approved) {
                                 this.stopRequested = true;
                                 this.emitEvent({ type: 'status', message: 'Task stopped at 100-step circuit breaker checkpoint by user.' });
-                                break;
                             }
-                            this.circuitBreakerUnlocked = true;
-                            this.emitEvent({ type: 'status', message: `✓ Circuit breaker unlocked! Resuming execution up to ${this.maxSteps} tier budget...` });
+                            else {
+                                this.circuitBreakerUnlocked = true;
+                                this.emitEvent({ type: 'status', message: `✓ Circuit breaker unlocked! Resuming execution up to ${this.maxSteps} tier budget...` });
+                            }
                         }
                     }
                     // Sovereign Tier Budget Extension Checkpoint Gate
-                    if (this.stepsCompleted >= this.maxSteps) {
+                    if (this.stepsCompleted >= this.maxSteps && !this.stopRequested) {
                         if (this.config.autonomyMode === 'C') {
                             this.stopRequested = true;
                             this.emitEvent({ type: 'error', message: `Task reached the configured ${this.maxSteps}-step limit without verified completion.` });
@@ -4566,11 +4579,12 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             if (!approved) {
                                 this.stopRequested = true;
                                 this.emitEvent({ type: 'status', message: `Task stopped at ${this.maxSteps}-step tier limit by user.` });
-                                break;
                             }
-                            this.maxSteps += extensionBatch;
-                            this.maxCircuitBreaker = this.maxSteps;
-                            this.emitEvent({ type: 'status', message: `✓ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
+                            else {
+                                this.maxSteps += extensionBatch;
+                                this.maxCircuitBreaker = this.maxSteps;
+                                this.emitEvent({ type: 'status', message: `✓ Tier budget extended (+${extensionBatch} steps unlocked, new limit: ${this.maxSteps}). Resuming task...` });
+                            }
                         }
                     }
                     // SmartToolsUse tracks actual local tool calls, without denying
@@ -4619,8 +4633,8 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 name: functionName,
                                 content: `Image successfully captured: ${result.filename || 'image'}. Passing to vision observation.`
                             });
-                            // Then push the user observation message containing the image data block
-                            this.messages.push({
+                            // Defer user image observation until after every role:'tool' result in this batch.
+                            deferredPostBatchMessages.push({
                                 role: 'user',
                                 content: [
                                     imageContent,
@@ -4705,7 +4719,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                             ...(spill ? { spillPath: spill.path } : {})
                         });
                         if (stallObservation.notice) {
-                            this.messages.push({
+                            deferredPostBatchMessages.push({
                                 role: 'system',
                                 content: stallObservation.notice
                             });
@@ -4720,9 +4734,17 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     }
                     // Save state continuously after each tool loop
                     this.memoryManager.saveHistory(this.messages);
-                    if (this.stopRequested)
+                    if (this.stopRequested || this.abortController?.signal?.aborted)
                         break;
                 }
+                if (deferredPostBatchMessages.length > 0) {
+                    for (const deferredMsg of deferredPostBatchMessages) {
+                        this.messages.push(deferredMsg);
+                    }
+                    this.memoryManager.saveHistory(this.messages);
+                }
+                if (this.stopRequested || this.abortController?.signal?.aborted)
+                    break;
             }
             catch (e) {
                 // Providers sometimes throw strings or plain objects. Normalize once
@@ -4951,7 +4973,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
             + Number(error?.partialUsage?.completionTokens || 0);
         if (spent > 0)
             return 'fatal';
-        const msg = (error.message || '').toLowerCase();
+        const msg = (typeof error === 'string' ? error : error?.message || '').toLowerCase();
         if (error?.name === 'OpenRouterPrivacyConstraintError'
             || msg.includes('matching the privacy policy')
             || msg.includes('data_collection=')) {
