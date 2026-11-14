@@ -187,6 +187,19 @@ describe('approval as a modal', () => {
     const rows = layer.body(70, 12).map(stripAnsi).join('\n');
     assert.match(rows, /rm -rf/, 'approving a shell command with the command hidden is not consent');
   });
+
+  test('sanitizes escape sequences in verb, detail, and clamps negative scroll', () => {
+    const layer = new ApprovalLayer({
+      request: { tool: 'fs_write', risk: 'MODERATE', args: { path: '/tmp/\x1b[2Jbad' } },
+      verb: 'write\x1b[2J\nspoof',
+      detail: 'edit\x1b[31m\x1b[2J'
+    });
+    const rendered = layer.body(70, 12).join(' | ');
+    assert.equal(rendered.includes('\x1b[2J'), false);
+    layer.key({ name: 'up' });
+    layer.key({ name: 'up' });
+    assert.equal(layer.scroll >= 0, true);
+  });
 });
 
 describe('the palette', () => {

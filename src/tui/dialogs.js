@@ -435,10 +435,11 @@ export class ApprovalLayer extends Layer {
     // chips, so the diff never grows into the controls and push them off-panel.
     const height = Math.max(1, fullHeight - 2);
     const rows = [];
-    rows.push(`${paint(this.role, GLYPHS.warnMark)} ${bold(safeDisplay(this.request.tool || ''))}${this.verb ? dim(`  ${this.verb}`) : ''}`);
+    const cleanVerb = this.verb ? cleanDialogText(this.verb) : '';
+    rows.push(`${paint(this.role, GLYPHS.warnMark)} ${bold(safeDisplay(this.request.tool || ''))}${cleanVerb ? dim(`  ${cleanVerb}`) : ''}`);
 
     if (this.detail) {
-      for (const line of wrap(paint('ink', this.detail), width).slice(0, 2)) rows.push(line);
+      for (const line of wrap(paint('ink', cleanDialogText(this.detail)), width).slice(0, 2)) rows.push(line);
     }
 
     if (this.diff) {
@@ -446,10 +447,10 @@ export class ApprovalLayer extends Layer {
         this.diff.added ? paint('success', `+${this.diff.added}`) : '',
         this.diff.removed ? paint('danger', `-${this.diff.removed}`) : ''
       ].filter(Boolean).join(' ');
-      const note = this.diff.note ? dim(`  ${GLYPHS.dot}  ${this.diff.note}`) : '';
+      const note = this.diff.note ? dim(`  ${GLYPHS.dot}  ${cleanDialogText(this.diff.note)}`) : '';
       // The detail row above already names the file; printing the path again
       // here just spends a row saying the same thing twice.
-      const where = this.detail ? '' : `${dim(this.diff.path)}  `;
+      const where = this.detail ? '' : `${dim(cleanDialogText(this.diff.path))}  `;
       rows.push('');
       rows.push(`${where}${stat}${note}`);
       rows.push(paint('rule', GLYPHS.hLine.repeat(width)));
@@ -542,15 +543,15 @@ export class ApprovalLayer extends Layer {
     }
 
     if (event.name === 'wheel') {
-      if (event.wheel?.direction === 'up') this.scroll--;
+      if (event.wheel?.direction === 'up') this.scroll = Math.max(0, this.scroll - 1);
       else if (event.wheel?.direction === 'down') this.scroll++;
       return 'handled';
     }
 
     switch (event.name) {
-      case 'up':       this.scroll--; return 'handled';
+      case 'up':       this.scroll = Math.max(0, this.scroll - 1); return 'handled';
       case 'down':     this.scroll++; return 'handled';
-      case 'pageup':   this.scroll -= page; return 'handled';
+      case 'pageup':   this.scroll = Math.max(0, this.scroll - page); return 'handled';
       case 'pagedown': this.scroll += page; return 'handled';
       case 'home':     this.scroll = 0; return 'handled';
       case 'end':      this.scroll = this.diff ? this.diff.rows.length : 0; return 'handled';
