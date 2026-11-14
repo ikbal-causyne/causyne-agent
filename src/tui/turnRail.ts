@@ -126,12 +126,14 @@ export function resolveActiveTurnIndex(
   if (isAtBottom) {
     return turns[turns.length - 1]!.turnIndex;
   }
-  if (scrollTop <= 0) {
+  const safeScrollTop = Number.isFinite(scrollTop) ? scrollTop : 0;
+  const safeViewportHeight = Number.isFinite(viewportHeight) ? Math.max(0, viewportHeight) : 20;
+  if (safeScrollTop <= 0) {
     return turns[0]!.turnIndex;
   }
 
   let active = turns[turns.length - 1]!.turnIndex;
-  const targetRow = Math.max(0, scrollTop + Math.floor(viewportHeight / 3));
+  const targetRow = Math.max(0, safeScrollTop + Math.floor(safeViewportHeight / 3));
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i]!;
     if (t.startRow <= targetRow) {
