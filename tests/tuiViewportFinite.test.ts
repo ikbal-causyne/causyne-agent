@@ -41,3 +41,17 @@ test('Viewport.refresh ignores non-finite grownBy without setting unseen to Infi
   viewport.refresh(3);
   assert.equal(viewport.unseen, 3);
 });
+
+test('Viewport.refresh clears manual scroll and unseen count when content fits within viewHeight', () => {
+  let contentHeight = 40;
+  const viewport = new Viewport({ transcript: { height: () => contentHeight }, height: 20, width: 80 });
+  viewport.scrollTo(5);
+  assert.equal(viewport.manual, true);
+
+  contentHeight = 10;
+  viewport.refresh(2);
+  assert.equal(viewport.scrollTop, 0);
+  assert.equal(viewport.manual, false);
+  assert.equal(viewport.unseen, 0);
+  assert.equal(viewport.following, true);
+});

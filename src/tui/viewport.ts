@@ -252,10 +252,11 @@ export class Viewport {
       const max = this.maxScrollTop();
       const tolerance = safeGrownBy > 0 ? REENGAGE_TOLERANCE : 0;
 
-      if (!this.manual) {
+      if (!this.manual || max <= 0) {
+        this.manual = false;
         this.scrollTop = max;
         this.unseen = 0;
-      } else if (max > 0 && this.scrollTop >= max - tolerance) {
+      } else if (this.scrollTop >= max - tolerance) {
         this.manual = false;
         this.scrollTop = max;
         this.unseen = 0;
