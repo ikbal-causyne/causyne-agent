@@ -154,8 +154,8 @@ export class SessionPickerLayer extends SelectLayer {
         return result;
     }
     body(width, height) {
-        const w = Math.max(12, Math.floor(width));
-        const h = Math.max(1, Math.floor(height));
+        const w = Math.max(12, Number.isFinite(width) ? Math.floor(width) : 60);
+        const h = Math.max(1, Number.isFinite(height) ? Math.floor(height) : 20);
         const rows = [];
         const scopeLabel = this.scope === 'all' ? 'ALL WORKSPACES' : 'THIS WORKSPACE';
         const total = this.allItems.filter(item => item.value.type === 'switch').length;
@@ -164,10 +164,11 @@ export class SessionPickerLayer extends SelectLayer {
         const query = String(this.list.query || '');
         const lead = `  ${paint('accent', GLYPHS.arrow)} `;
         const maxInput = Math.max(1, w - visibleWidth(lead) - 1);
-        let visibleQuery = query;
-        // Show the tail of long queries so the edit caret stays near the typing point.
-        while (visibleWidth(visibleQuery) > maxInput)
-            visibleQuery = visibleQuery.slice(1);
+        // Show the tail of long queries without splitting UTF-16 surrogate pairs.
+        const runes = Array.from(query);
+        while (runes.length > 0 && visibleWidth(runes.join('')) > maxInput)
+            runes.shift();
+        const visibleQuery = runes.join('');
         const shown = query ? clean(visibleQuery) : dim('Search by title, workspace or ID…');
         rows.push(lead + truncate(shown, maxInput, '…'));
         this.cursor = { x: Math.min(w - 1, visibleWidth(lead) + (query ? visibleWidth(visibleQuery) : 0)), y: 1 };
