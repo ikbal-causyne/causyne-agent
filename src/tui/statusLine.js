@@ -37,7 +37,7 @@ export function compactCount(value) {
     const rounded = Math.round(n);
     if (rounded < 1000)
         return String(rounded);
-    if (n < 9995)
+    if (n < 9950)
         return `${(n / 1000).toFixed(1)}k`;
     const thousands = Math.round(n / 1000);
     if (thousands < 1000)
@@ -130,7 +130,8 @@ export class StatusLine {
     /**
      * The idle footer: where you are, and how much context is left.
      */
-    renderIdle({ width = 80, hint = '' } = {}) {
+    renderIdle(options = {}) {
+        const { width = 80, hint = '' } = options || {};
         const safeWidth = finiteWidth(width);
         const budget = Math.max(1, safeWidth - 1);
         const meter = contextMeter(Math.round(this.contextChars / CHARS_PER_TOKEN), Math.round(this.contextLimit / CHARS_PER_TOKEN));
@@ -175,7 +176,8 @@ export class StatusLine {
     /**
      * Build the line.
      */
-    render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick } = {}) {
+    render(options = {}) {
+        const { message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick } = options || {};
         const safeWidth = finiteWidth(width);
         const safeElapsedMs = nonNegativeFinite(elapsedMs);
         const safeSteps = Math.floor(nonNegativeFinite(steps));
@@ -200,6 +202,7 @@ export class StatusLine {
         if (this.model)
             segments.push(this.model);
         const separator = `  ${GLYPHS.dot}  `;
+        const sepWidth = visibleWidth(separator);
         const rawMessage = safeTick !== undefined
             ? formatAnimatedStatus(message || 'working', safeTick)
             : (message || (spinnerFrame ? 'working' : ''));
@@ -208,13 +211,13 @@ export class StatusLine {
         const wanted = Math.min(visibleWidth(text), Math.max(18, Math.floor(budget / 2)));
         while (kept.length > 0) {
             const tail = kept.join(separator);
-            if (visibleWidth(tail) + separator.length + wanted <= budget)
+            if (visibleWidth(tail) + sepWidth + wanted <= budget)
                 break;
             kept.pop();
         }
         const tail = kept.length > 0 ? kept.join(separator) : '';
         const messageBudget = tail
-            ? Math.max(1, budget - visibleWidth(tail) - separator.length)
+            ? Math.max(1, budget - visibleWidth(tail) - sepWidth)
             : budget;
         const body = truncate(text, messageBudget, GLYPHS.ellipsis);
         const isAnimating = safeTick !== undefined || safeElapsedMs > 0 || Boolean(spinnerFrame);

@@ -53,4 +53,17 @@ describe('StatusLine bounds and sanitization', () => {
     const activeNarrow = status.render({ message: 'working hard', spinnerFrame: '⠋', width: 8 });
     assert.ok(visibleWidth(activeNarrow) <= 7, `activeNarrow width ${visibleWidth(activeNarrow)} must be <= 7`);
   });
+
+  test('compactCount avoids 10.0k seam, StatusLine guards nullish objects, and sanitizes spinner escape sequences', () => {
+    assert.equal(compactCount(9960), '10k');
+    const status = new StatusLine();
+    assert.doesNotThrow(() => {
+      status.setSession(null as any);
+      status.onUsage(null as any);
+      status.renderIdle(null as any);
+      status.render(null as any);
+    });
+    const rendered = status.render({ message: 'working', spinnerFrame: '*\x1b[2J', width: 40 });
+    assert.ok(!rendered.includes('\x1b[2J'), 'spinnerFrame must strip unsafe terminal control sequences');
+  });
 });

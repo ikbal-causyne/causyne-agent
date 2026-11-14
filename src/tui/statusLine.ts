@@ -40,7 +40,7 @@ export function compactCount(value: unknown): string {
   const n = nonNegativeFinite(value);
   const rounded = Math.round(n);
   if (rounded < 1000) return String(rounded);
-  if (n < 9995) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 9950) return `${(n / 1000).toFixed(1)}k`;
   const thousands = Math.round(n / 1000);
   if (thousands < 1000) return `${thousands}k`;
   return `${(n / 1000000).toFixed(1)}M`;
@@ -130,7 +130,7 @@ export class StatusLine {
   }
 
   /** Session-lifetime facts, set once from the same info as the header. */
-  setSession(info: StatusLineSessionInfo = {}): this {
+  setSession(info: StatusLineSessionInfo | null = {}): this {
     if (!info || typeof info !== 'object') return this;
     if (info.model !== undefined) this.model = shortModel(info.model);
     if (info.provider !== undefined) this.provider = info.provider ? oneLineDisplay(info.provider) : '';
@@ -153,7 +153,8 @@ export class StatusLine {
   /**
    * The idle footer: where you are, and how much context is left.
    */
-  renderIdle({ width = 80, hint = '' }: StatusLineIdleOptions = {}): string {
+  renderIdle(options: StatusLineIdleOptions | null = {}): string {
+    const { width = 80, hint = '' } = options || {};
     const safeWidth = finiteWidth(width);
     const budget = Math.max(1, safeWidth - 1);
     const meter = contextMeter(
@@ -190,7 +191,7 @@ export class StatusLine {
   /**
    * Consume a `usage_update` frame.
    */
-  onUsage(msg: Record<string, unknown> = {}): this {
+  onUsage(msg: Record<string, unknown> | null = {}): this {
     const usage = msg && typeof msg === 'object' ? msg : {};
     this.turnTokens = nonNegativeFinite(usage.taskTokens) || nonNegativeFinite(usage.usedTokens) || this.turnTokens;
     this.applyContextWindow(usage.contextChars, usage.contextLimitChars);
@@ -204,7 +205,8 @@ export class StatusLine {
   /**
    * Build the line.
    */
-  render({ message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick }: StatusLineRenderOptions = {}): string {
+  render(options: StatusLineRenderOptions | null = {}): string {
+    const { message = '', elapsedMs = 0, steps = 0, width = 80, spinnerFrame = '', tick } = options || {};
     const safeWidth = finiteWidth(width);
     const safeElapsedMs = nonNegativeFinite(elapsedMs);
     const safeSteps = Math.floor(nonNegativeFinite(steps));
@@ -226,6 +228,7 @@ export class StatusLine {
     if (this.model) segments.push(this.model);
 
     const separator = `  ${GLYPHS.dot}  `;
+    const sepWidth = visibleWidth(separator);
     const rawMessage = safeTick !== undefined
       ? formatAnimatedStatus(message || 'working', safeTick)
       : (message || (spinnerFrame ? 'working' : ''));
@@ -235,13 +238,13 @@ export class StatusLine {
     const wanted = Math.min(visibleWidth(text), Math.max(18, Math.floor(budget / 2)));
     while (kept.length > 0) {
       const tail = kept.join(separator);
-      if (visibleWidth(tail) + separator.length + wanted <= budget) break;
+      if (visibleWidth(tail) + sepWidth + wanted <= budget) break;
       kept.pop();
     }
 
     const tail = kept.length > 0 ? kept.join(separator) : '';
     const messageBudget = tail
-      ? Math.max(1, budget - visibleWidth(tail) - separator.length)
+      ? Math.max(1, budget - visibleWidth(tail) - sepWidth)
       : budget;
     const body = truncate(text, messageBudget, GLYPHS.ellipsis);
 
