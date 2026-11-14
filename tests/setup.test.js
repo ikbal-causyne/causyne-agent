@@ -61,8 +61,22 @@ test('endpoint validator rejects credential leaks and insecure external HTTP', (
   const credentialURL = new URL('https://example.invalid/chat');
   credentialURL.username = 'fixture'; credentialURL.password = 'not-a-secret';
   assert.ok(validateEndpoint(credentialURL.href));
-  for (const url of ['file:///tmp', 'http://example.com/chat', 'https://test/chat?key=secret', 'https://test/#secret']) assert.ok(validateEndpoint(url));
+  for (const url of ['file:///tmp', 'http://example.com/chat', 'https://test/chat?key=secret', 'https://test/#secret', 'https://example.com\t/chat', 'https://example.com\n/chat']) assert.ok(validateEndpoint(url));
   for (const url of ['https://example.com/chat', 'http://localhost:11434/api/chat', 'http://[::1]:11434/api/chat']) assert.equal(validateEndpoint(url), null);
+});
+
+test('runSetup sanitizes workspace path in review screen', async () => {
+  const questions = [];
+  const store = { loadConfig: () => ({}), saveConfig() {} };
+  const ui = {
+    async select(q) { questions.push(q); return q.items.find(i => i.id === 'save' || i.id === 'B' || i.id === 'ollama') || null; },
+    async text(q) { questions.push(q); return q.title.includes('endpoint') ? 'http://localhost:11434/api/chat' : 'local'; }
+  };
+  await runSetup(ui, providers, store, '/tmp/ws\x1b[2J\nline2');
+  const review = questions.find(q => q.title === 'Setup 5/5 · review');
+  const cancelDesc = review.items.find(i => i.id === 'cancel').description;
+  assert.equal(cancelDesc.includes('\x1b'), false);
+  assert.equal(cancelDesc.includes('\n'), false);
 });
 test('dismissed provider picker resolves in-chat setup instead of hanging', async () => {
   let layer; let saves = 0;

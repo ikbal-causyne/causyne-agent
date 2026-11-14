@@ -1,5 +1,6 @@
 /** Shared setup transaction for the home panel and standalone CLI. */
 import { resolveAvailableModels } from '../dynamicCatalogue.js';
+import { safeDisplay } from './text.js';
 
 export interface SetupChoice { id: string; label: string; description?: string }
 export interface SetupProvider { id: string; label: string; hint: string; model: string }
@@ -22,6 +23,9 @@ const defaults: Record<string, string> = {
 };
 
 export function validateEndpoint(value: string): string | null {
+  if (typeof value !== 'string' || !value || /[\x00-\x1f\x7f-\x9f\s]/.test(value)) {
+    return 'Use a single-line endpoint URL without whitespace or control characters.';
+  }
   try {
     const url = new URL(value);
     if (url.username || url.password || url.search || url.hash) return 'Use an endpoint without credentials, query parameters, or a fragment.';
@@ -70,7 +74,12 @@ export async function runSetup(ui: SetupUI, providers: SetupProvider[], store: {
       // The peer already knows which models its account can reach. Listing them
       // is the whole point of treating it as a provider; a blank text box would
       // make the user guess ids the CLI could have told us for free.
-      const known = (await resolveAvailableModels(provider.id, {}, false)).models;
+      let known: string[] = [];
+      try {
+        known = (await resolveAvailableModels(provider.id, {}, false)).models;
+      } catch {
+        known = [];
+      }
       if (known.length === 0) {
         model = await text('Setup 3/5 · model',
           ['Enter a model ID published by the installed CLI.',
@@ -113,10 +122,13 @@ export async function runSetup(ui: SetupUI, providers: SetupProvider[], store: {
     if (!mode || !['A', 'B', 'C'].includes(mode.id)) return null;
     draft = { ...draft, provider: provider.id, model, apiKey, autonomyMode: mode.id };
     if (baseUrl) draft.baseUrl = baseUrl; else delete draft.baseUrl;
+    const cleanWorkspace = safeDisplay(workspace).replace(/\s+/g, ' ').trim();
+    const cleanLabel = safeDisplay(provider.label).replace(/\s+/g, ' ').trim();
+    const cleanModel = safeDisplay(model).replace(/\s+/g, ' ').trim();
     const review = await ui.select({ title: 'Setup 5/5 · review', items: [
-      { id: 'save', label: 'Save configuration', description: `${provider.label} · ${model} · Mode ${mode.id}` },
+      { id: 'save', label: 'Save configuration', description: `${cleanLabel} · ${cleanModel} · Mode ${mode.id}` },
       { id: 'edit', label: 'Edit choices', description: baseUrl || 'Provider default endpoint' },
-      { id: 'cancel', label: 'Cancel without saving', description: `Workspace: ${workspace}` }
+      { id: 'cancel', label: 'Cancel without saving', description: `Workspace: ${cleanWorkspace}` }
     ] });
     if (!review || review.id === 'cancel') return null;
     if (review.id === 'edit') continue;

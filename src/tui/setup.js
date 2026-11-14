@@ -1,5 +1,6 @@
 /** Shared setup transaction for the home panel and standalone CLI. */
 import { resolveAvailableModels } from '../dynamicCatalogue.js';
+import { safeDisplay } from './text.js';
 const string = (value) => typeof value === 'string' ? value : '';
 const customProviders = new Set(['openai-compatible', 'dashscope-byok', 'ollama']);
 /** Peers and Antigravity authenticate through their own CLI, not a stored key. */
@@ -12,6 +13,9 @@ const defaults = {
     'dashscope-byok': 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
 };
 export function validateEndpoint(value) {
+    if (typeof value !== 'string' || !value || /[\x00-\x1f\x7f-\x9f\s]/.test(value)) {
+        return 'Use a single-line endpoint URL without whitespace or control characters.';
+    }
     try {
         const url = new URL(value);
         if (url.username || url.password || url.search || url.hash)
@@ -65,7 +69,13 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
             // The peer already knows which models its account can reach. Listing them
             // is the whole point of treating it as a provider; a blank text box would
             // make the user guess ids the CLI could have told us for free.
-            const known = (await resolveAvailableModels(provider.id, {}, false)).models;
+            let known = [];
+            try {
+                known = (await resolveAvailableModels(provider.id, {}, false)).models;
+            }
+            catch {
+                known = [];
+            }
             if (known.length === 0) {
                 model = await text('Setup 3/5 · model', ['Enter a model ID published by the installed CLI.',
                     'Leave the default to let the peer choose its own model.'], suggestedModel, false, value => value ? null : 'A model ID is required.');
@@ -112,10 +122,13 @@ export async function runSetup(ui, providers, store, workspace = process.cwd()) 
             draft.baseUrl = baseUrl;
         else
             delete draft.baseUrl;
+        const cleanWorkspace = safeDisplay(workspace).replace(/\s+/g, ' ').trim();
+        const cleanLabel = safeDisplay(provider.label).replace(/\s+/g, ' ').trim();
+        const cleanModel = safeDisplay(model).replace(/\s+/g, ' ').trim();
         const review = await ui.select({ title: 'Setup 5/5 · review', items: [
-                { id: 'save', label: 'Save configuration', description: `${provider.label} · ${model} · Mode ${mode.id}` },
+                { id: 'save', label: 'Save configuration', description: `${cleanLabel} · ${cleanModel} · Mode ${mode.id}` },
                 { id: 'edit', label: 'Edit choices', description: baseUrl || 'Provider default endpoint' },
-                { id: 'cancel', label: 'Cancel without saving', description: `Workspace: ${workspace}` }
+                { id: 'cancel', label: 'Cancel without saving', description: `Workspace: ${cleanWorkspace}` }
             ] });
         if (!review || review.id === 'cancel')
             return null;
