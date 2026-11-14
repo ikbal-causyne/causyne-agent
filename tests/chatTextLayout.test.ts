@@ -5,7 +5,7 @@ import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { StageSurface } from '../src/tui/stageSurface.js';
 import { Transcript } from '../src/tui/transcript.js';
 import { visibleWidth, stripAnsi } from '../src/tui/text.js';
-import { chatTextWidth } from '../src/tui/textLayout.js';
+import { chatTextWidth, wrappedChatRows } from '../src/tui/textLayout.js';
 import { sidebarVisible, sessionMainWidth, sessionComposerWidth } from '../src/tui/sessionSidebar.js';
 
 const narrow = 109; // Simulate a previously cramped conversation measure.
@@ -98,4 +98,11 @@ test('long assistant code, headings and table cells reflow without losing conten
     assert.ok(transcript.rows(width).every((row: string) => visibleWidth(row) < width),
       `message overflows a ${width}-column conversation`);
   }
+});
+
+test('wrappedChatRows sanitizes control sequences and clamps long prefix inside chatTextWidth', () => {
+  const rows = wrappedChatRows('\x1b[2Jhello\x07 world', 12, '\x1b[31mvery-long-label:\n ', 'muted');
+  assert.ok(rows.every(row => !/\x1b\[2J|\x07|\n/.test(row)), 'disallowed escapes or newlines leaked');
+  assert.ok(rows.every(row => visibleWidth(row) <= chatTextWidth(12)),
+    `wrappedChatRows exceeded width ${chatTextWidth(12)}: ${rows.map(r => visibleWidth(r))}`);
 });

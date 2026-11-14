@@ -1,4 +1,4 @@
-import { visibleWidth, wrap } from './text.js';
+import { safeDisplay, truncate, visibleWidth, wrap } from './text.js';
 // The terminal palette remains a JavaScript module during the TypeScript migration.
 // @ts-expect-error theme.js does not have a declaration yet.
 import { paint } from './theme.js';
@@ -16,8 +16,10 @@ export function chatProseWidth(columns) {
 }
 /** Keep every line of a labeled message visible when the terminal is resized. */
 export function wrappedChatRows(message, columns, prefix, tone) {
-    const inset = visibleWidth(prefix);
-    const room = Math.max(1, chatTextWidth(columns) - inset);
+    const width = chatTextWidth(columns);
+    const safePrefix = truncate(String(prefix ?? '').replace(/[\x00-\x1a\x1c-\x1f\x7f-\x9f]/g, ' '), Math.max(0, width - 1), '');
+    const inset = visibleWidth(safePrefix);
+    const room = Math.max(1, width - inset);
     const continuation = ' '.repeat(inset);
-    return wrap(message, room).map((line, index) => `${index === 0 ? prefix : continuation}${paint(tone, line)}`);
+    return wrap(safeDisplay(String(message ?? '')), room).map((line, index) => `${index === 0 ? safePrefix : continuation}${paint(tone, line)}`);
 }
