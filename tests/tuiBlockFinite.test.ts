@@ -37,4 +37,16 @@ describe('block contextMeter finite bounds', () => {
       assert.ok(!row.includes('\n') && !row.includes('\r'), 'panel row must not contain embedded newlines');
     }
   });
+
+  it('guards nullish options, prevents 10.0K rounding seam, truncates long panel titles, and resets open SGR', () => {
+    assert.doesNotThrow(() => {
+      barBlock(['a'], null as any);
+      blockOf('a', null as any);
+      panel(['a'], null as any);
+    });
+    assert.equal(contextMeter(9960, 0), '10K');
+    const narrowed = panel(['\x1b[31munclosed red row'], { width: 20, title: 'VeryLongTitleTruncated' });
+    assert.ok(narrowed[0]!.includes('VeryLong'), 'panel should truncate long title rather than drop it');
+    assert.ok(narrowed[1]!.includes('\x1b[0m'), 'panel row should reset open SGR before right border');
+  });
 });

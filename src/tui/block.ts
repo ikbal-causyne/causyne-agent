@@ -55,13 +55,15 @@ export interface BarBlockOptions {
  * @param options configuration options
  * @returns rows, each exactly `width` columns wide
  */
-export function barBlock(lines: string[], {
-  width = 80,
-  role = 'accent',
-  filled = true,
-  surface = 'surface',
-  punctuate = false
-}: BarBlockOptions = {}): string[] {
+export function barBlock(lines: string[], options: BarBlockOptions | null = {}): string[] {
+  const {
+    width = 80,
+    role = 'accent',
+    filled = true,
+    surface = 'surface',
+    punctuate = false
+  } = options || {};
+  void punctuate;
   // Use continuous heavy vertical line ('┃') for clean, solid, unbroken alignment.
   // Box-drawing characters connect seamlessly across lines in all terminal fonts without line-height leading gaps.
   const glyph = GLYPHS.barHeavy || GLYPHS.bar || '┃';
@@ -78,7 +80,8 @@ export function barBlock(lines: string[], {
     const line = collapseLine(rawLine);
     const clipped = visibleWidth(line) > body ? truncate(line, body, GLYPHS.ellipsis) : line;
     const padded = padEnd(clipped, body);
-    const inner = filled ? fill(surface, gutter + padded) : gutter + padded;
+    const tailReset = !filled && clipped.includes('\x1b[') ? '\x1b[0m' : '';
+    const inner = filled ? fill(surface, gutter + padded) : gutter + padded + tailReset;
     return bar + inner;
   });
 }
@@ -89,12 +92,13 @@ export function barBlock(lines: string[], {
  * The convenience form for plain prose. Callers that have already styled their
  * rows individually (the prompt editor, a status row) use barBlock directly.
  */
-export function blockOf(text: string, options: BarBlockOptions = {}): string[] {
-  const safeWidth = finiteWidth(options.width) || 80;
+export function blockOf(text: string, options: BarBlockOptions | null = {}): string[] {
+  const safeOptions = options || {};
+  const safeWidth = Math.max(4, finiteWidth(safeOptions.width));
   const glyph = GLYPHS.barHeavy || GLYPHS.bar || '┃';
   const inner = Math.max(1, safeWidth - visibleWidth(glyph) - GUTTER);
   const lines = wrap(String(text == null ? '' : text), inner);
-  return barBlock(lines.length ? lines : [''], { ...options, width: safeWidth });
+  return barBlock(lines.length ? lines : [''], { ...safeOptions, width: safeWidth });
 }
 
 export interface PanelOptions {
@@ -106,12 +110,16 @@ export interface PanelOptions {
 /**
  * A bordered panel with its title inset into the top border.
  */
-export function panel(rows: string[], { width = 80, title = '', role = 'rule' }: PanelOptions = {}): string[] {
+export function panel(rows: string[], options: PanelOptions | null = {}): string[] {
+  const { width = 80, title = '', role = 'rule' } = options || {};
   const inner = Math.max(4, finiteWidth(width) - 2);
   const h = GLYPHS.hLine;
   const cleanTitle = collapseLine(title).trim();
-  const label = cleanTitle ? ` ${cleanTitle} ` : '';
-  const clippedLabel = visibleWidth(label) > inner - 2 ? '' : label;
+  const maxTitleChars = inner - 3;
+  const boundedTitle = cleanTitle && maxTitleChars >= 3
+    ? truncate(cleanTitle, maxTitleChars, GLYPHS.ellipsis)
+    : '';
+  const clippedLabel = boundedTitle ? ` ${boundedTitle} ` : '';
   const lead = clippedLabel ? h : '';
   const trail = h.repeat(Math.max(0, inner - visibleWidth(clippedLabel) - visibleWidth(lead)));
 
@@ -124,7 +132,8 @@ export function panel(rows: string[], { width = 80, title = '', role = 'rule' }:
   const middle = (Array.isArray(rows) ? rows : []).map((rawRow) => {
     const row = collapseLine(rawRow);
     const clipped = visibleWidth(row) > inner ? truncate(row, inner, GLYPHS.ellipsis) : row;
-    return side + padEnd(clipped, inner) + side;
+    const borderReset = clipped.includes('\x1b[') ? '\x1b[0m' : '';
+    return side + padEnd(clipped, inner) + borderReset + side;
   });
 
   return [top, ...middle, bottom];
@@ -143,7 +152,7 @@ export function contextMeter(usedTokens: number, limitTokens: number): string {
   let compact: string;
   if (rounded < 1000) {
     compact = String(rounded);
-  } else if (used < 9995) {
+  } else if (used < 9950) {
     compact = `${(used / 1000).toFixed(1)}K`;
   } else {
     const thousands = Math.round(used / 1000);
