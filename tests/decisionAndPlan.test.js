@@ -151,4 +151,16 @@ describe('structured decision interaction', () => {
     assert.equal(layer.key({ name: 'escape' }), 'close');
     assert.equal(answer, null);
   });
+
+  test('custom answer input clamps row width, cursor bounds, and sanitizes escapes', () => {
+    const layer = new DecisionLayer({ request: REQUEST });
+    layer.key({ name: 'down' });
+    layer.key({ name: 'down' });
+    layer.key({ name: 'enter' });
+    layer.key({ name: 'paste', text: 'custom\x1b[2J ' + 'x'.repeat(80) });
+    const rows = layer.body(24, 6);
+    assert.equal(rows.some(row => row.includes('\x1b[2J')), false);
+    assert.ok(layer.cursor.x <= 23, `expected cursor.x <= 23, got ${layer.cursor.x}`);
+    assert.ok(layer.cursor.y < rows.length, `expected cursor.y < ${rows.length}, got ${layer.cursor.y}`);
+  });
 });

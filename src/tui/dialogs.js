@@ -609,18 +609,27 @@ export class DecisionLayer extends Layer {
       if (option.description) rows.push(`  ${dim(truncate(safeDisplay(option.description), Math.max(1, width - 2), GLYPHS.ellipsis))}`);
     }
 
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.floor(width) : 8;
+    const safeHeight = Number.isFinite(height) && height > 0 ? Math.floor(height) : rows.length + 2;
     const customSelected = this.selected === this.customIndex;
     rows.push(`${customSelected ? paint('accent', GLYPHS.arrow) : paint('muted', GLYPHS.dot)} ${customSelected ? bold('Type your own answer') : 'Type your own answer'}`);
     if (this.customMode) {
-      const value = this.editor.getText();
-      rows.push(`${paint('accent', `${GLYPHS.arrow} `)}${value || dim('Describe the direction you want')}`);
-      this.cursor = { x: 2 + visibleWidth(value.slice(0, this.editor.col)), y: rows.length - 1 };
+      const raw = this.editor.getText();
+      const value = cleanDialogText(raw);
+      rows.push(truncate(`${paint('accent', `${GLYPHS.arrow} `)}${value || dim('Describe the direction you want')}`, safeWidth, GLYPHS.ellipsis));
+      const rendered = rows.length > safeHeight ? rows.slice(rows.length - safeHeight) : rows;
+      const before = visibleWidth(cleanDialogText(raw.slice(0, this.editor.col)));
+      this.cursor = {
+        x: Math.min(Math.max(0, safeWidth - 1), 2 + before),
+        y: Math.max(0, rendered.length - 1)
+      };
       this.footer = `enter submit  ${GLYPHS.dot}  esc choices`;
+      return rendered;
     } else {
       this.cursor = null;
       this.footer = `↑↓ choose  ${GLYPHS.dot}  enter select  ${GLYPHS.dot}  esc cancel`;
     }
-    return rows.slice(0, height);
+    return rows.slice(0, safeHeight);
   }
 
   key(event) {
