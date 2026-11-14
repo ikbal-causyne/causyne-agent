@@ -1310,4 +1310,15 @@ describe('a completion that matches exactly submits instead of looping', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test('detectTrigger and applyCompletion clamp out-of-range and NaN cursors cleanly', () => {
+    const t = detectTrigger('/help', 999);
+    assert.ok(t);
+    assert.equal(t.start, 0);
+    assert.equal(t.query, 'help');
+    assert.equal(detectTrigger('/help', Number.NaN)?.start, 0);
+    const applied = applyCompletion('/help', Number.NaN, t, { value: '/help' });
+    assert.equal(applied.text, '/help ');
+    assert.equal(applied.cursor, 6);
+  });
 });

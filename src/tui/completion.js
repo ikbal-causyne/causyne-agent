@@ -316,14 +316,21 @@ function directoryItems(root, partial) {
 // Trigger detection
 // ---------------------------------------------------------------------------
 
+function clampCursor(text, cursor) {
+  if (!Number.isFinite(cursor)) return text.length;
+  return Math.max(0, Math.min(text.length, Math.floor(cursor)));
+}
+
 /**
  * Find a slash command or @ reference at the current caret position.
  * Slash detection works at any whitespace-delimited token boundary. Execution
  * remains exclusive to explicit selection; normal prompt dispatch is unchanged.
  */
 export function detectTrigger(text, cursor) {
-  const before = text.slice(0, cursor);
-  const slash = detectInlineSlashTrigger(text, cursor);
+  const input = String(text == null ? '' : text);
+  const pos = clampCursor(input, cursor);
+  const before = input.slice(0, pos);
+  const slash = detectInlineSlashTrigger(input, pos);
   if (slash) return slash;
 
   // 1. Quoted @ file mention: @"pixel2d games/ or @'pixel2d games/
@@ -335,7 +342,7 @@ export function detectTrigger(text, cursor) {
     return {
       kind: 'file',
       quote,
-      start: cursor - query.length - 2, // accounts for @ and quote char
+      start: pos - query.length - 2, // accounts for @ and quote char
       query
     };
   }
@@ -346,7 +353,7 @@ export function detectTrigger(text, cursor) {
     return {
       kind: 'file',
       quote: null,
-      start: cursor - mention[1].length - 1,
+      start: pos - mention[1].length - 1,
       query: mention[1]
     };
   }
@@ -421,24 +428,27 @@ export function suggest(text, cursor, options = {}) {
 
 /** Replace the trigger span with the chosen value. */
 export function applyCompletion(text, cursor, trigger, item) {
+  const input = String(text == null ? '' : text);
+  const pos = clampCursor(input, cursor);
+  const start = Math.max(0, Math.min(pos, Number.isFinite(trigger?.start) ? Math.floor(trigger.start) : 0));
   if (trigger.kind === 'command-argument') {
-    const head = text.slice(0, trigger.start);
-    const tail = text.slice(cursor);
+    const head = input.slice(0, start);
+    const tail = input.slice(pos);
     const complete = item.value.includes('/');
     const replaced = head + item.value + (complete ? ' ' : '');
     return { text: replaced + tail, cursor: replaced.length };
   }
 
   if (trigger.kind === 'command') {
-    const head = text.slice(0, trigger.start);
-    const tail = text.slice(cursor);
+    const head = input.slice(0, start);
+    const tail = input.slice(pos);
     const replaced = head + item.value + ' ';
     return { text: replaced + tail, cursor: replaced.length };
   }
 
   // trigger.kind === 'file'
-  const head = text.slice(0, trigger.start);
-  const tail = text.slice(cursor);
+  const head = input.slice(0, start);
+  const tail = input.slice(pos);
   const isDir = item.value.endsWith('/');
   const hasSpace = item.value.includes(' ');
   const quote = trigger.quote || (hasSpace ? '"' : '');
