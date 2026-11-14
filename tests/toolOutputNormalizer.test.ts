@@ -283,3 +283,15 @@ test('normalizeHistoricalToolResult guards null messages and recovers decay spil
   }
 });
 
+test('formatMarkdownMath preserves operator spacing, multi-term sub/superscript grouping, escaped backslashes, and O(N) performance on unclosed brackets', () => {
+  assert.equal(formatMarkdownMath('$\\alpha = 1, \\theta + \\phi = \\pi$'), 'α = 1, θ + φ = π');
+  assert.equal(formatMarkdownMath('$2^{n-1} + a_{i+1}$'), '2^(n-1) + a_(i+1)');
+  assert.equal(formatMarkdownMath('path C:\\\\[test\\\\] and fn\\\\(x\\\\)'), 'path C:\\\\[test\\\\] and fn\\\\(x\\\\)');
+
+  const start = Date.now();
+  const unclosed = '\\['.repeat(25000);
+  const out = formatMarkdownMath(unclosed);
+  assert.ok(Date.now() - start < 200, 'unclosed \\[ delimiters must complete in linear time');
+  assert.equal(out.length, unclosed.length);
+});
+

@@ -179,26 +179,26 @@ export function renderLatexExpression(rawExpr: string): string {
     .replace(/\\_/g, '_');
 
   // 4. Replace named functions and Greek/math symbols
-  out = out.replace(/\\([a-zA-Z]+)(\s*)/g, (full, name: string, trailingSpace: string) => {
+  out = out.replace(/\\([a-zA-Z]+)(\s*)/g, (full, name: string, trailingSpace: string, offset: number, source: string) => {
     if (FUNCTION_MACROS.has(name)) {
       return name + (trailingSpace || '');
     }
     const sym = Object.hasOwn(GREEK_AND_SYMBOLS, name) ? GREEK_AND_SYMBOLS[name] : undefined;
     if (sym !== undefined) {
-      // Preserve a space if the symbol is a binary relation/operator and had trailing space,
-      // or if the next character would otherwise run into an operator.
-      return sym + (trailingSpace.length > 0 && /^[∈∉⊂⊆⊃⊇∪∩≤≥≠≈≡∼≃≅∝×·±∓÷→←↔⇒⇐⇔↦]$/.test(sym) ? ' ' : '');
+      const nextChar = source[offset + full.length] ?? '';
+      const suppressSpace = nextChar === '' || /^[,.;:!?)\]}_^]$/.test(nextChar);
+      return sym + (trailingSpace.length > 0 && !suppressSpace ? ' ' : '');
     }
     return full;
   });
 
   // 5. Simplify braced subscripts and superscripts
   out = out
-    .replace(/_\{([a-zA-Z0-9α-ωΑ-Ω+-]+)\}/g, '_$1')
+    .replace(/_\{([a-zA-Z0-9α-ωΑ-Ω]+)\}/g, '_$1')
     .replace(/_\{([^{}]+)\}/g, '_($1)')
     .replace(/\^\{([0-9])\}/g, (_m, d: string) => SUPERSCRIPT_DIGITS[d] ?? `^${d}`)
     .replace(/\^([23])(?![0-9])/g, (_m, d: string) => SUPERSCRIPT_DIGITS[d] ?? `^${d}`)
-    .replace(/\^\{([a-zA-Z0-9α-ωΑ-Ω+-]+)\}/g, '^$1')
+    .replace(/\^\{([a-zA-Z0-9α-ωΑ-Ω]+)\}/g, '^$1')
     .replace(/\^\{([^{}]+)\}/g, '^($1)');
 
   return out.replace(/\s{2,}/g, ' ').trim();
@@ -234,6 +234,59 @@ function isLikelyInlineMath(inner: string): boolean {
   return false;
 }
 
+function hasOddPrecedingBackslashes(text: string, index: number): boolean {
+  let count = 0;
+  for (let i = index - 1; i >= 0 && text.charCodeAt(i) === 92; i--) {
+    count++;
+  }
+  return count % 2 === 1;
+}
+
+function replaceEscapedMathDelimiters(text: string, open: string, close: string): string {
+  if (!text.includes(open) || !text.includes(close)) return text;
+
+  let out = '';
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const openIdx = text.indexOf(open, cursor);
+    if (openIdx === -1) break;
+    if (hasOddPrecedingBackslashes(text, openIdx)) {
+      out += text.slice(cursor, openIdx + 1);
+      cursor = openIdx + 1;
+      continue;
+    }
+
+    let searchFrom = openIdx + open.length;
+    let closeIdx = -1;
+    while (searchFrom < text.length) {
+      const candidate = text.indexOf(close, searchFrom);
+      if (candidate === -1) {
+        closeIdx = -1;
+        break;
+      }
+      if (hasOddPrecedingBackslashes(text, candidate)) {
+        searchFrom = candidate + 1;
+        continue;
+      }
+      closeIdx = candidate;
+      break;
+    }
+
+    if (closeIdx === -1) {
+      // No unescaped closing delimiter exists anywhere after this point; linear early exit.
+      break;
+    }
+
+    const expr = text.slice(openIdx + open.length, closeIdx);
+    out += text.slice(cursor, openIdx);
+    out += expr ? renderLatexExpression(expr) : text.slice(openIdx, closeIdx + close.length);
+    cursor = closeIdx + close.length;
+  }
+
+  return cursor === 0 ? text : out + text.slice(cursor);
+}
+
 /**
  * Format LaTeX math spans inside a markdown prose line (after code spans and
  * links have already been stashed).
@@ -248,9 +301,9 @@ export function formatMarkdownMath(text: string): string {
   // 1. Display math $$...$$ (disjoint alternation prevents polynomial ReDoS)
   out = out.replace(/\$\$((?:[^$\\]|\\[\s\S]|\$(?!\$))+?)\$\$/g, (_m, expr: string) => renderLatexExpression(expr));
 
-  // 2. Explicit LaTeX delimiters \[...\] and \(...\)
-  out = out.replace(/\\\[([\s\S]+?)\\\]/g, (_m, expr: string) => renderLatexExpression(expr));
-  out = out.replace(/\\\(([\s\S]+?)\\\)/g, (_m, expr: string) => renderLatexExpression(expr));
+  // 2. Explicit LaTeX delimiters \[...\] and \(...\) in guaranteed O(N) time
+  out = replaceEscapedMathDelimiters(out, '\\[', '\\]');
+  out = replaceEscapedMathDelimiters(out, '\\(', '\\)');
 
   // 3. Inline math $...$
   out = out.replace(/(?<![\\$\w])\$(?!\s)((?:[^$\n\\]|\\.)+?)(?<!\s)\$(?![$\d])/g, (full, expr: string) => {
