@@ -35,12 +35,18 @@ export function openingRows(rows, columns, terminalRows) {
         ...centerRows(rows, columns).rows
     ];
 }
+function positiveRequested(requested, fallback) {
+    if (!Number.isFinite(requested))
+        return fallback;
+    const floored = Math.floor(requested);
+    return floored > 0 ? floored : fallback;
+}
 /** Fit every dialog, including text reports, inside the current terminal width. */
 export function dialogWidth(columns, requested) {
     const available = Number.isFinite(columns) ? Math.max(4, Math.floor(columns) - 1) : 79;
-    return Math.max(4, Math.min(available, Math.floor(requested) || available));
+    return Math.max(4, Math.min(available, positiveRequested(requested, available)));
 }
 export function dialogHeight(available, requested) {
     const room = Number.isFinite(available) ? Math.max(4, Math.floor(available) - 1) : 20;
-    return Math.max(4, Math.min(20, room, Math.floor(requested) || room));
+    return Math.max(4, Math.min(20, room, positiveRequested(requested, room)));
 }

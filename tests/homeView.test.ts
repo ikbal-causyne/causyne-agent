@@ -145,3 +145,12 @@ test('rapid terminal resize settles once and restores the Home composer', async 
     surface.close();
   }
 });
+
+test('dialogWidth and dialogHeight fall back when requested dimensions are non-positive or non-finite', () => {
+  assert.equal(dialogWidth(100, -10), 99);
+  assert.equal(dialogWidth(100, Number.NEGATIVE_INFINITY), 99);
+  assert.equal(dialogWidth(100, Number.NaN), 99);
+  assert.equal(dialogHeight(40, -10), 20);
+  assert.equal(dialogHeight(40, Number.NEGATIVE_INFINITY), 20);
+  assert.equal(dialogHeight(40, Number.NaN), 20);
+});
