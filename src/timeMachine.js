@@ -159,7 +159,7 @@ export class TimeMachine {
                 failureClass: classification, lastGoodTool: good,
                 guidance: `Further attempts were not approved. Stop this task. Give a brief evidence-based report and state what remains unresolved.${checkpoint}` };
         }
-        if (classification === 'rate_limited' && attempt < TIME_MACHINE_CONSENT_AT) {
+        if (classification === 'rate_limited' && attempt < TIME_MACHINE_MAX_ATTEMPTS) {
             return { kind: 'replan', attempt, maxAttempts: TIME_MACHINE_MAX_ATTEMPTS, issueKey: key,
                 failureClass: classification, lastGoodTool: good,
                 guidance: `Rate limit reached. Respect the provider's retry/reset window; do not immediately resend the same request.${checkpoint}` };

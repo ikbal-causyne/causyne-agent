@@ -362,5 +362,10 @@ test('rate limits demand backoff immediately while retaining the consent boundar
   assert.equal(first.kind, 'replan');
   assert.match(first.guidance, /retry\/reset window/);
   assert.equal(machine.observe('exec', args, result).kind, 'replan');
-  assert.equal(machine.observe('exec', args, result).kind, 'consent');
+  const consent = machine.observe('exec', args, result);
+  assert.equal(consent.kind, 'consent');
+  machine.grantExtension(consent.issueKey);
+  const extended = machine.observe('exec', args, result);
+  assert.equal(extended.kind, 'replan');
+  assert.match(extended.guidance, /retry\/reset window/);
 });
