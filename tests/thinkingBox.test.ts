@@ -637,4 +637,31 @@ describe('thinkingBox component', () => {
     assert.match(collapsedText, /Executed/);
     assert.match(collapsedText, /click to expand/);
   });
+
+  test('thinkingBox sanitizes multiline/ANSI metadata, guards non-finite totalLines, and keeps latest line when maxVisibleLines is 1', () => {
+    const badge = renderCollapsedThinkingBadge(
+      { streaming: false, completedTitle: 'Analyzed\nInjected\x1b[2J', durationText: '1.2s\nfast', nowMs: Number.NaN },
+      -4.7
+    );
+    assert.ok(!badge.includes('\n'), 'collapsed badge must remain a single line');
+    assert.ok(!badge.includes('\x1b[2J'), 'collapsed badge must strip control sequences');
+    assert.match(stripAnsi(badge), /\(0 lines\)/);
+
+    const rows = renderThinkingFrame('Line 1\nLine 2\nLine 3\x1b[2J', {
+      width: 60,
+      streaming: true,
+      maxVisibleLines: 1,
+      title: 'Inspecting\n Header\x1b[2J',
+      durationText: '0.5s\r\nnow',
+      nowMs: Number.NaN,
+      tick: Number.NaN
+    });
+    for (const row of rows) {
+      assert.ok(!row.includes('\n') && !row.includes('\r'), 'no thinking box row may contain embedded newlines');
+      assert.ok(!row.includes('\x1b[2J'), 'thinking box rows must strip unsafe CSI sequences');
+      assert.equal(visibleWidth(row), 60);
+    }
+    const joined = stripAnsi(rows.join('\n'));
+    assert.match(joined, /Line 3/, 'streaming box with maxVisibleLines=1 must still show the latest line');
+  });
 });

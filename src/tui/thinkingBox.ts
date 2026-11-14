@@ -8,7 +8,7 @@
 
 // @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, dim, GLYPHS, HAS_UNICODE } from './theme.js';
-import { padEnd, truncate, visibleWidth, wrapBlock } from './text.js';
+import { padEnd, safeDisplay, truncate, visibleWidth, wrapBlock } from './text.js';
 import { renderRunningLight } from './runningLight.js';
 
 export interface ThinkingFrameOptions {
@@ -40,11 +40,25 @@ function clampMaxVisibleLines(value: number | undefined, fallback: number): numb
   return Number.isFinite(numeric) ? Math.max(1, Math.floor(numeric)) : fallback;
 }
 
+function cleanSingleLine(value: string | undefined): string {
+  return safeDisplay(String(value ?? '')).replace(/\s+/g, ' ').trim();
+}
+
+function resolveShimmerNowMs(options: ThinkingFrameOptions): number {
+  if (typeof options.nowMs === 'number' && Number.isFinite(options.nowMs)) {
+    return options.nowMs;
+  }
+  if (typeof options.tick === 'number' && Number.isFinite(options.tick)) {
+    return options.tick * 80;
+  }
+  return 320;
+}
+
 /**
  * Calculates total wrapped lines for reasoning content under the thinking box budget.
  */
 export function calculateThinkingLineCount(content: string, width: number): number {
-  const text = String(content ?? '').trim();
+  const text = safeDisplay(String(content ?? '')).trim();
   if (!text) return 0;
   const safeWidth = clampThinkingWidth(width);
   const contentBudget = Math.max(10, safeWidth - 4);
@@ -52,7 +66,7 @@ export function calculateThinkingLineCount(content: string, width: number): numb
 }
 
 function stripTrailingEllipsis(value: string | undefined): string {
-  let text = String(value ?? '').trim();
+  let text = cleanSingleLine(value);
   while (text.endsWith('…') || text.endsWith('...')) {
     text = (text.endsWith('...') ? text.slice(0, -3) : text.slice(0, -1)).trimEnd();
   }
@@ -70,7 +84,7 @@ export function resolveActivityLabels(options: ThinkingFrameOptions): {
   const cleanedTitle = stripTrailingEllipsis(options.title);
   const raw = (cleanedActivity || cleanedTitle || 'thinking').toLowerCase();
 
-  const rawTitle = cleanedTitle && options.title ? options.title.trim() : '';
+  const rawTitle = cleanedTitle && options.title ? cleanSingleLine(options.title) : '';
   let active = rawTitle || `${raw}…`;
   if (!rawTitle) {
     if (raw === 'thinking') active = 'thinking…';
@@ -84,7 +98,7 @@ export function resolveActivityLabels(options: ThinkingFrameOptions): {
     else active = `${raw}…`;
   }
 
-  let completed = options.completedTitle ? options.completedTitle.trim() : '';
+  let completed = options.completedTitle ? cleanSingleLine(options.completedTitle) : '';
   if (!completed) {
     if (raw === 'thinking') completed = 'Thought';
     else if (raw === 'analyzing') completed = 'Analyzed';
@@ -108,17 +122,14 @@ export function renderCollapsedThinkingBadge(
   totalLines: number
 ): string {
   const isStreaming = Boolean(options.streaming);
-  const durationText = options.durationText ? String(options.durationText).trim() : '';
+  const durationText = options.durationText ? cleanSingleLine(options.durationText) : '';
   const arrow = HAS_UNICODE ? '▸' : '>';
   const { activeLabel, completedLabel } = resolveActivityLabels(options);
+  const safeTotalLines = Number.isFinite(totalLines) ? Math.max(0, Math.floor(totalLines)) : 0;
 
   if (isStreaming) {
     const timePart = durationText ? ` · ${durationText}` : '';
-    const shimmerNowMs = options.nowMs !== undefined
-      ? options.nowMs
-      : options.tick !== undefined
-        ? options.tick * 80
-        : 320;
+    const shimmerNowMs = resolveShimmerNowMs(options);
     const styledLabel = renderRunningLight(activeLabel, {
       nowMs: shimmerNowMs,
       baseRole: 'warn',
@@ -128,8 +139,8 @@ export function renderCollapsedThinkingBadge(
   }
 
   const timePart = durationText ? ` for ${durationText}` : '';
-  const lineWord = totalLines === 1 ? 'line' : 'lines';
-  return `${paint('muted', arrow)} ${dim(`${completedLabel}${timePart}`)} ${dim(`(${totalLines} ${lineWord})`)} ${dim('· click to expand')}`;
+  const lineWord = safeTotalLines === 1 ? 'line' : 'lines';
+  return `${paint('muted', arrow)} ${dim(`${completedLabel}${timePart}`)} ${dim(`(${safeTotalLines} ${lineWord})`)} ${dim('· click to expand')}`;
 }
 
 /**
@@ -156,10 +167,11 @@ export function buildThinkingBoxBorders(
   const br = GLYPHS.bottomRight || '╯';
 
   // --- Top Border ---
-  const rawTitle = title ? ` ${title} ` : '';
+  const cleanTitle = String(title ?? '').replace(/[\r\n]+/g, ' ');
+  const rawTitle = cleanTitle ? ` ${cleanTitle} ` : '';
   const titleVis = visibleWidth(rawTitle);
   const maxTitleVis = Math.max(0, inner - 4); // reserve at least 1 leading hLine and 2 trailing hLines
-  const safeTitle = titleVis > maxTitleVis ? (rawTitle ? ` ${truncate(title, Math.max(4, maxTitleVis - 2), GLYPHS.ellipsis || '…')} ` : '') : rawTitle;
+  const safeTitle = titleVis > maxTitleVis ? (rawTitle ? ` ${truncate(cleanTitle, Math.max(4, maxTitleVis - 2), GLYPHS.ellipsis || '…')} ` : '') : rawTitle;
   const safeTitleVis = visibleWidth(safeTitle);
 
   const topLead = h;
@@ -168,10 +180,11 @@ export function buildThinkingBoxBorders(
   const top = paint(role, tl + topLead) + safeTitle + paint(role, topTrail + tr);
 
   // --- Bottom Border ---
-  const rawFooter = footer ? ` ${footer} ` : '';
+  const cleanFooter = String(footer ?? '').replace(/[\r\n]+/g, ' ');
+  const rawFooter = cleanFooter ? ` ${cleanFooter} ` : '';
   const footerVis = visibleWidth(rawFooter);
   const maxFooterVis = Math.max(0, inner - 4);
-  const safeFooter = footerVis > maxFooterVis ? (rawFooter ? ` ${truncate(footer, Math.max(4, maxFooterVis - 2), GLYPHS.ellipsis || '…')} ` : '') : rawFooter;
+  const safeFooter = footerVis > maxFooterVis ? (rawFooter ? ` ${truncate(cleanFooter, Math.max(4, maxFooterVis - 2), GLYPHS.ellipsis || '…')} ` : '') : rawFooter;
   const safeFooterVis = visibleWidth(safeFooter);
 
   const bottomLead = h;
@@ -201,13 +214,13 @@ export function renderThinkingFrame(
   content: string,
   options: ThinkingFrameOptions = {}
 ): string[] {
-  const text = String(content ?? '').trim();
+  const text = safeDisplay(String(content ?? '')).trim();
   if (!text) return [];
 
   const width = clampThinkingWidth(options.width);
   const isStreaming = Boolean(options.streaming);
   const isCollapsed = Boolean(options.collapsed);
-  const durationText = options.durationText ? String(options.durationText).trim() : '';
+  const durationText = options.durationText ? cleanSingleLine(options.durationText) : '';
 
   // Wrap lines for inner box width (w - 4) with zero hanging indent
   const contentBudget = Math.max(10, width - 4);
@@ -227,11 +240,7 @@ export function renderThinkingFrame(
     const maxLines = clampMaxVisibleLines(options.maxVisibleLines, DEFAULT_MAX_STREAMING_LINES);
     const timePart = durationText ? ` · ${durationText}` : '';
     const { activeLabel } = resolveActivityLabels(options);
-    const shimmerNowMs = options.nowMs !== undefined
-      ? options.nowMs
-      : options.tick !== undefined
-        ? options.tick * 80
-        : 320;
+    const shimmerNowMs = resolveShimmerNowMs(options);
     const styledActiveLabel = renderRunningLight(activeLabel, {
       nowMs: shimmerNowMs,
       baseRole: 'warn',
@@ -254,14 +263,15 @@ export function renderThinkingFrame(
     };
 
     if (totalLines > maxLines) {
-      const hiddenCount = totalLines - (maxLines - 1);
+      const tailCount = Math.max(1, maxLines - 1);
+      const hiddenCount = Math.max(0, totalLines - tailCount);
       const scrollIndicator = HAS_UNICODE ? '↑' : '^';
       const cleanedLabel = stripTrailingEllipsis(options.activity) || stripTrailingEllipsis(options.title) || 'thinking';
       const activityWord = `${cleanedLabel} `;
       const hiddenNotice = `${paint('rule', scrollIndicator)} ${dim(`${hiddenCount} earlier ${activityWord}line${hiddenCount === 1 ? '' : 's'} scrolled`)}`;
       rows.push(wrapRow(hiddenNotice));
 
-      const tailRows = allRows.slice(totalLines - (maxLines - 1));
+      const tailRows = allRows.slice(totalLines - tailCount);
       for (let i = 0; i < tailRows.length; i++) {
         rows.push(renderStreamingRow(tailRows[i]!, i === tailRows.length - 1));
       }
@@ -279,7 +289,7 @@ export function renderThinkingFrame(
   const maxLines = clampMaxVisibleLines(options.maxVisibleLines, DEFAULT_MAX_EXPANDED_LINES);
   const timePart = durationText ? ` · ${durationText}` : '';
   const raw = (stripTrailingEllipsis(options.activity) || stripTrailingEllipsis(options.title) || 'thinking').toLowerCase();
-  const trimmedCompleted = options.completedTitle ? options.completedTitle.trim() : '';
+  const trimmedCompleted = options.completedTitle ? cleanSingleLine(options.completedTitle) : '';
   const expandedTitleLabel = trimmedCompleted
     ? trimmedCompleted.toLowerCase()
     : (raw === 'thinking' ? 'thinking' : raw);
