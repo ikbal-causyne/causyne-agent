@@ -119,9 +119,19 @@ export const AMBIGUOUS_IS_WIDE: boolean = detectAmbiguousWide();
 
 /** Columns one code point occupies, under the active ambiguous-width policy. */
 function columnsFor(code: number): number {
+  if (code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f)) return 0;
   if (isWideCodePoint(code)) return 2;
   if (AMBIGUOUS_IS_WIDE && isAmbiguousCodePoint(code)) return 2;
   return 1;
+}
+
+function matchEscapeSequenceAt(source: string, index: number): string | null {
+  if (source[index] !== '\x1b') return null;
+  const rest = source.slice(index);
+  const match = rest.match(/^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/)
+    || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
+    || rest.match(/^\x1b[@-Z\\-_]/);
+  return match ? match[0] : null;
 }
 
 /** Columns this string will occupy once printed. Escapes count for nothing. */
@@ -131,8 +141,6 @@ export function visibleWidth(text: unknown): number {
   for (const character of plain) {
     const code = character.codePointAt(0);
     if (code === undefined) continue;
-    if (code === 0x200d) continue;          // zero-width joiner
-    if (code >= 0xfe00 && code <= 0xfe0f) continue; // variation selectors
     width += columnsFor(code);
   }
   return width;
@@ -163,24 +171,19 @@ export function truncate(text: unknown, width: number, ellipsis = '…'): string
   let index = 0;
 
   while (index < source.length) {
-    if (source[index] === '\x1b') {
+    const esc = matchEscapeSequenceAt(source, index);
+    if (esc) {
       // Copy the whole sequence verbatim; it costs no columns.
-      const rest = source.slice(index);
-      const match = rest.match(/^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/)
-        || rest.match(/^\x1b\[[0-?]*[ -/]*[@-~]/)
-        || rest.match(/^\x1b[@-Z\\-_]/);
-      if (match) {
-        const osc8 = OSC8_SEQUENCE.exec(match[0]);
-        if (osc8) {
-          const uri = osc8[1] ?? '';
-          const term = osc8[2] ?? '\x1b\\';
-          openOsc8Term = uri.length > 0 ? term : '';
-        }
-        out += match[0];
-        sawEscape = true;
-        index += match[0].length;
-        continue;
+      const osc8 = OSC8_SEQUENCE.exec(esc);
+      if (osc8) {
+        const uri = osc8[1] ?? '';
+        const term = osc8[2] ?? '\x1b\\';
+        openOsc8Term = uri.length > 0 ? term : '';
       }
+      out += esc;
+      sawEscape = true;
+      index += esc.length;
+      continue;
     }
 
     const code = source.codePointAt(index);
@@ -234,15 +237,28 @@ export function wrap(text: unknown, width: number, _options?: { hang?: number })
       let remainder = word;
       while (visibleWidth(remainder) > safeWidth) {
         lines.push(truncate(remainder, safeWidth, ''));
-        // truncate() gives us the head; drop the same number of characters.
+        // truncate() gives us the head; drop the exact prefix, skipping escapes.
         let consumed = 0;
         let cut = 0;
-        while (cut < remainder.length && consumed < safeWidth) {
+        while (cut < remainder.length) {
+          const esc = matchEscapeSequenceAt(remainder, cut);
+          if (esc) {
+            cut += esc.length;
+            continue;
+          }
           const code = remainder.codePointAt(cut);
           if (code === undefined) break;
-          consumed += columnsFor(code);
+          const charWidth = columnsFor(code);
+          if (consumed + charWidth > safeWidth) {
+            if (cut === 0 || consumed === 0) {
+              cut += String.fromCodePoint(code).length;
+            }
+            break;
+          }
+          consumed += charWidth;
           cut += String.fromCodePoint(code).length;
         }
+        if (cut === 0) break;
         remainder = remainder.slice(cut);
       }
       current = remainder;

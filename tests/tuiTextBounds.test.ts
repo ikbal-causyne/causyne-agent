@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandTabs, padEnd, truncate, wrap, wrapBlock } from '../src/tui/text.js';
+import { expandTabs, padEnd, stripAnsi, truncate, visibleWidth, wrap, wrapBlock } from '../src/tui/text.js';
 
 describe('tui/text finite bounds', () => {
   it('truncate handles non-finite width without overflowing input', () => {
@@ -43,5 +43,16 @@ describe('tui/text finite bounds', () => {
     assert.deepEqual(wrap('alpha beta', Number.NaN), ['alpha beta']);
     assert.deepEqual(wrap('alpha beta', 0.5), ['alpha beta']);
     assert.deepEqual(wrap('a\nb', Number.POSITIVE_INFINITY), ['a', 'b']);
+  });
+
+  it('wrap preserves ANSI escape sequences and wide characters across hard word breaks', () => {
+    const ansiWrapped = wrap('\x1b[31mabcdef\x1b[0m', 3);
+    assert.equal(ansiWrapped.map(stripAnsi).join(''), 'abcdef');
+    for (const row of ansiWrapped) {
+      assert.ok(visibleWidth(row) <= 3);
+    }
+
+    const cjkWrapped = wrap('a中b', 2);
+    assert.deepEqual(cjkWrapped, ['a', '中', 'b']);
   });
 });
