@@ -50,3 +50,21 @@ test('/cd refuses an incorrectly scoped replacement before updating TUI', () => 
   }), /sandbox did not adopt/);
   assert.equal(prompt.root, '/old');
 });
+
+test('/cd updates surface sidebar and clears activeSkill even without headerInfo or prompt.setWorkingRoot', () => {
+  const prompt = { pendingAttachments: [{ path: '/a' }], completion: { kind: 'file' } };
+  const surface = { info: { cwd: '/old', activeSkill: { id: 'old/skill' } }, setSessionInfo(info) { this.info = { ...this.info, ...info }; } };
+  switchChatWorkspace({
+    workspaceRoot: '/next',
+    prompt,
+    surface,
+    headerInfo: null,
+    createLoop(root) { return { workspaceRoot: root, sandbox: { workspacePaths: [root] } }; },
+    approvalHandler: () => true,
+    decisionHandler: () => null
+  });
+  assert.deepEqual(prompt.pendingAttachments, []);
+  assert.equal(prompt.completion, null);
+  assert.equal(surface.info.cwd, '/next');
+  assert.equal(surface.info.activeSkill, null);
+});

@@ -26,7 +26,8 @@ export function switchChatWorkspace({ workspaceRoot, createLoop, prompt = null, 
     replacement.waitForApproval = approvalHandler;
     replacement.waitForDecision = decisionHandler;
     if (prompt) {
-        prompt.setWorkingRoot(workspaceRoot);
+        if (typeof prompt.setWorkingRoot === 'function')
+            prompt.setWorkingRoot(workspaceRoot);
         prompt.messageActionLoop = replacement;
         // A workspace switch is also a change of task context. Do not transfer
         // queued attachments or active skills from the previous workspace.
@@ -35,18 +36,20 @@ export function switchChatWorkspace({ workspaceRoot, createLoop, prompt = null, 
         if (typeof prompt.scheduleDraw === 'function')
             prompt.scheduleDraw();
     }
+    const workspaceLabel = replacement.sandbox?.grantAllAccess
+        ? 'ALL ACCESS'
+        : (Array.isArray(replacement.sandbox?.workspacePaths) ? replacement.sandbox.workspacePaths.join(', ') : '');
     if (headerInfo) {
         headerInfo.cwd = workspaceRoot;
-        headerInfo.workspace = replacement.sandbox?.grantAllAccess
-            ? 'ALL ACCESS'
-            : replacement.sandbox?.workspacePaths?.join(', ') ?? '';
-        if (renderer?.status?.setSession)
+        headerInfo.workspace = workspaceLabel;
+        if (typeof renderer?.status?.setSession === 'function')
             renderer.status.setSession(headerInfo);
-        if (surface?.setSessionInfo)
-            surface.setSessionInfo({
-                ...headerInfo,
-                activeSkill: null
-            });
+    }
+    if (typeof surface?.setSessionInfo === 'function') {
+        surface.setSessionInfo({
+            ...(headerInfo || { cwd: workspaceRoot, workspace: workspaceLabel }),
+            activeSkill: null
+        });
     }
     return replacement;
 }
