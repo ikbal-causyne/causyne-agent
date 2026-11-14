@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { centerRows, composerWidth, openingRows } from '../src/tui/layout.js';
+import { centerRows, composerWidth, openingRows, openingTopGap } from '../src/tui/layout.js';
 import { commandDialog } from '../src/tui/commandPresentation.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
 import { Transcript } from '../src/tui/transcript.js';
@@ -164,4 +164,12 @@ test('synthetic empty turns are hidden between real assistant replies', () => {
   assert.doesNotMatch(visible, /Provider returned no final answer/);
   assert.match(visible, /two assertions failed/);
   assert.equal(transcript.frames.filter(frame => frame.kind === 'assistant').length, 1);
+});
+
+test('openingTopGap returns a finite non-negative integer for non-finite or negative introRows', () => {
+  assert.equal(Number.isFinite(openingTopGap(60, Number.NaN)), true);
+  assert.equal(openingTopGap(60, Number.NaN), 26);
+  assert.equal(openingTopGap(60, -10), 26);
+  assert.equal(openingTopGap(60, Number.NEGATIVE_INFINITY), 26);
+  assert.equal(openingTopGap(60, Number.POSITIVE_INFINITY), 0);
 });

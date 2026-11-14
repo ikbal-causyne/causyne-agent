@@ -28,8 +28,10 @@ export function sessionRows(rows: string[], columns: number): { rows: string[]; 
 
 /** Leave room for a centered home composition without overflowing small terminals. */
 export function openingTopGap(rows: number, introRows: number): number {
-  if (!Number.isFinite(rows) || rows < 40) return 0;
-  return Math.max(0, Math.min(40, Math.floor((rows - introRows - 8) / 2)));
+  if (!Number.isFinite(rows) || rows < 40 || introRows === Number.POSITIVE_INFINITY) return 0;
+  const safeRows = Math.floor(rows);
+  const safeIntro = Number.isFinite(introRows) ? Math.max(0, Math.floor(introRows)) : 0;
+  return Math.max(0, Math.min(40, Math.floor((safeRows - safeIntro - 8) / 2)));
 }
 
 /** Place the home composition as one centered group, with room for the composer below. */
