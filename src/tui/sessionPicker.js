@@ -4,8 +4,13 @@
 import { SessionPickerLayer } from './sessionPickerView.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from './theme.js';
+import { safeDisplay } from './text.js';
+import { measureMessages } from '../contextManager.js';
 import { listSessions, getActiveSessionId, switchSession, createSession, forkSession } from '../sessionJournal.js';
 import { revokeAllAlways } from '../approvalGrants.js';
+function cleanTitle(value) {
+    return safeDisplay(typeof value === 'string' ? value : String(value ?? '')).replace(/[\r\n]+/g, ' ').trim() || 'Untitled';
+}
 /** The divider counts conversation messages that the history renderer displays. */
 function visibleHistoryCount(messages) {
     return messages.filter((message) => {
@@ -69,16 +74,17 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
     if (activeId) {
         const active = sessions.find(s => s.id === activeId);
         if (active) {
+            const activeTitle = cleanTitle(active.title);
             items.push({
                 id: '__FORK_SESSION__',
-                label: `Branch / Fork Current Session ("${active.title}")`,
+                label: `Branch / Fork Current Session ("${activeTitle}")`,
                 category: 'Actions',
                 description: 'Copy conversation history into a new branch without copying permissions',
                 searchText: 'fork branch clone copy session fresh permissions',
                 value: {
                     type: 'fork',
                     id: activeId,
-                    title: active.title
+                    title: activeTitle
                 }
             });
         }
@@ -107,16 +113,17 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
         const category = dateGroup(s.updatedAt);
         const mark = isCurrent ? `● ` : `  `;
         const tag = isCurrent ? ` [active]` : '';
+        const title = cleanTitle(s.title);
         items.push({
             id: s.id,
-            label: `${mark}${s.title}${tag}`,
+            label: `${mark}${title}${tag}`,
             category,
             description: `${msgCount}  ${GLYPHS.dot}  ${timeAgo}  ${GLYPHS.dot}  ${wsLabel}${s.workspace === currentWorkspace ? ' (current)' : ''}`,
-            searchText: `${s.title} ${s.id} ${s.workspace || ''} ${category}`,
+            searchText: `${title} ${s.id} ${s.workspace || ''} ${category}`,
             value: {
                 type: 'switch',
                 id: s.id,
-                title: s.title,
+                title,
                 workspace: s.workspace,
                 messageCount: safeMessageCount,
                 updatedAt: s.updatedAt,
@@ -162,6 +169,41 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
     if (!picked || !picked.value) {
         return 'Cancelled. Session was not changed.';
     }
+    const syncSessionSurface = (record, messages) => {
+        const renderer = prompt.renderer || options.loop?.connection?.renderer;
+        const surface = prompt.surface;
+        const contextChars = messages.length > 0 ? Math.max(0, measureMessages(messages)) : 0;
+        const sessionMeta = {
+            id: record.id,
+            title: cleanTitle(record.title),
+            messagesCount: visibleHistoryCount(messages),
+            contextChars,
+            plan: []
+        };
+        if (renderer?.status && typeof renderer.status === 'object') {
+            renderer.status.contextChars = contextChars;
+        }
+        if (renderer && typeof renderer.renderSessionHistory === 'function') {
+            renderer.renderSessionHistory(messages, sessionMeta);
+        }
+        if (renderer && typeof renderer.setSessionInfo === 'function') {
+            renderer.setSessionInfo(sessionMeta);
+        }
+        if (surface && typeof surface === 'object') {
+            if ('activeTurnIndex' in surface)
+                surface.activeTurnIndex = null;
+            if ('hoveredTurnIndex' in surface)
+                surface.hoveredTurnIndex = null;
+            if ('hoveredMessageFrameId' in surface)
+                surface.hoveredMessageFrameId = null;
+            if (typeof surface.setSessionInfo === 'function') {
+                surface.setSessionInfo(sessionMeta);
+            }
+            if (surface.viewport && typeof surface.viewport.toBottom === 'function') {
+                surface.viewport.toBottom();
+            }
+        }
+    };
     // Case 1: Start fresh new session
     if (picked.value.type === 'new') {
         let newSession;
@@ -178,19 +220,9 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
                 options.loop.tokenTracker.reset();
             }
         }
-        const renderer = prompt.renderer || options.loop?.connection?.renderer;
-        if (renderer && typeof renderer.renderSessionHistory === 'function') {
-            renderer.renderSessionHistory([], {
-                id: newSession.id,
-                title: newSession.title,
-                messagesCount: 0
-            });
-        }
-        if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
-            prompt.surface.viewport.toBottom();
-        }
+        syncSessionSurface(newSession, []);
         cleanPrompt();
-        return `Started new session: "${newSession.title}" (${newSession.id}) in ${shortenPath(workspace)}.`;
+        return `Started new session: "${cleanTitle(newSession.title)}" (${newSession.id}) in ${shortenPath(workspace)}.`;
     }
     // Case 2: Fork session into a new branch without copying permissions
     if (picked.value.type === 'fork') {
@@ -225,19 +257,9 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
                 options.loop.tokenTracker.reset();
             }
         }
-        const renderer = prompt.renderer || options.loop?.connection?.renderer;
-        if (renderer && typeof renderer.renderSessionHistory === 'function') {
-            renderer.renderSessionHistory(historyMessages, {
-                id: forked.id,
-                title: forked.title,
-                messagesCount: visibleHistoryCount(historyMessages)
-            });
-        }
-        if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
-            prompt.surface.viewport.toBottom();
-        }
+        syncSessionSurface(forked, historyMessages);
         cleanPrompt();
-        return `Forked into "${forked.title}" (${forked.messages.length} messages, ${forked.id}). Permissions and standing approvals were reset; any gated actions will request authorization anew.`;
+        return `Forked into "${cleanTitle(forked.title)}" (${forked.messages.length} messages, ${forked.id}). Permissions and standing approvals were reset; any gated actions will request authorization anew.`;
     }
     // Case 3: Switch to selected session
     const targetId = picked.value.id;
@@ -265,18 +287,7 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
             options.loop.tokenTracker.reset();
         }
     }
-    // Render the conversation history to the transcript & viewport
-    const renderer = prompt.renderer || options.loop?.connection?.renderer;
-    if (renderer && typeof renderer.renderSessionHistory === 'function') {
-        renderer.renderSessionHistory(historyMessages, {
-            id: switched.id,
-            title: switched.title,
-            messagesCount: visibleHistoryCount(historyMessages)
-        });
-    }
-    if (prompt.surface?.viewport && typeof prompt.surface.viewport.toBottom === 'function') {
-        prompt.surface.viewport.toBottom();
-    }
+    syncSessionSurface(switched, historyMessages);
     cleanPrompt();
-    return `Switched to "${switched.title}" (${switched.messages.length} messages, ${switched.id}).`;
+    return `Switched to "${cleanTitle(switched.title)}" (${switched.messages.length} messages, ${switched.id}).`;
 }

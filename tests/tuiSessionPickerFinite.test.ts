@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSessionPickerItems } from '../src/tui/sessionPicker.js';
+import { buildSessionPickerItems, runInteractiveSessionPicker } from '../src/tui/sessionPicker.js';
 
 describe('sessionPicker finite timestamps', () => {
   it('formatTimeAgo via buildSessionPickerItems avoids NaNd ago for non-finite updatedAt', () => {
@@ -92,5 +92,59 @@ describe('sessionPicker finite timestamps', () => {
     assert.ok(activeEntry);
     assert.doesNotMatch(activeEntry.description, /\bNaN\b/);
     assert.equal(activeEntry.value.messageCount, 0);
+  });
+
+  it('runInteractiveSessionPicker synchronizes surface.setSessionInfo and clears stale turn rail selection on session switch and new session', async () => {
+    const surfaceInfos: Array<Record<string, unknown>> = [];
+    const surface = {
+      activeTurnIndex: 2,
+      hoveredTurnIndex: 1,
+      hoveredMessageFrameId: 5,
+      viewport: { toBottom() {} },
+      setSessionInfo(info: Record<string, unknown>) {
+        surfaceInfos.push(info);
+      }
+    };
+    const renderer = {
+      status: {
+        contextChars: 9999,
+        setSession() {}
+      },
+      renderSessionHistory() {}
+    };
+    const loop = {
+      messages: [{ role: 'user', content: 'old message' }],
+      memoryManager: {
+        startNewSession(title = 'Untitled') {
+          return {
+            id: 'sess-new-1',
+            title,
+            workspace: '/tmp/ws',
+            workspaceKey: 'k',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: []
+          };
+        }
+      }
+    };
+    const prompt = {
+      surface,
+      renderer,
+      openLayer(layer: any) {
+        layer.onPick({ id: '__NEW_SESSION__', value: { type: 'new' } });
+      }
+    };
+
+    const msg = await runInteractiveSessionPicker(prompt as any, { loop: loop as any, workspace: '/tmp/ws' });
+    assert.match(msg, /Started new session/);
+    assert.equal(surface.activeTurnIndex, null);
+    assert.equal(surface.hoveredTurnIndex, null);
+    assert.equal(surface.hoveredMessageFrameId, null);
+    assert.equal(renderer.status.contextChars, 0);
+    assert.ok(surfaceInfos.length >= 1, 'surface.setSessionInfo must be called so sidebar updates');
+    assert.equal(surfaceInfos.at(-1)?.id, 'sess-new-1');
+    assert.equal(surfaceInfos.at(-1)?.title, 'Untitled');
+    assert.equal(surfaceInfos.at(-1)?.contextChars, 0);
   });
 });
