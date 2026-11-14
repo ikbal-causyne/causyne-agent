@@ -139,7 +139,7 @@ export class TimeMachine {
       || value.failureKind === 'site_refusal' || value.status === 'error' || value.status === 'failed'
       || (typeof value.status === 'number' && (!Number.isFinite(value.status) || value.status >= 400))
       || (value.error !== null && typeof value.error === 'object');
-    const classification = failed ? failureClass(value) || 'failed' : '';
+    const classification = failed ? (value.status === 429 ? 'rate_limited' : value.status === 401 ? 'permission' : failureClass(value) || 'failed') : '';
     const key = issueKey(tool, args);
     const good = lastGoodTool(outcomes);
 
