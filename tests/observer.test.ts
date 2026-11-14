@@ -212,6 +212,14 @@ test('outcomeFromResult extracts CommandLine and commandLine correctly', () => {
   assert.equal(o3.command, 'cargo test');
 });
 
+test('outcomeFromResult skips blank command fields to find populated fallback aliases', () => {
+  const o1 = outcomeFromResult('run_command', { command: '   ', CommandLine: 'npm test' }, { success: true, exitCode: 0 }, 103);
+  assert.equal(o1.command, 'npm test');
+
+  const o2 = outcomeFromResult('exec', { command: '', CommandLine: '', cmd: '  ', script: 'pytest' }, { success: true, exitCode: 0 }, 104);
+  assert.equal(o2.command, 'pytest');
+});
+
 test('coldObserver recognizes test run via CommandLine and avoids overconfident penalty', async () => {
   const taskId = 'task-test-cmdline-1';
   coldObserver.recordToolOutcome(taskId, 'write_file', { path: '/tmp/test.js', content: 'hello' }, { success: true });

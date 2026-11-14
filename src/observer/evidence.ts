@@ -494,13 +494,10 @@ export function outcomeFromResult(tool: string, args: Record<string, unknown>, r
     && !(typeof record.exitCode === 'number' && (!Number.isFinite(record.exitCode) || record.exitCode !== 0));
   const rawError = typeof record.error === 'string' ? record.error : '';
   const exitCode = typeof record.exitCode === 'number' && Number.isFinite(record.exitCode) ? record.exitCode : null;
-  const rawCommand = typeof args.command === 'string' ? args.command
-    : typeof args.CommandLine === 'string' ? args.CommandLine
-    : typeof args.commandLine === 'string' ? args.commandLine
-    : typeof args.cmd === 'string' ? args.cmd
-    : typeof args.script === 'string' ? args.script
-    : (['run_command', 'run', 'execute', 'exec', 'bash', 'terminal', 'sh', 'zsh', 'sysrun'].includes((tool || '').toLowerCase()) && typeof args.detail === 'string') ? args.detail
-    : '';
+  const detailFallback = ['run_command', 'run', 'execute', 'exec', 'bash', 'terminal', 'sh', 'zsh', 'sysrun']
+    .includes((tool || '').toLowerCase()) ? args.detail : undefined;
+  const rawCommand = [args.command, args.CommandLine, args.commandLine, args.cmd, args.script, detailFallback]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? '';
   const command = rawCommand.trim();
   const browserData = Array.isArray(record.data) ? record.data : [];
   const imageCaptured = success && record._is_image_marker === true;
