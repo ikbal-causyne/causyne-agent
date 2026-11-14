@@ -1161,14 +1161,14 @@ export class ChatRenderer {
     // leave two frames showing two different outputs, not one shown twice.
     const output = this.lastOutput;
     this.frame('result', () => {
-      const width = this.width() - 7;
+      const width = Math.max(8, this.width() - 7);
       this.write('');
       for (const line of String(output.text).split('\n')) {
         for (const part of wrap(safeDisplay(line), width)) {
           this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(part)}`);
         }
       }
-        if (output.spillPath) {
+      if (output.spillPath) {
         this.write(this.clipHint(output.spillPath));
       }
       this.write('');
@@ -1180,7 +1180,8 @@ export class ChatRenderer {
    * Remember the payload Ctrl+O expands. Separate from rendering it, because
    * rendering runs again on every reflow and this must not.
    */
-  captureLastOutput(result = {}) {
+  captureLastOutput(result) {
+    if (!result || typeof result !== 'object') return;
     const payload = typeof result.output === 'string' ? result.output
       : typeof result.log === 'string' ? result.log
       : '';
@@ -1189,6 +1190,7 @@ export class ChatRenderer {
   }
 
   renderOutputPreview(result, toolName = '') {
+    if (!result || typeof result !== 'object') return;
     const rawPayload = typeof result.output === 'string' ? result.output
       : typeof result.log === 'string' ? result.log
       : '';
@@ -1200,7 +1202,7 @@ export class ChatRenderer {
       : payload;
     if (!source.trim()) return;
 
-    const width = this.width() - 7;
+    const width = Math.max(8, this.width() - 7);
     const cleaned = safeDisplay(source).replace(/\n{3,}/g, '\n\n').trim();
 
     // Wrap first, THEN cut — bounding by source newlines lets a single long
@@ -1329,6 +1331,7 @@ export class ChatRenderer {
   }
 
   renderApprovalRequest(msg, diff = undefined) {
+    if (!msg || typeof msg !== 'object') return;
     // Colour carries the tier; the word never reaches the user. See the note
     // in dialogs.js ApprovalLayer — 'DANGEROUS' printed at somebody installing a
     // package teaches them to stop reading these.
@@ -1339,7 +1342,7 @@ export class ChatRenderer {
     this.write();
     this.write(`${paint(role, GLYPHS.warnMark)} ${paint('ink', 'permission required')}  ${bold(safeDisplay(msg.tool || ''))}${verb ? dim(`  ${verb}`) : ''}`);
     if (detail) {
-      this.write(`  ${paint('ink', truncate(detail, this.width() - 4, GLYPHS.ellipsis))}`);
+      this.write(`  ${paint('ink', truncate(detail, Math.max(8, this.width() - 4), GLYPHS.ellipsis))}`);
     }
 
     // What the user is actually consenting to. Without this the approval gate
@@ -1393,7 +1396,8 @@ export class ChatRenderer {
   }
 
   onError(msg) {
-    const message = safeDisplay(msg.message || '');
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
+    const message = safeDisplay(safeMsg.message || '');
     this.frame('error', () => {
       this.write();
       for (const row of wrappedChatRows(message, this.width(), `${badge('danger', 'ERROR')} `, 'danger')) this.write(row);
@@ -1402,14 +1406,16 @@ export class ChatRenderer {
   }
 
   onBudgetWarning(msg) {
-    const message = safeDisplay(msg.message || '');
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
+    const message = safeDisplay(safeMsg.message || '');
     this.frame('notice', () => {
       for (const row of wrappedChatRows(message, this.width(), `${badge('warn', 'BUDGET')} `, 'warn')) this.write(row);
     }, { tone: 'warn' });
   }
 
   onStatus(msg) {
-    this.startSpinner(msg.message || '');
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
+    this.startSpinner(safeMsg.message || '');
   }
 
   /**
@@ -1428,9 +1434,9 @@ export class ChatRenderer {
       const head = `${paint('accent', GLYPHS.step)} ${bold(paint('ink', 'skill'))}`
         + `${dim(`  ${GLYPHS.dot}  `)}${paint('agent', safeDisplay(id))}`;
       this.write();
-      this.write(truncate(head, width - 1, GLYPHS.ellipsis));
+      this.write(truncate(head, Math.max(8, width - 1), GLYPHS.ellipsis));
       if (instruction) {
-        for (const line of wrapBlock(safeDisplay(instruction), width - 4, { hang: 0 })) {
+        for (const line of wrapBlock(safeDisplay(instruction), Math.max(8, width - 4), { hang: 0 })) {
           this.write(dim(`  ${line}`));
         }
       }
@@ -1450,12 +1456,13 @@ export class ChatRenderer {
    * as loudly as the agent's answer trains the user to stop reading both.
    */
   onNotice(msg) {
-    const tone = ['accent', 'success', 'warn', 'muted'].includes(msg.tone) ? msg.tone : 'muted';
-    const message = safeDisplay(msg.message || '');
+    const safeMsg = msg && typeof msg === 'object' ? msg : {};
+    const tone = ['accent', 'success', 'warn', 'muted'].includes(safeMsg.tone) ? safeMsg.tone : 'muted';
+    const message = safeDisplay(safeMsg.message || '');
     this.frame('notice', () => {
       const width = this.measure();
       const marker = paint(tone === 'muted' ? 'rule' : tone, GLYPHS.vLine);
-      for (const line of wrapBlock(message, width - 2, { hang: 0 })) {
+      for (const line of wrapBlock(message, Math.max(8, width - 2), { hang: 0 })) {
         this.write(`${marker} ${dim(line)}`);
       }
     }, { tone });

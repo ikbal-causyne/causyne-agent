@@ -123,3 +123,20 @@ test('deeply indented markdown bullets, numbered items, and quotes clamp indenta
   assert.ok(rows.every((row: string) => visibleWidth(row) <= 40), `overflow row: ${rows.find(r => visibleWidth(r) > 40)}`);
   assert.ok(rows.length <= 10, `over-wrapped into ${rows.length} tiny fragments`);
 });
+
+test('narrow preview, expand, approval, skill, and notice clamp wrap widths and guard nullish payloads', () => {
+  const written: string[] = [];
+  const out = { columns: 8, isTTY: false, write: (chunk: string) => { written.push(chunk); return true; } };
+  const renderer = new ChatRenderer({ out });
+  assert.doesNotThrow(() => renderer.captureLastOutput(null as unknown as Record<string, unknown>));
+  assert.doesNotThrow(() => renderer.renderOutputPreview(null as unknown as Record<string, unknown>, 'bash'));
+  renderer.captureLastOutput({ output: 'hello world from narrow terminal preview' });
+  renderer.renderOutputPreview({ output: 'hello world from narrow terminal preview' }, 'bash');
+  renderer.expandLastOutput();
+  renderer.renderApprovalRequest({ tool: 'edit_file', args: { path: 'src/tui/very-long-file-name.ts' }, risk: 'safe' });
+  renderer.skillInvoked('my-skill', 'follow this carefully');
+  renderer.onNotice(null as unknown as Record<string, unknown>);
+  const rows = written.join('').split('\n').map(stripAnsi).filter(Boolean);
+  assert.ok(rows.some((r: string) => r.includes('hello world')));
+  assert.ok(!rows.some((r: string) => /^ {5}│ [a-z]$/.test(r)), `collapsed 1-char wrap rows detected: ${rows.slice(0, 6).join(' | ')}`);
+});
