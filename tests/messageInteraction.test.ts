@@ -460,3 +460,29 @@ test('placeMessageActionPanel adaptively floats upward when clicking bottom mess
   const splicedRow = placedBottom.rows[placedBottom.layout.y]!;
   assert.match(splicedRow, /\x1b\[2m/);
 });
+
+test('markerAt honors surface.env sidebar disablement on wide terminals and markHoveredMessage guards non-finite scrollTop', () => {
+  const wideSurface: any = {
+    width: 200,
+    env: { CAUSYNE_SIDEBAR: 'off' },
+    out: { rows: 30 },
+    stage: { height: 20, reserved: true },
+    viewport: { height: 15, width: 200, scrollTop: Number.NaN },
+    hoveredMessageFrameId: 1,
+    transcript: {
+      flatten: () => ({
+        rows: ['   ┃ User line across wide screen'],
+        markers: [{ id: 1, kind: 'user', row: 0, meta: { messageText: 'User line across wide screen' } }]
+      })
+    }
+  };
+
+  // At x = 175 on a 200-column terminal with CAUSYNE_SIDEBAR=off, the click is in the main column, not a sidebar
+  const hit = messageAt(wideSurface, { x: 175, y: 24 });
+  assert.equal(hit?.id, 1);
+
+  const viewportRows = Array<string>(14).fill('').concat(['   ┃ User line across wide screen']);
+  markHoveredMessage(viewportRows, wideSurface, 200);
+  assert.ok(viewportRows[14]!.length > '   ┃ User line across wide screen'.length);
+});
+

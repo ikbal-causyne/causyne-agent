@@ -171,7 +171,9 @@ export function markerAt(surface, point) {
     const py = Math.floor(point.y);
     const rawViewW = surface.viewport?.viewWidth;
     const surfWidth = positiveDim(surface.width, positiveDim(rawViewW, positiveDim(surface.viewport?.width, 80)));
-    const mainWidth = sidebarVisible(surfWidth) ? sessionMainWidth(surfWidth) : surfWidth;
+    const mainWidth = sidebarVisible(surfWidth, false, surface.env)
+        ? sessionMainWidth(surfWidth, false, surface.env)
+        : surfWidth;
     const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
     const viewWidth = positiveDim(rawViewW, positiveDim(surface.viewport?.width, surfWidth));
     if (px < leftGutter || px >= Math.min(mainWidth, viewWidth + leftGutter))
@@ -219,7 +221,8 @@ export function markHoveredMessage(rows, surface, contentWidth) {
     const marker = flat.markers.find(item => item.id === id);
     if (!marker || !isMessage(marker))
         return;
-    const visible = Math.max(0, Math.min(rows.length, flat.rows.length - surface.viewport.scrollTop));
+    const scrollTop = Number.isFinite(surface.viewport?.scrollTop) ? Math.max(0, Math.floor(surface.viewport.scrollTop)) : 0;
+    const visible = Math.max(0, Math.min(rows.length, flat.rows.length - scrollTop));
     const padding = rows.length - visible;
     const next = flat.markers[flat.markers.indexOf(marker) + 1];
     const rawStart = marker.row;
@@ -236,10 +239,10 @@ export function markHoveredMessage(rows, surface, contentWidth) {
     }
     if (firstContentRow >= rawEnd)
         return;
-    const first = Math.max(firstContentRow, surface.viewport.scrollTop);
-    const last = Math.min(lastContentRow + 1, surface.viewport.scrollTop + visible);
+    const first = Math.max(firstContentRow, scrollTop);
+    const last = Math.min(lastContentRow + 1, scrollTop + visible);
     for (let transcriptRow = first; transcriptRow < last; transcriptRow++) {
-        const row = transcriptRow - surface.viewport.scrollTop + padding;
+        const row = transcriptRow - scrollTop + padding;
         if (row < padding || row >= rows.length)
             continue;
         const existingRow = rows[row] ?? '';
@@ -381,10 +384,13 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
             const nextM = flat.markers[mIdx + 1];
             const rawStart = marker.row;
             const rawEnd = nextM ? nextM.row - 1 : flat.rows.length - 1;
-            const visible = Math.max(0, Math.min(host.surface.viewport.height, flat.rows.length - host.surface.viewport.scrollTop));
+            const scrollTop = Number.isFinite(host.surface.viewport.scrollTop)
+                ? Math.max(0, Math.floor(host.surface.viewport.scrollTop))
+                : 0;
+            const visible = Math.max(0, Math.min(host.surface.viewport.height, flat.rows.length - scrollTop));
             const padding = host.surface.viewport.height - visible;
-            const startRow = rawStart - host.surface.viewport.scrollTop + padding;
-            const endRow = rawEnd - host.surface.viewport.scrollTop + padding;
+            const startRow = rawStart - scrollTop + padding;
+            const endRow = rawEnd - scrollTop + padding;
             messageBounds = { startRow, endRow, textLength: text.length };
         }
     }
@@ -422,6 +428,7 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
                 loop.taskId = `cli_chat_${Date.now()}`;
                 loop.tokenTracker?.reset?.();
                 const info = { id: forked.id, title: forked.title, messagesCount: history.length };
+                host.surface?.setSessionInfo?.(info);
                 host.renderer?.setSessionInfo?.(info);
                 host.renderer?.renderSessionHistory?.(history, info);
                 host.surface?.viewport?.toBottom?.();
@@ -450,6 +457,7 @@ export function openMessageActions(host, loop, marker, anchorY = null) {
             loop.messages = history;
             loop.taskId = `cli_chat_${Date.now()}`;
             const info = { id: latestSource.id, title: latestSource.title, messagesCount: history.length };
+            host.surface?.setSessionInfo?.(info);
             host.renderer?.setSessionInfo?.(info);
             host.renderer?.renderSessionHistory?.(history, info);
             host.surface?.viewport?.toBottom?.();
