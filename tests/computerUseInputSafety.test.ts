@@ -31,3 +31,19 @@ test('unsupported key chords never become literal text typing', async () => {
     assert.equal(called, false);
   } finally { desktopAct.execute = original; }
 });
+
+test('key action trims surrounding whitespace and rejects blank keys', async () => {
+  const original = desktopAct.execute;
+  const recorded: unknown[] = [];
+  desktopAct.execute = async (args: unknown) => { recorded.push(args); return { success: true }; };
+  try {
+    const blank = await computerUse.execute({ action: 'key', key: '   ' });
+    assert.equal(blank.success, false);
+    assert.match(blank.error ?? '', /requires "key"/i);
+    assert.equal(recorded.length, 0);
+
+    const padded = await computerUse.execute({ action: 'key', key: '  return  ' });
+    assert.equal(padded.success, true);
+    assert.deepEqual(padded.actions, [{ verb: 'key', keyCode: 36 }]);
+  } finally { desktopAct.execute = original; }
+});

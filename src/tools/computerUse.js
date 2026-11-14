@@ -102,17 +102,18 @@ export const computerUse = {
                 desktopActions.push({ verb: 'type', text: args.text });
             }
             else if (actionType === 'key') {
-                if (!args.key)
+                const keyName = typeof args.key === 'string' ? args.key.trim() : '';
+                if (!keyName)
                     return { success: false, error: 'Key action requires "key" parameter.' };
                 const keyMap = {
                     return: 36, enter: 36, tab: 48, space: 49, backspace: 51, escape: 53, esc: 53
                 };
-                const keyCode = keyMap[args.key.toLowerCase()];
+                const keyCode = keyMap[keyName.toLowerCase()];
                 if (keyCode !== undefined) {
                     desktopActions.push({ verb: 'key', keyCode });
                 }
-                else if (/^[a-z0-9]$/i.test(args.key)) {
-                    desktopActions.push({ verb: 'type', text: args.key });
+                else if (/^[a-z0-9]$/i.test(keyName)) {
+                    desktopActions.push({ verb: 'type', text: keyName });
                 }
                 else {
                     return { success: false, error: 'Unsupported key name or chord. Use action "type" for text; compound hotkeys require supported key actuation.' };
