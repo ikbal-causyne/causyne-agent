@@ -102,7 +102,8 @@ function isLikelyBareWebDomain(token: string): boolean {
   if (!host.includes('.') || host.startsWith('.') || host.endsWith('.')) return false;
 
   for (const suffix of KNOWN_HOST_SUFFIXES) {
-    if (host === suffix || host.endsWith(suffix)) return true;
+    const dotSuffix = suffix.startsWith('.') ? suffix : `.${suffix}`;
+    if (host === suffix || host.endsWith(dotSuffix)) return true;
   }
 
   const parts = host.split('.');
@@ -122,7 +123,9 @@ function isLikelyBareWebDomain(token: string): boolean {
 }
 
 export function resolveFullUrlFromMessage(candidate: string, rawMessageText?: string): string {
+  if (typeof candidate !== 'string') return '';
   const cleaned = candidate.trim();
+  if (!cleaned) return '';
   const isTruncated = cleaned.endsWith('…') || cleaned.endsWith('...');
   const prefix = cleaned
     .replace(/(?:…|\.{2,})+$/, '')
@@ -175,8 +178,10 @@ export function extractRowLinks(
   rawMessageText?: string,
   prevRawRow?: string
 ): DetectedLink[] {
-  if (!rawRow) return [];
+  if (typeof rawRow !== 'string' || !rawRow) return [];
   const links: DetectedLink[] = [];
+  const csiRe = /\x1b\[[0-?]*[ -/]*[@-~]/y;
+  const oscRe = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/y;
 
   let col = 0;
   let i = 0;
@@ -250,12 +255,14 @@ export function extractRowLinks(
     }
 
     if (rawRow[i] === '\x1b') {
-      const csi = /^\x1b\[[0-?]*[ -/]*[@-~]/.exec(rawRow.slice(i));
+      csiRe.lastIndex = i;
+      const csi = csiRe.exec(rawRow);
       if (csi) {
         i += csi[0].length;
         continue;
       }
-      const osc = /^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/.exec(rawRow.slice(i));
+      oscRe.lastIndex = i;
+      const osc = oscRe.exec(rawRow);
       if (osc) {
         i += osc[0].length;
         continue;
@@ -334,7 +341,16 @@ export function detectLinkAtPoint(
   point: { x: number; y: number },
   marker?: MessageMarker | null
 ): DetectedLink | null {
-  if (!surface?.stage.reserved || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+  if (
+    !surface?.stage?.reserved
+    || !surface.transcript?.flatten
+    || !point
+    || typeof point !== 'object'
+    || !Number.isFinite(point.x)
+    || !Number.isFinite(point.y)
+  ) {
+    return null;
+  }
   const surfaceWidth = Number.isFinite(surface.width) ? Math.floor(surface.width) : 0;
   const rawViewW = Number.isFinite(surface.viewport?.viewWidth) ? surface.viewport.viewWidth : surface.viewport?.width;
   const rawViewH = Number.isFinite(surface.viewport?.viewHeight) ? surface.viewport.viewHeight : surface.viewport?.height;
@@ -352,15 +368,16 @@ export function detectLinkAtPoint(
   const leftGutter = (surface.turnRailLayout?.turns?.length ?? 0) > 0 ? 3 : 0;
   if (px < leftGutter || px >= Math.min(mainWidth, viewportWidth + leftGutter)) return null;
 
-  const outRows = Number.isFinite(surface.out.rows) && (surface.out.rows as number) > 0
-    ? Math.floor(surface.out.rows as number)
+  const outRows = Number.isFinite(surface.out?.rows) && (surface.out?.rows as number) > 0
+    ? Math.floor(surface.out?.rows as number)
     : stageHeight;
   const top = Math.max(0, outRows - stageHeight);
   const viewRow = py - top;
   if (viewRow < 0 || viewRow >= viewportHeight) return null;
 
-  const scrollTop = Number.isFinite(surface.viewport.scrollTop) ? Math.max(0, Math.floor(surface.viewport.scrollTop)) : 0;
+  const scrollTop = Number.isFinite(surface.viewport?.scrollTop) ? Math.max(0, Math.floor(surface.viewport.scrollTop)) : 0;
   const flat = surface.transcript.flatten(viewportWidth);
+  if (!Array.isArray(flat?.rows)) return null;
   const visible = Math.max(0, Math.min(viewportHeight, flat.rows.length - scrollTop));
   const padding = viewportHeight - visible;
   if (viewRow < padding) return null;
@@ -397,18 +414,26 @@ export interface OpenLinkOptions {
  * Open an HTTP/HTTPS/file URL in the system default browser or handler without blocking the TUI.
  */
 export function openDetectedLink(url: string, options: OpenLinkOptions = {}): boolean {
-  if (!url || !/^(?:https?|file):\/\//i.test(url)) return false;
+  if (
+    typeof url !== 'string'
+    || !url
+    || /[\x00-\x1f\x7f\s]/.test(url)
+    || !/^(?:https?|file):\/\//i.test(url)
+  ) {
+    return false;
+  }
 
-  const now = typeof options.now === 'number' && Number.isFinite(options.now) ? options.now : Date.now();
-  const debounceMs = typeof options.debounceMs === 'number' && Number.isFinite(options.debounceMs)
-    ? Math.max(0, options.debounceMs)
+  const safeOptions: OpenLinkOptions = options && typeof options === 'object' ? options : {};
+  const now = typeof safeOptions.now === 'number' && Number.isFinite(safeOptions.now) ? safeOptions.now : Date.now();
+  const debounceMs = typeof safeOptions.debounceMs === 'number' && Number.isFinite(safeOptions.debounceMs)
+    ? Math.max(0, safeOptions.debounceMs)
     : 800;
   if (url === lastOpenedUrl && now >= lastOpenedAt && now - lastOpenedAt < debounceMs) {
     return true;
   }
 
-  const platform = options.platform ?? process.platform;
-  const spawnFn = options.spawnImpl ?? spawn;
+  const platform = safeOptions.platform ?? process.platform;
+  const spawnFn = safeOptions.spawnImpl ?? spawn;
 
   let command: string;
   let args: string[];

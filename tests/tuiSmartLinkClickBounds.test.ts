@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   detectLinkAtPoint,
+  extractRowLinks,
   openDetectedLink,
+  resolveFullUrlFromMessage,
   resetLinkOpenDebounceForTests,
   type SmartLinkSurface
 } from '../src/tui/smartLinkClick.js';
@@ -95,5 +97,17 @@ describe('smartLinkClick finite and integer bounds', () => {
     });
     assert.equal(earlierClock, true);
     assert.equal(launches, 2);
+  });
+
+  it('guards partial surfaces, null options/points, control chars in URLs, and false-positive host suffixes', () => {
+    resetLinkOpenDebounceForTests();
+    assert.equal(detectLinkAtPoint({} as never, { x: 1, y: 1 }), null);
+    assert.equal(detectLinkAtPoint({ stage: { reserved: true } } as never, null as never), null);
+    assert.deepEqual(extractRowLinks(null as never), []);
+    assert.equal(resolveFullUrlFromMessage(null as never), '');
+
+    assert.equal(extractRowLinks('check app.badlocalhost and evilvercel.com', 0).filter(l => l.label.includes('badlocalhost')).length, 0);
+    assert.equal(openDetectedLink('https://example.com/\n--flag', { spawnImpl: (() => ({ on() {}, unref() {} })) as never }), false);
+    assert.equal(openDetectedLink('invalid-scheme://x', null as never), false);
   });
 });
