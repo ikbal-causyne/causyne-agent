@@ -30,6 +30,10 @@ import { visibleWidth, padEnd, truncate, wrap } from './text.js';
 // bordered box; one column belongs to the bar, so the gutter is one more.
 const GUTTER = 1;
 
+function finiteWidth(width: number | undefined, fallback = 80): number {
+  return typeof width === 'number' && Number.isFinite(width) ? Math.floor(width) : fallback;
+}
+
 export interface BarBlockOptions {
   width?: number;
   role?: string;
@@ -59,7 +63,7 @@ export function barBlock(lines: string[], {
   const glyph = GLYPHS.barHeavy || GLYPHS.bar || '┃';
 
   const barWidth = visibleWidth(glyph);
-  const body = Math.max(1, width - barWidth - GUTTER);
+  const body = Math.max(1, finiteWidth(width) - barWidth - GUTTER);
   const bar = paint(role, glyph);
   const gutter = ' '.repeat(GUTTER);
 
@@ -81,11 +85,11 @@ export function barBlock(lines: string[], {
  * rows individually (the prompt editor, a status row) use barBlock directly.
  */
 export function blockOf(text: string, options: BarBlockOptions = {}): string[] {
-  const width = options.width || 80;
+  const safeWidth = finiteWidth(options.width) || 80;
   const glyph = GLYPHS.barHeavy || GLYPHS.bar || '┃';
-  const inner = Math.max(1, width - visibleWidth(glyph) - GUTTER);
+  const inner = Math.max(1, safeWidth - visibleWidth(glyph) - GUTTER);
   const lines = wrap(String(text == null ? '' : text), inner);
-  return barBlock(lines.length ? lines : [''], options);
+  return barBlock(lines.length ? lines : [''], { ...options, width: safeWidth });
 }
 
 export interface PanelOptions {
@@ -98,7 +102,7 @@ export interface PanelOptions {
  * A bordered panel with its title inset into the top border.
  */
 export function panel(rows: string[], { width = 80, title = '', role = 'rule' }: PanelOptions = {}): string[] {
-  const inner = Math.max(4, width - 2);
+  const inner = Math.max(4, finiteWidth(width) - 2);
   const h = GLYPHS.hLine;
   const label = title ? ` ${title} ` : '';
   const clippedLabel = visibleWidth(label) > inner - 2 ? '' : label;
