@@ -32,10 +32,15 @@ export const DEFAULT_MAX_EXPANDED_LINES = 12;
 /**
  * Calculates total wrapped lines for reasoning content under the thinking box budget.
  */
+function clampThinkingWidth(width: number | undefined): number {
+  const numeric = Number(width ?? 80);
+  return Number.isFinite(numeric) ? Math.max(20, Math.floor(numeric)) : 80;
+}
+
 export function calculateThinkingLineCount(content: string, width: number): number {
   const text = String(content ?? '').trim();
   if (!text) return 0;
-  const safeWidth = Math.max(20, Math.floor(width));
+  const safeWidth = clampThinkingWidth(width);
   const contentBudget = Math.max(10, safeWidth - 4);
   return wrapBlock(text, contentBudget, { hang: 0 }).length;
 }
@@ -126,7 +131,7 @@ export function buildThinkingBoxBorders(
   bottom: string;
   wrapRow: (line: string) => string;
 } {
-  const w = Math.max(20, Math.floor(width));
+  const w = clampThinkingWidth(width);
   const inner = w - 2; // total space between left and right outer border corners
 
   const h = GLYPHS.hLine || '─';
@@ -185,7 +190,7 @@ export function renderThinkingFrame(
   const text = String(content ?? '').trim();
   if (!text) return [];
 
-  const width = Math.max(20, Math.floor(options.width ?? 80));
+  const width = clampThinkingWidth(options.width);
   const isStreaming = Boolean(options.streaming);
   const isCollapsed = Boolean(options.collapsed);
   const durationText = options.durationText ? String(options.durationText).trim() : '';
