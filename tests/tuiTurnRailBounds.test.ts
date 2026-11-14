@@ -1,6 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTurnRailCells, resolveActiveTurnIndex, sliceFromColumn, type SessionTurn } from '../src/tui/turnRail.js';
+import {
+  buildTurnRailCells,
+  renderTurnPreviewCard,
+  resolveActiveTurnIndex,
+  sliceFromColumn,
+  type SessionTurn
+} from '../src/tui/turnRail.js';
+import { visibleWidth } from '../src/tui/text.js';
 
 const sampleTurn = (turnIndex: number, startRow: number): SessionTurn => ({
   turnIndex,
@@ -32,5 +39,10 @@ describe('turnRail finite bounds', () => {
       assert.deepEqual(buildTurnRailCells(turns, Number.POSITIVE_INFINITY, 1, null).cells, []);
       assert.equal(buildTurnRailCells(turns, 5.7, 1, null).cells.length, 5);
     });
+  });
+
+  it('renderTurnPreviewCard falls back safely on non-finite maxCardWidth', () => {
+    const rows = renderTurnPreviewCard(sampleTurn(1, 0), Number.NaN);
+    assert.equal(visibleWidth(rows[0]!), 50);
   });
 });

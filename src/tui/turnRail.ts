@@ -333,7 +333,8 @@ export function formatPreviewCardMarkdown(raw: string): string {
  * - Footer: Left 'X of Y', Right timestamp
  */
 export function renderTurnPreviewCard(turn: SessionTurn, maxCardWidth = 50): string[] {
-  const cardWidth = Math.max(38, Math.min(60, maxCardWidth));
+  const safeWidth = Number.isFinite(maxCardWidth) ? Math.floor(maxCardWidth) : 50;
+  const cardWidth = Math.max(38, Math.min(60, safeWidth));
   const innerWidth = cardWidth - 4; // 2 border chars + 2 padding chars
 
   const cardBg = '\x1b[48;2;28;28;32m';
