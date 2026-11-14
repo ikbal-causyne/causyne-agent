@@ -1,3 +1,4 @@
+import { safeDisplay } from './text.js';
 const activeStageHosts = new Set();
 let stageMouseSessionDepth = 0;
 let guardInstalled = false;
@@ -70,9 +71,9 @@ function ensureConsoleGuardInstalled() {
     if (originalStdoutWrite && process.stdout) {
         process.stdout.write = ((chunk, encodingOrCb, cb) => {
             if (isAnyStageReservedOnStdout() && !stageInternalWriting) {
-                // Prevent rogue unmanaged writes from emitting bare newlines that scroll the stage
+                // Prevent rogue unmanaged writes from emitting newlines, CRs, or escape codes that corrupt the stage
                 const text = String(chunk ?? '');
-                if (text.includes('\n')) {
+                if (text.includes('\n') || text.includes('\r') || text.includes('\x1b')) {
                     if (typeof encodingOrCb === 'function')
                         encodingOrCb();
                     else if (typeof cb === 'function')
@@ -117,16 +118,19 @@ export function setTransientNotice(host, message, ttlMs = 4000) {
         clearTimeout(existing);
         noticeTimers.delete(host);
     }
-    host.notice = message;
+    const cleanMessage = typeof message === 'string' && message.length > 0
+        ? safeDisplay(message).replace(/\s+/g, ' ').trim()
+        : '';
+    host.notice = cleanMessage;
     host.scheduleDraw();
     const safeTtlMs = !Number.isFinite(ttlMs)
         ? (Number.isNaN(ttlMs) ? 4000 : 0)
         : Math.min(Math.floor(ttlMs), 2_147_483_647);
-    if (!message || safeTtlMs <= 0)
+    if (!cleanMessage || safeTtlMs <= 0)
         return;
     const timer = setTimeout(() => {
         noticeTimers.delete(host);
-        if (host.notice === message) {
+        if (host.notice === cleanMessage) {
             host.notice = '';
             host.scheduleDraw();
         }

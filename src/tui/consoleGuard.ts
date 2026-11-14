@@ -1,3 +1,5 @@
+import { safeDisplay } from './text.js';
+
 export interface ConsoleGuardStageHost {
   out?: NodeJS.WriteStream | { rows?: number; columns?: number };
   stage?: { reserved?: boolean; invalidate?: () => void };
@@ -87,9 +89,9 @@ function ensureConsoleGuardInstalled(): void {
   if (originalStdoutWrite && process.stdout) {
     process.stdout.write = ((chunk: unknown, encodingOrCb?: unknown, cb?: unknown): boolean => {
       if (isAnyStageReservedOnStdout() && !stageInternalWriting) {
-        // Prevent rogue unmanaged writes from emitting bare newlines that scroll the stage
+        // Prevent rogue unmanaged writes from emitting newlines, CRs, or escape codes that corrupt the stage
         const text = String(chunk ?? '');
-        if (text.includes('\n')) {
+        if (text.includes('\n') || text.includes('\r') || text.includes('\x1b')) {
           if (typeof encodingOrCb === 'function') (encodingOrCb as () => void)();
           else if (typeof cb === 'function') (cb as () => void)();
           return true;
@@ -135,16 +137,19 @@ export function setTransientNotice(host: TransientNoticeHost, message: string, t
     clearTimeout(existing);
     noticeTimers.delete(host);
   }
-  host.notice = message;
+  const cleanMessage = typeof message === 'string' && message.length > 0
+    ? safeDisplay(message).replace(/\s+/g, ' ').trim()
+    : '';
+  host.notice = cleanMessage;
   host.scheduleDraw();
   const safeTtlMs = !Number.isFinite(ttlMs)
     ? (Number.isNaN(ttlMs) ? 4000 : 0)
     : Math.min(Math.floor(ttlMs), 2_147_483_647);
-  if (!message || safeTtlMs <= 0) return;
+  if (!cleanMessage || safeTtlMs <= 0) return;
 
   const timer = setTimeout(() => {
     noticeTimers.delete(host);
-    if (host.notice === message) {
+    if (host.notice === cleanMessage) {
       host.notice = '';
       host.scheduleDraw();
     }

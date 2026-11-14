@@ -26,6 +26,11 @@ describe('consoleGuard setTransientNotice bounds', () => {
 
       setTransientNotice(host, 'Long notice', 1e12);
       assert.equal(delays.at(-1), 2_147_483_647);
+
+      setTransientNotice(host, 'Error: failed\x1b[2J\nnext line sk-1234567890abcdef', 5000);
+      assert.equal(host.notice.includes('\x1b'), false, 'notice must strip raw escape sequences');
+      assert.equal(host.notice.includes('\n'), false, 'notice must collapse newlines');
+      assert.equal(host.notice.includes('sk-1234567890abcdef'), false, 'notice must redact secrets');
     } finally {
       setTransientNotice(host, '', 0);
       globalThis.setTimeout = prevSetTimeout;
