@@ -624,7 +624,7 @@ export function handleTurnRailMouse(
 
   // The preview partially overlaps the widened rail hit target. A pointer
   // inside the card belongs to the card, including its left border.
-  if (isCard) isRail = false;
+  if (isCard && layout.cardRect?.turnIndex === surface.hoveredTurnIndex) isRail = false;
   const inHoverZone = isRail || isCard || isBridge;
 
   if (!inHoverZone || relY < 0 || relY >= layout.viewportHeight) {
