@@ -22,6 +22,62 @@ conversation history navigator. Around 00:06 and 00:25 the visible behavior is:
 This is a behavior and geometry reference, **not** a license to copy all
 the reference application's interface or a claim of pixel-perfect parity.
 
+## Frame-by-frame evidence from the actual 38.85-second recording
+
+This revision is based on direct inspection of the original attached
+`Screen Recording 2026-11-15 at 21.48.51.mov` (2118 × 2520 pixels at
+60 fps), not the earlier single-card assumption.
+
+- **00:05–00:06:** A dot opens a floating history panel with the time
+  range **Sat, Nov 14, 3:32 AM – 8:19 PM**, **8 turns**, timestamped
+  entries and a conversational title. The panel has multiple entries,
+  not merely the selected turn's assistant summary.
+- **00:07–00:10:** Moving to other dots changes the panel to different
+  groups (including **7 turns** and **23 turns**). Each group maintains
+  chronological items with short previews.
+- **00:10–00:12:** Another dot opens a small **2-turn** group, while
+  another opens a larger **17-turn** group. Popover height adapts to the
+  number of visible entries; it is not always a fixed card height.
+- **00:18–00:20:** A single latest-turn tooltip appears, containing
+  the user's request and a position indicator (**239 of 239**).
+- **00:26–00:29:** The cursor moves inside a multi-entry history panel;
+  shortly afterward the conversation scrolls to a different portion
+  and the panel disappears. Treat individual entry selection and
+  transcript navigation as distinct from simply highlighting a dot.
+
+### Behavioral invariants
+
+- A dot represents **one turn when sparse, or a group of turns when
+  dense**. Dense sampling must remain visually quiet (retain the
+  existing density test), but every turn must belong to a reachable
+  visible group.
+- A grouped popover has a title, a time-range/turn-count header, and
+  timestamped selectable user turns. The popup is an overlay:
+  **do not expand/reflow underlying transcript or composer rows**.
+- Clicking an entry navigates to *that entry's* message, not always
+  the representative dot's earliest turn.
+- When the group exceeds available preview height, wheel input inside
+  the card pages the list and **must not scroll the chat behind it**.
+  Wheel outside the card continues to scroll the chat.
+- The real card hitbox must win over the nearby widened rail hitbox;
+  synthetic/fallback preview estimates must not steal dot clicks.
+- Read-only rail exploration remains available during live agent work;
+  an agent's busy state is not a reason to disable the feature.
+- Respect keyboard navigation, mouse opt-outs, and terminal capability
+  limitations documented in `TUI_MOUSE_SCROLL_CONTRACT.md`.
+
+### Regression tests
+
+- `tests/tuiTurnTimelineVideoParity.test.ts`: density, group
+  coverage, timestamped preview, clickable group entries, actual
+  Stage overlay and nearest-visible-dot behavior.
+- `tests/tuiTurnTimelineWheel.test.ts`: scrolling a 23-turn group
+  without scrolling the underlying transcript and overlap hitboxes.
+- `tests/interfaceIntegration.test.js`: sparse density remains
+  bounded; no solid rail.
+- `tests/turnRail.test.ts`: existing click/hover semantics remain
+  available, including while an agent is busy.
+
 ## Causyne contract
 
 1. A visible session with user turns and enough width paints its thin left
