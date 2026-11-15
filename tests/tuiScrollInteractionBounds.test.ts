@@ -51,7 +51,7 @@ describe('scrollInteraction finite bounds', () => {
     assert.equal(drawCalls, 0);
     assert.equal(surface.activeTurnIndex, 2);
 
-    // Non-finite host.out.rows should fall back cleanly and fractional coordinates should floor to integer cells.
+    // Non-finite host.out.rows should fall back cleanly; fractional coordinates inside the 80-column conversation floor to valid cells (column 80 itself is out of bounds).
     const infRowsHost = {
       out: { rows: Number.POSITIVE_INFINITY },
       notice: '',
@@ -61,7 +61,7 @@ describe('scrollInteraction finite bounds', () => {
     };
 
     const fracResult = handleScrollbarMouse(
-      { name: 'mouse', mouse: { x: 80.9, y: 12.9, pressed: true, button: 0 } },
+      { name: 'mouse', mouse: { x: 79.9, y: 12.9, pressed: true, button: 0 } },
       viewport,
       surface,
       infRowsHost
