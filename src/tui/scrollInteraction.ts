@@ -290,8 +290,8 @@ export function handleScrollbarMouse(
   if (!hasRail) return false;
   const contentW = Math.max(20, mainW - 3);
 
-  // Rail occupies column mainW - 3 through mainW (spacer, glyph column, outer margin)
-  const isRailColumn = mouseX >= Math.max(contentW, mainW - 3) && mouseX <= mainW;
+  // Rail is inside the conversation; the sidebar starts at mainW and must not trigger scrolling
+  const isRailColumn = mouseX >= Math.max(contentW, mainW - 3) && mouseX < mainW;
 
   if (isRailColumn) {
     (surface as any).activeTurnIndex = null;
