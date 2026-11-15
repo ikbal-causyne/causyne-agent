@@ -90,16 +90,16 @@ describe('Stage consoleGuard terminal-mode isolation', () => {
       const afterStop = writes.splice(0).join('');
 
       origWrite(JSON.stringify({
-        has1000hOpen: afterOpen.includes('\\x1b[?1000h\\x1b[?1006h'),
-        has1000lHome: afterHome.includes('\\x1b[?1006l\\x1b[?1000l'),
+        has1000hOpen: afterOpen.includes('\\x1b[?1006h\\x1b[?1000h'),
+        has1000lHome: afterHome.includes('\\x1b[?1000l\\x1b[?1006l'),
         has2004hPromptStart: afterPromptStart.includes('\\x1b[?2004h'),
-        has1000hLeave: afterLeave.includes('\\x1b[?1000h\\x1b[?1006h'),
+        has1000hLeave: afterLeave.includes('\\x1b[?1006h\\x1b[?1000h'),
         rogueBlocked: rogueAttempt === '',
-        has1000lRelease: afterRelease.includes('\\x1b[?1006l\\x1b[?1000l'),
-        has1000hCapture: afterCapture.includes('\\x1b[?1000h\\x1b[?1006h'),
-        has1000lSuspend: afterSuspend.includes('\\x1b[?1006l\\x1b[?1000l'),
-        has1000hResume: afterResume.includes('\\x1b[?1000h\\x1b[?1006h'),
-        has1000lStop: afterStop.includes('\\x1b[?1006l\\x1b[?1000l'),
+        has1000lRelease: afterRelease.includes('\\x1b[?1000l\\x1b[?1006l'),
+        has1000hCapture: afterCapture.includes('\\x1b[?1006h\\x1b[?1000h'),
+        has1000lSuspend: afterSuspend.includes('\\x1b[?1000l\\x1b[?1006l'),
+        has1000hResume: afterResume.includes('\\x1b[?1006h\\x1b[?1000h'),
+        has1000lStop: afterStop.includes('\\x1b[?1000l\\x1b[?1006l'),
         has2004lStop: afterStop.includes('\\x1b[?2004l')
       }) + '\\n');
     `;
@@ -197,7 +197,7 @@ describe('Stage consoleGuard terminal-mode isolation', () => {
       await runInteractiveSessionPicker(fakePrompt, { workspace: ws });
       assert.equal(surface.homeInfo, null, 'switching/starting session must exit Home view');
       assert.equal(surface.mouseOn, true, 'exiting Home via session picker must enable mouse reporting');
-      assert.ok(writes.join('').includes('\x1b[?1000h\x1b[?1006h'));
+      assert.ok(writes.join('').includes('\x1b[?1006h\x1b[?1000h'));
     } finally {
       surface.close();
       try { deleteSession(created.id); } catch {}

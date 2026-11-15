@@ -479,7 +479,9 @@ function partialSuffixLength(text, marker) {
  * There is no mode that reports the wheel alone. UX-02.
  */
 export function mouseTracking(enabled) {
-  return enabled ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1006l\x1b[?1000l';
+  // Select SGR encoding before enabling reporting. Disable reporting before
+  // tearing down its encoding so no event can arrive as legacy X10 bytes.
+  return enabled ? '\x1b[?1006h\x1b[?1000h' : '\x1b[?1000l\x1b[?1006l';
 }
 
 /** Turn bracketed paste on/off. Paired with the editor's lifecycle. */
