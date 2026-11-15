@@ -34,7 +34,7 @@ import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionSidebarWidth, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
-import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex } from './turnRail.js';
+import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex, formatPreviewCardMarkdown } from './turnRail.js';
 import { registerStageConsoleGuard, setStageConsoleGuardActive, runWithStageWrite } from './consoleGuard.js';
 
 // Rows of evicted transcript held for the exit log. Eviction only happens after
@@ -179,6 +179,60 @@ export function scrollSettings(env = process.env, config = null) {
     : Boolean(tui.scrollAcceleration);
 
   return { speed, accelerate };
+}
+
+
+/**
+ * A rail dot represents a *time-ordered group* when a long conversation is
+ * compressed into fewer terminal rows. The video reference shows a titled
+ * history list with timestamps, not a single-turn assistant-summary card.
+ * This function never changes transcript geometry or user content.
+ */
+export function renderTurnTimelineCard(turns, maxCardWidth = 52, maxHeight = 16, offset = 0) {
+  if (!Array.isArray(turns) || turns.length === 0) {
+    return { rows: [], entries: [], entryStart: 4, maxOffset: 0 };
+  }
+  const width = Number.isFinite(maxCardWidth) ? Math.max(24, Math.min(52, Math.floor(maxCardWidth))) : 52;
+  const inner = width - 4;
+  const viewHeight = Number.isFinite(maxHeight) ? Math.max(6, Math.floor(maxHeight)) : 16;
+  const count = Math.max(1, Math.min(10, turns.length, viewHeight - 5));
+  const maxOffset = Math.max(0, turns.length - count);
+  const start = Number.isFinite(offset) ? Math.max(0, Math.min(maxOffset, Math.floor(offset))) : 0;
+  const entries = turns.slice(start, start + count);
+  const bg = '\\x1b[48;2;28;28;32m';
+  const border = bg + '\\x1b[38;2;75;75;82m';
+  const reset = '\\x1b[0m';
+  const top = border + '╭' + '─'.repeat(width - 2) + '╮' + reset;
+  const bottom = border + '╰' + '─'.repeat(width - 2) + '╯' + reset;
+  const blank = border + '│' + bg + ' '.repeat(inner + 2) + border + '│' + reset;
+  const line = (value, style = '') => {
+    const text = truncate(formatPreviewCardMarkdown(String(value || '')), inner, '…');
+    return border + '│' + bg + ' ' + style + padEnd(text, inner) + border + ' │' + reset;
+  };
+  const shortTime = turn => {
+    const ts = Number(turn?.timestamp);
+    return Number.isFinite(ts) && ts > 0
+      ? new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      : '';
+  };
+  const first = turns[0];
+  const last = turns[turns.length - 1];
+  const title = first?.userPrompt || 'Conversation history';
+  const range = shortTime(first) + (turns.length > 1 ? ' – ' + shortTime(last) : '');
+  const header = range.trim() + ' · ' + turns.length + (turns.length === 1 ? ' turn' : ' turns');
+  const rows = [
+    top,
+    line(title, '\\x1b[1m\\x1b[38;2;235;235;242m'),
+    line(header, '\\x1b[38;2;145;145;155m'),
+    blank
+  ];
+  for (const turn of entries) {
+    const when = shortTime(turn);
+    const prompt = turn?.userPrompt || 'Turn ' + String(turn?.turnIndex ?? '');
+    rows.push(line((when ? when + '  ' : '') + prompt, '\\x1b[38;2;185;185;193m'));
+  }
+  rows.push(bottom);
+  return { rows, entries, entryStart: 4, maxOffset };
 }
 
 export class StageSurface {
@@ -600,7 +654,12 @@ export class StageSurface {
       if (this.hoveredTurnIndex && this.turnRailLayout?.turns?.length) {
         const hoveredTurn = this.turnRailLayout.turns.find(t => t.turnIndex === this.hoveredTurnIndex);
         if (hoveredTurn) {
-          const card = renderTurnPreviewCard(hoveredTurn, 52);
+          const groupRow = this.turnRailLayout?.dotRows?.get(hoveredTurn.turnIndex);
+          const group = this.turnRailLayout?.rowToTurns?.get(groupRow) || [hoveredTurn];
+          const timeline = group.length > 1
+            ? renderTurnTimelineCard(group, Math.min(52, mainWidth - 5), rows.length, this.turnRailCardOffset || 0)
+            : null;
+          const card = timeline?.rows || renderTurnPreviewCard(hoveredTurn, 52);
           const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
           rows = overlayTurnPreviewCard(rows, card, anchorY, this.turnRailLayout?.railX ?? 1, mainWidth);
           if (this.turnRailLayout) {
@@ -616,7 +675,14 @@ export class StageSurface {
             const effectiveCardWidth = Math.max(1, Math.min(cardWidth, Math.max(1, mainWidth - cardX)));
             const startY = Math.max(0, Math.min(rows.length - card.length, safeAnchorY - Math.floor(card.length / 2)));
             const visibleCardHeight = Math.min(card.length, Math.max(0, rows.length - startY));
-            this.turnRailLayout.cardRect = { x: cardX, y: startY, width: effectiveCardWidth, height: visibleCardHeight, turnIndex: hoveredTurn.turnIndex };
+            this.turnRailLayout.cardRect = {
+              x: cardX, y: startY, width: effectiveCardWidth, height: visibleCardHeight,
+              turnIndex: hoveredTurn.turnIndex,
+              entries: timeline?.entries || null,
+              entryStart: timeline?.entryStart ?? null,
+              groupTurns: group.length > 1 ? group : null,
+              maxOffset: timeline?.maxOffset || 0
+            };
           }
         }
       } else if (this.turnRailLayout) {
@@ -864,8 +930,16 @@ export class StageSurface {
       ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex, scrollTop)
       : null;
 
+    const rowToTurns = new Map();
+    for (const turn of turns) {
+      const row = railResult?.layout?.dotRows?.get(turn.turnIndex);
+      if (!Number.isFinite(row)) continue;
+      if (!rowToTurns.has(row)) rowToTurns.set(row, []);
+      rowToTurns.get(row).push(turn);
+    }
     this.turnRailLayout = {
       railX: hasTurns ? 1 : contentWidth + 1,
+      rowToTurns,
       stageTop: Math.max(0, (this.out.rows || this.stage.height) - this.stage.height),
       viewportHeight: rows.length,
       dotRows: railResult?.layout?.dotRows || new Map(),

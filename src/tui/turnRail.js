@@ -247,7 +247,7 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         dotRows.set(turnNum, rowIdx);
         const isHovered = hoveredTurnIndex === turnNum;
         const isActive = activeTurnIndex === turnNum;
-        const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0;
+        const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0 || !rowToTurn.has(rowIdx);
         const rowHasHovered = cells[rowIdx]?.includes('230;235;245m');
         const rowHasDot = cells[rowIdx]?.includes('●');
         if (isHovered) {
@@ -581,17 +581,10 @@ export function handleTurnRailMouse(event, surface, host) {
     }
     if (turnNum) {
         if (isMouseMotion(event.sequence)) {
-            // While a turn is streaming, a hover card would sit on top of live output
-            // (thinking, code edits, tool frames). Clicking a dot still navigates.
-            if (host?.busy) {
-                if (surface.hoveredTurnIndex !== null && surface.hoveredTurnIndex !== undefined) {
-                    surface.hoveredTurnIndex = null;
-                    surface.hoveredTurnAnchorY = null;
-                    redrawHost(host);
-                }
-                return true;
-            }
+            // Reading history is independent of ongoing agent work. Never disable
+            // the rail merely because a tool is running; previews are read-only.
             if (surface.hoveredTurnIndex !== turnNum) {
+                surface.turnRailCardOffset = 0;
                 surface.hoveredTurnIndex = turnNum;
                 surface.hoveredTurnAnchorY = anchorY;
                 redrawHost(host);
@@ -599,6 +592,15 @@ export function handleTurnRailMouse(event, surface, host) {
             return true;
         }
         if (event.mouse.button === 0 && event.mouse.pressed) {
+            // A compressed rail dot opens a timestamped group. Its individual
+            // entries are actual navigation targets, not a decorative tooltip.
+            if (isCard && layout.cardRect?.entries) {
+                const item = relY - layout.cardRect.y - layout.cardRect.entryStart;
+                const chosen = layout.cardRect.entries[item];
+                if (!chosen)
+                    return true; // Header/border clicks leave the chat alone.
+                turnNum = chosen.turnIndex;
+            }
             const turns = layout.turns || [];
             const turn = turns.find((t) => t.turnIndex === turnNum);
             const isLatestTurn = turnNum === turns.length || (turn && turns.length > 0 && turn.turnIndex === turns[turns.length - 1].turnIndex);
