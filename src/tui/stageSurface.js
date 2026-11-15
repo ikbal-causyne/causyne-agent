@@ -217,6 +217,7 @@ export class StageSurface {
     this.mouseWanted = String(env.CAUSYNE_MOUSE ?? '1') !== '0';
     this.mouseOn = false;
     this.mouseCaptured = false;
+    this.mouseMotionOn = false;
     this.detached = false;
 
     // Retained for callers that pass a measured header width. The composer now
@@ -324,12 +325,29 @@ export class StageSurface {
     });
   }
 
+  syncTurnRailMotion(railHasTurns) {
+    if (!this.mouseOn || !this.mouseCaptured || !this.stage.reserved) return;
+    const preference = String(this.env.CAUSYNE_MOUSE_HOVER ?? '').trim();
+    // Hover needs 1003, not just 1000. Limit default motion tracking to
+    // visible turn rails; preserve explicit opt-in and opt-out preferences.
+    const wantMotion = preference === '1' || (preference !== '0' && railHasTurns);
+    if (this.mouseMotionOn === wantMotion) return;
+    this.writeModeControl(mouseHoverTracking(wantMotion, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
+    this.mouseMotionOn = wantMotion;
+    if (!wantMotion) {
+      // 1003 can replace 1000 in terminal tracking-mode state. When it is
+      // removed, explicitly restore 1000 or the wheel scrolls the shell.
+      this.writeModeControl(mouseTracking(true));
+    }
+  }
+
   enableMouse() {
     if (this.homeInfo || !this.mouseWanted || this.mouseOn || !this.stage.reserved) return false;
     this.writeModeControl(mouseTracking(true));
     this.writeModeControl(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.mouseOn = true;
+    this.mouseMotionOn = String(this.env.CAUSYNE_MOUSE_HOVER ?? '') === '1';
     return true;
   }
 
@@ -340,6 +358,7 @@ export class StageSurface {
     this.writeModeControl(mouseTracking(false));
     this.mouseCaptured = false;
     this.mouseOn = false;
+    this.mouseMotionOn = false;
     this.detached = false;
     return true;
   }
@@ -493,6 +512,7 @@ export class StageSurface {
     }
 
     if (this.homeInfo || (caret?.modal && !caret?.inline)) {
+      this.syncTurnRailMotion(false);
       this.turnRailLayout = null;
       this.hoveredTurnIndex = null;
       this.hoveredTurnAnchorY = null;
@@ -553,6 +573,7 @@ export class StageSurface {
     this.lastBlockLength = block.length;
 
     const budget = Math.max(0, height - block.length);
+    this.syncTurnRailMotion(rail && budget > 0 && hasSessionTurns(this.transcript));
     let rows = [];
     if (budget > 0) {
       this.viewport.resize({ height: budget, width: contentWidth });
@@ -890,9 +911,11 @@ export class StageSurface {
    */
   releaseMouse() {
     if (!this.mouseCaptured) return false;
-    this.writeModeControl(mouseHoverTracking(false, this.env));
+    // Auto-enabled rail hover must be disarmed even without env opt-in.
+    this.writeModeControl(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
     this.writeModeControl(mouseTracking(false));
     this.mouseCaptured = false;
+    this.mouseMotionOn = false;
     this.detached = true;
     return true;
   }
@@ -904,6 +927,7 @@ export class StageSurface {
     this.writeModeControl(mouseTracking(true));
     this.writeModeControl(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
+    this.mouseMotionOn = String(this.env.CAUSYNE_MOUSE_HOVER ?? '') === '1';
     this.detached = false;
     // After native scrollback, the former physical cursor location is unknown.
     // Return to the screen bottom before repainting any transcript rows.
