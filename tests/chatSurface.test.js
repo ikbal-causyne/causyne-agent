@@ -229,7 +229,7 @@ describe('UX-02 — mouse reporting cannot be armed without a way back', () => {
     }
     assert.deepEqual(motionOwners, ['src/tui/mouseHover.js']);
     assert.match(source('tui/mouseHover.js'), /\\x1b\[\?1003l/);
-    assert.match(source('tui/stageSurface.js'), /mouseHoverTracking\(false, this\.env\)/);
+    assert.match(source('tui/stageSurface.js'), /mouseHoverTracking\(false, \{ \.\.\.this\.env, CAUSYNE_MOUSE_HOVER: '1' \}\)/, 'auto-enabled hover must be disabled even without user opt-in');
   });
 
   test('whoever arms it also registers the way back', () => {

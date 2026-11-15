@@ -327,7 +327,7 @@ export class StageSurface {
 
   syncTurnRailMotion(railHasTurns) {
     if (!this.mouseOn || !this.mouseCaptured || !this.stage.reserved) return;
-    const preference = String(this.env.CAUSYNE_MOUSE_HOVER ?? '').trim();
+    const preference = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '').trim();
     // Hover needs 1003, not just 1000. Limit default motion tracking to
     // visible turn rails; preserve explicit opt-in and opt-out preferences.
     const wantMotion = preference === '1' || (preference !== '0' && railHasTurns);
@@ -347,7 +347,7 @@ export class StageSurface {
     this.writeModeControl(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
     this.mouseOn = true;
-    this.mouseMotionOn = String(this.env.CAUSYNE_MOUSE_HOVER ?? '') === '1';
+    this.mouseMotionOn = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '') === '1';
     return true;
   }
 
@@ -927,7 +927,7 @@ export class StageSurface {
     this.writeModeControl(mouseTracking(true));
     this.writeModeControl(mouseHoverTracking(true, this.env));
     this.mouseCaptured = true;
-    this.mouseMotionOn = String(this.env.CAUSYNE_MOUSE_HOVER ?? '') === '1';
+    this.mouseMotionOn = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '') === '1';
     this.detached = false;
     // After native scrollback, the former physical cursor location is unknown.
     // Return to the screen bottom before repainting any transcript rows.
