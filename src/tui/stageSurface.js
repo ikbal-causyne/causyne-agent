@@ -930,12 +930,24 @@ export class StageSurface {
       ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex, scrollTop)
       : null;
 
+    // Keep the original sparse rail. Cluster every turn behind the nearest
+    // *visible* dot so no unseen history becomes impossible to reach.
     const rowToTurns = new Map();
+    const dotRows = [...(railResult?.layout?.rowToTurn?.keys() || [])].sort((a, b) => a - b);
     for (const turn of turns) {
-      const row = railResult?.layout?.dotRows?.get(turn.turnIndex);
-      if (!Number.isFinite(row)) continue;
-      if (!rowToTurns.has(row)) rowToTurns.set(row, []);
-      rowToTurns.get(row).push(turn);
+      const rawRow = railResult?.layout?.dotRows?.get(turn.turnIndex);
+      if (!Number.isFinite(rawRow) || dotRows.length === 0) continue;
+      let nearest = dotRows[0];
+      let distance = Math.abs(rawRow - nearest);
+      for (const dotRow of dotRows) {
+        const delta = Math.abs(rawRow - dotRow);
+        if (delta < distance) {
+          nearest = dotRow;
+          distance = delta;
+        }
+      }
+      if (!rowToTurns.has(nearest)) rowToTurns.set(nearest, []);
+      rowToTurns.get(nearest).push(turn);
     }
     this.turnRailLayout = {
       railX: hasTurns ? 1 : contentWidth + 1,

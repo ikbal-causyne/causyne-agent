@@ -247,7 +247,7 @@ export function buildTurnRailCells(turns, height, activeTurnIndex, hoveredTurnIn
         dotRows.set(turnNum, rowIdx);
         const isHovered = hoveredTurnIndex === turnNum;
         const isActive = activeTurnIndex === turnNum;
-        const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0 || !rowToTurn.has(rowIdx);
+        const showQuiet = quietStep === 1 || i === 0 || i === count - 1 || i % quietStep === 0;
         const rowHasHovered = cells[rowIdx]?.includes('230;235;245m');
         const rowHasDot = cells[rowIdx]?.includes('●');
         if (isHovered) {
