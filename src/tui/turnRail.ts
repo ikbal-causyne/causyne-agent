@@ -661,13 +661,14 @@ export function handleTurnRailMouse(
   let turnNum = isRail ? layout.rowToTurn?.get(relY) : ((isCard || isBridge) ? surface.hoveredTurnIndex : undefined);
   let anchorY = relY;
 
-  // If on rail and not an exact row hit, resolve closest dot within proximity
-  if (!turnNum && isRail && layout.dotRows && layout.dotRows.size > 0) {
+  // Nearest *visible* dot: the original dotRows includes every compressed
+  // turn, including invisible samples. Those must not replace group previews.
+  if (!turnNum && isRail && layout.rowToTurn && layout.rowToTurn.size > 0) {
     let minDistance = Infinity;
     let closestTurn: number | undefined;
     let closestRow: number | undefined;
 
-    for (const [tNum, row] of layout.dotRows.entries()) {
+    for (const [row, tNum] of layout.rowToTurn.entries()) {
       const dist = Math.abs(relY - row);
       if (dist < minDistance) {
         minDistance = dist;

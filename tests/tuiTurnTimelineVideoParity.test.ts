@@ -90,3 +90,28 @@ test('stage attaches actual groups to left-side dots and renders their list on h
     surface.close();
   }
 });
+
+
+test('hover near a compressed group resolves the nearest visible dot, not an invisible turn', () => {
+  const rail = buildTurnRailCells(turns, 25, 90, null);
+  const activeRows = [...rail.layout.rowToTurn.keys()].sort((a, b) => a - b);
+  const gap = activeRows.find(row => !rail.layout.rowToTurn.has(row + 1) && row + 2 < 25);
+  assert.ok(gap !== undefined, 'sparse rail should contain gaps between dots');
+  const expected = rail.layout.rowToTurn.get(gap!)!;
+  let changes = 0;
+  const surface: any = {
+    turnRailLayout: {
+      railX: 1, stageTop: 0, viewportHeight: 25,
+      dotRows: rail.layout.dotRows, rowToTurn: rail.layout.rowToTurn,
+      turns
+    },
+    hoveredTurnIndex: null,
+    hoveredTurnAnchorY: null
+  };
+  assert.equal(handleTurnRailMouse({
+    mouse: { x: 1, y: gap! + 1, button: 3, pressed: false },
+    sequence: '\x1b[<35;2;10M'
+  }, surface, { scheduleDraw() { changes++; } }), true);
+  assert.equal(surface.hoveredTurnIndex, expected);
+  assert.equal(changes, 1);
+});
