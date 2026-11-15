@@ -499,7 +499,7 @@ export function handleTurnRailMouse(event, surface, host) {
     const stageTop = Number.isFinite(layout.stageTop) ? Math.floor(layout.stageTop) : 0;
     const relY = mouseY - stageTop;
     // Rail hit box: if railX <= 4, check columns 0..5 (left margin); otherwise check [railX - 2, railX + 3]
-    const isRail = layout.railX <= 4
+    let isRail = layout.railX <= 4
         ? (mouseX >= 0 && mouseX <= Math.max(5, layout.railX + 3))
         : (mouseX >= layout.railX - 2 && mouseX <= layout.railX + 3);
     // Check if currently showing a card and mouse is hovering over the card or bridge tunnel
@@ -529,6 +529,10 @@ export function handleTurnRailMouse(event, surface, host) {
                 relY >= cardStartY && relY < cardEndY;
         }
     }
+    // The preview partially overlaps the widened rail hit target. A pointer
+    // inside the card belongs to the card, including its left border.
+    if (isCard)
+        isRail = false;
     const inHoverZone = isRail || isCard || isBridge;
     if (!inHoverZone || relY < 0 || relY >= layout.viewportHeight) {
         surface.turnRailHoverSuppressed = false;

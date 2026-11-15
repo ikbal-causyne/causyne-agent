@@ -1194,6 +1194,30 @@ export class ChatPrompt {
     }
     if (key.name === 'wheel') {
       if (!viewport || !key.wheel) return true;
+      // The reference timeline popover is itself scrollable when a dot
+      // represents more turns than can fit. Wheel input over the card must
+      // not move the chat viewport behind it.
+      const layout = this.surface?.turnRailLayout;
+      const card = layout?.cardRect;
+      const pointerX = key.wheel.x;
+      const pointerY = key.wheel.y;
+      const relativeY = pointerY - (Number.isFinite(layout?.stageTop) ? layout.stageTop : 0);
+      if (card && Array.isArray(card.groupTurns) &&
+          Number.isFinite(pointerX) && Number.isFinite(pointerY) &&
+          pointerX >= card.x && pointerX < card.x + card.width &&
+          relativeY >= card.y && relativeY < card.y + card.height &&
+          (key.wheel.direction === 'up' || key.wheel.direction === 'down')) {
+        const previous = Number.isFinite(this.surface.turnRailCardOffset)
+          ? this.surface.turnRailCardOffset : 0;
+        const maximum = Number.isFinite(card.maxOffset) ? Math.max(0, card.maxOffset) : 0;
+        const change = key.wheel.direction === 'up' ? -1 : 1;
+        const current = Math.max(0, Math.min(maximum, previous + change));
+        if (current !== previous) {
+          this.surface.turnRailCardOffset = current;
+          this.scheduleDraw();
+        }
+        return true;
+      }
       if (this.renderer?.scrollCodePanel?.(key, this.surface)) {
         if (typeof this.scheduleDraw === 'function') this.scheduleDraw(); else this.draw();
         return true;
