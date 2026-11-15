@@ -1506,6 +1506,9 @@ export class AgentLoop {
   }
 
   updateImplementationPlan(update: any, options: { seeded?: boolean } = {}) {
+    // A malformed provider plan is not permission to replace a valid plan or
+    // crash an active run. Empty arrays remain valid and can clear the plan.
+    if (!update || !Array.isArray(update.plan)) return;
     const nextPlan = update.plan.map((item: any) => ({ ...item }));
     const prevText = this._implementationPlan.map((item: any) => item.step).join('\n');
     const prevKey = JSON.stringify(this._implementationPlan.map((item: any) => ({ id: item.id, step: item.step, status: item.status })));
