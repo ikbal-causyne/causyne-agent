@@ -199,9 +199,9 @@ export function renderTurnTimelineCard(turns, maxCardWidth = 52, maxHeight = 16,
   const maxOffset = Math.max(0, turns.length - count);
   const start = Number.isFinite(offset) ? Math.max(0, Math.min(maxOffset, Math.floor(offset))) : 0;
   const entries = turns.slice(start, start + count);
-  const bg = '\\x1b[48;2;28;28;32m';
-  const border = bg + '\\x1b[38;2;75;75;82m';
-  const reset = '\\x1b[0m';
+  const bg = '\x1b[48;2;28;28;32m';
+  const border = bg + '\x1b[38;2;75;75;82m';
+  const reset = '\x1b[0m';
   const top = border + '╭' + '─'.repeat(width - 2) + '╮' + reset;
   const bottom = border + '╰' + '─'.repeat(width - 2) + '╯' + reset;
   const blank = border + '│' + bg + ' '.repeat(inner + 2) + border + '│' + reset;
@@ -222,14 +222,14 @@ export function renderTurnTimelineCard(turns, maxCardWidth = 52, maxHeight = 16,
   const header = range.trim() + ' · ' + turns.length + (turns.length === 1 ? ' turn' : ' turns');
   const rows = [
     top,
-    line(title, '\\x1b[1m\\x1b[38;2;235;235;242m'),
-    line(header, '\\x1b[38;2;145;145;155m'),
+    line(title, '\x1b[1m\x1b[38;2;235;235;242m'),
+    line(header, '\x1b[38;2;145;145;155m'),
     blank
   ];
   for (const turn of entries) {
     const when = shortTime(turn);
     const prompt = turn?.userPrompt || 'Turn ' + String(turn?.turnIndex ?? '');
-    rows.push(line((when ? when + '  ' : '') + prompt, '\\x1b[38;2;185;185;193m'));
+    rows.push(line((when ? when + '  ' : '') + prompt, '\x1b[38;2;185;185;193m'));
   }
   rows.push(bottom);
   return { rows, entries, entryStart: 4, maxOffset };

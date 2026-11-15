@@ -428,7 +428,7 @@ test('handleTurnRailMouse maintains hover tunnel when cursor moves into card bod
   assert.equal(mockSurface.hoveredTurnIndex, null, 'card dismissed after click');
 });
 
-test('handleTurnRailMouse suppresses hover card when host is busy', () => {
+test('handleTurnRailMouse permits read-only hover previews while host is busy', () => {
   let scheduled = false;
   const busyHost = {
     busy: true,
@@ -449,8 +449,8 @@ test('handleTurnRailMouse suppresses hover card when host is busy', () => {
         { turnIndex: 1, totalTurns: 1, userPrompt: 'T1', assistantSummary: '', timestamp: 1, formattedDate: '10:00', frameId: 1, startRow: 0 }
       ]
     },
-    hoveredTurnIndex: 1,
-    hoveredTurnAnchorY: 2,
+    hoveredTurnIndex: null,
+    hoveredTurnAnchorY: null,
     viewport: {
       scrollTo: () => {},
       toBottom: () => {}
@@ -464,9 +464,9 @@ test('handleTurnRailMouse suppresses hover card when host is busy', () => {
 
   const handled = handleTurnRailMouse(motionOverDot, mockSurface, busyHost);
   assert.equal(handled, true);
-  // Existing card must be immediately dismissed and new hover prohibited during busy execution
-  assert.equal(mockSurface.hoveredTurnIndex, null);
-  assert.equal(mockSurface.hoveredTurnAnchorY, null);
+  // Reading an old turn must remain available even while a tool is running.
+  assert.equal(mockSurface.hoveredTurnIndex, 1);
+  assert.equal(mockSurface.hoveredTurnAnchorY, 2);
   assert.equal(scheduled, true);
 });
 
