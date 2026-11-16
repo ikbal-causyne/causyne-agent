@@ -16,6 +16,9 @@ export function exploreStateMachine(options) {
   if (typeof transition !== 'function') throw new TypeError('transition must be a function');
   if (typeof invariant !== 'function') throw new TypeError('invariant must be a function');
 
+  if (initial && typeof initial.then === 'function') {
+    throw new TypeError('Async initial state is not supported by synchronous model exploration');
+  }
   const maxDepth = boundedInteger(options.maxDepth, DEFAULT_DEPTH, 32);
   const maxStates = boundedInteger(options.maxStates, DEFAULT_STATES, 100_000);
   if (maxStates === 0) throw new RangeError('maxStates must be positive');
@@ -23,6 +26,9 @@ export function exploreStateMachine(options) {
   if (typeof key !== 'function') throw new TypeError('stateKey must be a function');
 
   const startKey = key(initial);
+  if (startKey && typeof startKey.then === 'function') {
+    throw new TypeError('Async stateKey is not supported');
+  }
   if (typeof startKey !== 'string') throw new TypeError('stateKey must produce a string');
   let nodesVisited = 1;
   let transitions = 0;
@@ -33,6 +39,9 @@ export function exploreStateMachine(options) {
 
   function failed(node) {
     const result = invariant(node.state);
+    if (result && typeof result.then === 'function') {
+      throw new TypeError('Async invariants are not supported');
+    }
     if (result === true) return null;
     return {
       status: 'counterexample',
@@ -62,6 +71,9 @@ export function exploreStateMachine(options) {
         throw new TypeError('State must be structured-cloneable for sound bounded exploration');
       }
       const next = transition(isolated, action);
+      if (next && typeof next.then === 'function') {
+        throw new TypeError('Async transitions are not supported');
+      }
       transitions++;
       if (next === null || next === undefined) continue;
       const trace = current.trace.concat(action);
@@ -69,6 +81,9 @@ export function exploreStateMachine(options) {
       const failure = failed(nextNode);
       if (failure) return failure;
       const identity = key(next);
+      if (identity && typeof identity.then === 'function') {
+        throw new TypeError('Async stateKey is not supported');
+      }
       if (typeof identity !== 'string') throw new TypeError('stateKey must produce a string');
       if (seen.has(identity)) continue;
       if (nodesVisited >= maxStates) {

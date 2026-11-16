@@ -125,3 +125,28 @@ test('bounded explorer fails explicitly rather than accepting uncloneable mutabl
     transition: state => state, invariant: () => true
   }), /structured-cloneable/);
 });
+
+test('bounded model exploration rejects async entrypoints instead of returning a false pass', () => {
+  const base = {
+    initial: { count: 0 },
+    actions: ['tick'],
+    transition: state => ({ count: state.count + 1 }),
+    invariant: () => true,
+    maxDepth: 1
+  };
+  assert.throws(() => exploreStateMachine({
+    ...base, initial: Promise.resolve({ count: 0 }), maxDepth: 0
+  }), /Async initial/);
+  assert.throws(() => exploreStateMachine({
+    ...base, transition: async state => state
+  }), /Async transitions/);
+  assert.throws(() => exploreStateMachine({
+    ...base, invariant: async () => true, maxDepth: 0
+  }), /Async invariants/);
+  assert.throws(() => exploreStateMachine({
+    ...base, stateKey: async () => 'state', maxDepth: 0
+  }), /Async stateKey/);
+  assert.throws(() => exploreStateMachine({
+    ...base, stateKey: state => state.count === 0 ? 'root' : Promise.resolve('next')
+  }), /Async stateKey/);
+});
