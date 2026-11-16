@@ -95,8 +95,10 @@ export function verifyActionSequences(options = {}) {
     if (!observed.failed) continue;
     const originalTrace = path.slice(0, Math.max(0, observed.step + 1));
     const budget = { left: LIMITS.replay };
-    const trace = shrinkPath(originalTrace, candidate =>
-      runPath(initial, transition, invariant, candidate).failed, budget);
+    const trace = shrinkPath(originalTrace, candidate => {
+      const result = runPath(initial, transition, invariant, candidate);
+      return result.failed && result.reason === observed.reason;
+    }, budget);
     const minimized = runPath(initial, transition, invariant, trace);
     return {
       status: 'counterexample', seed, trial, maxSteps, trialsRun: trial + 1,
