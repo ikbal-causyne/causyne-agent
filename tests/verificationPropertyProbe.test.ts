@@ -139,3 +139,32 @@ test('async state factories cannot masquerade as verified initial state', () => 
   assert.deepEqual(report.trace, []);
   assert.match(report.reason, /Async initial state is not supported/);
 });
+
+test('seeded action sequences isolate mutable input actions between steps and trials', () => {
+  const actions = [{ kind: 'add', amount: 1 }];
+  const result = verifyActionSequences({
+    initial: () => ({ count: 0 }),
+    actions,
+    transition(state, action) {
+      state.count += action.amount;
+      action.amount = 100;
+    },
+    invariant: state => state.count <= 3 || 'action object leaked to next step',
+    seed: 8, trials: 12, maxSteps: 3
+  });
+  assert.equal(result.status, 'bounded-pass', JSON.stringify(result));
+  assert.deepEqual(actions, [{ kind: 'add', amount: 1 }]);
+});
+
+test('property runner rejects non-cloneable actions instead of silently sharing them', () => {
+  const result = verifyActionSequences({
+    initial: () => ({ count: 0 }),
+    actions: [{ callback: () => 1 }],
+    transition: () => undefined,
+    invariant: () => true,
+    trials: 1, maxSteps: 1
+  });
+  assert.equal(result.status, 'counterexample');
+  assert.match(result.reason, /could not be cloned|DataCloneError|clone/i);
+  assert.equal(result.trace.length, 1);
+});

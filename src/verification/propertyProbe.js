@@ -39,7 +39,8 @@ function runPath(initial, transition, invariant, path) {
   }
   for (let i = 0; i < path.length; i++) {
     try {
-      const next = transition(state, path[i]);
+      const action = structuredClone(path[i]);
+      const next = transition(state, action);
       if (next && typeof next.then === 'function') throw new TypeError('Async transitions are not supported');
       if (next !== undefined) state = next;
       const error = failure(invariant(state));
