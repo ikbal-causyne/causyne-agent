@@ -44,11 +44,16 @@ test('PTY verifier rejects a missing visible user path rather than passing on ex
 });
 
 test('PTY verifier cannot be pointed at an external executable or existing user home', async () => {
-  await assert.rejects(runInteractivePty({
-    workspace: root, script: '../../somewhere.js',
-    env: { CAUSYNE_HOME: os.homedir() },
-    steps: [{ name: 'probe', waitFor: 'READY', input: '', contains: '' }]
-  }), /ENOENT|workspace/);
+  const isolated = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-pty-path-'));
+  try {
+    await assert.rejects(runInteractivePty({
+      workspace: root, script: '../../somewhere.js',
+      env: { CAUSYNE_HOME: isolated },
+      steps: [{ name: 'probe', waitFor: 'READY', input: '', contains: '' }]
+    }), /ENOENT|workspace/);
+  } finally {
+    fs.rmSync(isolated, { recursive: true, force: true });
+  }
   await assert.rejects(runInteractivePty({
     workspace: root, script: 'tests/fixtures/liveTuiTarget.mjs',
     env: {}, steps: [{ name: 'probe', waitFor: 'READY', input: '', contains: '' }]
