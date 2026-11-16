@@ -39,6 +39,14 @@ export const FEATURE_MAP = Object.freeze({
     automated: ['tests/plugins.test.js', 'tests/skillsReliability.test.js'],
     liveRequired: 'Check a separately approved plugin against the current permission record'
   },
+  'terminal-pty': {
+    surface: 'posix-pty',
+    entry: 'An explicitly selected interactive program and input sequence',
+    action: 'Launch the real program in a pseudo-terminal and capture exit, input and output evidence',
+    assertion: 'A PTY pass requires observed terminal output and the expected process exit',
+    automated: ['tests/verificationPtyProbe.test.ts'],
+    liveRequired: 'The smoke fixture only tests the PTY driver; user-app behavior needs a separate real app session'
+  },
   'ui-properties': {
     surface: 'terminal',
     entry: 'Seeded UI interaction and runtime state handlers',
