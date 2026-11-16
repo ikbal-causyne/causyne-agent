@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 
 const root = new URL('../native-skills/', import.meta.url);
-const skills = {};
+const skills = Object.create(null);
 const forbidden = new Set(['agent-docs', 'agent_docs', 'doctrine', 'internal']);
 
 function formatStringLiteral(str, indent = 8, maxLine = 75) {
@@ -30,7 +30,7 @@ function formatStringLiteral(str, indent = 8, maxLine = 75) {
 for (const domain of fs.readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
   if (!domain.isDirectory() || domain.name.startsWith('.')) continue;
   if (forbidden.has(domain.name)) throw new Error(`Developer instructions are not product skills: ${domain.name}`);
-  skills[domain.name] = {};
+  skills[domain.name] = Object.create(null);
   const domainUrl = new URL(`${domain.name}/`, root);
   for (const entry of fs.readdirSync(domainUrl, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
@@ -43,6 +43,13 @@ for (const domain of fs.readdirSync(root, { withFileTypes: true }).sort((a, b) =
     const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1] || '';
     const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim() || entry.name;
     const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim() || '';
+    if (['__proto__', 'prototype', 'constructor'].includes(name) ||
+        !/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+      throw new Error('Invalid skill name: ' + name);
+    }
+    if (Object.hasOwn(skills[domain.name], name)) {
+      throw new Error('Duplicate skill name: ' + name);
+    }
     skills[domain.name][name] = { name, description, content };
   }
 }
