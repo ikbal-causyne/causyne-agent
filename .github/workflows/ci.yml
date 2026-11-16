@@ -93,3 +93,7 @@ jobs:
       - name: Verify Causyne feature behavior gates
         if: runner.os == 'Linux'
         run: npm run verify:features -- tui-usage tui-turn-rail agent-loop plugin-safety formal-state
+
+      - name: Drive actual Causyne TUI in isolated terminal
+        if: runner.os == 'Linux'
+        run: npm run verify:ui

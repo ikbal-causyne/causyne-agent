@@ -5,7 +5,8 @@ export const FEATURE_MAP = Object.freeze({
     action: 'Open the panel, submit a message, switch busy state, close with Escape',
     assertion: 'The panel stays visible until explicitly dismissed',
     automated: ['tests/tuiPinnedUsageStatus.test.ts', 'tests/usageCard.test.ts'],
-    liveRequired: 'Drive the published TUI in a PTY and capture its rendered rows'
+    liveDriver: 'posix-pty-component',
+    liveRequired: 'Run the actual ChatPrompt and StageSurface in an isolated PTY; full CLI startup and host mouse forwarding remain separate'
   },
   'tui-turn-rail': {
     surface: 'terminal',

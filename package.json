@@ -34,6 +34,7 @@
     "typecheck:js-ratchet": "tsc -p tsconfig.js-ratchet.json",
     "typecheck:strict": "npm run typecheck:ts && npm run typecheck:js-ratchet",
     "verify:features": "node scripts/verify-features.mjs",
+    "verify:ui": "node scripts/verify-ui.mjs",
     "verify:properties": "node --test --import ./tests/helpers/isolateState.js tests/boundedExplorer.test.ts tests/verificationPropertyProbe.test.ts",
     "verify:tla": "node scripts/verify-tla.mjs"
   },
