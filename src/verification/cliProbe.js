@@ -3,8 +3,9 @@ import path from 'node:path';
 import { realpathSync } from 'node:fs';
 
 function inside(root, candidate) {
+  const lexicalRoot = path.resolve(root);
   const base = realpathSync(root);
-  const lexical = path.relative(base, path.resolve(candidate));
+  const lexical = path.relative(lexicalRoot, path.resolve(candidate));
   if (lexical === '..' || lexical.startsWith('..' + path.sep) || path.isAbsolute(lexical)) return false;
   let target;
   try {
@@ -37,6 +38,10 @@ export async function runCliProbe(options) {
     throw new TypeError('contains must be a bounded string');
   }
   const cwd = path.resolve(workspace);
+  if (program !== 'node' && !path.isAbsolute(program)
+      && !program.includes('/') && !program.includes('\\')) {
+    throw new Error('Executable must be an explicit workspace path or node');
+  }
   const executable = program === 'node' ? process.execPath : program;
   const resolvedProgram = path.isAbsolute(executable) ? executable
     : executable.includes('/') || executable.includes('\\') ? path.resolve(cwd, executable) : executable;
