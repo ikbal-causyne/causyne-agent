@@ -217,7 +217,7 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
   const rows = [fill('surface', top)];
 
   const labelWidth = innerWidth >= 60 ? 16 : 13;
-  const addRow = (label, value) => {
+  const addRow = (label: string, value: string): void => {
     const name = dim(String(label).padEnd(labelWidth));
     const text = name + value;
     const clipped = visibleWidth(text) > innerWidth
@@ -259,7 +259,7 @@ export function renderUsageCardRows(data: UsageCardData, width: number): string[
     : dim('no positive local estimate recorded'));
 
   addRow('Data source', dim('Local tracker; not provider billing or exact token telemetry'));
-  if (data.budgetEnabled && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
+  if (data.budgetEnabled && typeof data.budgetLimitTokens === 'number' && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
     const pct = Number.isFinite(data.budgetPercentUsed)
       ? Math.max(0, Math.round(data.budgetPercentUsed)) : 0;
     addRow('Daily budget', `${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tracked (${pct}% used)`);
