@@ -24,16 +24,24 @@ function runPath(initial, transition, invariant, path) {
   let state;
   try {
     state = initial();
-    let error = failure(invariant(state));
-    if (error) return { failed: true, reason: error, step: -1 };
-    for (let i = 0; i < path.length; i++) {
-      const next = transition(state, path[i]);
-      if (next !== undefined) state = next;
-      error = failure(invariant(state));
-      if (error) return { failed: true, reason: error, step: i };
-    }
   } catch (error) {
     return { failed: true, reason: String(error?.message || error), step: -1 };
+  }
+  try {
+    const error = failure(invariant(state));
+    if (error) return { failed: true, reason: error, step: -1 };
+  } catch (error) {
+    return { failed: true, reason: String(error?.message || error), step: -1 };
+  }
+  for (let i = 0; i < path.length; i++) {
+    try {
+      const next = transition(state, path[i]);
+      if (next !== undefined) state = next;
+      const error = failure(invariant(state));
+      if (error) return { failed: true, reason: error, step: i };
+    } catch (error) {
+      return { failed: true, reason: String(error?.message || error), step: i };
+    }
   }
   return { failed: false, reason: null, step: path.length };
 }
