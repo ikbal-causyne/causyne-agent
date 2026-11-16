@@ -10,7 +10,7 @@ test('real PTY probe drives a TTY child through stdin and records evidence', asy
   const result = await runPtyProbe({
     workspace, program: 'node',
     args: ['-e', "process.stdout.write('TTY:'+Boolean(process.stdout.isTTY)+'\\n'); process.stdin.once('data', d => { process.stdout.write('RECEIVED:'+d.toString('utf8').trim()+'\\n'); process.exit(0); });"],
-    input: 'probe-enter\\n', inputDelayMs: 150, timeoutMs: 4000,
+    input: 'probe-enter\n', inputDelayMs: 150, timeoutMs: 4000,
     contains: 'RECEIVED:probe-enter'
   });
   if (result.status === 'unavailable') return t.skip(result.reason);
