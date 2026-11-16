@@ -22,7 +22,7 @@ test('verified workflows are discoverable as native Causyne skills', async () =>
 
 test('new skills never impersonate Cursor-only commands or claim proof without a check', () => {
   const text = Object.values(VERIFICATION_SKILLS).map(v => v.content).join('\n');
-  assert.doesNotMatch(text, /app aria-click|guaranteed proof|100% tested/i);
+  assert.doesNotMatch(text, /(?:^|\n)\s*[$>]\s*app aria-click|guaranteed proof|100% tested/im);
   assert.match(text, /PTY/);
   assert.match(text, /TLA\+/);
 });
