@@ -12,6 +12,7 @@ import { loadConfig } from '../config.js';
 import { buildContextReport } from '../reporting.js';
 import { isAntigravityProvider } from '../providers/antigravity.js';
 import { isAcpProvider } from '../providers/acp.js';
+import { resolveModelContextTokens } from '../contextManager.js';
 function oneLineText(value) {
     return safeDisplay(value).replace(/\s+/g, ' ').trim();
 }
@@ -58,8 +59,10 @@ export async function collectUsageCardData(loop) {
     const cumulative = await tracker.getCumulativeUsage();
     const daily = await tracker.getDailyUsage();
     const config = loadConfig();
-    const provider = oneLineText(config.provider || 'default') || 'default';
-    const model = oneLineText(config.model || 'default') || 'default';
+    // The running agent can differ from saved settings after a model switch.
+    const liveConfig = loop?.config || {};
+    const provider = oneLineText(liveConfig.provider || config.provider || 'default') || 'default';
+    const model = oneLineText(liveConfig.model || config.model || 'default') || 'default';
     const isAgy = isAntigravityProvider(provider);
     const isAcp = isAcpProvider(provider);
     const billingNote = (isAgy || isAcp)
@@ -71,8 +74,15 @@ export async function collectUsageCardData(loop) {
     };
     // Context accounting
     const contextReport = buildContextReport();
-    const rawPoolTokens = finiteNonNeg(contextReport?.approxTokenPool, 250000);
-    const poolTokens = rawPoolTokens > 0 ? Math.floor(rawPoolTokens) : 250000;
+    const override = liveConfig.contextTokens || liveConfig.maxContextTokens
+        || config.contextTokens || config.maxContextTokens;
+    const explicitLimit = Number.isFinite(Number(override)) && Number(override) > 0;
+    // report() uses persisted settings and can describe a *different* model.
+    // Resolve against the actual running provider/model; otherwise say inferred.
+    const modelLimit = resolveModelContextTokens({
+        provider, model, overrideTokens: explicitLimit ? Number(override) : 0
+    });
+    const poolTokens = Math.floor(finiteNonNeg(modelLimit, finiteNonNeg(contextReport?.approxTokenPool, 0)));
     // Measure active messages tokens
     let messageChars = 0;
     let messageCount = 0;
@@ -109,7 +119,8 @@ export async function collectUsageCardData(loop) {
     const messageTokens = Math.round(messageChars / 4);
     const coreToolTokens = Math.floor(finiteNonNeg(contextReport?.core?.tokens, 5000));
     const contextUsed = messageTokens + coreToolTokens;
-    const contextPctLeft = Math.max(0, Math.min(100, Math.round(((poolTokens - contextUsed) / poolTokens) * 100)));
+    const contextPctLeft = poolTokens > 0
+        ? Math.max(0, Math.min(100, Math.round(((poolTokens - contextUsed) / poolTokens) * 100))) : 0;
     // Budget
     const budget = config.tokenBudget || {};
     const budgetEnabled = Boolean(budget.enabled);
@@ -120,8 +131,10 @@ export async function collectUsageCardData(loop) {
         : 0;
     const rawCostCeiling = finiteNonNeg(budget.maxCostUsd, 0);
     const sessionId = oneLineText(loop?.memoryManager?.sessionId || 'default') || 'default';
-    const sessionTokens = finiteNonNeg(tracker.sessionTokens, 0) || finiteNonNeg(tracker.taskTokens, 0);
-    const sessionCostUsd = finiteNonNeg(tracker.sessionCostUsd, 0) || finiteNonNeg(tracker.taskCostUsd, 0);
+    const sessionMetricsAvailable = Boolean(loop?.tokenTracker);
+    // These counters are per tracker instance, not persisted across restarts.
+    const sessionTokens = finiteNonNeg(tracker.sessionTokens, finiteNonNeg(reported?.sessionTokens, 0));
+    const sessionCostUsd = finiteNonNeg(tracker.sessionCostUsd, finiteNonNeg(reported?.sessionCostUsd, 0));
     return {
         sessionId,
         sessionTurns: messageCount,
@@ -141,7 +154,10 @@ export async function collectUsageCardData(loop) {
         budgetEnabled,
         budgetLimitTokens,
         budgetCostCeilingUsd: rawCostCeiling > 0 ? rawCostCeiling : undefined,
-        budgetPercentUsed
+        budgetPercentUsed,
+        sessionMetricsAvailable,
+        contextLimitSource: explicitLimit ? 'configured' : 'inferred',
+        usageProvenance: 'Local tracker: provider reports, ACP text estimates and media equivalents can be mixed'
     };
 }
 /**
