@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { COMPILED_SKILLS } from './compiledSkills.js';
+import { VERIFICATION_SKILLS } from './verification/skillCatalog.js';
 import { loadUserSkills, type UserSkill } from './userSkills.js';
 import { getPluginSkills } from './plugins/pluginManager.js';
 
@@ -19,7 +20,7 @@ interface CompiledSkillItem {
   content: string;
 }
 
-const compiledSkillsCatalog = COMPILED_SKILLS as unknown as Record<string, Record<string, CompiledSkillItem>>;
+const compiledSkillsCatalog = { ...COMPILED_SKILLS, verification: VERIFICATION_SKILLS } as unknown as Record<string, Record<string, CompiledSkillItem>>;
 
 // User skills are read from disk, and the disk is slow relative to how often
 // these functions are called (every completion keystroke asks for the
@@ -100,7 +101,7 @@ const DOMAIN_INDICATORS: Record<string, string[]> = {
 // Design and security are not properties of a file layout — an agent writing a
 // UI needs the anti-slop direction whether or not a tailwind config exists, and
 // input validation matters whether or not the repository has a SECURITY.md.
-const UNIVERSAL_DOMAINS = ['design', 'security'];
+const UNIVERSAL_DOMAINS = ['design', 'security', 'verification'];
 
 // Ceiling on how many skill descriptions may enter the system prompt.
 //

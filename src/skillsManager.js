@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { COMPILED_SKILLS } from './compiledSkills.js';
+import { VERIFICATION_SKILLS } from './verification/skillCatalog.js';
 import { loadUserSkills } from './userSkills.js';
 import { getPluginSkills } from './plugins/pluginManager.js';
-const compiledSkillsCatalog = COMPILED_SKILLS;
+const compiledSkillsCatalog = { ...COMPILED_SKILLS, verification: VERIFICATION_SKILLS };
 // User skills are read from disk, and the disk is slow relative to how often
 // these functions are called (every completion keystroke asks for the
 // catalogue). Cache for a moment so typing stays instant, but keep the window
@@ -80,7 +81,7 @@ const DOMAIN_INDICATORS = {
 // Design and security are not properties of a file layout — an agent writing a
 // UI needs the anti-slop direction whether or not a tailwind config exists, and
 // input validation matters whether or not the repository has a SECURITY.md.
-const UNIVERSAL_DOMAINS = ['design', 'security'];
+const UNIVERSAL_DOMAINS = ['design', 'security', 'verification'];
 // Ceiling on how many skill descriptions may enter the system prompt.
 //
 // With 100 skills, injecting every description of every detected domain would
