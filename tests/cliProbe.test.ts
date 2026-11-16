@@ -55,3 +55,31 @@ test('probe refuses unexpected executable and workspace traversal', async () => 
     fs.rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test('probe rejects bare PATH commands without explicit executable authorization', async () => {
+  await assert.rejects(runCliProbe({
+    workspace, program: 'sh', args: ['-c', 'echo bypass']
+  }), /explicit workspace path/);
+});
+
+test('probe accepts an executable in a symlinked workspace but blocks escaped links', async t => {
+  if (process.platform === 'win32') return t.skip('symlink fixtures require Unix permissions');
+  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-symlink-'));
+  try {
+    const actual = path.join(outer, 'workspace');
+    fs.mkdirSync(actual);
+    const alias = path.join(outer, 'alias');
+    fs.symlinkSync(actual, alias, 'dir');
+    const cli = path.join(actual, 'verify');
+    fs.writeFileSync(cli, '#!/usr/bin/env node\\nprocess.stdout.write("CHECKED");\\n', { mode: 0o755 });
+    const allowed = await runCliProbe({ workspace: alias, program: path.join(alias, 'verify'), contains: 'CHECKED' });
+    assert.equal(allowed.success, true, allowed.error || allowed.stderr);
+    const escape = path.join(actual, 'escape');
+    fs.symlinkSync('/bin/sh', escape);
+    await assert.rejects(runCliProbe({
+      workspace: alias, program: path.join(alias, 'escape'), args: []
+    }), /inside workspace/);
+  } finally {
+    fs.rmSync(outer, { recursive: true, force: true });
+  }
+});
