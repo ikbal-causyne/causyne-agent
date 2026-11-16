@@ -81,3 +81,23 @@ test('model exploration directly exercises production verification assessment', 
   });
   assert.equal(result.status, 'bounded-pass');
 });
+
+test('wide exploration retains deterministic shortest witness', () => {
+  const choices = Array.from({ length: 150 }, (_, i) => i);
+  const result = exploreStateMachine({
+    initial: { step: 0, picked: -1 }, actions: choices,
+    transition: (state, choice) => state.step === 0 ? { step: 1, picked: choice } : null,
+    invariant: state => state.picked !== 149 || 'last choice violates property',
+    maxDepth: 3, maxStates: 200
+  });
+  assert.equal(result.status, 'counterexample');
+  assert.deepEqual(result.trace, [149]);
+  assert.equal(result.exploredDepth, 1);
+});
+
+test('explorer rejects action alphabets too large to exhaust', () => {
+  assert.throws(() => exploreStateMachine({
+    initial: 0, actions: Array.from({ length: 10_001 }, (_, i) => i),
+    transition: state => state, invariant: () => true
+  }), /Too many actions/);
+});
