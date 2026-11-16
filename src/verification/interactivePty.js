@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const DRIVER = String.raw`import base64, fcntl, json, os, pty, select, signal, struct, sys, termios, time
@@ -10,7 +11,7 @@ if pid==0:
     os.environ["TERM"]="xterm-256color"
     os.environ["COLUMNS"]=str(cfg["cols"])
     os.environ["LINES"]=str(cfg["rows"])
-    os.execv(sys.executable if False else cfg["exec"],cfg["argv"])
+    os.execv(cfg["exec"],cfg["argv"])
 fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack("HHHH",cfg["rows"],cfg["cols"],0,0))
 started=time.monotonic()
 out=bytearray()
@@ -119,6 +120,13 @@ export async function runInteractivePty(options = {}) {
   }
   if (typeof env.CAUSYNE_HOME !== 'string' || !path.isAbsolute(env.CAUSYNE_HOME)) {
     throw new TypeError('An explicit isolated CAUSYNE_HOME path is required');
+  }
+  const tempRoot = realpathSync(os.tmpdir());
+  const isolatedHome = realpathSync(env.CAUSYNE_HOME);
+  const relativeHome = path.relative(tempRoot, isolatedHome);
+  if (!relativeHome || relativeHome === '..' || relativeHome.startsWith('..' + path.sep)
+      || path.isAbsolute(relativeHome)) {
+    throw new Error('Verification CAUSYNE_HOME must be an isolated temporary directory');
   }
   const cwd = realpathSync(workspace);
   const target = realpathSync(path.resolve(cwd, script));

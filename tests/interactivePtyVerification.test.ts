@@ -53,4 +53,9 @@ test('PTY verifier cannot be pointed at an external executable or existing user 
     workspace: root, script: 'tests/fixtures/liveTuiTarget.mjs',
     env: {}, steps: [{ name: 'probe', waitFor: 'READY', input: '', contains: '' }]
   }), /CAUSYNE_HOME/);
+  await assert.rejects(runInteractivePty({
+    workspace: root, script: 'tests/fixtures/liveTuiTarget.mjs',
+    env: { CAUSYNE_HOME: os.homedir() },
+    steps: [{ name: 'probe', waitFor: 'READY', input: '', contains: 'READY' }]
+  }), /isolated temporary/);
 });
