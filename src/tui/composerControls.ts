@@ -193,9 +193,20 @@ export function handlePromptEscape(
     prompt.scheduleDraw();
     return;
   }
-  if ((prompt as any).usageCard) {
-    (prompt as any).usageCard = null;
-    prompt.scheduleDraw();
+  if ((prompt as any).usageCard || (prompt as any).usageCardLoading) {
+    if (typeof (prompt as any).closeUsageCard === 'function') (prompt as any).closeUsageCard();
+    else {
+      (prompt as any).usageCard = null;
+      prompt.scheduleDraw();
+    }
+    return;
+  }
+  if ((prompt as any).statusCard !== null && (prompt as any).statusCard !== undefined) {
+    if (typeof (prompt as any).closeStatusCard === 'function') (prompt as any).closeStatusCard();
+    else {
+      (prompt as any).statusCard = null;
+      prompt.scheduleDraw();
+    }
     return;
   }
   if (prompt.completion) {

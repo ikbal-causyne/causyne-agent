@@ -30,6 +30,7 @@ import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay, stripAnsi 
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
 import { renderUsageCardRows, collectUsageCardData } from './usageCard.js';
+import { buildStatusText } from '../reporting.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
 import { readClipboardSync, writeClipboardSync } from './clipboardSync.js';
@@ -135,6 +136,10 @@ export class ChatPrompt {
     this.exitHook = null;
     this.drawnRows = 0;
     this.usageCard = null;
+    this.usageCardLoading = false;
+    this.statusCard = null;
+    this.infoPanelVersion = 0;
+    this.usageRefreshPending = false;
 
     // Which row of the drawn block the caret is parked on.
     //
@@ -542,6 +547,10 @@ export class ChatPrompt {
     this.tickTimer = setInterval(() => {
       this.tick++;
       if (this.busy) this.scheduleDraw();
+      // Keep the pinned usage view current without disk reads every 125 ms.
+      if (this.busy && this.usageCard && this.tick % 32 === 0) {
+        void this.refreshUsageCard();
+      }
     }, 125);
     if (this.tickTimer.unref) this.tickTimer.unref();
   }
@@ -667,16 +676,30 @@ export class ChatPrompt {
     }));
   }
 
-  /** Toggle the docked usage card directly above the chatbox. */
+  /** Usage and Status are non-modal panels: ordinary chat must not close them. */
   async toggleUsageCard(loop = null) {
-    if (this.usageCard) {
-      this.usageCard = null;
-      this.scheduleDraw();
+    if (this.usageCard || this.usageCardLoading) {
+      this.closeUsageCard();
       return false;
     }
-    this.usageCard = await collectUsageCardData(loop || this.messageActionLoop);
-    this.scheduleDraw();
-    return true;
+    const version = ++this.infoPanelVersion;
+    this.statusCard = null;
+    this.usageCardLoading = true;
+    try {
+      const data = await collectUsageCardData(loop || this.messageActionLoop);
+      if (version !== this.infoPanelVersion || !this.usageCardLoading) return false;
+      this.usageCard = data;
+      this.usageCardLoading = false;
+      this.scheduleDraw();
+      return true;
+    } catch (error) {
+      if (version === this.infoPanelVersion) {
+        this.usageCardLoading = false;
+        this.notice = this.sanitizeSingleLine(error instanceof Error ? error.message : String(error));
+        this.scheduleDraw();
+      }
+      return false;
+    }
   }
 
   showUsageCard(loop = null) {
@@ -684,12 +707,64 @@ export class ChatPrompt {
   }
 
   closeUsageCard() {
-    if (this.usageCard) {
-      this.usageCard = null;
+    if (!this.usageCard && !this.usageCardLoading) return false;
+    ++this.infoPanelVersion; // Invalidate an in-flight open or refresh.
+    this.usageCard = null;
+    this.usageCardLoading = false;
+    this.scheduleDraw();
+    return true;
+  }
+
+  async refreshUsageCard(loop = null) {
+    if (!this.usageCard || this.usageRefreshPending) return false;
+    const version = this.infoPanelVersion;
+    this.usageRefreshPending = true;
+    try {
+      const data = await collectUsageCardData(loop || this.messageActionLoop);
+      if (version !== this.infoPanelVersion || !this.usageCard) return false;
+      this.usageCard = data;
       this.scheduleDraw();
       return true;
+    } catch {
+      // A transient ledger read failure must not close an already visible panel.
+      return false;
+    } finally {
+      this.usageRefreshPending = false;
     }
-    return false;
+  }
+
+  toggleStatusCard(loop = null) {
+    if (this.statusCard !== null) {
+      this.closeStatusCard();
+      return false;
+    }
+    ++this.infoPanelVersion; // A pending usage read must not reopen a replaced panel.
+    this.usageCard = null;
+    this.usageCardLoading = false;
+    this.statusCard = buildStatusText({ loop: loop || this.messageActionLoop });
+    this.scheduleDraw();
+    return true;
+  }
+
+  closeStatusCard() {
+    if (this.statusCard === null) return false;
+    this.statusCard = null;
+    this.scheduleDraw();
+    return true;
+  }
+
+  statusCardRows(width) {
+    if (this.statusCard === null) return [];
+    const lines = String(this.statusCard).split(/\r?\n/);
+    if (lines[0] === 'Status') lines.shift();
+    // An on-screen detail card, not a modal: keep the composer usable.
+    const card = panelRows({
+      title: 'Status',
+      footer: 'esc close',
+      preferredHeight: () => lines.length + 2,
+      body: () => lines
+    }, width, lines.length + 2);
+    return card.concat(['']);
   }
 
   /**
@@ -877,6 +952,10 @@ export class ChatPrompt {
     this.busy = busy;
     resetTurnInterruptState(this, busy);
     if (busy) this.startTick(); else this.stopTick();
+    if (!busy && this.usageCard) void this.refreshUsageCard();
+    if (this.statusCard !== null) {
+      this.statusCard = buildStatusText({ loop: this.messageActionLoop });
+    }
     if (this.surface?.stage) this.surface.stage.invalidate();
     this.draw();
   }
@@ -897,13 +976,16 @@ export class ChatPrompt {
     this.history.add(text);
     this.editor.clear();
     this.completion = null;
-    if (this.usageCard && !this.isCommand(text)) {
-      this.usageCard = null;
-    }
-
+    // Do not dismiss a pinned information panel on any chat submission,
+    // queued prompt, or agent run. Only Esc or the same command closes it.
     // Instant slash command shortcuts that operate directly on the prompt surface
-    if (text === '/usage' && typeof this.toggleUsageCard === 'function') {
+    if ((text.trim().toLowerCase() === '/usage' || text.trim().toLowerCase() === '/cost')
+        && typeof this.toggleUsageCard === 'function') {
       void this.toggleUsageCard();
+      return;
+    }
+    if (text.trim().toLowerCase() === '/status' && typeof this.toggleStatusCard === 'function') {
+      this.toggleStatusCard();
       return;
     }
 
@@ -1918,7 +2000,8 @@ export class ChatPrompt {
       punctuate: false
     });
 
-    const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, width) : [];
+    const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, width)
+      : this.statusCard !== null ? this.statusCardRows(width) : [];
     const planRows = this.planRows(width);
     const pickerRows = this.completion ? this.pickerRows(width) : [];
     this.pickerLayout = this.completion ? {

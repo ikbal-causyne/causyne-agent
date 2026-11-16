@@ -2055,7 +2055,13 @@ export const COMMANDS = [
     description: 'Show the current provider, autonomy mode and workspace scope',
     dialogTitle: 'Status',
     // One builder, shared with `causyne status`, so status output cannot drift.
-    run: (argv, ctx) => ok(buildStatusText({ loop: ctx.loop || null }))
+    run: (argv, ctx = {}) => {
+      if (ctx.prompt && typeof ctx.prompt.toggleStatusCard === 'function') {
+        ctx.prompt.toggleStatusCard(ctx.loop);
+        return ok('', { effect: 'silent' });
+      }
+      return ok(buildStatusText({ loop: ctx.loop || null }));
+    }
   },
 
   {

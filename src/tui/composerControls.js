@@ -143,9 +143,22 @@ export function handlePromptEscape(prompt, formatInterruptedRow) {
         prompt.scheduleDraw();
         return;
     }
-    if (prompt.usageCard) {
-        prompt.usageCard = null;
-        prompt.scheduleDraw();
+    if (prompt.usageCard || prompt.usageCardLoading) {
+        if (typeof prompt.closeUsageCard === 'function')
+            prompt.closeUsageCard();
+        else {
+            prompt.usageCard = null;
+            prompt.scheduleDraw();
+        }
+        return;
+    }
+    if (prompt.statusCard !== null && prompt.statusCard !== undefined) {
+        if (typeof prompt.closeStatusCard === 'function')
+            prompt.closeStatusCard();
+        else {
+            prompt.statusCard = null;
+            prompt.scheduleDraw();
+        }
         return;
     }
     if (prompt.completion) {
