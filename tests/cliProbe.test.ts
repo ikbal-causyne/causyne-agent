@@ -71,7 +71,7 @@ test('probe accepts an executable in a symlinked workspace but blocks escaped li
     const alias = path.join(outer, 'alias');
     fs.symlinkSync(actual, alias, 'dir');
     const cli = path.join(actual, 'verify');
-    fs.writeFileSync(cli, '#!/usr/bin/env node\\nprocess.stdout.write("CHECKED");\\n', { mode: 0o755 });
+    fs.writeFileSync(cli, '#!/usr/bin/env node\nprocess.stdout.write("CHECKED");\n', { mode: 0o755 });
     const allowed = await runCliProbe({ workspace: alias, program: path.join(alias, 'verify'), contains: 'CHECKED' });
     assert.equal(allowed.success, true, allowed.error || allowed.stderr);
     const escape = path.join(actual, 'escape');
