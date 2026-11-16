@@ -122,7 +122,8 @@ export async function collectUsageCardData(loop?: any): Promise<UsageCardData> {
   const modelLimit = resolveModelContextTokens({
     provider, model, overrideTokens: explicitLimit ? Number(override) : 0
   });
-  const poolTokens = Math.floor(finiteNonNeg(modelLimit, finiteNonNeg(contextReport?.approxTokenPool, 0)));
+  const poolTokens = Math.floor(modelLimit > 0
+    ? finiteNonNeg(modelLimit, 0) : finiteNonNeg(contextReport?.approxTokenPool, 0));
 
   // Measure active messages tokens
   let messageChars = 0;
