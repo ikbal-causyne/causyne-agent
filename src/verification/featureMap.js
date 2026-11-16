@@ -40,7 +40,7 @@ export const FEATURE_MAP = Object.freeze({
     liveRequired: 'Check a separately approved plugin against the current permission record'
   },
   'terminal-pty': {
-    surface: 'posix-pty',
+    surface: 'terminal',
     entry: 'An explicitly selected interactive program and input sequence',
     action: 'Launch the real program in a pseudo-terminal and capture exit, input and output evidence',
     assertion: 'A PTY pass requires observed terminal output and the expected process exit',
