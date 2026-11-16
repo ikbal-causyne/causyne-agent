@@ -89,6 +89,11 @@ jobs:
       - name: Verify bounded properties and counterexample detection
         if: runner.os == 'Linux'
         run: npm run verify:properties
+      - name: Verify statechart model and failure detection
+        if: runner.os == 'Linux'
+        run: |
+          npm run verify:statechart
+          npm run verify:statechart -- --broken
 
       - name: Verify Causyne feature behavior gates
         if: runner.os == 'Linux'

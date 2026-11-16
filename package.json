@@ -36,6 +36,7 @@
     "verify:features": "node scripts/verify-features.mjs",
     "verify:ui": "node scripts/verify-ui.mjs",
     "verify:properties": "node --test --import ./tests/helpers/isolateState.js tests/boundedExplorer.test.ts tests/verificationPropertyProbe.test.ts",
+    "verify:statechart": "node scripts/verify-statechart.mjs",
     "verify:tla": "node scripts/verify-tla.mjs"
   },
   "engines": {

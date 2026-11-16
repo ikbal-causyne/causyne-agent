@@ -41,7 +41,7 @@ export const VERIFICATION_SKILLS = Object.freeze({
     content: `# Statechart verification
 1. Locate the real reducer or transition map. List states, events, guards, and actions from code.
 2. Define forbidden states and transitions. Use bounded breadth-first exploration to reach every modeled state within the chosen bounds.
-3. Where installed, confirm a TLA+ model with TLC. Draw a statechart only after checking the model, and label assumed or omitted transitions.
+3. Run npm run verify:statechart to render the bounded JavaScript panel model, and npm run verify:statechart -- --broken to confirm a counterexample can be found. This graph is not a TLC proof. Where a pinned TLA+ checker exists, separately run npm run verify:tla and report its status explicitly.
 4. Report shortest paths to violations; do not invent events or conflate a diagram with an executable verification result.
 ## Verification
 - Done when: each displayed transition has a code mapping and all reported counterexamples reproduce under the stated conditions.`
