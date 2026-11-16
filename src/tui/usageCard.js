@@ -82,8 +82,11 @@ export async function collectUsageCardData(loop) {
     const modelLimit = resolveModelContextTokens({
         provider, model, overrideTokens: explicitLimit ? Number(override) : 0
     });
+    const liveLimitChars = finiteNonNeg(loop?._contextLimitChars, 0);
+    const liveLimitTokens = liveLimitChars > 0 ? Math.round(liveLimitChars / 4) : 0;
     const poolTokens = Math.floor(modelLimit > 0
-        ? finiteNonNeg(modelLimit, 0) : finiteNonNeg(contextReport?.approxTokenPool, 0));
+        ? finiteNonNeg(modelLimit, 0)
+        : (liveLimitTokens > 0 ? liveLimitTokens : finiteNonNeg(contextReport?.approxTokenPool, 0)));
     // Measure active messages tokens
     let messageChars = 0;
     let messageCount = 0;
@@ -119,7 +122,11 @@ export async function collectUsageCardData(loop) {
     }
     const messageTokens = Math.round(messageChars / 4);
     const coreToolTokens = Math.floor(finiteNonNeg(contextReport?.core?.tokens, 5000));
-    const contextUsed = messageTokens + coreToolTokens;
+    const liveContextChars = finiteNonNeg(loop?._contextChars, 0);
+    const liveContextTokens = liveContextChars > 0 ? Math.round(liveContextChars / 4) : 0;
+    const contextUsed = liveContextTokens > 0
+        ? Math.max(liveContextTokens, messageTokens)
+        : (messageTokens + coreToolTokens);
     const contextPctLeft = poolTokens > 0
         ? Math.max(0, Math.min(100, Math.round(((poolTokens - contextUsed) / poolTokens) * 100))) : 0;
     // Budget

@@ -62,3 +62,16 @@ test('missing live tracker is not fabricated as zero session usage', async () =>
   assert.equal(data.sessionMetricsAvailable, false);
   assert.match(stripAnsi(renderUsageCardRows(data, 80).join('\n')), /unavailable/);
 });
+
+test('/usage stays synchronized with live loop._contextChars and _contextLimitChars', async () => {
+  const data = await collectUsageCardData({
+    ...usageLoop(),
+    _contextChars: 53070 * 4,
+    _contextLimitChars: 128000 * 4
+  });
+  assert.equal(data.contextUsedTokens, 53070);
+  assert.equal(data.contextPoolTokens, 128000);
+  assert.equal(data.contextPercentLeft, 59);
+  const body = stripAnsi(renderUsageCardRows(data, 100).join('\n'));
+  assert.match(body, /~53,070 \/ ~128,000 tokens\s+\(~59% left; inferred cap\)/);
+});
