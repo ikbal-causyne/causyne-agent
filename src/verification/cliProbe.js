@@ -4,7 +4,15 @@ import { realpathSync } from 'node:fs';
 
 function inside(root, candidate) {
   const base = realpathSync(root);
-  const target = realpathSync(candidate);
+  const lexical = path.relative(base, path.resolve(candidate));
+  if (lexical === '..' || lexical.startsWith('..' + path.sep) || path.isAbsolute(lexical)) return false;
+  let target;
+  try {
+    target = realpathSync(candidate);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return true;
+    throw error;
+  }
   const relative = path.relative(base, target);
   return relative === '' || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
 }
