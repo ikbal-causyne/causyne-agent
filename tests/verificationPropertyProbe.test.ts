@@ -128,3 +128,14 @@ test('async invariant results cannot silently count as successful verification',
   assert.deepEqual(report.trace, []);
   assert.match(report.reason, /Async invariants are not supported/);
 });
+
+test('async state factories cannot masquerade as verified initial state', () => {
+  const report = verifyActionSequences({
+    initial: async () => ({ valid: true }),
+    actions: ['tick'], trials: 1, maxSteps: 1,
+    transition: state => state, invariant: () => true
+  });
+  assert.equal(report.status, 'counterexample');
+  assert.deepEqual(report.trace, []);
+  assert.match(report.reason, /Async initial state is not supported/);
+});
