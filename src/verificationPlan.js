@@ -91,7 +91,7 @@ function after(outcomes, domain) {
     return outcomes.slice(outcomes.findLastIndex(matches) + 1);
 }
 function satisfied(domain, evidence) {
-    const ok = evidence.filter((outcome) => outcome.success);
+    const ok = evidence.filter((outcome) => outcome.success && (outcome.exitCode === null || outcome.exitCode === 0));
     switch (domain) {
         case 'code':
             return ok.some((outcome) => outcome.tool === 'code_verify_syntax'

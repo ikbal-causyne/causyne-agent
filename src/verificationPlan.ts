@@ -114,7 +114,7 @@ function after(outcomes: readonly ToolOutcome[], domain: VerificationDomain): re
 }
 
 function satisfied(domain: VerificationDomain, evidence: readonly ToolOutcome[]): boolean {
-  const ok = evidence.filter((outcome) => outcome.success);
+  const ok = evidence.filter((outcome) => outcome.success && (outcome.exitCode === null || outcome.exitCode === 0));
   switch (domain) {
     case 'code':
       return ok.some((outcome) => outcome.tool === 'code_verify_syntax'
