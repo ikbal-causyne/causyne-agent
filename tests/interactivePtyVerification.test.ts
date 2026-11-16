@@ -79,3 +79,16 @@ test('full chatMode dispatches /usage and /status through a real PTY without pro
   assert.ok(result.observations.every(x => x.matched));
   assert.equal(result.exitCode, 0);
 });
+
+test('live TUI usage remains reachable at compact terminal dimensions', async t => {
+  if (process.platform === 'win32') return t.skip('ConPTY adapter not installed');
+  const result = await verifyCausyneTui({
+    workspace: root, columns: 80, rows: 28, timeoutMs: 20000
+  });
+  if (result.status === 'unavailable') return t.skip(result.reason);
+  assert.equal(result.status, 'observed-pass', JSON.stringify({
+    observations: result.observations, error: result.stderr?.slice(-1100),
+    outputTail: result.stdout?.slice(-1300), exitCode: result.exitCode
+  }));
+  assert.ok(result.observations.every(x => x.matched));
+});
