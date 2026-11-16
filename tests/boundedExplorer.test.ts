@@ -157,7 +157,10 @@ test('invariant side effects cannot alter states explored by later actions', () 
     initial: source, actions: ['inspect'], maxDepth: 1,
     transition: state => ({ ...state, inspected: true }),
     invariant: state => {
-      if (!state.inspected) state.count = 100;
+      if (!state.inspected) {
+        state.count = 100;
+        return true;
+      }
       return state.count === 0 || 'invariant mutated the state used by transition';
     }
   });
