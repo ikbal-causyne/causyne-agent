@@ -35,7 +35,7 @@ test('PTY evidence never passes when expected terminal output is absent', async 
 
 test('PTY command restrictions reject out-of-workspace executables', async () => {
   await assert.rejects(runPtyProbe({
-    workspace, program: '/bin/sh', args: ['-c', 'echo forbidden']
+    workspace, program: process.execPath, args: ['-e', 'process.exit(0)']
   }), /inside workspace/);
   await assert.rejects(runPtyProbe({ workspace, program: 'sh' }), /Only node/);
   await assert.rejects(runPtyProbe({ workspace, maxSteps: 1, timeoutMs: 0 }), /limits/);
