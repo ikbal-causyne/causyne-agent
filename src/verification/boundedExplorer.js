@@ -25,7 +25,17 @@ export function exploreStateMachine(options) {
   const key = options.stateKey || JSON.stringify;
   if (typeof key !== 'function') throw new TypeError('stateKey must be a function');
 
-  const startKey = key(initial);
+  const checkedState = value => {
+    try { return structuredClone(value); }
+    catch { throw new TypeError('State must be structured-cloneable for sound bounded exploration'); }
+  };
+  const checkedAction = value => {
+    try { return structuredClone(value); }
+    catch { throw new TypeError('Actions must be structured-cloneable for sound bounded exploration'); }
+  };
+  const stableActions = actions.map(checkedAction);
+  const startState = checkedState(initial);
+  const startKey = key(checkedState(startState));
   if (startKey && typeof startKey.then === 'function') {
     throw new TypeError('Async stateKey is not supported');
   }
@@ -33,12 +43,12 @@ export function exploreStateMachine(options) {
   let nodesVisited = 1;
   let transitions = 0;
   let deepest = 0;
-  const root = { state: initial, trace: [] };
+  const root = { state: startState, trace: [] };
   const queue = [root];
   const seen = new Set([startKey]);
 
   function failed(node) {
-    const result = invariant(node.state);
+    const result = invariant(checkedState(node.state));
     if (result && typeof result.then === 'function') {
       throw new TypeError('Async invariants are not supported');
     }
@@ -61,16 +71,11 @@ export function exploreStateMachine(options) {
     const current = queue[head];
     deepest = Math.max(deepest, current.trace.length);
     if (current.trace.length >= maxDepth) continue;
-    for (const action of actions) {
+    for (const action of stableActions) {
       // Each branch must start from the same immutable snapshot. A mutating
       // transition otherwise poisons later siblings and can produce false proofs.
-      let isolated;
-      try {
-        isolated = structuredClone(current.state);
-      } catch {
-        throw new TypeError('State must be structured-cloneable for sound bounded exploration');
-      }
-      const next = transition(isolated, action);
+      const isolated = checkedState(current.state);
+      const next = transition(isolated, checkedAction(action));
       if (next && typeof next.then === 'function') {
         throw new TypeError('Async transitions are not supported');
       }
@@ -80,7 +85,7 @@ export function exploreStateMachine(options) {
       const nextNode = { state: next, trace };
       const failure = failed(nextNode);
       if (failure) return failure;
-      const identity = key(next);
+      const identity = key(checkedState(next));
       if (identity && typeof identity.then === 'function') {
         throw new TypeError('Async stateKey is not supported');
       }

@@ -150,3 +150,53 @@ test('bounded model exploration rejects async entrypoints instead of returning a
     ...base, stateKey: state => state.count === 0 ? 'root' : Promise.resolve('next')
   }), /Async stateKey/);
 });
+
+test('invariant side effects cannot alter states explored by later actions', () => {
+  const source = { count: 0, inspected: false };
+  const result = exploreStateMachine({
+    initial: source, actions: ['inspect'], maxDepth: 1,
+    transition: state => ({ ...state, inspected: true }),
+    invariant: state => {
+      if (!state.inspected) state.count = 100;
+      return state.count === 0 || 'invariant mutated the state used by transition';
+    }
+  });
+  assert.equal(result.status, 'bounded-pass');
+  assert.deepEqual(source, { count: 0, inspected: false });
+});
+
+test('mutation of action arguments never leaks to other branches or depths', () => {
+  const actions = [{ kind: 'tick', amount: 1 }];
+  const result = exploreStateMachine({
+    initial: { count: 0 }, actions, maxDepth: 3,
+    transition: (state, action) => {
+      const amount = action.amount;
+      action.amount = 999;
+      return { count: state.count + amount };
+    },
+    invariant: state => state.count <= 3 || 'action object corrupted across transitions'
+  });
+  assert.equal(result.status, 'bounded-pass', JSON.stringify(result));
+  assert.equal(actions[0].amount, 1);
+  assert.equal(result.statesExplored, 4);
+});
+
+test('exploration fails closed on non-cloneable actions even when initial state is safe', () => {
+  assert.throws(() => exploreStateMachine({
+    initial: { count: 0 }, actions: [{ callback: () => true }],
+    transition: state => state, invariant: () => true
+  }), /Actions must be structured-cloneable/);
+});
+
+test('an invariant may not mutate the underlying reachable state', () => {
+  const result = exploreStateMachine({
+    initial: { count: 0 }, actions: ['step'], maxDepth: 2,
+    transition: state => ({ count: state.count + 1 }),
+    invariant: state => {
+      state.count = -1;
+      return true;
+    }
+  });
+  assert.equal(result.status, 'bounded-pass');
+  assert.equal(result.statesExplored, 3);
+});
