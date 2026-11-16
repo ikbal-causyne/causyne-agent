@@ -66,6 +66,9 @@ export class LocalCLIConnection {
 
     try {
       this.renderer.handle(msg);
+      if (msg.type === 'usage_update' && typeof this.onUsageUpdate === 'function') {
+        this.onUsageUpdate(msg);
+      }
     } catch (e) {
       // This used to be `catch(e) {}` around the whole method, so a render bug
       // silently ate the frame and the transcript just went quiet. Report it
@@ -377,12 +380,24 @@ export async function chatMode({ home = false } = {}) {
         messageActionLoop: loop,
         onInterrupt: () => loop.abort(),
         getMode: () => loop.config?.autonomyMode || config.autonomyMode || 'B',
-        onOpenMode: () => openModeControl(prompt, loop),
-        onOpenModel: () => runInteractiveModelPicker(prompt, { loadConfig, saveConfig }, { loop }),
-        onOpenVariant: () => openVariantControl(prompt),
+        onOpenMode: async () => {
+          await openModeControl(prompt, loop);
+          prompt?.refreshPinnedPanels?.(loop);
+        },
+        onOpenModel: async () => {
+          await runInteractiveModelPicker(prompt, { loadConfig, saveConfig }, { loop });
+          prompt?.refreshPinnedPanels?.(loop);
+        },
+        onOpenVariant: async () => {
+          await openVariantControl(prompt);
+          prompt?.refreshPinnedPanels?.(loop);
+        },
         onExit: () => { if (prompt) prompt.stop(); process.exit(0); },
         onExpand: () => conn.renderer.expandLastOutput()
       });
+      conn.onUsageUpdate = () => {
+        if (prompt && typeof prompt.refreshPinnedPanels === 'function') prompt.refreshPinnedPanels(loop);
+      };
       if (surface) prompt.attachSurface(surface);
       prompt.attach(conn.renderer);
       prompt.start();
@@ -631,6 +646,7 @@ export async function chatMode({ home = false } = {}) {
         if (commandResult.output && (commandResult.output.includes('Now using') || commandResult.output.includes('Active model switched') || commandResult.output.includes('Saved API key'))) {
           conn.renderer.write(homeStatusLine({ config: loadConfig() }) + '\n');
         }
+        if (prompt && typeof prompt.refreshPinnedPanels === 'function') prompt.refreshPinnedPanels(loop);
         if (commandResult.effect === 'exit') { finish(); break; }
         continue;
       }

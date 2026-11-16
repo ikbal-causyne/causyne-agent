@@ -29,7 +29,7 @@ import { composerGeometry } from './composerGeometry.js';
 import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay, stripAnsi } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
-import { renderUsageCardRows, collectUsageCardData } from './usageCard.js';
+import { renderUsageCardRows, renderStatusCardRows, collectUsageCardData } from './usageCard.js';
 import { buildStatusText } from '../reporting.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
@@ -138,6 +138,7 @@ export class ChatPrompt {
     this.usageCard = null;
     this.usageCardLoading = false;
     this.statusCard = null;
+    this.statusCardUsage = null;
     this.infoPanelVersion = 0;
     this.usageRefreshPending = false;
 
@@ -547,9 +548,9 @@ export class ChatPrompt {
     this.tickTimer = setInterval(() => {
       this.tick++;
       if (this.busy) this.scheduleDraw();
-      // Keep the pinned usage view current without disk reads every 125 ms.
-      if (this.busy && this.usageCard && this.tick % 32 === 0) {
-        void this.refreshUsageCard();
+      // Keep the pinned usage/status view current without disk reads every 125 ms.
+      if (this.busy && (this.usageCard || this.statusCard !== null) && this.tick % 32 === 0) {
+        this.refreshPinnedPanels();
       }
     }, 125);
     if (this.tickTimer.unref) this.tickTimer.unref();
@@ -684,6 +685,7 @@ export class ChatPrompt {
     }
     const version = ++this.infoPanelVersion;
     this.statusCard = null;
+    this.statusCardUsage = null;
     this.usageCardLoading = true;
     try {
       const data = await collectUsageCardData(loop || this.messageActionLoop);
@@ -738,33 +740,53 @@ export class ChatPrompt {
       this.closeStatusCard();
       return false;
     }
+    const targetLoop = loop || this.messageActionLoop;
     ++this.infoPanelVersion; // A pending usage read must not reopen a replaced panel.
     this.usageCard = null;
     this.usageCardLoading = false;
-    this.statusCard = buildStatusText({ loop: loop || this.messageActionLoop });
+    this.statusCardUsage = null;
+    this.statusCard = buildStatusText({ loop: targetLoop });
     this.scheduleDraw();
+    void this.refreshStatusCardMeta(targetLoop);
     return true;
   }
 
   closeStatusCard() {
     if (this.statusCard === null) return false;
+    ++this.infoPanelVersion;
     this.statusCard = null;
+    this.statusCardUsage = null;
     this.scheduleDraw();
     return true;
   }
 
+  async refreshStatusCardMeta(loop = null) {
+    if (this.statusCard === null) return false;
+    const version = this.infoPanelVersion;
+    try {
+      const data = await collectUsageCardData(loop || this.messageActionLoop);
+      if (version !== this.infoPanelVersion || this.statusCard === null) return false;
+      this.statusCardUsage = data;
+      this.scheduleDraw();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  refreshPinnedPanels(loop = null) {
+    const targetLoop = loop || this.messageActionLoop;
+    if (this.usageCard) void this.refreshUsageCard(targetLoop);
+    if (this.statusCard !== null) {
+      this.statusCard = buildStatusText({ loop: targetLoop });
+      this.scheduleDraw();
+      void this.refreshStatusCardMeta(targetLoop);
+    }
+  }
+
   statusCardRows(width) {
     if (this.statusCard === null) return [];
-    const lines = String(this.statusCard).split(/\r?\n/);
-    if (lines[0] === 'Status') lines.shift();
-    // An on-screen detail card, not a modal: keep the composer usable.
-    const card = panelRows({
-      title: 'Status',
-      footer: 'esc close',
-      preferredHeight: () => lines.length + 2,
-      body: () => lines
-    }, width, lines.length + 2);
-    return card.concat(['']);
+    return renderStatusCardRows(this.statusCard, this.statusCardUsage, width);
   }
 
   /**
@@ -955,6 +977,7 @@ export class ChatPrompt {
     if (!busy && this.usageCard) void this.refreshUsageCard();
     if (this.statusCard !== null) {
       this.statusCard = buildStatusText({ loop: this.messageActionLoop });
+      if (!busy) void this.refreshStatusCardMeta(this.messageActionLoop);
     }
     if (this.surface?.stage) this.surface.stage.invalidate();
     this.draw();
@@ -2000,8 +2023,8 @@ export class ChatPrompt {
       punctuate: false
     });
 
-    const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, width)
-      : this.statusCard !== null ? this.statusCardRows(width) : [];
+    const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, boxWidth)
+      : this.statusCard !== null ? this.statusCardRows(boxWidth) : [];
     const planRows = this.planRows(width);
     const pickerRows = this.completion ? this.pickerRows(width) : [];
     this.pickerLayout = this.completion ? {

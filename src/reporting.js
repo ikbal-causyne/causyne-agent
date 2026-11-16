@@ -339,20 +339,28 @@ export function formatUptime(ms) {
  */
 export function buildStatusText({ loop = null } = {}) {
   const config = loadConfig();
+  const liveConfig = loop?.config || {};
+  const provider = liveConfig.provider || config.provider || 'default';
+  const model = liveConfig.model || config.model || 'default';
+  const autonomyMode = liveConfig.autonomyMode || config.autonomyMode || 'C';
+  const tier = liveConfig.tier || config.tier || 'premium';
   const lines = ['Status'];
 
   lines.push('  Runtime          : local desktop');
 
-  lines.push(`  Provider / model : ${config.provider || 'default'} / ${config.model || 'default'}`);
-  lines.push(`  Autonomy mode    : ${config.autonomyMode || 'C'}`);
-  lines.push(`  Tier             : ${config.tier || 'premium'}`);
+  if (loop?.memoryManager?.sessionId) {
+    lines.push(`  Session          : ${loop.memoryManager.sessionId}`);
+  }
+  lines.push(`  Provider / model : ${provider} / ${model}`);
+  lines.push(`  Autonomy mode    : ${autonomyMode}`);
+  lines.push(`  Tier             : ${tier}`);
 
   if (loop && loop.sandbox) {
     const sandbox = loop.sandbox;
     lines.push(`  Workspace scope  : ${sandbox.grantAllAccess ? 'ALL ACCESS' : (sandbox.workspacePaths || []).join(', ')}`);
   }
 
-  if (!config.apiKey && config.provider !== 'ollama' && !isAcpProvider(config.provider) && !isAntigravityProvider(config.provider)) {
+  if (!liveConfig.apiKey && !config.apiKey && provider !== 'ollama' && !isAcpProvider(provider) && !isAntigravityProvider(provider)) {
     lines.push('');
     lines.push('  No API key is set. Run `causyne config`.');
   }

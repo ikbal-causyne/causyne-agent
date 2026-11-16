@@ -33,6 +33,8 @@ export function switchChatWorkspace({ workspaceRoot, createLoop, prompt = null, 
         // queued attachments or active skills from the previous workspace.
         prompt.pendingAttachments = [];
         prompt.completion = null;
+        if (typeof prompt.refreshPinnedPanels === 'function')
+            prompt.refreshPinnedPanels(replacement);
         if (typeof prompt.scheduleDraw === 'function')
             prompt.scheduleDraw();
     }

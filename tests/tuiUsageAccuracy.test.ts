@@ -74,4 +74,5 @@ test('/usage stays synchronized with live loop._contextChars and _contextLimitCh
   assert.equal(data.contextPercentLeft, 59);
   const body = stripAnsi(renderUsageCardRows(data, 100).join('\n'));
   assert.match(body, /~53,070 \/ ~128,000 tokens\s+\(~59% left; inferred cap\)/);
+  assert.match(body, /Window left.*\[.+\]\s*59% left/);
 });

@@ -210,73 +210,157 @@ export async function collectUsageCardData(loop?: any): Promise<UsageCardData> {
   };
 }
 
-/**
- * Render the usage card as an array of styled terminal rows, exactly matching `width`.
- */
-export function renderUsageCardRows(data: UsageCardData, width: number): string[] {
+interface FramedCardOptions {
+  title: string;
+  footer?: string;
+  labelWidth?: number;
+}
+
+function buildFramedCardRows(
+  width: number,
+  options: FramedCardOptions,
+  populate: (addRow: (label: string, value: string) => void, addLine: (line: string) => void, ctx: { innerWidth: number; labelWidth: number }) => void
+): string[] {
   const safeWidth = Number.isFinite(width) ? Math.max(4, Math.floor(width)) : 80;
   const frameWidth = safeWidth; // Never paint outside the terminal's actual columns.
   const innerWidth = Math.max(0, frameWidth - 4);
   const edge = paint('accent', FRAME.v);
-  const title = frameWidth >= 32 ? ` ${bold(paint('accent', 'Usage & Context'))} `
-    : frameWidth >= 13 ? ' Usage ' : '';
-  const hint = frameWidth >= 43 ? ` ${dim('esc close')} ` : '';
+  const cleanTitle = oneLineText(options.title);
+  const title = frameWidth >= 32 ? ` ${bold(paint('accent', cleanTitle))} `
+    : frameWidth >= 13 ? ` ${cleanTitle.split(/\s+/)[0] || cleanTitle} ` : '';
+  const footerText = oneLineText(options.footer || 'esc close');
+  const hint = frameWidth >= 43 && footerText ? ` ${dim(footerText)} ` : '';
   const lineRoom = Math.max(0, frameWidth - 3 - visibleWidth(title) - visibleWidth(hint));
   const top = paint('accent', FRAME.tl + FRAME.h)
     + title + paint('accent', FRAME.h.repeat(lineRoom)) + hint + paint('accent', FRAME.tr);
   const rows = [fill('surface', top)];
 
-  const labelWidth = innerWidth >= 60 ? 16 : 13;
-  const addRow = (label: string, value: string): void => {
-    const name = dim(String(label).padEnd(labelWidth));
-    const text = name + value;
+  const labelWidth = options.labelWidth ?? (innerWidth >= 60 ? 16 : 13);
+  const pushInnerRow = (text: string): void => {
     const clipped = visibleWidth(text) > innerWidth
       ? truncate(text, innerWidth, GLYPHS.ellipsis) : text;
     const padding = ' '.repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
     rows.push(fill('surface', `${edge} ${clipped}${padding} ${edge}`));
   };
+  const addRow = (label: string, value: string): void => {
+    const name = dim(String(label).padEnd(labelWidth));
+    pushInnerRow(name + value);
+  };
 
-  const session = oneLineText(data.sessionId || 'unknown') || 'unknown';
-  const sessionName = truncate(session, Math.max(8, Math.floor(innerWidth / 2)), '…');
-  addRow('Session/Chat', `${paint('ink', sessionName)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`);
-  // Model and provider occupy separate rows, rather than squeezing two long
-  // identifiers into a single line where neither is readable.
-  addRow('Active Model', paint('accent', oneLineText(data.model || 'unknown')));
-  addRow('Provider', `${paint('ink', oneLineText(data.provider || 'unknown'))} ${dim(oneLineText(data.billingNote || ''))}`);
-
-  const pool = Number.isFinite(data.contextPoolTokens) && data.contextPoolTokens > 0
-    ? data.contextPoolTokens : 0;
-  const estimatedUsed = formatNumber(data.contextUsedTokens);
-  if (pool > 0) {
-    const percent = Number.isFinite(data.contextPercentLeft)
-      ? Math.max(0, Math.min(100, Math.round(data.contextPercentLeft))) : 0;
-    const poolSource = data.contextLimitSource === 'configured' ? 'configured cap' : 'inferred cap';
-    addRow('Context (est.)', `~${estimatedUsed} / ~${formatNumber(pool)} tokens  (~${percent}% left; ${poolSource})`);
-  } else {
-    addRow('Context (est.)', `~${estimatedUsed} tokens; model limit unknown`);
-  }
-
-  addRow('This Session', data.sessionMetricsAvailable === false
-    ? dim('unavailable (no live tracker)')
-    : `${bold(formatNumber(data.sessionTokens))} tracked tokens ${dim('(current process only)')}`);
-  addRow('Today (local)', `${bold(formatNumber(data.dailyTokens))} tracked tokens ${dim('(calendar day)')}`);
-  addRow('All-Time', `${bold(formatNumber(data.lifetimeTokens))} tracked tokens ${dim(`(${formatNumber(data.lifetimeCalls)} recorded events)`)}`);
-
-  const totalEstimate = formatCostEstimate(data.lifetimeCostUsd).trim();
-  const dailyEstimate = formatCostEstimate(data.dailyCostUsd).trim();
-  addRow('Cost (estimate)', totalEstimate
-    ? `${totalEstimate} all-time${dailyEstimate ? ` · ${dailyEstimate} today` : ''}`
-    : dim('no positive local estimate recorded'));
-
-  addRow('Data source', dim('Local tracker; not provider billing or exact token telemetry'));
-  if (data.budgetEnabled && typeof data.budgetLimitTokens === 'number' && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
-    const pct = typeof data.budgetPercentUsed === 'number' && Number.isFinite(data.budgetPercentUsed)
-      ? Math.max(0, Math.round(data.budgetPercentUsed)) : 0;
-    addRow('Daily budget', `${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tracked (${pct}% used)`);
-  }
+  populate(addRow, pushInnerRow, { innerWidth, labelWidth });
 
   const bottom = paint('accent', FRAME.bl + FRAME.h.repeat(Math.max(0, frameWidth - 2)) + FRAME.br);
   rows.push(fill('surface', bottom));
-  rows.push(''); // Keep the composer visually separate from the usage panel.
+  rows.push(''); // Keep the composer visually separate from the pinned panel.
   return rows;
+}
+
+/**
+ * Render the usage card as an array of styled terminal rows, exactly matching `width`.
+ */
+export function renderUsageCardRows(data: UsageCardData, width: number): string[] {
+  return buildFramedCardRows(width, { title: 'Usage & Context', footer: 'esc close' }, (addRow, _addLine, { innerWidth, labelWidth }) => {
+    const session = oneLineText(data.sessionId || 'unknown') || 'unknown';
+    const sessionName = truncate(session, Math.max(8, Math.floor(innerWidth / 2)), '…');
+    addRow('Session/Chat', `${paint('ink', sessionName)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`);
+    // Model and provider occupy separate rows, rather than squeezing two long
+    // identifiers into a single line where neither is readable.
+    addRow('Active Model', paint('accent', oneLineText(data.model || 'unknown')));
+    addRow('Provider', `${paint('ink', oneLineText(data.provider || 'unknown'))} ${dim(oneLineText(data.billingNote || ''))}`);
+
+    const pool = Number.isFinite(data.contextPoolTokens) && data.contextPoolTokens > 0
+      ? data.contextPoolTokens : 0;
+    const estimatedUsed = formatNumber(data.contextUsedTokens);
+    if (pool > 0) {
+      const percent = Number.isFinite(data.contextPercentLeft)
+        ? Math.max(0, Math.min(100, Math.round(data.contextPercentLeft))) : 0;
+      const poolSource = data.contextLimitSource === 'configured' ? 'configured cap' : 'inferred cap';
+      addRow('Context (est.)', `~${estimatedUsed} / ~${formatNumber(pool)} tokens  (~${percent}% left; ${poolSource})`);
+      const barRoom = Math.max(0, innerWidth - labelWidth - 13);
+      if (barRoom >= 8) {
+        const barWidth = Math.min(28, barRoom);
+        const bar = renderProgressBar(percent, barWidth, false);
+        addRow('Window left', `[${bar}] ${String(percent).padStart(3)}% left`);
+      }
+    } else {
+      addRow('Context (est.)', `~${estimatedUsed} tokens; model limit unknown`);
+    }
+
+    addRow('This Session', data.sessionMetricsAvailable === false
+      ? dim('unavailable (no live tracker)')
+      : `${bold(formatNumber(data.sessionTokens))} tracked tokens ${dim('(current process only)')}`);
+    addRow('Today (local)', `${bold(formatNumber(data.dailyTokens))} tracked tokens ${dim('(calendar day)')}`);
+    addRow('All-Time', `${bold(formatNumber(data.lifetimeTokens))} tracked tokens ${dim(`(${formatNumber(data.lifetimeCalls)} recorded events)`)}`);
+
+    const totalEstimate = formatCostEstimate(data.lifetimeCostUsd).trim();
+    const dailyEstimate = formatCostEstimate(data.dailyCostUsd).trim();
+    addRow('Cost (estimate)', totalEstimate
+      ? `${totalEstimate} all-time${dailyEstimate ? ` · ${dailyEstimate} today` : ''}`
+      : dim('no positive local estimate recorded'));
+
+    addRow('Data source', dim('Local tracker; not provider billing or exact token telemetry'));
+    if (data.budgetEnabled && typeof data.budgetLimitTokens === 'number' && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
+      const pct = typeof data.budgetPercentUsed === 'number' && Number.isFinite(data.budgetPercentUsed)
+        ? Math.max(0, Math.round(data.budgetPercentUsed)) : 0;
+      addRow('Daily budget', `${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tracked (${pct}% used)`);
+    }
+  });
+}
+
+/**
+ * Render the pinned `/status` card matching the Usage card styling, plus live session/context meters when available.
+ */
+export function renderStatusCardRows(
+  statusText: string,
+  usageData: UsageCardData | null | undefined,
+  width: number
+): string[] {
+  return buildFramedCardRows(width, { title: 'Status', footer: 'esc close' }, (addRow, addLine, { innerWidth, labelWidth }) => {
+    const rawLines = String(statusText || '').split(/\r?\n/);
+    if (rawLines[0]?.trim() === 'Status') rawLines.shift();
+    let hasSessionLine = false;
+    for (const rawLine of rawLines) {
+      const trimmed = oneLineText(rawLine);
+      if (!trimmed) continue;
+      const sepIdx = trimmed.indexOf(':');
+      if (sepIdx > 0 && sepIdx <= 20) {
+        const key = trimmed.slice(0, sepIdx).trim();
+        const val = trimmed.slice(sepIdx + 1).trim();
+        if (key.toLowerCase() === 'session') hasSessionLine = true;
+        const coloredVal = key.toLowerCase().includes('provider')
+          ? paint('accent', val)
+          : paint('ink', val);
+        addRow(key, coloredVal);
+      } else {
+        addLine(dim(trimmed));
+      }
+    }
+
+    if (usageData) {
+      if (!hasSessionLine) {
+        const session = oneLineText(usageData.sessionId || 'unknown') || 'unknown';
+        const sessionName = truncate(session, Math.max(8, Math.floor(innerWidth / 2)), '…');
+        addRow('Session', `${paint('ink', sessionName)}  ${dim(`(${formatNumber(usageData.sessionTurns)} messages)`)}`);
+      }
+      const pool = Number.isFinite(usageData.contextPoolTokens) && usageData.contextPoolTokens > 0
+        ? usageData.contextPoolTokens : 0;
+      const used = formatNumber(usageData.contextUsedTokens);
+      if (pool > 0) {
+        const percent = Number.isFinite(usageData.contextPercentLeft)
+          ? Math.max(0, Math.min(100, Math.round(usageData.contextPercentLeft))) : 0;
+        const barRoom = Math.max(0, innerWidth - labelWidth - 13);
+        if (barRoom >= 8) {
+          const barWidth = Math.min(26, barRoom);
+          const bar = renderProgressBar(percent, barWidth, false);
+          addRow('Context left', `[${bar}] ${String(percent).padStart(3)}% left`);
+        }
+        addRow('Context tokens', `~${used} / ~${formatNumber(pool)} tokens`);
+      } else {
+        addRow('Context tokens', `~${used} tokens; model limit unknown`);
+      }
+      if (usageData.sessionMetricsAvailable !== false) {
+        addRow('Tracked tokens', `${bold(formatNumber(usageData.sessionTokens))} session · ${bold(formatNumber(usageData.dailyTokens))} today`);
+      }
+    }
+  });
 }

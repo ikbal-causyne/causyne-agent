@@ -125,3 +125,59 @@ test('an in-flight usage snapshot cannot reopen after explicit close or panel sw
   prompt.closeUsageCard();
   assert.equal(prompt.usageCard, null);
 });
+
+test('pinned /usage and /status preserve right borders in draw() and stay synchronized via refreshPinnedPanels()', async () => {
+  const { prompt } = promptHarness();
+  let paintedRows: string[] = [];
+  prompt.active = true;
+  prompt.out = { columns: 90, rows: 35, isTTY: true, write: () => true } as any;
+  prompt.present = (rows: string[]) => { paintedRows = rows; };
+
+  const loop = {
+    config: { provider: 'acp/opencode', model: 'opencode/deepseek-v4.1-flash-free', autonomyMode: 'C' },
+    _contextChars: 20000 * 4,
+    _contextLimitChars: 128000 * 4,
+    tokenTracker: {
+      sessionTokens: 18465, sessionCostUsd: 0,
+      async getReportedUsage() { return { sessionTokens: 18465, sessionCostUsd: 0 }; },
+      async getDailyUsage() { return { date: '2026-11-17', totalTokens: 37016, totalCalls: 2, totalCostUsd: 0 }; },
+      async getCumulativeUsage() { return { totalTokens: 100000, totalCalls: 10, totalCostUsd: 0.5 }; }
+    },
+    messages: [{ role: 'user', content: 'hi' }],
+    memoryManager: { sessionId: 's_live_90' }
+  };
+
+  assert.equal(await prompt.toggleUsageCard(loop), true);
+  ChatPrompt.prototype.draw.call(prompt);
+  const usagePlain = paintedRows.map(r => stripAnsi(r));
+  const usageTop = usagePlain.find(r => r.includes('Usage & Context'));
+  assert.ok(usageTop && /[╮+]$/.test(usageTop.trimEnd()), `Expected intact top-right border on Usage & Context, got: ${usageTop}`);
+  const usageBottomIdx = usagePlain.findIndex((r, idx) => idx > 0 && /^[╰└+][─-]+/.test(r.trimStart()));
+  assert.ok(usageBottomIdx > 0 && /[╯┘+]$/.test(usagePlain[usageBottomIdx]!.trimEnd()), `Expected intact bottom-right border, got: ${usagePlain[usageBottomIdx]}`);
+  for (let i = 1; i < usageBottomIdx; i++) {
+    assert.match(usagePlain[i]!.trimEnd(), /[│|]$/, `Expected intact right border on usage row ${i}: ${usagePlain[i]}`);
+  }
+  assert.ok(usagePlain.some(r => r.includes('Window left') && /\[.*% left/.test(r)), 'Expected visual context progress bar inside Usage & Context');
+
+  // Switching to pinned /status enriches it with live session & context bar and keeps right border intact.
+  assert.equal(prompt.toggleStatusCard(loop), true);
+  await prompt.refreshStatusCardMeta(loop);
+  ChatPrompt.prototype.draw.call(prompt);
+  const statusPlain = paintedRows.map(r => stripAnsi(r));
+  assert.ok(statusPlain.some(r => r.includes('Context left') && /\[.*% left/.test(r)), 'Expected live Context left progress bar inside /status');
+  const statusTop = statusPlain.find(r => r.includes('Status'));
+  assert.ok(statusTop && /[╮+]$/.test(statusTop.trimEnd()), `Expected intact top-right border on Status, got: ${statusTop}`);
+
+  // refreshPinnedPanels updates open pinned panel when active loop switches (e.g. /cd or /model).
+  const replacementLoop = {
+    ...loop,
+    config: { provider: 'openai', model: 'gpt-4o', autonomyMode: 'B' },
+    memoryManager: { sessionId: 's_switched_2' }
+  };
+  prompt.messageActionLoop = replacementLoop;
+  prompt.refreshPinnedPanels(replacementLoop);
+  await prompt.refreshStatusCardMeta(replacementLoop);
+  const refreshed = stripAnsi(prompt.statusCardRows(89).join('\n'));
+  assert.match(refreshed, /openai \/ gpt-4o/);
+  assert.match(refreshed, /s_switched_2/);
+});
