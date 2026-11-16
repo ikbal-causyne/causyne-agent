@@ -10,7 +10,7 @@ if pid==0:
     os.chdir(cfg["cwd"])
     os.execvpe(cfg["argv"][0],cfg["argv"],os.environ)
 start=time.monotonic()
-sent=False
+sent=not bool(cfg["input"])
 closed=False
 done=False
 status=None
