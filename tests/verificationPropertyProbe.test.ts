@@ -105,3 +105,26 @@ test('property runner drives actual Causyne status and Escape handlers', () => {
   });
   assert.equal(result.status, 'bounded-pass', JSON.stringify(result));
 });
+
+test('async transition results are never accepted as synchronous proof', () => {
+  const report = verifyActionSequences({
+    initial: () => ({ done: false }),
+    actions: ['write'], trials: 1, maxSteps: 1,
+    transition: async state => ({ ...state, done: true }),
+    invariant: () => true
+  });
+  assert.equal(report.status, 'counterexample');
+  assert.deepEqual(report.trace, ['write']);
+  assert.match(report.reason, /Async transitions are not supported/);
+});
+
+test('async invariant results cannot silently count as successful verification', () => {
+  const report = verifyActionSequences({
+    initial: () => 0, actions: ['tick'], trials: 1, maxSteps: 1,
+    transition: state => state + 1,
+    invariant: async () => true
+  });
+  assert.equal(report.status, 'counterexample');
+  assert.deepEqual(report.trace, []);
+  assert.match(report.reason, /Async invariants are not supported/);
+});
