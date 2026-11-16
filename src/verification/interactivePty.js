@@ -17,6 +17,7 @@ out=bytearray()
 observations=[]
 cursor=0
 since=0
+pending_enter=None
 done=False
 closed=False
 timeout=False
@@ -24,6 +25,10 @@ overflow=False
 exit_code=None
 while True:
     elapsed=(time.monotonic()-started)*1000
+    if pending_enter is not None and elapsed>=pending_enter[0]:
+        try: os.write(fd,pending_enter[1])
+        except OSError: pass
+        pending_enter=None
     readable,_,_=select.select([fd],[],[],0.025)
     if readable and not closed:
         try: chunk=os.read(fd,16384)
@@ -33,15 +38,23 @@ while True:
             room=max(0,cfg["limit"]-len(out))
             if len(chunk)>room: overflow=True
             out.extend(chunk[:room])
-    if cursor<len(cfg["steps"]) and not done:
+    if cursor<len(cfg["steps"]) and not done and pending_enter is None:
         step=cfg["steps"][cursor]
         match=step["waitFor"]
         segment=bytes(out[since:]).decode("utf-8",errors="replace")
         if match in segment:
             observation={"name":step["name"],"offset":len(out),"expected":step["contains"]}
             observations.append(observation)
-            try: os.write(fd,base64.b64decode(step["input"]))
-            except OSError: pass
+            payload=base64.b64decode(step["input"])
+            # A real keyboard sends text then Enter. Combining both in one
+            # PTY write makes Causyne correctly classify it as a bulk paste.
+            if payload.endswith(b"\r") and len(payload)>1:
+                try: os.write(fd,payload[:-1])
+                except OSError: pass
+                pending_enter=((time.monotonic()-started)*1000+65,b"\r")
+            else:
+                try: os.write(fd,payload)
+                except OSError: pass
             since=len(out)
             cursor+=1
     if not done:
