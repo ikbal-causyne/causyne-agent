@@ -164,66 +164,70 @@ export async function collectUsageCardData(loop) {
  * Render the usage card as an array of styled terminal rows, exactly matching `width`.
  */
 export function renderUsageCardRows(data, width) {
-    const safeWidth = Number.isFinite(width) ? Math.floor(width) : 80;
-    const frameWidth = Math.max(40, safeWidth);
-    const innerWidth = Math.max(20, frameWidth - 4); // border (1) + pad (1) on each side
-    const borderRole = 'accent';
-    const surfaceRole = 'surface';
-    // Header row
-    const title = ` ${bold(paint('accent', 'Usage & Context'))} `;
-    const closeHint = ` ${dim('esc close')} `;
-    const hLineLength = Math.max(0, frameWidth - 3 - visibleWidth(title) - visibleWidth(closeHint));
-    const topBorder = paint(borderRole, FRAME.tl + FRAME.h)
-        + title
-        + paint(borderRole, FRAME.h.repeat(hLineLength))
-        + closeHint
-        + paint(borderRole, FRAME.tr);
-    // Content lines inside card
-    const lines = [];
-    // 1. Session ID & Message count
-    const cleanSession = oneLineText(data.sessionId || 'default') || 'default';
-    const sessionChars = Array.from(cleanSession);
-    const shortSession = sessionChars.length > 24
-        ? `${sessionChars.slice(0, 10).join('')}…${sessionChars.slice(-10).join('')}`
-        : cleanSession;
-    lines.push(`${dim('Session/Chat :')} ${paint('ink', shortSession)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`);
-    // 2. Context Window & Progress bar
-    const safePercentLeft = Number.isFinite(data.contextPercentLeft)
-        ? Math.max(0, Math.min(100, Math.round(data.contextPercentLeft)))
-        : 0;
-    const pBar = renderProgressBar(safePercentLeft, 22, false);
-    lines.push(`${dim('Context      :')} ${bold(`${safePercentLeft}% left`)} ${dim(`(${formatNumber(data.contextUsedTokens)} used / ${formatNumber(data.contextPoolTokens)})`)}  ${pBar}`);
-    // 3. This Session Usage
-    lines.push(`${dim('This Session :')} ${bold(formatNumber(data.sessionTokens))} tokens${formatCostEstimate(data.sessionCostUsd)}`);
-    // 4. Daily Usage (Today)
-    lines.push(`${dim('Today (24h)  :')} ${bold(formatNumber(data.dailyTokens))} tokens${formatCostEstimate(data.dailyCostUsd)}`);
-    // 5. All-Time / Lifetime Usage
-    lines.push(`${dim('All-Time     :')} ${bold(formatNumber(data.lifetimeTokens))} tokens${formatCostEstimate(data.lifetimeCostUsd)}  ${dim(`(${formatNumber(data.lifetimeCalls)} calls)`)}`);
-    // 6. Model & Provider
-    const cleanProvider = oneLineText(data.provider || 'default') || 'default';
-    const cleanModel = oneLineText(data.model || 'default') || 'default';
-    const cleanBilling = oneLineText(data.billingNote || '');
-    lines.push(`${dim('Active Model :')} ${paint('accent', `${cleanProvider} / ${cleanModel}`)}${cleanBilling ? `  ${dim(`(${cleanBilling})`)}` : ''}`);
-    // 7. Optional Budget
-    if (data.budgetEnabled && typeof data.budgetLimitTokens === 'number' && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
-        const safeBudgetPercent = typeof data.budgetPercentUsed === 'number' && Number.isFinite(data.budgetPercentUsed)
-            ? Math.max(0, Math.round(data.budgetPercentUsed))
-            : 0;
-        const bBar = renderProgressBar(safeBudgetPercent, 16, true);
-        lines.push(`${dim('Daily Budget :')} ${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tokens (${safeBudgetPercent}% used)  ${bBar}`);
-    }
-    // Construct boxed rows
-    const edge = paint(borderRole, FRAME.v);
-    const rows = [fill(surfaceRole, topBorder)];
-    for (const line of lines) {
-        const clipped = visibleWidth(line) > innerWidth ? truncate(line, innerWidth, GLYPHS.ellipsis) : line;
-        const padding = ' '.repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
-        rows.push(fill(surfaceRole, `${edge} ${clipped}${padding} ${edge}`));
-    }
-    // Bottom row
-    const bottomBorder = paint(borderRole, FRAME.bl + FRAME.h.repeat(Math.max(0, frameWidth - 2)) + FRAME.br);
-    rows.push(fill(surfaceRole, bottomBorder));
-    // Add 1 blank row gap separating the usage card from the chatbox below
-    rows.push('');
-    return rows;
+  const safeWidth = Number.isFinite(width) ? Math.max(4, Math.floor(width)) : 80;
+  const frameWidth = safeWidth; // Never paint outside the terminal's actual columns.
+  const innerWidth = Math.max(0, frameWidth - 4);
+  const edge = paint('accent', FRAME.v);
+  const title = frameWidth >= 32 ? ` ${bold(paint('accent', 'Usage & Context'))} `
+    : frameWidth >= 13 ? ' Usage ' : '';
+  const hint = frameWidth >= 43 ? ` ${dim('esc close')} ` : '';
+  const lineRoom = Math.max(0, frameWidth - 3 - visibleWidth(title) - visibleWidth(hint));
+  const top = paint('accent', FRAME.tl + FRAME.h)
+    + title + paint('accent', FRAME.h.repeat(lineRoom)) + hint + paint('accent', FRAME.tr);
+  const rows = [fill('surface', top)];
+
+  const labelWidth = innerWidth >= 60 ? 16 : 13;
+  const addRow = (label, value) => {
+    const name = dim(String(label).padEnd(labelWidth));
+    const text = name + value;
+    const clipped = visibleWidth(text) > innerWidth
+      ? truncate(text, innerWidth, GLYPHS.ellipsis) : text;
+    const padding = ' '.repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+    rows.push(fill('surface', `${edge} ${clipped}${padding} ${edge}`));
+  };
+
+  const session = oneLineText(data.sessionId || 'unknown') || 'unknown';
+  const sessionName = truncate(session, Math.max(8, Math.floor(innerWidth / 2)), '…');
+  addRow('Session/Chat', `${paint('ink', sessionName)}  ${dim(`(${formatNumber(data.sessionTurns)} messages)`)}`);
+  // Model and provider occupy separate rows, rather than squeezing two long
+  // identifiers into a single line where neither is readable.
+  addRow('Active Model', paint('accent', oneLineText(data.model || 'unknown')));
+  addRow('Provider', `${paint('ink', oneLineText(data.provider || 'unknown'))} ${dim(oneLineText(data.billingNote || ''))}`);
+
+  const pool = Number.isFinite(data.contextPoolTokens) && data.contextPoolTokens > 0
+    ? data.contextPoolTokens : 0;
+  const estimatedUsed = formatNumber(data.contextUsedTokens);
+  if (pool > 0) {
+    const percent = Number.isFinite(data.contextPercentLeft)
+      ? Math.max(0, Math.min(100, Math.round(data.contextPercentLeft))) : 0;
+    const poolSource = data.contextLimitSource === 'configured' ? 'configured cap' : 'inferred cap';
+    addRow('Context (est.)', `~${estimatedUsed} / ~${formatNumber(pool)} tokens  (~${percent}% left; ${poolSource})`);
+  } else {
+    addRow('Context (est.)', `~${estimatedUsed} tokens; model limit unknown`);
+  }
+
+  addRow('This Session', data.sessionMetricsAvailable === false
+    ? dim('unavailable (no live tracker)')
+    : `${bold(formatNumber(data.sessionTokens))} tracked tokens ${dim('(current process only)')}`);
+  addRow('Today (local)', `${bold(formatNumber(data.dailyTokens))} tracked tokens ${dim('(calendar day)')}`);
+  addRow('All-Time', `${bold(formatNumber(data.lifetimeTokens))} tracked tokens ${dim(`(${formatNumber(data.lifetimeCalls)} recorded events)`)}`);
+
+  const totalEstimate = formatCostEstimate(data.lifetimeCostUsd).trim();
+  const dailyEstimate = formatCostEstimate(data.dailyCostUsd).trim();
+  addRow('Cost (estimate)', totalEstimate
+    ? `${totalEstimate} all-time${dailyEstimate ? ` · ${dailyEstimate} today` : ''}`
+    : dim('no positive local estimate recorded'));
+
+  addRow('Data source', dim('Local tracker; not provider billing or exact token telemetry'));
+  if (data.budgetEnabled && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
+    const pct = Number.isFinite(data.budgetPercentUsed)
+      ? Math.max(0, Math.round(data.budgetPercentUsed)) : 0;
+    addRow('Daily budget', `${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tracked (${pct}% used)`);
+  }
+
+  const bottom = paint('accent', FRAME.bl + FRAME.h.repeat(Math.max(0, frameWidth - 2)) + FRAME.br);
+  rows.push(fill('surface', bottom));
+  rows.push(''); // Keep the composer visually separate from the usage panel.
+  return rows;
+}
 }
