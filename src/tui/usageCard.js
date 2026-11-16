@@ -220,7 +220,7 @@ export function renderUsageCardRows(data, width) {
 
   addRow('Data source', dim('Local tracker; not provider billing or exact token telemetry'));
   if (data.budgetEnabled && typeof data.budgetLimitTokens === 'number' && Number.isFinite(data.budgetLimitTokens) && data.budgetLimitTokens > 0) {
-    const pct = Number.isFinite(data.budgetPercentUsed)
+    const pct = typeof data.budgetPercentUsed === 'number' && Number.isFinite(data.budgetPercentUsed)
       ? Math.max(0, Math.round(data.budgetPercentUsed)) : 0;
     addRow('Daily budget', `${formatNumber(data.dailyTokens)} / ${formatNumber(data.budgetLimitTokens)} tracked (${pct}% used)`);
   }
