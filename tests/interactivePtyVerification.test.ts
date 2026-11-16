@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInteractivePty } from '../src/verification/interactivePty.js';
-import { verifyCausyneTui } from '../src/verification/uiRuntime.js';
+import { verifyCausyneTui, verifyCausyneChatMode } from '../src/verification/uiRuntime.js';
 
 const root = process.cwd();
 
@@ -63,4 +63,19 @@ test('PTY verifier cannot be pointed at an external executable or existing user 
     env: { CAUSYNE_HOME: os.homedir() },
     steps: [{ name: 'probe', waitFor: 'READY', input: '', contains: 'READY' }]
   }), /isolated temporary/);
+});
+
+test('full chatMode dispatches /usage and /status through a real PTY without provider calls', async t => {
+  if (process.platform === 'win32') return t.skip('ConPTY adapter not installed');
+  const result = await verifyCausyneChatMode({ workspace: root, timeoutMs: 20000 });
+  if (result.status === 'unavailable') return t.skip(result.reason);
+  assert.equal(result.status, 'observed-pass', JSON.stringify({
+    observations: result.observations, error: result.stderr?.slice(-1400),
+    outputTail: result.stdout?.slice(-1700), exitCode: result.exitCode,
+    timedOut: result.timedOut
+  }));
+  assert.deepEqual(result.observations.map(x => x.name),
+    ['open-real-chat', 'real-chat-status', 'real-chat-exit']);
+  assert.ok(result.observations.every(x => x.matched));
+  assert.equal(result.exitCode, 0);
 });

@@ -30,3 +30,28 @@ export async function verifyCausyneTui(options = {}) {
     fs.rmSync(home, { recursive: true, force: true });
   }
 }
+
+export async function verifyCausyneChatMode(options = {}) {
+  const workspace = options.workspace || process.cwd();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-chat-verify-'));
+  try {
+    const result = await runInteractivePty({
+      workspace, script: 'tests/fixtures/liveChatModeTarget.mjs',
+      timeoutMs: options.timeoutMs ?? 18000,
+      rows: options.rows ?? 42, columns: options.columns ?? 126,
+      env: { CAUSYNE_HOME: home },
+      steps: [
+        { name: 'open-real-chat', waitFor: 'enter send',
+          input: '/usage\r', contains: 'Usage & Context' },
+        { name: 'real-chat-status', waitFor: 'Usage & Context',
+          input: '/status\r', contains: 'Status' },
+        { name: 'real-chat-exit', waitFor: 'Status',
+          input: 'exit\r', contains: 'exit' }
+      ]
+    });
+    return { ...result, feature: 'tui-chat-mode',
+      evidence: 'Launched Causyne chatMode and observed command handling in real POSIX PTY' };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
