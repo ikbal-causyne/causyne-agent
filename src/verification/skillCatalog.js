@@ -5,7 +5,7 @@ export const VERIFICATION_SKILLS = Object.freeze({
     content: `# Runtime verification
 1. Identify one user-visible behavior and the actual launch command in the active workspace. Do not assume the Causyne repository is the workspace.
 2. Run the build and existing tests first. Launch the real binary or local app using sysRun and the current workspace scope.
-3. For a CLI, supply a real input and inspect the exit status and output. For a TUI, use an actual PTY and check emitted input/output; ordinary pipes do not establish terminal mouse or rendering behavior.
+3. For a CLI, supply a real input and inspect the exit status and output. For a TUI, call runPtyProbe from src/verification/ptyProbe.js on POSIX when python3 is available. Treat unavailable as unverified; pipes do not establish terminal mouse or rendering behavior.
 4. For a web app, use browser_act for navigation, snapshot, and screenshot. For a desktop app, use computer_use and explicit screenshot/inspection tools. Do not invent an "app aria-click" command.
 5. Record the action, observed result, expected result, and artifact location. A screenshot alone does not prove the action took place. If an adapter or approval is unavailable, report unverified.
 6. Close the launched process, and ensure transient resources are released.
@@ -29,7 +29,7 @@ export const VERIFICATION_SKILLS = Object.freeze({
     description: 'Explore UI state and input sequences including long random-looking text, resize, and session changes. Use for regressions in chat or navigation.',
     content: `# UI property testing
 1. Define user-observable invariants for the current interface: text stays within viewport width, hover cannot mutate messages, Escape closes only the intended layer, and scrolling never escapes the active surface.
-2. Generate deterministic seeded sequences of typed input, resize, mouse wheel, focus, Enter, and Escape, respecting real event decoding and lifecycle constraints.
+2. Use verifyActionSequences from src/verification/propertyProbe.js with a fresh state factory, seeded actions and real event handlers. Report the finite trials and shortened counterexample; a bounded pass is not a proof.
 3. Execute the real UI reducer or input handler for each sequence; use a PTY for claims about terminal behavior and browser_act for browser visuals.
 4. Save the shortest failing sequence and seed. Rerun the original sequence after a fix; do not lower the assertion to make it pass.
 ## Verification
