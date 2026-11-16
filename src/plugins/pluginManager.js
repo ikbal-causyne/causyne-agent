@@ -304,6 +304,80 @@ export function createPlugin({ name, description, toolName, toolDescription, par
   }
 }
 
+
+export function createSkillPlugin({
+  name, description, skillId, skillName, skillDescription, skillContent, licenseText
+} = {}) {
+  if (!NAME.test(name || '')) return { ok: false, error: 'Invalid plugin name' };
+  if (!NAME.test(skillId || '')) return { ok: false, error: 'Invalid skill id' };
+  if (typeof description !== 'string' || !description.trim() || description.length > 1000) {
+    return { ok: false, error: 'Plugin description must be 1..1000 characters' };
+  }
+  if (typeof skillName !== 'string' || !skillName.trim() || skillName.length > 120) {
+    return { ok: false, error: 'Skill name must be 1..120 characters' };
+  }
+  if (typeof skillDescription !== 'string' || !skillDescription.trim()
+      || skillDescription.length > 400) {
+    return { ok: false, error: 'Skill description must be 1..400 characters' };
+  }
+  if (typeof skillContent !== 'string' || !skillContent.trim()
+      || Buffer.byteLength(skillContent, 'utf8') > 32 * 1024) {
+    return { ok: false, error: 'Skill content must be nonempty and at most 32 KB' };
+  }
+  if (typeof licenseText !== 'string' || licenseText.length > 32 * 1024) {
+    return { ok: false, error: 'Full third-party license text is required' };
+  }
+
+  const isMit = /^MIT License\s*$/mi.test(licenseText)
+    && /Permission is hereby granted, free of charge/i.test(licenseText)
+    && /above copyright notice/i.test(licenseText);
+  const isApache = /Apache License\s*Version 2\.0/i.test(licenseText)
+    && /TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION/i.test(licenseText);
+  if (!isMit && !isApache) {
+    return { ok: false, error: 'Only reviewed MIT or Apache-2.0 license text is accepted' };
+  }
+
+  const manifest = {
+    schemaVersion: 1, name, version: '0.1.0', description: description.trim(),
+    capabilities: [], tools: [],
+    skills: [{
+      id: skillId, name: skillName.trim(),
+      description: skillDescription.trim(), file: 'SKILL.md'
+    }]
+  };
+  ensureRoot();
+  const directory = path.join(PLUGIN_ROOT, name);
+  if (fs.existsSync(directory)) return { ok: false, error: 'Plugin already exists' };
+  let created = false;
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 });
+    created = true;
+    fs.writeFileSync(path.join(directory, 'SKILL.md'), skillContent, {
+      mode: 0o600, flag: 'wx'
+    });
+    fs.writeFileSync(path.join(directory, 'LICENSE'), licenseText, {
+      mode: 0o600, flag: 'wx'
+    });
+    fs.writeFileSync(path.join(directory, 'plugin.json'),
+      JSON.stringify(manifest, null, 2) + '\n', {
+        mode: 0o600, flag: 'wx'
+      });
+    const reviewed = readPlugin(directory);
+    return {
+      ok: true, name, enabled: false, tools: [],
+      skills: reviewed.skills.map(entry => entry.domain + '/' + entry.id),
+      license: isMit ? 'MIT' : 'Apache-2.0',
+      digest: reviewed.digest, path: directory,
+      message: 'Skill packaged disabled. Review its instructions and license before explicit enablement.'
+    };
+  } catch (error) {
+    if (created) {
+      try { fs.rmSync(directory, { recursive: true, force: true }); } catch {}
+    }
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function enabledTools() {
   const state = readState();
   const tools = [];
