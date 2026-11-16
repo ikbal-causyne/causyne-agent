@@ -12,6 +12,7 @@ function boundedInteger(value, fallback, maximum) {
 export function exploreStateMachine(options) {
   const { initial, actions, transition, invariant } = options || {};
   if (!Array.isArray(actions) || actions.length === 0) throw new TypeError('actions must be nonempty');
+  if (actions.length > 10000) throw new RangeError('Too many actions to explore safely');
   if (typeof transition !== 'function') throw new TypeError('transition must be a function');
   if (typeof invariant !== 'function') throw new TypeError('invariant must be a function');
 
@@ -47,8 +48,8 @@ export function exploreStateMachine(options) {
 
   const initialFailure = failed(root);
   if (initialFailure) return initialFailure;
-  while (queue.length) {
-    const current = queue.shift();
+  for (let head = 0; head < queue.length; head++) {
+    const current = queue[head];
     deepest = Math.max(deepest, current.trace.length);
     if (current.trace.length >= maxDepth) continue;
     for (const action of actions) {
