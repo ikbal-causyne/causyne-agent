@@ -40,3 +40,16 @@ test('PTY command restrictions reject out-of-workspace executables', async () =>
   await assert.rejects(runPtyProbe({ workspace, program: 'sh' }), /Only node/);
   await assert.rejects(runPtyProbe({ workspace, maxSteps: 1, timeoutMs: 0 }), /limits/);
 });
+
+test('an output-only PTY probe can verify observed exit and stdout without injected input', async t => {
+  if (process.platform === 'win32') return t.skip('POSIX PTY only');
+  const result = await runPtyProbe({
+    workspace, program: 'node',
+    args: ['-e', "process.stdout.write('READY'); process.exit(0)"],
+    contains: 'READY', inputDelayMs: 50, timeoutMs: 3000
+  });
+  if (result.status === 'unavailable') return t.skip(result.reason);
+  assert.equal(result.status, 'observed-pass', JSON.stringify(result));
+  assert.equal(result.inputSent, true);
+  assert.equal(result.exitCode, 0);
+});
