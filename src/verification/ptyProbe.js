@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
-const DRIVER = String.raw\`
+const DRIVER = String.raw`
 import base64, json, os, pty, select, signal, sys, time
 cfg=json.loads(sys.argv[1])
 pid,fd=pty.fork()
@@ -48,7 +48,7 @@ while True:
         break
 os.write(1,bytes(out))
 os.write(2,("PTY_RESULT:"+json.dumps({"exit":status,"timeout":elapsed>cfg["timeout"]/1000,"truncated":overflow,"inputSent":sent})+"\n").encode())
-\`;
+`;
 
 function resolveCommand(workspace, program) {
   const base = realpathSync(workspace);
