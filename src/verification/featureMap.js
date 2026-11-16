@@ -39,6 +39,14 @@ export const FEATURE_MAP = Object.freeze({
     automated: ['tests/plugins.test.js', 'tests/skillsReliability.test.js'],
     liveRequired: 'Check a separately approved plugin against the current permission record'
   },
+  'ui-properties': {
+    surface: 'terminal',
+    entry: 'Seeded UI interaction and runtime state handlers',
+    action: 'Generate bounded action sequences, shrink counterexamples and replay real prompt transitions',
+    assertion: 'Panels persist until explicit close; counterexamples retain their original failure identity',
+    automated: ['tests/verificationPropertyProbe.test.ts'],
+    liveRequired: 'Seeded handler checks do not establish terminal rendering or cross-process races'
+  },
   'formal-state': {
     surface: 'model',
     entry: 'verification/formal-verification',
