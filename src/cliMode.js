@@ -324,7 +324,11 @@ export async function chatMode({ home = false } = {}) {
     // The idle footer's two facts. Both were already loaded and neither was ever
     // displayed once the header had scrolled away.
     cwd: process.cwd(),
-    contextLimit: resolveCharPool(config.tier, config.maxCharPool)
+    contextLimit: resolveCharPool(config.tier, config.maxCharPool, {
+      provider: config.provider,
+      model: config.model,
+      overrideTokens: config.contextTokens || config.maxContextTokens
+    })
   };
   let surface = home && isInteractive() ? createStageSurface({ config }) : null;
   const openedHome = Boolean(surface);

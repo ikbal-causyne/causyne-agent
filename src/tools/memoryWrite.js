@@ -1,5 +1,5 @@
-// @ts-expect-error Legacy memory module has no TypeScript declarations yet.
 import { getMemory, saveMemory } from '../memory.js';
+import { recordScopedFact } from '../memory/scopedFacts.js';
 import { cortexDb } from '../cortex/vectorDb.js';
 const MAX_FACTS = 100;
 export const memoryWrite = {
@@ -41,16 +41,14 @@ export const memoryWrite = {
         }
         try {
             const memory = getMemory();
-            if (!Array.isArray(memory.facts))
-                memory.facts = [];
             const fact = String(args.fact).trim();
-            const alreadyKnown = memory.facts.includes(fact);
+            const workspace = dependencies?.parentLoop?.workspaceRoot || dependencies?.workspaceRoot;
+            const { memory: updated, alreadyKnown } = recordScopedFact(memory, fact, {
+                workspace,
+                maxFacts: MAX_FACTS
+            });
             if (!alreadyKnown) {
-                memory.facts.push(fact);
-                while (memory.facts.length > MAX_FACTS) {
-                    memory.facts.shift();
-                }
-                saveMemory(memory);
+                saveMemory(updated);
             }
             let creativeSaved = false;
             if (args.creativePattern && args.creativePattern.designApproach) {
@@ -76,7 +74,7 @@ export const memoryWrite = {
             }
             const notes = [
                 alreadyKnown ? 'Fact already known, not duplicated.' : 'Fact saved.',
-                `Total persistent facts: ${memory.facts.length}.`,
+                `Total persistent facts: ${updated.facts.length}.`,
                 creativeSaved ? 'Creative pattern recorded in the V5 Cortex.' : ''
             ].filter(Boolean);
             return { success: true, output: notes.join(' ') };

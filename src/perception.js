@@ -30,10 +30,20 @@ export class WorkspacePerception {
         }
         // 2b. Design system detection (Anti-Slop: tells the brain what's already installed)
         context.designSystem = await this.detectDesignContext(resolvedPath);
-        // 2c. Subprojects detection (find subfolders like 'pixel2d games', 'causyne-agent', etc.)
+        // 2c. Subprojects & nested stacks discovery
         context.subprojects = await this.detectSubprojects(resolvedPath);
-        // 2d. Key files discovery
-        context.keyFiles = await this.detectKeyFiles(resolvedPath);
+        const repoArtifacts = await this.detectRepoArtifacts(resolvedPath, context.subprojects);
+        context.subprojectStacks = repoArtifacts.subprojectStacks;
+        context.docFiles = repoArtifacts.docFiles;
+        context.buildFiles = repoArtifacts.buildFiles;
+        context.topEntries = repoArtifacts.topEntries;
+        // 2d. Key files discovery (root entrypoints + key docs & build scripts)
+        const rootKeyFiles = await this.detectKeyFiles(resolvedPath);
+        context.keyFiles = [...new Set([
+                ...rootKeyFiles,
+                ...repoArtifacts.buildFiles.slice(0, 8),
+                ...repoArtifacts.docFiles.slice(0, 8)
+            ])];
         // 2e. Package manager detection
         context.packageManager = await this.detectPackageManager(resolvedPath);
         // 2f. Git branch and status
@@ -196,6 +206,114 @@ export class WorkspacePerception {
         }
         return subprojects;
     }
+    async detectRepoArtifacts(dir, subprojects) {
+        const subprojectStacks = [];
+        const docFiles = [];
+        const buildFiles = [];
+        const topEntries = [];
+        const existsFile = async (rel) => {
+            try {
+                const stat = await fs.stat(path.join(dir, rel));
+                return stat.isFile();
+            }
+            catch {
+                return false;
+            }
+        };
+        try {
+            const entries = await fs.readdir(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (entry.name.startsWith('.') || SKIP_DIRECTORIES.has(entry.name))
+                    continue;
+                if (topEntries.length >= 25)
+                    break;
+                topEntries.push(entry.isDirectory() ? `${entry.name}/` : entry.name);
+            }
+        }
+        catch {
+            // ignore
+        }
+        const rootDocs = ['AGENTS.md', 'CLAUDE.md', 'README.md', 'ARCHITECTURE.md', 'CONTRIBUTING.md', 'RELEASE.md', 'ANDROID_RELEASE.md', 'ENGINEERING.md'];
+        for (const rel of rootDocs) {
+            if (await existsFile(rel))
+                docFiles.push(rel);
+        }
+        const priorityDocScore = (name) => {
+            const lower = name.toLowerCase();
+            if (/(?:release|android|build|architecture|engineering)/.test(lower))
+                return 0;
+            if (/(?:readme|agents|claude|work_log|qa|guide)/.test(lower))
+                return 1;
+            return 2;
+        };
+        for (const docDir of ['docs', 'doc']) {
+            try {
+                const docEntries = await fs.readdir(path.join(dir, docDir), { withFileTypes: true });
+                const mdFiles = docEntries
+                    .filter(e => e.isFile() && /\.(?:md|txt)$/i.test(e.name) && !e.name.startsWith('.'))
+                    .map(e => `${docDir}/${e.name}`)
+                    .sort((a, b) => priorityDocScore(a) - priorityDocScore(b) || a.localeCompare(b));
+                for (const rel of mdFiles) {
+                    if (docFiles.length >= 16)
+                        break;
+                    if (!docFiles.includes(rel))
+                        docFiles.push(rel);
+                }
+            }
+            catch {
+                // ignore missing docs dir
+            }
+        }
+        const rootBuildCandidates = [
+            'Makefile', 'CMakeLists.txt', 'package.json', 'tsconfig.json',
+            'project.godot', 'export_presets.cfg', 'build.gradle', 'build.gradle.kts',
+            'settings.gradle', 'settings.gradle.kts', 'Cargo.toml', 'pyproject.toml',
+            'go.mod', 'pubspec.yaml', 'Dockerfile', 'docker-compose.yml', 'wrangler.toml'
+        ];
+        for (const rel of rootBuildCandidates) {
+            if (await existsFile(rel))
+                buildFiles.push(rel);
+        }
+        try {
+            const scriptEntries = await fs.readdir(path.join(dir, 'scripts'), { withFileTypes: true });
+            for (const entry of scriptEntries.sort((a, b) => a.name.localeCompare(b.name))) {
+                if (!entry.isFile() || entry.name.startsWith('.'))
+                    continue;
+                if (/\.(?:sh|bash|py|js|cjs|mjs|ts|ps1)$/i.test(entry.name)) {
+                    const rel = `scripts/${entry.name}`;
+                    if (!buildFiles.includes(rel) && buildFiles.length < 18)
+                        buildFiles.push(rel);
+                }
+            }
+        }
+        catch {
+            // ignore missing scripts dir
+        }
+        const nestedCheckDirs = [...new Set([...subprojects, 'godot', 'android', 'app', 'mobile', 'desktop', 'server', 'backend', 'frontend', 'web'])];
+        for (const sub of nestedCheckDirs) {
+            if (sub.includes('..') || path.isAbsolute(sub))
+                continue;
+            const subBuildChecks = [
+                { rel: `${sub}/project.godot`, stack: `godot (gdscript) @ ${sub}/` },
+                { rel: `${sub}/export_presets.cfg` },
+                { rel: `${sub}/build.gradle.kts`, stack: `android (kotlin/gradle) @ ${sub}/` },
+                { rel: `${sub}/build.gradle`, stack: `android (gradle) @ ${sub}/` },
+                { rel: `${sub}/Cargo.toml`, stack: `rust @ ${sub}/` },
+                { rel: `${sub}/go.mod`, stack: `go @ ${sub}/` },
+                { rel: `${sub}/pyproject.toml`, stack: `python @ ${sub}/` },
+                { rel: `${sub}/package.json`, stack: `node @ ${sub}/` }
+            ];
+            for (const check of subBuildChecks) {
+                if (await existsFile(check.rel)) {
+                    if (!buildFiles.includes(check.rel) && buildFiles.length < 22)
+                        buildFiles.push(check.rel);
+                    if (check.stack && !subprojectStacks.includes(check.stack))
+                        subprojectStacks.push(check.stack);
+                }
+            }
+        }
+        return { subprojectStacks, docFiles, buildFiles, topEntries };
+    }
     async detectKeyFiles(dir) {
         const candidateFiles = [
             'package.json', 'tsconfig.json', 'index.html', 'main.js',
@@ -284,6 +402,9 @@ export class WorkspacePerception {
         }
         catch {
             // ignore
+        }
+        if (context.subprojectStacks?.some(s => s.startsWith('godot '))) {
+            return 'Godot Game Project';
         }
         // Check directory name or key files for game patterns
         const baseName = path.basename(dir).toLowerCase();

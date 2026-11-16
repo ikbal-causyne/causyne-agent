@@ -85,6 +85,19 @@ const ARCHETYPES = {
             { name: 'Report', tools: [], note: 'Answer concisely and cite exact file paths or URLs. Do not modify anything unless asked.' }
         ]
     },
+    modify_repo: {
+        label: 'Inspect and update an existing project or build release artifact',
+        match: {
+            strong: ['bump', 'version code', 'version name', 'aab', 'apk', 'release', 'export', 'synchronize', 'sync', 'upgrade', 'migrate', 'rebuild'],
+            weak: ['version', 'bundle', 'existing', 'repo', 'repository', 'docs']
+        },
+        phases: [
+            { name: 'Orient in docs and structure', tools: ['fs_read', 'fs_list'], note: 'Read the workspace README, docs/ guides (e.g. ANDROID_RELEASE.md, ENGINEERING.md), and build scripts/manifests FIRST to follow the repository conventions.' },
+            { name: 'Apply targeted updates', tools: ['fs_read', 'fs_edit', 'MultiEdit'], note: 'Modify only the exact configuration, version fields, or source files required by the user request.' },
+            { name: 'Run documented build', tools: ['sysRun'], note: 'Execute the project’s documented build/export command for the requested deliverable only. Do not build unrelated web or side targets.' },
+            { name: 'Verify artifact', tools: ['sysRun', 'fs_read'], note: 'Verify the exact produced output (version, signature, alignment, tests) before reporting.' }
+        ]
+    },
     maintain: {
         label: 'Operate on files, processes or the machine itself',
         match: {
@@ -123,6 +136,12 @@ function scoreSignals(text, signals) {
     }
     return { score, hits };
 }
+function isPureGreeting(prompt) {
+    const cleaned = String(prompt || '').trim().toLowerCase().replace(/[!?.]+$/g, '');
+    if (!cleaned)
+        return false;
+    return /^(?:hi+|hello+|hey+|yo+|sup|greetings|good\s+(?:morning|afternoon|evening)|thanks|thank\s+you|ok(?:ay)?)$/.test(cleaned);
+}
 /**
  * Analyse a request into the shape of the work it implies.
  *
@@ -130,10 +149,12 @@ function scoreSignals(text, signals) {
 export function analyzeTask(prompt, workspaceContext = null) {
     const rawPrompt = String(prompt || '');
     const pureSkillLookup = isPureSkillOrCapabilityLookup(rawPrompt);
+    const pureGreeting = !pureSkillLookup && isPureGreeting(rawPrompt);
+    const lightweightLookup = pureSkillLookup || pureGreeting;
     const text = (pureSkillLookup ? redactSkillAndQueryLiterals(rawPrompt) : rawPrompt).toLowerCase();
     // Which capability packs are worth their token cost for this request.
     const packScores = [];
-    if (!pureSkillLookup) {
+    if (!lightweightLookup) {
         for (const packName of Object.keys(PACK_SIGNALS)) {
             const signals = PACK_SIGNALS[packName];
             if (!signals)
@@ -147,12 +168,14 @@ export function analyzeTask(prompt, workspaceContext = null) {
     // Workspace evidence outranks keywords: a Godot project on disk is far more
     // reliable than any phrasing in the prompt. Pure skill/capability lookups
     // stay lightweight and never preload workspace app packs.
-    if (workspaceContext && !pureSkillLookup) {
+    if (workspaceContext && !lightweightLookup) {
         const signals = [
             workspaceContext.framework,
             workspaceContext.projectType,
             workspaceContext.designSystem,
-            Array.isArray(workspaceContext.keyFiles) ? workspaceContext.keyFiles.join(' ') : ''
+            Array.isArray(workspaceContext.keyFiles) ? workspaceContext.keyFiles.join(' ') : '',
+            Array.isArray(workspaceContext.subprojectStacks) ? workspaceContext.subprojectStacks.join(' ') : '',
+            Array.isArray(workspaceContext.buildFiles) ? workspaceContext.buildFiles.join(' ') : ''
         ].filter(Boolean).join(' ').toLowerCase();
         const bump = (name, amount) => {
             const existing = packScores.find(p => p.name === name);
@@ -161,10 +184,15 @@ export function analyzeTask(prompt, workspaceContext = null) {
             else
                 packScores.push({ name, score: amount });
         };
-        if (/godot|project\.godot|unity|\.tscn/.test(signals))
+        const hasGameProject = /godot|project\.godot|unity|\.tscn/.test(signals);
+        const hasExplicitWebFramework = /\b(react|vue|svelte|next|nuxt|astro|angular|tailwind|vite)\b/.test(signals);
+        const explicitNonWebTarget = /\b(aab|apk|gradle|android|godot|export_presets|tscn|gdscript|xcode|ipa|ios|rust|cargo)\b/.test(text);
+        const hasPromptWebSignal = /\b(web|website|html|css|browser|frontend|page|ui|dom|react|vue|svelte|vite|next|playwright|lighthouse|localhost)\b/.test(text);
+        if (hasGameProject)
             bump('game', 5);
-        if (/react|vue|svelte|next|nuxt|astro|angular|tailwind|vite|index\.html/.test(signals))
+        if (!explicitNonWebTarget && (hasExplicitWebFramework || (!hasGameProject && /index\.html/.test(signals)) || (hasGameProject && /index\.html/.test(signals) && hasPromptWebSignal))) {
             bump('web', 4);
+        }
     }
     packScores.sort((a, b) => b.score - a.score);
     // Which archetype the work follows.
@@ -191,11 +219,25 @@ export function analyzeTask(prompt, workspaceContext = null) {
         bestArchetype = 'integrate';
         bestScore = integrationScore;
     }
-    if (pureSkillLookup) {
+    const hasExistingRepo = Boolean(workspaceContext && ((Array.isArray(workspaceContext.keyFiles) && workspaceContext.keyFiles.length > 0)
+        || (Array.isArray(workspaceContext.buildFiles) && workspaceContext.buildFiles.length > 0)
+        || (Array.isArray(workspaceContext.docFiles) && workspaceContext.docFiles.length > 0)
+        || (Array.isArray(workspaceContext.subprojectStacks) && workspaceContext.subprojectStacks.length > 0)
+        || (workspaceContext.framework && !/^(?:none|unknown)$/i.test(String(workspaceContext.framework)))
+        || (workspaceContext.projectType && !/^(?:none|unknown)$/i.test(String(workspaceContext.projectType)))));
+    const explicitGreenfield = /\b(?:from\s+scratch|new\s+app(?:lication)?|new\s+project|greenfield|scaffold)\b/.test(text);
+    const explicitRepoReleaseOrModify = /\b(?:aab|apk|gradle|android|release|bump|versioncode|version|export|rebuild|update|upgrade|modify|extend|add\s+feature|existing|script)\b/.test(text);
+    if (!lightweightLookup && hasExistingRepo && (bestArchetype === 'build_app' || !bestArchetype) && !explicitGreenfield) {
+        if (bestArchetype !== 'build_app' || explicitRepoReleaseOrModify) {
+            bestArchetype = 'modify_repo';
+            bestScore = Math.max(bestScore, STRONG_WEIGHT);
+        }
+    }
+    if (lightweightLookup) {
         bestArchetype = 'research';
         bestScore = Math.max(bestScore, STRONG_WEIGHT);
     }
-    const archetype = bestArchetype || 'build_app';
+    const archetype = bestArchetype || (hasExistingRepo ? 'modify_repo' : 'build_app');
     const confidence = bestScore >= 6 ? 'high' : (bestScore >= 3 ? 'medium' : 'low');
     const definition = ARCHETYPES[archetype];
     if (!definition)

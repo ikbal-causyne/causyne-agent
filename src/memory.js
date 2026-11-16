@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { causyneHome } from './utils/paths.js';
+import { formatMemoryContext, normalizeMemoryData, recordScopedFact } from './memory/scopedFacts.js';
 
 const MEMORY_FILE_PATH = path.join(causyneHome(), 'memory.json');
 
@@ -20,7 +20,7 @@ export function getMemory() {
     try {
         initMemory();
         const data = fs.readFileSync(MEMORY_FILE_PATH, 'utf-8');
-        return JSON.parse(data);
+        return normalizeMemoryData(JSON.parse(data));
     } catch (e) {
         console.error("Failed to read memory.json:", e.message);
         return { facts: [] };
@@ -36,27 +36,24 @@ export function saveMemory(data) {
     }
 }
 
-export function addFact(factStr) {
+export function addFact(factStr, options = {}) {
     const mem = getMemory();
-    // Only add if it doesn't already exist to avoid duplicates
-    if (!mem.facts.includes(factStr)) {
-        mem.facts.push(factStr);
-        saveMemory(mem);
+    const { memory, alreadyKnown } = recordScopedFact(mem, factStr, options);
+    if (!alreadyKnown || options.workspace) {
+        saveMemory(memory);
     }
 }
 
 export function clearMemory() {
     try {
         initMemory();
-        fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify({ facts: [] }, null, 2));
+        fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify({ facts: [], entries: [] }, null, 2));
     } catch (e) {
         console.error("Failed to clear memory:", e.message);
     }
 }
 
-export function getMemoryContextString() {
+export function getMemoryContextString(options = undefined) {
     const mem = getMemory();
-    if (!mem || !mem.facts || mem.facts.length === 0) return "No prior memory facts available.";
-    
-    return mem.facts.map((fact, index) => `${index + 1}. ${fact}`).join("\n");
+    return formatMemoryContext(mem, options);
 }

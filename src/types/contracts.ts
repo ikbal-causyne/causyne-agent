@@ -298,6 +298,9 @@ export interface WorkspaceContext {
   projectType?: string;
   designSystem?: string;
   keyFiles?: string[];
+  subprojectStacks?: string[];
+  docFiles?: string[];
+  buildFiles?: string[];
   applicationRoot?: string;
   workspaceRoot?: string;
   allowedReadRoots?: string[];

@@ -48,6 +48,7 @@ export class CodeStreamRenderer extends ChatRenderer {
   private modelNote = '';
   private lastReasoning = '';
   private currentActivity = 'thinking';
+  private lastReasoningActivity = 'thinking';
   private streamingNowMs = 320;
   private streamingTick: number | undefined = undefined;
   private readonly codePanels = new WeakMap<CodeFrame, CodePanelState>();
@@ -231,6 +232,7 @@ export class CodeStreamRenderer extends ChatRenderer {
     this.activeCode = null;
     this.modelNote = '';
     this.lastReasoning = '';
+    this.lastReasoningActivity = 'thinking';
     this.collapseFinishedReasoningFrames(true);
     super.resetTurn();
   }
@@ -274,30 +276,47 @@ export class CodeStreamRenderer extends ChatRenderer {
     if (message?.type === 'agent_activity') {
       const rawActivity = safeDisplay(String((message as any).activity || (message as any).message || '')).replace(/\s+/g, ' ').trim();
       if (rawActivity) {
-        this.currentActivity = stripTrailingEllipsisText(rawActivity);
+        const normalizedActivity = stripTrailingEllipsisText(rawActivity);
+        this.currentActivity = normalizedActivity;
+        const isRespondingPhase = /^responding\b/i.test(normalizedActivity);
         if (this._activeReasoning && this.lastReasoning) {
-          super.onAgentReasoning({
-            content: this.lastReasoning,
-            streaming: true,
-            activity: this.currentActivity,
-            title: rawActivity
-          });
+          if (isRespondingPhase) {
+            // Finalize an open reasoning / native-step frame with its real
+            // activity instead of relabeling executed steps as "responding".
+            super.onAgentReasoning({
+              content: this.lastReasoning,
+              streaming: false,
+              activity: this.lastReasoningActivity || 'thinking'
+            });
+            this._activeReasoning = false;
+            this.lastReasoning = '';
+          } else {
+            this.lastReasoningActivity = normalizedActivity;
+            super.onAgentReasoning({
+              content: this.lastReasoning,
+              streaming: true,
+              activity: normalizedActivity,
+              title: rawActivity
+            });
+          }
           if (selfStatus.quietStatus) {
             selfStatus.currentStatus = rawActivity;
             selfStatus.onStatusChange?.(rawActivity);
           }
           return true;
         }
-        const handled = super.handle({
+        if (selfStatus.quietStatus) {
+          // Full-screen quietStatus owns live phase indicators via the footer;
+          // do not append transient phase notices into the permanent transcript.
+          selfStatus.currentStatus = rawActivity;
+          selfStatus.onStatusChange?.(rawActivity);
+          return true;
+        }
+        return super.handle({
           ...message,
           activity: rawActivity,
           message: rawActivity
         });
-        if (selfStatus.quietStatus) {
-          selfStatus.currentStatus = rawActivity;
-          selfStatus.onStatusChange?.(rawActivity);
-        }
-        return handled;
       }
     }
 
@@ -319,6 +338,7 @@ export class CodeStreamRenderer extends ChatRenderer {
           activity = 'planning';
         }
         this.currentActivity = activity;
+        this.lastReasoningActivity = activity;
         if (selfStatus.quietStatus) {
           const statusLabel = `${activity.charAt(0).toUpperCase() + activity.slice(1)}…`;
           selfStatus.currentStatus = statusLabel;
@@ -360,9 +380,14 @@ export class CodeStreamRenderer extends ChatRenderer {
         return true;
       }
       const preservedStatus = selfStatus.quietStatus ? selfStatus.currentStatus : '';
+      const rawReasonActivity = (message as any).activity || this.currentActivity || 'thinking';
+      const reasonActivity = /^responding\b/i.test(String(rawReasonActivity))
+        ? (this.lastReasoningActivity || 'thinking')
+        : String(rawReasonActivity);
+      this.lastReasoningActivity = reasonActivity;
       const handled = super.handle({
         ...message,
-        activity: (message as any).activity || this.currentActivity
+        activity: reasonActivity
       });
       if (message.streaming === false) {
         this.lastReasoning = '';
@@ -388,7 +413,7 @@ export class CodeStreamRenderer extends ChatRenderer {
         super.onAgentReasoning({
           content: this.lastReasoning,
           streaming: false,
-          activity: this.currentActivity
+          activity: this.lastReasoningActivity || this.currentActivity
         });
       }
       this._activeReasoning = false;

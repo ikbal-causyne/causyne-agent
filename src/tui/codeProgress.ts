@@ -28,14 +28,15 @@ const MAX_STREAM_PREVIEW_CHARS = 256_000;
 
 const FILE_TOOLS: Record<string, string> = {
   fs_write: 'Creating', fs_edit: 'Editing', MultiEdit: 'Editing',
+  write: 'Creating', edit: 'Editing', multiedit: 'Editing', multi_edit: 'Editing',
   'fs.write': 'Creating', 'fs.edit': 'Editing',
   fs_delete: 'Removing', fs_move: 'Moving',
-  write_file: 'Creating', edit_file: 'Editing', delete_file: 'Removing',
+  write_file: 'Creating', write_to_file: 'Creating', edit_file: 'Editing', delete_file: 'Removing',
   create_file: 'Creating', new_file: 'Creating',
   remove_file: 'Removing', unlink: 'Removing', move_file: 'Moving',
   replace_file_content: 'Editing', multi_replace_file_content: 'Editing',
   apply_patch: 'Editing', patch: 'Editing', str_replace_editor: 'Editing',
-  WriteFile: 'Creating', EditFile: 'Editing', DeleteFile: 'Removing',
+  WriteFile: 'Creating', WriteToFile: 'Creating', EditFile: 'Editing', DeleteFile: 'Removing',
   CreateFile: 'Creating', RemoveFile: 'Removing', MoveFile: 'Moving',
   ReplaceFileContent: 'Editing', MultiReplaceFileContent: 'Editing'
 };

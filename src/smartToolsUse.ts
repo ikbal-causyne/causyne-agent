@@ -8,7 +8,7 @@
  * Authorship: Strict TypeScript (Causyne Agent).
  */
 
-import { PACK_PLAYBOOKS, isWebIntent } from './toolPacks.js';
+import { PACK_PLAYBOOKS, isReverseEngineeringIntent, isWebIntent } from './toolPacks.js';
 import {
   isMutatingToolCall,
   isPureSkillOrCapabilityLookup,
@@ -185,13 +185,11 @@ const EXPLICIT_WEB_ENGINEERING_PATTERN =
 const EXPLICIT_GAME_DEV_PATTERN =
   /(?:\b(?:build|create|make|design|develop|scaffold|render|animate|code|program|buat\w*|bikin\w*)[\s\S]*(?:game|simulation|simulator|simulasi|interactive|3d|three\.?js|threejs|webgl|canvas3d|babylonjs|godot|unity|unreal|platformer|rpg|arcade)\b|\b(?:game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive)\b|\b3d\s*(?:game|app|simulator|simulation|scene|city|world|view|body|human|anatomy|model|mesh|character|rendering|visualization|experience|space|environment)\b|\bin 3d\b|[-_]3d\b|\b3d[-_]|\b(?:threejs|three\.js|webgl|canvas3d|babylonjs)\b)/i;
 
-// Explicit reverse engineering and binary analysis intent
-const EXPLICIT_REVERSE_ENGINEERING_PATTERN =
-  /\b(reverse[-_ ]?engineering|decompile|disassemble|disasm|apk|aab|dex|radare|rizin|ghidra|jadx|apktool|mach-o|elf binary|portable executable|\.apk\b|\.aab\b|\.dex\b|\.so\b|\.dylib\b|\.wasm\b|\.asar\b)\b/i;
+// Explicit reverse engineering and binary analysis intent is defined in toolPacks.ts (isReverseEngineeringIntent).
 
 // Explicit software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools, Android/mobile)
 const EXPLICIT_SOFTWARE_ENGINEERING_PATTERN =
-  /(?:\b(?:build|create|code|program|develop|refactor|debug|fix|implement|test|optimize|write|add|modify|migrate|architect|architecture|engineer|benchmark|profile|audit|scaffold)\b[\s\S]*\b(?:api|backend|service|microservice|server|database|schema|endpoint|controller|auth|test|spec|algorithm|function|module|class|feature|script|pipeline|codebase|repo|repository|bug|issue|engine|tool|cli|library|sdk|migration|handler|worker|queue|stream|app|application|compose|jetpack|android|gradle|package)\b|\b(?:python|rust|golang|c\+\+|cpp|java|kotlin|swift|csharp|typescript|javascript|ruby|php|sql|bash|shell|docker|k8s|kubernetes|gradle|compose|android)\b)/i;
+  /(?:\b(?:build|create|code|program|develop|refactor|debug|fix|implement|test|optimize|write|add|modify|migrate|architect|architecture|engineer|benchmark|profile|audit|scaffold|bump|export)\b[\s\S]*\b(?:api|backend|service|microservice|server|database|schema|endpoint|controller|auth|test|spec|algorithm|function|module|class|feature|script|pipeline|codebase|repo|repository|bug|issue|engine|tool|cli|library|sdk|migration|handler|worker|queue|stream|app|application|compose|jetpack|android|gradle|package|apk|aab|bundle|version)\b|\b(?:python|rust|golang|c\+\+|cpp|java|kotlin|swift|csharp|typescript|javascript|ruby|php|sql|bash|shell|docker|k8s|kubernetes|gradle|compose|android|apk|aab)\b)/i;
 
 /**
  * Select tools to preload based on prompt intent. This is never an allowlist:
@@ -226,7 +224,7 @@ export function determineToolScope(
   const effectiveText = redactSkillAndQueryLiterals(text);
 
   // 1. Reverse engineering & binary analysis intent
-  if (EXPLICIT_REVERSE_ENGINEERING_PATTERN.test(effectiveText)) {
+  if (isReverseEngineeringIntent(effectiveText)) {
     const tools = new Set([
       'reverse_engineering',
       'fs_read',

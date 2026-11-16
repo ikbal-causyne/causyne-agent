@@ -24,6 +24,7 @@ export interface WorkspaceRoutingContext {
   projectType?: string | null | undefined;
   designSystem?: string | null | undefined;
   keyFiles?: string[] | null | undefined;
+  subprojectStacks?: string[] | null | undefined;
 }
 
 export interface ToolDefinitionLike {
@@ -380,7 +381,10 @@ const SYSTEM_INTENT = /\b(process|processes|pid|kill|port|zip|unzip|tar|archive|
 
 const ADVANCED_INTENT = /\b(pdf|document|proposal|screenplay|shotlist|shot list|voiceover|dubbing|forge a tool|custom tool|new tool|plugin|plugins|custom plugin|plugins? factory|python bridge|mcp|mcp server|subagent|sub-agent|parallel agent|swarm|ast|symbols|refactor across)\b/i;
 
-const REVERSE_ENGINEERING_INTENT = /\b(rea|rea-agents|decompile|decompiling|decompilation|disassemble|disassembly|disassembling|binary|binaries|apk|aab|dex|elf|mach-o|pe|coff|reverse[\s_-]?engineer(ing)?|sourcemap|deobfuscate|asar|symbols|ghidra|rizin|radare|hopper|frida|hook script|mitigations|pie|canary|clean[- ]?room)\b|\.(apk|aab|dex|dylib|so|dll|exe|asar)\b/i;
+const REVERSE_ENGINEERING_INTENT = /\b(rea|rea-agents|decompile|decompiling|decompilation|disassemble|disassembly|disassembling|disasm|binary|binaries|elf binary|mach-o|portable executable|coff|reverse[\s_-]?engineer(ing)?|sourcemap|deobfuscate|ghidra|rizin|radare|jadx|apktool|hopper|frida|hook script|mitigations|clean[- ]?room)\b|\.(dylib|so|dll|exe|wasm|asar)\b/i;
+
+const RE_BUNDLE_TARGET = /(?:\b(?:apk|aab|dex|asar)\b|\.(?:apk|aab|dex)\b)/i;
+const RE_INSPECTION_VERB = /\b(?:inspect|analyze|analyse|examine|unpack|extract|dump|audit|reconstruct|decode|parse|strings)\b|what(?:'s| is) inside/i;
 
 const INTENT_MATCHERS: Record<PackName, RegExp> = {
   game: GAME_INTENT,
@@ -390,6 +394,13 @@ const INTENT_MATCHERS: Record<PackName, RegExp> = {
   advanced: ADVANCED_INTENT,
   reverse_engineering: REVERSE_ENGINEERING_INTENT
 };
+
+/** True when the prompt genuinely asks for reverse engineering or binary inspection rather than building/exporting our own APK/AAB. */
+export function isReverseEngineeringIntent(prompt?: string | null): boolean {
+  const value = prompt || '';
+  if (REVERSE_ENGINEERING_INTENT.test(value)) return true;
+  return RE_BUNDLE_TARGET.test(value) && RE_INSPECTION_VERB.test(value);
+}
 
 /** True when the prompt genuinely describes game development work. */
 export function isGameIntent(prompt?: string | null): boolean {
@@ -418,27 +429,43 @@ export function routePacks(
   const text = prompt || '';
 
   for (const packName of PACK_NAMES) {
-    if (INTENT_MATCHERS[packName].test(text)) {
+    const matched = packName === 'reverse_engineering'
+      ? isReverseEngineeringIntent(text)
+      : INTENT_MATCHERS[packName].test(text);
+    if (matched) {
       unlocked.add(packName);
     }
   }
 
+  // Greetings and pure non-actionable prompts must not preload heavy workspace packs.
+  const trimmed = text.trim();
+  const isGreeting = /^(?:hi|hello|hey|yo|halo|hai|p|good\s+(?:morning|afternoon|evening))[.!?, ]*$/i.test(trimmed);
+  const explicitNonWebTarget = /\b(?:aab|apk|gradle|bundleRelease|android|godot|\.gd\b|rust|cargo|xcode|ipa)\b/i.test(trimmed)
+    && !isWebIntent(trimmed);
+
   // Workspace signals. A Godot project on disk is far more reliable evidence of
   // game work than any keyword, and a detected web framework means the agent
   // will eventually need to look at what it built.
-  if (workspaceContext) {
+  if (workspaceContext && !isGreeting) {
     const signals = [
       workspaceContext.framework,
       workspaceContext.projectType,
       workspaceContext.designSystem,
+      Array.isArray(workspaceContext.subprojectStacks) ? workspaceContext.subprojectStacks.join(' ') : '',
       Array.isArray(workspaceContext.keyFiles) ? workspaceContext.keyFiles.join(' ') : ''
     ]
       .filter(Boolean)
       .join(' ')
       .toLowerCase();
 
-    if (/godot|project\.godot|unity|\.tscn/.test(signals)) unlocked.add('game');
-    if (/react|vue|svelte|next|nuxt|astro|angular|tailwind|vite|html/.test(signals)) unlocked.add('web');
+    const hasGameProject = /godot|project\.godot|unity|\.tscn/.test(signals);
+    const hasFrontendFramework = /react|vue|svelte|next|nuxt|astro|angular|tailwind|vite/.test(signals);
+    const hasHtmlEntry = /\bhtml\b/.test(signals);
+
+    if (hasGameProject) unlocked.add('game');
+    if (hasFrontendFramework || (hasHtmlEntry && !hasGameProject && !explicitNonWebTarget)) {
+      unlocked.add('web');
+    }
   }
 
   return [...unlocked];

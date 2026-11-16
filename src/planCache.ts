@@ -208,6 +208,19 @@ const STOPWORDS: ReadonlySet<string> = new Set([
   'make', 'create', 'creating', 'made', 'generate'
 ]);
 
+/** Generic noise/filler tokens that never uniquely identify a reusable multi-step procedure on their own. */
+const LOW_SIGNAL_PLAN_WORDS: ReadonlySet<string> = new Set([
+  'fix', 'test', 'testing', 'check', 'run', 'build', 'update', 'change',
+  'help', 'issue', 'bug', 'error', 'work', 'working', 'thing', 'file',
+  'code', 'pleae', 'pls', 'plz', 'halp', 'hello', 'hey', 'thanks', 'thank',
+  'okay', 'yes', 'none', 'something', 'anything', 'everything'
+]);
+
+function hasSpecificPlanKeywords(keywords: readonly string[]): boolean {
+  if (keywords.length < 2) return false;
+  return keywords.some((word) => !LOW_SIGNAL_PLAN_WORDS.has(word));
+}
+
 // HONEST LIMIT. Matching is LEXICAL.
 // This path is deterministic, instant, and works on a machine with no embedding model
 // provisioned. Cortex is the semantic route and already carries embeddings;
@@ -640,7 +653,7 @@ export function failureClass(result: unknown): PlanFailureClass | '' {
 export function lookupPlan(query: PlanLookupQuery | null | undefined): PlanMatch | null {
   const startedAt = performance.now();
   const keywords = extractKeywords(query?.prompt);
-  if (keywords.length === 0) {
+  if (!hasSpecificPlanKeywords(keywords)) {
     recordLookupTelemetry({ hit: false, durationMs: performance.now() - startedAt });
     return null;
   }
@@ -655,7 +668,7 @@ export function lookupPlan(query: PlanLookupQuery | null | undefined): PlanMatch
 
   // Tier 1: Exact signature matching (O(1) hash index, Table 5 in APC paper)
   const exact = exactIndex.get(planSignature(archetype, keywords));
-  if (exact) {
+  if (exact && hasSpecificPlanKeywords(exact.keywords)) {
     const durationMs = performance.now() - startedAt;
     recordLookupTelemetry({ hit: true, matchType: 'exact', durationMs });
     return {
@@ -687,6 +700,7 @@ export function lookupPlan(query: PlanLookupQuery | null | undefined): PlanMatch
     // Archetype is a hard gate, not a score. A "build a 3D scene" plan sharing
     // three words with "debug the build" is not a plan for it.
     if (archetype && template.archetype && template.archetype !== archetype) continue;
+    if (!hasSpecificPlanKeywords(template.keywords)) continue;
 
     const score = similarity(keywords, template.keywords);
     if (score < threshold) continue;
@@ -727,7 +741,7 @@ export function recordPlan(outcome: PlanRecordInput | null | undefined): PlanTem
   if (steps.length < 2) return null;
 
   const keywords = extractKeywords(outcome?.prompt);
-  if (keywords.length === 0) return null;
+  if (!hasSpecificPlanKeywords(keywords)) return null;
 
   const plans = readAll();
   const archetype = String(outcome?.archetype || '');

@@ -80,6 +80,7 @@ import type { DecideToolsInput } from './decideTools.js';
 import { SavedTools, readSavedTools, writeSavedTools } from './saveTools.js';
 import type { AdmissionResult } from './saveTools.js';
 import {
+  CHARS_PER_TOKEN,
   resolveCharPool,
   measureMessages,
   resultCapFor,
@@ -394,10 +395,10 @@ ${AGENT_USER_POLICY}
 # Project Conventions
 Follow the selected project's existing style and architecture. Check dependencies and tool schemas before use. Preserve unrelated behavior.
 
-# Greenfield Application Scaffolding vs. Legacy Codebase Exploration
-- When the user asks to CREATE or BUILD a new application, web page, 3D model, game, or tool from scratch (e.g., "buatkan", "create", "build", "make", "generate"), focus DIRECTLY on authoring the project in its designated project directory.
-- DO NOT perform exploratory directory listings of the root repository or inspect unrelated legacy projects in the workspace.
-- Immediately initialize the target directory and author the required implementation files (e.g. index.html, style.css, app.js).
+# Repository Structure, Project Docs & Existing Codebases First
+- When working inside an existing repository or project (indicated by Workspace Context key files, docs, build scripts, or subprojects), ALWAYS inspect the relevant project documentation (docs/, README.md), build scripts (scripts/, Makefile, package.json), and actual directory structure BEFORE modifying files or choosing a build/release command.
+- Do NOT blindly initialize template web files (index.html, style.css, app.js) or assume a task is a greenfield web app unless the user explicitly requested a new web project from scratch AND the target directory has no matching existing build/architecture.
+- Only skip root exploration when creating an explicitly requested brand-new greenfield project inside a dedicated new/empty directory.
 
 # Operational Guidelines & Communication
 - **Strict Mandatory English Only Directive**: Operate, reason, plan, and communicate STRICTLY and EXCLUSIVELY in the English language across all thoughts, plan steps, and responses, regardless of the language used in the user's prompt. The use of non-English languages (including Indonesian) is strictly and permanently forbidden anywhere in agent responses, plans, or thoughts.
@@ -805,6 +806,8 @@ export class AgentLoop {
     this.webVerificationScheduled = false;
     // P6: rendered surfaces this task wrote, for the anti-slop gate to read back.
     this.webArtifacts = new Set();
+    // Web files only read/grepped during exploration — never treated as written surfaces.
+    this.inspectedWebFiles = new Set();
     this.claimedLocalUrls = new Set();
     this.slopReviewAttempts = 0;
     this.slopLastAuditHash = '';
@@ -1030,7 +1033,7 @@ export class AgentLoop {
       const resolved = path.resolve(this.workspaceRoot, expanded);
       try {
         if (fsSync.existsSync(resolved) && fsSync.statSync(resolved).isFile()) {
-          this.webArtifacts.add(resolved);
+          this.inspectedWebFiles.add(resolved);
           this.webVerificationState.htmlInspected = true;
         }
       } catch {
@@ -1918,6 +1921,7 @@ export class AgentLoop {
     this._verificationPlanFired = false;
     this.webVerificationState = { screenshotTaken: false, browserActUsed: false, htmlInspected: false };
     this.webArtifacts = new Set();
+    this.inspectedWebFiles = new Set();
     this.claimedLocalUrls = new Set();
     this.slopReviewAttempts = 0;
     this.slopLastAuditHash = '';
@@ -2009,7 +2013,11 @@ export class AgentLoop {
 
     if (!this.isInitialized) {
       const activeTier = this.activeTier;
-      const charPoolLimit = resolveCharPool(activeTier, this.config.maxCharPool);
+      const charPoolLimit = resolveCharPool(activeTier, this.config.maxCharPool, {
+        provider: this.config.provider,
+        model: this.config.model,
+        overrideTokens: this.config.contextTokens || this.config.maxContextTokens
+      });
       const devTag = isDevEmulator(this.config) ? ' (dev emulator)' : '';
       // Was a console.log carrying a hardcoded \x1b[1m\x1b[36m, which ignored
       // NO_COLOR outright. The renderer paints this through the theme.
@@ -2249,7 +2257,11 @@ export class AgentLoop {
         // replaced by a summary, so memory, disk and CPU all stay bounded.
 
         const activeTier = isDevEmulator(this.config) ? 'super_max' : (this.config.tier || 'premium');
-        const MAX_CHAR_POOL = resolveCharPool(activeTier, this.config.maxCharPool);
+        const MAX_CHAR_POOL = resolveCharPool(activeTier, this.config.maxCharPool, {
+          provider: this.config.provider,
+          model: this.config.model,
+          overrideTokens: this.config.contextTokens || this.config.maxContextTokens
+        });
 
         // 5-Stage Progressive Compaction (Claude Code Architecture / Research Section E):
         // Stage 0 (HLCE Ephemeral Decay) + Stage 2 (Snip >15K tokens / 60K chars) +
@@ -2386,7 +2398,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
   4. Perform thorough code inspection of generated math, physics, and canvas render loops to ensure zero defects.
 - For non-visual tasks (backend, CLI, algorithms): Verify using standard test suites and execution logs.`;
         const providerPrompt = `${baseProviderPrompt}${sensoryAwareness}`;
-        const memoryContext = getMemoryContextString();
+        const memoryContext = getMemoryContextString({ workspaceRoot: this.workspaceRoot });
 
         // --- PER-TASK STATIC CONTEXT (computed once, not once per step) ---
         // Cortex retrieval, design detection, creative-pattern lookup and the
@@ -2416,11 +2428,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
             ctx.packageManager && `Package manager: ${ctx.packageManager}`,
             ctx.gitBranch && `Git branch: ${ctx.gitBranch}`,
             ctx.gitStatus && `Git status: ${ctx.gitStatus}`,
+            Array.isArray(ctx.topEntries) && ctx.topEntries.length > 0 && `Top-level layout: ${ctx.topEntries.slice(0, 20).join(', ')}`,
+            Array.isArray(ctx.subprojectStacks) && ctx.subprojectStacks.length > 0 && `Detected stacks: ${ctx.subprojectStacks.join(', ')}`,
             Array.isArray(ctx.subprojects) && ctx.subprojects.length > 0 && `Subprojects in workspace: ${ctx.subprojects.join(', ')}`,
+            Array.isArray(ctx.docFiles) && ctx.docFiles.length > 0 && `Project docs (read relevant docs before guessing conventions): ${ctx.docFiles.slice(0, 15).join(', ')}`,
+            Array.isArray(ctx.buildFiles) && ctx.buildFiles.length > 0 && `Build & config files: ${ctx.buildFiles.slice(0, 15).join(', ')}`,
             Array.isArray(ctx.keyFiles) && ctx.keyFiles.length > 0 && `Key files: ${ctx.keyFiles.slice(0, 25).join(', ')}`
           ].filter(Boolean);
           if (facts.length > 0) {
-            workspaceSummary = `\n\n◆ WORKSPACE CONTEXT (already scanned for you — do NOT waste steps rediscovering this):\n${facts.join('\n')}`;
+            workspaceSummary = `\n\n◆ WORKSPACE CONTEXT (scanned on disk — verify docs/build scripts directly and treat repository files as authoritative):\n${facts.join('\n')}`;
           }
         }
 
@@ -2534,7 +2550,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
           // here never invalidates the cached prefix in [1]-[3].
           {
             role: 'system',
-            content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)\n\n◆ PERSISTENT MEMORY (FACTS LEARNED ABOUT THE USER):\n${memoryContext}`
+            content: `${uncertaintyDirective ? uncertaintyDirective + '\n\n' : ''}${describeSession(this.taskId)}CURRENT AUTONOMY MODE: ${autonomyMode}\nALLOWED WORKSPACE PATHS: ${allowedPaths}\n(You MUST NOT write files outside these paths!)${memoryContext ? `\n\n◆ PERSISTENT MEMORY (workspace-relevant notes — actual repository files and docs on disk always override memory if anything conflicts):\n${memoryContext}` : ''}`
           }
         ];
 
@@ -2649,6 +2665,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
         let nativeMutationCount = 0;
         let nativeExplorationCount = 0;
         const completedNativeActionIds = new Set<string>();
+        const seenNativePlanActionIds = new Set<string>();
         const observedNativeTerminalIds = new Set<string>();
         const finalizeReasoningSegment = (): void => {
           if (!segmentReasoning) return;
@@ -2775,6 +2792,8 @@ You are operating in a text-and-code modality without direct image pixel renderi
             const actionPlan = normalizePeerPlanEntries(action.parameters);
             if (actionPlan) {
               hasStructuredToolPlan = true;
+              if (action.id) seenNativePlanActionIds.add(String(action.id));
+              seenNativePlanActionIds.add(JSON.stringify(actionPlan));
               this.updateImplementationPlan(actionPlan);
             }
             const isChecklistTool = Boolean(actionPlan) || ['todowrite', 'todo_write', 'update_plan'].includes(action.name.toLowerCase());
@@ -2846,7 +2865,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
               const lowerName = action.name.toLowerCase();
               const rawDetail = String(action.detail || '');
               const lowerDetail = rawDetail.toLowerCase();
-              if (['fs_write', 'fs_edit', 'write_file', 'edit_file', 'write', 'edit', 'replace_file_content'].includes(lowerName)
+              if (['fs_write', 'fs_edit', 'write_file', 'edit_file', 'write', 'edit', 'multiedit', 'multi_edit', 'write_to_file', 'replace_file_content', 'multi_replace_file_content'].includes(lowerName)
                   || isNativeMutation(action.name, actionArgs)) {
                 nativeMutationCount++;
                 taskMutationCount++;
@@ -2947,20 +2966,23 @@ You are operating in a text-and-code modality without direct image pixel renderi
           throw Object.assign(new RetryConsentCheckpoint(), { partialUsage: response.usage });
         }
 
-        // The call came back. Whatever went wrong before is no longer
-        // consecutive — without this reset, one failure at step 2 and another
-        // at step 200 would count toward the same ceiling and stop a task that
-        // was working perfectly well.
-        this.consecutiveFailures = 0;
-        this.lastFailureType = null;
-
         // Track tokens. usage carries cachedPromptTokens / cacheWriteTokens so
         // the cost estimate reflects the real cache-discounted bill.
+        const rawUsage = response?.usage && typeof response.usage === 'object' ? response.usage : undefined;
+        const normalizedUsage = rawUsage
+          ? {
+              ...rawUsage,
+              promptTokens: Number.isFinite(Number(rawUsage.promptTokens)) ? Math.max(0, Number(rawUsage.promptTokens)) : 0,
+              completionTokens: Number.isFinite(Number(rawUsage.completionTokens)) ? Math.max(0, Number(rawUsage.completionTokens)) : 0,
+              cachedPromptTokens: Number.isFinite(Number(rawUsage.cachedPromptTokens)) ? Math.max(0, Number(rawUsage.cachedPromptTokens)) : 0
+            }
+          : { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
+
         const tracking = await this.tokenTracker.trackUsage(
-          response.usage.promptTokens,
-          response.usage.completionTokens,
+          normalizedUsage.promptTokens,
+          normalizedUsage.completionTokens,
           (msg: string) => this.emitEvent({ type: 'budget_warning', message: msg }),
-          response.usage
+          normalizedUsage
         );
 
         // Private numeric telemetry only. The daily ledger aggregates calls,
@@ -2970,18 +2992,18 @@ You are operating in a text-and-code modality without direct image pixel renderi
           event: 'model_usage', scope: 'agent_loop_primary',
           taskId: this.taskId, step: this.stepsCompleted,
           provider: this.config.provider || 'unknown',
-          promptTokens: response.usage.promptTokens,
-          completionTokens: response.usage.completionTokens,
-          cachedPromptTokens: response.usage.cachedPromptTokens || 0,
-          uncachedPromptTokens: response.usage.uncachedPromptTokens,
-          noncachedTokens: noncachedTokens(response.usage),
-          measurement: response.usage.measurement || 'unspecified',
-          measurementScope: response.usage.measurementScope || 'unspecified',
-          cacheMeasurement: response.usage.cacheMeasurement || 'unspecified',
+          promptTokens: normalizedUsage.promptTokens,
+          completionTokens: normalizedUsage.completionTokens,
+          cachedPromptTokens: normalizedUsage.cachedPromptTokens,
+          uncachedPromptTokens: rawUsage?.uncachedPromptTokens,
+          noncachedTokens: noncachedTokens(normalizedUsage),
+          measurement: rawUsage?.measurement || 'unspecified',
+          measurementScope: rawUsage?.measurementScope || 'unspecified',
+          cacheMeasurement: rawUsage?.cacheMeasurement || 'unspecified',
           costBasis: /^(acp(?:\/|$)|antigravity$|agy$)/i.test(String(this.config.provider || ''))
             ? 'external_subscription_unavailable' : 'rate_card_estimate',
           callEstimatedCostUsd: this.tokenTracker.calculateCost(
-            response.usage.promptTokens, response.usage.completionTokens, response.usage
+            normalizedUsage.promptTokens, normalizedUsage.completionTokens, normalizedUsage
           )
         });
 
@@ -2994,10 +3016,15 @@ You are operating in a text-and-code modality without direct image pixel renderi
           auditLog.log({ event: 'task_usage_advisory', taskId: this.taskId, freshTokens: this.tokenTracker.taskTokens });
         }
 
-        const cachedTokens = response.usage.cachedPromptTokens || 0;
+        const cachedTokens = normalizedUsage.cachedPromptTokens;
         if (cachedTokens > 0) {
-          this.debugLog(`prompt cache hit: ${cachedTokens.toLocaleString()} of ${response.usage.promptTokens.toLocaleString()} input tokens served from cache`);
+          this.debugLog(`prompt cache hit: ${cachedTokens.toLocaleString()} of ${normalizedUsage.promptTokens.toLocaleString()} input tokens served from cache`);
         }
+
+        // Reset retry state only after response metadata and token accounting succeed
+        // so an internal post-response exception cannot spin infinitely on retry 1 of 3.
+        this.consecutiveFailures = 0;
+        this.lastFailureType = null;
 
         
         //
@@ -3013,6 +3040,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
         // the window is actually budgeted in. The renderer converts once, using
         // the project's own CHAR_POOLS convention, instead of comparing a token
         // count to a character limit.
+        const reportedPromptTokens = Number(response.usage?.promptTokens || 0);
+        if (response.usage?.measurement === 'provider_reported'
+          && response.usage?.measurementScope !== 'cumulative'
+          && Number.isFinite(reportedPromptTokens)
+          && reportedPromptTokens > 0) {
+          const reportedContextChars = Math.round(reportedPromptTokens * CHARS_PER_TOKEN);
+          if (reportedContextChars > (this._contextChars || 0)) {
+            this._contextChars = reportedContextChars;
+          }
+        }
         this.emitEvent({
           type: 'usage_update',
           usedTokens: tracking.dailyTokens || 0,
@@ -3248,7 +3285,13 @@ You are operating in a text-and-code modality without direct image pixel renderi
             const extPlan = normalizePeerPlanEntries(extAction.parameters);
             if (extPlan) {
               hasStructuredToolPlan = true;
-              this.updateImplementationPlan(extPlan);
+              const extActionId = extAction.id ? String(extAction.id) : '';
+              const extPlanKey = JSON.stringify(extPlan);
+              if (!(extActionId && seenNativePlanActionIds.has(extActionId)) && !seenNativePlanActionIds.has(extPlanKey)) {
+                seenNativePlanActionIds.add(extPlanKey);
+                if (extActionId) seenNativePlanActionIds.add(extActionId);
+                this.updateImplementationPlan(extPlan);
+              }
             }
             const actionName = String(extAction.name || '').toLowerCase();
             const detailPath = typeof extAction.detail === 'string' ? extAction.detail.trim() : '';
@@ -5259,6 +5302,9 @@ You are operating in a text-and-code modality without direct image pixel renderi
       return 'invalid_request_error';
     }
     if (msg.includes('kill') || msg.includes('abort') || msg.includes('signal') || msg.includes('fatal')) {
+      return 'fatal';
+    }
+    if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) {
       return 'fatal';
     }
     

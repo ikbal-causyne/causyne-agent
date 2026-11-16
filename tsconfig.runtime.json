@@ -228,6 +228,7 @@
     "src/memory/contextBudget.ts",
     "src/memory/symbolFolder.ts",
     "src/memory/episodicStore.ts",
+    "src/memory/scopedFacts.ts",
     "src/tools/memoryRecall.ts",
     "src/tools/memoryWrite.ts",
     "src/pluginsFactory/types.ts",

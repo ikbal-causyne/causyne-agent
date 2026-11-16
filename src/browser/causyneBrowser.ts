@@ -299,6 +299,13 @@ export function isDeadContextError(err: unknown): boolean {
     || msg.includes('Browser closed');
 }
 
+export function isExecutionContextDestroyedError(err: unknown): boolean {
+  const msg = errorMessage(err);
+  return msg.includes('Execution context was destroyed')
+    || msg.includes('Cannot find context with specified id')
+    || msg.includes('Frame was detached');
+}
+
 export function isPageCrashedError(err: unknown): boolean {
   const msg = errorMessage(err);
   return msg.includes('Page crashed')
@@ -1046,7 +1053,7 @@ export class CausyneBrowser {
       ...windowSnapshot(state.lastSnapshot, offset),
       tabId: state.id,
       url: state.page.url(),
-      title: await state.page.title(),
+      title: await this.safePageTitle(state.page),
       refsCount: state.refs.size,
       ...(state.lastStructure ? { structure: state.lastStructure } : {})
     };
@@ -1691,18 +1698,18 @@ export class CausyneBrowser {
         ? (expandSearchMacro(action.macro, action.query ?? action.text ?? '') ?? undefined)
         : action.url;
       const state = await this.createTab(initialUrl);
-      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
+      return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page) };
     }
     if (action.type === 'listTabs' || action.type === 'list_tabs') {
       const data = await Promise.all([...this.tabs.values()].filter(tab => !tab.page.isClosed() && !tab.crashed).map(async tab => ({
-        tabId: tab.id, active: tab.id === this.activeTabId, url: tab.page.url(), title: await tab.page.title()
+        tabId: tab.id, active: tab.id === this.activeTabId, url: tab.page.url(), title: await this.safePageTitle(tab.page)
       })));
       return { action: action.type, data };
     }
     const requested = this.requestedTab(action);
     const state = requested ?? await this.activeTab();
     if (action.type === 'switchTab' || action.type === 'switch_tab') {
-      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
+      return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page) };
     }
     if (action.type === 'closeTab' || action.type === 'close_tab') {
       await state.page.close();
@@ -1717,12 +1724,12 @@ export class CausyneBrowser {
     }
     if (action.type === 'goto' || action.type === 'open' || action.type === 'navigate') {
       await this.navigateWithMacroFallback(state, action);
-      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
+      return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page) };
     }
     if (action.type === 'preview') {
       if (typeof action.filePath !== 'string') throw new Error('preview requires filePath');
       await this.preview(state, action.filePath, workspace);
-      return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title(), output: 'Rendered in an isolated internal preview. This browser-only origin is not user-openable. Start a real local server with sysRunBg if the user needs an interactive URL.' };
+      return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page), output: 'Rendered in an isolated internal preview. This browser-only origin is not user-openable. Start a real local server with sysRunBg if the user needs an interactive URL.' };
     }
     if (action.type === 'snapshot' || action.type === 'scrape') {
       const snapshot = await this.snapshot(action.offset ?? 0);
@@ -1879,7 +1886,22 @@ export class CausyneBrowser {
       throw new Error(`Unsupported browser action: ${action.type}`);
     }
     state.refs.clear();
-    return { action: action.type, tabId: state.id, url: state.page.url(), title: await state.page.title() };
+    return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page) };
+  }
+
+  /** Reads page.title() safely even if an immediate client redirect destroyed the mid-flight execution context. */
+  private async safePageTitle(page: BrowserPage): Promise<string> {
+    try {
+      return await page.title();
+    } catch (error) {
+      if (!isExecutionContextDestroyedError(error)) throw error;
+      try {
+        await page.waitForLoadState('domcontentloaded', { timeout: 2000 });
+        return await page.title();
+      } catch {
+        return '';
+      }
+    }
   }
 
   private touch(): void {

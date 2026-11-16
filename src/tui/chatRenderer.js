@@ -822,7 +822,10 @@ export class ChatRenderer {
       this.status.contextChars = finalMeasured;
     }
     if (!this.status.contextLimit) {
-      this.status.contextLimit = resolveCharPool(this.status.tier);
+      this.status.contextLimit = resolveCharPool(this.status.tier, undefined, {
+        provider: sessionInfo?.provider || this.status.provider,
+        model: sessionInfo?.model || this.status.model
+      });
     }
     if (sessionInfo) {
       this.status.setSession({
