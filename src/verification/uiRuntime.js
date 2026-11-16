@@ -1,0 +1,32 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { runInteractivePty } from './interactivePty.js';
+
+export async function verifyCausyneTui(options = {}) {
+  const workspace = options.workspace || process.cwd();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-ui-verify-'));
+  try {
+    const result = await runInteractivePty({
+      workspace, script: 'tests/fixtures/liveTuiTarget.mjs',
+      timeoutMs: options.timeoutMs ?? 15000,
+      rows: options.rows ?? 42,
+      columns: options.columns ?? 126,
+      env: { CAUSYNE_HOME: home },
+      steps: [
+        { name: 'open-usage', waitFor: 'CAUSYNE_VERIFY_READY',
+          input: '/usage\r', contains: 'Usage & Context' },
+        { name: 'submit-while-pinned', waitFor: 'Usage & Context',
+          input: 'verification-message\r', contains: 'CAUSYNE_VERIFY_MESSAGE_OK' },
+        { name: 'switch-to-status', waitFor: 'CAUSYNE_VERIFY_MESSAGE_OK',
+          input: '/status\r', contains: 'Status' },
+        { name: 'submit-while-status-pinned', waitFor: 'Status',
+          input: 'verify-exit\r', contains: 'CAUSYNE_VERIFY_EXIT_OK' }
+      ]
+    });
+    return { ...result, feature: 'tui-usage',
+      evidence: 'Observed actual ChatPrompt and StageSurface terminal output at each input boundary' };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
