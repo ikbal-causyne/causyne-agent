@@ -1,8 +1,8 @@
 ----------------- MODULE CausynePinnedPanels -----------------
 EXTENDS Naturals
-VARIABLES panel, busy, queued, interrupted, lastAction, priorPanel
+VARIABLES panel, busy, queued, interrupted, lastAction, priorPanel, priorInterrupted
 
-vars == <<panel, busy, queued, interrupted, lastAction, priorPanel>>
+vars == <<panel, busy, queued, interrupted, lastAction, priorPanel, priorInterrupted>>
 
 Init ==
   /\ panel = "none"
@@ -11,12 +11,14 @@ Init ==
   /\ interrupted = FALSE
   /\ lastAction = "init"
   /\ priorPanel = "none"
+  /\ priorInterrupted = FALSE
 
 OpenUsage ==
   /\ panel # "usage"
   /\ panel' = "usage"
   /\ priorPanel' = panel
   /\ lastAction' = "open_usage"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<busy, queued, interrupted>>
 
 OpenStatus ==
@@ -24,6 +26,7 @@ OpenStatus ==
   /\ panel' = "status"
   /\ priorPanel' = panel
   /\ lastAction' = "open_status"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<busy, queued, interrupted>>
 
 ClosePanel ==
@@ -31,6 +34,7 @@ ClosePanel ==
   /\ panel' = "none"
   /\ priorPanel' = panel
   /\ lastAction' = "close"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<busy, queued, interrupted>>
 
 Submit ==
@@ -38,6 +42,7 @@ Submit ==
   /\ queued' = queued + 1
   /\ priorPanel' = panel
   /\ lastAction' = "submit"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<panel, busy, interrupted>>
 
 BeginRun ==
@@ -45,6 +50,7 @@ BeginRun ==
   /\ busy' = TRUE
   /\ priorPanel' = panel
   /\ lastAction' = "start"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<panel, queued, interrupted>>
 
 FinishRun ==
@@ -52,6 +58,7 @@ FinishRun ==
   /\ busy' = FALSE
   /\ priorPanel' = panel
   /\ lastAction' = "finish"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<panel, queued, interrupted>>
 
 Dequeue ==
@@ -59,7 +66,25 @@ Dequeue ==
   /\ queued' = queued - 1
   /\ priorPanel' = panel
   /\ lastAction' = "dequeue"
+  /\ priorInterrupted' = interrupted
   /\ UNCHANGED <<panel, busy, interrupted>>
+
+EscapePanel ==
+  /\ panel # "none"
+  /\ panel' = "none"
+  /\ priorPanel' = panel
+  /\ priorInterrupted' = interrupted
+  /\ lastAction' = "escape_panel"
+  /\ UNCHANGED <<busy, queued, interrupted>>
+
+EscapeRun ==
+  /\ panel = "none"
+  /\ busy = TRUE
+  /\ interrupted' = TRUE
+  /\ priorInterrupted' = interrupted
+  /\ priorPanel' = panel
+  /\ lastAction' = "escape_run"
+  /\ UNCHANGED <<panel, busy, queued>>
 
 Next ==
   \/ OpenUsage
@@ -69,6 +94,8 @@ Next ==
   \/ BeginRun
   \/ FinishRun
   \/ Dequeue
+  \/ EscapePanel
+  \/ EscapeRun
 
 Spec == Init /\ [][Next]_vars
 
@@ -78,11 +105,12 @@ TypeOK ==
   /\ queued \in 0..2
   /\ interrupted \in BOOLEAN
   /\ priorPanel \in {"none", "usage", "status"}
+  /\ priorInterrupted \in BOOLEAN
 
 PinnedUntilClose ==
   lastAction \in {"submit", "start", "finish", "dequeue"}
     => panel = priorPanel
 
 NoRunInterruptFromPanel ==
-  interrupted = FALSE
+  lastAction = "escape_panel" => interrupted = priorInterrupted
 ==============================================================
