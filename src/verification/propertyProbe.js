@@ -8,6 +8,7 @@ function integer(name, value, maximum) {
 }
 
 function failure(value) {
+  if (value && typeof value.then === 'function') throw new TypeError('Async invariants are not supported');
   return value === true ? null : (typeof value === 'string' ? value : 'Invariant returned false');
 }
 
@@ -36,6 +37,7 @@ function runPath(initial, transition, invariant, path) {
   for (let i = 0; i < path.length; i++) {
     try {
       const next = transition(state, path[i]);
+      if (next && typeof next.then === 'function') throw new TypeError('Async transitions are not supported');
       if (next !== undefined) state = next;
       const error = failure(invariant(state));
       if (error) return { failed: true, reason: error, step: i };
