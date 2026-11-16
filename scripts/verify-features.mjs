@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FEATURE_MAP, selectFeatures } from '../src/verification/featureMap.js';
 import { runCliProbe } from '../src/verification/cliProbe.js';
-import { verifyCausyneTui } from '../src/verification/uiRuntime.js';
+import { verifyCausyneTui, verifyCausyneChatMode } from '../src/verification/uiRuntime.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const argv = process.argv.slice(2);
@@ -32,20 +32,25 @@ if (listOnly) {
     if (live) {
       report.evidenceLevel = 'automated tests plus explicit PTY evidence for supported surfaces';
       for (const feature of targets) {
-        if (feature.liveDriver !== 'posix-pty-component') {
+        if (feature.liveDriver !== 'posix-pty-chat') {
           report.results.push({ feature: feature.id, status: 'unavailable', success: false,
             reason: 'No real interaction driver implemented for this surface' });
           report.success = false;
           continue;
         }
-        const evidence = await verifyCausyneTui({ workspace: root });
-        report.results.push({
-          feature: feature.id, status: evidence.status, success: evidence.success,
-          surface: evidence.surface, observations: evidence.observations || [],
-          exitCode: evidence.exitCode, timedOut: evidence.timedOut,
-          reason: evidence.reason, limitation: evidence.limitation
-        });
-        report.success &&= evidence.success;
+        for (const [route, verify] of [
+          ['tui-components', verifyCausyneTui],
+          ['real-chat-mode', verifyCausyneChatMode]
+        ]) {
+          const evidence = await verify({ workspace: root });
+          report.results.push({
+            feature: feature.id, route, status: evidence.status, success: evidence.success,
+            surface: evidence.surface, observations: evidence.observations || [],
+            exitCode: evidence.exitCode, timedOut: evidence.timedOut,
+            reason: evidence.reason, limitation: evidence.limitation
+          });
+          report.success &&= evidence.success;
+        }
       }
     }
   } catch (error) {
