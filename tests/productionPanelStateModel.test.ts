@@ -27,6 +27,7 @@ function realTransition(state, action, corrupt = false) {
     draw() {},
     startTick() {},
     stopTick() {},
+    refreshUsageCard: async () => false,
     restoreUnconsumedAttachments() {},
     takeSubmissionAttachments: () => [],
     renderSubmittedUserMessage() {},
