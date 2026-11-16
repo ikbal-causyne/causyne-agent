@@ -101,3 +101,27 @@ test('explorer rejects action alphabets too large to exhaust', () => {
     transition: state => state, invariant: () => true
   }), /Too many actions/);
 });
+
+
+test('mutating transitions cannot contaminate sibling branches or create false counterexamples', () => {
+  const result = exploreStateMachine({
+    initial: { n: 0 }, actions: ['increment', 'observe'], maxDepth: 1,
+    transition(state, action) {
+      if (action === 'increment') {
+        state.n++;
+        return state;
+      }
+      return { ...state, observed: state.n };
+    },
+    invariant: state => state.observed === undefined || state.observed === 0
+  });
+  assert.equal(result.status, 'bounded-pass', JSON.stringify(result));
+  assert.equal(result.statesExplored, 3);
+});
+
+test('bounded explorer fails explicitly rather than accepting uncloneable mutable states', () => {
+  assert.throws(() => exploreStateMachine({
+    initial: { callback: () => 7 }, actions: ['advance'], maxDepth: 1,
+    transition: state => state, invariant: () => true
+  }), /structured-cloneable/);
+});

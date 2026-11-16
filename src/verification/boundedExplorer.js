@@ -53,7 +53,15 @@ export function exploreStateMachine(options) {
     deepest = Math.max(deepest, current.trace.length);
     if (current.trace.length >= maxDepth) continue;
     for (const action of actions) {
-      const next = transition(current.state, action);
+      // Each branch must start from the same immutable snapshot. A mutating
+      // transition otherwise poisons later siblings and can produce false proofs.
+      let isolated;
+      try {
+        isolated = structuredClone(current.state);
+      } catch {
+        throw new TypeError('State must be structured-cloneable for sound bounded exploration');
+      }
+      const next = transition(isolated, action);
       transitions++;
       if (next === null || next === undefined) continue;
       const trace = current.trace.concat(action);
