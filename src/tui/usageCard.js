@@ -230,4 +230,3 @@ export function renderUsageCardRows(data, width) {
   rows.push(''); // Keep the composer visually separate from the usage panel.
   return rows;
 }
-}
