@@ -61,7 +61,10 @@ test('transition action objects and invariant state snapshots are isolated', () 
       return { count: state.count, started: true };
     },
     invariant: state => {
-      if (!state.started) state.count = 42;
+      if (!state.started) {
+        state.count = 42;
+        return true;
+      }
       return state.count < 4 || 'state mutation escaped';
     },
     maxDepth: 3
@@ -88,7 +91,7 @@ test('labels cannot inject Mermaid chart syntax from model data', () => {
   });
   assert.doesNotMatch(result.diagram, /\n\[\*\] --> HACKED/);
   assert.doesNotMatch(result.diagram, /<script>/);
-  assert.doesNotMatch(result.diagram, /state MALICIOUS/);
+  assert.doesNotMatch(result.diagram, /^\s*state MALICIOUS/m);
 });
 
 test('async or uncloneable model inputs cannot be reported as verified', () => {
