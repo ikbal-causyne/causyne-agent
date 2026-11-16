@@ -25,6 +25,9 @@ function runPath(initial, transition, invariant, path) {
   let state;
   try {
     state = initial();
+    if (state && typeof state.then === 'function') {
+      throw new TypeError('Async initial state is not supported');
+    }
   } catch (error) {
     return { failed: true, reason: String(error?.message || error), step: -1 };
   }
