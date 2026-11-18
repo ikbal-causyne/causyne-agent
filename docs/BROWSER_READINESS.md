@@ -21,9 +21,10 @@ Production browsers may use a different runtime (e.g. Camoufox); this smoke
 coverage must **not** be represented as testing that production engine.
 
 The soak script records `completed`, `requests`, `elapsed_ms`,
-`node_peak_rss_mib`, `tree_peak_rss_mib`, and `peak_processes`.
-The process-tree RSS metric uses Linux `/proc`. It is an approximate RSS sum,
-not a deduplicated PSS measurement, and does not replace kernel OOM monitoring.
+`node_peak_rss_mib`, `tree_peak_rss_mib`, `tree_peak_pss_mib`, and `peak_processes`.
+The process-tree metrics use Linux `/proc`: total RSS is diagnostic and
+can double-count shared pages, while the enforceable budget uses proportional
+set size (PSS) from `smaps_rollup`. Neither replaces kernel OOM monitoring.
 
 ## Optional extended soak
 
@@ -41,7 +42,7 @@ Environment knobs for local execution:
 - `CAUSYNE_BROWSER_SOAK_ITERATIONS`: integer 1–10000
 - `CAUSYNE_BROWSER_SOAK_WORKSPACES`: integer 1–8
 - `CAUSYNE_BROWSER_SOAK_RSS_LIMIT_MIB`: Node.js process RSS ceiling
-- `CAUSYNE_BROWSER_SOAK_TREE_RSS_LIMIT_MIB`: Linux process-tree RSS ceiling
+- `CAUSYNE_BROWSER_SOAK_TREE_PSS_LIMIT_MIB`: Linux process-tree PSS ceiling
 
 ## Remaining certification gates
 
