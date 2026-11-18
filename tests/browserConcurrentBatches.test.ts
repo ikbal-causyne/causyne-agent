@@ -22,7 +22,7 @@ function harness() {
         },
         async waitForLoadState() {}, async title() { return 'title'; },
         locator: () => ({ ariaSnapshot: async () => '- heading "OK"' }),
-        frames: () => [], async evaluate() { return []; },
+        frames: () => [], async evaluate() { return [{ title: 'Result', url: 'https://example.org/result', snippet: 'OK' }]; },
         async waitForTimeout() {}, async close() {}
       };
       return page;
@@ -59,6 +59,8 @@ test('browser search action inside a locked browser batch does not deadlock',asy
   const {browser,release}=harness();
   release();
   try {
-    await assert.rejects(browser.run([{type:'search',query:'test'}]),/no results|exhausted|failed|search/i);
+    const result = await browser.run([{type:'search',query:'test'}]);
+    assert.equal(result[0].action,'search');
+    assert.equal(result[0].data[0].url,'https://example.org/result');
   } finally {await browser.close();}
 });
