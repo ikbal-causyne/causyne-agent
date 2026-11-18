@@ -40,6 +40,9 @@ export async function streamAssetResponseToFile(response, filePath, maxBytes = M
   const reader = response.body.getReader();
   let handle;
   let received = 0;
+  const validateZip = filePath.toLowerCase().endsWith('.zip');
+  const signature = Buffer.alloc(4);
+  let signatureSize = 0;
   try {
     handle = await fs.open(temporary, 'wx', 0o600);
     while (true) {
@@ -49,6 +52,17 @@ export async function streamAssetResponseToFile(response, filePath, maxBytes = M
       if (received + value.byteLength > maxBytes) {
         throw new Error(`Asset exceeds the ${maxBytes / 1024 / 1024} MB download limit.`);
       }
+      if (validateZip && signatureSize < 4) {
+        const length = Math.min(4 - signatureSize, value.byteLength);
+        signature.set(value.subarray(0, length), signatureSize);
+        signatureSize += length;
+        if (signatureSize === 4 && !(signature[0] === 0x50 && signature[1] === 0x4b &&
+            ((signature[2] === 3 && signature[3] === 4) ||
+             (signature[2] === 5 && signature[3] === 6) ||
+             (signature[2] === 7 && signature[3] === 8)))) {
+          throw new Error('Downloaded ZIP archive has an invalid file signature');
+        }
+      }
       let written = 0;
       while (written < value.byteLength) {
         const result = await handle.write(value, written, value.byteLength - written, null);
@@ -57,6 +71,7 @@ export async function streamAssetResponseToFile(response, filePath, maxBytes = M
       }
       received += value.byteLength;
     }
+    if (validateZip && signatureSize < 4) throw new Error('Downloaded ZIP archive is incomplete');
     await handle.close();
     handle = undefined;
     await fs.rename(temporary, filePath);

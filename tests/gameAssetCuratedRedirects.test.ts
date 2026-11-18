@@ -30,14 +30,14 @@ test('curated downloader follows safe public redirects with a bounded chain', as
     calls.push(String(input));
     return calls.length === 1
       ? new Response(null, {status:302,headers:{location:'https://1.1.1.1/assets.zip'}})
-      : new Response(new Uint8Array([1, 2, 3]), {status:200});
+      : new Response(new Uint8Array([80, 75, 3, 4, 1, 2, 3]), {status:200});
   }) as typeof fetch;
   try {
     const result = await gameAssetFetcher.execute({action:'download_asset',url:curatedUrl, outputDir:directory});
     assert.equal(result.success, true);
     assert.equal(calls.length, 2);
     const output = JSON.parse(result.output);
-    assert.deepEqual(await fs.readFile(output.output_file), Buffer.from([1, 2, 3]));
+    assert.deepEqual(await fs.readFile(output.output_file), Buffer.from([80, 75, 3, 4, 1, 2, 3]));
   } finally {
     globalThis.fetch = original;
     await fs.rm(directory, {recursive:true,force:true});
