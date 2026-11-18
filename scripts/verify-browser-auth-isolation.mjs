@@ -23,7 +23,7 @@ const server = http.createServer((request, response) => {
   response.setHeader('content-type', 'text/html; charset=utf-8');
   response.setHeader('cache-control', 'no-store');
   if (url.pathname === '/login' && (account === 'A' || account === 'B')) {
-    response.setHeader('set-cookie', `causyne_test_user=${account}; Path=/; HttpOnly; SameSite=Lax`);
+    response.setHeader('set-cookie', `causyne_test_user=${account}; Path=/; HttpOnly; Secure; SameSite=Lax`);
     response.end(`<html><body><h1>Signed in as ${account}</h1></body></html>`);
     return;
   }
