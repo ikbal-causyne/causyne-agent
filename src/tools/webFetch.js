@@ -219,6 +219,8 @@ export const webFetch = {
             };
             const request = { method, headers, signal: controller.signal };
             if (args.body !== undefined) {
+                if (typeof args.body !== 'string')
+                    return { success: false, error: 'HTTP request body must be a string' };
                 if (method === 'GET' || method === 'HEAD')
                     return { success: false, error: `${method} requests cannot contain a body` };
                 request.body = args.body;
