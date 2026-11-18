@@ -1,8 +1,25 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
+
+async function prepareAssetOutput(filePath, sandbox) {
+  const scopedWorkspace = sandbox?.workspaceRoot ?? sandbox?.workspacePaths?.[0] ?? (sandbox ? process.cwd() : null);
+  if (scopedWorkspace) {
+    await ensureSafeWorkspaceOutputPath(scopedWorkspace, filePath);
+    return;
+  }
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const existing = await fs.lstat(filePath).catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (existing?.isSymbolicLink() || (existing && !existing.isFile())) {
+    throw new Error('Output target cannot be a symlink or directory');
+  }
+}
 
 function getWorkspaceTempDir() {
   return path.join(process.cwd(), '.tmp_causyne_3d', 'assets');
@@ -287,7 +304,7 @@ export const gameAssetFetcher = {
         const filePath = path.join(targetDir, filename);
 
         const wavBuffer = synthesizeWavBuffer(preset);
-        await fs.mkdir(targetDir, { recursive: true });
+        await prepareAssetOutput(filePath, sandbox);
         await fs.writeFile(filePath, wavBuffer);
 
         return {
@@ -343,7 +360,7 @@ export const gameAssetFetcher = {
           chunks.push(chunk);
         }
         const buffer = Buffer.concat(chunks);
-        await fs.mkdir(targetDir, { recursive: true });
+        await prepareAssetOutput(filePath, sandbox);
         await fs.writeFile(filePath, buffer);
 
         return {
