@@ -71,7 +71,7 @@ export const gameAssetHarvester = {
         },
         category: {
           type: 'string',
-          enum: ['3d_model', '2d_sprite', 'tileset', 'sfx', 'shader'],
+          enum: ['all', '3d_model', '2d_sprite', 'tileset', 'sfx', 'shader'],
           description: 'Category of asset.'
         },
         packType: {
@@ -98,7 +98,7 @@ export const gameAssetHarvester = {
 
   async execute(args) {
     try {
-      const { action, query, category = '3d_model', packType = 'rpg_starter_pack', projectDir, assetUrl, targetSubdir = '3d/props' } = args;
+      const { action, query, category = 'all', packType = 'rpg_starter_pack', projectDir, assetUrl, targetSubdir = '3d/props' } = args;
 
       const catalog = [
         { id: 'kenney_knight_3d', title: 'CC0 Medieval Knight 3D (.obj/.gltf)', category: '3d_model', url: 'https://kenney.nl/assets/obj/knight.obj', tags: ['knight', 'rpg', 'character', '3d'] },
@@ -108,8 +108,11 @@ export const gameAssetHarvester = {
       ];
 
       if (action === 'search_assets') {
-        const q = (query || '').toLowerCase();
-        const matches = catalog.filter(item => item.category === category || item.tags.some(t => t.includes(q)) || item.title.toLowerCase().includes(q));
+        const q = String(query || '').trim().toLowerCase();
+        const matches = catalog.filter(item =>
+          (category === 'all' || item.category === category) &&
+          (!q || item.tags.some(tag => tag.includes(q)) || item.title.toLowerCase().includes(q))
+        );
         return {
           success: true,
           output: JSON.stringify({
