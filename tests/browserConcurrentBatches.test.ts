@@ -9,6 +9,7 @@ function harness() {
   const enteredPromise = new Promise(resolve => { entered = resolve; });
   const gate = new Promise(resolve => { release = resolve; });
   const visited = [];
+  const snapshots = [];
   const session = {
     pages: () => page ? [page] : [],
     async newPage() {
@@ -21,7 +22,7 @@ function harness() {
           return { status: () => 200 };
         },
         async waitForLoadState() {}, async title() { return 'title'; },
-        locator: () => ({ ariaSnapshot: async () => '- heading "OK"' }),
+        locator: () => ({ ariaSnapshot: async () => { snapshots.push(page.currentUrl); return '- heading "OK"'; } }),
         frames: () => [], async evaluate() { return [{ title: 'Result', url: 'https://example.org/result', snippet: 'OK' }]; },
         async waitForTimeout() {}, async close() {}
       };
@@ -35,7 +36,7 @@ function harness() {
     loadBrowserEngine: async () => ({Camoufox: async () => session}),
     validateUrl: async value => new URL(value)
   });
-  return {browser,visited,enteredPromise,release};
+  return {browser,visited,snapshots,enteredPromise,release};
 }
 test('overlapping browser action batches never interleave a snapshot with another navigation', async () => {
   const {browser,visited,enteredPromise,release} = harness();
@@ -63,4 +64,37 @@ test('browser search action inside a locked browser batch does not deadlock',asy
     assert.equal(result[0].action,'search');
     assert.equal(result[0].data[0].url,'https://example.org/result');
   } finally {await browser.close();}
+});
+
+test('direct snapshot reads wait for an in-flight action batch instead of racing navigation', async () => {
+  const {browser, snapshots, enteredPromise, release} = harness();
+  const first = browser.run([{type:'goto',url:'https://example.org/first'},{type:'snapshot'}]);
+  try {
+    await enteredPromise;
+    const directSnapshot = browser.snapshot();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(snapshots, [], 'direct snapshot must not inspect the page during navigation');
+    release();
+    const [batch, snapshot] = await Promise.all([first, directSnapshot]);
+    assert.equal(batch[1].url, 'https://example.org/first');
+    assert.equal(snapshot.url, 'https://example.org/first');
+    assert.deepEqual(snapshots, ['https://example.org/first', 'https://example.org/first']);
+  } finally {
+    release();
+    await browser.close();
+  }
+});
+
+test('browser searches renew the idle lease for an active session', async () => {
+  const {browser, release} = harness();
+  release();
+  try {
+    await browser.run([{type:'snapshot'}]);
+    const before = (browser as any).idleGeneration;
+    const results = await browser.search('test');
+    assert.equal(results[0].url, 'https://example.org/result');
+    assert.ok((browser as any).idleGeneration > before);
+  } finally {
+    await browser.close();
+  }
 });
