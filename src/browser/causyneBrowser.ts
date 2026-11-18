@@ -876,14 +876,17 @@ const LINKS_EXTRACT_SCRIPT = `(opts) => {
   return { links, totalLinks };
 }`;
 
-const IMAGES_EXTRACT_SCRIPT = `(opts) => {
+export const IMAGES_EXTRACT_SCRIPT = `(opts) => {
   const max = Math.min(Math.max(Number(opts && opts.limit) || 100, 1), 300);
   const imgs = Array.from(document.querySelectorAll('img'));
   const seen = new Set();
   const out = [];
   for (const img of imgs) {
     const src = img.currentSrc || img.src || '';
-    if (!src || src.startsWith('data:') || seen.has(src)) continue;
+    if (!src || src.length > 4096 || seen.has(src)) continue;
+    let parsed;
+    try { parsed = new URL(src, document.baseURI); } catch { continue; }
+    if (!['http:', 'https:', 'blob:'].includes(parsed.protocol) || parsed.username || parsed.password) continue;
     const width = Number(img.naturalWidth || img.width || 0);
     const height = Number(img.naturalHeight || img.height || 0);
     seen.add(src);
