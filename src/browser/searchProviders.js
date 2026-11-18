@@ -139,25 +139,25 @@ export async function searchPublicWeb(query, options = {}) {
         const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
         const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
         try {
-                const response = await fetchImpl(provider.url, {
-                    method: 'GET',
-                    redirect: 'error',
-                    signal,
-                    headers: {
-                        Accept: provider.accept,
-                        'Accept-Language': 'en-US,en;q=0.8',
-                        'User-Agent': 'Causyne-Agent/1.10 (+https://causyne.com)'
-                    }
-                });
-                if (!response.ok) {
-                    await response.body?.cancel().catch(() => { });
-                    throw new Error(`HTTP ${response.status}`);
+            const response = await fetchImpl(provider.url, {
+                method: 'GET',
+                redirect: 'error',
+                signal,
+                headers: {
+                    Accept: provider.accept,
+                    'Accept-Language': 'en-US,en;q=0.8',
+                    'User-Agent': 'Causyne-Agent/1.10 (+https://causyne.com)'
                 }
-                const results = provider.parse(await readBoundedText(response));
-                if (results.length > 0)
-                    return results;
-                failures.push(`${provider.engine}: no results`);
+            });
+            if (!response.ok) {
+                await response.body?.cancel().catch(() => { });
+                throw new Error(`HTTP ${response.status}`);
             }
+            const results = provider.parse(await readBoundedText(response));
+            if (results.length > 0)
+                return results;
+            failures.push(`${provider.engine}: no results`);
+        }
         catch (error) {
             if (options.signal?.aborted)
                 throw error;
