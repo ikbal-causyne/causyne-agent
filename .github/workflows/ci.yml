@@ -108,3 +108,26 @@ jobs:
       - name: Drive actual Causyne TUI in isolated terminal
         if: runner.os == 'Linux'
         run: npm run verify:ui
+
+  browser-runtime-smoke:
+    name: real Chromium browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install smoke-only Playwright driver (no browser download)
+        run: npm install --no-save --package-lock=false --ignore-scripts playwright-core@1.58.0
+
+      - name: Exercise real browser runtime without an LLM API
+        run: node scripts/verify-browser-runtime.mjs
