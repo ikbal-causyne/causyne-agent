@@ -32,6 +32,16 @@ export function htmlToReadableText(html) {
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
+export function isBinaryResponseContentType(contentType) {
+    const mediaType = contentType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+    if (mediaType === 'image/svg+xml' || mediaType.startsWith('text/'))
+        return false;
+    if (/^application\/(?:json|xml|javascript|ecmascript|x-javascript|x-www-form-urlencoded|graphql|sql|yaml|x-yaml|x-ndjson)$/.test(mediaType))
+        return false;
+    if (/^application\/.+\+(?:json|xml)$/.test(mediaType))
+        return false;
+    return /^(?:application|image|audio|video|font)\//.test(mediaType);
+}
 function isWithin(root, candidate) {
     const relative = path.relative(root, candidate);
     return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
@@ -192,7 +202,7 @@ export const webFetch = {
                 await response.body?.cancel().catch(() => { });
                 return { success: false, error: `HTTP ${response.status} ${response.statusText}`.trim(), status: response.status, finalUrl: finalUrl.href };
             }
-            if (!args.outputFile && /^(?:application\/(?:octet-stream|pdf|zip|gzip)|image\/|audio\/|video\/)/i.test(contentType)) {
+            if (!args.outputFile && isBinaryResponseContentType(contentType)) {
                 await response.body?.cancel().catch(() => { });
                 return { success: false, error: 'Binary content requires outputFile to download without corrupting bytes', status: response.status, finalUrl: finalUrl.href, contentType };
             }
