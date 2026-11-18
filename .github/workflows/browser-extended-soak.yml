@@ -1,0 +1,50 @@
+name: Extended browser soak (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Repeated interactive navigation cycles per workspace (1-10000)"
+        required: true
+        type: string
+        default: "500"
+      workspaces:
+        description: "Concurrent isolated Chromium profiles (1-8)"
+        required: true
+        type: string
+        default: "4"
+
+concurrency:
+  group: browser-extended-soak-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  extended-browser-soak:
+    name: Repeated authenticated Chromium workload
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install smoke-only Playwright driver (no browser download)
+        run: npm install --no-save --package-lock=false --ignore-scripts playwright-core@1.58.0
+
+      - name: Run isolated long-duration Chromium workload
+        env:
+          CAUSYNE_BROWSER_SOAK_ITERATIONS: ${{ inputs.iterations }}
+          CAUSYNE_BROWSER_SOAK_WORKSPACES: ${{ inputs.workspaces }}
+          CAUSYNE_BROWSER_SOAK_RSS_LIMIT_MIB: "512"
+        run: node scripts/verify-browser-soak.mjs
