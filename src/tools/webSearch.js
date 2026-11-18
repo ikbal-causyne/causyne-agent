@@ -25,7 +25,9 @@ export const webSearch = {
         }
     },
     async execute(args) {
-        const query = String(args.query ?? '').trim();
+        if (typeof args?.query !== 'string')
+            return { success: false, error: 'Search query must be a string' };
+        const query = args.query.trim();
         if (!query || query.length > 1_000)
             return { success: false, error: 'Search query must contain 1-1000 characters' };
         let lightweightFailure = '';
