@@ -42,7 +42,7 @@ const server = http.createServer((request, response) => {
       response.writeHead(400).end('Invalid account');
       return;
     }
-    response.setHeader('set-cookie', `soak_account=${account}; Path=/; HttpOnly; SameSite=Lax`);
+    response.setHeader('set-cookie', `soak_account=${account}; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax`);
     response.end(`<html><body><h1>Signed in: ${account}</h1></body></html>`);
     return;
   }
