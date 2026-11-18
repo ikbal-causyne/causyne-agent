@@ -347,7 +347,8 @@ export const gameAssetFetcher = {
   async execute(args, sandbox) {
     try {
       const { action, category = 'all', query = '', url, preset, outputFilename, outputDir } = args;
-      const targetDir = outputDir || getWorkspaceTempDir();
+      const workspace = sandbox?.workspaceRoot ?? sandbox?.workspacePaths?.[0];
+      const targetDir = outputDir || (workspace ? path.join(path.resolve(workspace), '.tmp_causyne_3d', 'assets') : getWorkspaceTempDir());
 
       // Security Check: Ensure output path is allowed inside workspace boundary
       if (sandbox && sandbox.isPathAllowed && !sandbox.isPathAllowed(path.resolve(targetDir))) {
