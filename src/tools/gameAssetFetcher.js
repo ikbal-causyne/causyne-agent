@@ -331,11 +331,13 @@ export const gameAssetFetcher = {
           signal: AbortSignal.timeout(30_000)
         });
         if (!response.ok) {
+          await response.body?.cancel().catch(() => {});
           return { success: false, error: `Failed to fetch asset from URL (${response.status} ${response.statusText}): ${url}` };
         }
 
         const declaredSize = Number(response.headers.get('content-length') || 0);
         if (declaredSize > MAX_ASSET_BYTES) {
+          await response.body?.cancel().catch(() => {});
           return { success: false, error: `Asset exceeds the ${MAX_ASSET_BYTES / 1024 / 1024} MB download limit.` };
         }
         const chunks = [];
