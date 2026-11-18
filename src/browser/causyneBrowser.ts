@@ -1579,7 +1579,7 @@ export class CausyneBrowser {
     await this.assertFillable(locator);
     if (action.mode === 'keyboard' && typeof state.page.keyboard.type === 'function') {
       await this.performClick(state, locator, false);
-      const delay = Math.max(0, Math.min(500, Number(action.delay ?? 20)));
+      const delay = boundedFiniteInteger(action.delay, 20, 0, 500);
       await state.page.keyboard.type(action.text, { delay });
     } else {
       await locator.fill(action.text, { timeout: ACTION_TIMEOUT_MS });

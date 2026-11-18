@@ -268,6 +268,18 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('keyboard typing delay is always finite and bounded', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{type:'snapshot'}]);
+    const page = session.openPages[0];
+    const delays = [];
+    page.keyboard.type = async (_text, options) => { delays.push(options.delay); };
+    await browser.run([{type:'type',mode:'keyboard',selector:'input',text:'hello',delay:'not-a-number'}]);
+    await browser.run([{type:'type',mode:'keyboard',selector:'input',text:'hello',delay:100000}]);
+    assert.deepEqual(delays,[20,500]);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
