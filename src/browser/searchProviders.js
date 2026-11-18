@@ -19,6 +19,7 @@ function decodeEntities(value) {
 }
 function cleanMarkup(value) {
     return decodeEntities(value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, ' '))
+        .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 }
