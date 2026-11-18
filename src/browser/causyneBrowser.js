@@ -651,30 +651,18 @@ export const IMAGES_EXTRACT_SCRIPT = `(opts) => {
   }
   return out;
 }`;
-const DISMISS_CONSENT_SCRIPT = `(() => {
-  const selectors = [
-    '#onetrust-accept-btn-handler',
-    '.onetrust-close-btn-handler',
-    '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-    '#CybotCookiebotDialogBodyButtonAccept',
-    '[data-testid="cookie-policy-dialog-accept-button"]',
-    'button[id*="cookie"][id*="accept" i]',
-    'button[class*="cookie"][class*="accept" i]',
-    'button[aria-label*="Accept all" i]',
-    'button[aria-label*="Accept cookies" i]'
-  ];
-  for (const sel of selectors) {
-    const el = document.querySelector(sel);
-    if (el && typeof el.click === 'function') {
-      const rect = el.getBoundingClientRect?.();
-      if (!rect || (rect.width > 0 && rect.height > 0)) {
-        el.click();
-        return true;
-      }
-    }
-  }
-  return false;
-})()`;
+const CONSENT_DISMISS_SELECTORS = [
+  '#onetrust-accept-btn-handler',
+  '.onetrust-close-btn-handler',
+  '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+  '#CybotCookiebotDialogBodyButtonAccept',
+  '[data-testid="cookie-policy-dialog-accept-button"]',
+  'button[id*="cookie"][id*="accept" i]',
+  'button[class*="cookie"][class*="accept" i]',
+  'button[aria-label*="Accept all" i]',
+  'button[aria-label*="Accept cookies" i]'
+];
+
 const WAIT_FOR_PAGE_READY_SCRIPT = `(() => {
   return new Promise(resolve => {
     if (document.readyState === 'complete') {
@@ -1418,6 +1406,20 @@ export class CausyneBrowser {
         // Retrying mutating actions could also submit the same form twice.
         await locator.click({ timeout: ACTION_TIMEOUT_MS });
     }
+    async dismissConsentBanner(state) {
+        for (const selector of CONSENT_DISMISS_SELECTORS) {
+            const locator = state.page.locator(selector).first();
+            if (typeof locator.isVisible !== 'function')
+                continue;
+            if (!await locator.isVisible().catch(() => false))
+                continue;
+            // Do not bypass actionability or retry a potentially mutating click.
+            await locator.click({ timeout: ACTION_TIMEOUT_MS });
+            state.refs.clear();
+            return true;
+        }
+        return false;
+    }
     async performType(state, locator, action) {
         if (typeof action.text !== 'string')
             throw new Error(`${action.type} requires text as a string`);
@@ -1685,10 +1687,8 @@ export class CausyneBrowser {
                 await state.page.evaluate(WAIT_FOR_PAGE_READY_SCRIPT).catch(() => { });
                 await state.page.waitForTimeout(Math.min(waitTimeout, 2_000));
             }
-            if (action.dismissConsent) {
-                await state.page.evaluate(DISMISS_CONSENT_SCRIPT).catch(() => false);
-            }
-            return { action: action.type, tabId: state.id, url: state.page.url(), output: 'Wait completed' };
+            const dismissed = action.dismissConsent ? await this.dismissConsentBanner(state) : false;
+            return { action: action.type, tabId: state.id, url: state.page.url(), output: dismissed ? 'Wait completed; consent banner dismissed' : 'Wait completed' };
         }
         if (action.type === 'viewport') {
             const width = Math.floor(Number(action.width ?? 1280));
@@ -1887,7 +1887,7 @@ export function validateBrowserActSandbox(args, workspaceRoot, isInternalUrl, is
     if (hasDownload) {
         return { allowed: true, risk: 'extreme', reason: 'Writes browser content to the selected workspace' };
     }
-    if (actions.some(action => typeof action?.type === 'string' && INTERACTIVE_BROWSER_ACTIONS.has(action.type))) {
+    if (actions.some(action => typeof action?.type === 'string' && (INTERACTIVE_BROWSER_ACTIONS.has(action.type) || (action.type === 'wait' && action.dismissConsent === true)))) {
         return { allowed: true, risk: 'dangerous', reason: 'Interacts with a website through the dedicated agent browser' };
     }
     return { allowed: true, risk: 'safe' };
