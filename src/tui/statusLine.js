@@ -199,6 +199,9 @@ export class StatusLine {
             segments.push(formatCost(this.turnCost));
         if (this.cachedTokens > 0)
             segments.push(`${compactCount(this.cachedTokens)} cached`);
+        const meter = contextMeter(Math.round(this.contextChars / CHARS_PER_TOKEN), Math.round(this.contextLimit / CHARS_PER_TOKEN));
+        if (meter)
+            segments.push(meter);
         if (this.model)
             segments.push(this.model);
         const separator = `  ${GLYPHS.dot}  `;

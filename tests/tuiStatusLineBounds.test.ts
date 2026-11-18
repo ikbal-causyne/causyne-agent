@@ -66,4 +66,24 @@ describe('StatusLine bounds and sanitization', () => {
     const rendered = status.render({ message: 'working', spinnerFrame: '*\x1b[2J', width: 40 });
     assert.ok(!rendered.includes('\x1b[2J'), 'spinnerFrame must strip unsafe terminal control sequences');
   });
+
+  test('StatusLine.render preserves context window meter during active turns when budget allows', () => {
+    const status = new StatusLine();
+    status.setSession({
+      model: 'gpt-4o',
+      contextChars: 80000,
+      contextLimit: 512000
+    });
+    const rendered = status.render({
+      message: 'generating patch',
+      elapsedMs: 2500,
+      steps: 3,
+      width: 100
+    });
+    const text = stripAnsi(rendered);
+    assert.ok(text.includes('20K (16%)'), `Active statusLine must include context meter: "${text}"`);
+    assert.ok(text.includes('step 3'));
+    assert.ok(text.includes('2.5s'));
+    assert.ok(visibleWidth(rendered) <= 99);
+  });
 });
