@@ -222,6 +222,15 @@ export const webFetch = {
             }
             const { response, finalUrl } = await fetchFollowingSafeRedirects(args.url, request);
             const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+            if (response.status === 429) {
+                const retryAfter = response.headers.get('retry-after');
+                await response.body?.cancel().catch(() => { });
+                return {
+                    success: false, status: 429, finalUrl: finalUrl.href, failureKind: 'rate_limited',
+                    ...(retryAfter ? { retryAfter } : {}),
+                    error: 'HTTP 429 rate limit: respect the Retry-After window before retrying'
+                };
+            }
             if (!response.ok && method === 'GET' && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
                 await response.body?.cancel().catch(() => { });
                 const fallback = await browserFallback(finalUrl.href, workspace);
