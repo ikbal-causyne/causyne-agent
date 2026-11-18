@@ -222,6 +222,13 @@ export const webFetch = {
             }
             const { response, finalUrl } = await fetchFollowingSafeRedirects(args.url, request);
             const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+            if (response.status === 401) {
+                await response.body?.cancel().catch(() => { });
+                return {
+                    success: false, status: 401, finalUrl: finalUrl.href,
+                    failureKind: 'authentication_required', error: 'HTTP 401: this resource requires authentication'
+                };
+            }
             if (response.status === 429) {
                 const retryAfter = response.headers.get('retry-after');
                 await response.body?.cancel().catch(() => { });
