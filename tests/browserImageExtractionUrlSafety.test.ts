@@ -15,6 +15,6 @@ test('rendered image extraction excludes unsafe protocols credentials and unboun
  const document={baseURI:'https://example.org/',querySelectorAll:()=>images};
  const extract=runInNewContext(IMAGES_EXTRACT_SCRIPT,{document,URL});
  const result=extract({limit:100});
- assert.deepEqual(result.map((x:any)=>x.src),['https://example.org/image.png']);
+ assert.deepEqual(Array.from(result, (x:any) => x.src), ['https://example.org/image.png']);
  assert.equal(result[0].alt,'valid');
 });
