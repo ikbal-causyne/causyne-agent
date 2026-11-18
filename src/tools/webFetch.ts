@@ -68,6 +68,9 @@ async function fetchFollowingSafeRedirects(urlValue: string, options: RequestIni
     if (redirect === MAX_REDIRECTS) throw new Error(`Too many redirects (maximum ${MAX_REDIRECTS})`);
     if (!location) throw new Error(`HTTP ${response.status} redirect has no Location header`);
     const nextUrl = await assertPublicWebUrl(new URL(location, url).href);
+    if (nextUrl.origin !== url.origin && request.method !== 'GET' && request.method !== 'HEAD') {
+      throw new Error('Cross-origin redirect blocked for state-changing HTTP request');
+    }
     if (nextUrl.origin !== url.origin) {
       const forwardedHeaders = new Headers();
       const currentHeaders = new Headers(request.headers);
