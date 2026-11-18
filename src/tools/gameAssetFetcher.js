@@ -85,7 +85,11 @@ async function fetchCuratedAssetWithSafeRedirects(url) {
     await response.body?.cancel().catch(() => {});
     if (redirects === 5) throw new Error('Asset download exceeded five redirects');
     if (!location) throw new Error(`Asset HTTP ${response.status} redirect has no Location header`);
-    current = await assertPublicWebUrl(new URL(location, current).href);
+    const next = await assertPublicWebUrl(new URL(location, current).href);
+    if (current.protocol === 'https:' && next.protocol !== 'https:') {
+      throw new Error('Asset redirect cannot downgrade HTTPS to HTTP');
+    }
+    current = next;
   }
   throw new Error('Asset redirect handling failed');
 }
