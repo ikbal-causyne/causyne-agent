@@ -2,6 +2,7 @@ import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 
 // Direct DashScope API connection for BYOK (unlike dashscope.js which is the proxy for Free Demo)
 export class DashscopeByokProvider extends LLMProvider {
@@ -44,10 +45,12 @@ export class DashscopeByokProvider extends LLMProvider {
       payload.response_format = { type: 'json_object' };
     }
     
-    if (options.tools) {
+    let freeFormPaths = new Map();
+    if (options.tools && options.tools.length > 0) {
       const scanReport = scanAndAdaptToolsForProvider(options.tools, 'dashscope');
       payload.tools = scanReport.adaptedTools;
       payload.tool_choice = "auto";
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const response = await fetch(this.baseUrl, {
@@ -73,13 +76,16 @@ export class DashscopeByokProvider extends LLMProvider {
     }
 
     const data = await response.json();
-    const content = data.choices[0].message.content;
-    const toolCalls = data.choices[0].message.tool_calls;
-    
+    const normalized = normalizeOpenAIChatChoiceResponse(data, {
+      prefix: 'call_dashscope',
+      freeFormPaths
+    });
+
     return {
-      content: content || '',
-      toolCalls: (toolCalls && toolCalls.length > 0) ? toolCalls : undefined,
-      usage: this.normalizeUsage(data.usage)
+      content: normalized.content,
+      toolCalls: normalized.toolCalls,
+      reasoningContent: normalized.reasoningContent,
+      usage: this.normalizeUsage(normalized.rawUsage)
     };
   }
 }

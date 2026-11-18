@@ -2,6 +2,7 @@ import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 
 export class XAIProvider extends LLMProvider {
   constructor(config) {
@@ -37,10 +38,12 @@ export class XAIProvider extends LLMProvider {
       throw new Error(`xAI (Grok) API requires a valid API key (BYOK mode). Please set it in your configuration.`);
     }
 
-    if (options.tools) {
+    let freeFormPaths = new Map();
+    if (options.tools && options.tools.length > 0) {
       const scanReport = scanAndAdaptToolsForProvider(options.tools, 'xai');
       payload.tools = scanReport.adaptedTools;
       payload.tool_choice = "auto";
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const response = await fetch(this.baseUrl, {
@@ -55,18 +58,16 @@ export class XAIProvider extends LLMProvider {
     }
 
     const data = await response.json();
-    let content = '';
-    let toolCalls = [];
-    
-    if (data.choices && data.choices[0] && data.choices[0].message) {
-        content = data.choices[0].message.content || '';
-        toolCalls = data.choices[0].message.tool_calls || [];
-    }
-    
+    const normalized = normalizeOpenAIChatChoiceResponse(data, {
+      prefix: 'call_xai',
+      freeFormPaths
+    });
+
     return {
-      content: content,
-      toolCalls: (toolCalls && toolCalls.length > 0) ? toolCalls : undefined,
-      usage: this.normalizeUsage(data.usage || { prompt_tokens: 0, completion_tokens: 0 })
+      content: normalized.content,
+      toolCalls: normalized.toolCalls,
+      reasoningContent: normalized.reasoningContent,
+      usage: this.normalizeUsage(normalized.rawUsage)
     };
   }
 }

@@ -1,3 +1,4 @@
+import { scanAndAdaptToolsForProvider, scanAllProvidersCompatibility } from './toolScanner.js';
 import { creativeApps } from './creativeApps.js';
 import { computerUse } from './computerUse.js';
 import { uiForge } from './uiForge.js';
@@ -348,6 +349,18 @@ export async function getSearchableToolDefinitions() {
     mcp = await discoverTools();
   } catch (e) { /* a broken third-party server must not hide native tools */ }
   return dedupeDefinitions([...TOOL_DEFINITIONS, ...plugins, ...mcp]);
+}
+
+/**
+ * Scan every registered native, plugin, and MCP tool against one provider or
+ * the entire provider matrix (`toolsScan`) and report auto-adapted compatibility.
+ */
+export async function scanToolRegistry(provider = 'all', options = {}) {
+  const tools = await getSearchableToolDefinitions();
+  if (!provider || provider.toLowerCase() === 'all') {
+    return scanAllProvidersCompatibility(tools);
+  }
+  return scanAndAdaptToolsForProvider(tools, provider, options);
 }
 
 export async function getDynamicTools(autonomyMode = 'C', supportsVision = true, options = {}) {

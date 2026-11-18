@@ -5,8 +5,14 @@ import {
   scanAndAdaptToolsForProvider,
   decodeFreeFormArguments,
   adaptSchemaForGemini,
-  isEmptyObjectSchema
+  isEmptyObjectSchema,
+  normalizeToolName
 } from '../tools/toolScanner.js';
+import {
+  safeParseJsonObject,
+  sanitizeProviderToolId,
+  serializeAndDecodeArguments
+} from './wireNormalizer.js';
 
 export { adaptSchemaForGemini, isEmptyObjectSchema };
 
@@ -134,25 +140,29 @@ export class GeminiProvider extends LLMProvider {
         for (const tc of msg.tool_calls) {
           parts.push({
             functionCall: {
-              name: tc.function.name,
-              args: typeof tc.function.arguments === 'string'
-                ? JSON.parse(tc.function.arguments || '{}')
-                : (tc.function.arguments || {})
+              name: normalizeToolName(tc.function?.name || ''),
+              args: safeParseJsonObject(tc.function?.arguments)
             }
           });
         }
         contents.push({ role, parts });
       } else if (msg.role === 'tool') {
-        // Add tool response
-        contents.push({
-          role: 'user', // Gemini expects tool responses to come from 'user' or 'function'
-          parts: [{
-            functionResponse: {
-              name: msg.name,
-              response: { result: msg.content }
-            }
-          }]
-        });
+        // Batch consecutive tool responses into a single 'user' message for parallel calls.
+        const responsePart = {
+          functionResponse: {
+            name: normalizeToolName(msg.name || ''),
+            response: { result: msg.content ?? '' }
+          }
+        };
+        const lastEntry = contents[contents.length - 1];
+        if (lastEntry && lastEntry.role === 'user' && Array.isArray(lastEntry.parts) && lastEntry.parts[0]?.functionResponse) {
+          lastEntry.parts.push(responsePart);
+        } else {
+          contents.push({
+            role: 'user',
+            parts: [responsePart]
+          });
+        }
       } else {
         if (Array.isArray(msg.content)) {
           const mappedParts = msg.content.map(part => {
@@ -185,7 +195,7 @@ export class GeminiProvider extends LLMProvider {
           });
           contents.push({ role, parts: mappedParts });
         } else {
-          contents.push({ role, parts: [{ text: msg.content }] });
+          contents.push({ role, parts: [{ text: msg.content ?? '' }] });
         }
       }
     }
@@ -232,22 +242,20 @@ export class GeminiProvider extends LLMProvider {
 
     let content = '';
     let toolCalls = [];
+    const candidateParts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
 
-    for (const part of firstCandidate.content.parts) {
+    for (const part of candidateParts) {
       if (part.text) {
         content += part.text;
       } else if (part.functionCall) {
-        const paths = freeFormPaths.get(part.functionCall.name) || [];
-        const args = decodeFreeFormArguments(
-          part.functionCall.args || {},
-          paths
-        );
+        const callName = normalizeToolName(part.functionCall.name || '');
+        const serializedArgs = serializeAndDecodeArguments(part.functionCall.args || {}, callName, freeFormPaths);
         toolCalls.push({
-          id: `call_${Math.random().toString(36).substr(2, 9)}`,
+          id: sanitizeProviderToolId(part.functionCall.id, 'call_gemini', toolCalls.length),
           type: 'function',
           function: {
-            name: part.functionCall.name,
-            arguments: JSON.stringify(args)
+            name: callName,
+            arguments: serializedArgs
           }
         });
       }

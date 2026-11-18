@@ -10,7 +10,12 @@
 import { LLMProvider } from './base.js';
 import { canonicalModelId } from '../modelIds.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
-import { extractToolCallJsonObjects, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
+import {
+  extractTextToolCalls,
+  normalizeOpenAIChatChoiceResponse,
+  serializeAndDecodeArguments
+} from './wireNormalizer.js';
+import { normalizeToolName } from '../tools/toolScanner.js';
 import type { ChatOptions, ChatResponse, ChatResponseUsage, ChatResponseToolCall } from './base.d.js';
 
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
@@ -108,10 +113,12 @@ export class OpenRouterProvider extends LLMProvider {
       payload['response_format'] = { type: 'json_object' };
     }
 
+    let freeFormPaths = new Map<string, string[][]>();
     if (options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
       const scanReport = scanAndAdaptToolsForProvider(options.tools, 'openai');
       payload['tools'] = scanReport.adaptedTools;
       payload['tool_choice'] = 'auto';
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const headers: Record<string, string> = {
@@ -147,9 +154,9 @@ export class OpenRouterProvider extends LLMProvider {
     }
 
     if (shouldStream && response.body) {
-      return this.handleStreamingResponse(response, options);
+      return this.handleStreamingResponse(response, options, freeFormPaths);
     } else {
-      return this.handleJsonResponse(response);
+      return this.handleJsonResponse(response, freeFormPaths);
     }
   }
 
@@ -185,33 +192,21 @@ export class OpenRouterProvider extends LLMProvider {
   /**
    * Process a non-streaming JSON response from OpenRouter.
    */
-  private async handleJsonResponse(response: Response): Promise<ChatResponse> {
+  private async handleJsonResponse(
+    response: Response,
+    freeFormPaths?: Map<string, string[][]>
+  ): Promise<ChatResponse> {
     const data = (await response.json()) as any;
-    let content = '';
-    let toolCalls: ChatResponseToolCall[] = [];
-    let reasoningContent = '';
-
-    if (data.choices && Array.isArray(data.choices) && data.choices[0]?.message) {
-      const message = data.choices[0].message;
-      content = message.content || '';
-      toolCalls = this.normalizeToolCalls(message.tool_calls);
-      reasoningContent = message.reasoning || message.reasoning_content || '';
-    }
-
-    if (toolCalls.length === 0 && content) {
-      const extracted = this.extractToolCallsFromContent(content);
-      if (extracted.length > 0) {
-        toolCalls = extracted;
-      }
-    }
-
-    const rawUsage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    const usage: ChatResponseUsage = this.normalizeUsage(rawUsage);
+    const normalized = normalizeOpenAIChatChoiceResponse(data, {
+      prefix: 'call_openrouter',
+      ...(freeFormPaths ? { freeFormPaths } : {})
+    });
+    const usage: ChatResponseUsage = this.normalizeUsage(normalized.rawUsage);
 
     return {
-      content,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      reasoningContent: reasoningContent || undefined,
+      content: normalized.content,
+      toolCalls: normalized.toolCalls,
+      reasoningContent: normalized.reasoningContent,
       usage
     };
   }
@@ -219,7 +214,11 @@ export class OpenRouterProvider extends LLMProvider {
   /**
    * Process a streaming SSE response from OpenRouter.
    */
-  private async handleStreamingResponse(response: Response, options: ChatOptions): Promise<ChatResponse> {
+  private async handleStreamingResponse(
+    response: Response,
+    options: ChatOptions,
+    freeFormPaths?: Map<string, string[][]>
+  ): Promise<ChatResponse> {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder('utf-8');
 
@@ -308,19 +307,20 @@ export class OpenRouterProvider extends LLMProvider {
     const toolCalls: ChatResponseToolCall[] = [];
     for (const item of toolCallsMap.values()) {
       if (item.name) {
+        const cleanName = normalizeToolName(item.name);
         toolCalls.push({
           id: item.id,
           type: 'function',
           function: {
-            name: item.name,
-            arguments: item.arguments || '{}'
+            name: cleanName,
+            arguments: serializeAndDecodeArguments(item.arguments || '{}', cleanName, freeFormPaths)
           }
         });
       }
     }
 
     if (toolCalls.length === 0 && content) {
-      const extracted = this.extractToolCallsFromContent(content);
+      const extracted = extractTextToolCalls(content, 'call_text', freeFormPaths);
       if (extracted.length > 0) {
         toolCalls.push(...extracted);
       }
@@ -336,68 +336,5 @@ export class OpenRouterProvider extends LLMProvider {
       reasoningContent: reasoningContent || undefined,
       usage
     };
-  }
-
-  /**
-   * Extract tool calls embedded in content text (e.g. <tool_call> envelopes).
-   */
-  private extractToolCallsFromContent(text: string): ChatResponseToolCall[] {
-    const calls: ChatResponseToolCall[] = [];
-    if (!text || typeof text !== 'string') return calls;
-    let index = 0;
-    for (const parsed of extractToolCallJsonObjects(text)) {
-      const fnObj = parsed.function && typeof parsed.function === 'object'
-        ? (parsed.function as Record<string, unknown>)
-        : null;
-      const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
-      if (!name) continue;
-      const rawArgs = resolveToolCallEnvelopeArguments(parsed);
-      calls.push({
-        id: `call_text_${Date.now()}_${index++}`,
-        type: 'function',
-        function: {
-          name,
-          arguments: typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs || {})
-        }
-      });
-    }
-    return calls;
-  }
-
-  /**
-   * Safely normalize tool calls from provider message.
-   */
-  private normalizeToolCalls(rawCalls: any[]): ChatResponseToolCall[] {
-    if (!Array.isArray(rawCalls)) return [];
-    const normalized: ChatResponseToolCall[] = [];
-
-    for (let i = 0; i < rawCalls.length; i++) {
-      const tc = rawCalls[i];
-      if (!tc || typeof tc !== 'object') continue;
-
-      const id = typeof tc.id === 'string' && tc.id ? tc.id : `call_${i}_${Date.now()}`;
-      const name = tc.function?.name || tc.name || '';
-      if (!name || typeof name !== 'string') continue;
-
-      let args = tc.function?.arguments;
-      if (typeof args !== 'string') {
-        try {
-          args = JSON.stringify(args || {});
-        } catch {
-          args = '{}';
-        }
-      }
-
-      normalized.push({
-        id,
-        type: 'function',
-        function: {
-          name,
-          arguments: args
-        }
-      });
-    }
-
-    return normalized;
   }
 }

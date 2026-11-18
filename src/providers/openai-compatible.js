@@ -2,6 +2,7 @@ import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 
 export class OpenAICompatibleProvider extends LLMProvider {
   constructor(config) {
@@ -37,10 +38,12 @@ export class OpenAICompatibleProvider extends LLMProvider {
       payload.response_format = { type: 'json_object' };
     }
     
-    if (options.tools) {
+    let freeFormPaths = new Map();
+    if (options.tools && options.tools.length > 0) {
       const scanReport = scanAndAdaptToolsForProvider(options.tools, 'openai');
       payload.tools = scanReport.adaptedTools;
       payload.tool_choice = "auto";
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const response = await fetch(this.baseUrl, {
@@ -58,26 +61,16 @@ export class OpenAICompatibleProvider extends LLMProvider {
     }
 
     const data = await response.json();
-    let content = '';
-    let toolCalls = [];
-
-    let reasoningContent = '';
-
-    if (data.choices && data.choices[0] && data.choices[0].message) {
-      const message = data.choices[0].message;
-      content = message.content || '';
-      toolCalls = message.tool_calls || [];
-      // DeepSeek and several compatible endpoints return the chain of thought
-      // in a sibling field. It was being discarded, so the reasoning the user
-      // paid for never reached them.
-      reasoningContent = message.reasoning_content || message.reasoning || '';
-    }
+    const normalized = normalizeOpenAIChatChoiceResponse(data, {
+      prefix: 'call_oai',
+      freeFormPaths
+    });
 
     return {
-      content: content,
-      toolCalls: (toolCalls && toolCalls.length > 0) ? toolCalls : undefined,
-      reasoningContent: reasoningContent || undefined,
-      usage: this.normalizeUsage(data.usage || { prompt_tokens: 0, completion_tokens: 0 })
+      content: normalized.content,
+      toolCalls: normalized.toolCalls,
+      reasoningContent: normalized.reasoningContent,
+      usage: this.normalizeUsage(normalized.rawUsage)
     };
   }
 }

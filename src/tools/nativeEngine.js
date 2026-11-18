@@ -348,7 +348,7 @@ export const nativeEngineTool = {
         parameters: {
             type: 'object',
             properties: {
-                engine: { type: 'string', default: 'film', description: 'Engine id, default film. status lists installed engines.' },
+                engine: { type: 'string', description: 'Engine id, default film. status lists installed engines.' },
                 action: { type: 'string', enum: [...ACTIONS] },
                 command: { type: 'string', description: 'Command id for execute or describe.' },
                 params: { type: 'object', description: 'Command parameters for execute.' },

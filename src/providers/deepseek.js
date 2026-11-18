@@ -2,6 +2,7 @@ import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 
 export class DeepSeekProvider extends LLMProvider {
   constructor(config) {
@@ -38,10 +39,12 @@ export class DeepSeekProvider extends LLMProvider {
       throw new Error("API key is required.");
     }
 
-    if (options.tools) {
+    let freeFormPaths = new Map();
+    if (options.tools && options.tools.length > 0) {
       const scanReport = scanAndAdaptToolsForProvider(options.tools, 'deepseek');
       payload.tools = scanReport.adaptedTools;
       payload.tool_choice = "auto";
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const response = await fetch(targetUrl, {
@@ -56,24 +59,16 @@ export class DeepSeekProvider extends LLMProvider {
     }
 
     const data = await response.json();
-    let content = '';
-    let toolCalls = [];
-    
-    // Support both direct DeepSeek API format and our Cloudflare Proxy format
-    if (data.reply !== undefined) {
-        // Proxy Format
-        content = data.reply || '';
-        toolCalls = data.tool_calls || [];
-    } else if (data.choices && data.choices[0] && data.choices[0].message) {
-        // Direct API Format
-        content = data.choices[0].message.content || '';
-        toolCalls = data.choices[0].message.tool_calls || [];
-    }
-    
+    const normalized = normalizeOpenAIChatChoiceResponse(data, {
+      prefix: 'call_deepseek',
+      freeFormPaths
+    });
+
     return {
-      content: content,
-      toolCalls: (toolCalls && toolCalls.length > 0) ? toolCalls : undefined,
-      usage: this.normalizeUsage(data.usage || { prompt_tokens: 0, completion_tokens: 0 })
+      content: normalized.content,
+      toolCalls: normalized.toolCalls,
+      reasoningContent: normalized.reasoningContent,
+      usage: this.normalizeUsage(normalized.rawUsage)
     };
   }
 }

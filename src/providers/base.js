@@ -250,6 +250,20 @@ export class LLMProvider {
    */
   normalizeImageBlocks(msg) {
     if (!Array.isArray(msg.content)) return msg;
+    if (this.imagePayloadFormat === 'anthropic') {
+      const content = msg.content.map(block => {
+        if (block && block.type === 'image_url' && typeof block.image_url?.url === 'string') {
+          const commaIdx = block.image_url.url.indexOf('base64,');
+          if (commaIdx !== -1 && block.image_url.url.startsWith('data:')) {
+            const mediaType = block.image_url.url.slice(5, commaIdx).split(';')[0] || 'image/png';
+            const data = block.image_url.url.slice(commaIdx + 7);
+            return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+          }
+        }
+        return block;
+      });
+      return { ...msg, content };
+    }
     if (this.imagePayloadFormat !== 'openai') return msg;
 
     const content = msg.content.map(block => {

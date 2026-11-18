@@ -1,7 +1,13 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
-import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import { scanAndAdaptToolsForProvider, normalizeToolName } from '../tools/toolScanner.js';
+import {
+  prepareMessagesForAnthropic,
+  safeParseJsonObject,
+  sanitizeProviderToolId,
+  serializeAndDecodeArguments
+} from './wireNormalizer.js';
 
 // Models that support server-side tool search (defer_loading + tool_reference
 // expansion). On these, Causyne hands Anthropic the complete 69-tool catalogue
@@ -203,6 +209,7 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   async chat(messages, options = {}) {
+    messages = prepareMessagesForAnthropic(this, messages);
     // Anthropic separates the system prompt from the message list.
     const systemBlocks = [];
     const anthropicMessages = [];
@@ -227,11 +234,11 @@ export class AnthropicProvider extends LLMProvider {
         const isMidConversation = anthropicMessages.length > 0;
         const lastEmitted = anthropicMessages[anthropicMessages.length - 1];
         if (isMidConversation && allowInlineSystem && lastEmitted?.role === 'user') {
-          anthropicMessages.push({ role: 'system', content: String(msg.content) });
+          anthropicMessages.push({ role: 'system', content: String(msg.content ?? '') });
           continue;
         }
 
-        const block = { type: 'text', text: String(msg.content) };
+        const block = { type: 'text', text: String(msg.content ?? '') };
         // Stable system blocks are cache anchors; everything volatile is ordered
         // after them by the agent loop, which is what makes the prefix cacheable.
         // Capped so the reserved tool breakpoint always fits within Anthropic's 4.
@@ -244,8 +251,8 @@ export class AnthropicProvider extends LLMProvider {
         // Translate OpenAI tool response → Anthropic tool_result block
         const toolResultBlock = {
           type: 'tool_result',
-          tool_use_id: msg.tool_call_id,
-          content: msg.content
+          tool_use_id: sanitizeProviderToolId(msg.tool_call_id, 'toolu', 0),
+          content: msg.content ?? ''
         };
         // Anthropic requires consecutive tool_results to be grouped into a single 'user' message
         const lastMsg = anthropicMessages[anthropicMessages.length - 1];
@@ -267,20 +274,21 @@ export class AnthropicProvider extends LLMProvider {
         if (msg.content) {
           contentBlocks.push({ type: 'text', text: msg.content });
         }
-        for (const tc of msg.tool_calls) {
+        for (let idx = 0; idx < msg.tool_calls.length; idx++) {
+          const tc = msg.tool_calls[idx];
           contentBlocks.push({
             type: 'tool_use',
-            id: tc.id,
-            name: tc.function.name,
-            input: typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments || '{}') : (tc.function.arguments || {})
+            id: sanitizeProviderToolId(tc.id, 'toolu', idx),
+            name: normalizeToolName(tc.function?.name || ''),
+            input: safeParseJsonObject(tc.function?.arguments)
           });
         }
         anthropicMessages.push({ role: 'assistant', content: contentBlocks });
       } else {
         // These are the loop's own bookkeeping. The API rejects unknown message
         // properties, so every one of them has to be stripped here.
-        const { cacheAnchor, thinking_blocks, reasoning_content, ...clean } = msg;
-        anthropicMessages.push(clean);
+        const { cacheAnchor, thinking_blocks, reasoning_content, spillPath, ...clean } = msg;
+        anthropicMessages.push({ ...clean, content: clean.content ?? '' });
       }
     }
 
@@ -297,12 +305,18 @@ export class AnthropicProvider extends LLMProvider {
     }
 
     const thinking = this.buildThinking();
-    if (thinking) payload.thinking = thinking;
+    if (thinking) {
+      if (thinking.type === 'enabled' && typeof thinking.budget_tokens === 'number' && payload.max_tokens > 1024) {
+        thinking.budget_tokens = Math.max(1024, Math.min(thinking.budget_tokens, payload.max_tokens - 1));
+      }
+      payload.thinking = thinking;
+    }
 
     const effort = this.resolveEffort();
     // effort lives inside output_config, not at the top level.
     if (effort) payload.output_config = { ...(payload.output_config || {}), effort };
 
+    let freeFormPaths = new Map();
     if (options.tools && options.tools.length > 0) {
       const useToolSearch = this.supportsToolSearch();
       const coreToolCount = Number.isInteger(options.coreToolCount) ? options.coreToolCount : options.tools.length;
@@ -312,6 +326,7 @@ export class AnthropicProvider extends LLMProvider {
         coreToolCount
       });
       const converted = scanReport.adaptedTools;
+      freeFormPaths = scanReport.freeFormPaths;
 
       if (useToolSearch) {
         payload.tools = [
@@ -358,21 +373,22 @@ export class AnthropicProvider extends LLMProvider {
     const thinkingBlocks = [];
     let reasoningContent = '';
 
-    for (const block of data.content) {
+    for (const block of (Array.isArray(data.content) ? data.content : [])) {
       if (block.type === 'thinking' || block.type === 'redacted_thinking') {
         // Kept verbatim for the echo above. The readable summary, when the user
         // asked for one, is surfaced separately.
         thinkingBlocks.push(block);
         if (typeof block.thinking === 'string') reasoningContent += block.thinking;
       } else if (block.type === 'text') {
-        content += block.text;
+        content += block.text || '';
       } else if (block.type === 'tool_use') {
+        const callName = normalizeToolName(block.name || '');
         toolCalls.push({
-          id: block.id,
+          id: sanitizeProviderToolId(block.id, 'toolu', toolCalls.length),
           type: 'function',
           function: {
-            name: block.name,
-            arguments: JSON.stringify(block.input)
+            name: callName,
+            arguments: serializeAndDecodeArguments(block.input || {}, callName, freeFormPaths)
           }
         });
       }

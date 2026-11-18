@@ -2,6 +2,12 @@ import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
+import {
+  normalizeMessagesForOllama,
+  normalizeOpenAIToolCalls,
+  extractTextToolCalls
+} from './wireNormalizer.js';
+import { stripToolCallMarkup } from '../implementationPlan.js';
 
 export class OllamaProvider extends LLMProvider {
   constructor(config) {
@@ -42,7 +48,7 @@ export class OllamaProvider extends LLMProvider {
   }
 
   async chat(messages, options = {}) {
-    const sanitizedMessages = this.prepareMessages(messages);
+    const sanitizedMessages = normalizeMessagesForOllama(this.prepareMessages(messages));
 
     const payload = {
       model: this.model,
@@ -53,9 +59,11 @@ export class OllamaProvider extends LLMProvider {
       }
     };
     
-    if (options.tools) {
+    let freeFormPaths = new Map();
+    if (options.tools && options.tools.length > 0) {
       const scanReport = scanAndAdaptToolsForProvider(options.tools, 'ollama');
       payload.tools = scanReport.adaptedTools;
+      freeFormPaths = scanReport.freeFormPaths;
     }
 
     const response = await fetch(this.baseUrl, {
@@ -71,28 +79,20 @@ export class OllamaProvider extends LLMProvider {
 
     const data = await response.json();
 
-    // Ollama returns tool calls with no id. Every stage downstream — the tool
-    // result messages, the approval map, and sanitizeSequences, which filters an
-    // assistant turn's tool_calls against the ids of the results that follow it —
-    // keys on that id. Without one, sanitizeSequences matched nothing and
-    // stripped every tool call out of the history on the very next step, so a
-    // local model lost all memory of the actions it had just taken.
-    const rawToolCalls = data.message?.tool_calls || [];
-    const toolCalls = rawToolCalls.map((call, index) => ({
-      id: call.id || `call_ollama_${Date.now()}_${index}`,
-      type: 'function',
-      function: {
-        name: call.function?.name,
-        // Ollama hands back a parsed object where the OpenAI shape carries a
-        // JSON string. Normalise so the whole pipeline sees one contract.
-        arguments: typeof call.function?.arguments === 'string'
-          ? call.function.arguments
-          : JSON.stringify(call.function?.arguments || {})
+    // Ollama returns tool calls with no id and object arguments instead of JSON strings.
+    // Normalize through wireNormalizer so sanitizeSequences and toolSelfRepair see one contract.
+    let content = typeof data.message?.content === 'string' ? data.message.content : '';
+    let toolCalls = normalizeOpenAIToolCalls(data.message?.tool_calls, freeFormPaths, 'call_ollama');
+    if (toolCalls.length === 0 && content) {
+      const extracted = extractTextToolCalls(content, 'call_ollama_text', freeFormPaths);
+      if (extracted.length > 0) {
+        toolCalls = extracted;
+        content = stripToolCallMarkup(content).trim();
       }
-    }));
+    }
 
     return {
-      content: data.message?.content || '',
+      content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
         promptTokens: data.prompt_eval_count || 0,

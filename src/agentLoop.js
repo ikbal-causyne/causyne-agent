@@ -16,6 +16,7 @@ import { WorkspacePerception } from './perception.js';
 import { audioFormatForMimeType } from './providers/base.js';
 import { TaskBuffer } from './taskBuffer.js';
 import { TOOL_DEFINITIONS, getDynamicTools, getSearchableToolDefinitions, resolveTool, canonicalToolName } from './tools/registry.js';
+import { scanAndAdaptToolsForProvider } from './tools/toolScanner.js';
 import { selfRepairToolCall, generateSelfRepairDiagnostic } from './tools/toolSelfRepair.js';
 import { validateToolArguments } from './tools/argumentValidation.js';
 import { Sandbox } from './sandbox.js';
@@ -403,9 +404,10 @@ You possess native reverse engineering capabilities powered by the Reverse Engin
   5. **Multiple Emulators/Devices**: When multiple devices or emulators are connected, specify \`-s <serial>\` (e.g. \`adb -s emulator-5554 ...\`) or set \`export ANDROID_SERIAL=<serial>\`.
 
 # Universal Tool Calling & Registry Discipline
-1. **Strict Registry Adherence**: Use ONLY the tools declared in the catalogue. Invoke tools using exact parameter names specified in the schema. Do not invent or rename parameters.
-2. **Valid JSON Formatting**: All tool call arguments must be valid JSON objects. Never include raw unescaped newlines or trailing commas inside argument strings.
-3. **Automated Buffer & Self-Correction**: Causyne runs a Universal Tool Buffer with self-repair capabilities. If a tool returns a \`selfRepairGuidance\` result indicating missing or invalid parameters, immediately read the \`expectedParameters\` and re-invoke the tool with the corrected arguments.
+1. **Strict Root Registry Adherence**: Invoke ONLY tools registered in the active Causyne catalogue (native, plugin, or MCP) or permitted connected-peer capabilities across ACP/Antigravity/Pi. Use exact canonical parameter names and required fields defined in each tool schema without inventing or renaming parameters.
+2. **Pre-Flight Universal Schema Scan (\`toolsScan\`)**: Before dispatching schemas to any provider API, Causyne scans and compiles every tool declaration into that provider's dialect without reducing or altering underlying tool capability. When an adapted schema asks for a JSON-encoded string on an object, array, or union parameter (e.g. multi-file paths or free-form properties), pass valid JSON so the runtime buffer decodes it transparently to its native type.
+3. **Universal Self-Repair Buffer (\`toolsSelfRepair\`)**: Every tool call is filtered through \`toolsSelfRepair\`, which heals malformed JSON, decodes adapted free-form/polymorphic values, resolves parameter aliases, coerces types recursively, and emits structured \`selfRepairGuidance\` (\`expectedParameters\`) on incomplete invocations. Always read \`expectedParameters\` and re-invoke with the corrected arguments.
+4. **Valid JSON Formatting**: Never emit raw unescaped newlines, single-quoted keys, or trailing commas inside tool call JSON strings.
 
 # Completion
 Answer directly when no tool is needed. For action tasks, continue until the authorized work is done or a real blocker is evidenced; then report the verified outcome or blocker concisely.
@@ -662,6 +664,8 @@ export class AgentLoop {
         this.stallGuard = new StallGuardController();
         this.smartToolsGovernor = new SmartToolsGovernor(4);
         this._smartToolsNudge = null;
+        this.activeFreeFormPaths = new Map();
+        this._lastToolsScanKey = '';
         // Sovereign Progressive Disclosure: which capability packs have entered the
         // context window for this task. Nothing is disabled — see src/toolPacks.js.
         this.unlockedPacks = new Set();
@@ -2295,6 +2299,21 @@ export class AgentLoop {
                     ? eligibleTools.filter((tool) => this.toolScope.has(tool.name)) : eligibleTools;
                 const dynamicTools = this.smartTools.schemas(permittedTools, this.unlockedTools, this.unlockedPacks, this.config.grantAllTools === true);
                 const dynamicToolNames = dynamicTools.map((t) => t.name);
+                // Pre-flight universal schema audit (toolsScan): verify dialect readiness and cache
+                // adapted free-form/polymorphic paths for lossless decoding inside toolsSelfRepair.
+                const activeProviderName = String(this.config?.provider || 'openai');
+                const scanKey = `${activeProviderName}:${dynamicToolNames.join(',')}`;
+                if (scanKey !== this._lastToolsScanKey) {
+                    const preflightScan = scanAndAdaptToolsForProvider(dynamicTools, activeProviderName);
+                    this.activeFreeFormPaths = preflightScan.freeFormPaths;
+                    this._lastToolsScanKey = scanKey;
+                    if (preflightScan.repairedCount > 0) {
+                        this.debugLog(`[toolsScan] Pre-flight compiled ${preflightScan.repairedCount}/${preflightScan.totalTools} schemas for '${activeProviderName}' (universalReady=${preflightScan.universalReady})`);
+                    }
+                    if (!preflightScan.universalReady) {
+                        this.debugLog(`[toolsScan] Residual compatibility issues on '${activeProviderName}': ${preflightScan.residualIssues.slice(0, 5).map((issue) => `${issue.tool}:${issue.code}`).join(', ')}`);
+                    }
+                }
                 // Dynamically inject the absolute latest System context
                 const autonomyMode = this.config.autonomyMode || 'C';
                 const allowedPaths = this.sandbox.grantAllAccess
@@ -3924,7 +3943,8 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     const tool = resolveTool(functionName);
                     const toolSchema = tool?.schema?.parameters || tool?.schema?.input_schema;
                     const repair = selfRepairToolCall(toolCall, toolSchema, {
-                        cwd: this.workspaceRoot || process.cwd()
+                        cwd: this.workspaceRoot || process.cwd(),
+                        freeFormPaths: this.activeFreeFormPaths?.get(functionName)
                     });
                     if (repair.error) {
                         this.messages.push({

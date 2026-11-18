@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { normalizeToolName, normalizeUniversalSchema } from '../tools/toolScanner.js';
 
 type JsonObject = Record<string, unknown>;
 export interface ToolContract {
@@ -10,15 +11,20 @@ export interface ToolContract {
 const object = (value: unknown): JsonObject =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
 
-/** Preserve constraints and nested schemas; text peers need more than parameter names. */
+/** Preserve constraints and nested schemas while compiling union/combinator edge cases safely. */
 export function normalizeToolContracts(tools: readonly unknown[]): ToolContract[] {
   return tools.map(raw => {
     const tool = object(raw);
     const fn = object(tool.function);
+    const rawName = String(tool.name || fn.name || '');
+    const rawParams = object(tool.parameters || tool.input_schema || fn.parameters);
+    const cleanParams = Object.keys(rawParams).length > 0
+      ? object(normalizeUniversalSchema(rawParams, [], [], 'strict_json'))
+      : rawParams;
     return {
-      name: String(tool.name || fn.name || ''),
+      name: rawName ? normalizeToolName(rawName) : '',
       description: String(tool.description || fn.description || ''),
-      parameters: object(tool.parameters || tool.input_schema || fn.parameters)
+      parameters: cleanParams
     };
   }).filter(tool => tool.name).sort((a, b) => a.name.localeCompare(b.name));
 }

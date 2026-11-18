@@ -158,7 +158,8 @@ export const creativeApps = {
                     description: 'Unreal UProperty name for remote_control property read/write.'
                 },
                 propertyValue: {
-                    description: 'Value to write for Unreal remote_control property access.'
+                    type: ['string', 'number', 'boolean', 'object', 'array'],
+                    description: 'Value to write for Unreal remote_control property access (string, or JSON-encoded number, boolean, object, or array).'
                 },
                 parameters: {
                     type: 'object',

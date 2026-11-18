@@ -12,6 +12,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { decodeFreeFormArguments } from './toolScanner.js';
 
 export interface RepairResult {
   args: Record<string, unknown>;
@@ -34,6 +35,10 @@ export interface ParameterSchema {
   properties?: Record<string, ParameterSchema>;
   required?: string[];
   items?: ParameterSchema;
+  oneOf?: ParameterSchema[];
+  anyOf?: ParameterSchema[];
+  allOf?: ParameterSchema[];
+  enum?: unknown[];
   [key: string]: unknown;
 }
 
@@ -866,138 +871,245 @@ export function resolveParameterAliases(
   };
 }
 
+function collectSchemaTypes(propSchema: ParameterSchema): string[] {
+  const found = new Set<string>();
+  if (typeof propSchema.type === 'string') {
+    found.add(propSchema.type);
+  } else if (Array.isArray(propSchema.type)) {
+    for (const entry of propSchema.type) {
+      if (typeof entry === 'string' && entry !== 'null') found.add(entry);
+    }
+  }
+  for (const branchKey of ['oneOf', 'anyOf', 'allOf'] as const) {
+    const branches = propSchema[branchKey];
+    if (Array.isArray(branches)) {
+      for (const branch of branches) {
+        if (branch && typeof branch === 'object') {
+          for (const t of collectSchemaTypes(branch)) found.add(t);
+        }
+      }
+    }
+  }
+  return Array.from(found);
+}
+
+function coerceValueBySchema(
+  key: string,
+  val: unknown,
+  propSchema: ParameterSchema,
+  pathLabel: string,
+  repairs: string[],
+  depth: number
+): unknown {
+  if (depth > 8 || val === undefined || val === null) return val;
+
+  const allowedTypes = collectSchemaTypes(propSchema);
+  const singleType = typeof propSchema.type === 'string'
+    ? propSchema.type
+    : (allowedTypes.length === 1 ? allowedTypes[0] : undefined);
+
+  // Handle polymorphic / multi-type schemas (e.g. oneOf [string, string[]], union type arrays)
+  if (!singleType && allowedTypes.length > 1 && typeof val === 'string') {
+    const trimmed = val.trim();
+    if (allowedTypes.includes('object') && trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      const recovered = repairJsonArguments(trimmed);
+      if (!recovered.error) {
+        repairs.push(`Decoded JSON object string for polymorphic parameter '${pathLabel}'`);
+        return recovered.args;
+      }
+    }
+    if (allowedTypes.includes('array') && trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          repairs.push(`Decoded JSON array string for polymorphic parameter '${pathLabel}'`);
+          return parsed;
+        }
+      } catch {
+        // Keep string intact
+      }
+    }
+    if (!allowedTypes.includes('string')) {
+      if (allowedTypes.includes('boolean') && (trimmed === 'true' || trimmed === 'false')) {
+        repairs.push(`Coerced string "${val}" -> boolean ${trimmed} for parameter '${pathLabel}'`);
+        return trimmed === 'true';
+      }
+      if ((allowedTypes.includes('number') || allowedTypes.includes('integer')) && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+        const num = allowedTypes.includes('integer') && !trimmed.includes('.') ? parseInt(trimmed, 10) : parseFloat(trimmed);
+        if (!isNaN(num)) {
+          repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${pathLabel}'`);
+          return num;
+        }
+      }
+    }
+    return val;
+  }
+
+  const expectedType = singleType;
+
+  // 1. Number / Integer coercion
+  if (expectedType === 'number' || expectedType === 'integer') {
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      const timeMatch = (key === 'timeout' || key === 'timeoutMs' || key === 'timeout_ms' || key === 'duration')
+        ? trimmed.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m)?$/i)
+        : null;
+      if (timeMatch && timeMatch[1]) {
+        const rawVal = parseFloat(timeMatch[1]);
+        const unit = (timeMatch[2] || '').toLowerCase();
+        let ms = rawVal;
+        if (unit === 'ms') ms = rawVal;
+        else if (unit === 'm') ms = rawVal * 60 * 1000;
+        else if (unit === 's') ms = rawVal * 1000;
+        else ms = rawVal <= 600 ? rawVal * 1000 : rawVal;
+        const normalized = expectedType === 'integer' ? Math.round(ms) : ms;
+        repairs.push(`Normalized time string "${val}" -> ${normalized}ms for parameter '${pathLabel}'`);
+        return normalized;
+      } else if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        const num = expectedType === 'integer' ? parseInt(trimmed, 10) : parseFloat(trimmed);
+        if (!isNaN(num)) {
+          repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${pathLabel}'`);
+          return num;
+        }
+      }
+    } else if (typeof val === 'number' && (key === 'timeout' || key === 'timeoutMs')) {
+      if (val > 0 && val <= 600) {
+        const ms = Math.round(val * 1000);
+        repairs.push(`Scaled timeout from seconds (${val}s) -> ${ms}ms for parameter '${pathLabel}'`);
+        return ms;
+      }
+    } else if (Array.isArray(val) && val.length === 1) {
+      const item = val[0];
+      if (typeof item === 'number') {
+        repairs.push(`Unwrapped single-element array to number for parameter '${pathLabel}'`);
+        return item;
+      } else if (typeof item === 'string' && /^-?\d+(\.\d+)?$/.test(item.trim())) {
+        const num = expectedType === 'integer' ? parseInt(item.trim(), 10) : parseFloat(item.trim());
+        repairs.push(`Unwrapped single-element array to number for parameter '${pathLabel}'`);
+        return num;
+      }
+    }
+    return val;
+  }
+
+  // 2. Boolean coercion
+  if (expectedType === 'boolean') {
+    if (typeof val === 'string') {
+      const lower = val.trim().toLowerCase();
+      if (lower === 'true' || lower === '1') {
+        repairs.push(`Coerced string "${val}" -> boolean true for parameter '${pathLabel}'`);
+        return true;
+      } else if (lower === 'false' || lower === '0') {
+        repairs.push(`Coerced string "${val}" -> boolean false for parameter '${pathLabel}'`);
+        return false;
+      }
+    } else if (typeof val === 'number') {
+      const coerced = val !== 0;
+      repairs.push(`Coerced number ${val} -> boolean ${coerced} for parameter '${pathLabel}'`);
+      return coerced;
+    }
+    return val;
+  }
+
+  // 3. Array coercion (auto-wraps single objects, parses strings, and coerces items recursively)
+  if (expectedType === 'array' || (allowedTypes.length === 1 && allowedTypes[0] === 'array')) {
+    let arrVal: unknown[] | null = Array.isArray(val) ? val : null;
+    if (!arrVal && typeof val === 'string') {
+      const trimmed = val.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            arrVal = parsed;
+            repairs.push(`Parsed stringified array for parameter '${pathLabel}'`);
+          }
+        } catch {
+          // Passthrough
+        }
+      } else if (trimmed.includes(',')) {
+        arrVal = trimmed.split(',').map((s) => s.trim());
+        repairs.push(`Split comma-separated string into array for parameter '${pathLabel}'`);
+      } else if (trimmed.length > 0) {
+        arrVal = [trimmed];
+        repairs.push(`Wrapped single string into array for parameter '${pathLabel}'`);
+      }
+    } else if (!arrVal && val && typeof val === 'object' && !Array.isArray(val)) {
+      arrVal = [val];
+      repairs.push(`Wrapped single object into array for parameter '${pathLabel}'`);
+    }
+
+    if (arrVal && propSchema.items) {
+      const itemSchema = propSchema.items;
+      return arrVal.map((entry, idx) =>
+        coerceValueBySchema(`${key}[]`, entry, itemSchema, `${pathLabel}[${idx}]`, repairs, depth + 1)
+      );
+    }
+    return arrVal ?? val;
+  }
+
+  // 4. Object coercion (parses JSON object strings and recurses into nested properties)
+  if (expectedType === 'object' || (propSchema.properties && typeof propSchema.properties === 'object')) {
+    let objVal: Record<string, unknown> | null = (val && typeof val === 'object' && !Array.isArray(val))
+      ? { ...(val as Record<string, unknown>) }
+      : null;
+    if (!objVal && typeof val === 'string') {
+      const trimmed = val.trim();
+      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        const recovered = repairJsonArguments(trimmed);
+        if (!recovered.error) {
+          objVal = recovered.args;
+          repairs.push(`Parsed stringified JSON object for parameter '${pathLabel}'`);
+        }
+      }
+    }
+    if (objVal && propSchema.properties) {
+      return coerceObjectBySchema(objVal, propSchema, pathLabel, repairs, depth + 1);
+    }
+    return objVal ?? val;
+  }
+
+  // 5. String coercion (unwrapping single-element arrays)
+  if (expectedType === 'string') {
+    if (Array.isArray(val) && val.length === 1 && typeof val[0] === 'string') {
+      repairs.push(`Unwrapped single-element array to string for parameter '${pathLabel}'`);
+      return val[0];
+    }
+  }
+
+  return val;
+}
+
+function coerceObjectBySchema(
+  obj: Record<string, unknown>,
+  schema: ParameterSchema,
+  pathPrefix: string,
+  repairs: string[],
+  depth: number
+): Record<string, unknown> {
+  if (depth > 8 || !schema.properties) return obj;
+  const modified: Record<string, unknown> = { ...obj };
+  for (const [key, propSchema] of Object.entries(schema.properties)) {
+    if (!(key in modified)) continue;
+    const label = pathPrefix ? `${pathPrefix}.${key}` : key;
+    modified[key] = coerceValueBySchema(key, modified[key], propSchema, label, repairs, depth);
+  }
+  return modified;
+}
+
 /**
- * Automatically coerce argument types according to the tool's parameter schema.
+ * Automatically coerce argument types recursively according to the tool's parameter schema.
  */
 export function coerceArgumentTypes(
-  toolName: string,
+  _toolName: string,
   args: Record<string, unknown>,
   schema?: ParameterSchema
 ): RepairResult {
   const repairs: string[] = [];
-  const modified = { ...args };
-
   if (!schema || !schema.properties) {
-    return { args: modified, repaired: false, repairs: [] };
+    return { args: { ...args }, repaired: false, repairs: [] };
   }
 
-  for (const [key, propSchema] of Object.entries(schema.properties)) {
-    if (!(key in modified)) continue;
-    const val = modified[key];
-    const expectedType = propSchema.type;
-
-    // 1. Number / Integer coercion
-    if (expectedType === 'number' || expectedType === 'integer') {
-      if (typeof val === 'string') {
-        const trimmed = val.trim();
-        const timeMatch = (key === 'timeout' || key === 'timeoutMs' || key === 'timeout_ms' || key === 'duration')
-          ? trimmed.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m)?$/i)
-          : null;
-        if (timeMatch && timeMatch[1]) {
-          const rawVal = parseFloat(timeMatch[1]);
-          const unit = (timeMatch[2] || '').toLowerCase();
-          let ms = rawVal;
-          if (unit === 'ms') ms = rawVal;
-          else if (unit === 'm') ms = rawVal * 60 * 1000;
-          else if (unit === 's') ms = rawVal * 1000;
-          else ms = rawVal <= 600 ? rawVal * 1000 : rawVal;
-          modified[key] = expectedType === 'integer' ? Math.round(ms) : ms;
-          repairs.push(`Normalized time string "${val}" -> ${modified[key]}ms for parameter '${key}'`);
-        } else if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
-          const num = expectedType === 'integer' ? parseInt(trimmed, 10) : parseFloat(trimmed);
-          if (!isNaN(num)) {
-            modified[key] = num;
-            repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${key}'`);
-          }
-        }
-      } else if (typeof val === 'number' && (key === 'timeout' || key === 'timeoutMs')) {
-        if (val > 0 && val <= 600) {
-          modified[key] = Math.round(val * 1000);
-          repairs.push(`Scaled timeout from seconds (${val}s) -> ${modified[key]}ms for parameter '${key}'`);
-        }
-      } else if (Array.isArray(val) && val.length === 1) {
-        const item = val[0];
-        if (typeof item === 'number') {
-          modified[key] = item;
-          repairs.push(`Unwrapped single-element array to number for parameter '${key}'`);
-        } else if (typeof item === 'string' && /^-?\d+(\.\d+)?$/.test(item.trim())) {
-          modified[key] = expectedType === 'integer' ? parseInt(item.trim(), 10) : parseFloat(item.trim());
-          repairs.push(`Unwrapped single-element array to number for parameter '${key}'`);
-        }
-      }
-    }
-
-    // 2. Boolean coercion
-    if (expectedType === 'boolean') {
-      if (typeof val === 'string') {
-        const lower = val.trim().toLowerCase();
-        if (lower === 'true' || lower === '1') {
-          modified[key] = true;
-          repairs.push(`Coerced string "${val}" -> boolean true for parameter '${key}'`);
-        } else if (lower === 'false' || lower === '0') {
-          modified[key] = false;
-          repairs.push(`Coerced string "${val}" -> boolean false for parameter '${key}'`);
-        }
-      } else if (typeof val === 'number') {
-        modified[key] = val !== 0;
-        repairs.push(`Coerced number ${val} -> boolean ${modified[key]} for parameter '${key}'`);
-      }
-    }
-
-    // 3. Array coercion (auto-wraps single objects and parses strings)
-    if (expectedType === 'array') {
-      if (typeof val === 'string') {
-        const trimmed = val.trim();
-        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-              modified[key] = parsed;
-              repairs.push(`Parsed stringified array for parameter '${key}'`);
-            }
-          } catch {
-            // Passthrough
-          }
-        } else if (trimmed.includes(',')) {
-          modified[key] = trimmed.split(',').map((s) => s.trim());
-          repairs.push(`Split comma-separated string into array for parameter '${key}'`);
-        } else if (trimmed.length > 0) {
-          modified[key] = [trimmed];
-          repairs.push(`Wrapped single string into array for parameter '${key}'`);
-        }
-      } else if (val && typeof val === 'object' && !Array.isArray(val)) {
-        modified[key] = [val];
-        repairs.push(`Wrapped single object into array for parameter '${key}'`);
-      }
-    }
-
-    // 4. Object coercion
-    if (expectedType === 'object') {
-      if (typeof val === 'string') {
-        const trimmed = val.trim();
-        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (parsed && typeof parsed === 'object') {
-              modified[key] = parsed;
-              repairs.push(`Parsed stringified JSON object for parameter '${key}'`);
-            }
-          } catch {
-            // Passthrough
-          }
-        }
-      }
-    }
-
-    // 5. String coercion (unwrapping single-element arrays)
-    if (expectedType === 'string') {
-      if (Array.isArray(val) && val.length === 1 && typeof val[0] === 'string') {
-        modified[key] = val[0];
-        repairs.push(`Unwrapped single-element array to string for parameter '${key}'`);
-      }
-    }
-  }
-
+  const modified = coerceObjectBySchema(args, schema, '', repairs, 0);
   return {
     args: modified,
     repaired: repairs.length > 0,
@@ -1117,7 +1229,7 @@ export function selfRepairToolCall(
     arguments?: unknown;
   },
   toolSchema?: ParameterSchema,
-  options: { cwd?: string } = {}
+  options: { cwd?: string; freeFormPaths?: string[][] } = {}
 ): SelfRepairToolCallResult {
   const rawName = toolCall.function?.name || toolCall.name || '';
   const canonicalName = canonicalizeToolName(rawName);
@@ -1143,8 +1255,36 @@ export function selfRepairToolCall(
   }
   allRepairs.push(...jsonResult.repairs);
 
+  // 1b. Decode any dialect-adapted free-form / polymorphic JSON string paths
+  let decodedInput = jsonResult.args;
+  if (options.freeFormPaths && options.freeFormPaths.length > 0) {
+    try {
+      const beforeSnapshot = JSON.stringify(decodedInput);
+      const cloned = structuredClone(decodedInput) as Record<string, unknown>;
+      decodedInput = decodeFreeFormArguments(cloned, options.freeFormPaths);
+      if (JSON.stringify(decodedInput) !== beforeSnapshot) {
+        allRepairs.push('Decoded adapted free-form/polymorphic schema arguments');
+      }
+    } catch {
+      decodedInput = decodeFreeFormArguments({ ...decodedInput }, options.freeFormPaths);
+    }
+  }
+
+  // Unwrap accidental single-key argument envelope { arguments: { ... } }
+  if (
+    decodedInput &&
+    Object.keys(decodedInput).length === 1 &&
+    decodedInput.arguments &&
+    typeof decodedInput.arguments === 'object' &&
+    !Array.isArray(decodedInput.arguments) &&
+    !(toolSchema?.properties && 'arguments' in toolSchema.properties)
+  ) {
+    decodedInput = decodedInput.arguments as Record<string, unknown>;
+    allRepairs.push("Unwrapped single-key 'arguments' object envelope");
+  }
+
   // 2. Resolve parameter aliases & structural transforms
-  const aliasResult = resolveParameterAliases(canonicalName, jsonResult.args, toolSchema);
+  const aliasResult = resolveParameterAliases(canonicalName, decodedInput, toolSchema);
   allRepairs.push(...aliasResult.repairs);
 
   // 3. Coerce argument types
