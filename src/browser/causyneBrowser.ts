@@ -11,6 +11,7 @@ import {
 } from '../provisioning/capabilityProvisioner.js';
 import { resolveBrowserRuntime, type PreparedBrowserRuntime } from './browserRuntime.js';
 import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
+import { ensureSafeWorkspaceInputPath } from './workspacePathSafety.js';
 import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
 import { searchPublicWeb } from './searchProviders.js';
 
@@ -1609,6 +1610,7 @@ export class CausyneBrowser {
       if (!stat || !stat.isFile()) {
         throw new Error(`Upload file does not exist or is not a regular file: ${resolved}`);
       }
+      await ensureSafeWorkspaceInputPath(workspace, resolved);
       resolvedFiles.push(resolved);
     }
 

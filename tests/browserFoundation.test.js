@@ -233,6 +233,20 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('an upload cannot follow a symlink outside the workspace', async () => {
+    const { browser, workspace } = fakeRuntime();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-upload-outside-'));
+    workspaces.push(outside);
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'private file');
+    fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(workspace, 'linked.txt'));
+    await browser.run([{ type: 'snapshot' }]);
+    await assert.rejects(
+      browser.run([{ type: 'upload', ref: 'e2', filePath: 'linked.txt' }]),
+      /outside the selected workspace/
+    );
+    await browser.close();
+  });
+
   test('a download cannot escape the workspace', async () => {
     const { browser } = fakeRuntime();
     await browser.run([{ type: 'snapshot' }]);

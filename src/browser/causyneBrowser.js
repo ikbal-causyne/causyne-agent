@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { capabilityDirectory, ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
 import { resolveBrowserRuntime } from './browserRuntime.js';
 import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
+import { ensureSafeWorkspaceInputPath } from './workspacePathSafety.js';
 import { windowSnapshot } from './snapshotWindow.js';
 import { searchPublicWeb } from './searchProviders.js';
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -1379,6 +1380,7 @@ export class CausyneBrowser {
             if (!stat || !stat.isFile()) {
                 throw new Error(`Upload file does not exist or is not a regular file: ${resolved}`);
             }
+            await ensureSafeWorkspaceInputPath(workspace, resolved);
             resolvedFiles.push(resolved);
         }
         const locator = await this.locatorFor(state, action);
