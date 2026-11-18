@@ -59,10 +59,13 @@ f 7 1 3 5
 export function summarizeHarvestResults(results) {
   const downloadedCount = results.filter(item => item.status?.source === 'downloaded').length;
   const fallbackCount = results.filter(item => item.status?.source === 'procedural_cc0_fallback').length;
+  const failedCount = results.length - downloadedCount - fallbackCount;
   return {
-    status: fallbackCount ? 'STARTER_PACK_WITH_PROCEDURAL_FALLBACKS' : 'STARTER_PACK_DOWNLOADED',
+    status: failedCount ? 'STARTER_PACK_INCOMPLETE'
+      : fallbackCount ? 'STARTER_PACK_WITH_PROCEDURAL_FALLBACKS' : 'STARTER_PACK_DOWNLOADED',
     downloaded_count: downloadedCount,
-    fallback_count: fallbackCount
+    fallback_count: fallbackCount,
+    failed_count: failedCount
   };
 }
 

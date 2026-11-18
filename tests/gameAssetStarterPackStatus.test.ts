@@ -13,3 +13,13 @@ test('starter pack summary reports procedural fallbacks separately from real dow
   assert.equal(result.fallback_count, 1);
   assert.equal(summarizeHarvestResults([{ status: { source: 'downloaded' } }]).status, 'STARTER_PACK_DOWNLOADED');
 });
+
+test('starter pack never reports all downloads when an asset failed', () => {
+  const outcome = summarizeHarvestResults([
+    { status: { source: 'downloaded' } },
+    { status: { source: 'download_failed', success: false } }
+  ]);
+  assert.equal(outcome.status, 'STARTER_PACK_INCOMPLETE');
+  assert.equal(outcome.downloaded_count, 1);
+  assert.equal(outcome.failed_count, 1);
+});
