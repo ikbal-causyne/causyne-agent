@@ -178,6 +178,27 @@ export function isRenderedNativeBrowserAction(tool: string): boolean {
   return ['browser_act', 'preview', 'snapshot'].includes(tool.toLowerCase());
 }
 
+/** Only inspected, successful DOM output counts as browser verification. */
+export function inspectBrowserToolEvidence(result: unknown): { verified: boolean; runtimeErrors: string[] } {
+  if (!result || typeof result !== 'object') return { verified: false, runtimeErrors: [] };
+  const data = result as { success?: boolean; data?: unknown };
+  if (data.success !== true || !Array.isArray(data.data)) return { verified: false, runtimeErrors: [] };
+  const runtimeErrors: string[] = [];
+  let verified = false;
+  for (const item of data.data) {
+    if (!item || typeof item !== 'object') continue;
+    const action = item as { action?: string; output?: string; data?: { runtimeErrors?: unknown } };
+    if (Array.isArray(action.data?.runtimeErrors)) {
+      runtimeErrors.push(...action.data.runtimeErrors.filter((error): error is string => typeof error === 'string'));
+    }
+    if (['snapshot', 'scrape'].includes(action.action ?? '')
+        && typeof action.output === 'string' && action.output.trim()) {
+      verified = true;
+    }
+  }
+  return { verified: verified && runtimeErrors.length === 0, runtimeErrors };
+}
+
 export function isVerificationCommand(command: string): boolean {
   return VERIFICATION_COMMAND.test(command);
 }

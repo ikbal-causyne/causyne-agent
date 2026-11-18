@@ -53,7 +53,7 @@ import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js'
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
-import { isRenderedNativeBrowserAction, isVerificationCommand } from './observer/evidence.js';
+import { inspectBrowserToolEvidence, isRenderedNativeBrowserAction, isVerificationCommand } from './observer/evidence.js';
 import { CausyneObserver, defaultObserver, extractClaimedLocalUrls } from './observer.js';
 import type { Observation } from './observer.js';
 import { TimeMachine, recoveryUserMessage, TIME_MACHINE_MAX_ATTEMPTS } from './timeMachine.js';
@@ -4675,18 +4675,10 @@ You are operating in a text-and-code modality without direct image pixel renderi
           if (functionName === 'browser_act' && result?.success === true) {
             const hasExplicitPlanInBatch = Array.isArray(response.toolCalls)
               && response.toolCalls.some((c: any) => canonicalToolName(c?.function?.name || '') === 'update_plan');
-            if (!hasExplicitPlanInBatch) {
-              this.advanceImplementationPlanProgress('verification');
-            }
-            const browserResults = Array.isArray(result.data) ? result.data : [];
-            const allRuntimeErrors = browserResults.flatMap((item: any) =>
-              Array.isArray(item?.data?.runtimeErrors) ? item.data.runtimeErrors : []
-            );
-            const hasValidBrowserAction = browserResults.some((item: any) =>
-              ['preview', 'snapshot', 'scrape', 'screenshot'].includes(item?.action)
-            );
-            if (allRuntimeErrors.length === 0 && (hasValidBrowserAction || result.url || result.tabId)) {
+            const { verified, runtimeErrors: allRuntimeErrors } = inspectBrowserToolEvidence(result);
+            if (verified) {
               this.webVerificationState.browserActUsed = true;
+              if (!hasExplicitPlanInBatch) this.advanceImplementationPlanProgress('verification');
             } else if (allRuntimeErrors.length > 0) {
               this.webVerificationState.browserActUsed = false;
               this.emitEvent({

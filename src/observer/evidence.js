@@ -120,6 +120,29 @@ export function isCodePath(target) {
 export function isRenderedNativeBrowserAction(tool) {
     return ['browser_act', 'preview', 'snapshot'].includes(tool.toLowerCase());
 }
+/** Only inspected, successful DOM output counts as browser verification. */
+export function inspectBrowserToolEvidence(result) {
+    if (!result || typeof result !== 'object')
+        return { verified: false, runtimeErrors: [] };
+    const data = result;
+    if (data.success !== true || !Array.isArray(data.data))
+        return { verified: false, runtimeErrors: [] };
+    const runtimeErrors = [];
+    let verified = false;
+    for (const item of data.data) {
+        if (!item || typeof item !== 'object')
+            continue;
+        const action = item;
+        if (Array.isArray(action.data?.runtimeErrors)) {
+            runtimeErrors.push(...action.data.runtimeErrors.filter((error) => typeof error === 'string'));
+        }
+        if (['snapshot', 'scrape'].includes(action.action ?? '')
+            && typeof action.output === 'string' && action.output.trim()) {
+            verified = true;
+        }
+    }
+    return { verified: verified && runtimeErrors.length === 0, runtimeErrors };
+}
 export function isVerificationCommand(command) {
     return VERIFICATION_COMMAND.test(command);
 }
