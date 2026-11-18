@@ -154,7 +154,7 @@ export const webFetch = {
                 request.body = args.body;
             const { response, finalUrl } = await fetchFollowingSafeRedirects(args.url, request);
             const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
-            if (!response.ok && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
+            if (!response.ok && method === 'GET' && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
                 await response.body?.cancel().catch(() => { });
                 const fallback = await browserFallback(finalUrl.href, workspace);
                 if (fallback.success)
