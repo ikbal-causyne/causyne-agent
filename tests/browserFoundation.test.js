@@ -149,9 +149,12 @@ describe('Causyne Browser lifecycle', () => {
     const { browser, session } = fakeRuntime();
     await browser.run([{ type: 'snapshot' }]);
     const page = session.openPages[0];
+    const credentialUrl = new URL('https://example.org/');
+    credentialUrl.username = 'user';
+    credentialUrl.password = 'pass';
     page.evaluate = async () => [
       { title: 'Internal', url: 'http://127.0.0.1/private', snippet: 'unsafe' },
-      { title: 'Credentials', url: 'https://user:pass@example.org/', snippet: 'unsafe' },
+      { title: 'Credentials', url: credentialUrl.href, snippet: 'unsafe' },
       { title: 'Allowed', url: 'https://example.org/docs', snippet: 'safe' }
     ];
     const results = await browser.search('safety regression');
