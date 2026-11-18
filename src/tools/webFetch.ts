@@ -214,6 +214,9 @@ export const webFetch = {
       if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
         return { success: false, error: 'Unsupported HTTP method' };
       }
+      if (args.outputFile !== undefined && (typeof args.outputFile !== 'string' || !args.outputFile.trim())) {
+        return { success: false, error: 'Download outputFile must be a non-empty string' };
+      }
       if (method === 'HEAD' && args.outputFile) {
         return { success: false, error: 'HEAD responses cannot be downloaded as resource files' };
       }
