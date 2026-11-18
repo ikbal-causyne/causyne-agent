@@ -84,11 +84,18 @@ try {
   await visit(a, `${base}/whoami`, /Identity: A/);
   await visit(b, `${base}/whoami`, /Identity: B/);
 
+  // Independent workspaces must also remain isolated under overlapping requests.
+  const concurrentChecks = Array.from({ length: 4 }, () => Promise.all([
+    visit(a, `${base}/whoami`, /Identity: A/),
+    visit(b, `${base}/whoami`, /Identity: B/)
+  ]));
+  await Promise.all(concurrentChecks);
+
   // Closing and recreating one context must retain only its own authenticated state.
   await a.close();
   await visit(a, `${base}/whoami`, /Identity: A/);
   await visit(b, `${base}/whoami`, /Identity: B/);
-  console.log('REAL_BROWSER_AUTH_ISOLATION_PASS: cookie separation, distinct profiles, restart persistence');
+  console.log('REAL_BROWSER_AUTH_ISOLATION_PASS: cookie separation, concurrent workspaces, distinct profiles, restart persistence');
 } finally {
   await Promise.allSettled([a.close(), b.close()]);
   if (server.listening) await new Promise(resolve => server.close(resolve));
