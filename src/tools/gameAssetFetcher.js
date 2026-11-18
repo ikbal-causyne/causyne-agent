@@ -3,6 +3,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
+import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 
@@ -68,6 +69,25 @@ export async function streamAssetResponseToFile(response, filePath, maxBytes = M
     await handle?.close().catch(() => {});
     await fs.unlink(temporary).catch(() => {});
   }
+}
+
+async function fetchCuratedAssetWithSafeRedirects(url) {
+  const signal = AbortSignal.timeout(30_000);
+  let current = new URL(url);
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    const response = await fetch(current, {
+      headers: { 'User-Agent': 'Causyne-Agent-Sovereign/1.3.1' },
+      redirect: 'manual',
+      signal
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    await response.body?.cancel().catch(() => {});
+    if (redirects === 5) throw new Error('Asset download exceeded five redirects');
+    if (!location) throw new Error(`Asset HTTP ${response.status} redirect has no Location header`);
+    current = await assertPublicWebUrl(new URL(location, current).href);
+  }
+  throw new Error('Asset redirect handling failed');
 }
 
 function getWorkspaceTempDir() {
@@ -385,10 +405,7 @@ export const gameAssetFetcher = {
         const filePath = path.join(targetDir, filename);
 
         console.log(`[game_asset_fetch] Downloading CC0 asset from: ${url}`);
-        const response = await fetch(url, {
-          headers: { 'User-Agent': 'Causyne-Agent-Sovereign/1.3.1' },
-          signal: AbortSignal.timeout(30_000)
-        });
+        const response = await fetchCuratedAssetWithSafeRedirects(url);
         if (!response.ok) {
           await response.body?.cancel().catch(() => {});
           return { success: false, error: `Failed to fetch asset from URL (${response.status} ${response.statusText}): ${url}` };
