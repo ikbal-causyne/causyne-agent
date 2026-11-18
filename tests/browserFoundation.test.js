@@ -280,6 +280,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('invalid scroll direction cannot falsely report a completed scroll', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{type:'snapshot'}]);
+    const page = session.openPages[0];
+    await assert.rejects(browser.run([{type:'scroll',direction:'diagonal',amount:500}]),/Unsupported scroll direction/);
+    assert.equal(page.calls.some(call => call[0] === 'wheel'), false);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

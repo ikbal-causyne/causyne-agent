@@ -1573,6 +1573,8 @@ export class CausyneBrowser {
         if (action.type === 'scroll') {
             const amount = boundedFiniteInteger(action.amount, 700, 1, 10_000);
             const direction = action.direction ?? 'down';
+            if (!['up', 'down', 'left', 'right'].includes(direction))
+                throw new Error('Unsupported scroll direction');
             const x = direction === 'left' ? -amount : direction === 'right' ? amount : 0;
             const y = direction === 'up' ? -amount : direction === 'down' ? amount : 0;
             await state.page.mouse.wheel(x, y);
