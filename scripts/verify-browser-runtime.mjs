@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { existsSync } from 'node:fs';
+import http from 'node:http';
 import { chromium } from 'playwright-core';
 import { CausyneBrowser } from '../src/browser/causyneBrowser.js';
 
@@ -46,6 +47,7 @@ const browser = new CausyneBrowser({
   })
 });
 
+let server;
 try {
   const initial = await browser.run([
     { type: 'preview', filePath: 'index.html' },
@@ -63,8 +65,33 @@ try {
   const png = await fs.readFile(path.join(root, 'evidence.png'));
   assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(png.length > 100);
-  console.log('REAL_BROWSER_SMOKE_PASS: isolated preview, DOM, click, snapshot, screenshot');
+
+  let privateHits = 0;
+  server = http.createServer((request, response) => {
+    if (request.url === '/private') privateHits++;
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end('<html><body><h1>Local development server</h1></body></html>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const localUrl = `http://127.0.0.1:${server.address().port}`;
+  const local = await browser.run([
+    { type: 'goto', url: localUrl },
+    { type: 'snapshot' }
+  ]);
+  assert.match(local[1].output, /Local development server/);
+
+  await fs.writeFile(
+    path.join(root, 'untrusted.html'),
+    `<html><body><h1>Untrusted preview</h1><script>
+      fetch('${localUrl}/private', { mode: 'no-cors' }).catch(() => {});
+    </script></body></html>`
+  );
+  await browser.run([{ type: 'preview', filePath: 'untrusted.html' }, { type: 'wait', timeout: 250 }]);
+  assert.equal(privateHits, 0, 'untrusted page must not access an approved local development server');
+
+  console.log('REAL_BROWSER_SMOKE_PASS: preview, DOM, click, snapshot, screenshot, explicit local navigation, local-service isolation');
 } finally {
   await browser.close();
+  if (server) await new Promise(resolve => server.close(resolve));
   await fs.rm(root, { recursive: true, force: true });
 }
