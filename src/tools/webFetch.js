@@ -35,6 +35,7 @@ function isWithin(root, candidate) {
     const relative = path.relative(root, candidate);
     return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
+const FORBIDDEN_REQUEST_HEADERS = new Set(['host', 'connection', 'proxy-connection', 'proxy-authorization', 'content-length', 'transfer-encoding', 'upgrade', 'te', 'trailer', 'keep-alive']);
 function validatedHeaders(value) {
     if (value === undefined)
         return {};
@@ -42,7 +43,7 @@ function validatedHeaders(value) {
         throw new Error('headers must be an object');
     const result = {};
     for (const [key, item] of Object.entries(value)) {
-        if (typeof item !== 'string' || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n]/.test(item)) {
+        if (typeof item !== 'string' || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n]/.test(item) || FORBIDDEN_REQUEST_HEADERS.has(key.toLowerCase())) {
             throw new Error('headers contain an invalid name or value');
         }
         result[key] = item;
