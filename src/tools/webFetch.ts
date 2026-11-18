@@ -13,9 +13,14 @@ const REQUEST_TIMEOUT_MS = 30_000;
 function decodeEntities(text: string): string {
   const named: Record<string, string> = { amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"' };
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (full, entity: string) => {
-    if (entity.startsWith('#x')) return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
-    if (entity.startsWith('#')) return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
-    return named[entity.toLowerCase()] ?? full;
+    const normalized = entity.toLowerCase();
+    const codePoint = normalized.startsWith('#x') ? Number.parseInt(normalized.slice(2), 16)
+      : normalized.startsWith('#') ? Number.parseInt(normalized.slice(1), 10) : null;
+    if (codePoint !== null) {
+      return Number.isInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff &&
+        !(codePoint >= 0xd800 && codePoint <= 0xdfff) ? String.fromCodePoint(codePoint) : full;
+    }
+    return named[normalized] ?? full;
   });
 }
 
