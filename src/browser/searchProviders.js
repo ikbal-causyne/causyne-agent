@@ -87,8 +87,10 @@ export function parseDuckDuckGoHtml(html) {
 }
 async function readBoundedText(response) {
     const declared = Number(response.headers.get('content-length') ?? '0');
-    if (Number.isFinite(declared) && declared > MAX_PROVIDER_BYTES)
+    if (Number.isFinite(declared) && declared > MAX_PROVIDER_BYTES) {
+        await response.body?.cancel().catch(() => { });
         throw new Error('search response is too large');
+    }
     if (!response.body)
         return '';
     const reader = response.body.getReader();
