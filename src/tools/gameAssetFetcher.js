@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
@@ -18,6 +19,16 @@ async function prepareAssetOutput(filePath, sandbox) {
   });
   if (existing?.isSymbolicLink() || (existing && !existing.isFile())) {
     throw new Error('Output target cannot be a symlink or directory');
+  }
+}
+
+async function writeAssetAtomically(filePath, bytes) {
+  const temporary = `${filePath}.part-${randomUUID()}`;
+  try {
+    await fs.writeFile(temporary, bytes, { mode: 0o600 });
+    await fs.rename(temporary, filePath);
+  } finally {
+    await fs.unlink(temporary).catch(() => {});
   }
 }
 
@@ -305,7 +316,7 @@ export const gameAssetFetcher = {
 
         const wavBuffer = synthesizeWavBuffer(preset);
         await prepareAssetOutput(filePath, sandbox);
-        await fs.writeFile(filePath, wavBuffer);
+        await writeAssetAtomically(filePath, wavBuffer);
 
         return {
           success: true,
@@ -361,7 +372,7 @@ export const gameAssetFetcher = {
         }
         const buffer = Buffer.concat(chunks);
         await prepareAssetOutput(filePath, sandbox);
-        await fs.writeFile(filePath, buffer);
+        await writeAssetAtomically(filePath, buffer);
 
         return {
           success: true,
