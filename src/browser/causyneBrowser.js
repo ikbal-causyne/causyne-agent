@@ -1312,7 +1312,7 @@ export class CausyneBrowser {
         }
         catch (clickError) {
             const msg = errorMessage(clickError);
-            if (msg.includes('intercepts pointer events') || msg.includes('Timeout')) {
+            if (msg.includes('intercepts pointer events')) {
                 try {
                     await locator.click({ timeout: 5_000, force: true });
                     return;

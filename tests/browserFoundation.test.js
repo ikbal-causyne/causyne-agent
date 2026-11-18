@@ -184,6 +184,20 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('timed-out browser clicks cannot be retried as potentially duplicate mutations', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let attempts = 0;
+    page.locator = () => ({
+      first() { return this; },
+      async click() { attempts++; throw new Error('Timeout waiting for click action'); }
+    });
+    await assert.rejects(browser.run([{ type: 'click', selector: 'button' }]), /Timeout/);
+    assert.equal(attempts, 1);
+    await browser.close();
+  });
+
   test('mutating browser actions are never replayed after a closed-context error', async () => {
     const { browser, session } = fakeRuntime();
     await browser.run([{ type: 'snapshot' }]);
