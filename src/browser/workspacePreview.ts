@@ -69,7 +69,7 @@ export class WorkspacePreview {
     const deny = { status: 403, contentType: 'text/plain', body: Buffer.from('Preview asset is outside the allowed scope') };
     try {
       const parts = decodeURIComponent(url.pathname).replace(/\\/g, '/').split('/').filter(Boolean);
-      if (parts.some(part => part.startsWith('.') || /^(credentials|secrets?|id_rsa|id_ed25519)(\.|$)/i.test(part))) return deny;
+      if (parts.some(part => part.startsWith('.') || /^(credentials|secrets?|private|tokens?|id_rsa|id_ed25519)([._-]|$)/i.test(part))) return deny;
       const file = await fs.realpath(path.resolve(root, ...parts));
       const contentType = MIME[path.extname(file).toLowerCase()];
       if (!within(root, file) || !contentType) return deny;
