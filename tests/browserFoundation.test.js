@@ -331,6 +331,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('keyPress cannot submit a form when the caller omitted its key', async () => {
+    const { browser, session } = fakeRuntime();
+    await assert.rejects(browser.run([{ type: 'press' }]), /keyPress requires a non-empty key/);
+    assert.equal(session.openPages[0].calls.some(call => call[0] === 'keyboard'), false);
+    const result = await browser.run([{ type: 'press', key: 'Tab' }]);
+    assert.equal(result[0].output, 'Pressed Tab');
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

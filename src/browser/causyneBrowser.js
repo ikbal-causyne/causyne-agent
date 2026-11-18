@@ -1566,7 +1566,10 @@ export class CausyneBrowser {
             return { action: action.type, tabId: state.id, url: state.page.url(), output: 'Option selected' };
         }
         if (action.type === 'keyPress' || action.type === 'press') {
-            const normalizedKey = normalizeBrowserKey(action.key ?? 'Enter');
+            if (typeof action.key !== 'string' || !action.key.trim()) {
+                throw new Error('keyPress requires a non-empty key');
+            }
+            const normalizedKey = normalizeBrowserKey(action.key);
             await state.page.keyboard.press(normalizedKey);
             return { action: action.type, tabId: state.id, url: state.page.url(), output: `Pressed ${normalizedKey}` };
         }
