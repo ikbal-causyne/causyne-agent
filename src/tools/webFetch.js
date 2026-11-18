@@ -153,8 +153,11 @@ export const webFetch = {
                 ...validatedHeaders(args.headers)
             };
             const request = { method, headers, signal: controller.signal };
-            if (args.body !== undefined && method !== 'GET' && method !== 'HEAD')
+            if (args.body !== undefined) {
+                if (method === 'GET' || method === 'HEAD')
+                    return { success: false, error: `${method} requests cannot contain a body` };
                 request.body = args.body;
+            }
             const { response, finalUrl } = await fetchFollowingSafeRedirects(args.url, request);
             const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
             if (!response.ok && method === 'GET' && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
