@@ -62,7 +62,14 @@ async function fetchFollowingSafeRedirects(urlValue, options) {
         if (!location)
             throw new Error(`HTTP ${response.status} redirect has no Location header`);
         await response.body?.cancel().catch(() => { });
-        url = await assertPublicWebUrl(new URL(location, url).href);
+        const nextUrl = await assertPublicWebUrl(new URL(location, url).href);
+        if (nextUrl.origin !== url.origin) {
+            const forwardedHeaders = new Headers(request.headers);
+            for (const name of ['authorization', 'proxy-authorization', 'cookie', 'cookie2'])
+                forwardedHeaders.delete(name);
+            request = { ...request, headers: forwardedHeaders };
+        }
+        url = nextUrl;
         if (response.status === 303 || ([301, 302].includes(response.status) && request.method === 'POST')) {
             const redirectedHeaders = new Headers(request.headers);
             redirectedHeaders.delete('content-length');
