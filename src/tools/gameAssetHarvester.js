@@ -16,6 +16,9 @@ async function downloadOrGenerateFallback(url, targetPath, fallbackType = 'obj',
     const stat = await fs.stat(targetPath);
     return { success: true, source: 'downloaded', size: stat.size };
   }
+  if (!['.obj', '.svg', '.png'].includes(path.extname(targetPath).toLowerCase())) {
+    return { success: false, source: 'download_failed', downloadError: String(download.error ?? 'Download unavailable') };
+  }
   const fallback = await generateFallbackAsset(targetPath, fallbackType);
   return { ...fallback, downloadError: String(download.error ?? 'Download unavailable') };
 }
@@ -152,6 +155,9 @@ export const gameAssetHarvester = {
         const destFile = path.join(targetDir, fileName);
 
         const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fileName.endsWith('.png') ? 'png' : fileName.endsWith('.svg') ? 'svg' : 'obj', projectDir);
+        if (!resDownload.success) {
+          return { success: false, error: resDownload.downloadError ?? 'Asset download failed', url: urlToFetch };
+        }
 
         return {
           success: true,
