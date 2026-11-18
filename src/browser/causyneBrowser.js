@@ -1452,6 +1452,7 @@ export class CausyneBrowser {
         const extension = path.extname(target).toLowerCase();
         if (!['.png', '.jpg', '.jpeg'].includes(extension))
             throw new Error('Screenshot outputFile must end in .png, .jpg, or .jpeg');
+        await ensureSafeWorkspaceOutputPath(workspace, target);
         const bytes = await state.page.screenshot({
             fullPage: action.fullPage ?? false,
             type: extension === '.png' ? 'png' : 'jpeg'
@@ -1459,7 +1460,6 @@ export class CausyneBrowser {
         if (bytes.byteLength > MAX_SCREENSHOT_BYTES)
             throw new Error(`Screenshot exceeds ${MAX_SCREENSHOT_BYTES} bytes`);
         const temporary = `${target}.part-${crypto.randomUUID()}`;
-        await fs.mkdir(path.dirname(target), { recursive: true });
         try {
             await fs.writeFile(temporary, bytes, { mode: 0o600 });
             await fs.rename(temporary, target);

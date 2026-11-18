@@ -178,6 +178,19 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('screenshots cannot write through escaping directory symlinks', async () => {
+    const { browser, workspace } = fakeRuntime();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-screenshot-outside-'));
+    workspaces.push(outside);
+    fs.symlinkSync(outside, path.join(workspace, 'escape'), 'dir');
+    await assert.rejects(
+      browser.run([{ type: 'screenshot', outputFile: 'escape/page.png' }]),
+      /outside the selected workspace/
+    );
+    assert.equal(fs.existsSync(path.join(outside, 'page.png')), false);
+    await browser.close();
+  });
+
   test('screenshots are bounded and written inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
