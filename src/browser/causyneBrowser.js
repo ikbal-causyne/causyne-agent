@@ -255,6 +255,18 @@ export class BrowserCapabilityError extends Error {
         this.requiresConsent = requiresConsent;
     }
 }
+export class BrowserBatchError extends Error {
+    completedActions;
+    failedActionIndex;
+    failedActionType;
+    constructor(error, completedActions, index, actionType) {
+        super(`Browser action ${index + 1} (${actionType}) failed: ${errorMessage(error)}`);
+        this.name = 'BrowserBatchError';
+        this.completedActions = [...completedActions];
+        this.failedActionIndex = index;
+        this.failedActionType = actionType;
+    }
+}
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -733,18 +745,24 @@ export class CausyneBrowser {
         const activeWorkspace = options.workspace ? path.resolve(options.workspace) : this.workspace;
         await this.start();
         const results = [];
-        for (const action of actions) {
+        for (let index = 0; index < actions.length; index++) {
+            const action = actions[index];
             try {
                 results.push(await this.runAction(action, activeWorkspace));
             }
             catch (error) {
-                if (isDeadContextError(error) && ['goto', 'open', 'navigate', 'preview', 'snapshot', 'scrape', 'search', 'links', 'images', 'extract', 'listTabs', 'list_tabs'].includes(action.type)) {
-                    await this.close();
-                    await this.start();
-                    results.push(await this.runAction(action, activeWorkspace));
+                try {
+                    if (isDeadContextError(error) && ['goto', 'open', 'navigate', 'preview', 'snapshot', 'scrape', 'search', 'links', 'images', 'extract', 'listTabs', 'list_tabs'].includes(action.type)) {
+                        await this.close();
+                        await this.start();
+                        results.push(await this.runAction(action, activeWorkspace));
+                    }
+                    else {
+                        throw error;
+                    }
                 }
-                else {
-                    throw error;
+                catch (finalError) {
+                    throw new BrowserBatchError(finalError, results, index, action.type);
                 }
             }
         }

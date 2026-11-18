@@ -1,4 +1,4 @@
-import { BrowserCapabilityError, causyneBrowser, getSupportedSearchMacros } from '../browser/causyneBrowser.js';
+import { BrowserBatchError, BrowserCapabilityError, causyneBrowser, getSupportedSearchMacros } from '../browser/causyneBrowser.js';
 const SUPPORTED_ACTION_TYPES = [
     'newTab', 'new_tab',
     'switchTab', 'switch_tab',
@@ -116,6 +116,18 @@ export const browserAct = {
             return { success: true, output: JSON.stringify(results, null, 2), data: results };
         }
         catch (error) {
+            if (error instanceof BrowserBatchError) {
+                return {
+                    success: false,
+                    error: error.message,
+                    code: 'BROWSER_BATCH_PARTIAL_FAILURE',
+                    failedActionIndex: error.failedActionIndex,
+                    failedActionType: error.failedActionType,
+                    completedActions: error.completedActions,
+                    output: JSON.stringify(error.completedActions, null, 2),
+                    retryGuidance: 'Do not repeat the completed browser actions. Inspect current page state and resume from the failed operation.'
+                };
+            }
             if (error instanceof BrowserCapabilityError) {
                 return { success: false, error: error.message, requiresConsent: error.requiresConsent };
             }
