@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
 
+# Keep only the latest verification for a branch or pull request. Rapid pushes
+# must not queue obsolete three-OS matrices ahead of the current revision.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
