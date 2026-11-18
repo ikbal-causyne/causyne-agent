@@ -950,6 +950,7 @@ export class CausyneBrowser {
   private readonly validateUrl: (value: string) => Promise<URL>;
   private session: BrowserSession | null = null;
   private starting: Promise<void> | null = null;
+  private operationTail: Promise<void> = Promise.resolve();
   private tabs = new Map<string, TabState>();
   private activeTabId: string | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -982,7 +983,23 @@ export class CausyneBrowser {
     return this.workspace;
   }
 
+  private async enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationTail;
+    let release!: () => void;
+    this.operationTail = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
   async run(actions: BrowserAction[], options: BrowserRunOptions = {}): Promise<BrowserActionResult[]> {
+    return this.enqueueOperation(() => this.runUnlocked(actions, options));
+  }
+
+  private async runUnlocked(actions: BrowserAction[], options: BrowserRunOptions = {}): Promise<BrowserActionResult[]> {
     if (!Array.isArray(actions) || actions.length === 0 || actions.length > 40) {
       throw new Error('Browser actions must contain between 1 and 40 operations');
     }
@@ -1007,6 +1024,10 @@ export class CausyneBrowser {
   }
 
   async search(query: string, options: { skipPublicFallback?: boolean } = {}): Promise<SearchResult[]> {
+    return this.enqueueOperation(() => this.searchUnlocked(query, options));
+  }
+
+  private async searchUnlocked(query: string, options: { skipPublicFallback?: boolean } = {}): Promise<SearchResult[]> {
     if (typeof query !== 'string') throw new Error('Browser search query must be a string');
     const cleaned = query.trim();
     if (!cleaned || cleaned.length > 1_000) throw new Error('Search query must contain 1-1000 characters');
@@ -1729,7 +1750,7 @@ export class CausyneBrowser {
       return { action: action.type, tabId: state.id, output: 'Tab closed' };
     }
     if (action.type === 'search') {
-      const results = await this.search(action.query ?? action.text ?? '');
+      const results = await this.searchUnlocked(action.query ?? action.text ?? '');
       const active = await this.activeTab();
       return { action: action.type, tabId: active.id, url: active.page.url(), data: results };
     }

@@ -682,6 +682,7 @@ export class CausyneBrowser {
     validateUrl;
     session = null;
     starting = null;
+    operationTail = Promise.resolve();
     tabs = new Map();
     activeTabId = null;
     idleTimer = null;
@@ -710,7 +711,22 @@ export class CausyneBrowser {
     getWorkspace() {
         return this.workspace;
     }
+    async enqueueOperation(operation) {
+        const previous = this.operationTail;
+        let release;
+        this.operationTail = new Promise(resolve => { release = resolve; });
+        await previous;
+        try {
+            return await operation();
+        }
+        finally {
+            release();
+        }
+    }
     async run(actions, options = {}) {
+        return this.enqueueOperation(() => this.runUnlocked(actions, options));
+    }
+    async runUnlocked(actions, options = {}) {
         if (!Array.isArray(actions) || actions.length === 0 || actions.length > 40) {
             throw new Error('Browser actions must contain between 1 and 40 operations');
         }
@@ -736,6 +752,9 @@ export class CausyneBrowser {
         return results;
     }
     async search(query, options = {}) {
+        return this.enqueueOperation(() => this.searchUnlocked(query, options));
+    }
+    async searchUnlocked(query, options = {}) {
         if (typeof query !== 'string')
             throw new Error('Browser search query must be a string');
         const cleaned = query.trim();
@@ -1510,7 +1529,7 @@ export class CausyneBrowser {
             return { action: action.type, tabId: state.id, output: 'Tab closed' };
         }
         if (action.type === 'search') {
-            const results = await this.search(action.query ?? action.text ?? '');
+            const results = await this.searchUnlocked(action.query ?? action.text ?? '');
             const active = await this.activeTab();
             return { action: action.type, tabId: active.id, url: active.page.url(), data: results };
         }
