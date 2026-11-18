@@ -418,6 +418,20 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('links extraction retains total count while returning only a bounded page', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{type:'snapshot'}]);
+    const page = session.openPages[0];
+    const links = Array.from({length:1000},(_,i)=>({url:'https://example.org/'+i,text:'Link '+i}));
+    page.evaluate = async (_script,opts) => ({
+      totalLinks: links.length, links: links.slice(opts.offset,opts.offset+opts.limit)
+    });
+    const result = await browser.run([{type:'links',offset:200,limit:50}]);
+    assert.equal(result[0].data.totalLinks,1000);
+    assert.equal(result[0].data.links.length,50);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

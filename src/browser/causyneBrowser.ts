@@ -853,9 +853,12 @@ const SEARCH_EXTRACT_SCRIPT = `(() => {
 const LINKS_EXTRACT_SCRIPT = `(opts) => {
   const scope = opts && opts.selector ? document.querySelector(opts.selector) : document;
   if (!scope) return { links: [], totalLinks: 0 };
-  const anchors = Array.from(scope.querySelectorAll('a[href]'));
+  const anchors = scope.querySelectorAll('a[href]');
   const seen = new Set();
-  const all = [];
+  const links = [];
+  const start = (opts && opts.offset) || 0;
+  const max = (opts && opts.limit) || 50;
+  let totalLinks = 0;
   for (const a of anchors) {
     let href;
     try {
@@ -867,11 +870,10 @@ const LINKS_EXTRACT_SCRIPT = `(opts) => {
     if (seen.has(href)) continue;
     seen.add(href);
     const text = (a.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 200);
-    all.push({ url: href, text: text || undefined });
+    if (totalLinks >= start && links.length < max) links.push({ url: href, text: text || undefined });
+    totalLinks++;
   }
-  const start = (opts && opts.offset) || 0;
-  const max = (opts && opts.limit) || 50;
-  return { links: all.slice(start, start + max), totalLinks: all.length };
+  return { links, totalLinks };
 }`;
 
 const IMAGES_EXTRACT_SCRIPT = `(opts) => {
