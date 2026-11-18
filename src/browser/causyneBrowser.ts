@@ -19,6 +19,11 @@ const NAVIGATION_TIMEOUT_MS = 30_000;
 const ACTION_TIMEOUT_MS = 12_000;
 const IFRAME_SNAPSHOT_TIMEOUT_MS = 3_000;
 const IDLE_CLOSE_MS = 120 * 60_000;
+
+function workspaceProfileDirectory(workspace: string): string {
+  const id = crypto.createHash('sha256').update(path.resolve(workspace)).digest('hex');
+  return path.join(capabilityDirectory(), 'browser-profiles', id);
+}
 const MAX_SEARCH_RESULTS = 10;
 const MAX_EXTRACT_CHARS = 80_000;
 const MAX_DOWNLOAD_BYTES = 250 * 1024 * 1024;
@@ -959,7 +964,9 @@ export class CausyneBrowser {
   private readonly ensureBrowserCapability: NonNullable<RuntimeOptions['ensureBrowserCapability']>;
   private readonly loadBrowserEngine: NonNullable<RuntimeOptions['loadBrowserEngine']>;
   private readonly resolveRuntime: NonNullable<RuntimeOptions['resolveRuntime']>;
-  private readonly profileDirectory: string;
+  private profileDirectory: string;
+  private readonly pinnedProfileDirectory: boolean;
+  private queuedOperations = 0;
   private readonly visible: boolean;
   private readonly validateUrl: (value: string) => Promise<URL>;
   private session: BrowserSession | null = null;
@@ -980,21 +987,28 @@ export class CausyneBrowser {
     this.ensureBrowserCapability = options.ensureBrowserCapability ?? (() => ensureCapability('browser'));
     this.loadBrowserEngine = options.loadBrowserEngine ?? (async () => await loadCapabilityPackage('camoufox-js') as BrowserEngineModule);
     this.resolveRuntime = options.resolveRuntime ?? resolveBrowserRuntime;
-    this.profileDirectory = path.resolve(options.profileDirectory ?? path.join(capabilityDirectory(), 'browser-profile'));
+    this.pinnedProfileDirectory = options.profileDirectory !== undefined;
+    this.profileDirectory = path.resolve(options.profileDirectory ?? workspaceProfileDirectory(this.workspace));
     this.visible = options.visible ?? process.env.CAUSYNE_BROWSER_VISIBLE === '1';
     this.validateUrl = options.validateUrl ?? assertBrowserNavigableUrl;
   }
 
   setWorkspace(workspace: string): void {
-    if (workspace && typeof workspace === 'string') {
-      if (this.workspace !== path.resolve(workspace)) {
-        this.workspacePreview.clear();
-        this.lastTarget = null;
-        this.approvedLoopbackOrigins.clear();
-        this.pendingLocalNavigation = null;
-      }
-      this.workspace = path.resolve(workspace);
+    if (!workspace || typeof workspace !== 'string') return;
+    const next = path.resolve(workspace);
+    if (next === this.workspace) return;
+    if (this.session || this.starting || this.queuedOperations > 0) {
+      throw new Error('Cannot switch the workspace of an active browser session; use a workspace-scoped browser');
     }
+    if (this.pinnedProfileDirectory) {
+      throw new Error('Cannot switch workspaces with an explicitly configured browser profile');
+    }
+    this.workspacePreview.clear();
+    this.lastTarget = null;
+    this.approvedLoopbackOrigins.clear();
+    this.pendingLocalNavigation = null;
+    this.workspace = next;
+    this.profileDirectory = workspaceProfileDirectory(next);
   }
 
   getWorkspace(): string {
@@ -1002,6 +1016,7 @@ export class CausyneBrowser {
   }
 
   private async enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    this.queuedOperations++;
     const previous = this.operationTail;
     let release!: () => void;
     this.operationTail = new Promise<void>(resolve => { release = resolve; });
@@ -1009,6 +1024,7 @@ export class CausyneBrowser {
     try {
       return await operation();
     } finally {
+      this.queuedOperations--;
       release();
     }
   }
@@ -1022,6 +1038,9 @@ export class CausyneBrowser {
       throw new Error('Browser actions must contain between 1 and 40 operations');
     }
     const activeWorkspace = options.workspace ? path.resolve(options.workspace) : this.workspace;
+    if (activeWorkspace !== this.workspace) {
+      throw new Error('Browser action workspace must match the isolated browser session workspace');
+    }
     await this.start();
     const results: BrowserActionResult[] = [];
     for (let index = 0; index < actions.length; index++) {
@@ -1964,20 +1983,22 @@ export class CausyneBrowser {
   }
 }
 
-let sharedBrowser: CausyneBrowser | null = null;
+const sharedBrowsers = new Map<string, CausyneBrowser>();
 
 export function causyneBrowser(options?: { workspace?: string }): CausyneBrowser {
-  sharedBrowser ??= new CausyneBrowser(options);
-  if (options?.workspace) {
-    sharedBrowser.setWorkspace(options.workspace);
+  const workspace = path.resolve(options?.workspace ?? process.cwd());
+  let browser = sharedBrowsers.get(workspace);
+  if (!browser) {
+    browser = new CausyneBrowser({ workspace });
+    sharedBrowsers.set(workspace, browser);
   }
-  return sharedBrowser;
+  return browser;
 }
 
 export async function closeCausyneBrowser(): Promise<void> {
-  const browser = sharedBrowser;
-  sharedBrowser = null;
-  if (browser) await browser.close();
+  const browsers = [...sharedBrowsers.values()];
+  sharedBrowsers.clear();
+  await Promise.all(browsers.map(browser => browser.close()));
 }
 
 export interface BrowserSandboxValidationResult {
