@@ -47,4 +47,5 @@ jobs:
           CAUSYNE_BROWSER_SOAK_ITERATIONS: ${{ inputs.iterations }}
           CAUSYNE_BROWSER_SOAK_WORKSPACES: ${{ inputs.workspaces }}
           CAUSYNE_BROWSER_SOAK_RSS_LIMIT_MIB: "512"
+          CAUSYNE_BROWSER_SOAK_TREE_PSS_LIMIT_MIB: "3072"
         run: node scripts/verify-browser-soak.mjs
