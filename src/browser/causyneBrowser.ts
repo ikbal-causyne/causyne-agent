@@ -1698,9 +1698,10 @@ export class CausyneBrowser {
     if (!action || typeof action.type !== 'string') throw new Error('Every browser action needs a type');
     if (action.type === 'newTab' || action.type === 'new_tab') {
       const initialUrl = action.macro
-        ? (expandSearchMacro(action.macro, action.query ?? action.text ?? '') ?? undefined)
+        ? expandSearchMacro(action.macro, action.query ?? action.text ?? '')
         : action.url;
-      const state = await this.createTab(initialUrl);
+      if (action.macro && !initialUrl) throw new Error(`Unsupported search macro: ${action.macro}`);
+      const state = await this.createTab(initialUrl ?? undefined);
       return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page) };
     }
     if (action.type === 'listTabs' || action.type === 'list_tabs') {

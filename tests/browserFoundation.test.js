@@ -324,6 +324,13 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('newTab rejects unknown search macros rather than opening a misleading blank tab', async () => {
+    const { browser, session } = fakeRuntime();
+    await assert.rejects(browser.run([{ type: 'newTab', macro: '@no_such_search', query: 'test' }]), /Unsupported search macro/);
+    assert.equal(session.openPages.length, 1);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
