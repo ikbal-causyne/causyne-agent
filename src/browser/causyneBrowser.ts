@@ -975,6 +975,7 @@ export class CausyneBrowser {
   private tabs = new Map<string, TabState>();
   private activeTabId: string | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
+  private idleGeneration = 0;
   private securedPages = new WeakSet<object>();
   private pageStates = new WeakMap<object, TabState>();
   private contextRouteInstalled = false;
@@ -1066,7 +1067,13 @@ export class CausyneBrowser {
   }
 
   async search(query: string, options: { skipPublicFallback?: boolean } = {}): Promise<SearchResult[]> {
-    return this.enqueueOperation(() => this.searchUnlocked(query, options));
+    return this.enqueueOperation(async () => {
+      try {
+        return await this.searchUnlocked(query, options);
+      } finally {
+        if (this.session) this.touch();
+      }
+    });
   }
 
   private async searchUnlocked(query: string, options: { skipPublicFallback?: boolean } = {}): Promise<SearchResult[]> {
@@ -1120,6 +1127,10 @@ export class CausyneBrowser {
   }
 
   async snapshot(offset = 0): Promise<SnapshotWindow & { tabId: string; url: string; title: string; refsCount: number; structure?: PageStructure | null }> {
+    return this.enqueueOperation(() => this.snapshotUnlocked(offset));
+  }
+
+  private async snapshotUnlocked(offset = 0): Promise<SnapshotWindow & { tabId: string; url: string; title: string; refsCount: number; structure?: PageStructure | null }> {
     await this.start();
     const state = await this.activeTab();
     await this.restoreLastTargetIfBlank(state);
@@ -1135,6 +1146,7 @@ export class CausyneBrowser {
   }
 
   async close(): Promise<void> {
+    this.idleGeneration++;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
     const session = this.session;
@@ -1799,7 +1811,7 @@ export class CausyneBrowser {
       return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page), output: 'Rendered in an isolated internal preview. This browser-only origin is not user-openable. Start a real local server with sysRunBg if the user needs an interactive URL.' };
     }
     if (action.type === 'snapshot' || action.type === 'scrape') {
-      const snapshot = await this.snapshot(action.offset ?? 0);
+      const snapshot = await this.snapshotUnlocked(action.offset ?? 0);
       return {
         action: action.type,
         tabId: snapshot.tabId,
@@ -1977,8 +1989,13 @@ export class CausyneBrowser {
   }
 
   private touch(): void {
+    const generation = ++this.idleGeneration;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => { void this.close(); }, IDLE_CLOSE_MS);
+    this.idleTimer = setTimeout(() => {
+      void this.enqueueOperation(async () => {
+        if (generation === this.idleGeneration) await this.close();
+      });
+    }, IDLE_CLOSE_MS);
     this.idleTimer.unref?.();
   }
 }
