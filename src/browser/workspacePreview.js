@@ -23,7 +23,6 @@ export async function readBoundedPreviewFile(file, maxBytes = MAX_PREVIEW_BYTES)
         await handle.close();
     }
 }
-
 const MIME = {
     '.html': 'text/html', '.htm': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
     '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
