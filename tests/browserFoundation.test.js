@@ -363,6 +363,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('browser upload does not coerce non-string paths into filesystem names', async () => {
+    const { browser, session } = fakeRuntime();
+    for (const pathValue of [[null], [42], ['   ']]) {
+      await assert.rejects(browser.run([{ type:'upload',selector:'input',filePath:pathValue }]), /non-empty filePath strings/);
+    }
+    assert.equal(session.openPages[0].calls.some(call => call[0] === 'upload'), false);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

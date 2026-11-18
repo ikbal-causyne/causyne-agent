@@ -1607,7 +1607,8 @@ export class CausyneBrowser {
     const list = Array.isArray(rawPaths) ? rawPaths : [rawPaths];
     const resolvedFiles: string[] = [];
     for (const item of list) {
-      const resolved = path.resolve(workspace, String(item));
+      if (typeof item !== 'string' || !item.trim()) throw new Error('upload requires non-empty filePath strings');
+      const resolved = path.resolve(workspace, item);
       if (!isWithin(workspace, resolved)) {
         throw new Error('Upload file must stay inside the selected workspace');
       }
