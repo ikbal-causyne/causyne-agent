@@ -140,3 +140,6 @@ jobs:
           CAUSYNE_BROWSER_SOAK_ITERATIONS: '12'
           CAUSYNE_BROWSER_SOAK_WORKSPACES: '3'
         run: node scripts/verify-browser-soak.mjs
+
+      - name: Verify agent-loop provider-tool round-trip in Chromium
+        run: node scripts/verify-browser-agent-loop.mjs
