@@ -3,6 +3,7 @@ import fsSync from 'fs';
 import path from 'path';
 import https from 'https';
 import http from 'http';
+import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 
 // Helper: Download a file or fallback to generating procedural dummy texture/obj if offline
 async function downloadOrGenerateFallback(url, targetPath, fallbackType = 'obj') {
@@ -148,7 +149,9 @@ export const gameAssetHarvester = {
         await fs.mkdir(targetDir, { recursive: true });
 
         const urlToFetch = assetUrl || catalog[0].url;
-        const fileName = path.basename(urlToFetch) || `asset_${Date.now()}.obj`;
+        await assertPublicWebUrl(urlToFetch);
+        const rawName = path.basename(new URL(urlToFetch).pathname) || `asset_${Date.now()}.obj`;
+        const fileName = rawName.replace(/[<>:"\\/|?*\x00-\x1f]/g, '_');
         const destFile = path.join(targetDir, fileName);
 
         const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fileName.endsWith('.svg') || fileName.endsWith('.png') ? 'svg' : 'obj');
