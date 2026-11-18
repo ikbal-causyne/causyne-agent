@@ -372,6 +372,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('download rejects malformed destinations before clicking a link', async () => {
+    const { browser, session } = fakeRuntime();
+    for (const outputFile of [42, {}, '  ']) {
+      await assert.rejects(browser.run([{type:'download',selector:'a',outputFile}]), /non-empty outputFile string/);
+    }
+    assert.equal(session.openPages[0].calls.some(call => call[0] === 'click'),false);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

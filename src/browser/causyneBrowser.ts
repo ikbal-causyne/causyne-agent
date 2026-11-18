@@ -1647,7 +1647,7 @@ export class CausyneBrowser {
   }
 
   private async saveDownload(state: TabState, action: BrowserAction, workspace: string): Promise<BrowserActionResult> {
-    if (!action.outputFile) throw new Error('download requires outputFile');
+    if (typeof action.outputFile !== 'string' || !action.outputFile.trim()) throw new Error('download requires non-empty outputFile string');
     const target = path.resolve(workspace, action.outputFile);
     if (!isWithin(workspace, target)) throw new Error('Download target must stay inside the selected workspace');
     await ensureSafeWorkspaceOutputPath(workspace, target);
