@@ -249,6 +249,10 @@ export const webFetch = {
                     error: 'HTTP 429 rate limit: respect the Retry-After window before retrying'
                 };
             }
+            if (args.outputFile && response.status === 204) {
+                await response.body?.cancel().catch(() => { });
+                return { success: false, status: 204, finalUrl: finalUrl.href, error: 'No downloadable content was returned (HTTP 204)' };
+            }
             if (!response.ok && method === 'GET' && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
                 await response.body?.cancel().catch(() => { });
                 const fallback = await browserFallback(finalUrl.href, workspace);
