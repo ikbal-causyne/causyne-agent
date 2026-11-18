@@ -131,3 +131,6 @@ jobs:
 
       - name: Exercise real browser runtime without an LLM API
         run: node scripts/verify-browser-runtime.mjs
+
+      - name: Verify independent authenticated browser sessions
+        run: node scripts/verify-browser-auth-isolation.mjs
