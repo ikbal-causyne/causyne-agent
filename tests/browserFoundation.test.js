@@ -397,6 +397,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('dropdown option selection rejects non-string values before any event', async () => {
+    const { browser, session } = fakeRuntime();
+    for (const value of [null, 123, { label: 'secret' }]) {
+      await assert.rejects(browser.run([{type:'selectOption',selector:'select',value}]),/requires a string value/);
+    }
+    assert.equal(session.openPages[0].calls.some(call => call[0] === 'select'),false);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

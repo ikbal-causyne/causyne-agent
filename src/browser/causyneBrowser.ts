@@ -1781,7 +1781,7 @@ export class CausyneBrowser {
     }
     if (action.type === 'selectOption' || action.type === 'select') {
       const value = action.value ?? action.option ?? action.text;
-      if (value === undefined) throw new Error(`${action.type} requires value`);
+      if (typeof value !== 'string') throw new Error(`${action.type} requires a string value`);
       const locator = await this.locatorFor(state, action);
       await this.performSelectOption(locator, value);
       return { action: action.type, tabId: state.id, url: state.page.url(), output: 'Option selected' };
