@@ -1002,7 +1002,8 @@ export class CausyneBrowser {
   }
 
   async search(query: string, options: { skipPublicFallback?: boolean } = {}): Promise<SearchResult[]> {
-    const cleaned = String(query ?? '').trim();
+    if (typeof query !== 'string') throw new Error('Browser search query must be a string');
+    const cleaned = query.trim();
     if (!cleaned || cleaned.length > 1_000) throw new Error('Search query must contain 1-1000 characters');
     const failures: string[] = [];
 

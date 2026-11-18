@@ -390,6 +390,13 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('browser search rejects structured query coercion without opening sites', async () => {
+    const { browser, session } = fakeRuntime();
+    await assert.rejects(browser.search({ query: 'private' }), /query must be a string/);
+    assert.equal(session.openPages.length,0);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
