@@ -11,7 +11,7 @@ import {
 } from '../provisioning/capabilityProvisioner.js';
 import { resolveBrowserRuntime, type PreparedBrowserRuntime } from './browserRuntime.js';
 import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
-import { ensureSafeWorkspaceInputPath } from './workspacePathSafety.js';
+import { ensureSafeWorkspaceInputPath, ensureSafeWorkspaceOutputPath } from './workspacePathSafety.js';
 import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
 import { searchPublicWeb } from './searchProviders.js';
 
@@ -1648,6 +1648,7 @@ export class CausyneBrowser {
     if (!action.outputFile) throw new Error('download requires outputFile');
     const target = path.resolve(workspace, action.outputFile);
     if (!isWithin(workspace, target)) throw new Error('Download target must stay inside the selected workspace');
+    await ensureSafeWorkspaceOutputPath(workspace, target);
     const locator = await this.locatorFor(state, action);
     const [download] = await Promise.all([
       state.page.waitForEvent('download', { timeout: NAVIGATION_TIMEOUT_MS }) as Promise<BrowserDownload>,
@@ -1657,7 +1658,6 @@ export class CausyneBrowser {
     // filename alter the caller's workspace-scoped target.
     const finalTarget = target;
     const temporary = `${finalTarget}.part-${crypto.randomUUID()}`;
-    await fs.mkdir(path.dirname(finalTarget), { recursive: true });
     try {
       await download.saveAs(temporary);
       const failure = await download.failure();

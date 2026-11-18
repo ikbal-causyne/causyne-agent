@@ -247,6 +247,20 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('a download cannot follow a workspace directory symlink', async () => {
+    const { browser, workspace } = fakeRuntime();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-download-outside-'));
+    workspaces.push(outside);
+    fs.symlinkSync(outside, path.join(workspace, 'escape'), 'dir');
+    await browser.run([{ type: 'snapshot' }]);
+    await assert.rejects(
+      browser.run([{ type: 'download', ref: 'e2', outputFile: 'escape/secret.bin' }]),
+      /outside the selected workspace/
+    );
+    assert.equal(fs.existsSync(path.join(outside, 'secret.bin')), false);
+    await browser.close();
+  });
+
   test('a download cannot escape the workspace', async () => {
     const { browser } = fakeRuntime();
     await browser.run([{ type: 'snapshot' }]);
