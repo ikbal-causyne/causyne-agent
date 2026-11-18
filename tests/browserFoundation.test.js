@@ -167,6 +167,24 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('mutating browser actions are never replayed after a closed-context error', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let clicks = 0;
+    page.locator = () => ({
+      first() { return this; },
+      async click() { clicks++; throw new Error('browser has been closed'); }
+    });
+    await assert.rejects(
+      browser.run([{ type: 'click', selector: 'button' }]),
+      /browser has been closed/
+    );
+    assert.equal(clicks, 1);
+    assert.equal(session.openPages.length, 1);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

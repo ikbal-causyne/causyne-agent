@@ -717,7 +717,7 @@ export class CausyneBrowser {
                 results.push(await this.runAction(action, activeWorkspace));
             }
             catch (error) {
-                if (isDeadContextError(error)) {
+                if (isDeadContextError(error) && ['goto', 'open', 'navigate', 'preview', 'snapshot', 'scrape', 'search', 'links', 'images', 'extract', 'listTabs', 'list_tabs'].includes(action.type)) {
                     await this.close();
                     await this.start();
                     results.push(await this.runAction(action, activeWorkspace));
