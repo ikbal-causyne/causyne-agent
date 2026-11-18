@@ -1,39 +1,23 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import https from 'https';
-import http from 'http';
+import { webFetch } from './webFetch.js';
+import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 
-// Helper: Download a file or fallback to generating procedural dummy texture/obj if offline
-async function downloadOrGenerateFallback(url, targetPath, fallbackType = 'obj') {
-  return new Promise(async (resolve) => {
-    try {
-      const client = url.startsWith('https') ? https : http;
-      const req = client.get(url, { timeout: 8000 }, (res) => {
-        if (res.statusCode === 200) {
-          const fileStream = fsSync.createWriteStream(targetPath);
-          res.pipe(fileStream);
-          fileStream.on('finish', () => {
-            fileStream.close();
-            resolve({ success: true, source: 'downloaded', size: fsSync.statSync(targetPath).size });
-          });
-        } else {
-          generateFallbackAsset(targetPath, fallbackType).then(resFall => resolve(resFall));
-        }
-      });
-      req.on('error', () => {
-        generateFallbackAsset(targetPath, fallbackType).then(resFall => resolve(resFall));
-      });
-      req.on('timeout', () => {
-        req.destroy();
-        generateFallbackAsset(targetPath, fallbackType).then(resFall => resolve(resFall));
-      });
-    } catch (e) {
-      const resFall = await generateFallbackAsset(targetPath, fallbackType);
-      resolve(resFall);
-    }
-  });
+// A public, bounded, workspace-scoped download with an explicitly reported procedural fallback.
+async function downloadOrGenerateFallback(url, targetPath, fallbackType = 'obj', workspaceRoot = path.dirname(targetPath)) {
+  await ensureSafeWorkspaceOutputPath(workspaceRoot, targetPath);
+  const download = await webFetch.execute(
+    { url, outputFile: path.relative(workspaceRoot, targetPath) },
+    { workspaceRoot }
+  );
+  if (download.success) {
+    const stat = await fs.stat(targetPath);
+    return { success: true, source: 'downloaded', size: stat.size };
+  }
+  const fallback = await generateFallbackAsset(targetPath, fallbackType);
+  return { ...fallback, downloadError: String(download.error ?? 'Download unavailable') };
 }
 
 async function generateFallbackAsset(targetPath, fallbackType) {
@@ -154,7 +138,7 @@ export const gameAssetHarvester = {
         const fileName = rawName.replace(/[<>:"\\/|?*\x00-\x1f]/g, '_');
         const destFile = path.join(targetDir, fileName);
 
-        const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fileName.endsWith('.svg') || fileName.endsWith('.png') ? 'svg' : 'obj');
+        const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fileName.endsWith('.svg') || fileName.endsWith('.png') ? 'svg' : 'obj', projectDir);
 
         return {
           success: true,
@@ -183,9 +167,9 @@ export const gameAssetHarvester = {
           await fs.mkdir(weaponDir, { recursive: true });
           await fs.mkdir(tileDir, { recursive: true });
 
-          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/knight.obj', path.join(charDir, 'knight.obj'), 'obj');
-          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/sword.obj', path.join(weaponDir, 'sword.obj'), 'obj');
-          const r3 = await downloadOrGenerateFallback('https://kenney.nl/assets/2d/dungeon.svg', path.join(tileDir, 'dungeon_tiles.svg'), 'svg');
+          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/knight.obj', path.join(charDir, 'knight.obj'), 'obj', projectDir);
+          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/sword.obj', path.join(weaponDir, 'sword.obj'), 'obj', projectDir);
+          const r3 = await downloadOrGenerateFallback('https://kenney.nl/assets/2d/dungeon.svg', path.join(tileDir, 'dungeon_tiles.svg'), 'svg', projectDir);
           results.push({ item: 'knight.obj', status: r1 }, { item: 'sword.obj', status: r2 }, { item: 'dungeon_tiles.svg', status: r3 });
         } else {
           // Cyberpunk racer
@@ -194,8 +178,8 @@ export const gameAssetHarvester = {
           await fs.mkdir(carDir, { recursive: true });
           await fs.mkdir(trackDir, { recursive: true });
 
-          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/race_car.obj', path.join(carDir, 'cyberpunk_racer.obj'), 'obj');
-          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/highway_barrier.obj', path.join(trackDir, 'barrier.obj'), 'obj');
+          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/race_car.obj', path.join(carDir, 'cyberpunk_racer.obj'), 'obj', projectDir);
+          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/highway_barrier.obj', path.join(trackDir, 'barrier.obj'), 'obj', projectDir);
           results.push({ item: 'cyberpunk_racer.obj', status: r1 }, { item: 'barrier.obj', status: r2 });
         }
 
