@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { webFetch } from './webFetch.js';
 import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
@@ -23,6 +24,16 @@ async function downloadOrGenerateFallback(url, targetPath, fallbackType = 'obj',
   return { ...fallback, downloadError: String(download.error ?? 'Download unavailable') };
 }
 
+async function writeFallbackAtomically(targetPath, payload, encoding) {
+  const temp = `${targetPath}.part-${randomUUID()}`;
+  try {
+    await fs.writeFile(temp, payload, encoding ? { encoding, mode: 0o600 } : { mode: 0o600 });
+    await fs.rename(temp, targetPath);
+  } finally {
+    await fs.unlink(temp).catch(() => {});
+  }
+}
+
 async function generateFallbackAsset(targetPath, fallbackType) {
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   if (fallbackType === 'obj') {
@@ -43,15 +54,15 @@ f 7 8 2 1
 f 2 8 6 4
 f 7 1 3 5
 `;
-    await fs.writeFile(targetPath, objContent, 'utf8');
+    await writeFallbackAtomically(targetPath, objContent, 'utf8');
   } else if (fallbackType === 'png') {
-    await fs.writeFile(targetPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAA9ElEQVR42u2bwRGDMAwE4SZVkaLyTwH8UxR1kRJCLFmW8OrN+O7W9/HYrNt+nsvEo2XyAQAAAAAAAAAAAAAAwKzziBY83q+f3zz3T5ifNeIwdCX0KBhdAViCR4HoAsAzeG8QqhS+x/qqFL6HjqqF99ZTxfCeuqoa3ktflcN7+OAsUH33rX5owB123+KLBgDgJvVv9UcDAAAAAAAAAAAAwOWJvLRomX/90QAABNQsa/1pgAVAtha0+qEBI6hn2X2XBoyGYNVXBhMjdZXJzAg9ZTQVqaPM5iLW540Qr8SC/xma8p0gx2EAAAAAAAAAAAAAAADkmy/UVmFrjmXOcQAAAABJRU5ErkJggg==', 'base64'));
+    await writeFallbackAtomically(targetPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAA9ElEQVR42u2bwRGDMAwE4SZVkaLyTwH8UxR1kRJCLFmW8OrN+O7W9/HYrNt+nsvEo2XyAQAAAAAAAAAAAAAAwKzziBY83q+f3zz3T5ifNeIwdCX0KBhdAViCR4HoAsAzeG8QqhS+x/qqFL6HjqqF99ZTxfCeuqoa3ktflcN7+OAsUH33rX5owB123+KLBgDgJvVv9UcDAAAAAAAAAAAAwOWJvLRomX/90QAABNQsa/1pgAVAtha0+qEBI6hn2X2XBoyGYNVXBhMjdZXJzAg9ZTQVqaPM5iLW540Qr8SC/xma8p0gx2EAAAAAAAAAAAAAAADkmy/UVmFrjmXOcQAAAABJRU5ErkJggg==', 'base64'));
   } else if (fallbackType === 'svg') {
     // Generate SVG/dummy texture for 2D sprite
     const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#3a86ff"/><circle cx="32" cy="32" r="20" fill="#ff006e"/></svg>`;
-    await fs.writeFile(targetPath, svgContent, 'utf8');
+    await writeFallbackAtomically(targetPath, svgContent, 'utf8');
   } else {
-    await fs.writeFile(targetPath, `[Sovereign Asset Stub: ${path.basename(targetPath)}]`, 'utf8');
+    await writeFallbackAtomically(targetPath, `[Sovereign Asset Stub: ${path.basename(targetPath)}]`, 'utf8');
   }
   return { success: true, source: 'procedural_cc0_fallback', size: fsSync.statSync(targetPath).size };
 }
