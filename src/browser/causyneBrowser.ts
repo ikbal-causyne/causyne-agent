@@ -1593,8 +1593,8 @@ export class CausyneBrowser {
     try {
       const selected = await locator.selectOption(value, { timeout: ACTION_TIMEOUT_MS });
       if (!Array.isArray(selected) || selected.length > 0) return;
-    } catch {
-      // Retry by label
+    } catch (error) {
+      if (!/no option|option.*not found|did not match/i.test(errorMessage(error))) throw error;
     }
     await locator.selectOption({ label: value }, { timeout: ACTION_TIMEOUT_MS });
   }

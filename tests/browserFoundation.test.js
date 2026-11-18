@@ -340,6 +340,20 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('selectOption does not retry after unrelated or ambiguous browser failures', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let calls = 0;
+    page.locator = () => ({
+      first() { return this; },
+      async selectOption() { calls++; throw new Error('browser has been closed'); }
+    });
+    await assert.rejects(browser.run([{ type: 'selectOption', selector: 'select', value: 'blue' }]), /browser has been closed/);
+    assert.equal(calls, 1);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
