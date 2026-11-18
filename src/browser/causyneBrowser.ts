@@ -1884,7 +1884,7 @@ export class CausyneBrowser {
       }
       const data = await state.page.evaluate(
         LINKS_EXTRACT_SCRIPT,
-        { selector: action.selector, offset: action.offset ?? 0, limit: action.limit ?? 50 }
+        { selector: action.selector, offset: boundedFiniteInteger(action.offset, 0, 0, 100_000), limit: boundedFiniteInteger(action.limit, 50, 1, 200) }
       );
       return { action: action.type, tabId: state.id, url: state.page.url(), data };
     } else if (action.type === 'images') {

@@ -406,6 +406,18 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('links pagination bounds negative and unbounded caller offsets and limits', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{type:'snapshot'}]);
+    const page = session.openPages[0];
+    let provided;
+    page.evaluate = async (_script, options) => {provided = options; return {links:[],totalLinks:0};};
+    await browser.run([{type:'links',offset:-100,limit:1000000}]);
+    assert.equal(provided.offset,0);
+    assert.equal(provided.limit,200);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
