@@ -704,6 +704,7 @@ export class CausyneBrowser {
     tabs = new Map();
     activeTabId = null;
     idleTimer = null;
+    idleGeneration = 0;
     securedPages = new WeakSet();
     pageStates = new WeakMap();
     contextRouteInstalled = false;
@@ -794,7 +795,15 @@ export class CausyneBrowser {
         return results;
     }
     async search(query, options = {}) {
-        return this.enqueueOperation(() => this.searchUnlocked(query, options));
+        return this.enqueueOperation(async () => {
+            try {
+                return await this.searchUnlocked(query, options);
+            }
+            finally {
+                if (this.session)
+                    this.touch();
+            }
+        });
     }
     async searchUnlocked(query, options = {}) {
         if (typeof query !== 'string')
@@ -848,6 +857,9 @@ export class CausyneBrowser {
         throw new Error(`Search providers exhausted. ${failures.join('; ')}`);
     }
     async snapshot(offset = 0) {
+        return this.enqueueOperation(() => this.snapshotUnlocked(offset));
+    }
+    async snapshotUnlocked(offset = 0) {
         await this.start();
         const state = await this.activeTab();
         await this.restoreLastTargetIfBlank(state);
@@ -862,6 +874,7 @@ export class CausyneBrowser {
         };
     }
     async close() {
+        this.idleGeneration++;
         if (this.idleTimer)
             clearTimeout(this.idleTimer);
         this.idleTimer = null;
@@ -1581,7 +1594,7 @@ export class CausyneBrowser {
             return { action: action.type, tabId: state.id, url: state.page.url(), title: await this.safePageTitle(state.page), output: 'Rendered in an isolated internal preview. This browser-only origin is not user-openable. Start a real local server with sysRunBg if the user needs an interactive URL.' };
         }
         if (action.type === 'snapshot' || action.type === 'scrape') {
-            const snapshot = await this.snapshot(action.offset ?? 0);
+            const snapshot = await this.snapshotUnlocked(action.offset ?? 0);
             return {
                 action: action.type,
                 tabId: snapshot.tabId,
@@ -1780,9 +1793,15 @@ export class CausyneBrowser {
         }
     }
     touch() {
+        const generation = ++this.idleGeneration;
         if (this.idleTimer)
             clearTimeout(this.idleTimer);
-        this.idleTimer = setTimeout(() => { void this.close(); }, IDLE_CLOSE_MS);
+        this.idleTimer = setTimeout(() => {
+            void this.enqueueOperation(async () => {
+                if (generation === this.idleGeneration)
+                    await this.close();
+            });
+        }, IDLE_CLOSE_MS);
         this.idleTimer.unref?.();
     }
 }
