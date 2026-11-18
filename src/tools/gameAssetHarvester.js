@@ -139,7 +139,12 @@ export const gameAssetHarvester = {
         if (!projectDir || !fsSync.existsSync(projectDir)) {
           return { success: false, error: `Valid projectDir is required for asset download. Found: ${projectDir}` };
         }
-        const targetDir = path.join(projectDir, 'assets', targetSubdir);
+        const assetsRoot = path.resolve(projectDir, 'assets');
+        const targetDir = path.resolve(assetsRoot, targetSubdir);
+        const relativeDir = path.relative(assetsRoot, targetDir);
+        if (relativeDir === '..' || relativeDir.startsWith(`..${path.sep}`) || path.isAbsolute(relativeDir)) {
+          return { success: false, error: 'targetSubdir must remain inside project assets/' };
+        }
         await fs.mkdir(targetDir, { recursive: true });
 
         const urlToFetch = assetUrl || catalog[0].url;
