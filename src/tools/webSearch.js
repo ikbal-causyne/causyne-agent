@@ -1,5 +1,28 @@
 import { BrowserCapabilityError, causyneBrowser } from '../browser/causyneBrowser.js';
-import { searchPublicWeb } from '../browser/searchProviders.js';
+import { publicResultUrl, searchPublicWeb } from '../browser/searchProviders.js';
+export function normalizeSearchResults(results) {
+    const safe = [];
+    const clean = (value, length) => value
+        .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ')
+        .replace(/\s+/g, ' ').trim().slice(0, length);
+    for (const item of results) {
+        if (!item || typeof item.title !== 'string' || typeof item.url !== 'string')
+            continue;
+        const url = publicResultUrl(item.url);
+        if (!url)
+            continue;
+        const title = clean(item.title, 300);
+        if (!title)
+            continue;
+        safe.push({
+            title, url, snippet: clean(typeof item.snippet === 'string' ? item.snippet : '', 500),
+            engine: clean(typeof item.engine === 'string' ? item.engine : 'unknown', 40)
+        });
+        if (safe.length === 10)
+            break;
+    }
+    return safe;
+}
 function renderResults(query, results) {
     const lines = [`Search results for "${query}"`, ''];
     for (const [index, result] of results.entries()) {
@@ -32,14 +55,18 @@ export const webSearch = {
             return { success: false, error: 'Search query must contain 1-1000 characters' };
         let lightweightFailure = '';
         try {
-            const results = await searchPublicWeb(query);
+            const results = normalizeSearchResults(await searchPublicWeb(query));
+            if (results.length === 0)
+                throw new Error('Public search returned no safe results');
             return { success: true, output: renderResults(query, results), results };
         }
         catch (error) {
             lightweightFailure = error instanceof Error ? error.message : String(error);
         }
         try {
-            const results = await causyneBrowser().search(query, { skipPublicFallback: true });
+            const results = normalizeSearchResults(await causyneBrowser().search(query, { skipPublicFallback: true }));
+            if (results.length === 0)
+                throw new Error('Rendered search returned no safe results');
             return { success: true, output: renderResults(query, results), results };
         }
         catch (error) {
