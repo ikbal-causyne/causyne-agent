@@ -95,8 +95,8 @@ const server = http.createServer((request, response) => {
       response.writeHead(400).end('Invalid account');
       return;
     }
-    response.setHeader('set-cookie', `soak_account=${account}; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax`);
-    response.end(`<html><body><h1>Signed in: ${account}</h1></body></html>`);
+    response.setHeader('set-cookie', `soak_account=${account}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`);
+    response.end('<html><body><h1>Signed in</h1></body></html>');
     return;
   }
   if (url.pathname === '/private') {
@@ -151,9 +151,17 @@ try {
     server.listen(0, '127.0.0.1', resolve);
   });
   const base = `http://127.0.0.1:${server.address().port}`;
+  const rejectedLogin = await fetch(`${base}/login?account=${encodeURIComponent('<script>alert(1)</script>')}`);
+  assert.equal(rejectedLogin.status, 400, 'unknown accounts must be rejected');
+  assert.equal(rejectedLogin.headers.get('set-cookie'), null, 'rejected accounts must not receive credentials');
+  assert.equal((await rejectedLogin.text()).includes('<script>'), false, 'invalid input must not be reflected');
+  const validLogin = await fetch(`${base}/login?account=W0`);
+  assert.equal(validLogin.status, 200);
+  assert.match(validLogin.headers.get('set-cookie') ?? '', /; Secure;/);
+  assert.equal((await validLogin.text()).includes('W0'), false, 'login HTML must not reflect account identifiers');
   await Promise.all(browsers.map(async (browser, index) => {
     const result = await browser.run([{ type: 'goto', url: `${base}/login?account=W${index}` }, { type: 'snapshot' }]);
-    assert.match(result[1].output, new RegExp(`Signed in: W${index}`));
+    assert.match(result[1].output, /Signed in/);
   }));
 
   for (let step = 0; step < iterations; step++) {
