@@ -40,6 +40,7 @@ function cleanMarkup(value: string): string {
 
 export function publicResultUrl(value: string): string | null {
   try {
+    if (value.length > 4_096) return null;
     const parsed = new URL(decodeEntities(value));
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;
     const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');

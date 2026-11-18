@@ -25,6 +25,8 @@ function cleanMarkup(value) {
 }
 export function publicResultUrl(value) {
     try {
+        if (value.length > 4_096)
+            return null;
         const parsed = new URL(decodeEntities(value));
         if (!['http:', 'https:'].includes(parsed.protocol))
             return null;
