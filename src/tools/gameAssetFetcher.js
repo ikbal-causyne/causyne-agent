@@ -389,6 +389,9 @@ export const gameAssetFetcher = {
         if (filename !== requestedName || filename === '.' || filename === '..') {
           return { success: false, error: 'outputFilename must be a plain file name without directory components.' };
         }
+        if (path.extname(filename).toLowerCase() !== '.wav') {
+          return { success: false, error: 'Synthesized PCM audio must use a .wav output filename.' };
+        }
         const filePath = path.join(targetDir, filename);
 
         const wavBuffer = synthesizeWavBuffer(preset);
