@@ -33,12 +33,12 @@ async function processTreeRss() {
   if (process.platform !== 'linux') return null;
   const entries = new Map();
   for (const entry of await fs.readdir('/proc', { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\\d+$/.test(entry.name)) continue;
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
     const pid = Number(entry.name);
     try {
       const status = await fs.readFile(`/proc/${pid}/status`, 'utf8');
-      const parent = Number(/^PPid:\\s*(\\d+)/m.exec(status)?.[1] ?? -1);
-      const rssKiB = Number(/^VmRSS:\\s*(\\d+)/m.exec(status)?.[1] ?? 0);
+      const parent = Number(/^PPid:\s*(\d+)/m.exec(status)?.[1] ?? -1);
+      const rssKiB = Number(/^VmRSS:\s*(\d+)/m.exec(status)?.[1] ?? 0);
       entries.set(pid, { parent, rssKiB });
     } catch {
       // The process may have exited during sampling.
@@ -164,6 +164,7 @@ try {
     assert.ok(peakRss <= rssLimitMiB * 1024 * 1024, 'Node harness RSS exceeded configured limit');
     const tree = await processTreeRss();
     if (tree) {
+      assert.ok(tree.rssMiB > 0 && tree.processCount > 1, 'Process-tree sampler did not observe Chromium children');
       peakTreeRssMiB = Math.max(peakTreeRssMiB, tree.rssMiB);
       peakChildProcesses = Math.max(peakChildProcesses, tree.processCount);
       assert.ok(tree.rssMiB <= treeRssLimitMiB, 'Browser process tree exceeded configured RSS limit');
