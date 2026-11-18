@@ -143,7 +143,8 @@ export const gameAssetHarvester = {
         return {
           success: true,
           output: JSON.stringify({
-            status: 'ASSET_HARVESTED',
+            status: resDownload.source === 'downloaded' ? 'ASSET_DOWNLOADED' : 'PROCEDURAL_FALLBACK_GENERATED',
+            downloaded: resDownload.source === 'downloaded',
             url: urlToFetch,
             destination: destFile,
             download_result: resDownload
