@@ -1596,7 +1596,7 @@ export class CausyneBrowser {
             }
             else {
                 if (action.waitForNetwork) {
-                    await state.page.waitForLoadState('networkidle', { timeout: waitTimeout }).catch(() => { });
+                    await state.page.waitForLoadState('networkidle', { timeout: waitTimeout });
                 }
                 await state.page.evaluate(WAIT_FOR_PAGE_READY_SCRIPT).catch(() => { });
                 await state.page.waitForTimeout(Math.min(waitTimeout, 2_000));

@@ -239,6 +239,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('network-idle waits propagate browser timeout instead of reporting completion', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    page.waitForLoadState = async () => { throw new Error('networkidle timeout'); };
+    await assert.rejects(browser.run([{ type: 'wait', timeout: 100, waitForNetwork: true }]), /networkidle timeout/);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
