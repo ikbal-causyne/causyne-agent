@@ -153,7 +153,10 @@ export async function searchPublicWeb(query: string, options: SearchOptions = {}
             'User-Agent': 'Causyne-Agent/1.10 (+https://causyne.com)'
           }
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => {});
+          throw new Error(`HTTP ${response.status}`);
+        }
         const results = provider.parse(await readBoundedText(response));
         if (results.length > 0) return results;
         failures.push(`${provider.engine}: no results`);
