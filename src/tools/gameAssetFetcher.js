@@ -111,7 +111,7 @@ async function fetchCuratedAssetWithSafeRedirects(url) {
 
 function isSafeOutputFilename(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 255
-    && value !== '.' && value !== '..' && !/[\\/\\:*?"<>|\\x00-\\x1f]/.test(value);
+    && value !== '.' && value !== '..' && !/[\\\/:*?"<>|\x00-\x1f]/.test(value);
 }
 
 function getWorkspaceTempDir() {
