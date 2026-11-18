@@ -57,12 +57,12 @@ async function fetchFollowingSafeRedirects(urlValue, options) {
         const response = await fetch(url, { ...request, redirect: 'manual' });
         if (![301, 302, 303, 307, 308].includes(response.status))
             return { response, finalUrl: url };
+        const location = response.headers.get('location');
+        await response.body?.cancel().catch(() => { });
         if (redirect === MAX_REDIRECTS)
             throw new Error(`Too many redirects (maximum ${MAX_REDIRECTS})`);
-        const location = response.headers.get('location');
         if (!location)
             throw new Error(`HTTP ${response.status} redirect has no Location header`);
-        await response.body?.cancel().catch(() => { });
         const nextUrl = await assertPublicWebUrl(new URL(location, url).href);
         if (nextUrl.origin !== url.origin) {
             const forwardedHeaders = new Headers(request.headers);
