@@ -182,6 +182,9 @@ export const gameAssetHarvester = {
         const assetsDir = path.join(projectDir, 'assets');
         const results = [];
 
+        if (!['rpg_starter_pack', 'dungeon_pack', 'cyberpunk_racer_pack'].includes(packType)) {
+          return { success: false, error: 'Unknown starter pack type' };
+        }
         if (packType === 'rpg_starter_pack' || packType === 'dungeon_pack') {
           const charDir = path.join(assetsDir, '3d/characters');
           const weaponDir = path.join(assetsDir, '3d/weapons');
