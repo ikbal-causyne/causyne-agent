@@ -118,7 +118,7 @@ test('shared host schedules rendering through normal tool dispatch before accept
     executions++;
     assert.equal(context.parentLoop.workspaceRoot, root);
     assert.deepEqual(args.actions, [{ type: 'preview', filePath: 'index.html' }, { type: 'snapshot' }]);
-    return { success: true, output: 'Rendered heading: Study', data: [{ action: 'preview' }, { action: 'snapshot', data: { runtimeErrors: [] } }] };
+    return { success: true, output: 'Rendered heading: Study', data: [{ action: 'preview' }, { action: 'snapshot', output: '- heading "Study"', data: { runtimeErrors: [] } }] };
   };
   const plan = (status: string) => ({ id: `plan-${status}`, type: 'function', function: { name: 'update_plan', arguments: JSON.stringify({ plan: [{ step: 'Create page', status }, { step: 'Verify rendering', status }] }) } });
   try {
