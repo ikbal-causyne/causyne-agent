@@ -19,6 +19,7 @@ function boundedEnv(name, fallback, max) {
 const iterations = boundedEnv('CAUSYNE_BROWSER_SOAK_ITERATIONS', 12, 10_000);
 const workspaceCount = boundedEnv('CAUSYNE_BROWSER_SOAK_WORKSPACES', 3, 8);
 const rssLimitMiB = boundedEnv('CAUSYNE_BROWSER_SOAK_RSS_LIMIT_MIB', 512, 8_192);
+const treeRssLimitMiB = boundedEnv('CAUSYNE_BROWSER_SOAK_TREE_RSS_LIMIT_MIB', 3_072, 32_768);
 const executablePath = [
   process.env.CAUSYNE_BROWSER_EXECUTABLE,
   '/usr/bin/google-chrome',
@@ -27,6 +28,37 @@ const executablePath = [
   '/usr/bin/chromium-browser'
 ].filter(Boolean).find(existsSync);
 if (!executablePath) throw new Error('No Chromium/Chrome executable available for soak test');
+
+async function processTreeRss() {
+  if (process.platform !== 'linux') return null;
+  const entries = new Map();
+  for (const entry of await fs.readdir('/proc', { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\\d+$/.test(entry.name)) continue;
+    const pid = Number(entry.name);
+    try {
+      const status = await fs.readFile(`/proc/${pid}/status`, 'utf8');
+      const parent = Number(/^PPid:\\s*(\\d+)/m.exec(status)?.[1] ?? -1);
+      const rssKiB = Number(/^VmRSS:\\s*(\\d+)/m.exec(status)?.[1] ?? 0);
+      entries.set(pid, { parent, rssKiB });
+    } catch {
+      // The process may have exited during sampling.
+    }
+  }
+  const descendantPids = new Set([process.pid]);
+  let changed;
+  do {
+    changed = false;
+    for (const [pid, details] of entries) {
+      if (!descendantPids.has(pid) && descendantPids.has(details.parent)) {
+        descendantPids.add(pid);
+        changed = true;
+      }
+    }
+  } while (changed);
+  let rssKiB = 0;
+  for (const pid of descendantPids) rssKiB += entries.get(pid)?.rssKiB ?? 0;
+  return { rssMiB: Math.ceil(rssKiB / 1024), processCount: descendantPids.size };
+}
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-browser-soak-'));
 let privateHits = 0;
@@ -87,6 +119,8 @@ function makeBrowser(index) {
 
 const browsers = Array.from({ length: workspaceCount }, (_, index) => makeBrowser(index));
 let peakRss = process.memoryUsage().rss;
+let peakTreeRssMiB = 0;
+let peakChildProcesses = 0;
 const started = Date.now();
 let completed = 0;
 try {
@@ -113,6 +147,13 @@ try {
       assert.match(result[3].output, /Clicks: 1/);
       const tabs = await browser.run([{ type: 'listTabs' }]);
       assert.equal(tabs[0].data.length, 1, 'browser must not leak tabs during repeated navigation');
+      if (step % 4 === 0) {
+        const newTab = await browser.run([{ type: 'newTab' }]);
+        assert.ok(newTab[0].tabId);
+        await browser.run([{ type: 'closeTab', tabId: newTab[0].tabId }]);
+        const afterClose = await browser.run([{ type: 'listTabs' }]);
+        assert.equal(afterClose[0].data.length, 1, 'temporary browser tabs must be reclaimed');
+      }
       completed++;
     }));
     // Reuse one profile after a mid-run restart, while other contexts are still live.
@@ -121,6 +162,12 @@ try {
     }
     peakRss = Math.max(peakRss, process.memoryUsage().rss);
     assert.ok(peakRss <= rssLimitMiB * 1024 * 1024, 'Node harness RSS exceeded configured limit');
+    const tree = await processTreeRss();
+    if (tree) {
+      peakTreeRssMiB = Math.max(peakTreeRssMiB, tree.rssMiB);
+      peakChildProcesses = Math.max(peakChildProcesses, tree.processCount);
+      assert.ok(tree.rssMiB <= treeRssLimitMiB, 'Browser process tree exceeded configured RSS limit');
+    }
   }
 
   // A page rendered from an untrusted preview origin must not reach a local
@@ -135,7 +182,7 @@ try {
   assert.equal(privateHits, 0, 'untrusted browser origin accessed the local service');
 
   const duration = Date.now() - started;
-  console.log(`REAL_BROWSER_SOAK_PASS workspaces=${workspaceCount} iterations=${iterations} completed=${completed} requests=${requestCount} elapsed_ms=${duration} node_peak_rss_mib=${Math.ceil(peakRss / 1048576)}`);
+  console.log(`REAL_BROWSER_SOAK_PASS workspaces=${workspaceCount} iterations=${iterations} completed=${completed} requests=${requestCount} elapsed_ms=${duration} node_peak_rss_mib=${Math.ceil(peakRss / 1048576)} tree_peak_rss_mib=${peakTreeRssMiB} peak_processes=${peakChildProcesses}`);
 } finally {
   await Promise.allSettled(browsers.map(browser => browser.close()));
   if (server.listening) await new Promise(resolve => server.close(resolve));
