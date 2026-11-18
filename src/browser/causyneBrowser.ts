@@ -1604,42 +1604,17 @@ export class CausyneBrowser {
     }
   }
 
-  private async performClick(state: TabState, locator: BrowserLocator, doubleClick = false): Promise<void> {
-    if (doubleClick && typeof locator.dblclick === 'function') {
+  private async performClick(_state: TabState, locator: BrowserLocator, doubleClick = false): Promise<void> {
+    if (doubleClick) {
+      if (typeof locator.dblclick !== 'function') {
+        throw new Error('Browser engine does not support double-click actions');
+      }
       await locator.dblclick({ timeout: ACTION_TIMEOUT_MS });
       return;
     }
-    try {
-      await locator.click({ timeout: ACTION_TIMEOUT_MS });
-    } catch (clickError) {
-      const msg = errorMessage(clickError);
-      if (msg.includes('intercepts pointer events')) {
-        try {
-          await locator.click({ timeout: 5_000, force: true });
-          return;
-        } catch {
-          if (
-            typeof locator.boundingBox === 'function' &&
-            typeof state.page.mouse.move === 'function' &&
-            typeof state.page.mouse.down === 'function' &&
-            typeof state.page.mouse.up === 'function'
-          ) {
-            const box = await locator.boundingBox({ timeout: 2_000 }).catch(() => null);
-            if (box && box.width > 0 && box.height > 0) {
-              const cx = box.x + box.width / 2;
-              const cy = box.y + box.height / 2;
-              await state.page.mouse.move(cx, cy);
-              await state.page.waitForTimeout(30);
-              await state.page.mouse.down();
-              await state.page.waitForTimeout(30);
-              await state.page.mouse.up();
-              return;
-            }
-          }
-        }
-      }
-      throw clickError;
-    }
+    // A failed actionability check must not become a forced or synthetic click.
+    // Retrying mutating actions could also submit the same form twice.
+    await locator.click({ timeout: ACTION_TIMEOUT_MS });
   }
 
   private async performType(state: TabState, locator: BrowserLocator, action: BrowserAction): Promise<void> {
