@@ -241,6 +241,13 @@ export const webFetch = {
           failureKind: 'authentication_required', error: 'HTTP 401: this resource requires authentication'
         };
       }
+      if (response.status === 503 && response.headers.has('retry-after')) {
+        const retryAfter = response.headers.get('retry-after');
+        await response.body?.cancel().catch(() => {});
+        return { success: false, status: 503, finalUrl: finalUrl.href, failureKind: 'service_unavailable',
+          ...(retryAfter ? { retryAfter } : {}),
+          error: 'HTTP 503: respect the Retry-After window before requesting this resource again' };
+      }
       if (response.status === 429) {
         const retryAfter = response.headers.get('retry-after');
         await response.body?.cancel().catch(() => {});
