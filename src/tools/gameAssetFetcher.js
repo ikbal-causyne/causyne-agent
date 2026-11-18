@@ -32,6 +32,44 @@ async function writeAssetAtomically(filePath, bytes) {
   }
 }
 
+export async function streamAssetResponseToFile(response, filePath, maxBytes = MAX_ASSET_BYTES, sandbox) {
+  if (!response.body) throw new Error('Downloaded asset had no response body');
+  await prepareAssetOutput(filePath, sandbox);
+  const temporary = `${filePath}.part-${randomUUID()}`;
+  const reader = response.body.getReader();
+  let handle;
+  let received = 0;
+  try {
+    handle = await fs.open(temporary, 'wx', 0o600);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      if (received + value.byteLength > maxBytes) {
+        throw new Error(`Asset exceeds the ${maxBytes / 1024 / 1024} MB download limit.`);
+      }
+      let written = 0;
+      while (written < value.byteLength) {
+        const result = await handle.write(value, written, value.byteLength - written, null);
+        if (result.bytesWritten <= 0) throw new Error('Asset download made no write progress');
+        written += result.bytesWritten;
+      }
+      received += value.byteLength;
+    }
+    await handle.close();
+    handle = undefined;
+    await fs.rename(temporary, filePath);
+    return received;
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+    await handle?.close().catch(() => {});
+    await fs.unlink(temporary).catch(() => {});
+  }
+}
+
 function getWorkspaceTempDir() {
   return path.join(process.cwd(), '.tmp_causyne_3d', 'assets');
 }
@@ -361,18 +399,7 @@ export const gameAssetFetcher = {
           await response.body?.cancel().catch(() => {});
           return { success: false, error: `Asset exceeds the ${MAX_ASSET_BYTES / 1024 / 1024} MB download limit.` };
         }
-        const chunks = [];
-        let received = 0;
-        for await (const chunk of response.body) {
-          received += chunk.length;
-          if (received > MAX_ASSET_BYTES) {
-            return { success: false, error: `Asset exceeds the ${MAX_ASSET_BYTES / 1024 / 1024} MB download limit.` };
-          }
-          chunks.push(chunk);
-        }
-        const buffer = Buffer.concat(chunks);
-        await prepareAssetOutput(filePath, sandbox);
-        await writeAssetAtomically(filePath, buffer);
+        const received = await streamAssetResponseToFile(response, filePath, MAX_ASSET_BYTES, sandbox);
 
         return {
           success: true,
@@ -380,7 +407,7 @@ export const gameAssetFetcher = {
             action: 'download_asset',
             url: url,
             output_file: filePath,
-            size_bytes: buffer.length,
+            size_bytes: received,
             extracted_folder: null,
             ready_to_use: !filename.toLowerCase().endsWith('.zip'),
             instructions: filename.toLowerCase().endsWith('.zip')
