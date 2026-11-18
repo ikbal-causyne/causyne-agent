@@ -381,6 +381,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('screenshots reject invalid output paths before capturing page content', async () => {
+    const { browser, session } = fakeRuntime();
+    for (const outputFile of [42, ['a.png'], '  ']) {
+      await assert.rejects(browser.run([{type:'screenshot',outputFile}]),/non-empty outputFile string/);
+    }
+    assert.equal(session.openPages.length,1);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

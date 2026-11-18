@@ -1674,7 +1674,7 @@ export class CausyneBrowser {
   }
 
   private async saveScreenshot(state: TabState, action: BrowserAction, workspace: string): Promise<BrowserActionResult> {
-    if (!action.outputFile) throw new Error('screenshot requires outputFile');
+    if (typeof action.outputFile !== 'string' || !action.outputFile.trim()) throw new Error('screenshot requires non-empty outputFile string');
     const target = path.resolve(workspace, action.outputFile);
     if (!isWithin(workspace, target)) throw new Error('Screenshot target must stay inside the selected workspace');
     const extension = path.extname(target).toLowerCase();
