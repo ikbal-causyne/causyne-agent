@@ -1390,19 +1390,14 @@ export class CausyneBrowser {
         }
         const locator = await this.locatorFor(state, action);
         if (typeof locator.setInputFiles === 'function') {
-            try {
-                await locator.setInputFiles(resolvedFiles, { timeout: ACTION_TIMEOUT_MS });
-                state.refs.clear();
-                return {
-                    action: action.type,
-                    tabId: state.id,
-                    url: state.page.url(),
-                    output: `Uploaded ${resolvedFiles.length} file(s)`
-                };
-            }
-            catch {
-                // Fall through to filechooser event
-            }
+            await locator.setInputFiles(resolvedFiles, { timeout: ACTION_TIMEOUT_MS });
+            state.refs.clear();
+            return {
+                action: action.type,
+                tabId: state.id,
+                url: state.page.url(),
+                output: `Uploaded ${resolvedFiles.length} file(s)`
+            };
         }
         const [chooser] = await Promise.all([
             state.page.waitForEvent('filechooser', { timeout: ACTION_TIMEOUT_MS }),

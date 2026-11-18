@@ -289,6 +289,25 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('failed direct file uploads cannot be retried by clicking the upload target', async () => {
+    const { browser, session, workspace } = fakeRuntime();
+    fs.writeFileSync(path.join(workspace, 'upload.txt'), 'payload');
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let attempts = 0;
+    page.locator = () => ({
+      first() { return this; },
+      async setInputFiles() { attempts++; throw new Error('upload may have completed'); },
+      async click() { attempts++; }
+    });
+    await assert.rejects(
+      browser.run([{ type: 'upload', selector: 'input', filePath: 'upload.txt' }]),
+      /upload may have completed/
+    );
+    assert.equal(attempts, 1);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
