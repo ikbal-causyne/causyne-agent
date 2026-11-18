@@ -250,6 +250,10 @@ export const webFetch = {
           error: 'HTTP 429 rate limit: respect the Retry-After window before retrying'
         };
       }
+      if (args.outputFile && response.status === 206 && !(new Headers(headers)).has('range')) {
+        await response.body?.cancel().catch(() => {});
+        return { success: false, status: 206, finalUrl: finalUrl.href, error: 'Server returned partial content without a requested Range' };
+      }
       if (args.outputFile && response.status === 204) {
         await response.body?.cancel().catch(() => {});
         return { success: false, status: 204, finalUrl: finalUrl.href, error: 'No downloadable content was returned (HTTP 204)' };
