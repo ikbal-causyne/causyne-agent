@@ -1826,9 +1826,10 @@ export class CausyneBrowser {
       if (!Number.isFinite(width) || !Number.isFinite(height) || width < 100 || width > 4000 || height < 100 || height > 4000) {
         throw new Error('viewport width and height must be between 100 and 4000 pixels');
       }
-      if (typeof state.page.setViewportSize === 'function') {
-        await state.page.setViewportSize({ width, height });
+      if (typeof state.page.setViewportSize !== 'function') {
+        throw new Error('Browser engine does not support viewport resizing');
       }
+      await state.page.setViewportSize({ width, height });
       return { action: action.type, tabId: state.id, url: state.page.url(), output: `Viewport set to ${width}x${height}` };
     }
     if (action.type === 'back') {

@@ -225,6 +225,20 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('viewport reports unsupported resizing instead of claiming it succeeded', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    await assert.rejects(
+      browser.run([{ type: 'viewport', width: 1000, height: 700 }]),
+      /does not support viewport resizing/
+    );
+    page.setViewportSize = async size => { page.calls.push(['viewport', size]); };
+    const result = await browser.run([{ type: 'viewport', width: 1000, height: 700 }]);
+    assert.match(result[0].output, /Viewport set to 1000x700/);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
