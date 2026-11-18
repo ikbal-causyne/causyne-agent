@@ -317,6 +317,13 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('missing switchTab id cannot create an unintended browser tab', async () => {
+    const { browser, session } = fakeRuntime();
+    await assert.rejects(browser.run([{ type: 'switchTab' }]), /requires tabId/);
+    assert.equal(session.openPages.length, 1);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

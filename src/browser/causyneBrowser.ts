@@ -1709,6 +1709,9 @@ export class CausyneBrowser {
       })));
       return { action: action.type, data };
     }
+    if ((action.type === 'switchTab' || action.type === 'switch_tab') && !action.tabId) {
+      throw new Error('switchTab requires tabId');
+    }
     const requested = this.requestedTab(action);
     const state = requested ?? await this.activeTab();
     if (action.type === 'switchTab' || action.type === 'switch_tab') {
