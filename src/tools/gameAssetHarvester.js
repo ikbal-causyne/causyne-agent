@@ -177,10 +177,6 @@ export const gameAssetHarvester = {
           const charDir = path.join(assetsDir, '3d/characters');
           const weaponDir = path.join(assetsDir, '3d/weapons');
           const tileDir = path.join(assetsDir, '2d/tiles');
-          await fs.mkdir(charDir, { recursive: true });
-          await fs.mkdir(weaponDir, { recursive: true });
-          await fs.mkdir(tileDir, { recursive: true });
-
           const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/knight.obj', path.join(charDir, 'knight.obj'), 'obj', projectDir);
           const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/sword.obj', path.join(weaponDir, 'sword.obj'), 'obj', projectDir);
           const r3 = await downloadOrGenerateFallback('https://kenney.nl/assets/2d/dungeon.svg', path.join(tileDir, 'dungeon_tiles.svg'), 'svg', projectDir);
@@ -189,9 +185,6 @@ export const gameAssetHarvester = {
           // Cyberpunk racer
           const carDir = path.join(assetsDir, '3d/vehicles');
           const trackDir = path.join(assetsDir, '3d/environment');
-          await fs.mkdir(carDir, { recursive: true });
-          await fs.mkdir(trackDir, { recursive: true });
-
           const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/race_car.obj', path.join(carDir, 'cyberpunk_racer.obj'), 'obj', projectDir);
           const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/highway_barrier.obj', path.join(trackDir, 'barrier.obj'), 'obj', projectDir);
           results.push({ item: 'cyberpunk_racer.obj', status: r1 }, { item: 'barrier.obj', status: r2 });
