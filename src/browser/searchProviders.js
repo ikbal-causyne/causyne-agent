@@ -117,9 +117,6 @@ export async function searchPublicWeb(query, options = {}) {
     if (!cleaned || cleaned.length > 1_000)
         throw new Error('Search query must contain 1-1000 characters');
     const fetchImpl = options.fetchImpl ?? fetch;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
-    const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
     const providers = [
         {
             engine: 'duckduckgo-html',
@@ -135,9 +132,13 @@ export async function searchPublicWeb(query, options = {}) {
         }
     ];
     const failures = [];
-    try {
-        for (const provider of providers) {
-            try {
+    for (const provider of providers) {
+        if (options.signal?.aborted)
+            throw options.signal.reason ?? new Error('Search cancelled');
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+        const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
+        try {
                 const response = await fetchImpl(provider.url, {
                     method: 'GET',
                     redirect: 'error',
@@ -155,13 +156,14 @@ export async function searchPublicWeb(query, options = {}) {
                     return results;
                 failures.push(`${provider.engine}: no results`);
             }
-            catch (error) {
-                failures.push(`${provider.engine}: ${error instanceof Error ? error.message : String(error)}`);
-            }
+        catch (error) {
+            if (options.signal?.aborted)
+                throw error;
+            failures.push(`${provider.engine}: ${error instanceof Error ? error.message : String(error)}`);
         }
-    }
-    finally {
-        clearTimeout(timeout);
+        finally {
+            clearTimeout(timeout);
+        }
     }
     throw new Error(`Lightweight search providers exhausted. ${failures.join('; ')}`);
 }
