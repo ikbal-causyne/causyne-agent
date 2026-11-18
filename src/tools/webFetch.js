@@ -144,6 +144,9 @@ export const webFetch = {
                 return { success: false, error: 'url is required' };
             const workspace = path.resolve(sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd());
             const method = (args.method ?? 'GET').toUpperCase();
+            if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+                return { success: false, error: 'Unsupported HTTP method' };
+            }
             const headers = {
                 'User-Agent': 'Causyne-Agent/1.10 (+https://causyne.com)',
                 Accept: 'text/html,application/xhtml+xml,application/json,text/plain,*/*;q=0.8',
