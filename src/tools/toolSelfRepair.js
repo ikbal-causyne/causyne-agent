@@ -868,6 +868,18 @@ function coerceValueBySchema(key, val, propSchema, pathLabel, repairs, depth) {
     // Handle polymorphic / multi-type schemas (e.g. oneOf [string, string[]], union type arrays)
     if (!singleType && allowedTypes.length > 1 && typeof val === 'string') {
         const trimmed = val.trim();
+        if (allowedTypes.includes('string') && trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+            try {
+                const unquoted = JSON.parse(trimmed);
+                if (typeof unquoted === 'string') {
+                    repairs.push(`Unwrapped JSON-quoted string literal for polymorphic parameter '${pathLabel}'`);
+                    return unquoted;
+                }
+            }
+            catch {
+                // Keep original string if not valid JSON string literal
+            }
+        }
         if (allowedTypes.includes('object') && trimmed.startsWith('{') && trimmed.endsWith('}')) {
             const recovered = repairJsonArguments(trimmed);
             if (!recovered.error) {
@@ -887,17 +899,17 @@ function coerceValueBySchema(key, val, propSchema, pathLabel, repairs, depth) {
                 // Keep string intact
             }
         }
-        if (!allowedTypes.includes('string')) {
-            if (allowedTypes.includes('boolean') && (trimmed === 'true' || trimmed === 'false')) {
-                repairs.push(`Coerced string "${val}" -> boolean ${trimmed} for parameter '${pathLabel}'`);
-                return trimmed === 'true';
-            }
-            if ((allowedTypes.includes('number') || allowedTypes.includes('integer')) && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
-                const num = allowedTypes.includes('integer') && !trimmed.includes('.') ? parseInt(trimmed, 10) : parseFloat(trimmed);
-                if (!isNaN(num)) {
-                    repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${pathLabel}'`);
-                    return num;
-                }
+        if (allowedTypes.includes('boolean') && (trimmed === 'true' || trimmed === 'false')) {
+            repairs.push(`Coerced string "${val}" -> boolean ${trimmed} for parameter '${pathLabel}'`);
+            return trimmed === 'true';
+        }
+        if ((allowedTypes.includes('number') || allowedTypes.includes('integer')) && /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) {
+            const num = allowedTypes.includes('integer') && !allowedTypes.includes('number') && !trimmed.includes('.')
+                ? parseInt(trimmed, 10)
+                : parseFloat(trimmed);
+            if (Number.isFinite(num)) {
+                repairs.push(`Coerced string "${val}" -> number ${num} for parameter '${pathLabel}'`);
+                return num;
             }
         }
         return val;

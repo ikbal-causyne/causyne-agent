@@ -704,6 +704,39 @@ export function validateGameEngineJob(value) {
         }
         return [nums[0], nums[1], nums[2]];
     };
+    const normalizePropertyValue = (val) => {
+        if (typeof val !== 'string')
+            return val;
+        const trimmed = val.trim();
+        if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                if (typeof parsed === 'string')
+                    return parsed;
+            }
+            catch {
+                // Keep raw string
+            }
+        }
+        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+            try {
+                return JSON.parse(trimmed);
+            }
+            catch {
+                return val;
+            }
+        }
+        if (trimmed === 'true')
+            return true;
+        if (trimmed === 'false')
+            return false;
+        if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) {
+            const num = Number(trimmed);
+            if (Number.isFinite(num))
+                return num;
+        }
+        return val;
+    };
     return {
         engine: engineInput,
         canonicalEngine,
@@ -716,7 +749,7 @@ export function validateGameEngineJob(value) {
         objectPath: typeof raw.objectPath === 'string' ? raw.objectPath.trim() : undefined,
         functionName: typeof raw.functionName === 'string' ? raw.functionName.trim() : undefined,
         propertyName: typeof raw.propertyName === 'string' ? raw.propertyName.trim() : undefined,
-        propertyValue: raw.propertyValue,
+        propertyValue: normalizePropertyValue(raw.propertyValue),
         parameters: raw.parameters && typeof raw.parameters === 'object' && !Array.isArray(raw.parameters)
             ? raw.parameters
             : undefined,

@@ -159,7 +159,7 @@ export const creativeApps = {
                 },
                 propertyValue: {
                     type: ['string', 'number', 'boolean', 'object', 'array'],
-                    description: 'Value to write for Unreal remote_control property access (string, or JSON-encoded number, boolean, object, or array).'
+                    description: 'Value to write for Unreal remote_control property access (string, number, boolean, object, or array; JSON-encoded strings like "42", "true", "{\\"X\\":1}", or "[1,2]" are decoded to native types, or wrap in JSON quotes like "\\"42\\"" for a literal numeric string).'
                 },
                 parameters: {
                     type: 'object',

@@ -15,6 +15,7 @@ import { AnthropicProvider } from '../src/providers/anthropic.js';
 import { QwenByokProvider } from '../src/providers/qwen-byok.js';
 import { OllamaProvider } from '../src/providers/ollama.js';
 import { DeepSeekProvider } from '../src/providers/deepseek.js';
+import { validateGameEngineJob } from '../src/creative/liveBridge.js';
 
 function assertUniversalWireSchemaClean(node: any, wire: string, nodePath: string): void {
   if (!node || typeof node !== 'object') return;
@@ -182,6 +183,54 @@ describe('Universal Cross-Provider Matrix & Self-Repair Buffer', () => {
     );
     assert.equal(numericNameRepair.args.actions[0].filePath, '42');
     assert.deepEqual(validateToolArguments(numericNameRepair.args, browserDef.parameters), []);
+
+    // Polymorphic scalar + container decoding for creative_apps.propertyValue
+    const creativeDef = TOOL_DEFINITIONS.find((t) => t.name === 'creative_apps')!;
+    const creativeScan = scanAndAdaptToolsForProvider([creativeDef], 'gemini');
+    const creativePaths = creativeScan.freeFormPaths.get('creative_apps');
+
+    const scalarCases: Array<{ raw: string; expected: unknown }> = [
+      { raw: '42', expected: 42 },
+      { raw: '-3.5', expected: -3.5 },
+      { raw: 'true', expected: true },
+      { raw: 'false', expected: false },
+      { raw: '{"X":10,"Y":20,"Z":30}', expected: { X: 10, Y: 20, Z: 30 } },
+      { raw: '[1,2,3]', expected: [1, 2, 3] },
+      { raw: '"42"', expected: '42' },
+      { raw: 'HeroLight', expected: 'HeroLight' },
+      { raw: '007', expected: '007' }
+    ];
+
+    for (const { raw, expected } of scalarCases) {
+      const healed = selfRepairToolCall(
+        {
+          function: {
+            name: 'creative_apps',
+            arguments: JSON.stringify({
+              action: 'engine_bridge',
+              engine: 'unreal',
+              engineOperation: 'remote_control',
+              objectPath: '/Game/Main.Light',
+              propertyName: 'Intensity',
+              propertyValue: raw
+            })
+          }
+        },
+        creativeDef.parameters as any,
+        { cwd: process.cwd(), freeFormPaths: creativePaths }
+      );
+      assert.deepEqual(healed.args.propertyValue, expected, `Failed selfRepairToolCall on propertyValue=${raw}`);
+      assert.deepEqual(validateToolArguments(healed.args, creativeDef.parameters), []);
+
+      const job = validateGameEngineJob({
+        engine: 'unreal',
+        engineOperation: 'remote_control',
+        objectPath: '/Game/Main.Light',
+        propertyName: 'Intensity',
+        propertyValue: raw
+      });
+      assert.deepEqual(job.propertyValue, expected, `Failed validateGameEngineJob on propertyValue=${raw}`);
+    }
   });
 
   test('Gemini provider batches parallel tool responses, survives malformed history, and decodes adapted args', async () => {
