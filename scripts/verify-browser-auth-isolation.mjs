@@ -29,7 +29,7 @@ const server = http.createServer((request, response) => {
   }
   if (url.pathname === '/whoami') {
     const cookie = request.headers.cookie ?? '';
-    const observed = /(?:^|;\\s*)causyne_test_user=(A|B)(?:;|$)/.exec(cookie)?.[1] ?? 'Anonymous';
+    const observed = /(?:^|; *)causyne_test_user=(A|B)(?:;|$)/.exec(cookie)?.[1] ?? 'Anonymous';
     response.end(`<html><body><h1>Identity: ${observed}</h1></body></html>`);
     return;
   }
