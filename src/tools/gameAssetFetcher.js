@@ -340,7 +340,6 @@ export const gameAssetFetcher = {
         for await (const chunk of response.body) {
           received += chunk.length;
           if (received > MAX_ASSET_BYTES) {
-            response.body.destroy();
             return { success: false, error: `Asset exceeds the ${MAX_ASSET_BYTES / 1024 / 1024} MB download limit.` };
           }
           chunks.push(chunk);
