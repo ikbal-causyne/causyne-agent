@@ -42,6 +42,13 @@ export function isBinaryResponseContentType(contentType) {
         return false;
     return /^(?:application|image|audio|video|font)\//.test(mediaType);
 }
+export function looksLikeBinaryContent(bytes) {
+    if (bytes.length === 0)
+        return false;
+    const magic = bytes.subarray(0, 8).toString('hex');
+    return /^(?:89504e470d0a1a0a|504b0304|504b0506|25504446|1f8b|ffd8ff|0061736d)/i.test(magic)
+        || bytes.subarray(0, 512).includes(0);
+}
 function isWithin(root, candidate) {
     const relative = path.relative(root, candidate);
     return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
@@ -310,6 +317,10 @@ export const webFetch = {
                     status: response.status, finalUrl: finalUrl.href, ...(partial ? { partial: true } : {}) };
             }
             const bytes = await readBoundedBody(response);
+            if (looksLikeBinaryContent(bytes)) {
+                return { success: false, error: 'Binary content requires outputFile to download without corrupting bytes',
+                    status: response.status, finalUrl: finalUrl.href, contentType };
+            }
             const decoded = bytes.toString('utf8');
             const readable = contentType.includes('text/html') ? htmlToReadableText(decoded) : decoded;
             const output = readable.length > MAX_OUTPUT_CHARS
