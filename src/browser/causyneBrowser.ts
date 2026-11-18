@@ -10,7 +10,7 @@ import {
   loadCapabilityPackage
 } from '../provisioning/capabilityProvisioner.js';
 import { resolveBrowserRuntime, type PreparedBrowserRuntime } from './browserRuntime.js';
-import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
+import { assertPublicWebUrl, assertBrowserNavigableUrl, isLoopbackHost } from './urlPolicy.js';
 import { ensureSafeWorkspaceInputPath, ensureSafeWorkspaceOutputPath } from './workspacePathSafety.js';
 import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
 import { searchPublicWeb, publicResultUrl } from './searchProviders.js';
@@ -352,7 +352,7 @@ interface BrowserFileChooser {
 }
 
 interface BrowserRoute {
-  request(): { url(): string };
+  request(): { url(): string; frame?(): { url(): string }; isNavigationRequest?(): boolean };
   continue(): Promise<void>;
   abort(errorCode?: string): Promise<void>;
   fulfill?(response: { status: number; contentType: string; body: Buffer }): Promise<void>;
@@ -971,6 +971,8 @@ export class CausyneBrowser {
   private securedPages = new WeakSet<object>();
   private pageStates = new WeakMap<object, TabState>();
   private contextRouteInstalled = false;
+  private approvedLoopbackOrigins = new Set<string>();
+  private pendingLocalNavigation: string | null = null;
   private lastTarget: { kind: 'preview'; workspace: string; filePath: string } | { kind: 'url'; url: string } | null = null;
 
   constructor(options: RuntimeOptions = {}) {
@@ -988,6 +990,8 @@ export class CausyneBrowser {
       if (this.workspace !== path.resolve(workspace)) {
         this.workspacePreview.clear();
         this.lastTarget = null;
+        this.approvedLoopbackOrigins.clear();
+        this.pendingLocalNavigation = null;
       }
       this.workspace = path.resolve(workspace);
     }
@@ -1121,6 +1125,8 @@ export class CausyneBrowser {
     this.workspacePreview.clear();
     this.activeTabId = null;
     this.contextRouteInstalled = false;
+    this.approvedLoopbackOrigins.clear();
+    this.pendingLocalNavigation = null;
     this.securedPages = new WeakSet<object>();
     this.pageStates = new WeakMap<object, TabState>();
     if (session) await session.close().catch(() => {});
@@ -1257,18 +1263,27 @@ export class CausyneBrowser {
       }
       const parsed = new URL(url);
       if (parsed.protocol === 'file:') {
-        const workspace = await fs.realpath(this.workspace);
-        const file = await fs.realpath(fileURLToPath(parsed));
-        if (!isWithin(workspace, file)) throw new Error('File is outside the selected workspace');
-        await route.continue();
-        return;
+        throw new Error('Direct file requests are not allowed; use an isolated workspace preview');
       }
       if (parsed.protocol === 'ws:' || parsed.protocol === 'wss:') {
         parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:';
-        await this.validateUrl(parsed.href);
-      } else {
-        await this.validateUrl(url);
       }
+      if (isLoopbackHost(parsed.hostname)) {
+        const request = route.request();
+        let sameOriginFrame = false;
+        try {
+          const frameUrl = request.frame?.().url();
+          sameOriginFrame = Boolean(frameUrl && new URL(frameUrl).origin === parsed.origin);
+        } catch { /* Navigation requests can have no active frame. */ }
+        const explicitlyNavigating = this.pendingLocalNavigation === parsed.origin
+          && request.isNavigationRequest?.() === true;
+        const trustedSubresource = sameOriginFrame
+          && (this.approvedLoopbackOrigins.has(parsed.origin) || this.pendingLocalNavigation === parsed.origin);
+        if (!explicitlyNavigating && !trustedSubresource) {
+          throw new Error('A public page cannot request local services without explicit navigation');
+        }
+      }
+      await this.validateUrl(parsed.href);
       await route.continue();
     } catch {
       await route.abort('blockedbyclient');
@@ -1422,7 +1437,14 @@ export class CausyneBrowser {
   private async navigate(state: TabState, value: string): Promise<void> {
     const url = await this.validateUrl(value);
     state.runtimeErrors = [];
-    const response = await state.page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
+    if (isLoopbackHost(url.hostname)) this.pendingLocalNavigation = url.origin;
+    let response: Awaited<ReturnType<BrowserPage['goto']>>;
+    try {
+      response = await state.page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: NAVIGATION_TIMEOUT_MS });
+    } finally {
+      this.pendingLocalNavigation = null;
+    }
+    if (isLoopbackHost(url.hostname)) this.approvedLoopbackOrigins.add(url.origin);
     const status = response?.status() ?? 0;
     if (status >= 400) throw new Error(`Destination returned HTTP ${status}`);
     await state.page.waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS });
