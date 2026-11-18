@@ -109,6 +109,11 @@ async function fetchCuratedAssetWithSafeRedirects(url) {
   throw new Error('Asset redirect handling failed');
 }
 
+function isSafeOutputFilename(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 255
+    && value !== '.' && value !== '..' && !/[\\/\\:*?"<>|\\x00-\\x1f]/.test(value);
+}
+
 function getWorkspaceTempDir() {
   return path.join(process.cwd(), '.tmp_causyne_3d', 'assets');
 }
@@ -387,7 +392,7 @@ export const gameAssetFetcher = {
         }
         const requestedName = outputFilename || `sfx_${preset}.wav`;
         const filename = path.basename(requestedName);
-        if (filename !== requestedName || filename === '.' || filename === '..') {
+        if (filename !== requestedName || !isSafeOutputFilename(filename)) {
           return { success: false, error: 'outputFilename must be a plain file name without directory components.' };
         }
         if (path.extname(filename).toLowerCase() !== '.wav') {
