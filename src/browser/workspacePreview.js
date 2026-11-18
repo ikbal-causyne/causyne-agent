@@ -23,6 +23,8 @@ export class WorkspacePreview {
         const target = await fs.realpath(path.resolve(root, file));
         if (!within(root, target) || !/\.html?$/i.test(target))
             throw new Error('Preview requires an HTML file inside the selected workspace');
+        if (!(await fs.stat(target)).isFile())
+            throw new Error('Preview target must be a regular HTML file');
         const origin = `https://${randomUUID()}.causyne-preview.invalid`;
         this.roots.set(origin, path.dirname(target));
         if (this.roots.size > MAX_ACTIVE_PREVIEWS) {
