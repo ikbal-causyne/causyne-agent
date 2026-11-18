@@ -5,11 +5,7 @@ import path from 'path';
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 
 function getWorkspaceTempDir() {
-  const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d', 'assets');
-  if (!fsSync.existsSync(tmpDir)) {
-    fsSync.mkdirSync(tmpDir, { recursive: true });
-  }
-  return tmpDir;
+  return path.join(process.cwd(), '.tmp_causyne_3d', 'assets');
 }
 
 // ── Curated CC0 Open-Source Game Asset Catalog ──
@@ -253,10 +249,6 @@ export const gameAssetFetcher = {
         return { success: false, error: `Path outside allowed workspace boundary: ${targetDir}` };
       }
 
-      if (!fsSync.existsSync(targetDir)) {
-        await fs.mkdir(targetDir, { recursive: true });
-      }
-
       if (action === 'search_cc0') {
         let results = [];
         const categories = category === 'all' ? Object.keys(CC0_CATALOG) : [category];
@@ -295,6 +287,7 @@ export const gameAssetFetcher = {
         const filePath = path.join(targetDir, filename);
 
         const wavBuffer = synthesizeWavBuffer(preset);
+        await fs.mkdir(targetDir, { recursive: true });
         await fs.writeFile(filePath, wavBuffer);
 
         return {
@@ -350,6 +343,7 @@ export const gameAssetFetcher = {
           chunks.push(chunk);
         }
         const buffer = Buffer.concat(chunks);
+        await fs.mkdir(targetDir, { recursive: true });
         await fs.writeFile(filePath, buffer);
 
         return {
