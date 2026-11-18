@@ -21,6 +21,8 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-real-browser-'));
 const pageHtml = `<!doctype html><html><head><title>Causyne Runtime</title></head>
 <body><h1>Native browser integration</h1>
 <button id="counter">Count: 0</button>
+<button id="blocked" style="position:absolute;top:120px;left:30px;width:120px;height:44px">Blocked: 0</button>
+<div id="shield" style="position:absolute;top:120px;left:30px;width:120px;height:44px;z-index:20;background:#ddd">Overlay</div>
 <script type="module">
 const button = document.querySelector('#counter');
 let count = 0;
@@ -66,6 +68,15 @@ try {
   assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(png.length > 100);
 
+  // Playwright must report the obscured button as non-actionable. No force
+  // click or coordinate fallback may activate it through the overlay.
+  await assert.rejects(
+    browser.run([{ type: 'click', selector: '#blocked' }]),
+    /intercepts pointer events|Timeout|not receiving pointer events/
+  );
+  const afterBlockedClick = await browser.run([{ type: 'snapshot' }]);
+  assert.match(afterBlockedClick[0].output, /Blocked: 0/);
+
   let privateHits = 0;
   server = http.createServer((request, response) => {
     if (request.url === '/private') privateHits++;
@@ -89,7 +100,7 @@ try {
   await browser.run([{ type: 'preview', filePath: 'untrusted.html' }, { type: 'wait', timeout: 250 }]);
   assert.equal(privateHits, 0, 'untrusted page must not access an approved local development server');
 
-  console.log('REAL_BROWSER_SMOKE_PASS: preview, DOM, click, snapshot, screenshot, explicit local navigation, local-service isolation');
+  console.log('REAL_BROWSER_SMOKE_PASS: preview, DOM, safe clicks, overlay interception, snapshot, screenshot, explicit local navigation, local-service isolation');
 } finally {
   await browser.close();
   if (server) await new Promise(resolve => server.close(resolve));
