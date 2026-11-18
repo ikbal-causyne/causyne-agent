@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { BrowserCapabilityError, causyneBrowser } from '../browser/causyneBrowser.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
+import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 
 const MAX_REDIRECTS = 5;
 const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
@@ -195,8 +196,8 @@ export const webFetch = {
       if (args.outputFile) {
         const target = path.resolve(workspace, args.outputFile);
         if (!isWithin(workspace, target)) return { success: false, error: 'Download target must stay inside the selected workspace' };
+        await ensureSafeWorkspaceOutputPath(workspace, target);
         const temporary = `${target}.part-${crypto.randomUUID()}`;
-        await fs.mkdir(path.dirname(target), { recursive: true });
         try {
           await fs.writeFile(temporary, bytes, { mode: 0o600 });
           await fs.rename(temporary, target);
