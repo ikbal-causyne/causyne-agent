@@ -70,7 +70,7 @@ async function fetchFollowingSafeRedirects(urlValue, options) {
             request = { ...request, headers: forwardedHeaders };
         }
         url = nextUrl;
-        if (response.status === 303 || ([301, 302].includes(response.status) && request.method === 'POST')) {
+        if ((response.status === 303 && request.method !== 'HEAD') || ([301, 302].includes(response.status) && request.method === 'POST')) {
             const redirectedHeaders = new Headers(request.headers);
             redirectedHeaders.delete('content-length');
             redirectedHeaders.delete('content-type');
