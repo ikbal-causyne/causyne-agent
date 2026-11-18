@@ -134,3 +134,9 @@ jobs:
 
       - name: Verify independent authenticated browser sessions
         run: node scripts/verify-browser-auth-isolation.mjs
+
+      - name: Exercise repeated browser operations and resource bounds
+        env:
+          CAUSYNE_BROWSER_SOAK_ITERATIONS: '12'
+          CAUSYNE_BROWSER_SOAK_WORKSPACES: '3'
+        run: node scripts/verify-browser-soak.mjs
