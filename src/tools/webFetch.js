@@ -126,6 +126,48 @@ async function readBoundedBody(response) {
     }
     return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), size);
 }
+export async function writeResponseBodyAtomically(response, workspace, target, maxBytes = MAX_RESPONSE_BYTES) {
+    await ensureSafeWorkspaceOutputPath(workspace, target);
+    const temporary = `${target}.part-${crypto.randomUUID()}`;
+    let handle;
+    const reader = response.body?.getReader();
+    let received = 0;
+    try {
+        handle = await fs.open(temporary, 'wx', 0o600);
+        if (reader) {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                if (!value || value.byteLength === 0)
+                    continue;
+                if (received + value.byteLength > maxBytes)
+                    throw new Error(`Response exceeds ${maxBytes} bytes`);
+                let offset = 0;
+                while (offset < value.byteLength) {
+                    const { bytesWritten } = await handle.write(value, offset, value.byteLength - offset, null);
+                    if (bytesWritten <= 0)
+                        throw new Error('Download made no write progress');
+                    offset += bytesWritten;
+                }
+                received += value.byteLength;
+            }
+        }
+        await handle.close();
+        handle = undefined;
+        await fs.rename(temporary, target);
+        return received;
+    }
+    catch (error) {
+        await reader?.cancel().catch(() => { });
+        throw error;
+    }
+    finally {
+        reader?.releaseLock();
+        await handle?.close().catch(() => { });
+        await fs.unlink(temporary).catch(() => { });
+    }
+}
 async function browserFallback(url, workspace) {
     try {
         const results = await causyneBrowser(workspace ? { workspace } : undefined).run([{ type: 'goto', url }, { type: 'extract', selector: 'body' }], workspace ? { workspace } : undefined);
@@ -214,22 +256,16 @@ export const webFetch = {
                 await response.body?.cancel().catch(() => { });
                 return { success: false, error: `Response exceeds ${MAX_RESPONSE_BYTES} bytes` };
             }
-            const bytes = await readBoundedBody(response);
             if (args.outputFile) {
                 const target = path.resolve(workspace, args.outputFile);
-                if (!isWithin(workspace, target))
+                if (!isWithin(workspace, target)) {
+                    await response.body?.cancel().catch(() => { });
                     return { success: false, error: 'Download target must stay inside the selected workspace' };
-                await ensureSafeWorkspaceOutputPath(workspace, target);
-                const temporary = `${target}.part-${crypto.randomUUID()}`;
-                try {
-                    await fs.writeFile(temporary, bytes, { mode: 0o600 });
-                    await fs.rename(temporary, target);
                 }
-                finally {
-                    await fs.unlink(temporary).catch(() => { });
-                }
-                return { success: true, output: `Downloaded ${bytes.length} bytes to ${target}`, status: response.status, finalUrl: finalUrl.href };
+                const received = await writeResponseBodyAtomically(response, workspace, target);
+                return { success: true, output: `Downloaded ${received} bytes to ${target}`, status: response.status, finalUrl: finalUrl.href };
             }
+            const bytes = await readBoundedBody(response);
             const decoded = bytes.toString('utf8');
             const readable = contentType.includes('text/html') ? htmlToReadableText(decoded) : decoded;
             const output = readable.length > MAX_OUTPUT_CHARS
