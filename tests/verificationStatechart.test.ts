@@ -90,7 +90,7 @@ test('labels cannot inject Mermaid chart syntax from model data', () => {
     maxDepth: 1
   });
   assert.doesNotMatch(result.diagram, /\n\[\*\] --> HACKED/);
-  assert.doesNotMatch(result.diagram, /<script>/);
+  assert.equal(result.diagram.includes('<'), false, 'Mermaid labels must not contain raw HTML tags');
   assert.doesNotMatch(result.diagram, /^\s*state MALICIOUS/m);
 });
 
