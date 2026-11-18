@@ -216,6 +216,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('hover never falls back to a destructive click when engine lacks hover support', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    await assert.rejects(browser.run([{ type: 'hover', selector: 'button' }]), /cannot hover/);
+    assert.equal(page.calls.some(call => call[0] === 'click'), false);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

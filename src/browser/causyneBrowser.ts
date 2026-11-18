@@ -1764,7 +1764,7 @@ export class CausyneBrowser {
       if (typeof locator.hover === 'function') {
         await locator.hover({ timeout: ACTION_TIMEOUT_MS });
       } else {
-        await this.performClick(state, locator, false);
+        throw new Error('Browser engine cannot hover this element');
       }
       return { action: action.type, tabId: state.id, url: state.page.url(), output: 'Element hovered' };
     }
