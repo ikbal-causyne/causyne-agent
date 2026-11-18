@@ -22,7 +22,7 @@ function cleanMarkup(value) {
         .replace(/\s+/g, ' ')
         .trim();
 }
-function publicResultUrl(value) {
+export function publicResultUrl(value) {
     try {
         const parsed = new URL(decodeEntities(value));
         if (!['http:', 'https:'].includes(parsed.protocol))

@@ -37,7 +37,7 @@ function cleanMarkup(value: string): string {
     .trim();
 }
 
-function publicResultUrl(value: string): string | null {
+export function publicResultUrl(value: string): string | null {
   try {
     const parsed = new URL(decodeEntities(value));
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;

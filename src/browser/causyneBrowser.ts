@@ -13,7 +13,7 @@ import { resolveBrowserRuntime, type PreparedBrowserRuntime } from './browserRun
 import { assertPublicWebUrl, assertBrowserNavigableUrl } from './urlPolicy.js';
 import { ensureSafeWorkspaceInputPath, ensureSafeWorkspaceOutputPath } from './workspacePathSafety.js';
 import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
-import { searchPublicWeb } from './searchProviders.js';
+import { searchPublicWeb, publicResultUrl } from './searchProviders.js';
 
 const NAVIGATION_TIMEOUT_MS = 30_000;
 const ACTION_TIMEOUT_MS = 12_000;
@@ -1020,7 +1020,8 @@ export class CausyneBrowser {
           await state.page.waitForTimeout(500);
           const extracted = await state.page.evaluate<Array<Omit<SearchResult, 'engine'>>>(SEARCH_EXTRACT_SCRIPT);
           if (Array.isArray(extracted) && extracted.length > 0) {
-            return extracted.slice(0, MAX_SEARCH_RESULTS).map(result => ({ ...result, engine: target.engine }));
+            const safe = extracted.filter(result => typeof result?.url === 'string' && publicResultUrl(result.url));
+            if (safe.length > 0) return safe.slice(0, MAX_SEARCH_RESULTS).map(result => ({ ...result, engine: target.engine }));
           }
           failures.push(`${target.engine}: no organic results`);
         } catch (error) {

@@ -145,6 +145,20 @@ describe('Causyne Browser snapshot and refs', () => {
 });
 
 describe('Causyne Browser lifecycle', () => {
+  test('rendered search refuses private or credential-bearing result URLs', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    page.evaluate = async () => [
+      { title: 'Internal', url: 'http://127.0.0.1/private', snippet: 'unsafe' },
+      { title: 'Credentials', url: 'https://user:pass@example.org/', snippet: 'unsafe' },
+      { title: 'Allowed', url: 'https://example.org/docs', snippet: 'safe' }
+    ];
+    const results = await browser.search('safety regression');
+    assert.deepEqual(results.map(result => result.url), ['https://example.org/docs']);
+    await browser.close();
+  });
+
   test('search falls back from an empty Google page to DuckDuckGo', async () => {
     const { browser } = fakeRuntime();
     const results = await browser.search('causyne agent');
