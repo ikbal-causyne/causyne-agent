@@ -53,6 +53,16 @@ f 7 1 3 5
   return { success: true, source: 'procedural_cc0_fallback', size: fsSync.statSync(targetPath).size };
 }
 
+export function summarizeHarvestResults(results) {
+  const downloadedCount = results.filter(item => item.status?.source === 'downloaded').length;
+  const fallbackCount = results.filter(item => item.status?.source === 'procedural_cc0_fallback').length;
+  return {
+    status: fallbackCount ? 'STARTER_PACK_WITH_PROCEDURAL_FALLBACKS' : 'STARTER_PACK_DOWNLOADED',
+    downloaded_count: downloadedCount,
+    fallback_count: fallbackCount
+  };
+}
+
 export const gameAssetHarvester = {
   schema: {
     name: 'game.asset_harvest',
@@ -192,7 +202,7 @@ export const gameAssetHarvester = {
         return {
           success: true,
           output: JSON.stringify({
-            status: 'HARVESTED_STARTER_PACK',
+            ...summarizeHarvestResults(results),
             pack_type: packType,
             project_dir: projectDir,
             assets_installed: results
