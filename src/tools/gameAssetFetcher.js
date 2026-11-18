@@ -326,7 +326,10 @@ export const gameAssetFetcher = {
         const filePath = path.join(targetDir, filename);
 
         console.log(`[game_asset_fetch] Downloading CC0 asset from: ${url}`);
-        const response = await fetch(url, { headers: { 'User-Agent': 'Causyne-Agent-Sovereign/1.3.1' } });
+        const response = await fetch(url, {
+          headers: { 'User-Agent': 'Causyne-Agent-Sovereign/1.3.1' },
+          signal: AbortSignal.timeout(30_000)
+        });
         if (!response.ok) {
           return { success: false, error: `Failed to fetch asset from URL (${response.status} ${response.statusText}): ${url}` };
         }
