@@ -317,9 +317,11 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
-  test('missing switchTab id cannot create an unintended browser tab', async () => {
+  test('implicit switchTab reports the active tab without creating another', async () => {
     const { browser, session } = fakeRuntime();
-    await assert.rejects(browser.run([{ type: 'switchTab' }]), /requires tabId/);
+    const first = await browser.run([{ type: 'snapshot' }]);
+    const result = await browser.run([{ type: 'switchTab' }]);
+    assert.equal(result[0].tabId, first[0].tabId);
     assert.equal(session.openPages.length, 1);
     await browser.close();
   });
