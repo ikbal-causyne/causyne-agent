@@ -652,17 +652,16 @@ export const IMAGES_EXTRACT_SCRIPT = `(opts) => {
   return out;
 }`;
 const CONSENT_DISMISS_SELECTORS = [
-  '#onetrust-accept-btn-handler',
-  '.onetrust-close-btn-handler',
-  '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-  '#CybotCookiebotDialogBodyButtonAccept',
-  '[data-testid="cookie-policy-dialog-accept-button"]',
-  'button[id*="cookie"][id*="accept" i]',
-  'button[class*="cookie"][class*="accept" i]',
-  'button[aria-label*="Accept all" i]',
-  'button[aria-label*="Accept cookies" i]'
+    '#onetrust-accept-btn-handler',
+    '.onetrust-close-btn-handler',
+    '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+    '#CybotCookiebotDialogBodyButtonAccept',
+    '[data-testid="cookie-policy-dialog-accept-button"]',
+    'button[id*="cookie"][id*="accept" i]',
+    'button[class*="cookie"][class*="accept" i]',
+    'button[aria-label*="Accept all" i]',
+    'button[aria-label*="Accept cookies" i]'
 ];
-
 const WAIT_FOR_PAGE_READY_SCRIPT = `(() => {
   return new Promise(resolve => {
     if (document.readyState === 'complete') {
