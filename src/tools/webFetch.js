@@ -205,6 +205,9 @@ export const webFetch = {
             if (!args.url)
                 return { success: false, error: 'url is required' };
             const workspace = path.resolve(sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd());
+            if (args.method !== undefined && typeof args.method !== 'string') {
+                return { success: false, error: 'HTTP method must be a string' };
+            }
             const method = (args.method ?? 'GET').toUpperCase();
             if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
                 return { success: false, error: 'Unsupported HTTP method' };
