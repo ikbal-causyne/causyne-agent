@@ -19,7 +19,7 @@ function boundedEnv(name, fallback, max) {
 const iterations = boundedEnv('CAUSYNE_BROWSER_SOAK_ITERATIONS', 12, 10_000);
 const workspaceCount = boundedEnv('CAUSYNE_BROWSER_SOAK_WORKSPACES', 3, 8);
 const rssLimitMiB = boundedEnv('CAUSYNE_BROWSER_SOAK_RSS_LIMIT_MIB', 512, 8_192);
-const treeRssLimitMiB = boundedEnv('CAUSYNE_BROWSER_SOAK_TREE_RSS_LIMIT_MIB', 3_072, 32_768);
+const treePssLimitMiB = boundedEnv('CAUSYNE_BROWSER_SOAK_TREE_PSS_LIMIT_MIB', 3_072, 32_768);
 const executablePath = [
   process.env.CAUSYNE_BROWSER_EXECUTABLE,
   '/usr/bin/google-chrome',
@@ -56,8 +56,29 @@ async function processTreeRss() {
     }
   } while (changed);
   let rssKiB = 0;
-  for (const pid of descendantPids) rssKiB += entries.get(pid)?.rssKiB ?? 0;
-  return { rssMiB: Math.ceil(rssKiB / 1024), processCount: descendantPids.size };
+  let pssKiB = 0;
+  let pssSampled = 0;
+  for (const pid of descendantPids) {
+    const processInfo = entries.get(pid);
+    if (!processInfo) continue;
+    rssKiB += processInfo.rssKiB;
+    try {
+      const rollup = await fs.readFile(`/proc/${pid}/smaps_rollup`, 'utf8');
+      const pss = /^Pss:\s*(\d+)/m.exec(rollup);
+      if (pss) {
+        pssKiB += Number(pss[1]);
+        pssSampled++;
+      }
+    } catch {
+      // A child process can exit while process memory is sampled.
+    }
+  }
+  return {
+    rssMiB: Math.ceil(rssKiB / 1024),
+    pssMiB: Math.ceil(pssKiB / 1024),
+    pssSampled,
+    processCount: descendantPids.size
+  };
 }
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-browser-soak-'));
@@ -120,6 +141,7 @@ function makeBrowser(index) {
 const browsers = Array.from({ length: workspaceCount }, (_, index) => makeBrowser(index));
 let peakRss = process.memoryUsage().rss;
 let peakTreeRssMiB = 0;
+let peakTreePssMiB = 0;
 let peakChildProcesses = 0;
 const started = Date.now();
 let completed = 0;
@@ -164,10 +186,13 @@ try {
     assert.ok(peakRss <= rssLimitMiB * 1024 * 1024, 'Node harness RSS exceeded configured limit');
     const tree = await processTreeRss();
     if (tree) {
-      assert.ok(tree.rssMiB > 0 && tree.processCount > 1, 'Process-tree sampler did not observe Chromium children');
+      assert.ok(tree.rssMiB > 0 && tree.processCount > 1 && tree.pssSampled > 1,
+        'Process-tree sampler did not observe Chromium children or usable PSS');
       peakTreeRssMiB = Math.max(peakTreeRssMiB, tree.rssMiB);
+      peakTreePssMiB = Math.max(peakTreePssMiB, tree.pssMiB);
       peakChildProcesses = Math.max(peakChildProcesses, tree.processCount);
-      assert.ok(tree.rssMiB <= treeRssLimitMiB, 'Browser process tree exceeded configured RSS limit');
+      assert.ok(tree.pssMiB <= treePssLimitMiB,
+        `Browser process tree exceeded PSS ceiling: ${tree.pssMiB} MiB > ${treePssLimitMiB} MiB`);
     }
   }
 
@@ -183,7 +208,7 @@ try {
   assert.equal(privateHits, 0, 'untrusted browser origin accessed the local service');
 
   const duration = Date.now() - started;
-  console.log(`REAL_BROWSER_SOAK_PASS workspaces=${workspaceCount} iterations=${iterations} completed=${completed} requests=${requestCount} elapsed_ms=${duration} node_peak_rss_mib=${Math.ceil(peakRss / 1048576)} tree_peak_rss_mib=${peakTreeRssMiB} peak_processes=${peakChildProcesses}`);
+  console.log(`REAL_BROWSER_SOAK_PASS workspaces=${workspaceCount} iterations=${iterations} completed=${completed} requests=${requestCount} elapsed_ms=${duration} node_peak_rss_mib=${Math.ceil(peakRss / 1048576)} tree_peak_rss_mib=${peakTreeRssMiB} tree_peak_pss_mib=${peakTreePssMiB} peak_processes=${peakChildProcesses}`);
 } finally {
   await Promise.allSettled(browsers.map(browser => browser.close()));
   if (server.listening) await new Promise(resolve => server.close(resolve));
