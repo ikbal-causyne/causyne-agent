@@ -37,7 +37,7 @@ export const webSearch = {
             lightweightFailure = error instanceof Error ? error.message : String(error);
         }
         try {
-            const results = await causyneBrowser().search(query);
+            const results = await causyneBrowser().search(query, { skipPublicFallback: true });
             return { success: true, output: renderResults(query, results), results };
         }
         catch (error) {

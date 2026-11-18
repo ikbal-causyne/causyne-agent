@@ -730,7 +730,7 @@ export class CausyneBrowser {
         this.touch();
         return results;
     }
-    async search(query) {
+    async search(query, options = {}) {
         const cleaned = String(query ?? '').trim();
         if (!cleaned || cleaned.length > 1_000)
             throw new Error('Search query must contain 1-1000 characters');
@@ -762,6 +762,9 @@ export class CausyneBrowser {
         }
         catch (browserErr) {
             failures.push(`browser_session: ${errorMessage(browserErr)}`);
+        }
+        if (options.skipPublicFallback) {
+            throw new Error(`Rendered search providers exhausted. ${failures.join('; ')}`);
         }
         // High-reliability search fallback: query lightweight search providers (DuckDuckGo HTML / Bing RSS) directly
         try {

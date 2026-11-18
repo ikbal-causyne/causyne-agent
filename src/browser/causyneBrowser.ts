@@ -1001,7 +1001,7 @@ export class CausyneBrowser {
     return results;
   }
 
-  async search(query: string): Promise<SearchResult[]> {
+  async search(query: string, options: { skipPublicFallback?: boolean } = {}): Promise<SearchResult[]> {
     const cleaned = String(query ?? '').trim();
     if (!cleaned || cleaned.length > 1_000) throw new Error('Search query must contain 1-1000 characters');
     const failures: string[] = [];
@@ -1030,6 +1030,10 @@ export class CausyneBrowser {
       }
     } catch (browserErr) {
       failures.push(`browser_session: ${errorMessage(browserErr)}`);
+    }
+
+    if (options.skipPublicFallback) {
+      throw new Error(`Rendered search providers exhausted. ${failures.join('; ')}`);
     }
 
     // High-reliability search fallback: query lightweight search providers (DuckDuckGo HTML / Bing RSS) directly

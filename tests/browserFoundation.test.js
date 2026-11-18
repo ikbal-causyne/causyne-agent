@@ -162,6 +162,26 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('rendered search can omit already-exhausted lightweight providers', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    page.evaluate = async () => [];
+    const fetchBefore = globalThis.fetch;
+    let lightweightRequests = 0;
+    globalThis.fetch = (async () => { lightweightRequests++; throw new Error('Unexpected lightweight provider retry'); });
+    try {
+      await assert.rejects(
+        browser.search('research query', { skipPublicFallback: true }),
+        /Rendered search providers exhausted/
+      );
+      assert.equal(lightweightRequests, 0);
+    } finally {
+      globalThis.fetch = fetchBefore;
+      await browser.close();
+    }
+  });
+
   test('search falls back from an empty Google page to DuckDuckGo', async () => {
     const { browser } = fakeRuntime();
     const results = await browser.search('causyne agent');
