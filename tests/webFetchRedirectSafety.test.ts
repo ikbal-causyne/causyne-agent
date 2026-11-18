@@ -12,14 +12,17 @@ test('web.fetch strips cookies and authorization when redirect crosses origins',
   }) as typeof fetch;
   try {
     const result = await webFetch.execute({ url: 'https://1.1.1.1/start', headers: {
-      Authorization: 'Bearer secret', Cookie: 'session=secret', 'X-Trace': 'retained'
+      Authorization: 'Bearer secret', Cookie: 'session=secret', 'X-Trace': 'retained', 'X-API-Key': 'private-key', Referer: 'https://example.org/secret'
     } });
     assert.equal(result.success, true);
     assert.equal(calls.length, 2);
     assert.equal(calls[0]?.headers.get('authorization'), 'Bearer secret');
     assert.equal(calls[1]?.headers.has('authorization'), false);
     assert.equal(calls[1]?.headers.has('cookie'), false);
-    assert.equal(calls[1]?.headers.get('x-trace'), 'retained');
+    assert.equal(calls[1]?.headers.has('x-trace'), false);
+    assert.equal(calls[1]?.headers.has('x-api-key'), false);
+    assert.equal(calls[1]?.headers.has('referer'), false);
+    assert.equal(calls[1]?.headers.get('user-agent'), 'Causyne-Agent/1.10 (+https://causyne.com)');
   } finally {
     globalThis.fetch = originalFetch;
   }
