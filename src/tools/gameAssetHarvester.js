@@ -145,8 +145,6 @@ export const gameAssetHarvester = {
         if (relativeDir === '..' || relativeDir.startsWith(`..${path.sep}`) || path.isAbsolute(relativeDir)) {
           return { success: false, error: 'targetSubdir must remain inside project assets/' };
         }
-        await fs.mkdir(targetDir, { recursive: true });
-
         const urlToFetch = assetUrl || catalog[0].url;
         await assertPublicWebUrl(urlToFetch);
         const rawName = path.basename(new URL(urlToFetch).pathname) || `asset_${Date.now()}.obj`;
