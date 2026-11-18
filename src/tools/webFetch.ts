@@ -306,7 +306,9 @@ export const webFetch = {
           return { success: false, error: 'Download target must stay inside the selected workspace' };
         }
         const received = await writeResponseBodyAtomically(response, workspace, target);
-        return { success: true, output: `Downloaded ${received} bytes to ${target}`, status: response.status, finalUrl: finalUrl.href };
+        const partial = response.status === 206;
+        return { success: true, output: `Downloaded ${partial ? 'partial content: ' : ''}${received} bytes to ${target}`,
+          status: response.status, finalUrl: finalUrl.href, ...(partial ? { partial: true } : {}) };
       }
       const bytes = await readBoundedBody(response);
 
