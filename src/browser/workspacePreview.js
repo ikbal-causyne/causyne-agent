@@ -2,6 +2,28 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 const MAX_ACTIVE_PREVIEWS = 128;
+const MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
+export async function readBoundedPreviewFile(file, maxBytes = MAX_PREVIEW_BYTES) {
+    const handle = await fs.open(file, 'r');
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > maxBytes || stat.size < 0)
+            return null;
+        const body = Buffer.alloc(stat.size);
+        let total = 0;
+        while (total < body.length) {
+            const { bytesRead } = await handle.read(body, total, body.length - total, total);
+            if (bytesRead === 0)
+                break;
+            total += bytesRead;
+        }
+        return body.subarray(0, total);
+    }
+    finally {
+        await handle.close();
+    }
+}
+
 const MIME = {
     '.html': 'text/html', '.htm': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
     '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
@@ -54,10 +76,10 @@ export class WorkspacePreview {
             const contentType = MIME[path.extname(file).toLowerCase()];
             if (!within(root, file) || !contentType)
                 return deny;
-            const stat = await fs.stat(file);
-            if (!stat.isFile() || stat.size > 25 * 1024 * 1024)
+            const body = await readBoundedPreviewFile(file);
+            if (body === null)
                 return deny;
-            return { status: 200, contentType, body: await fs.readFile(file) };
+            return { status: 200, contentType, body };
         }
         catch {
             return { ...deny, status: 404 };
