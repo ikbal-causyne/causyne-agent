@@ -33,6 +33,8 @@ export function publicResultUrl(value) {
         const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
         if (parsed.username || parsed.password || host === 'localhost' ||
             host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') ||
+            host.endsWith('.invalid') || host.endsWith('.test') || host.endsWith('.example') ||
+            host.endsWith('.onion') || host === 'localhost.localdomain' ||
             (isIP(host) !== 0 && isPrivateAddress(host)))
             return null;
         if (/(^|\.)(bing|duckduckgo)\.com$/i.test(parsed.hostname))
