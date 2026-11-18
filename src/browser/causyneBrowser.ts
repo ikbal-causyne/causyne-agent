@@ -1806,7 +1806,7 @@ export class CausyneBrowser {
           if (typeof loc.waitFor === 'function') {
             await loc.waitFor({ timeout: waitTimeout });
           } else {
-            await state.page.waitForTimeout(waitTimeout);
+            throw new Error('Browser engine cannot wait for selectors');
           }
         }
       } else {

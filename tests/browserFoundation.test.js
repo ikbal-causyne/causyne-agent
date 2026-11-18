@@ -308,6 +308,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('unsupported selector waits cannot silently finish after sleeping', async () => {
+    const { browser } = fakeRuntime();
+    await assert.rejects(
+      browser.run([{ type: 'wait', selector: 'never-shown' }]),
+      /cannot wait for selectors/
+    );
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([
