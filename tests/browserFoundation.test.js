@@ -354,6 +354,15 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('browser typing cannot coerce non-string payloads into form fields', async () => {
+    const { browser, session } = fakeRuntime();
+    for (const text of [123, { password: 'secret' }, null]) {
+      await assert.rejects(browser.run([{ type: 'type', selector: 'input', text }]), /requires text as a string/);
+    }
+    assert.equal(session.openPages[0].calls.some(call => call[0] === 'fill'), false);
+    await browser.close();
+  });
+
   test('downloads are written atomically inside the selected workspace', async () => {
     const { browser, workspace } = fakeRuntime();
     const results = await browser.run([

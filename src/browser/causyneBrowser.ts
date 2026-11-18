@@ -1575,7 +1575,7 @@ export class CausyneBrowser {
   }
 
   private async performType(state: TabState, locator: BrowserLocator, action: BrowserAction): Promise<void> {
-    if (action.text === undefined) throw new Error(`${action.type} requires text`);
+    if (typeof action.text !== 'string') throw new Error(`${action.type} requires text as a string`);
     await this.assertFillable(locator);
     if (action.mode === 'keyboard' && typeof state.page.keyboard.type === 'function') {
       await this.performClick(state, locator, false);
