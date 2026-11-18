@@ -3,8 +3,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 const MAX_ACTIVE_PREVIEWS = 128;
 const MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
-export async function readBoundedPreviewFile(file, maxBytes = MAX_PREVIEW_BYTES) {
-    const handle = await fs.open(file, 'r');
+export async function readBoundedPreviewFile(file, maxBytes = MAX_PREVIEW_BYTES, openFile = fs.open) {
+    const handle = await openFile(file, 'r');
     try {
         const stat = await handle.stat();
         if (!stat.isFile() || stat.size > maxBytes || stat.size < 0)
@@ -17,7 +17,7 @@ export async function readBoundedPreviewFile(file, maxBytes = MAX_PREVIEW_BYTES)
                 break;
             total += bytesRead;
         }
-        return body.subarray(0, total);
+        return total === body.length ? body : null;
     }
     finally {
         await handle.close();

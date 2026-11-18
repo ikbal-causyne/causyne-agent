@@ -5,8 +5,10 @@ import { randomUUID } from 'node:crypto';
 const MAX_ACTIVE_PREVIEWS = 128;
 const MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
 
-export async function readBoundedPreviewFile(file: string, maxBytes = MAX_PREVIEW_BYTES): Promise<Buffer | null> {
-  const handle = await fs.open(file, 'r');
+export async function readBoundedPreviewFile(
+  file: string, maxBytes = MAX_PREVIEW_BYTES, openFile: typeof fs.open = fs.open
+): Promise<Buffer | null> {
+  const handle = await openFile(file, 'r');
   try {
     const stat = await handle.stat();
     if (!stat.isFile() || stat.size > maxBytes || stat.size < 0) return null;
@@ -17,7 +19,7 @@ export async function readBoundedPreviewFile(file: string, maxBytes = MAX_PREVIE
       if (bytesRead === 0) break;
       total += bytesRead;
     }
-    return body.subarray(0, total);
+    return total === body.length ? body : null;
   } finally {
     await handle.close();
   }
