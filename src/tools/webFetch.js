@@ -185,6 +185,10 @@ export const webFetch = {
                 await response.body?.cancel().catch(() => { });
                 return { success: false, error: `HTTP ${response.status} ${response.statusText}`.trim(), status: response.status, finalUrl: finalUrl.href };
             }
+            if (!args.outputFile && /^(?:application\/(?:octet-stream|pdf|zip|gzip)|image\/|audio\/|video\/)/i.test(contentType)) {
+                await response.body?.cancel().catch(() => { });
+                return { success: false, error: 'Binary content requires outputFile to download without corrupting bytes', status: response.status, finalUrl: finalUrl.href, contentType };
+            }
             const declaredLength = Number(response.headers.get('content-length') ?? '0');
             if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
                 await response.body?.cancel().catch(() => { });
