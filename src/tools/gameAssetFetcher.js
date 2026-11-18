@@ -424,6 +424,10 @@ export const gameAssetFetcher = {
         if (filename !== requestedName || filename === '.' || filename === '..') {
           return { success: false, error: 'outputFilename must be a plain file name without directory components.' };
         }
+        const sourceExtension = path.extname(new URL(url).pathname).toLowerCase();
+        if (path.extname(filename).toLowerCase() !== sourceExtension) {
+          return { success: false, error: 'Downloaded asset filename must preserve its source file extension.' };
+        }
         const filePath = path.join(targetDir, filename);
 
         console.log(`[game_asset_fetch] Downloading CC0 asset from: ${url}`);
