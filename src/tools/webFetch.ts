@@ -211,6 +211,9 @@ export const webFetch = {
       if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
         return { success: false, error: 'Unsupported HTTP method' };
       }
+      if (method === 'HEAD' && args.outputFile) {
+        return { success: false, error: 'HEAD responses cannot be downloaded as resource files' };
+      }
       const headers = {
         'User-Agent': 'Causyne-Agent/1.10 (+https://causyne.com)',
         Accept: 'text/html,application/xhtml+xml,application/json,text/plain,*/*;q=0.8',
