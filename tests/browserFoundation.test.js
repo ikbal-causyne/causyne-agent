@@ -204,6 +204,94 @@ describe('Causyne Browser lifecycle', () => {
     await browser.close();
   });
 
+  test('intercepted pointer events never trigger forced or synthetic clicks', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    const attempts = [];
+    const mouseEvents = [];
+    page.mouse = {
+      move: async () => { mouseEvents.push('move'); },
+      down: async () => { mouseEvents.push('down'); },
+      up: async () => { mouseEvents.push('up'); }
+    };
+    page.locator = () => ({
+      first() { return this; },
+      async click(options) {
+        attempts.push(options);
+        if (options.force) return;
+        throw new Error('another element intercepts pointer events');
+      },
+      async boundingBox() { return { x: 0, y: 0, width: 50, height: 20 }; }
+    });
+    await assert.rejects(browser.run([{ type: 'click', selector: '#covered' }]), /intercepts pointer events/);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0].force, undefined);
+    assert.deepEqual(mouseEvents, []);
+    await browser.close();
+  });
+
+  test('double-click does not silently degrade into a single click', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let singleClicks = 0;
+    page.locator = () => ({
+      first() { return this; },
+      async click() { singleClicks++; }
+    });
+    await assert.rejects(
+      browser.run([{ type: 'click', selector: '#target', doubleClick: true }]),
+      /does not support double-click/
+    );
+    assert.equal(singleClicks, 0);
+    await browser.close();
+  });
+
+  test('double-click action executes exactly once when supported', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let doubleClicks = 0;
+    let singleClicks = 0;
+    page.locator = () => ({
+      first() { return this; },
+      async click() { singleClicks++; },
+      async dblclick(options) {
+        assert.equal(options.force, undefined);
+        doubleClicks++;
+      }
+    });
+    const result = await browser.run([{ type: 'click', selector: '#target', doubleClick: true }]);
+    assert.equal(result[0].output, 'Element clicked');
+    assert.equal(singleClicks, 0);
+    assert.equal(doubleClicks, 1);
+    await browser.close();
+  });
+
+  test('keyboard-mode typing never proceeds after an intercepted focus click', async () => {
+    const { browser, session } = fakeRuntime();
+    await browser.run([{ type: 'snapshot' }]);
+    const page = session.openPages[0];
+    let typed = 0;
+    let attemptedClicks = 0;
+    page.keyboard.type = async () => { typed++; };
+    page.locator = () => ({
+      first() { return this; },
+      async click() {
+        attemptedClicks++;
+        throw new Error('overlay intercepts pointer events');
+      }
+    });
+    await assert.rejects(
+      browser.run([{ type: 'type', mode: 'keyboard', selector: '#input', text: 'private' }]),
+      /intercepts pointer events/
+    );
+    assert.equal(attemptedClicks, 1);
+    assert.equal(typed, 0);
+    await browser.close();
+  });
+
   test('timed-out browser clicks cannot be retried as potentially duplicate mutations', async () => {
     const { browser, session } = fakeRuntime();
     await browser.run([{ type: 'snapshot' }]);
