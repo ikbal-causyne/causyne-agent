@@ -41,7 +41,9 @@ f 2 8 6 4
 f 7 1 3 5
 `;
     await fs.writeFile(targetPath, objContent, 'utf8');
-  } else if (fallbackType === 'svg' || fallbackType === 'png') {
+  } else if (fallbackType === 'png') {
+    await fs.writeFile(targetPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAA9ElEQVR42u2bwRGDMAwE4SZVkaLyTwH8UxR1kRJCLFmW8OrN+O7W9/HYrNt+nsvEo2XyAQAAAAAAAAAAAAAAwKzziBY83q+f3zz3T5ifNeIwdCX0KBhdAViCR4HoAsAzeG8QqhS+x/qqFL6HjqqF99ZTxfCeuqoa3ktflcN7+OAsUH33rX5owB123+KLBgDgJvVv9UcDAAAAAAAAAAAAwOWJvLRomX/90QAABNQsa/1pgAVAtha0+qEBI6hn2X2XBoyGYNVXBhMjdZXJzAg9ZTQVqaPM5iLW540Qr8SC/xma8p0gx2EAAAAAAAAAAAAAAADkmy/UVmFrjmXOcQAAAABJRU5ErkJggg==', 'base64'));
+  } else if (fallbackType === 'svg') {
     // Generate SVG/dummy texture for 2D sprite
     const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#3a86ff"/><circle cx="32" cy="32" r="20" fill="#ff006e"/></svg>`;
     await fs.writeFile(targetPath, svgContent, 'utf8');
@@ -138,7 +140,7 @@ export const gameAssetHarvester = {
         const fileName = rawName.replace(/[<>:"\\/|?*\x00-\x1f]/g, '_');
         const destFile = path.join(targetDir, fileName);
 
-        const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fileName.endsWith('.svg') || fileName.endsWith('.png') ? 'svg' : 'obj', projectDir);
+        const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fileName.endsWith('.png') ? 'png' : fileName.endsWith('.svg') ? 'svg' : 'obj', projectDir);
 
         return {
           success: true,
