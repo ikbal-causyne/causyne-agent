@@ -159,6 +159,7 @@ export const webFetch = {
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
 
       if (!response.ok && !args.outputFile && contentType.includes('text/html') && [401, 403, 429, 503].includes(response.status)) {
+        await response.body?.cancel().catch(() => {});
         const fallback = await browserFallback(finalUrl.href, workspace);
         if (fallback.success) return { ...fallback, status: response.status, finalUrl: finalUrl.href, via: 'causyne-browser' };
         const nextStep = response.status === 403
@@ -177,10 +178,14 @@ export const webFetch = {
           requiresConsent: fallback.requiresConsent
         };
       }
-      if (!response.ok) return { success: false, error: `HTTP ${response.status} ${response.statusText}`.trim(), status: response.status, finalUrl: finalUrl.href };
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        return { success: false, error: `HTTP ${response.status} ${response.statusText}`.trim(), status: response.status, finalUrl: finalUrl.href };
+      }
 
       const declaredLength = Number(response.headers.get('content-length') ?? '0');
       if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+        await response.body?.cancel().catch(() => {});
         return { success: false, error: `Response exceeds ${MAX_RESPONSE_BYTES} bytes` };
       }
       const bytes = await readBoundedBody(response);
