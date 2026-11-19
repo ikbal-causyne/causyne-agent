@@ -6,6 +6,7 @@ export const SESSION_DIR = path.join(causyneHome(), 'sessions');
 const LEGACY_HISTORY = path.join(causyneHome(), 'memory', 'chat_history.json');
 const POINTER_FILE = path.join(SESSION_DIR, 'active.json');
 export const RESUME_WINDOW_MS = 12 * 60 * 60 * 1000;
+export const ORPHAN_EMPTY_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 export const MAX_SESSIONS = 50;
 const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
 const MAX_EVENT_BYTES = 8 * 1024 * 1024;
@@ -261,6 +262,47 @@ export function listSessions() {
         return [];
     }
 }
+/**
+ * Removes abandoned 0-message session files older than `maxAgeMs` (default 24h).
+ * Never removes:
+ * - any session with 1 or more messages (real conversation history)
+ * - the currently active session or `preserveId`
+ * - recent empty sessions younger than `maxAgeMs`
+ */
+export function pruneEmptyOrphanSessions(options = {}) {
+    try {
+        ensureDir();
+        const maxAgeMs = typeof options.maxAgeMs === 'number' && Number.isFinite(options.maxAgeMs) && options.maxAgeMs >= 0
+            ? options.maxAgeMs
+            : ORPHAN_EMPTY_SESSION_TTL_MS;
+        const now = typeof options.now === 'number' && Number.isFinite(options.now) ? options.now : Date.now();
+        const activeId = getActiveSessionId();
+        const preserveId = options.preserveId ? safeSessionId(options.preserveId) : null;
+        let removed = 0;
+        for (const row of listSessions()) {
+            if (row.messageCount > 0)
+                continue;
+            if (row.id === activeId || (preserveId && row.id === preserveId))
+                continue;
+            if (now - row.updatedAt < maxAgeMs)
+                continue;
+            let removedSession = false;
+            for (const file of [sessionTranscriptFile(row.id), legacySessionFile(row.id), `${legacySessionFile(row.id)}.migrated`]) {
+                try {
+                    fs.unlinkSync(file);
+                    removedSession = true;
+                }
+                catch { /* absent files need no action */ }
+            }
+            if (removedSession)
+                removed += 1;
+        }
+        return removed;
+    }
+    catch {
+        return 0;
+    }
+}
 export function pruneSessions(max = MAX_SESSIONS) {
     let removed = 0;
     for (const row of listSessions().slice(max)) {
@@ -334,6 +376,11 @@ export function resolveSession(workspace, options = {}) {
     const workspaceText = String(workspace ?? '');
     ensureDir();
     migrateLegacyHistory(workspaceText);
+    const preserveCandidate = options.preferredId || getActiveSessionId();
+    try {
+        pruneEmptyOrphanSessions({ preserveId: preserveCandidate });
+    }
+    catch { /* housekeeping must never block session resolution */ }
     if (options.forceNew) {
         return createSession(workspaceText);
     }

@@ -30,6 +30,7 @@
     "src/budget/budgetPolicy.ts",
     "src/tui/skillAuthoring.ts",
     "src/sessionJournal.ts",
+    "src/headlessCli.ts",
     "src/provisioning/npmInstall.ts",
     "src/plugins/pluginSkills.ts",
     "src/skills/skillResourceSafety.ts",

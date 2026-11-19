@@ -603,10 +603,20 @@ export class AgentLoop {
             ? options.workspaceRoot
             : process.cwd();
         this.autonomyOverride = null;
+        this.providerOverride = typeof options.provider === 'string' && options.provider.trim()
+            ? options.provider.trim()
+            : null;
+        this.modelOverride = typeof options.model === 'string' && options.model.trim()
+            ? options.model.trim()
+            : null;
         this.approvalScope = options.approvalScope && typeof options.approvalScope.isAlwaysAllowed === 'function'
             ? options.approvalScope
             : processApprovalScope;
         this.config = loadConfig();
+        if (this.providerOverride)
+            this.config.provider = this.providerOverride;
+        if (this.modelOverride)
+            this.config.model = this.modelOverride;
         this.sandbox = new Sandbox({ workspaceRoot: this.workspaceRoot });
         // Retire spilled tool outputs past their retention window. Fire-and-forget
         // at task start rather than on a timer: nothing may run in the background
@@ -1658,6 +1668,10 @@ export class AgentLoop {
         this.config = loadConfig();
         if (this.autonomyOverride)
             this.config.autonomyMode = this.autonomyOverride;
+        if (this.providerOverride)
+            this.config.provider = this.providerOverride;
+        if (this.modelOverride)
+            this.config.model = this.modelOverride;
         if (typeof this.initializeProvider === 'function') {
             const nextProvider = this.initializeProvider();
             if (nextProvider) {

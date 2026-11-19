@@ -1,6 +1,14 @@
 import { program } from 'commander';
 
 import { runTask, chatMode, execCommand, interactiveConfig } from './cliMode.js';
+import {
+  runHeadlessTask,
+  composeHeadlessPrompt,
+  readBoundedStdin,
+  parseOutputFormat,
+  parsePermissionMode,
+  parseMaxTurns
+} from './headlessCli.js';
 import { runLicenseCommand } from './licensing/entitlements.js';
 import { runSelfUpdate, diagnoseInstallation, formatDoctorReport } from './autoUpdate.js';
 import { printContextReport, printUsageReport, printCheckpoints, printUndo, buildStatusText, printReport } from './reporting.js';
@@ -67,7 +75,43 @@ program
   .name('causyne')
   .description('Causyne — Local desktop AI harness (alias: causyne-agent)')
   .option('-C, --cwd <directory>', 'Use this directory as the workspace')
-  .version(pkgVersion);
+  .option('-p, --print [prompt]', 'Run a single non-interactive prompt and print the response')
+  .option('--output-format <format>', 'Output format for headless runs: text, json, stream-json')
+  .option('-m, --model <name>', 'Override model for this run without modifying saved config')
+  .option('--provider <name>', 'Override provider for this run without modifying saved config')
+  .option('--max-turns <count>', 'Maximum agent turns/steps for this run')
+  .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
+  .version(pkgVersion)
+  .action(async (options) => {
+    if (options.print === undefined && !options.outputFormat) {
+      if (program.args.length > 0) {
+        console.error('Invalid command: %s\nSee --help for a list of available commands.', program.args.join(' '));
+        process.exit(1);
+      }
+      program.outputHelp();
+      process.exit(0);
+    }
+    try {
+      parseOutputFormat(options.outputFormat);
+      parsePermissionMode(options.permissionMode);
+      parseMaxTurns(options.maxTurns);
+      const stdinText = await readBoundedStdin(process.stdin);
+      const trailing = program.args.length > 0 && typeof options.print === 'boolean'
+        ? program.args.join(' ')
+        : options.print;
+      const prompt = composeHeadlessPrompt(trailing, stdinText);
+      await runHeadlessTask(prompt, {
+        outputFormat: options.outputFormat || 'text',
+        model: options.model,
+        provider: options.provider,
+        maxTurns: options.maxTurns,
+        permissionMode: options.permissionMode
+      });
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
+  });
 
 program
   .command('update')
@@ -101,12 +145,41 @@ program
   });
 
 program
-  .command('run <task>')
-  .description('Run a single task directly from the CLI')
+  .command('run [task]')
+  .description('Run a single task directly from the CLI (supports piped stdin and --output-format)')
   .option('--dev-emulator', 'Retired compatibility flag; grants no additional permissions')
+  .option('--output-format <format>', 'Output format: text, json, stream-json')
+  .option('-m, --model <name>', 'Override model for this run without modifying saved config')
+  .option('--provider <name>', 'Override provider for this run without modifying saved config')
+  .option('--max-turns <count>', 'Maximum agent turns/steps for this run')
+  .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
   .action(async (task, options) => {
     announceDevEmulator(options.devEmulator);
-    await runTask(task);
+    try {
+      if (options.outputFormat) parseOutputFormat(options.outputFormat);
+      parsePermissionMode(options.permissionMode);
+      parseMaxTurns(options.maxTurns);
+      const stdinText = await readBoundedStdin(process.stdin);
+      const prompt = composeHeadlessPrompt(task, stdinText);
+      if (!prompt) {
+        console.error('No task provided. Pass a task argument or pipe input on stdin.');
+        process.exit(2);
+      }
+      if (options.outputFormat || task === '-' || !task) {
+        await runHeadlessTask(prompt, {
+          outputFormat: options.outputFormat || 'text',
+          model: options.model,
+          provider: options.provider,
+          maxTurns: options.maxTurns,
+          permissionMode: options.permissionMode
+        });
+      } else {
+        await runTask(prompt, options);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(2);
+    }
   });
 
 program

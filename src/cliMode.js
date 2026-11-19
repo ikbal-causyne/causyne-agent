@@ -27,6 +27,7 @@ import { isAcpProvider } from './providers/acp.js';
 import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
 import { loadLocalImageAttachment } from './tui/clipboardImage.js';
+import { runHeadlessTask, parsePermissionMode, parseMaxTurns } from './headlessCli.js';
 
 // One themed source for the art.
 //
@@ -255,13 +256,26 @@ async function runHomeAction(action, { prompt, conn, finish, loop }) {
   }
 }
 
-export async function runTask(task) {
+export async function runTask(task, options = {}) {
+  if (options && (options.print || options.outputFormat)) {
+    await runHeadlessTask(task, options);
+    return;
+  }
+
   console.log(`\x1b[1m\x1b[36m[TASK]\x1b[0m Executing...\nTask: ${task}`);
   
   const conn = new LocalCLIConnection();
   const taskId = `cli_task_${Date.now()}`;
   
-  const loop = new AgentLoop(conn, taskId, task);
+  const loopOptions = {};
+  if (options?.provider) loopOptions.provider = options.provider;
+  if (options?.model) loopOptions.model = options.model;
+  const loop = new AgentLoop(conn, taskId, task, loopOptions);
+
+  const permMode = parsePermissionMode(options?.permissionMode);
+  if (permMode) loop.autonomyOverride = permMode;
+  const maxTurns = parseMaxTurns(options?.maxTurns);
+  if (maxTurns !== undefined) loop.maxStepsCeiling = maxTurns;
   
   // Local human-in-the-loop, showing WHAT is being approved (see L6).
   loop.waitForApproval = makeApprovalHandler(conn);
