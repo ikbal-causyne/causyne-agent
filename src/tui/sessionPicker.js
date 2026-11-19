@@ -2,6 +2,7 @@
 // Authored in Strict TypeScript for Causyne Agent.
 // Source-available under BUSL-1.1.
 import { SessionPickerLayer } from './sessionPickerView.js';
+import { sameWorkspace, shortenWorkspacePath, workspaceDisplayName, formatWorkspaceSectionTitle } from './workspaceIdentity.js';
 // @ts-expect-error untyped local TUI theme
 import { GLYPHS } from './theme.js';
 import { safeDisplay } from './text.js';
@@ -44,28 +45,36 @@ function dateGroup(timestamp) {
     const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
     return date.toDateString() === yesterday.toDateString() ? 'Yesterday' : date.toDateString();
 }
-function shortenPath(p) {
-    if (!p)
-        return '(default)';
-    const home = process.env.HOME || '';
-    if (home && p.startsWith(home)) {
-        return '~' + p.slice(home.length);
-    }
-    return p.split('/').pop() || p;
+function compareSessionsByDate(a, b) {
+    const aValid = Number.isFinite(a.updatedAt);
+    const bValid = Number.isFinite(b.updatedAt);
+    if (!aValid && !bValid)
+        return 0;
+    if (!aValid)
+        return 1;
+    if (!bValid)
+        return -1;
+    return b.updatedAt === a.updatedAt ? 0 : b.updatedAt > a.updatedAt ? 1 : -1;
 }
 /**
  * Build item list for SelectLayer modal.
- * The top item is always "+ New Session" to guarantee clean separation and quick reset.
+ * Ordering:
+ *   1. Pinned Actions (`+ New Session`, optional `Fork Current Session`)
+ *   2. Current workspace sessions (sorted newest-first and grouped by date)
+ *   3. All other sessions (sorted newest-first and grouped by date, strictly deduplicated)
  */
 export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
     const items = [];
+    const canonicalCache = new Map();
+    const currentWsName = workspaceDisplayName(currentWorkspace, canonicalCache);
     // Pinned item 0: Create new clean conversation
     items.push({
         id: '__NEW_SESSION__',
         label: '+ New Session (Start fresh conversation)',
         category: 'Actions',
-        description: 'Begin a clean session in this workspace without previous context',
-        searchText: 'new session fresh clear reset start',
+        section: 'actions',
+        description: `Begin a clean session in ${currentWsName} without previous context`,
+        searchText: `new session fresh clear reset start ${currentWsName}`,
         value: {
             type: 'new'
         }
@@ -79,6 +88,7 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
                 id: '__FORK_SESSION__',
                 label: `Branch / Fork Current Session ("${activeTitle}")`,
                 category: 'Actions',
+                section: 'actions',
                 description: 'Copy conversation history into a new branch without copying permissions',
                 searchText: 'fork branch clone copy session fresh permissions',
                 value: {
@@ -89,37 +99,36 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
             });
         }
     }
-    const sortedSessions = [...sessions].sort((a, b) => {
-        const aValid = Number.isFinite(a.updatedAt);
-        const bValid = Number.isFinite(b.updatedAt);
-        if (!aValid && !bValid)
-            return 0;
-        if (!aValid)
-            return 1;
-        if (!bValid)
-            return -1;
-        return b.updatedAt === a.updatedAt ? 0 : b.updatedAt > a.updatedAt ? 1 : -1;
-    });
+    const sortedSessions = [...sessions].sort(compareSessionsByDate);
+    const seenIds = new Set();
+    const workspaceItems = [];
+    const otherItems = [];
     for (const s of sortedSessions) {
+        if (!s || typeof s.id !== 'string' || !s.id || seenIds.has(s.id))
+            continue;
         // A session without any turns has no conversation to resume. Keep the
         // active one available, but do not fill the picker with abandoned starts.
         const safeMessageCount = Number.isFinite(s.messageCount) ? Math.max(0, Math.floor(s.messageCount)) : 0;
         if (safeMessageCount === 0 && s.id !== activeId)
             continue;
+        seenIds.add(s.id);
         const isCurrent = s.id === activeId;
+        const inCurrentWorkspace = sameWorkspace(s.workspace, currentWorkspace, canonicalCache);
         const timeAgo = formatTimeAgo(s.updatedAt);
-        const wsLabel = shortenPath(s.workspace);
+        const wsLabel = shortenWorkspacePath(s.workspace);
+        const wsName = s.workspace ? workspaceDisplayName(s.workspace, canonicalCache) : '';
         const msgCount = `${safeMessageCount} msg${safeMessageCount === 1 ? '' : 's'}`;
         const category = dateGroup(s.updatedAt);
         const mark = isCurrent ? `● ` : `  `;
         const tag = isCurrent ? ` [active]` : '';
         const title = cleanTitle(s.title);
-        items.push({
+        const pickerItem = {
             id: s.id,
             label: `${mark}${title}${tag}`,
             category,
-            description: `${msgCount}  ${GLYPHS.dot}  ${timeAgo}  ${GLYPHS.dot}  ${wsLabel}${s.workspace === currentWorkspace ? ' (current)' : ''}`,
-            searchText: `${title} ${s.id} ${s.workspace || ''} ${category}`,
+            section: inCurrentWorkspace ? 'workspace' : 'all',
+            description: `${msgCount}  ${GLYPHS.dot}  ${timeAgo}  ${GLYPHS.dot}  ${wsLabel}${inCurrentWorkspace ? ' (current)' : ''}`,
+            searchText: `${title} ${s.id} ${s.workspace || ''} ${wsName} ${category}`,
             value: {
                 type: 'switch',
                 id: s.id,
@@ -129,18 +138,98 @@ export function buildSessionPickerItems(sessions, activeId, currentWorkspace) {
                 updatedAt: s.updatedAt,
                 isCurrent
             }
-        });
+        };
+        if (inCurrentWorkspace) {
+            workspaceItems.push(pickerItem);
+        }
+        else {
+            otherItems.push(pickerItem);
+        }
     }
+    items.push(...workspaceItems, ...otherItems);
     return items;
+}
+/**
+ * Format a plain-text `/sessions` report (for non-interactive or piped output)
+ * with the current workspace section first (or Empty) and deduplicated All Sessions below.
+ */
+export function formatSessionsTextReport(sessions, activeId, currentWorkspace, limit = 20) {
+    const canonicalCache = new Map();
+    const sorted = [...sessions].sort(compareSessionsByDate);
+    const seenIds = new Set();
+    const workspaceRows = [];
+    const otherRows = [];
+    for (const s of sorted) {
+        if (!s || typeof s.id !== 'string' || !s.id || seenIds.has(s.id))
+            continue;
+        seenIds.add(s.id);
+        if (sameWorkspace(s.workspace, currentWorkspace, canonicalCache)) {
+            workspaceRows.push(s);
+        }
+        else {
+            otherRows.push(s);
+        }
+    }
+    const formatRow = (s) => {
+        const when = Number.isFinite(s.updatedAt)
+            ? new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ')
+            : 'unknown date';
+        const where = s.workspace ? shortenWorkspacePath(s.workspace) : '(no workspace)';
+        const mark = s.id === activeId ? '*' : ' ';
+        const count = Number.isFinite(s.messageCount) ? Math.max(0, Math.floor(s.messageCount)) : 0;
+        return `  ${mark} ${s.id}  ${when}  ${String(count).padStart(4)} msg  ${where}\n      ${cleanTitle(s.title)}`;
+    };
+    const totalCount = workspaceRows.length + otherRows.length;
+    const maxShown = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 20;
+    const lines = [
+        `${totalCount} session${totalCount === 1 ? '' : 's'} (* = active):`,
+        '',
+        `${formatWorkspaceSectionTitle(currentWorkspace, workspaceRows.length, canonicalCache)} (${shortenWorkspacePath(currentWorkspace)}):`
+    ];
+    let remaining = maxShown;
+    if (workspaceRows.length === 0) {
+        lines.push('  Empty — no sessions in this workspace yet');
+    }
+    else {
+        let lastDate = null;
+        for (const row of workspaceRows.slice(0, remaining)) {
+            const group = dateGroup(row.updatedAt);
+            if (group !== lastDate) {
+                lines.push(`  [${group}]`);
+                lastDate = group;
+            }
+            lines.push(formatRow(row));
+        }
+        remaining = Math.max(0, remaining - workspaceRows.length);
+    }
+    if (otherRows.length > 0 && remaining > 0) {
+        lines.push('');
+        lines.push(`ALL SESSIONS (${otherRows.length}):`);
+        let lastDate = null;
+        for (const row of otherRows.slice(0, remaining)) {
+            const group = dateGroup(row.updatedAt);
+            if (group !== lastDate) {
+                lines.push(`  [${group}]`);
+                lastDate = group;
+            }
+            lines.push(formatRow(row));
+        }
+    }
+    lines.push('');
+    lines.push('Switch with /sessions switch <id>, fork with /fork [id], or run /sessions to open interactive modal picker.');
+    return lines.join('\n');
 }
 /**
  * Launch the interactive Session Picker modal.
  * Single Enter switches session or creates a new one immediately.
  */
 export async function runInteractiveSessionPicker(prompt, options = {}) {
-    const workspace = options.workspace || process.cwd();
+    const workspace = options.workspace
+        || options.loop?.workspaceRoot
+        || prompt.root
+        || process.cwd();
     const sessions = listSessions();
-    const activeId = getActiveSessionId();
+    const activeId = options.loop?.memoryManager?.sessionId || getActiveSessionId();
     const items = buildSessionPickerItems(sessions, activeId, workspace);
     const cleanPrompt = () => {
         if (prompt.editor && typeof prompt.editor.clear === 'function') {
@@ -158,11 +247,19 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
                 resolve(item || null);
             }
         });
-        // Opening the picker should highlight a conversation, not an action that
-        // creates a new one. Actions remain available above the dated list.
-        const selected = items.findIndex(item => item.id === activeId);
-        const firstConversation = items.findIndex(item => item.value.type === 'switch');
-        layer.list.moveTo(selected >= 0 ? selected : Math.max(0, firstConversation), 15);
+        // Prefer the active session when it belongs to the current workspace,
+        // otherwise the newest conversation in the current workspace. When the
+        // current workspace is empty, keep focus at index 0 (+ New Session) so the
+        // workspace header and Empty indicator remain immediately visible on open.
+        const ordered = layer.list.all;
+        const activeWorkspaceIdx = ordered.findIndex(item => item.section === 'workspace' && item.id === activeId);
+        const firstWorkspaceIdx = ordered.findIndex(item => item.section === 'workspace');
+        const initialIndex = activeWorkspaceIdx >= 0
+            ? activeWorkspaceIdx
+            : firstWorkspaceIdx >= 0
+                ? firstWorkspaceIdx
+                : 0;
+        layer.list.moveTo(initialIndex, 15);
         prompt.openLayer(layer);
     });
     cleanPrompt();
@@ -225,7 +322,7 @@ export async function runInteractiveSessionPicker(prompt, options = {}) {
         }
         syncSessionSurface(newSession, []);
         cleanPrompt();
-        return `Started new session: "${cleanTitle(newSession.title)}" (${newSession.id}) in ${shortenPath(workspace)}.`;
+        return `Started new session: "${cleanTitle(newSession.title)}" (${newSession.id}) in ${shortenWorkspacePath(workspace)}.`;
     }
     // Case 2: Fork session into a new branch without copying permissions
     if (picked.value.type === 'fork') {

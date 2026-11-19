@@ -1,29 +1,25 @@
 /**
- * Causyne Agent /sessions: session-specific presentation on the existing modal stack.
- * No changes to the session store, approval policy or the shared SelectList.
+ * Causyne Agent /sessions: workspace-aware session presentation on the existing modal stack.
+ * Preserves the date-grouped placement algorithm while elevating the active workspace's
+ * sessions (or an explicit Empty state) above deduplicated All Sessions.
  */
-import path from 'node:path';
 // @ts-expect-error The existing dialog component is authored in JavaScript.
 import { SelectLayer } from './dialogs.js';
 // @ts-expect-error The theme is authored in JavaScript.
 import { bold, dim, paint, GLYPHS } from './theme.js';
 import { safeDisplay, truncate, visibleWidth } from './text.js';
+import { sameWorkspace, workspaceDisplayName, shortenWorkspacePath, formatWorkspaceSectionTitle } from './workspaceIdentity.js';
 const INNER_HEADER_ROWS = 3; // scope, search, divider
 const INNER_DETAIL_ROWS = 3; // divider, selected title, metadata
 const MAX_PANEL_HEIGHT = 28;
 function clean(value) {
     return safeDisplay(typeof value === 'string' ? value : String(value ?? '')).replace(/[\r\n]+/g, ' ');
 }
-function sameWorkspace(first, second) {
-    if (!first || !second)
-        return false;
-    const a = path.resolve(first);
-    const b = path.resolve(second);
-    return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-}
 function rowPair(left, right, width) {
     const room = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 60;
     const rightWidth = visibleWidth(right);
+    if (rightWidth === 0)
+        return truncate(left, room, '…');
     if (rightWidth >= room - 5)
         return truncate(left, room, '…');
     const safeLeft = truncate(left, Math.max(0, room - rightWidth - 2), '…');
@@ -70,35 +66,239 @@ function actionOrSessionText(item, selected, width) {
     const styledName = selected ? bold(paint('ink', name)) : paint('ink', name);
     return rowPair(leftPrefix + styledName, usableRight, width);
 }
+function resolveItemSection(item, currentWorkspace, cache) {
+    if (item.value.type !== 'switch')
+        return 'actions';
+    if (item.section === 'workspace' || item.section === 'all') {
+        if (!currentWorkspace || item.value.workspace === undefined)
+            return item.section;
+    }
+    if (currentWorkspace && sameWorkspace(item.value.workspace, currentWorkspace, cache)) {
+        return 'workspace';
+    }
+    return 'all';
+}
 /**
- * Category headers are terminal rows, not selectable items. This window is
- * measured in *actual rows*, preventing selection disappearing at group edges.
+ * Partition picker items into:
+ *   1. Pinned actions
+ *   2. Current workspace sessions (preserving date-sorted order)
+ *   3. All other sessions (preserving date-sorted order, strictly deduplicated)
  */
-export function renderSessionRows(entries, start, selected, width, budget) {
+export function partitionSessionPickerItems(items, currentWorkspace, cache) {
+    const actions = [];
+    const workspace = [];
+    const other = [];
+    const seenIds = new Set();
+    for (const raw of Array.isArray(items) ? items : []) {
+        if (!raw || !raw.value)
+            continue;
+        const key = typeof raw.id === 'string' && raw.id ? raw.id : '';
+        if (key && seenIds.has(key))
+            continue;
+        if (key)
+            seenIds.add(key);
+        if (raw.value.type !== 'switch') {
+            actions.push(raw.section === 'actions' ? raw : { ...raw, section: 'actions' });
+            continue;
+        }
+        const inWorkspace = sameWorkspace(raw.value.workspace, currentWorkspace, cache);
+        if (inWorkspace) {
+            workspace.push(raw.section === 'workspace' ? raw : { ...raw, section: 'workspace' });
+        }
+        else {
+            other.push(raw.section === 'all' ? raw : { ...raw, section: 'all' });
+        }
+    }
+    return {
+        ordered: [...actions, ...workspace, ...other],
+        workspaceCount: workspace.length,
+        otherCount: other.length
+    };
+}
+/**
+ * Section and date headers are terminal rows, not selectable items. This window is
+ * measured in *actual rows*, preventing orphaned headers or hidden selections at
+ * section and group boundaries.
+ */
+export function renderSessionRows(entries, start, selected, width, budget, options) {
     const rows = [];
     const safeStart = Number.isFinite(start) ? Math.max(0, Math.floor(start)) : 0;
     const safeWidth = Number.isFinite(width) ? Math.max(4, Math.floor(width)) : 60;
     const safeBudget = budget === Number.POSITIVE_INFINITY
-        ? entries.length
+        ? Math.max(entries.length * 4 + 6, 16)
         : (Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0);
+    if (safeBudget === 0) {
+        return { rows, lastIndex: safeStart - 1 };
+    }
+    const useSections = Boolean(options?.currentWorkspace
+        || entries.some((entry) => entry?.item?.section !== undefined));
+    // Legacy 5-argument direct rendering without workspace sections.
+    if (!useSections) {
+        let lastIndex = safeStart - 1;
+        let previousCategory = null;
+        for (let i = safeStart; i < entries.length && rows.length < safeBudget; i++) {
+            const item = entries[i].item;
+            const category = clean(item.category || 'Sessions');
+            const isNewGroup = category !== previousCategory;
+            // Avoid leaving an orphaned header in the final available row.
+            if (isNewGroup && safeBudget - rows.length >= 2) {
+                rows.push(dim(`  ${truncate(category.toUpperCase(), Math.max(1, safeWidth - 4), '…')}`));
+            }
+            else if (isNewGroup && rows.length > 0) {
+                break;
+            }
+            if (rows.length >= safeBudget)
+                break;
+            rows.push(actionOrSessionText(item, i === selected, safeWidth));
+            lastIndex = i;
+            previousCategory = category;
+        }
+        return { rows, lastIndex };
+    }
+    const currentWorkspace = options?.currentWorkspace;
+    const cache = options?.canonicalCache;
+    const isSearching = Boolean(options?.isSearching);
+    const wsCount = typeof options?.workspaceCount === 'number' && Number.isFinite(options.workspaceCount)
+        ? Math.max(0, Math.floor(options.workspaceCount))
+        : entries.filter((entry) => resolveItemSection(entry.item, currentWorkspace, cache) === 'workspace').length;
+    const otherCount = typeof options?.otherCount === 'number' && Number.isFinite(options.otherCount)
+        ? Math.max(0, Math.floor(options.otherCount))
+        : entries.filter((entry) => resolveItemSection(entry.item, currentWorkspace, cache) === 'all').length;
+    const wsDisplayName = workspaceDisplayName(currentWorkspace, cache);
+    const wsShortPath = currentWorkspace ? shortenWorkspacePath(currentWorkspace) : '';
+    const actionsHeaderRow = () => dim(`  ${truncate('ACTIONS', Math.max(1, safeWidth - 4), '…')}`);
+    const workspaceSectionRow = () => {
+        const title = formatWorkspaceSectionTitle(currentWorkspace, wsCount, cache);
+        const styledLeft = `  ${bold(paint('accent', title))}`;
+        const leftWidth = visibleWidth(styledLeft);
+        const remainingForPath = safeWidth - leftWidth - 3;
+        let rightPath = '';
+        if (safeWidth >= 52
+            && remainingForPath >= 12
+            && wsShortPath
+            && wsShortPath !== wsDisplayName
+            && wsShortPath !== '(default)') {
+            let shownPath = wsShortPath;
+            if (visibleWidth(shownPath) > remainingForPath) {
+                const runes = Array.from(shownPath);
+                const budget = Math.max(1, remainingForPath - 1);
+                while (runes.length > 0 && visibleWidth(runes.join('')) > budget)
+                    runes.shift();
+                shownPath = `…${runes.join('')}`;
+            }
+            rightPath = dim(shownPath);
+        }
+        return rowPair(styledLeft, rightPath, safeWidth);
+    };
+    const workspaceEmptyRow = () => {
+        const label = safeWidth >= 46
+            ? 'Empty — no sessions in this workspace yet'
+            : 'Empty';
+        return dim(`    ${truncate(label, Math.max(1, safeWidth - 4), '…')}`);
+    };
+    const allSessionsSectionRow = () => {
+        const title = `ALL SESSIONS (${otherCount})`;
+        return truncate(`  ${bold(paint('ink', title))}`, safeWidth, '…');
+    };
+    const dateSubHeaderRow = (category) => dim(`    ${truncate(category.toUpperCase(), Math.max(1, safeWidth - 6), '…')}`);
+    const searchGroupHeaderRow = (section, category) => {
+        if (section === 'actions')
+            return actionsHeaderRow();
+        if (section === 'workspace') {
+            const text = `${wsDisplayName}  ${GLYPHS.dot}  ${category.toUpperCase()}`;
+            return truncate(`  ${paint('accent', text)}`, safeWidth, '…');
+        }
+        const text = `ALL SESSIONS  ${GLYPHS.dot}  ${category.toUpperCase()}`;
+        return dim(`  ${truncate(text, Math.max(1, safeWidth - 4), '…')}`);
+    };
+    const shouldShowEmptyWorkspace = !isSearching && wsCount === 0;
+    let emptyWorkspaceEmitted = false;
     let lastIndex = safeStart - 1;
+    let previousSection = null;
     let previousCategory = null;
     for (let i = safeStart; i < entries.length && rows.length < safeBudget; i++) {
         const item = entries[i].item;
         const category = clean(item.category || 'Sessions');
-        const isNewGroup = category !== previousCategory;
-        // Avoid leaving an orphaned header in the final available row.
-        if (isNewGroup && safeBudget - rows.length >= 2) {
-            rows.push(dim(`  ${truncate(category.toUpperCase(), Math.max(1, safeWidth - 4), '…')}`));
+        const section = resolveItemSection(item, currentWorkspace, cache);
+        // Emit the Empty workspace block directly after Actions (or at index 0 when
+        // there are no Actions) before transitioning into ALL SESSIONS.
+        const needsEmptyWorkspaceBefore = shouldShowEmptyWorkspace
+            && !emptyWorkspaceEmitted
+            && section === 'all'
+            && (previousSection === 'actions' || (safeStart === 0 && i === 0));
+        if (needsEmptyWorkspaceBefore) {
+            const remainingBeforeEmpty = safeBudget - rows.length;
+            if (rows.length === 0 && i === selected && remainingBeforeEmpty < 3) {
+                // Ultra-short viewport targeting this item: never let the empty notice starve selection.
+                emptyWorkspaceEmitted = true;
+            }
+            else if (remainingBeforeEmpty >= 2) {
+                rows.push(workspaceSectionRow());
+                rows.push(workspaceEmptyRow());
+                emptyWorkspaceEmitted = true;
+            }
+            else if (rows.length > 0) {
+                break;
+            }
         }
-        else if (isNewGroup && rows.length > 0) {
+        const pendingHeaders = [];
+        if (isSearching) {
+            if (section !== previousSection || category !== previousCategory) {
+                pendingHeaders.push(searchGroupHeaderRow(section, category));
+            }
+        }
+        else {
+            const sectionChanged = section !== previousSection;
+            if (sectionChanged) {
+                // Reset date tracking on section change so TODAY renders cleanly under ALL SESSIONS
+                // even when the preceding workspace section also ended on TODAY.
+                previousCategory = null;
+                if (section === 'actions') {
+                    pendingHeaders.push(actionsHeaderRow());
+                }
+                else if (section === 'workspace') {
+                    pendingHeaders.push(workspaceSectionRow());
+                }
+                else {
+                    pendingHeaders.push(allSessionsSectionRow());
+                }
+            }
+            if (section !== 'actions' && category !== previousCategory) {
+                pendingHeaders.push(dateSubHeaderRow(category));
+            }
+        }
+        const remaining = safeBudget - rows.length;
+        if (pendingHeaders.length + 1 <= remaining) {
+            rows.push(...pendingHeaders);
+            rows.push(actionOrSessionText(item, i === selected, safeWidth));
+        }
+        else if (rows.length === 0) {
+            // First item in window on a very tight viewport: keep selection visible without orphaned headers.
+            if (remaining >= 2 && pendingHeaders.length > 0) {
+                rows.push(pendingHeaders[0]);
+                rows.push(actionOrSessionText(item, i === selected, safeWidth));
+            }
+            else if (remaining >= 1) {
+                rows.push(actionOrSessionText(item, i === selected, safeWidth));
+            }
+            else {
+                break;
+            }
+        }
+        else {
             break;
         }
-        if (rows.length >= safeBudget)
-            break;
-        rows.push(actionOrSessionText(item, i === selected, safeWidth));
         lastIndex = i;
+        previousSection = section;
         previousCategory = category;
+    }
+    // When the current workspace has 0 sessions and no other sessions followed Actions
+    // (for example: brand-new install or Tab-scoped THIS WORKSPACE view), show the
+    // workspace section header + Empty notice directly beneath Actions.
+    const reachedEnd = entries.length === 0 || lastIndex === entries.length - 1;
+    if (shouldShowEmptyWorkspace && !emptyWorkspaceEmitted && reachedEnd && safeBudget - rows.length >= 2) {
+        rows.push(workspaceSectionRow());
+        rows.push(workspaceEmptyRow());
     }
     return { rows, lastIndex };
 }
@@ -106,26 +306,53 @@ export class SessionPickerLayer extends SelectLayer {
     currentWorkspace;
     activeId;
     allItems;
+    canonicalCache;
+    lastWidth = 80;
     scope = 'all';
     constructor(options) {
+        const canonicalCache = new Map();
+        const partitioned = partitionSessionPickerItems(options.items, options.currentWorkspace, canonicalCache);
+        const totalSwitchCount = partitioned.workspaceCount + partitioned.otherCount;
         super({
-            title: `Sessions  ${options.items.filter(i => i.value.type === 'switch').length}`,
+            title: `Sessions  ${totalSwitchCount}`,
             width: 100,
             height: MAX_PANEL_HEIGHT,
-            items: options.items,
+            items: partitioned.ordered,
             placeholder: 'Search sessions by title, ID or workspace',
             emptyText: 'No matching sessions',
             footer: `↑↓ navigate  ${GLYPHS.dot}  enter open  ${GLYPHS.dot}  tab workspace  ${GLYPHS.dot}  esc close`,
             onPick: options.onPick
         });
-        this.allItems = options.items;
+        this.canonicalCache = canonicalCache;
+        this.allItems = partitioned.ordered;
         this.currentWorkspace = options.currentWorkspace;
         this.activeId = options.activeId;
     }
+    renderOptions(entries) {
+        const isSearching = Boolean(clean(this.list.query || '').trim());
+        let workspaceCount = 0;
+        let otherCount = 0;
+        for (const entry of entries) {
+            const section = resolveItemSection(entry.item, this.currentWorkspace, this.canonicalCache);
+            if (section === 'workspace')
+                workspaceCount++;
+            else if (section === 'all')
+                otherCount++;
+        }
+        return {
+            currentWorkspace: this.currentWorkspace,
+            workspaceCount,
+            otherCount,
+            scope: this.scope,
+            isSearching,
+            canonicalCache: this.canonicalCache
+        };
+    }
     preferredHeight() {
         // Modals with a few sessions do not retain a large blank area.
-        const distinctGroups = new Set(this.list.filtered.map((entry) => entry.item.category));
-        const content = this.list.filtered.length + distinctGroups.size;
+        const entries = this.list.filtered;
+        const rendered = renderSessionRows(entries, 0, 0, this.lastWidth, MAX_PANEL_HEIGHT, this.renderOptions(entries));
+        const content = Math.max(1, rendered.rows.length);
         return Math.min(MAX_PANEL_HEIGHT, Math.max(12, content + INNER_HEADER_ROWS + INNER_DETAIL_ROWS + 2));
     }
     countSessions() {
@@ -137,16 +364,28 @@ export class SessionPickerLayer extends SelectLayer {
         const scoped = this.scope === 'all'
             ? this.allItems
             : this.allItems.filter(item => item.value.type !== 'switch' ||
-                sameWorkspace(item.value.workspace, this.currentWorkspace));
+                sameWorkspace(item.value.workspace, this.currentWorkspace, this.canonicalCache));
         this.list.setItems(scoped);
         const next = this.list.filtered.findIndex((entry) => entry.item.id === oldId);
-        const firstSession = this.list.filtered.findIndex((entry) => entry.item.value.type === 'switch');
-        this.list.selected = next >= 0 ? next : Math.max(0, firstSession);
+        const firstWorkspace = this.list.filtered.findIndex((entry) => entry.item.section === 'workspace');
+        this.list.selected = next >= 0 ? next : Math.max(0, firstWorkspace);
         this.list.offset = 0;
     }
     key(event) {
         if (event?.name === 'tab') {
             this.toggleWorkspace();
+            return 'handled';
+        }
+        if (event?.name === 'pageup' || event?.name === 'pagedown') {
+            const entries = this.list.filtered;
+            if (entries.length === 0)
+                return 'handled';
+            const available = Math.max(1, this.list.lastItemRows || 12);
+            const offset = Math.max(0, Math.min(Math.floor(this.list.offset || 0), entries.length - 1));
+            const selected = Math.max(0, Math.min(Math.floor(this.list.selected || 0), entries.length - 1));
+            const window = renderSessionRows(entries, offset, selected, this.lastWidth, available, this.renderOptions(entries));
+            const page = Math.max(1, window.lastIndex - offset + 1);
+            this.list.move(event.name === 'pageup' ? -page : page, available);
             return 'handled';
         }
         const previousQuery = this.list.query;
@@ -160,11 +399,14 @@ export class SessionPickerLayer extends SelectLayer {
     body(width, height) {
         const w = Math.max(12, Number.isFinite(width) ? Math.floor(width) : 60);
         const h = Math.max(1, Number.isFinite(height) ? Math.floor(height) : 20);
+        this.lastWidth = w;
         const rows = [];
         const scopeLabel = this.scope === 'all' ? 'ALL WORKSPACES' : 'THIS WORKSPACE';
+        const wsName = workspaceDisplayName(this.currentWorkspace, this.canonicalCache);
         const total = this.allItems.filter(item => item.value.type === 'switch').length;
         const count = this.countSessions();
-        rows.push(rowPair(`  ${paint('accent', scopeLabel)}`, w >= 52 ? dim(`${count} / ${total} sessions`) : '', w));
+        const leftScope = `  ${paint('accent', scopeLabel)}  ${dim(`${GLYPHS.dot}  ${wsName}`)}`;
+        rows.push(rowPair(leftScope, w >= 52 ? dim(`${count} / ${total} sessions`) : '', w));
         const query = clean(this.list.query || '');
         const lead = `  ${paint('accent', GLYPHS.arrow)} `;
         const maxInput = Math.max(1, w - visibleWidth(lead) - 1);
@@ -193,10 +435,11 @@ export class SessionPickerLayer extends SelectLayer {
                 const selected = Math.max(0, Math.min(rawSel, entries.length - 1));
                 this.list.selected = selected;
                 let start = Math.max(0, Math.min(rawOff, selected));
-                let output = renderSessionRows(entries, start, selected, w, available);
+                const renderOpts = this.renderOptions(entries);
+                let output = renderSessionRows(entries, start, selected, w, available, renderOpts);
                 while (output.lastIndex < selected && start < selected) {
                     start++;
-                    output = renderSessionRows(entries, start, selected, w, available);
+                    output = renderSessionRows(entries, start, selected, w, available, renderOpts);
                 }
                 this.list.offset = start;
                 this.list.lastItemRows = available;
@@ -214,7 +457,7 @@ export class SessionPickerLayer extends SelectLayer {
                 rows.push(rowPair(`  ${truncate(title, Math.max(1, w - 19), '…')}`, state, w));
                 const description = chosen.value.type === 'switch'
                     ? chosen.description
-                    : chosen.value.type === 'new' ? 'Start with an empty conversation in this workspace'
+                    : chosen.value.type === 'new' ? `Start with an empty conversation in ${wsName}`
                         : 'Duplicate conversation history; authorization is reset';
                 rows.push(dim(`  ${truncate(clean(description), Math.max(1, w - 3), '…')}`));
             }

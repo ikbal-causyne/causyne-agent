@@ -72,19 +72,22 @@ test('buildSessionPickerItems: orders conversations by date and hides abandoned 
   assert.equal(items[1].id, '__FORK_SESSION__');
   assert.equal(items[1].value.type, 'fork');
 
-  // Active session
+  // Active workspace sessions come first (ordered newest-first by date)
   assert.equal(items[2].id, 's_active');
+  assert.equal(items[2].section, 'workspace');
   assert.ok(items[2].label.includes('[active]'));
   assert.ok(items[2].category === 'Today' || items[2].category === 'Yesterday');
 
-  // Other workspace session
-  assert.equal(items[3].id, 's_other');
+  // Second current-workspace session precedes other workspaces without duplication
+  assert.equal(items[3].id, 's_cont');
+  assert.equal(items[3].section, 'workspace');
   assert.ok(items[3].category === 'Today' || items[3].category === 'Yesterday');
-  assert.match(items[3].description, /other-proj/);
 
-  // Continuum session
-  assert.equal(items[4].id, 's_cont');
+  // Other workspace session appears below in All Sessions
+  assert.equal(items[4].id, 's_other');
+  assert.equal(items[4].section, 'all');
   assert.ok(items[4].category === 'Today' || items[4].category === 'Yesterday');
+  assert.match(items[4].description, /other-proj/);
   assert.equal(items.some(item => item.id === 's_empty'), false);
 });
 

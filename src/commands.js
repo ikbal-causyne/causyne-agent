@@ -692,7 +692,7 @@ export const COMMANDS = [
     run: async (_args = [], context = {}) => {
       const store = await import('./sessionStore.js');
       const memory = context.loop && context.loop.memoryManager;
-      const workspace = context.loop?.workspaceRoot || process.cwd();
+      const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
       const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
       if (context.loop) {
         context.loop.messages = [];
@@ -742,7 +742,7 @@ export const COMMANDS = [
       const store = await import('./sessionStore.js');
       const verb = String(args[0] || '').toLowerCase();
       const memory = context.loop && context.loop.memoryManager;
-      const workspace = context.loop?.workspaceRoot || process.cwd();
+      const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
 
       // If interactive TUI prompt is available and no sub-arguments are given, open interactive picker modal
       if ((!args || args.length === 0 || (args.length === 1 && args[0] === '')) && context.prompt) {
@@ -850,19 +850,11 @@ export const COMMANDS = [
         return ok('No sessions yet. This conversation becomes one as soon as you send something.');
       }
 
-      const active = store.getActiveSessionId();
-      const home = process.env.HOME || '';
-      const lines = rows.slice(0, 20).map((s) => {
-        const when = new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ');
-        const where = s.workspace ? (home ? s.workspace.replace(home, '~') : s.workspace) : '(no workspace)';
-        const mark = s.id === active ? '*' : ' ';
-        return `  ${mark} ${s.id}  ${when}  ${String(s.messageCount).padStart(4)} msg  ${where}\n      ${s.title}`;
-      });
+      const active = memory?.sessionId || store.getActiveSessionId();
+      const { formatSessionsTextReport } = await import('./tui/sessionPicker.js');
 
       return ok(
-        `${rows.length} session${rows.length === 1 ? '' : 's'} (* = active):\n`
-        + lines.join('\n')
-        + '\n\nSwitch with /sessions switch <id>, fork with /fork [id], or run /sessions to open interactive modal picker.',
+        formatSessionsTextReport(rows, active, workspace),
         { effect: 'pick-session', items: rows, active }
       );
     }

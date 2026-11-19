@@ -42,11 +42,15 @@ test('rows are compact, readable, and do not exceed panel columns', () => {
 test('selection is always visible through category boundaries and 860 sessions', () => {
   const layer = panel(860);
   layer.list.moveTo(700, 17);
+  const selected = layer.list.current;
+  assert.ok(selected && selected.value.type === 'switch');
   const rows = layer.body(84, 24).map(stripAnsi);
-  assert.ok(rows.some(row => row.includes('Session 698')), 'selected session is not hidden by scrolling');
-  assert.ok(rows.some(row => row.includes('Session 698') && row.includes('msgs')));
-  assert.equal(layer.list.current.id, 's-698');
+  assert.ok(rows.some(row => row.includes(selected.value.title)), 'selected session is not hidden by scrolling');
+  assert.ok(rows.some(row => row.includes(selected.value.title) && row.includes('msgs')));
   assert.equal(layer.list.filtered.length, 862);
+  // Zero duplicate IDs across current workspace and All Sessions partitions
+  const switchIds = layer.list.all.filter(item => item.value.type === 'switch').map(item => item.id);
+  assert.equal(new Set(switchIds).size, 860);
 });
 
 test('Tab scopes to the current workspace while retaining session actions', () => {

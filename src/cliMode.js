@@ -595,7 +595,7 @@ export async function chatMode({ home = false } = {}) {
         const { runInteractiveSessionPicker } = await import('./tui/sessionPicker.js');
         await runInteractiveSessionPicker(prompt, {
           loop,
-          workspace: loop?.workspaceRoot || process.cwd()
+          workspace: loop?.workspaceRoot || prompt?.root || process.cwd()
         });
         if (prompt && typeof prompt.draw === 'function') prompt.draw();
         continue;
