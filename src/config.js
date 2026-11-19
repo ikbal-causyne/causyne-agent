@@ -1,10 +1,15 @@
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
-import crypto from 'crypto';
 import { canonicalModelId } from './modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import { causyneHome } from './utils/paths.js';
+import {
+  ensureVaultDir,
+  atomicWriteSecretFileSync,
+  encryptVaultSecret,
+  decryptVaultSecret,
+  isEncryptedVaultSecret
+} from './configVault.js';
 
 function configDir() {
   return causyneHome();
@@ -17,54 +22,15 @@ function keyFile() {
 }
 
 function ensureConfigDir() {
-  const dir = configDir();
-  if (!fs.existsSync(dir)) {
-    // SECURITY: Directory must only be accessible by the owner
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-}
-
-function getVaultKey() {
-  ensureConfigDir();
-  const kf = keyFile();
-  if (!fs.existsSync(kf)) {
-    const key = crypto.randomBytes(32);
-    fs.writeFileSync(kf, key, { mode: 0o600 });
-    return key;
-  }
-  return fs.readFileSync(kf);
+  ensureVaultDir(configDir());
 }
 
 function encryptString(text) {
-  if (!text) return text;
-  if (text.startsWith('ENC:')) return text; // Already encrypted
-  const key = getVaultKey();
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
-  return `ENC:${iv.toString('hex')}:${authTag}:${encrypted}`;
+  return encryptVaultSecret(text, keyFile());
 }
 
 function decryptString(encryptedText) {
-  if (!encryptedText || !encryptedText.startsWith('ENC:')) return encryptedText;
-  try {
-    const parts = encryptedText.split(':');
-    if (parts.length !== 4) return '';
-    const iv = Buffer.from(parts[1], 'hex');
-    const authTag = Buffer.from(parts[2], 'hex');
-    const encrypted = parts[3];
-    const key = getVaultKey();
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
-  } catch (e) {
-    console.error('Failed to decrypt API key:', e);
-    return '';
-  }
+  return decryptVaultSecret(encryptedText, keyFile());
 }
 
 export function loadConfig() {
@@ -73,28 +39,34 @@ export function loadConfig() {
   if (fs.existsSync(file)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-      
-      // Decrypt API key into memory
-      if (parsed.apiKey) {
-        if (!parsed.apiKey.startsWith('ENC:')) {
-          // Found legacy plaintext key. We must encrypt it and re-save immediately.
-          const plaintext = parsed.apiKey;
-          parsed.apiKey = encryptString(plaintext);
-          saveConfig(parsed); // Re-saves safely encrypted
-          parsed.apiKey = plaintext; // Keep plaintext in memory for this session
+      let needsEncryptedResave = false;
+
+      // Decrypt API key into memory; flag legacy plaintext keys for immediate encrypted re-save.
+      if (typeof parsed.apiKey === 'string' && parsed.apiKey) {
+        if (!isEncryptedVaultSecret(parsed.apiKey)) {
+          needsEncryptedResave = true;
         } else {
           parsed.apiKey = decryptString(parsed.apiKey);
         }
       }
 
-      // Decrypt provider-specific API keys if stored
+      // Decrypt provider-specific API keys if stored; also re-encrypt any legacy plaintext entries.
       if (parsed.providerKeys && typeof parsed.providerKeys === 'object') {
         for (const [provider, keyVal] of Object.entries(parsed.providerKeys)) {
           if (typeof keyVal === 'string' && keyVal) {
-            parsed.providerKeys[provider] = decryptString(keyVal);
+            if (!isEncryptedVaultSecret(keyVal)) {
+              needsEncryptedResave = true;
+            } else {
+              parsed.providerKeys[provider] = decryptString(keyVal);
+            }
           }
         }
       }
+
+      if (needsEncryptedResave) {
+        saveConfig(parsed);
+      }
+
       if (parsed.apiKey && parsed.provider) {
         parsed.providerKeys = parsed.providerKeys || {};
         if (!parsed.providerKeys[parsed.provider]) {
@@ -111,18 +83,23 @@ export function loadConfig() {
 
       // Self-heal legacy unconfigured DashScope bug:
       // If config was written with provider 'dashscope' or 'dashscope-byok' but without an apiKey,
-      // it was an unintended default from older builds. Heal to an environment key or unconfigured.
+      // it was an unintended default from older builds. Heal to an environment key (in-memory only,
+      // never persisting transient env secrets to disk) or unconfigured.
       if ((parsed.provider === 'dashscope' || parsed.provider === 'dashscope-byok') && !parsed.apiKey) {
         const envDetected = detectEnvironmentProvider();
-        if (envDetected) {
+        if (envDetected && envDetected.apiKey) {
           parsed.provider = envDetected.provider;
           parsed.model = envDetected.model;
           parsed.apiKey = envDetected.apiKey;
+        } else if (envDetected) {
+          parsed.provider = envDetected.provider;
+          parsed.model = envDetected.model;
+          saveConfig(parsed);
         } else {
           parsed.provider = '';
           parsed.model = '';
+          saveConfig(parsed);
         }
-        saveConfig(parsed);
       }
 
       return parsed;
@@ -131,7 +108,8 @@ export function loadConfig() {
     }
   }
   
-  // Default config: auto-detect from environment if available, otherwise unconfigured
+  // Default config: auto-detect from environment if available, otherwise unconfigured.
+  // Transient environment API keys stay strictly in memory and are NEVER persisted to disk.
   const envDetected = detectEnvironmentProvider();
   const defaultConfig = {
     provider: envDetected ? envDetected.provider : '',
@@ -147,7 +125,9 @@ export function loadConfig() {
       hardStop: true
     }
   };
-  saveConfig(defaultConfig);
+  if (!envDetected || !envDetected.apiKey) {
+    saveConfig(defaultConfig);
+  }
   return defaultConfig;
 }
 
@@ -297,8 +277,7 @@ export function saveConfig(config) {
     }
   }
 
-  // SECURITY: Config file contains encrypted keys, must be 0600 (owner read/write only)
+  // SECURITY: Config file contains encrypted keys, written atomically with 0600 permissions
   const file = configFile();
-  fs.writeFileSync(file, JSON.stringify(configToSave, null, 2), { encoding: 'utf8', mode: 0o600 });
-  fs.chmodSync(file, 0o600); // Enforce on existing files
+  atomicWriteSecretFileSync(file, JSON.stringify(configToSave, null, 2));
 }

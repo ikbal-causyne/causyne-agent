@@ -63,6 +63,7 @@
     "src/core/planCache.ts",
     "src/core/contextCompactor.ts",
     "src/infra/atomicWriter.ts",
+    "src/configVault.ts",
     "src/infra/telemetry.ts",
     "src/session/sidechainEvents.ts",
     "src/session/cachePressure.ts",
