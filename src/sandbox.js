@@ -5,29 +5,14 @@ import { loadConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { validateBrowserActSandbox } from './browser/causyneBrowser.js';
 import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
-
-
-function maskQuotedSpans(text) {
-  return text
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
-}
-
-/**
- * Split a command line into the individual commands the shell will run.
- *
- * Prefix matching only ever inspected the FIRST word of the whole line, so any
- * leading token disguised everything after it: `cd ~/Documents && rm -f x` was
- * classified from `cd` and auto-executed with no approval. Each segment must be
- * judged on its own.
- */
-function splitShellSegments(text) {
-  return text
-    .split(/&&|\|\||[;\n|&]/)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
-}
+import {
+  isBlockedWorkspaceRoot,
+  isExtendedCredentialPath,
+  isSensitiveWriteTarget,
+  analyzeShellCommand,
+  isExtremeRemovalSegment,
+  isFetchAndExecPipeline
+} from './sandboxPolicy.js';
 
 /**
  * Read-only invocations of tools whose NAME is dangerous but whose subcommand
@@ -115,13 +100,18 @@ const CREDENTIAL_PATHS = [
   /(^|\/)Library\/Keychains(\/|$)/i,
   // Causyne's own vault: config.json holds the encrypted provider key and
   // .vault_key is the key that decrypts it.
-  /(^|\/)\.causyne(\/|$)/
+  /(^|\/)\.causyne(\/|$)/,
+  /(^|\/)\.envrc$/i,
+  /(^|\/)\.git-credentials$/i,
+  /(^|\/)\.pypirc$/i,
+  /(^|\/)\.pgpass$/i,
+  /(^|\/)\.my\.cnf$/i
 ];
 
 export function isCredentialPath(targetPath) {
   if (typeof targetPath !== 'string' || targetPath.length === 0) return false;
   const normalized = targetPath.replace(/\\/g, '/');
-  return CREDENTIAL_PATHS.some(pattern => pattern.test(normalized));
+  return CREDENTIAL_PATHS.some(pattern => pattern.test(normalized)) || isExtendedCredentialPath(normalized);
 }
 
 const SENSITIVE_WRITE_TARGETS = [
@@ -130,6 +120,13 @@ const SENSITIVE_WRITE_TARGETS = [
   /(^|\/)\.config\/fish\/config\.fish$/,
   // Remote session routing profiles and authentication credentials.
   /(^|\/)\.ssh\//,
+  /(^|\/)\.aws\//,
+  /(^|\/)\.kube\//,
+  /(^|\/)\.gnupg\//,
+  /(^|\/)\.docker\/config\.json$/,
+  /(^|\/)\.(npmrc|netrc|git-credentials|pypirc|envrc)$/,
+  // Git hooks and repository config can execute arbitrary commands on next git invocation.
+  /(^|\/)\.git\/(hooks(\/|$)|config$)/,
   // Scheduled execution.
   /(^|\/)(crontab|cron\.d)(\/|$)/,
   /\/etc\//,
@@ -195,13 +192,11 @@ export class Sandbox {
   
   updateWorkspacePaths(newPaths) {
     if (Array.isArray(newPaths) && newPaths.length > 0) {
-      // Validate: reject any system-critical paths
-      const BLOCKED_ROOTS = ['/etc', '/usr', '/bin', '/sbin', '/System', '/var', '/private', '/Library'];
-      const safePaths = newPaths.filter(p => {
-        const resolved = path.resolve(p);
-        return !BLOCKED_ROOTS.some(blocked => resolved.startsWith(blocked));
-      });
-      
+      // Validate: reject any system-critical roots, filesystem roots, or symlinks to them
+      const safePaths = newPaths
+        .filter(p => typeof p === 'string' && !isBlockedWorkspaceRoot(p))
+        .map(p => path.resolve(p));
+
       if (safePaths.length > 0) {
         this.workspacePaths = safePaths;
         return { success: true, paths: this.workspacePaths };
@@ -210,8 +205,11 @@ export class Sandbox {
     return { success: false, reason: 'Invalid or blocked paths provided' };
   }
 
-  // V5: Add a single workspace path
+  // V5: Add a single workspace path (enforces the same blocked-root checks as updateWorkspacePaths)
   addWorkspacePath(newPath) {
+    if (typeof newPath !== 'string' || isBlockedWorkspaceRoot(newPath)) {
+      return this.workspacePaths;
+    }
     const resolved = path.resolve(newPath);
     if (!this.workspacePaths.includes(resolved)) {
       this.workspacePaths.push(resolved);
@@ -467,25 +465,34 @@ export class Sandbox {
     // several of these patterns deliberately span shell separators (the fork
     // bomb contains ; and |, the pipe-to-shell patterns contain |), so
     // splitting first would stop them matching at all.
+    const analyzed = analyzeShellCommand(command);
     for (const pattern of FORBIDDEN_PATTERNS) {
       if (pattern.test(normalized)) return 'forbidden';
+      for (const rawUnit of analyzed.allRawUnits) {
+        if (pattern.test(rawUnit.toLowerCase())) return 'forbidden';
+      }
     }
+    if (isFetchAndExecPipeline(analyzed.normalizedPipelines)) return 'forbidden';
 
     // Everything below judges what the shell will actually execute.
-    const masked = maskQuotedSpans(normalized);
+    const masked = analyzed.maskedTopLevel;
 
-
-    // L3 (local-path audit): classify the redirection target, not just the verb.
+    // L3 (local-path audit): classify the redirection / tee write target, not just the verb.
     // Tool argument validation enforces boundaries on named arguments, but
-    // shell redirection targets appended via operators (>> or >) require independent
-    // audit. Writing into sensitive paths (such as user startup profiles, remote
-    // authentication directories, or agent configuration stores) must always escalate
-    // to extreme classification regardless of which command performs the redirection.
-    if (redirectsIntoSensitiveTarget(masked)) return 'extreme';
-    const executesQuotedText = INTERPRETER_INVOCATION.test(masked);
-    const destructiveScanTarget = executesQuotedText ? normalized : masked;
+    // shell redirection targets appended via operators (>> or >) or `tee` require independent
+    // audit — including quoted targets, `$HOME` expansions, and command substitutions.
+    if (
+      redirectsIntoSensitiveTarget(masked) ||
+      analyzed.writeTargets.some(target => isSensitiveWriteTarget(target))
+    ) {
+      return 'extreme';
+    }
 
-    
+    const executesQuotedText = analyzed.allMaskedUnits.some(unit => INTERPRETER_INVOCATION.test(unit));
+    const scanUnits = executesQuotedText
+      ? analyzed.allRawUnits.map(u => u.toLowerCase())
+      : analyzed.allMaskedUnits;
+
     const EXTREME_PATTERNS = [
       /rm\s+(-rf|-fr)\s+[\/~]/,
       /rm\s+(-rf|-fr)\s+\*/,
@@ -498,8 +505,16 @@ export class Sandbox {
       /diskpart/i
     ];
 
-    for (const pattern of EXTREME_PATTERNS) {
-      if (pattern.test(destructiveScanTarget)) return 'extreme';
+    for (const unit of scanUnits) {
+      for (const pattern of EXTREME_PATTERNS) {
+        if (pattern.test(unit)) return 'extreme';
+      }
+    }
+    for (const seg of analyzed.normalizedSegments) {
+      if (isExtremeRemovalSegment(seg)) return 'extreme';
+    }
+    for (const seg of analyzed.unwrappedRawSegments) {
+      if (isExtremeRemovalSegment(seg)) return 'extreme';
     }
 
     // DANGEROUS — requires approval in Mode B, auto-executes in Mode C
@@ -512,13 +527,16 @@ export class Sandbox {
       'mv ', 'crontab ', 'systemctl ', 'service '
     ];
 
-    // Prefix rules are per-segment: `cd x && rm -f y` must be judged on `rm`,
-    // not on `cd`. Highest risk across all segments wins.
-    const segments = splitShellSegments(masked);
-
-    for (const segment of segments) {
+    // Prefix rules are evaluated per normalized segment (including env-prefixed,
+    // wrapper-prefixed, absolute-path, and `$(...)`/backtick substituted commands).
+    // Highest risk across all segments wins.
+    for (const seg of analyzed.normalizedSegments) {
+      if (seg.isReadOnlyLookup) continue;
+      if (seg.executable === 'su') return 'dangerous';
       for (const prefix of DANGEROUS_PREFIXES) {
-        if (segment.startsWith(prefix) && !isReadOnlyInvocation(segment)) return 'dangerous';
+        if (seg.normalized.startsWith(prefix) && !isReadOnlyInvocation(seg.normalized)) {
+          return 'dangerous';
+        }
       }
     }
 
@@ -528,8 +546,10 @@ export class Sandbox {
     const DANGEROUS_PATTERNS = [
       /\bfind\b[\s\S]*\s-(exec|execdir|delete)\b/,
     ];
-    for (const pattern of DANGEROUS_PATTERNS) {
-      if (pattern.test(destructiveScanTarget)) return 'dangerous';
+    for (const unit of scanUnits) {
+      for (const pattern of DANGEROUS_PATTERNS) {
+        if (pattern.test(unit)) return 'dangerous';
+      }
     }
 
     // MODERATE — auto-execute + notify in Mode B
@@ -548,9 +568,10 @@ export class Sandbox {
       'curl ', 'wget '
     ];
 
-    for (const segment of segments) {
+    for (const seg of analyzed.normalizedSegments) {
+      if (seg.isReadOnlyLookup) continue;
       for (const prefix of MODERATE_PREFIXES) {
-        if (segment.startsWith(prefix)) return 'moderate';
+        if (seg.normalized.startsWith(prefix)) return 'moderate';
       }
     }
 

@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isLaunchOnlyPrompt, isServerLaunchCommand } from '../launchIntent.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
 
 export interface SysRunArgs {
   command: string;
@@ -93,7 +94,7 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
  * and language runtimes so ADB, emulator, and build tools function out-of-the-box.
  */
 export function getEnhancedEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...(baseEnv || process.env) };
+  const env: NodeJS.ProcessEnv = sanitizeSubprocessEnv(baseEnv || process.env);
 
   // 1. Discover ANDROID_HOME / ANDROID_SDK_ROOT across standard platform locations
   if (!env.ANDROID_HOME && !env.ANDROID_SDK_ROOT) {

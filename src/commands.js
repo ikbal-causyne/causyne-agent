@@ -45,7 +45,7 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { runCopyCommand, runPasteCommand } from './tui/chatboxClipboard.js';
 import { loadLocalImageAttachment, formatByteSize } from './tui/clipboardImage.js';
 import { getPackageVersion } from './version.js';
@@ -539,7 +539,7 @@ export const COMMANDS = [
         let isGit = fs.existsSync(path.join(ws, '.git'));
         if (!isGit) {
           try {
-            execSync('git rev-parse --is-inside-work-tree', { cwd: ws, stdio: 'pipe' });
+            execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
             isGit = true;
           } catch {
             isGit = false;
@@ -550,19 +550,20 @@ export const COMMANDS = [
           return ok(`Workspace "${ws}" is not a git repository.`);
         }
 
-        const status = execSync('git status --short', { cwd: ws, encoding: 'utf8' }).trim();
+        const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
         if (!status) {
           return ok('Working tree is clean. No uncommitted changes in this workspace.');
         }
 
-        let diffCmd = 'git diff';
+        let diffArgs = ['diff'];
         if (sub === 'staged' || sub === '--cached') {
-          diffCmd = 'git diff --cached';
+          diffArgs = ['diff', '--cached'];
         } else if (sub === 'stat') {
-          diffCmd = 'git diff --stat HEAD';
+          diffArgs = ['diff', '--stat', 'HEAD'];
         }
+        const diffCmd = `git ${diffArgs.join(' ')}`;
 
-        const diffOutput = execSync(diffCmd, { cwd: ws, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
+        const diffOutput = execFileSync('git', diffArgs, { cwd: ws, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
         const header = `Git Status (${ws}):\n${status}\n\n${'─'.repeat(50)}\n${diffCmd}:\n`;
         return ok(diffOutput ? `${header}\n${diffOutput}` : `${header}\n(no file diff for ${diffCmd})`);
       } catch (err) {
@@ -2288,7 +2289,7 @@ export const COMMANDS = [
         promptText = `Please review ${target} for security vulnerabilities, logic correctness, performance, and best practices.`;
       } else {
         try {
-          const status = execSync('git status --short', { cwd: ws, encoding: 'utf8' }).trim();
+          const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
           if (!status) {
             return ok('Working tree is clean. To review a specific file, run: /review <path>');
           }
@@ -2429,7 +2430,7 @@ export const COMMANDS = [
       const ws = ctx.loop?.workspaceRoot || process.cwd();
       let isGit = false;
       try {
-        execSync('git rev-parse --is-inside-work-tree', { cwd: ws, stdio: 'pipe' });
+        execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
         isGit = true;
       } catch {}
       lines.push(`  ✓ Workspace root    : ${ws}`);

@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isLaunchOnlyPrompt, isServerLaunchCommand } from '../launchIntent.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
 /**
  * Strips ANSI escape sequences and terminal control codes from string output.
  */
@@ -50,7 +51,7 @@ export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test
  * and language runtimes so ADB, emulator, and build tools function out-of-the-box.
  */
 export function getEnhancedEnv(baseEnv) {
-    const env = { ...(baseEnv || process.env) };
+    const env = sanitizeSubprocessEnv(baseEnv || process.env);
     // 1. Discover ANDROID_HOME / ANDROID_SDK_ROOT across standard platform locations
     if (!env.ANDROID_HOME && !env.ANDROID_SDK_ROOT) {
         const candidateDirs = [

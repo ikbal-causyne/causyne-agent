@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import os from 'os';
 import path from 'path';
+import { getEnhancedEnv } from './sysRun.js';
 
 // Singleton map of active persistent shell sessions
 const sessions = new Map();
@@ -55,9 +56,13 @@ export const persistentShell = {
         const shellBin = isWin ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh');
         const shellArgs = isWin ? ['-NoLogo', '-NoExit', '-Command', '-'] : ['-l'];
 
+        const initialCwd = typeof args.cwd === 'string' && args.cwd.trim()
+          ? args.cwd.replace(/^~\//, os.homedir() + '/')
+          : process.cwd();
+
         const proc = spawn(shellBin, shellArgs, {
-          cwd: process.cwd(),
-          env: { ...process.env, CAUSYNE_PERSISTENT_SHELL: '1', PS1: '' },
+          cwd: initialCwd,
+          env: { ...getEnhancedEnv(), CAUSYNE_PERSISTENT_SHELL: '1', PS1: '' },
           stdio: ['pipe', 'pipe', 'pipe']
         });
 
@@ -71,7 +76,7 @@ export const persistentShell = {
 
         session = {
           process: proc,
-          currentCwd: process.cwd()
+          currentCwd: initialCwd
         };
         sessions.set(sessionId, session);
       }
