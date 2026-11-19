@@ -3,6 +3,11 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
+import {
+  requireApiKey,
+  resolveTemperature,
+  safeProviderFetchJson
+} from './byokHttp.js';
 
 export class MoonshotProvider extends LLMProvider {
   constructor(config) {
@@ -15,27 +20,17 @@ export class MoonshotProvider extends LLMProvider {
   }
 
   async chat(messages, options = {}) {
+    const apiKey = requireApiKey(this.apiKey, 'Moonshot AI (Kimi)');
     const sanitizedMessages = this.prepareMessages(messages);
 
     const payload = {
       model: this.model,
       messages: sanitizedMessages,
-      temperature: options.temperature || 0.1,
+      temperature: resolveTemperature(options.temperature, 0.1),
     };
 
     if (options.jsonMode) {
       payload.response_format = { type: 'json_object' };
-    }
-    
-    let headers = {
-      'Content-Type': 'application/json'
-    };
-
-    if (this.apiKey) {
-      headers['Authorization'] = `Bearer ${this.apiKey}`;
-    } else {
-      // EXPLICIT BYOK CONSTRAINT
-      throw new Error(`Moonshot AI (Kimi) API requires a valid API key (BYOK mode). Please set it in your configuration.`);
     }
 
     let freeFormPaths = new Map();
@@ -46,18 +41,20 @@ export class MoonshotProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const response = await fetch(this.baseUrl, {
+    const data = await safeProviderFetchJson({
+      url: this.baseUrl,
       method: 'POST',
-      headers: headers,
-      body: JSON.stringify(payload)
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'Moonshot AI',
+      secrets: [apiKey],
+      hasApiKey: true
     });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`Moonshot AI API Error (${response.status}): ${errorData}`);
-    }
-
-    const data = await response.json();
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_moonshot',
       freeFormPaths

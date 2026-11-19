@@ -17,6 +17,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { causyneHome } from './utils/paths.js';
 import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE, DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
+import { validateProviderEndpointUrl, readBoundedResponseText } from './providers/byokHttp.js';
 import {
   BASELINE_ANTIGRAVITY_MODELS,
   ANTIGRAVITY_MODELS,
@@ -953,15 +954,34 @@ export async function fetchLiveModels(
   const peer = peerIdFromProviderKey(norm);
   if (peer) return discoverPeerModels(peer);
 
+  const MAX_DISCOVERY_BYTES = 4 * 1024 * 1024;
+  const fetchDiscoveryJson = async <T>(
+    rawUrl: string,
+    headers: Record<string, string> = {},
+    hasApiKey = false
+  ): Promise<T | null> => {
+    const safeUrl = validateProviderEndpointUrl(rawUrl, {
+      hasApiKey,
+      providerLabel: norm
+    });
+    const res = await fetch(safeUrl, {
+      headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    });
+    if (!res.ok) return null;
+    if (!res.body && typeof res.text !== 'function' && typeof res.json === 'function') {
+      return (await res.json()) as T;
+    }
+    const text = await readBoundedResponseText(res, MAX_DISCOVERY_BYTES, { truncate: false, label: norm });
+    return JSON.parse(text) as T;
+  };
+
   try {
     if (norm === 'ollama') {
       const host = (baseUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-      const res = await fetch(`${host}/api/tags`, {
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { models?: Array<{ name?: string }> };
-      if (Array.isArray(data.models)) {
+      const data = await fetchDiscoveryJson<{ models?: Array<{ name?: string }> }>(`${host}/api/tags`, {}, false);
+      if (Array.isArray(data?.models)) {
         return data.models
           .map((m) => (m.name || '').replace(/:latest$/, ''))
           .filter(Boolean);
@@ -971,13 +991,12 @@ export async function fetchLiveModels(
     if (norm === 'openai') {
       if (!apiKey) return [];
       const host = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-      const res = await fetch(`${host}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        `${host}/models`,
+        { Authorization: `Bearer ${apiKey}` },
+        true
+      );
+      if (Array.isArray(data?.data)) {
         return data.data
           .map((m) => m.id || '')
           .filter((id) => /^(gpt|o1|o3|chatgpt)/i.test(id))
@@ -987,12 +1006,13 @@ export async function fetchLiveModels(
 
     if (norm === 'gemini') {
       if (!apiKey) return [];
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`, {
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> };
-      if (Array.isArray(data.models)) {
+      // Send API key in x-goog-api-key header rather than query string (CWE-598).
+      const data = await fetchDiscoveryJson<{ models?: Array<{ name?: string; supportedGenerationMethods?: string[] }> }>(
+        'https://generativelanguage.googleapis.com/v1beta/models',
+        { 'x-goog-api-key': apiKey },
+        true
+      );
+      if (Array.isArray(data?.models)) {
         return data.models
           .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
           .map((m) => (m.name || '').replace(/^models\//, ''))
@@ -1003,16 +1023,15 @@ export async function fetchLiveModels(
 
     if (norm === 'anthropic') {
       if (!apiKey) return [];
-      const res = await fetch('https://api.anthropic.com/v1/models', {
-        headers: {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        'https://api.anthropic.com/v1/models',
+        {
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01'
         },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+        true
+      );
+      if (Array.isArray(data?.data)) {
         return data.data
           .map((m) => m.id || '')
           .filter(Boolean)
@@ -1022,13 +1041,12 @@ export async function fetchLiveModels(
 
     if (norm === 'deepseek') {
       if (!apiKey) return [];
-      const res = await fetch('https://api.deepseek.com/models', {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        'https://api.deepseek.com/models',
+        { Authorization: `Bearer ${apiKey}` },
+        true
+      );
+      if (Array.isArray(data?.data)) {
         return data.data.map((m) => m.id || '').filter(Boolean).sort();
       }
     }
@@ -1036,13 +1054,12 @@ export async function fetchLiveModels(
     if (norm === 'xai') {
       if (!apiKey) return [];
       const host = (baseUrl || 'https://api.x.ai/v1').replace(/\/+$/, '');
-      const res = await fetch(`${host}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        `${host}/models`,
+        { Authorization: `Bearer ${apiKey}` },
+        true
+      );
+      if (Array.isArray(data?.data)) {
         return data.data.map((m) => m.id || '').filter((id) => /^(grok)/i.test(id)).sort();
       }
     }
@@ -1050,13 +1067,12 @@ export async function fetchLiveModels(
     if (norm === 'moonshot') {
       if (!apiKey) return [];
       const host = (baseUrl || 'https://api.moonshot.cn/v1').replace(/\/+$/, '');
-      const res = await fetch(`${host}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        `${host}/models`,
+        { Authorization: `Bearer ${apiKey}` },
+        true
+      );
+      if (Array.isArray(data?.data)) {
         return data.data.map((m) => m.id || '').filter((id) => /^(kimi|moonshot)/i.test(id)).sort();
       }
     }
@@ -1064,13 +1080,12 @@ export async function fetchLiveModels(
     if (norm === 'dashscope-byok' || norm === 'qwen') {
       if (!apiKey) return [];
       const host = (baseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
-      const res = await fetch(`${host}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        `${host}/models`,
+        { Authorization: `Bearer ${apiKey}` },
+        true
+      );
+      if (Array.isArray(data?.data)) {
         return data.data.map((m) => m.id || '').filter((id) => /^(qwen)/i.test(id)).sort();
       }
     }
@@ -1088,13 +1103,12 @@ export async function fetchLiveModels(
       const host = baseUrl.replace(/\/+$/, '');
       const headers: Record<string, string> = {};
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-      const res = await fetch(`${host}/models`, {
+      const data = await fetchDiscoveryJson<{ data?: Array<{ id?: string }> }>(
+        `${host}/models`,
         headers,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { data?: Array<{ id?: string }> };
-      if (Array.isArray(data.data)) {
+        Boolean(apiKey)
+      );
+      if (Array.isArray(data?.data)) {
         return data.data.map((m) => m.id || '').filter(Boolean).sort();
       }
     }

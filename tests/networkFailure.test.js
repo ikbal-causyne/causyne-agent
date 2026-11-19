@@ -61,12 +61,12 @@ describe('a connection failure explains itself', () => {
     assert.ok(!text.includes('?'), 'no query string may survive into the text');
   });
 
-  test('the Gemini adapter really does put the key in the URL', () => {
-    // If this ever stops being true the guard above is still correct, but the
-    // reason for it should be re-read rather than assumed.
+  test('the Gemini adapter sends the API key in x-goog-api-key header, never in the URL', () => {
+    // Defense-in-depth: explainNetworkError still strips query strings above,
+    // and the Gemini adapter itself no longer puts the API key in the URL (CWE-598).
     const adapter = fs.readFileSync(path.join(repoRoot, 'src', 'providers', 'gemini.js'), 'utf8');
-    assert.match(adapter, /key=\$\{this\.apiKey\}/,
-      'the host-only rule exists because of this line');
+    assert.match(adapter, /'x-goog-api-key'\s*:\s*apiKey/);
+    assert.doesNotMatch(adapter, /key=\$\{this\.apiKey\}/);
   });
 
   test('an unknown cause still produces something usable', () => {

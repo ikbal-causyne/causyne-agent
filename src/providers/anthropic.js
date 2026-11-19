@@ -8,6 +8,11 @@ import {
   sanitizeProviderToolId,
   serializeAndDecodeArguments
 } from './wireNormalizer.js';
+import {
+  requireApiKey,
+  resolveTemperature,
+  safeProviderFetchJson
+} from './byokHttp.js';
 
 // Models that support server-side tool search (defer_loading + tool_reference
 // expansion). On these, Causyne hands Anthropic the complete 69-tool catalogue
@@ -292,6 +297,7 @@ export class AnthropicProvider extends LLMProvider {
       }
     }
 
+    const apiKey = requireApiKey(this.apiKey, 'Anthropic');
     const payload = {
       model: this.model,
       system: systemBlocks,
@@ -301,7 +307,7 @@ export class AnthropicProvider extends LLMProvider {
     };
 
     if (!this.rejectsSamplingParameters()) {
-      payload.temperature = options.temperature || 0.1;
+      payload.temperature = resolveTemperature(options.temperature, 0.1);
     }
 
     const thinking = this.buildThinking();
@@ -350,22 +356,21 @@ export class AnthropicProvider extends LLMProvider {
       }
     }
 
-    const response = await fetch(this.baseUrl, {
+    const data = await safeProviderFetchJson({
+      url: this.baseUrl,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'Anthropic',
+      secrets: [apiKey],
+      hasApiKey: true
     });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`Anthropic API Error (${response.status}): ${errorData}`);
-    }
-
-    const data = await response.json();
 
     // Extract text content and tool calls
     let content = '';

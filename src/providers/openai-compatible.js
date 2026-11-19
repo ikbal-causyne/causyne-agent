@@ -3,6 +3,12 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
+import {
+  isLoopbackHost,
+  requireApiKey,
+  resolveTemperature,
+  safeProviderFetchJson
+} from './byokHttp.js';
 
 export class OpenAICompatibleProvider extends LLMProvider {
   constructor(config) {
@@ -15,6 +21,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
     // 'low' | 'medium' | 'high' | 'off'. Unset means: do not send the parameter.
     this.reasoningEffort = config.reasoningEffort || null;
     this.baseUrl = config.baseUrl || 'https://api.openai.com/v1/chat/completions';
+    this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['openai']);
   }
 
@@ -23,7 +30,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
     const payload = {
       model: this.model,
       messages: preparedMessages,
-      temperature: options.temperature || 0.1,
+      temperature: resolveTemperature(options.temperature, 0.1),
     };
 
     // Reasoning models take an effort dial. Sending it to a model that does not
@@ -46,21 +53,34 @@ export class OpenAICompatibleProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const response = await fetch(this.baseUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`OpenAI-Compatible API Error (${response.status}): ${errorData}`);
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    const trimmedKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
+    let isLocalEndpoint = false;
+    try {
+      isLocalEndpoint = isLoopbackHost(new URL(this.baseUrl).hostname);
+    } catch {
+      isLocalEndpoint = false;
+    }
+    if (trimmedKey) {
+      headers['Authorization'] = `Bearer ${trimmedKey}`;
+    } else if (!isLocalEndpoint) {
+      requireApiKey(this.apiKey, 'OpenAI-Compatible');
     }
 
-    const data = await response.json();
+    const data = await safeProviderFetchJson({
+      url: this.baseUrl,
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'OpenAI-Compatible',
+      secrets: trimmedKey ? [trimmedKey] : [],
+      hasApiKey: Boolean(trimmedKey),
+      allowInsecureHttp: this.allowInsecureHttp
+    });
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_oai',
       freeFormPaths

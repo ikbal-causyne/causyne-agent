@@ -15,6 +15,16 @@ import {
   normalizeOpenAIChatChoiceResponse,
   serializeAndDecodeArguments
 } from './wireNormalizer.js';
+import {
+  MAX_PROVIDER_ERROR_BYTES,
+  MAX_PROVIDER_JSON_BYTES,
+  MAX_SSE_BUFFER_BYTES,
+  parseRetryAfterMs,
+  readBoundedResponseText,
+  redactProviderSecrets,
+  resolveTemperature,
+  safeProviderFetch
+} from './byokHttp.js';
 import { normalizeToolName } from '../tools/toolScanner.js';
 import type { ChatOptions, ChatResponse, ChatResponseUsage, ChatResponseToolCall } from './base.d.js';
 
@@ -30,9 +40,13 @@ export class FreeModeCostGuardError extends Error {
 }
 
 export class OpenRouterRateLimitError extends Error {
-  constructor(message: string) {
+  public readonly status = 429;
+  public readonly retryAfterMs?: number | undefined;
+
+  constructor(message: string, retryAfterMs?: number | undefined) {
     super(message);
     this.name = 'OpenRouterRateLimitError';
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -46,10 +60,12 @@ export class OpenRouterPrivacyConstraintError extends Error {
 export class OpenRouterProvider extends LLMProvider {
   public dataCollection: 'deny' | 'allow';
   public freeOnly: boolean;
+  public allowInsecureHttp: boolean;
 
   constructor(config: Record<string, any> = {}) {
     super(config);
     this.baseUrl = config['baseUrl'] || OPENROUTER_CHAT_ENDPOINT;
+    this.allowInsecureHttp = config['allowInsecureHttp'] === true;
     this.model = canonicalModelId(String(config['model'] || OPENROUTER_DEFAULT_FREE_MODEL));
     this.dataCollection = config['openrouterDataCollection'] === 'allow' ? 'allow' : 'deny';
     this.freeOnly = config['freeOnly'] !== false; // Default: free mode enforced
@@ -102,7 +118,7 @@ export class OpenRouterProvider extends LLMProvider {
     const payload: Record<string, any> = {
       model: this.model,
       messages: preparedMessages,
-      temperature: options.temperature ?? 0.1,
+      temperature: resolveTemperature(options.temperature, 0.1),
       stream: shouldStream,
       provider: {
         data_collection: this.dataCollection
@@ -128,45 +144,53 @@ export class OpenRouterProvider extends LLMProvider {
       'X-Title': 'Causyne Agent'
     };
 
-    let response: Response;
     const endpoint = this.baseUrl || OPENROUTER_CHAT_ENDPOINT;
-    const fetchInit: RequestInit = {
+    const { response, cleanup } = await safeProviderFetch({
+      url: endpoint,
       method: 'POST',
       headers,
-      body: JSON.stringify(payload)
-    };
-    if (options.signal) {
-      fetchInit.signal = options.signal;
-    }
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: typeof options['timeoutMs'] === 'number' ? options['timeoutMs'] : undefined,
+      providerLabel: 'OpenRouter',
+      secrets: [apiKey],
+      hasApiKey: true,
+      allowInsecureHttp: this.allowInsecureHttp
+    });
 
     try {
-      response = await fetch(endpoint, fetchInit);
-    } catch (err: any) {
-      if (err?.name === 'AbortError' || options.signal?.aborted) {
-        throw err;
+      if (!response.ok) {
+        const rawError = await readBoundedResponseText(response, MAX_PROVIDER_ERROR_BYTES, {
+          truncate: true,
+          label: 'OpenRouter'
+        }).catch(() => '');
+        const cleanError = redactProviderSecrets(rawError, [apiKey]);
+        const retryAfterHeader = (response as unknown as { headers?: { get?: (k: string) => string | null } }).headers?.get?.('retry-after');
+        const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
+        this.handleHttpErrors(response.status, cleanError, retryAfterMs);
       }
-      throw new Error(`OpenRouter network connection error: ${err?.message || err}`);
-    }
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      this.handleHttpErrors(response.status, errorText);
-    }
-
-    if (shouldStream && response.body) {
-      return this.handleStreamingResponse(response, options, freeFormPaths);
-    } else {
-      return this.handleJsonResponse(response, freeFormPaths);
+      if (shouldStream && response.body) {
+        return await this.handleStreamingResponse(response, options, freeFormPaths);
+      } else {
+        return await this.handleJsonResponse(response, freeFormPaths, apiKey);
+      }
+    } finally {
+      cleanup();
     }
   }
 
   /**
    * Map HTTP error codes into user-friendly and security-preserving exceptions.
    */
-  private handleHttpErrors(status: number, errorText: string): never {
+  private handleHttpErrors(status: number, errorText: string, retryAfterMs?: number): never {
     if (status === 429) {
+      const retryNote = retryAfterMs !== undefined
+        ? ` Retry after ${Math.ceil(retryAfterMs / 1000)}s.`
+        : '';
       throw new OpenRouterRateLimitError(
-        'OpenRouter Free rate limit or quota exceeded. Free models have community concurrency limits. Please wait a moment or try again later.'
+        `OpenRouter Free rate limit or quota exceeded. Free models have community concurrency limits. Please wait a moment or try again later.${retryNote}`,
+        retryAfterMs
       );
     }
 
@@ -181,7 +205,8 @@ export class OpenRouterProvider extends LLMProvider {
       }
       if (lowered.includes('rate limit') || lowered.includes('free model quota')) {
         throw new OpenRouterRateLimitError(
-          'OpenRouter Free usage limit reached for this free model. Please wait a moment or select another free model with /model.'
+          'OpenRouter Free usage limit reached for this free model. Please wait a moment or select another free model with /model.',
+          retryAfterMs
         );
       }
     }
@@ -194,9 +219,24 @@ export class OpenRouterProvider extends LLMProvider {
    */
   private async handleJsonResponse(
     response: Response,
-    freeFormPaths?: Map<string, string[][]>
+    freeFormPaths?: Map<string, string[][]>,
+    apiKey?: string
   ): Promise<ChatResponse> {
-    const data = (await response.json()) as any;
+    let data: any;
+    if (!response.body && typeof response.text !== 'function' && typeof response.json === 'function') {
+      data = await response.json();
+    } else {
+      const rawText = await readBoundedResponseText(response, MAX_PROVIDER_JSON_BYTES, {
+        truncate: false,
+        label: 'OpenRouter'
+      });
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        const preview = redactProviderSecrets(rawText.slice(0, 240), [apiKey]);
+        throw new Error(`OpenRouter returned a non-JSON response (HTTP ${response.status}): ${preview}`);
+      }
+    }
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_openrouter',
       ...(freeFormPaths ? { freeFormPaths } : {})
@@ -239,6 +279,10 @@ export class OpenRouterProvider extends LLMProvider {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
+        if (Buffer.byteLength(buffer, 'utf8') > MAX_SSE_BUFFER_BYTES) {
+          await reader.cancel().catch(() => {});
+          throw new Error(`OpenRouter SSE buffer exceeded maximum allowed size (${MAX_SSE_BUFFER_BYTES} bytes).`);
+        }
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 

@@ -67,6 +67,7 @@
     "src/session/cachePressure.ts",
     "src/auth/openrouterAuth.ts",
     "src/providers/openrouter.ts",
+    "src/providers/byokHttp.ts",
     "src/providers/wireNormalizer.ts",
     "src/providers/loopGuard.ts",
     "src/providers/toolContracts.ts",

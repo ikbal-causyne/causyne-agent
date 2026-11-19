@@ -13,6 +13,11 @@ import {
   sanitizeProviderToolId,
   serializeAndDecodeArguments
 } from './wireNormalizer.js';
+import {
+  requireApiKey,
+  resolveTemperature,
+  safeProviderFetchJson
+} from './byokHttp.js';
 
 export { adaptSchemaForGemini, isEmptyObjectSchema };
 
@@ -99,7 +104,8 @@ export class GeminiProvider extends LLMProvider {
   constructor(config) {
     super(config);
     this.model = canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['gemini']);
-    this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+    // Never embed the API key in the URL query string (CWE-598); send it via x-goog-api-key header.
+    this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
     // Every Gemini model from 1.5 onward accepts image input.
     this.visionModels = ['gemini-'];
     this.imagePayloadFormat = 'gemini';
@@ -200,10 +206,11 @@ export class GeminiProvider extends LLMProvider {
       }
     }
 
+    const apiKey = requireApiKey(this.apiKey, 'Gemini');
     const payload = {
       contents,
       generationConfig: {
-        temperature: options.temperature || 0.1,
+        temperature: resolveTemperature(options.temperature, 0.1),
       }
     };
 
@@ -222,18 +229,20 @@ export class GeminiProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const response = await fetch(this.baseUrl, {
+    const data = await safeProviderFetchJson({
+      url: this.baseUrl,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'Gemini',
+      secrets: [apiKey],
+      hasApiKey: true
     });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`Gemini API Error (${response.status}): ${errorData}`);
-    }
-
-    const data = await response.json();
 
     const firstCandidate = data.candidates?.[0];
     if (!firstCandidate) {

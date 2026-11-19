@@ -1,6 +1,7 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { OpenAICompatibleProvider } from './openai-compatible.js';
+import { safeProviderFetchJson } from './byokHttp.js';
 
 /**
  * Meta Model API — the Muse family.
@@ -134,7 +135,7 @@ export class MuseProvider extends OpenAICompatibleProvider {
     return Boolean(this.apiKey) && process.env.CAUSYNE_MUSE_ASR === '1';
   }
 
-  async transcribeAudio(base64, mimeType = 'audio/wav') {
+  async transcribeAudio(base64, mimeType = 'audio/wav', options = {}) {
     if (!base64 || !this.apiKey) return null;
 
     const extension = String(mimeType).includes('mp3') ? 'mp3'
@@ -147,18 +148,17 @@ export class MuseProvider extends OpenAICompatibleProvider {
     form.append('model', MUSE_TRANSCRIBE_MODEL);
     form.append('file', new Blob([Buffer.from(base64, 'base64')], { type: mimeType }), `clip.${extension}`);
 
-    const response = await fetch(this.transcribeUrl, {
+    const data = await safeProviderFetchJson({
+      url: this.transcribeUrl,
       method: 'POST',
       headers: { Authorization: `Bearer ${this.apiKey}` },
-      body: form
+      body: form,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'Muse Voice Transcribe',
+      secrets: [this.apiKey],
+      hasApiKey: true
     });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Muse Voice Transcribe (${response.status}): ${detail.slice(0, 400)}`);
-    }
-
-    const data = await response.json();
     // Accept the shapes a transcription endpoint plausibly answers in, rather
     // than betting the feature on one field name.
     const text = data.text

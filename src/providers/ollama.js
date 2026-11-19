@@ -8,11 +8,13 @@ import {
   extractTextToolCalls
 } from './wireNormalizer.js';
 import { stripToolCallMarkup } from '../implementationPlan.js';
+import { resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 
 export class OllamaProvider extends LLMProvider {
   constructor(config) {
     super(config);
     this.baseUrl = config.baseUrl || 'http://localhost:11434/api/chat';
+    this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['ollama']);
     // Locally installable vision models. Anything else stays text-only, and a
     // user on an unlisted build can set config.supportsVision explicitly.
@@ -55,7 +57,7 @@ export class OllamaProvider extends LLMProvider {
       messages: sanitizedMessages,
       stream: false,
       options: {
-        temperature: options.temperature || 0.1
+        temperature: resolveTemperature(options.temperature, 0.1)
       }
     };
     
@@ -66,18 +68,17 @@ export class OllamaProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const response = await fetch(this.baseUrl, {
+    const data = await safeProviderFetchJson({
+      url: this.baseUrl,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'Ollama',
+      hasApiKey: false,
+      allowInsecureHttp: this.allowInsecureHttp
     });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`Ollama API Error (${response.status}): ${errorData}`);
-    }
-
-    const data = await response.json();
 
     // Ollama returns tool calls with no id and object arguments instead of JSON strings.
     // Normalize through wireNormalizer so sanitizeSequences and toolSelfRepair see one contract.

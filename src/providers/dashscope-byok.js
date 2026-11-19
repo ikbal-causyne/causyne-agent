@@ -3,6 +3,11 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
+import {
+  requireApiKey,
+  resolveTemperature,
+  safeProviderFetchJson
+} from './byokHttp.js';
 
 // Direct DashScope API connection for BYOK (unlike dashscope.js which is the proxy for Free Demo)
 export class DashscopeByokProvider extends LLMProvider {
@@ -14,6 +19,7 @@ export class DashscopeByokProvider extends LLMProvider {
     else if (url.endsWith('/v1/')) url += 'chat/completions';
     
     this.baseUrl = url;
+    this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['dashscope-byok']);
     this.apiKey = config.apiKey;
     this.visionModels = ['-vl-', '-vl', 'qwen3.6', 'qwen3.7', 'kimi-k2.5', 'kimi-k2.7'];
@@ -23,22 +29,15 @@ export class DashscopeByokProvider extends LLMProvider {
   }
 
   async chat(messages, options = {}) {
-    const ALLOWED = [
-      "qwen3.7-max", "qwen3.7-plus", "kimi-k2.7-code", "kimi-k2.6", 
-      "kimi-k2.5", "kimi-k2-thinking", "Moonshot-Kimi-K2-Instruct", 
-      "deepseek-v4-flash", "deepseek-v4-pro"
-    ];
-    let activeModel = this.model;
-    if (!ALLOWED.includes(activeModel)) {
-      activeModel = 'qwen3.7-plus';
-    }
+    const apiKey = requireApiKey(this.apiKey, 'Qwen DashScope');
+    const activeModel = this.model || DEFAULT_MODEL_BY_PROVIDER['dashscope-byok'] || 'qwen3.7-plus';
 
     const sanitizedMessages = this.prepareMessages(messages);
 
     const payload = {
       model: activeModel,
       messages: sanitizedMessages,
-      temperature: options.temperature || 0.1,
+      temperature: resolveTemperature(options.temperature, 0.1),
     };
 
     if (options.jsonMode) {
@@ -53,29 +52,27 @@ export class DashscopeByokProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const response = await fetch(this.baseUrl, {
+    const data = await safeProviderFetchJson({
+      url: this.baseUrl,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`
+        'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      const errorData = await response.text();
-      
-      // Enterprise Error Handling: Detect Workspace-bound API Key configuration errors
-      if (response.status === 401 && this.apiKey && this.apiKey.startsWith('sk-ws-')) {
-        if (!this.baseUrl.includes('ws-')) {
+      body: JSON.stringify(payload),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+      providerLabel: 'Qwen DashScope',
+      secrets: [apiKey],
+      hasApiKey: true,
+      allowInsecureHttp: this.allowInsecureHttp,
+      onHttpError: ({ status }) => {
+        // Enterprise Error Handling: Detect Workspace-bound API Key configuration errors
+        if (status === 401 && apiKey.startsWith('sk-ws-') && !this.baseUrl.includes('ws-')) {
           throw new Error(`\n[QWEN WORKSPACE CONFIGURATION ERROR]\n\nYou are using a Workspace-bound API Key (starts with sk-ws-), but you haven't configured your Workspace Base URL!\n\nAlibaba requires a specific URL for these keys.\n\nHOW TO FIX THIS:\n1. Open your computer terminal.\n2. Run command: causyne-agent config\n3. When asked for 'Custom Base URL', paste your Workspace URL from Alibaba (e.g. https://{Your-Workspace-ID}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions).\n\nAlternatively, use a Standard API Key (starts with sk-) which does not require a custom URL.`);
         }
       }
-      
-      throw new Error(`Qwen DashScope API Error (${response.status}): ${errorData}`);
-    }
-
-    const data = await response.json();
+    });
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_dashscope',
       freeFormPaths
