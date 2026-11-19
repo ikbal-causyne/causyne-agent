@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { Client, SSEClientTransport, SdkError, SdkErrorCode, SdkHttpError, StreamableHTTPClientTransport, UnauthorizedError } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { getPackageVersion } from '../version.js';
+import { MAX_GLOB_PATTERN_CHARS, MAX_MCP_SERVER_INSTRUCTIONS_CHARS, MAX_MCP_TOOL_DESCRIPTION_CHARS, MAX_TOOLS_PER_MCP_SERVER, sanitizeMcpInputSchema, sanitizeMcpMetadataText, sanitizeMcpToolName } from './mcpSecurity.js';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
 const STDERR_LIMIT_BYTES = 8 * 1024;
@@ -37,14 +38,13 @@ function validateStringArray(value, label) {
     return null;
 }
 function normalizeTool(tool) {
-    if (typeof tool.name !== 'string' || tool.name.trim().length === 0)
+    const safeName = sanitizeMcpToolName(tool.name);
+    if (!safeName)
         return null;
-    const inputSchema = isRecord(tool.inputSchema)
-        ? tool.inputSchema
-        : { type: 'object', properties: {} };
+    const inputSchema = sanitizeMcpInputSchema(tool.inputSchema);
     const normalized = {
-        name: tool.name,
-        description: typeof tool.description === 'string' ? tool.description : '',
+        name: safeName,
+        description: sanitizeMcpMetadataText(tool.description, MAX_MCP_TOOL_DESCRIPTION_CHARS),
         inputSchema
     };
     if (isRecord(tool.annotations))
@@ -221,6 +221,13 @@ export class McpClient {
                     const problem = validateStringArray(definition.tools[key], `\`tools.${key}\``);
                     if (problem)
                         return problem;
+                    const patterns = definition.tools[key];
+                    if (patterns.length > 256) {
+                        return `\`tools.${key}\` must contain at most 256 patterns`;
+                    }
+                    if (patterns.some(pattern => pattern.length > MAX_GLOB_PATTERN_CHARS)) {
+                        return `\`tools.${key}\` patterns must be at most ${MAX_GLOB_PATTERN_CHARS} characters`;
+                    }
                 }
             }
         }
@@ -250,8 +257,9 @@ export class McpClient {
         catch (error) {
             await this.dispose();
             const state = isAuthenticationError(error) ? 'needs_auth' : 'failed';
-            const suffix = this.stderrTail.trim() ? `: ${this.stderrTail.trim().slice(-600)}` : '';
-            const message = `${errorMessage(error)}${suffix}`;
+            const safeTail = sanitizeMcpMetadataText(this.stderrTail.trim().slice(-600), 600);
+            const suffix = safeTail ? `: ${safeTail}` : '';
+            const message = `${sanitizeMcpMetadataText(errorMessage(error), 1000)}${suffix}`;
             this.setStatus({ state, error: message });
             throw new McpConnectionError(state, message, { cause: error });
         }
@@ -482,15 +490,34 @@ export class McpClient {
     }
     captureServer(client, transport) {
         const server = client.getServerVersion();
-        this.serverInfo = server ? { name: server.name, version: server.version } : null;
-        this.instructions = client.getInstructions()?.trim() || null;
+        this.serverInfo = server
+            ? {
+                name: sanitizeMcpMetadataText(server.name, 128),
+                version: sanitizeMcpMetadataText(server.version, 64)
+            }
+            : null;
+        const rawInstructions = client.getInstructions()?.trim();
+        this.instructions = rawInstructions
+            ? sanitizeMcpMetadataText(rawInstructions, MAX_MCP_SERVER_INSTRUCTIONS_CHARS)
+            : null;
         const status = { state: 'connected', connectedAt: Date.now() };
         if (transport)
             status.transport = transport;
         this.setStatus(status);
     }
     replaceTools(tools) {
-        this.tools = tools.map(normalizeTool).filter((tool) => tool !== null);
+        const nextTools = [];
+        const seenNames = new Set();
+        for (const rawTool of tools) {
+            if (nextTools.length >= MAX_TOOLS_PER_MCP_SERVER)
+                break;
+            const normalized = normalizeTool(rawTool);
+            if (!normalized || seenNames.has(normalized.name))
+                continue;
+            seenNames.add(normalized.name);
+            nextTools.push(normalized);
+        }
+        this.tools = nextTools;
         this.onToolsChanged?.([...this.tools]);
     }
     setStatus(status) {

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { McpClient, McpConnectionError } from './mcpClient.js';
+import { globMatchesSafe } from './mcpSecurity.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { auditLog } from '../auditLog.js';
 const NAMESPACE = 'mcp__';
@@ -83,11 +84,7 @@ function consentRecord(value) {
     return { digest: value.digest, grantedAt: value.grantedAt };
 }
 function globMatches(name, pattern) {
-    const source = pattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replaceAll('*', '.*')
-        .replaceAll('?', '.');
-    return new RegExp(`^${source}$`, 'u').test(name);
+    return globMatchesSafe(name, pattern);
 }
 function toolAllowed(server, toolName) {
     const include = server.tools?.include;

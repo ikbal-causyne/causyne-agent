@@ -8,6 +8,7 @@ import {
   type McpToolCallResult,
   type McpToolDefinition
 } from './mcpClient.js';
+import { globMatchesSafe } from './mcpSecurity.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { auditLog } from '../auditLog.js';
 
@@ -101,11 +102,7 @@ function consentRecord(value: unknown): ConsentRecord | null {
 }
 
 function globMatches(name: string, pattern: string): boolean {
-  const source = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replaceAll('*', '.*')
-    .replaceAll('?', '.');
-  return new RegExp(`^${source}$`, 'u').test(name);
+  return globMatchesSafe(name, pattern);
 }
 
 function toolAllowed(server: McpServerDefinition, toolName: string): boolean {
