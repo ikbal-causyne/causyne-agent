@@ -29,12 +29,14 @@ const DAY_MS = 24 * HOUR_MS;
 
 describe('workspaceIdentity dynamic detection and safety', () => {
   it('derives dynamic workspace names without hardcoding and sanitizes terminal control sequences', () => {
+    const fsRoot = path.parse(process.cwd()).root;
+    const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
     assert.equal(workspaceDisplayName('/Users/example/suika-game'), 'suika-game');
     assert.equal(workspaceDisplayName('/Users/example/Causyne AI/causyne-agent/'), 'causyne-agent');
     assert.equal(workspaceDisplayName('/srv/apps/My Creative Studio'), 'My Creative Studio');
-    assert.equal(workspaceDisplayName('/'), '/');
+    assert.equal(workspaceDisplayName(fsRoot), fsRoot);
     assert.equal(workspaceDisplayName(''), 'Current Workspace');
-    assert.equal(workspaceDisplayName(os.homedir()), '~');
+    assert.equal(workspaceDisplayName(homeDir), '~');
 
     const hostile = '/tmp/proj-\x1b[31mred\x1b[0m\ninjected';
     const cleanName = workspaceDisplayName(hostile);
@@ -44,8 +46,8 @@ describe('workspaceIdentity dynamic detection and safety', () => {
 
     assert.equal(formatWorkspaceSectionTitle('/tmp/suika-game', 3), 'suika-game SESSIONS (3)');
     assert.equal(formatWorkspaceSectionTitle('/tmp/causyne-agent', 0), 'causyne-agent SESSIONS (0)');
-    assert.equal(formatWorkspaceSectionTitle(os.homedir(), 2), 'HOME (~) SESSIONS (2)');
-    assert.equal(formatWorkspaceSectionTitle('/', 0), 'WORKSPACE (/) SESSIONS (0)');
+    assert.equal(formatWorkspaceSectionTitle(homeDir, 2), 'HOME (~) SESSIONS (2)');
+    assert.equal(formatWorkspaceSectionTitle(fsRoot, 0), `WORKSPACE (${fsRoot}) SESSIONS (0)`);
   });
 
   it('matches canonical symlinked workspaces without confusing parent, child, or same-basename folders', () => {
@@ -58,7 +60,7 @@ describe('workspaceIdentity dynamic detection and safety', () => {
 
       fs.mkdirSync(childSubdir, { recursive: true });
       fs.mkdirSync(siblingSameName, { recursive: true });
-      fs.symlinkSync(realProject, symlinkProject, 'dir');
+      fs.symlinkSync(realProject, symlinkProject, process.platform === 'win32' ? 'junction' : 'dir');
 
       const cache = new Map<string, string>();
       assert.equal(sameWorkspace(realProject, symlinkProject, cache), true);
