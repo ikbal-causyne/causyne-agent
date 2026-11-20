@@ -108,7 +108,8 @@ export const computerUse = {
                 const keyMap = {
                     return: 36, enter: 36, tab: 48, space: 49, backspace: 51, escape: 53, esc: 53
                 };
-                const keyCode = keyMap[keyName.toLowerCase()];
+                const normalizedKey = keyName.toLowerCase();
+                const keyCode = Object.hasOwn(keyMap, normalizedKey) ? keyMap[normalizedKey] : undefined;
                 if (keyCode !== undefined) {
                     desktopActions.push({ verb: 'key', keyCode });
                 }
