@@ -472,6 +472,20 @@ export function buildBubblewrapArgs(
         bindIfExists(path.join(homeDir, rel));
       }
     }
+  } else if (mode === 'read-only' && options.includeTempDirs !== false) {
+    const roBound = new Set<string>();
+    const roBindTmpPath = (rawPath: string): void => {
+      const resolved = path.resolve(rawPath);
+      if (roBound.has(resolved)) return;
+      if (!isSameOrChildPath(resolved, '/tmp')) return;
+      if (!fs.existsSync(resolved)) return;
+      roBound.add(resolved);
+      args.push('--ro-bind', resolved, resolved);
+    };
+    for (const ws of workspaces) {
+      roBindTmpPath(ws);
+    }
+    roBindTmpPath(options.cwd);
   }
 
   // Mask existing credential vaults (directories & files) and extra deny paths unless inside selected workspace
