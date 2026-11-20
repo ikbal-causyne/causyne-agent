@@ -316,10 +316,8 @@ function isAbortLikeError(err: unknown): boolean {
 export async function safeProviderFetch(
   options: SafeProviderFetchOptions
 ): Promise<{ response: Response; cleanup: () => void }> {
-  const hasKey = options.hasApiKey ?? Boolean(
-    options.headers?.Authorization
-    || options.headers?.['x-api-key']
-    || options.headers?.['x-goog-api-key']
+  const hasKey = options.hasApiKey ?? Object.entries(options.headers ?? {}).some(
+    ([k, v]) => /^(?:authorization|x-api-key|x-goog-api-key)$/i.test(k) && Boolean(v)
   );
 
   const safeUrl = validateProviderEndpointUrl(options.url, {

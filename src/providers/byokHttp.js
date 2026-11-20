@@ -244,9 +244,7 @@ function isAbortLikeError(err) {
  * - Secret redaction on thrown network errors
  */
 export async function safeProviderFetch(options) {
-    const hasKey = options.hasApiKey ?? Boolean(options.headers?.Authorization
-        || options.headers?.['x-api-key']
-        || options.headers?.['x-goog-api-key']);
+    const hasKey = options.hasApiKey ?? Object.entries(options.headers ?? {}).some(([k, v]) => /^(?:authorization|x-api-key|x-goog-api-key)$/i.test(k) && Boolean(v));
     const safeUrl = validateProviderEndpointUrl(options.url, {
         hasApiKey: hasKey,
         allowInsecureHttp: options.allowInsecureHttp,
