@@ -1,14 +1,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+function isWithinDir(child, parent) {
+    const c = process.platform === 'win32' ? child.toLowerCase() : child;
+    const p = process.platform === 'win32' ? parent.toLowerCase() : parent;
+    const rel = path.relative(p, c);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
 function isTempHome(dir) {
     const normalized = path.resolve(dir);
     const tmp = path.resolve(os.tmpdir());
-    return (normalized.startsWith(tmp) ||
-        normalized.startsWith('/tmp/') ||
-        normalized.startsWith('/private/tmp/') ||
-        normalized.startsWith('/var/folders/') ||
-        normalized.startsWith('/private/var/folders/'));
+    const roots = [tmp, '/tmp', '/private/tmp', '/var/folders', '/private/var/folders'];
+    return roots.some((root) => isWithinDir(normalized, path.resolve(root)));
 }
 function isNodeTestRunner() {
     if (process.env['NODE_TEST_CONTEXT'])
