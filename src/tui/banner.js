@@ -138,7 +138,7 @@ export function detect(o = {}, stream = process.stdout) {
     else {
         const f = env['FORCE_COLOR'];
         if (f !== undefined && f !== '')
-            color = FORCE[f] ?? '16';
+            color = Object.hasOwn(FORCE, f) ? FORCE[f] : '16';
         else if (env['NO_COLOR'] || env['CAUSYNE_NO_COLOR'] === '1')
             color = 'none';
         else if (!tty || env['TERM'] === 'dumb')
@@ -351,7 +351,8 @@ export function providerLabel(provider) {
         'acp/copilot': 'Copilot (ACP)', 'acp/kimi': 'Kimi (ACP)',
         'acp/goose': 'Goose (ACP)', 'acp/hermes': 'Hermes (ACP)'
     };
-    return known[raw.toLowerCase()] ?? raw;
+    const key = raw.toLowerCase();
+    return Object.hasOwn(known, key) ? known[key] : raw;
 }
 function sessionInfo(info) {
     const provider = providerLabel(info.provider);

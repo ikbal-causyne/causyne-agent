@@ -174,7 +174,7 @@ export function detect(o: BannerOptions = {}, stream: TermStream = process.stdou
   else if (typeof want === 'string' && VALID_COLORS.has(want as ColorMode)) color = want as ColorMode;
   else {
     const f = env['FORCE_COLOR'];
-    if (f !== undefined && f !== '') color = FORCE[f] ?? '16';
+    if (f !== undefined && f !== '') color = Object.hasOwn(FORCE, f) ? FORCE[f]! : '16';
     else if (env['NO_COLOR'] || env['CAUSYNE_NO_COLOR'] === '1') color = 'none';
     else if (!tty || env['TERM'] === 'dumb') color = 'none';
     else {
@@ -350,7 +350,8 @@ export function providerLabel(provider: unknown): string {
     'acp/copilot': 'Copilot (ACP)', 'acp/kimi': 'Kimi (ACP)',
     'acp/goose': 'Goose (ACP)', 'acp/hermes': 'Hermes (ACP)'
   };
-  return known[raw.toLowerCase()] ?? raw;
+  const key = raw.toLowerCase();
+  return Object.hasOwn(known, key) ? known[key]! : raw;
 }
 
 function sessionInfo(info: BannerInfo): BannerInfo {
