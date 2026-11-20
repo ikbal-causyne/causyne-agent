@@ -671,8 +671,17 @@ export class AcpServer {
     return {};
   }
 
+  private canonicalizePath(targetPath: string): string {
+    const resolved = path.resolve(targetPath);
+    try {
+      return fs.realpathSync(resolved);
+    } catch {
+      return resolved;
+    }
+  }
+
   private listSessions(params: ListSessionsRequest | undefined): ListSessionsResponse {
-    const filter = params && typeof params.cwd === 'string' ? path.resolve(params.cwd) : null;
+    const filter = params && typeof params.cwd === 'string' ? this.canonicalizePath(params.cwd) : null;
     const sessions: SessionInfo[] = [];
     for (const session of this.sessions.values()) {
       if (filter && session.cwd !== filter) continue;
@@ -714,7 +723,7 @@ export class AcpServer {
     if (!record) throw this.notFound(`Unknown session: ${params.sessionId}`);
     const requested = params.cwd ?? record.workspace;
     const cwd = this.resolveWorkspace(requested);
-    if (record.workspace && path.resolve(record.workspace) !== cwd) {
+    if (record.workspace && this.canonicalizePath(record.workspace) !== cwd) {
       throw this.paramsError('session workspace does not match cwd');
     }
     this.bindWorkspace(cwd);
@@ -739,7 +748,7 @@ export class AcpServer {
     const requested = params.cwd ?? source?.cwd ?? sourceRecord?.workspace;
     const cwd = this.resolveWorkspace(requested);
     if (source && source.cwd !== cwd) throw this.paramsError('fork must stay in the source workspace');
-    if (sourceRecord?.workspace && path.resolve(sourceRecord.workspace) !== cwd) {
+    if (sourceRecord?.workspace && this.canonicalizePath(sourceRecord.workspace) !== cwd) {
       throw this.paramsError('fork must stay in the source workspace');
     }
     this.bindWorkspace(cwd);
