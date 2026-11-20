@@ -93,8 +93,12 @@ function validMessages(value: unknown): value is SessionMessage[] {
   return Array.isArray(value) && value.every(validMessage);
 }
 
+function isValidTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 8.64e15;
+}
+
 function parseEvent(value: unknown): SessionEvent | null {
-  if (!isObject(value) || value.version !== 1 || typeof value.type !== 'string' || typeof value.at !== 'number') return null;
+  if (!isObject(value) || value.version !== 1 || typeof value.type !== 'string' || !isValidTimestamp(value.at)) return null;
   if (value.type === 'session.created') {
     const session = value.session;
     if (!isObject(session)
@@ -102,7 +106,7 @@ function parseEvent(value: unknown): SessionEvent | null {
       || typeof session.workspace !== 'string'
       || typeof session.workspaceKey !== 'string'
       || typeof session.title !== 'string'
-      || typeof session.createdAt !== 'number') return null;
+      || !isValidTimestamp(session.createdAt)) return null;
     return value as unknown as SessionCreatedEvent;
   }
   if (value.type === 'messages.appended') {
@@ -271,7 +275,9 @@ function sessionTitle(title: string, messages: SessionMessage[], createdAt: numb
     const text = message.content.trim();
     return text.length > 12 && !NON_TASK_MESSAGE.test(text) && !text.startsWith('[decayed]');
   });
-  return prompt ? titleFrom(prompt.content) : `New session - ${new Date(createdAt).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+  const dt = new Date(createdAt);
+  const iso = Number.isFinite(dt.getTime()) ? dt.toISOString() : new Date(0).toISOString();
+  return prompt ? titleFrom(prompt.content) : `New session - ${iso.replace('T', ' ').slice(0, 16)} UTC`;
 }
 
 export function listSessions(): Array<Omit<SessionRecord, 'messages'> & { messageCount: number }> {

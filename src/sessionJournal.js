@@ -35,8 +35,11 @@ function validMessage(value) {
 function validMessages(value) {
     return Array.isArray(value) && value.every(validMessage);
 }
+function isValidTimestamp(value) {
+    return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 8.64e15;
+}
 function parseEvent(value) {
-    if (!isObject(value) || value.version !== 1 || typeof value.type !== 'string' || typeof value.at !== 'number')
+    if (!isObject(value) || value.version !== 1 || typeof value.type !== 'string' || !isValidTimestamp(value.at))
         return null;
     if (value.type === 'session.created') {
         const session = value.session;
@@ -45,7 +48,7 @@ function parseEvent(value) {
             || typeof session.workspace !== 'string'
             || typeof session.workspaceKey !== 'string'
             || typeof session.title !== 'string'
-            || typeof session.createdAt !== 'number')
+            || !isValidTimestamp(session.createdAt))
             return null;
         return value;
     }
@@ -237,7 +240,9 @@ function sessionTitle(title, messages, createdAt) {
         const text = message.content.trim();
         return text.length > 12 && !NON_TASK_MESSAGE.test(text) && !text.startsWith('[decayed]');
     });
-    return prompt ? titleFrom(prompt.content) : `New session - ${new Date(createdAt).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+    const dt = new Date(createdAt);
+    const iso = Number.isFinite(dt.getTime()) ? dt.toISOString() : new Date(0).toISOString();
+    return prompt ? titleFrom(prompt.content) : `New session - ${iso.replace('T', ' ').slice(0, 16)} UTC`;
 }
 export function listSessions() {
     try {
