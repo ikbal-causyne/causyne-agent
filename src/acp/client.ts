@@ -722,6 +722,7 @@ export class AcpClient {
             return;
           }
           cleanup();
+          clearTimeout(timer);
           this.pending.delete(id);
           const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
           if (diag) {
