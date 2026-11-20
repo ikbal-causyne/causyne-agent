@@ -92,7 +92,8 @@ export function shortenWorkspacePath(workspacePath: string | undefined): string 
     const prefix = cmpHome.endsWith(path.sep) ? cmpHome : `${cmpHome}${path.sep}`;
     if (cmpResolved.startsWith(prefix)) {
       const tail = resolved.slice(resolvedHome.length);
-      return cleanInlineText(`~${tail}`) || '~';
+      const joined = tail.startsWith(path.sep) ? `~${tail}` : `~${path.sep}${tail}`;
+      return cleanInlineText(joined) || '~';
     }
   }
   return cleanInlineText(trimmed) || '(default)';
