@@ -165,8 +165,11 @@ export const fsRead = {
         end = start + 799;
       }
 
+      const MAX_READ_OUTPUT_CHARS = 512 * 1024;
       let currentLine = 1;
       const outputLines: string[] = [];
+      let collectedChars = 0;
+      let charTruncated = false;
       let totalLines = 0;
 
       const stream = fs.createReadStream(target);
@@ -181,8 +184,18 @@ export const fsRead = {
             return { success: false, error: 'File read aborted.' };
           }
           totalLines++;
-          if (currentLine >= start && currentLine <= end) {
-            outputLines.push(line);
+          if (currentLine >= start && currentLine <= end && !charTruncated) {
+            const remaining = MAX_READ_OUTPUT_CHARS - collectedChars;
+            if (line.length <= remaining) {
+              outputLines.push(line);
+              collectedChars += line.length + 1;
+            } else {
+              if (remaining > 0) {
+                outputLines.push(line.slice(0, remaining));
+              }
+              collectedChars = MAX_READ_OUTPUT_CHARS;
+              charTruncated = true;
+            }
           }
           currentLine++;
         }
@@ -193,7 +206,9 @@ export const fsRead = {
 
       let finalOutput = outputLines.join('\n');
 
-      if (totalLines > end) {
+      if (charTruncated) {
+        finalOutput += `\n\n[WARNING: Output truncated at ${MAX_READ_OUTPUT_CHARS} characters. Narrow the line range or inspect specific sections.]`;
+      } else if (totalLines > end) {
         finalOutput += `\n\n[WARNING: File truncated at line ${end} out of ${totalLines}. Use { startLine: ${end + 1}, endLine: ${end + 800} } to read more.]`;
       }
 
