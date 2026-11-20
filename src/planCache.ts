@@ -817,10 +817,10 @@ export function lookupAlternativeStep(query: AlternativeStepQuery): AlternativeS
 
   for (const template of plans) {
     if (archetype && template.archetype && template.archetype !== archetype) continue;
-    const failedIdx = template.steps.findIndex((s) => s.tool.toLowerCase() === failedTool);
+    const failedIdx = template.steps.findIndex((s) => s.tool.toLowerCase() === failedTool && !s.ok && (!why || s.why === why));
     if (failedIdx !== -1) {
       const step = template.steps[failedIdx];
-      if (step && !step.ok && (!why || step.why === why)) {
+      if (step) {
         const nextStep = template.steps.slice(failedIdx + 1).find((s) => s.ok);
         if (nextStep) {
           return {
