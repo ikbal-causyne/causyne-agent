@@ -65,7 +65,7 @@ export async function inspectRequestedImageAssets({ prompt, workspaceRoot, webAr
   const candidates: string[] = [];
   for (const candidate of paths) {
     if (typeof candidate !== 'string' || !/\.(html?|css)$/i.test(candidate)) continue;
-    const physical = await fs.realpath(path.resolve(candidate)).catch(() => null);
+    const physical = await fs.realpath(path.resolve(workspace, candidate)).catch(() => null);
     if (!physical || !within(workspace, physical)) continue;
     const stat = await fs.stat(physical).catch(() => null);
     if (stat?.isFile() && stat.size <= 1_000_000) candidates.push(physical);
@@ -83,7 +83,9 @@ export async function inspectRequestedImageAssets({ prompt, workspaceRoot, webAr
       if (/^(?:https?:|data:|\/\/|blob:)/i.test(ref)) continue;
       let decoded: string;
       try { decoded = decodeURIComponent(ref.split(/[?#]/)[0] ?? ''); } catch { continue; }
-      const image = path.resolve(path.dirname(sourceFile), decoded);
+      const image = decoded.startsWith('/')
+        ? path.resolve(workspace, decoded.replace(/^\/+/, ''))
+        : path.resolve(path.dirname(sourceFile), decoded);
       try {
         const physical = await fs.realpath(image);
         if (!within(workspace, physical)) continue;
