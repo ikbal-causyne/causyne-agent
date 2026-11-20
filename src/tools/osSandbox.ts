@@ -474,17 +474,36 @@ export function buildBubblewrapArgs(
     }
   }
 
-  // Mask existing credential directories with empty tmpfs mounts unless inside selected workspace
-  if (homeDir) {
-    for (const rel of ['.ssh', '.aws', '.gnupg', '.kube', '.causyne']) {
-      const full = path.join(homeDir, rel);
-      if (workspaceOverlapsPath(workspaces, full)) continue;
+  // Mask existing credential vaults (directories & files) and extra deny paths unless inside selected workspace
+  const masked = new Set<string>();
+  const maskTarget = (rawPath: string): void => {
+    for (const variant of resolveCanonicalPaths(rawPath)) {
+      if (masked.has(variant)) continue;
       try {
-        if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
-          args.push('--tmpfs', full);
+        const stat = fs.statSync(variant);
+        if (stat.isDirectory()) {
+          masked.add(variant);
+          args.push('--tmpfs', variant);
+        } else if (stat.isFile()) {
+          masked.add(variant);
+          args.push('--ro-bind', '/dev/null', variant);
         }
       } catch {
         continue;
+      }
+    }
+  };
+  if (homeDir) {
+    for (const rel of CREDENTIAL_SUBPATHS) {
+      const full = path.join(homeDir, rel);
+      if (workspaceOverlapsPath(workspaces, full)) continue;
+      maskTarget(full);
+    }
+  }
+  if (Array.isArray(options.extraDenyReadPaths)) {
+    for (const extra of options.extraDenyReadPaths) {
+      if (typeof extra === 'string' && extra.trim()) {
+        maskTarget(extra);
       }
     }
   }
