@@ -93,9 +93,15 @@ export class VFETracker {
   totalSteps: number;
 
   constructor(options: VFETrackerOptions = {}) {
-    this.windowSize = options.windowSize || VFE_WINDOW_SIZE;
-    this.varianceEpsilon = options.varianceEpsilon || VARIANCE_EPSILON;
-    this.meanThreshold = options.meanThreshold || MEAN_ERROR_THRESHOLD;
+    this.windowSize = typeof options.windowSize === 'number' && Number.isFinite(options.windowSize) && options.windowSize >= 1
+      ? Math.floor(options.windowSize)
+      : VFE_WINDOW_SIZE;
+    this.varianceEpsilon = typeof options.varianceEpsilon === 'number' && Number.isFinite(options.varianceEpsilon) && options.varianceEpsilon >= 0
+      ? options.varianceEpsilon
+      : VARIANCE_EPSILON;
+    this.meanThreshold = typeof options.meanThreshold === 'number' && Number.isFinite(options.meanThreshold) && options.meanThreshold >= 0
+      ? options.meanThreshold
+      : MEAN_ERROR_THRESHOLD;
 
     this.history = [];
     this.lastShiftStep = -SHIFT_COOLDOWN_STEPS;
