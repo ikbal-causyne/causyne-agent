@@ -25,12 +25,86 @@ function decodeEntities(text: string): string {
   });
 }
 
+const SKIP_CONTENT_TAGS = new Set(['script', 'style', 'svg', 'noscript']);
+const BLOCK_CLOSE_TAGS = new Set(['p', 'div', 'article', 'section', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'tr']);
+
 export function htmlToReadableText(html: string): string {
-  return decodeEntities(String(html ?? ''))
-    .replace(/<(script|style|svg|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<\s*br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|article|section|li|h[1-6]|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+  const src = String(html ?? '');
+  const parts: string[] = [];
+  let skipTag: string | null = null;
+  let i = 0;
+
+  while (i < src.length) {
+    const lt = src.indexOf('<', i);
+    if (lt === -1) {
+      if (!skipTag) parts.push(src.slice(i));
+      break;
+    }
+    if (!skipTag && lt > i) {
+      parts.push(src.slice(i, lt));
+    }
+
+    // HTML comments: <!-- ... -->
+    if (src.startsWith('<!--', lt)) {
+      const commentEnd = src.indexOf('-->', lt + 4);
+      i = commentEnd === -1 ? src.length : commentEnd + 3;
+      if (!skipTag) parts.push(' ');
+      continue;
+    }
+
+    let gt = lt + 1;
+    let quote: string | null = null;
+    while (gt < src.length) {
+      const ch = src[gt]!;
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '>') {
+        break;
+      }
+      gt++;
+    }
+    if (gt >= src.length) {
+      // Unclosed '<': emit remaining literal text if not inside a skipped element
+      if (!skipTag) parts.push(src.slice(lt));
+      break;
+    }
+
+    const rawTag = src.slice(lt + 1, gt).trim();
+    const isClosing = rawTag.startsWith('/');
+    const isSelfClosing = !isClosing && rawTag.endsWith('/');
+    let nameStart = isClosing ? 1 : 0;
+    while (nameStart < rawTag.length && (rawTag[nameStart] === ' ' || rawTag[nameStart] === '\t' || rawTag[nameStart] === '\n' || rawTag[nameStart] === '\r')) {
+      nameStart++;
+    }
+    let nameEnd = nameStart;
+    while (nameEnd < rawTag.length) {
+      const code = rawTag.charCodeAt(nameEnd);
+      const isAlphaNum = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+      if (!isAlphaNum) break;
+      nameEnd++;
+    }
+    const tagName = rawTag.slice(nameStart, nameEnd).toLowerCase();
+
+    if (skipTag) {
+      if (isClosing && tagName === skipTag) {
+        skipTag = null;
+        parts.push(' ');
+      }
+    } else if (!isClosing && !isSelfClosing && SKIP_CONTENT_TAGS.has(tagName)) {
+      skipTag = tagName;
+      parts.push(' ');
+    } else if (tagName === 'br' || (isClosing && BLOCK_CLOSE_TAGS.has(tagName))) {
+      parts.push('\n');
+    } else {
+      parts.push(' ');
+    }
+
+    i = gt + 1;
+  }
+
+  return decodeEntities(parts.join(''))
     .replace(/[ \t]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
