@@ -86,7 +86,8 @@ const SEARCH_MACROS: Record<string, (query: string) => string> = {
 };
 
 export function expandSearchMacro(macro: string, query = ''): string | null {
-  const fn = SEARCH_MACROS[String(macro || '').trim()];
+  const key = String(macro || '').trim();
+  const fn = Object.hasOwn(SEARCH_MACROS, key) ? SEARCH_MACROS[key] : undefined;
   return fn ? fn(String(query ?? '')) : null;
 }
 

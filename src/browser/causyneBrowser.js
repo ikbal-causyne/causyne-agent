@@ -72,7 +72,8 @@ const SEARCH_MACROS = {
     '@twitch_search': query => `https://www.twitch.tv/search?term=${encodeURIComponent(query || '')}`
 };
 export function expandSearchMacro(macro, query = '') {
-    const fn = SEARCH_MACROS[String(macro || '').trim()];
+    const key = String(macro || '').trim();
+    const fn = Object.hasOwn(SEARCH_MACROS, key) ? SEARCH_MACROS[key] : undefined;
     return fn ? fn(String(query ?? '')) : null;
 }
 export function getSupportedSearchMacros() {
