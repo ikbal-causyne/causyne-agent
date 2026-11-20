@@ -49,7 +49,8 @@ export function detectMagicFormat(buffer: Buffer): string | null {
   if (buffer.length >= 8) {
     const boxSize = buffer.readUInt32BE(0);
     const boxType = buffer.toString('ascii', 4, 8);
-    const validBoxSize = boxSize === 0 || boxSize === 1 || (boxSize >= 8 && boxSize <= buffer.length);
+    // Reject printable ASCII prefixes (>= 0x20000000) while accepting header-only MP4 slices
+    const validBoxSize = boxSize === 0 || boxSize === 1 || (boxSize >= 8 && boxSize < 0x20000000);
     if (validBoxSize && ['ftyp', 'moov', 'mdat', 'free'].includes(boxType)) return 'mp4';
   }
 
