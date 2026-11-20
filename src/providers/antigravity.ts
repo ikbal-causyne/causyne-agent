@@ -772,8 +772,11 @@ export class AntigravityProvider extends LLMProvider {
           if (typeof c === 'string') return c;
           if (c?.text) return c.text;
           if (c?.type === 'image_url' || c?.type === 'image') {
-            const url = c?.image_url?.url || '';
-            const mime = c?.source?.media_type || (url.startsWith('data:') ? url.slice(5, url.indexOf(';')) : 'image');
+            const url = typeof c?.image_url?.url === 'string' ? c.image_url.url : '';
+            const semi = url.indexOf(';');
+            const comma = url.indexOf(',');
+            const end = semi >= 5 && (comma < 0 || semi < comma) ? semi : comma;
+            const mime = c?.source?.media_type || (url.startsWith('data:') && end > 5 ? url.slice(5, end) : 'image');
             return `[Visual Content: ${mime}]`;
           }
           return '';
@@ -846,8 +849,11 @@ export class AntigravityProvider extends LLMProvider {
           if (typeof c === 'string') return c;
           if (c?.text) return c.text;
           if (c?.type === 'image_url' || c?.type === 'image') {
-            const url = c?.image_url?.url || '';
-            const mime = c?.source?.media_type || (url.startsWith('data:') ? url.slice(5, url.indexOf(';')) : 'image');
+            const url = typeof c?.image_url?.url === 'string' ? c.image_url.url : '';
+            const semi = url.indexOf(';');
+            const comma = url.indexOf(',');
+            const end = semi >= 5 && (comma < 0 || semi < comma) ? semi : comma;
+            const mime = c?.source?.media_type || (url.startsWith('data:') && end > 5 ? url.slice(5, end) : 'image');
             return `[Visual Content: ${mime}]`;
           }
           return '';
