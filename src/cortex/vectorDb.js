@@ -75,24 +75,35 @@ export class VectorDB {
     isInitialized = false;
     isNeural = false;
     db = null;
+    ensureDbPromise = null;
     async ensureDb() {
         if (this.db)
             return;
-        if (!fs.existsSync(CORTEX_DIR)) {
-            fs.mkdirSync(CORTEX_DIR, { recursive: true, mode: 0o700 });
+        if (this.ensureDbPromise)
+            return this.ensureDbPromise;
+        this.ensureDbPromise = (async () => {
+            if (!fs.existsSync(CORTEX_DIR)) {
+                fs.mkdirSync(CORTEX_DIR, { recursive: true, mode: 0o700 });
+            }
+            this.db = await openCortexDatabase(CORTEX_DB_FILE);
+            // Create the task_memories table if it doesn't exist
+            // embedding_vector is stored as a JSON string array of floats
+            this.db.exec(`
+        CREATE TABLE IF NOT EXISTS task_memories (
+          id TEXT PRIMARY KEY,
+          text TEXT NOT NULL,
+          embedding_vector TEXT NOT NULL,
+          timestamp INTEGER NOT NULL
+        )
+      `);
+            this.migrateSchema();
+        })();
+        try {
+            await this.ensureDbPromise;
         }
-        this.db = await openCortexDatabase(CORTEX_DB_FILE);
-        // Create the task_memories table if it doesn't exist
-        // embedding_vector is stored as a JSON string array of floats
-        this.db.exec(`
-      CREATE TABLE IF NOT EXISTS task_memories (
-        id TEXT PRIMARY KEY,
-        text TEXT NOT NULL,
-        embedding_vector TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-      )
-    `);
-        this.migrateSchema();
+        finally {
+            this.ensureDbPromise = null;
+        }
     }
     /**
      * Bring an existing store up to the current schema, additively.

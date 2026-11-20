@@ -123,28 +123,38 @@ export class VectorDB {
   public isInitialized: boolean = false;
   public isNeural: boolean = false;
   public db: CortexDatabase | null = null;
+  private ensureDbPromise: Promise<void> | null = null;
 
   async ensureDb(): Promise<void> {
     if (this.db) return;
+    if (this.ensureDbPromise) return this.ensureDbPromise;
 
-    if (!fs.existsSync(CORTEX_DIR)) {
-      fs.mkdirSync(CORTEX_DIR, { recursive: true, mode: 0o700 });
+    this.ensureDbPromise = (async () => {
+      if (!fs.existsSync(CORTEX_DIR)) {
+        fs.mkdirSync(CORTEX_DIR, { recursive: true, mode: 0o700 });
+      }
+
+      this.db = await openCortexDatabase(CORTEX_DB_FILE);
+
+      // Create the task_memories table if it doesn't exist
+      // embedding_vector is stored as a JSON string array of floats
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS task_memories (
+          id TEXT PRIMARY KEY,
+          text TEXT NOT NULL,
+          embedding_vector TEXT NOT NULL,
+          timestamp INTEGER NOT NULL
+        )
+      `);
+
+      this.migrateSchema();
+    })();
+
+    try {
+      await this.ensureDbPromise;
+    } finally {
+      this.ensureDbPromise = null;
     }
-
-    this.db = await openCortexDatabase(CORTEX_DB_FILE);
-
-    // Create the task_memories table if it doesn't exist
-    // embedding_vector is stored as a JSON string array of floats
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS task_memories (
-        id TEXT PRIMARY KEY,
-        text TEXT NOT NULL,
-        embedding_vector TEXT NOT NULL,
-        timestamp INTEGER NOT NULL
-      )
-    `);
-
-    this.migrateSchema();
   }
 
   /**
