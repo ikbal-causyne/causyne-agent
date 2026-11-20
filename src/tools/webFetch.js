@@ -284,6 +284,7 @@ export const webFetch = {
     async execute(args, sandbox) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        const requestSignal = sandbox?.signal ? AbortSignal.any([sandbox.signal, controller.signal]) : controller.signal;
         try {
             if (!args.url)
                 return { success: false, error: 'url is required' };
@@ -306,7 +307,7 @@ export const webFetch = {
                 Accept: 'text/html,application/xhtml+xml,application/json,text/plain,*/*;q=0.8',
                 ...validatedHeaders(args.headers)
             };
-            const request = { method, headers, signal: controller.signal };
+            const request = { method, headers, signal: requestSignal };
             if (args.body !== undefined) {
                 if (typeof args.body !== 'string')
                     return { success: false, error: 'HTTP request body must be a string' };
@@ -405,8 +406,11 @@ export const webFetch = {
             return { success: true, output, status: response.status, finalUrl: finalUrl.href, contentType };
         }
         catch (error) {
+            if (sandbox?.signal?.aborted) {
+                return { success: false, error: 'Request aborted' };
+            }
             const message = error instanceof Error ? error.message : String(error);
-            const timedOut = error instanceof Error && (error.name === 'AbortError' || message === 'This operation was aborted');
+            const timedOut = controller.signal.aborted || (error instanceof Error && (error.name === 'AbortError' || message === 'This operation was aborted'));
             return { success: false, error: timedOut ? `Request timed out after ${REQUEST_TIMEOUT_MS}ms` : message };
         }
         finally {

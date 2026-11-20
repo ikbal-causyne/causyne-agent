@@ -281,10 +281,11 @@ export const webFetch = {
 
   async execute(
     args: { url?: string; method?: string; headers?: unknown; body?: string; outputFile?: string },
-    sandbox?: { workspacePaths?: string[]; workspaceRoot?: string }
+    sandbox?: { workspacePaths?: string[]; workspaceRoot?: string; signal?: AbortSignal; parentLoop?: { workspaceRoot?: string } }
   ) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const requestSignal = sandbox?.signal ? AbortSignal.any([sandbox.signal, controller.signal]) : controller.signal;
     try {
       if (!args.url) return { success: false, error: 'url is required' };
       const workspace = path.resolve(sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd());
@@ -306,7 +307,7 @@ export const webFetch = {
         Accept: 'text/html,application/xhtml+xml,application/json,text/plain,*/*;q=0.8',
         ...validatedHeaders(args.headers)
       };
-      const request: RequestInit = { method, headers, signal: controller.signal };
+      const request: RequestInit = { method, headers, signal: requestSignal };
       if (args.body !== undefined) {
         if (typeof args.body !== 'string') return { success: false, error: 'HTTP request body must be a string' };
         if (method === 'GET' || method === 'HEAD') return { success: false, error: `${method} requests cannot contain a body` };
@@ -404,8 +405,11 @@ export const webFetch = {
         : readable;
       return { success: true, output, status: response.status, finalUrl: finalUrl.href, contentType };
     } catch (error) {
+      if (sandbox?.signal?.aborted) {
+        return { success: false, error: 'Request aborted' };
+      }
       const message = error instanceof Error ? error.message : String(error);
-      const timedOut = error instanceof Error && (error.name === 'AbortError' || message === 'This operation was aborted');
+      const timedOut = controller.signal.aborted || (error instanceof Error && (error.name === 'AbortError' || message === 'This operation was aborted'));
       return { success: false, error: timedOut ? `Request timed out after ${REQUEST_TIMEOUT_MS}ms` : message };
     } finally {
       clearTimeout(timer);
