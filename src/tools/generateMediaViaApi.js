@@ -226,6 +226,15 @@ export const generateMediaViaApi = {
             const pathPolicy = sandbox?.parentLoop?.sandbox || sandbox;
             if (!args.prompt.trim())
                 return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: 'prompt must be a nonempty string' };
+            if (args.durationSeconds !== undefined && (!Number.isFinite(args.durationSeconds) || args.durationSeconds <= 0 || args.durationSeconds > 60)) {
+                return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: 'durationSeconds must be a finite number between 0 and 60' };
+            }
+            if (args.width !== undefined && (!Number.isFinite(args.width) || args.width < 64 || args.width > 4096)) {
+                return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: 'width must be between 64 and 4096' };
+            }
+            if (args.height !== undefined && (!Number.isFinite(args.height) || args.height < 64 || args.height > 4096)) {
+                return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: 'height must be between 64 and 4096' };
+            }
             const { mediaType = 'image', prompt = '', width, height, model, voice, targetProvider, targetModel, durationSeconds } = args || {};
             const ext = mediaType === 'audio_tts' ? 'mp3' : mediaType === 'video_animation' ? 'mp4' : 'png';
             const rawOutputPath = typeof args?.outputPath === 'string' && args.outputPath.trim()
