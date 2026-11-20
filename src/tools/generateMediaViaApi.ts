@@ -268,10 +268,24 @@ export const generateMediaViaApi: { schema: { name: string; description: string;
       const rawOutputPath = typeof args?.outputPath === 'string' && args.outputPath.trim()
         ? args.outputPath.trim()
         : path.join(workspaceRoot, `generated_media_${crypto.randomUUID()}.${ext}`);
-      const outputPath = rawOutputPath.startsWith('~') ? resolveUserPath(rawOutputPath) : path.resolve(workspaceRoot, rawOutputPath);
+      const isHomePath = rawOutputPath === '~' || rawOutputPath.startsWith('~/') || rawOutputPath.startsWith('~\\');
+      const outputPath = isHomePath ? resolveUserPath(rawOutputPath) : path.resolve(workspaceRoot, rawOutputPath);
 
       if (pathPolicy?.isPathAllowed && !pathPolicy.isPathAllowed(outputPath)) {
         return { success: false, error: `Path outside allowed workspace: ${outputPath}` };
+      }
+      try {
+        const existingStat = fs.lstatSync(outputPath);
+        if (existingStat.isDirectory()) {
+          return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: `outputPath is an existing directory: ${outputPath}` };
+        }
+        if (existingStat.isSymbolicLink() || !existingStat.isFile()) {
+          return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: `Refusing to overwrite symlink or non-regular file: ${outputPath}` };
+        }
+      } catch (statErr: unknown) {
+        if ((statErr as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          return { success: false, error: errorMessage(statErr) };
+        }
       }
 
       const outputDir = path.dirname(outputPath);
