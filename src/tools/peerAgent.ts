@@ -7,6 +7,7 @@
  * Those come from the catalog presets or the user's `~/.causyne/peers.json`.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -60,11 +61,25 @@ function isWithinWorkspaceRoot(workspaceRoot: string, candidatePath: string): bo
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
-function selectPermission(
+export interface PeerAgentContext {
+  workspaceRoot?: string;
+  workspacePaths?: string[];
+  signal?: AbortSignal;
+  waitForApproval?: (id: string) => Promise<boolean>;
+  emitEvent?: (event: Record<string, unknown>) => void;
+  parentLoop?: {
+    workspaceRoot?: string;
+    waitForApproval?: (id: string) => Promise<boolean>;
+    emitEvent?: (event: Record<string, unknown>) => void;
+  };
+}
+
+async function selectPermission(
   profile: PeerProfile,
   request: RequestPermissionRequest,
-  workspaceRoot: string
-): RequestPermissionResponse['outcome'] {
+  workspaceRoot: string,
+  context?: PeerAgentContext
+): Promise<RequestPermissionResponse['outcome']> {
   const kind = request.toolCall.kind;
   const readLike = typeof kind === 'string' && READ_ONLY_KINDS.has(kind);
 
@@ -99,9 +114,33 @@ function selectPermission(
     return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
   }
 
-  // Mutating requests under 'ask' policy default to requiring confirmation
-  const allow = request.options.find((option) => option.kind === 'allow_once');
-  return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
+  // Mutating requests under 'ask' policy require explicit interactive user approval
+  const approver = typeof context?.waitForApproval === 'function'
+    ? context
+    : typeof context?.parentLoop?.waitForApproval === 'function'
+      ? context.parentLoop
+      : undefined;
+  if (approver?.waitForApproval) {
+    const approvalId = `peer_${crypto.randomUUID()}`;
+    approver.emitEvent?.({
+      type: 'approval_request',
+      toolCallId: approvalId,
+      tool: `peer_agent:${profile.id}:${request.toolCall.title || request.toolCall.kind || 'action'}`,
+      args: {
+        peer: profile.id,
+        kind: request.toolCall.kind,
+        locations: request.toolCall.locations
+      },
+      risk: 'high'
+    });
+    const approved = await approver.waitForApproval(approvalId);
+    if (approved) {
+      const allow = request.options.find((option) => option.kind === 'allow_once');
+      return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
+    }
+  }
+  const reject = request.options.find((option) => option.kind === 'reject_once' || option.kind === 'reject_always');
+  return reject ? { outcome: 'selected', optionId: reject.optionId } : { outcome: 'cancelled' };
 }
 
 export const peerAgentTool = {
@@ -139,7 +178,7 @@ export const peerAgentTool = {
       }
     }
   },
-  async execute(args: PeerAgentArgs = {}): Promise<{
+  async execute(args: PeerAgentArgs = {}, context: PeerAgentContext = {}): Promise<{
     success: boolean;
     output?: string;
     error?: string;
@@ -194,7 +233,11 @@ export const peerAgentTool = {
       : profile.timeoutSeconds;
     const timeoutSeconds = Math.max(5, Math.min(Math.min(profile.timeoutSeconds, requestedTimeout), 1800));
 
-    const workspaceRoot = profile.cwd || process.cwd();
+    const workspaceRoot = profile.cwd
+      || context?.parentLoop?.workspaceRoot
+      || context?.workspaceRoot
+      || context?.workspacePaths?.find((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      || process.cwd();
 
     if (peerId.toLowerCase() === 'antigravity') {
       try {
@@ -232,7 +275,7 @@ export const peerAgentTool = {
       cwd: workspaceRoot,
       env: peerEnvironment(profile),
       promptTimeoutMs: timeoutSeconds * 1000,
-      permissionHandler: async (request) => selectPermission(profile, request, workspaceRoot)
+      permissionHandler: async (request) => selectPermission(profile, request, workspaceRoot, context)
     });
 
     try {

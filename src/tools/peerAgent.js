@@ -6,6 +6,7 @@
  * a prompt; it never chooses the raw executable or unrestricted arguments.
  * Those come from the catalog presets or the user's `~/.causyne/peers.json`.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -46,7 +47,7 @@ function isWithinWorkspaceRoot(workspaceRoot, candidatePath) {
     const rel = path.relative(canonicalRoot, canonicalTarget);
     return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
-function selectPermission(profile, request, workspaceRoot) {
+async function selectPermission(profile, request, workspaceRoot, context) {
     const kind = request.toolCall.kind;
     const readLike = typeof kind === 'string' && READ_ONLY_KINDS.has(kind);
     if (profile.policy === 'read-only') {
@@ -75,9 +76,33 @@ function selectPermission(profile, request, workspaceRoot) {
         const allow = request.options.find((option) => option.kind === 'allow_once' || option.kind === 'allow_always');
         return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
     }
-    // Mutating requests under 'ask' policy default to requiring confirmation
-    const allow = request.options.find((option) => option.kind === 'allow_once');
-    return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
+    // Mutating requests under 'ask' policy require explicit interactive user approval
+    const approver = typeof context?.waitForApproval === 'function'
+        ? context
+        : typeof context?.parentLoop?.waitForApproval === 'function'
+            ? context.parentLoop
+            : undefined;
+    if (approver?.waitForApproval) {
+        const approvalId = `peer_${crypto.randomUUID()}`;
+        approver.emitEvent?.({
+            type: 'approval_request',
+            toolCallId: approvalId,
+            tool: `peer_agent:${profile.id}:${request.toolCall.title || request.toolCall.kind || 'action'}`,
+            args: {
+                peer: profile.id,
+                kind: request.toolCall.kind,
+                locations: request.toolCall.locations
+            },
+            risk: 'high'
+        });
+        const approved = await approver.waitForApproval(approvalId);
+        if (approved) {
+            const allow = request.options.find((option) => option.kind === 'allow_once');
+            return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
+        }
+    }
+    const reject = request.options.find((option) => option.kind === 'reject_once' || option.kind === 'reject_always');
+    return reject ? { outcome: 'selected', optionId: reject.optionId } : { outcome: 'cancelled' };
 }
 export const peerAgentTool = {
     schema: {
@@ -114,7 +139,7 @@ export const peerAgentTool = {
             }
         }
     },
-    async execute(args = {}) {
+    async execute(args = {}, context = {}) {
         const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
         const action = safeArgs.action || (safeArgs.peer || safeArgs.prompt !== undefined ? 'delegate' : 'list');
         // 1. Action: list
@@ -154,7 +179,11 @@ export const peerAgentTool = {
             ? Math.round(safeArgs.timeoutSeconds)
             : profile.timeoutSeconds;
         const timeoutSeconds = Math.max(5, Math.min(Math.min(profile.timeoutSeconds, requestedTimeout), 1800));
-        const workspaceRoot = profile.cwd || process.cwd();
+        const workspaceRoot = profile.cwd
+            || context?.parentLoop?.workspaceRoot
+            || context?.workspaceRoot
+            || context?.workspacePaths?.find((entry) => typeof entry === 'string' && entry.trim().length > 0)
+            || process.cwd();
         if (peerId.toLowerCase() === 'antigravity') {
             try {
                 const agyModel = args.model || 'Gemini 3.8 Flash (Low)';
@@ -193,7 +222,7 @@ export const peerAgentTool = {
             cwd: workspaceRoot,
             env: peerEnvironment(profile),
             promptTimeoutMs: timeoutSeconds * 1000,
-            permissionHandler: async (request) => selectPermission(profile, request, workspaceRoot)
+            permissionHandler: async (request) => selectPermission(profile, request, workspaceRoot, context)
         });
         try {
             await client.start();
