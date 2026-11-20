@@ -16,8 +16,12 @@ export function classifyAgentError(error) {
     }
     // A provider may have charged for completed steps before the turn failed.
     // Replaying that turn can repeat actions and spend the same tokens again.
-    const spent = Number(errObj?.partialUsage?.promptTokens || 0) +
-        Number(errObj?.partialUsage?.completionTokens || 0);
+    const posTokens = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const spent = posTokens(errObj?.partialUsage?.promptTokens) +
+        posTokens(errObj?.partialUsage?.completionTokens);
     if (spent > 0)
         return 'fatal';
     const msg = (typeof error === 'string'
