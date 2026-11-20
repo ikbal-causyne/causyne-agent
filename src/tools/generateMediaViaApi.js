@@ -7,6 +7,10 @@ function resolveApprovalHost(sandbox) {
         return sandbox.parentLoop;
     return undefined;
 }
+function buildMediaSignal(signal, timeoutMs = 120_000) {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
 const errorMessage = (error) => error instanceof Error ? error.message : String(error);
 import fs from 'fs';
 import path from 'path';
@@ -171,7 +175,7 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
     }
     if (!targetUrl || !apiKey)
         return { success: false, code: 'MEDIA_PROVIDER_UNAVAILABLE', error: `No supported authenticated ${mediaType} endpoint is configured for ${provider}. No media artifact was produced.` };
-    const response = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body), signal: sandbox?.signal || AbortSignal.timeout(120_000) });
+    const response = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body), signal: buildMediaSignal(sandbox?.signal) });
     if (!response.ok)
         return { success: false, code: 'MEDIA_PROVIDER_ERROR', status: response.status, retryable: response.status === 429 || response.status >= 500, error: `Media provider ${provider} returned HTTP ${response.status}. No media artifact was produced.` };
     const data = await response.json();
@@ -308,7 +312,7 @@ export const generateMediaViaApi = {
             let attempts = 0;
             while (attempts < 3) {
                 attempts++;
-                const response = await fetch(targetUrl, { headers: { Authorization: `Bearer ${pollinationsKey}` }, signal: sandbox?.signal || AbortSignal.timeout(120_000) });
+                const response = await fetch(targetUrl, { headers: { Authorization: `Bearer ${pollinationsKey}` }, signal: buildMediaSignal(sandbox?.signal) });
                 if (!response.ok) {
                     const retryable = response.status === 429 || response.status >= 500;
                     if (!retryable || attempts === 3)

@@ -9,6 +9,10 @@ function resolveApprovalHost(sandbox?: MediaContext): ApprovalHost | undefined {
   if (typeof sandbox?.parentLoop?.waitForApproval === 'function') return sandbox.parentLoop;
   return undefined;
 }
+function buildMediaSignal(signal?: AbortSignal, timeoutMs = 120_000): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
 interface RouteResult { success?: boolean; buffer?: Buffer; provider?: string; model?: string; costUsd?: number; equivalentTokens?: number; fallbackToPollinations?: boolean; error?: string; [key: string]: unknown; }
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 import fs from 'fs';
@@ -170,7 +174,7 @@ async function routeMultimediaRequest(args: MediaArgs, config: Record<string, an
   }
 
   if (!targetUrl || !apiKey) return { success: false, code: 'MEDIA_PROVIDER_UNAVAILABLE', error: `No supported authenticated ${mediaType} endpoint is configured for ${provider}. No media artifact was produced.` };
-  const response = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body), signal: sandbox?.signal || AbortSignal.timeout(120_000) });
+  const response = await fetch(targetUrl, { method: 'POST', headers, body: JSON.stringify(body), signal: buildMediaSignal(sandbox?.signal) });
   if (!response.ok) return { success: false, code: 'MEDIA_PROVIDER_ERROR', status: response.status, retryable: response.status === 429 || response.status >= 500, error: `Media provider ${provider} returned HTTP ${response.status}. No media artifact was produced.` };
 
   const data = await response.json() as { data?: Array<{ b64_json?: string; url?: string }>; predictions?: Array<{ bytesBase64Encoded?: string }>; url?: string };
@@ -309,7 +313,7 @@ export const generateMediaViaApi: { schema: { name: string; description: string;
       let attempts = 0;
       while (attempts < 3) {
         attempts++;
-        const response = await fetch(targetUrl, { headers: { Authorization: `Bearer ${pollinationsKey}` }, signal: sandbox?.signal || AbortSignal.timeout(120_000) });
+        const response = await fetch(targetUrl, { headers: { Authorization: `Bearer ${pollinationsKey}` }, signal: buildMediaSignal(sandbox?.signal) });
         if (!response.ok) {
           const retryable = response.status === 429 || response.status >= 500;
           if (!retryable || attempts === 3) return {
