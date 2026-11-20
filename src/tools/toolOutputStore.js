@@ -112,8 +112,10 @@ export class ToolOutputStore {
             throw new Error('ToolOutputStore: Requested file is outside the output store');
         }
         const lines = fs.readFileSync(resolvedPath, 'utf8').split('\n');
-        const clampedStart = Math.max(1, Math.min(startLine, lines.length));
-        const clampedEnd = Math.max(clampedStart, Math.min(endLine, lines.length));
+        const safeStart = Number.isFinite(startLine) ? Math.floor(startLine) : 1;
+        const safeEnd = Number.isFinite(endLine) ? Math.floor(endLine) : lines.length;
+        const clampedStart = Math.max(1, Math.min(safeStart, lines.length));
+        const clampedEnd = Math.max(clampedStart, Math.min(safeEnd, lines.length));
         return lines.slice(clampedStart - 1, clampedEnd).join('\n');
     }
     pruneOldOutputs(maxAgeMs = 7 * 24 * 60 * 60 * 1000) {
