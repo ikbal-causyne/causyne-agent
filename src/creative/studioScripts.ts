@@ -304,17 +304,26 @@ export async function findHostApplication(host: CanonicalHost): Promise<string |
     const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
     const folderPattern = host === 'photoshop' ? /Photoshop/i : host === 'premiere' ? /Premiere/i : /After Effects/i;
     const exePattern = host === 'photoshop' ? /Photoshop\.exe$/i : host === 'premiere' ? /Premiere\.exe$/i : /AfterFX\.exe$/i;
-    try {
-      const topDirs = await fs.readdir(programFiles);
+    const searchRoots = [path.join(programFiles, 'Adobe'), programFiles];
+    for (const rootDir of searchRoots) {
+      let topDirs: string[];
+      try {
+        topDirs = await fs.readdir(rootDir);
+      } catch {
+        continue;
+      }
       for (const dir of topDirs) {
-        const fullDir = path.join(programFiles, dir);
-        if (folderPattern.test(dir)) {
+        if (!folderPattern.test(dir)) continue;
+        const fullDir = path.join(rootDir, dir);
+        try {
           const files = await fs.readdir(fullDir);
           const foundExe = files.find(f => exePattern.test(f));
           if (foundExe) return path.join(fullDir, foundExe);
+        } catch {
+          // Ignore non-directory entries or unreadable subdirs
         }
       }
-    } catch { /* Ignore filesystem search failures */ }
+    }
   }
 
   return null;
