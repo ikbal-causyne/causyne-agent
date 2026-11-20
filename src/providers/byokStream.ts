@@ -371,7 +371,21 @@ export async function streamOpenAICompatibleChat(
           for (let pos = 0; pos < delta.tool_calls.length; pos++) {
             const tc = delta.tool_calls[pos];
             if (!isRecord(tc)) continue;
-            const idx = typeof tc.index === 'number' && Number.isInteger(tc.index) ? tc.index : pos;
+            let idx: number;
+            if (typeof tc.index === 'number' && Number.isInteger(tc.index)) {
+              idx = tc.index;
+            } else if (typeof tc.id === 'string' && tc.id) {
+              const match = [...toolCallMap.entries()].find(([, item]) => item.id === tc.id);
+              if (match) {
+                idx = match[0];
+              } else if (toolCallMap.get(pos)?.id && toolCallMap.get(pos)?.id !== tc.id) {
+                idx = toolCallMap.size;
+              } else {
+                idx = pos;
+              }
+            } else {
+              idx = pos;
+            }
             let entry = toolCallMap.get(idx);
             if (!entry) {
               entry = { id: '', type: 'function', function: { name: '', arguments: '' } };
