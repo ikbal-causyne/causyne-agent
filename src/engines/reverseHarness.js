@@ -6,6 +6,7 @@
 // Encapsulates on-demand process lifecycle, error containment, execution timeouts,
 // and graceful fallback mechanisms to guarantee zero crashes on Causyne host processes.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { McpClient } from '../mcp/mcpClient.js';
 import { resolveUserPath } from '../utils/paths.js';
@@ -51,8 +52,9 @@ export class SovereignReverseHarness {
                 // 1. Locate local rea binary if installed (sub-second launch, zero network lag)
                 let command = 'npx';
                 let args = ['--yes', 'rea-agents@6.8.0', '--mcp'];
+                const homeDir = os.homedir();
                 const candidatePaths = [
-                    path.join(process.env.HOME || '', '.local', 'bin', 'rea'),
+                    path.join(homeDir, '.local', 'bin', 'rea'),
                     '/usr/local/bin/rea',
                     '/opt/homebrew/bin/rea'
                 ];
@@ -64,7 +66,6 @@ export class SovereignReverseHarness {
                     }
                 }
                 const nodeDir = path.dirname(process.execPath);
-                const homeDir = process.env.HOME || '';
                 const buildToolsDirs = [
                     path.join(homeDir, 'Library/Android/sdk/build-tools/36.1.0'),
                     path.join(homeDir, 'Library/Android/sdk/build-tools/35.0.0'),
@@ -72,7 +73,7 @@ export class SovereignReverseHarness {
                     '/opt/homebrew/bin',
                     '/usr/local/bin'
                 ].filter(d => fs.existsSync(d));
-                const augmentedPath = [nodeDir, ...buildToolsDirs, process.env.PATH || ''].join(':');
+                const augmentedPath = [nodeDir, ...buildToolsDirs, process.env.PATH || ''].filter(Boolean).join(path.delimiter);
                 const mcpClient = new McpClient({
                     name: 'causyne_reverse_engineering',
                     command,
