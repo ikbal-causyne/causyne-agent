@@ -310,8 +310,11 @@ export function repairJsonArguments(rawInput) {
     // 5. Native parse retry after stripping markdown/filler
     try {
         const parsed = JSON.parse(healed);
-        if (parsed && typeof parsed === 'object') {
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
             return { args: parsed, repaired: true, repairs };
+        }
+        if (Array.isArray(parsed)) {
+            return { args: { items: parsed }, repaired: true, repairs: [...repairs, 'Wrapped array payload into items'] };
         }
     }
     catch {
