@@ -299,7 +299,7 @@ export class VectorDB {
       const ageMs = Math.max(0, now - (memory.timestamp || 0));
       // OBLIVION: S = BASE_HALF_LIFE * (1 + hits * REINFORCEMENT_ALPHA) * tierMultiplier
       // R = e^(-t/S) — adaptive retention that rewards reinforced memories with slower decay
-      const tierMult = TIER_MULTIPLIERS[memory.kind] ?? 1.0;
+      const tierMult = Object.hasOwn(TIER_MULTIPLIERS, memory.kind) ? TIER_MULTIPLIERS[memory.kind]! : 1.0;
       const stability = Math.max(1, RECENCY_HALF_LIFE_MS * (1 + (memory.hits || 0) * REINFORCEMENT_ALPHA) * tierMult);
       const retention = Math.exp(-ageMs / stability);
       scored.push({
