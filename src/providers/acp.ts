@@ -26,7 +26,7 @@ interface AcpTransportSnapshot {
 }
 
 function fingerprint(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  return createHash('sha256').update(JSON.stringify(value) ?? 'undefined').digest('hex');
 }
 
 export function isAcpProvider(provider?: string | null): boolean {

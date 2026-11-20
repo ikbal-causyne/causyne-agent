@@ -12,7 +12,7 @@ import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { extractToolCallJsonObjects, stripToolCallMarkup, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
 import { canonicalizeToolName } from '../tools/toolSelfRepair.js';
 function fingerprint(value) {
-    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    return createHash('sha256').update(JSON.stringify(value) ?? 'undefined').digest('hex');
 }
 export function isAcpProvider(provider) {
     if (!provider)
