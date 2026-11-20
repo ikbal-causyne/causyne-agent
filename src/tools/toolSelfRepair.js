@@ -171,11 +171,11 @@ for (const [alias, canonical] of Object.entries(TOOL_NAME_ALIASES)) {
  */
 export function canonicalizeToolName(rawName) {
     const normalized = String(rawName || '').replace(/\./g, '_');
-    if (TOOL_NAME_ALIASES[normalized]) {
+    if (Object.hasOwn(TOOL_NAME_ALIASES, normalized) && TOOL_NAME_ALIASES[normalized]) {
         return TOOL_NAME_ALIASES[normalized];
     }
     const stripped = stripDelimiters(rawName);
-    if (DELIMITER_FREE_TOOL_INDEX[stripped]) {
+    if (Object.hasOwn(DELIMITER_FREE_TOOL_INDEX, stripped) && DELIMITER_FREE_TOOL_INDEX[stripped]) {
         return DELIMITER_FREE_TOOL_INDEX[stripped];
     }
     return normalized;
