@@ -59,9 +59,12 @@ export const viewImage = {
           const Tesseract: any = await loadCapabilityPackage('tesseract.js');
           if (Tesseract && typeof Tesseract.createWorker === 'function') {
             const worker = await Tesseract.createWorker('eng');
-            const { data: { text } } = await worker.recognize(targetPath);
-            await worker.terminate();
-            return { success: true, output: `[OCR Text Extracted from ${path.basename(targetPath)}]:\n\n${text}` };
+            try {
+              const { data: { text } } = await worker.recognize(targetPath);
+              return { success: true, output: `[OCR Text Extracted from ${path.basename(targetPath)}]:\n\n${text}` };
+            } finally {
+              await worker.terminate().catch(() => {});
+            }
           }
         } catch {
           // If tesseract isn't provisioned, fall through to returning image data if not explicitly text-only
@@ -77,6 +80,7 @@ export const viewImage = {
       // Vision image reading & normalization
       let processedBuffer: Buffer;
       let mimeType = 'image/jpeg';
+      let reencodedAsJpeg = false;
       const ext = path.extname(targetPath).toLowerCase();
 
       try {
@@ -86,6 +90,7 @@ export const viewImage = {
             .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
             .jpeg({ quality: 85 })
             .toBuffer();
+          reencodedAsJpeg = true;
         } else {
           processedBuffer = await fs.readFile(targetPath);
         }
@@ -93,11 +98,13 @@ export const viewImage = {
         processedBuffer = await fs.readFile(targetPath);
       }
 
-      if (ext === '.png') mimeType = 'image/png';
-      else if (ext === '.webp') mimeType = 'image/webp';
-      else if (ext === '.gif') mimeType = 'image/gif';
-      else if (ext === '.svg') mimeType = 'image/svg+xml';
-      else if (ext === '.bmp') mimeType = 'image/bmp';
+      if (!reencodedAsJpeg) {
+        if (ext === '.png') mimeType = 'image/png';
+        else if (ext === '.webp') mimeType = 'image/webp';
+        else if (ext === '.gif') mimeType = 'image/gif';
+        else if (ext === '.svg') mimeType = 'image/svg+xml';
+        else if (ext === '.bmp') mimeType = 'image/bmp';
+      }
 
       const base64 = processedBuffer.toString('base64');
 
