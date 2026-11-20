@@ -13,8 +13,11 @@ function resolveWorkspaceArgPath(raw, baseDir) {
     if (!val || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(val)) {
         return null;
     }
-    if (val === '~' || val.startsWith('~/') || val.startsWith('~\\')) {
-        return val.replace(/^~(?=$|[\\/])/, os.homedir());
+    if (val === '~') {
+        return os.homedir();
+    }
+    if (val.startsWith('~/') || val.startsWith('~\\')) {
+        return path.join(os.homedir(), val.slice(2));
     }
     if (!path.isAbsolute(val)) {
         return path.resolve(baseDir, val);

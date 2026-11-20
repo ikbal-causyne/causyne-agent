@@ -54,9 +54,17 @@ describe('Sector 3 — Extracted Strict-TS AgentLoop modules', () => {
     assert.equal(validateAndNormalizeToolArgs('fs_write', args, ws), null);
     assert.equal(args.path, path.resolve(ws, 'src/index.ts'));
 
-    const tildeArgs: Record<string, unknown> = { path: '~/notes.md' };
+    const tildeArgs: Record<string, unknown> = {
+      path: '~/notes.md',
+      cwd: '~',
+      destination: '~/sub/file.txt',
+      source: '~\\notes.md'
+    };
     assert.equal(validateAndNormalizeToolArgs('fs_read', tildeArgs, ws), null);
     assert.equal(tildeArgs.path, path.join(os.homedir(), 'notes.md'));
+    assert.equal(tildeArgs.cwd, os.homedir());
+    assert.equal(tildeArgs.destination, path.join(os.homedir(), 'sub', 'file.txt'));
+    assert.equal(tildeArgs.source, path.join(os.homedir(), 'notes.md'));
 
     const urlArgs: Record<string, unknown> = { target: 'https://example.com' };
     assert.equal(validateAndNormalizeToolArgs('web_fetch', urlArgs, ws), null);
