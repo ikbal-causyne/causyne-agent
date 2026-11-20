@@ -38,12 +38,14 @@ function boundedMessage(value) {
     if (typeof content === 'string') {
         content = boundedText(content, MAX_CONTENT_BYTES);
     }
-    else {
+    else if (content !== undefined && content !== null) {
         try {
             const serialized = JSON.stringify(content);
-            content = Buffer.byteLength(serialized, 'utf8') <= MAX_CONTENT_BYTES
-                ? JSON.parse(serialized)
-                : '[structured content omitted: exceeds sidechain limit]';
+            content = typeof serialized === 'string'
+                ? (Buffer.byteLength(serialized, 'utf8') <= MAX_CONTENT_BYTES
+                    ? JSON.parse(serialized)
+                    : '[structured content omitted: exceeds sidechain limit]')
+                : '[unserializable content omitted]';
         }
         catch {
             content = '[unserializable content omitted]';
