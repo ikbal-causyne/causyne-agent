@@ -126,6 +126,14 @@ export const fsRead = {
         return { success: false, error: scopeErr };
       }
 
+      const targetStat = fs.statSync(target);
+      if (targetStat.isDirectory()) {
+        return { success: false, error: `Path is a directory, not a file: ${target}. Use fs_list to inspect directories.` };
+      }
+      if (!targetStat.isFile()) {
+        return { success: false, error: `Path is not a regular readable file: ${target}` };
+      }
+
       const ext = path.extname(target).toLowerCase();
       const isKnownBinaryExt = BINARY_EXTENSIONS.test(ext);
 
