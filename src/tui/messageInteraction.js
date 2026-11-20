@@ -3,7 +3,7 @@ import { revokeAllAlways } from '../approvalGrants.js';
 // @ts-expect-error Legacy checkpoints module has no TypeScript declarations yet.
 import { undoLast } from '../checkpoints.js';
 import { writeClipboardSync } from './clipboardSync.js';
-import { registerStageConsoleGuard, setTransientNotice } from './consoleGuard.js';
+import { setTransientNotice } from './consoleGuard.js';
 import { detectLinkAtPoint, openDetectedLink } from './smartLinkClick.js';
 import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { safeDisplay, stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
@@ -102,7 +102,7 @@ export class MessageActionsLayer extends Layer {
             this.onPick(this.items[this.list.selected] ?? null);
             return 'close';
         }
-        if (!event.ctrl && !event.alt && keyName && (keyName.length === 1 || keyName === 'space' || keyName === 'backspace')) {
+        if (!event.ctrl && !event.alt && !event.meta && keyName && (keyName === 'char' || keyName === 'paste' || keyName.length === 1 || keyName === 'space' || keyName === 'backspace')) {
             this.settled = true;
             this.onPick(null);
             return 'dismiss';
@@ -235,7 +235,6 @@ export function messageAt(surface, point) {
 }
 /** Highlight only the visible non-empty rows of the hovered message, without altering transcript data. */
 export function markHoveredMessage(rows, surface, contentWidth) {
-    registerStageConsoleGuard(surface);
     if (!Array.isArray(rows) || rows.length === 0 || !surface?.transcript?.flatten)
         return;
     const safeContentWidth = Number.isFinite(contentWidth) && contentWidth > 0 ? Math.floor(contentWidth) : 1;
