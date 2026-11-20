@@ -124,7 +124,7 @@ export function validateAdobeLiveJob(value) {
     }
     const raw = value;
     const hostInput = String(raw.host ?? 'photoshop').trim().toLowerCase();
-    const canonicalHost = ADOBE_HOST_ALIASES[hostInput];
+    const canonicalHost = Object.hasOwn(ADOBE_HOST_ALIASES, hostInput) ? ADOBE_HOST_ALIASES[hostInput] : undefined;
     if (!canonicalHost) {
         throw new Error(`Unsupported Adobe host "${String(raw.host)}". Supported hosts: photoshop, premiere, after-effects, illustrator, indesign, media-encoder.`);
     }
@@ -669,7 +669,7 @@ export function validateGameEngineJob(value) {
     }
     const raw = value;
     const engineInput = String(raw.engine ?? raw.host ?? 'unreal').trim().toLowerCase();
-    const canonicalEngine = GAME_ENGINE_ALIASES[engineInput];
+    const canonicalEngine = Object.hasOwn(GAME_ENGINE_ALIASES, engineInput) ? GAME_ENGINE_ALIASES[engineInput] : undefined;
     if (!canonicalEngine) {
         throw new Error(`Unsupported game engine "${String(raw.engine ?? raw.host)}". Supported engines: unreal, unity, godot.`);
     }
