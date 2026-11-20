@@ -266,9 +266,9 @@ export function buildSeatbeltProfile(options) {
     const mode = options.mode ?? 'workspace-write';
     const homeDir = options.homeDir ?? os.homedir();
     const tmpDir = options.tmpDir ?? os.tmpdir();
-    const workspaces = options.workspaceRoots && options.workspaceRoots.length > 0
-        ? [...options.workspaceRoots, options.cwd]
-        : [options.cwd];
+    const configuredWorkspaces = (options.workspaceRoots ?? [])
+        .filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+    const workspaces = configuredWorkspaces.length > 0 ? configuredWorkspaces : [options.cwd];
     const lines = [
         '(version 1)',
         '(allow default)'
@@ -367,9 +367,9 @@ export function buildSeatbeltProfile(options) {
 export function buildBubblewrapArgs(shell, shellArgs, options) {
     const mode = options.mode ?? 'workspace-write';
     const homeDir = options.homeDir ?? os.homedir();
-    const workspaces = options.workspaceRoots && options.workspaceRoots.length > 0
-        ? [...options.workspaceRoots, options.cwd]
-        : [options.cwd];
+    const configuredWorkspaces = (options.workspaceRoots ?? [])
+        .filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+    const workspaces = configuredWorkspaces.length > 0 ? configuredWorkspaces : [options.cwd];
     const args = [
         '--die-with-parent',
         '--ro-bind', '/', '/',
