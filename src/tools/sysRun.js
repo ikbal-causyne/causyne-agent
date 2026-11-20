@@ -184,7 +184,8 @@ export function isFinalCommandSearch(rawCommand) {
         lastStmt = subshellMatch[1].trim();
     }
     const pipeParts = lastStmt.split('|');
-    const finalCmd = pipeParts.at(-1)?.trim().replace(/["'\)\s]+$/, '') || '';
+    const rawFinalCmd = pipeParts.at(-1)?.trim().replace(/["'\)\s]+$/, '') || '';
+    const finalCmd = rawFinalCmd.replace(/^(?:adb\s+(?:-s\s+\S+\s+)?shell|ssh\s+\S+)\s+/i, '');
     return /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:\/(?:usr\/)?bin\/)?(?:grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep|find))(?:\s|$)/.test(finalCmd);
 }
 /**
