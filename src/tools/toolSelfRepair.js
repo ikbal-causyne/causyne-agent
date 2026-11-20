@@ -460,16 +460,73 @@ function sanitizeUnescapedStringLiterals(input) {
     return result;
 }
 /**
- * Convert simple single-quoted JSON objects to valid double-quoted JSON.
+ * Convert single-quoted JSON keys/values to valid double-quoted JSON without
+ * mutating single quotes that already reside inside double-quoted strings.
  */
 function convertSingleQuotesToJson(input) {
-    return input.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner) => {
-        const escaped = inner
-            .replace(/\\'/g, "'")
-            .replace(/\\/g, '\\\\')
-            .replace(/"/g, '\\"');
-        return `"${escaped}"`;
-    });
+    let out = '';
+    let i = 0;
+    let inDouble = false;
+    while (i < input.length) {
+        const ch = input[i];
+        if (inDouble) {
+            if (ch === '\\' && i + 1 < input.length) {
+                out += ch + input[i + 1];
+                i += 2;
+                continue;
+            }
+            if (ch === '"')
+                inDouble = false;
+            out += ch;
+            i++;
+            continue;
+        }
+        if (ch === '"') {
+            inDouble = true;
+            out += ch;
+            i++;
+            continue;
+        }
+        if (ch === "'") {
+            let j = i + 1;
+            let inner = '';
+            let closed = false;
+            while (j < input.length) {
+                const c = input[j];
+                if (c === '\\' && j + 1 < input.length) {
+                    const next = input[j + 1];
+                    if (next === "'") {
+                        inner += "'";
+                    }
+                    else {
+                        inner += '\\' + next;
+                    }
+                    j += 2;
+                    continue;
+                }
+                if (c === "'") {
+                    closed = true;
+                    j++;
+                    break;
+                }
+                if (c === '"') {
+                    inner += '\\"';
+                }
+                else {
+                    inner += c;
+                }
+                j++;
+            }
+            if (closed) {
+                out += `"${inner}"`;
+                i = j;
+                continue;
+            }
+        }
+        out += ch;
+        i++;
+    }
+    return out;
 }
 /**
  * Balance unmatched brackets/braces if the LLM output was truncated.
