@@ -43,6 +43,7 @@ export function cleanToolOutputPreview(payload, toolName = '') {
     if (!trimmed || trimmed.startsWith(DECAY_MARKER))
         return '';
     let text = payload
+        .replace(/\r\n?/g, '\n')
         .replace(/\x1b\[(?:[12]K|\d*G)/g, '\n')
         .replace(/(https?:\/\/[^\s"'<>]+?\.[a-z]{2,10})([A-Z][a-z]{2,15}:\s)/g, '$1\n$2');
     // Strip renderSpillDocument metadata header up to the first `--- field: ... ---` marker
@@ -127,9 +128,7 @@ function recoverBrokenJsonOutput(raw, spillPath) {
     if (outputMatch?.[1]) {
         const body = outputMatch[1]
             .replace(/"\s*\}\s*$/, '')
-            .replace(/\\n/g, '\n')
-            .replace(/\\"/g, '"')
-            .replace(/\\\\/g, '\\');
+            .replace(/\\([\\nrt"])/g, (_m, ch) => ch === 'n' ? '\n' : ch === 'r' ? '\r' : ch === 't' ? '\t' : ch);
         return {
             success,
             output: body,
