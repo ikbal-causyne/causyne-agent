@@ -110,7 +110,13 @@ export const fsWrite = {
       return { success: false, error: `Target ${args.path} ends in a directory separator. Add a filename such as index.html.` };
     }
 
-    const target = path.resolve(expandHome(trimmedPath));
+    const expandedPath = expandHome(trimmedPath);
+    const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+      || context?.workspaceRoot?.trim()
+      || context?.workspacePaths?.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
+    const target = path.isAbsolute(expandedPath)
+      ? path.resolve(expandedPath)
+      : path.resolve(baseRoot ? path.resolve(expandHome(baseRoot)) : process.cwd(), expandedPath);
     let temporary = '';
     try {
       await checkScope(target, context);
