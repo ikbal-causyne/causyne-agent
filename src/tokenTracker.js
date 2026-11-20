@@ -135,15 +135,20 @@ export class TokenTracker {
         return 0.5;
     }
     calculateCost(promptTokens, completionTokens, usageDetail = null) {
-        const [promptPrice, completionPrice] = this.getPricing(promptTokens);
-        const cachedTokens = Math.min(Number(usageDetail?.cachedPromptTokens || 0), promptTokens);
-        const writeTokens = Math.min(Number(usageDetail?.cacheWriteTokens || 0), promptTokens - cachedTokens);
-        const fullPriceTokens = Math.max(0, promptTokens - cachedTokens - writeTokens);
-        const writeMultiplier = Number(usageDetail?.cacheWriteMultiplier || 1.25);
+        const safePrompt = Number.isFinite(promptTokens) ? Math.max(0, Number(promptTokens)) : 0;
+        const safeCompletion = Number.isFinite(completionTokens) ? Math.max(0, Number(completionTokens)) : 0;
+        const [promptPrice, completionPrice] = this.getPricing(safePrompt);
+        const rawCached = Number(usageDetail?.cachedPromptTokens ?? 0);
+        const cachedTokens = Math.min(Number.isFinite(rawCached) ? Math.max(0, rawCached) : 0, safePrompt);
+        const rawWrite = Number(usageDetail?.cacheWriteTokens ?? 0);
+        const writeTokens = Math.min(Number.isFinite(rawWrite) ? Math.max(0, rawWrite) : 0, safePrompt - cachedTokens);
+        const fullPriceTokens = Math.max(0, safePrompt - cachedTokens - writeTokens);
+        const rawMult = Number(usageDetail?.cacheWriteMultiplier ?? 1.25);
+        const writeMultiplier = Number.isFinite(rawMult) && rawMult >= 0 ? rawMult : 1.25;
         const promptCost = (fullPriceTokens / 1_000_000) * promptPrice +
             (cachedTokens / 1_000_000) * promptPrice * this.cachedInputMultiplier() +
             (writeTokens / 1_000_000) * promptPrice * writeMultiplier;
-        const completionCost = (completionTokens / 1_000_000) * completionPrice;
+        const completionCost = (safeCompletion / 1_000_000) * completionPrice;
         return promptCost + completionCost;
     }
     getMediaPricing(provider = '', model = '', mediaType = 'image') {
@@ -444,7 +449,7 @@ export class TokenTracker {
         this.taskTokens += freshStep;
         this.sessionTokens = (this.sessionTokens || 0) + freshStep;
         this.largestStepTokens = Math.max(this.largestStepTokens || 0, freshStep);
-        const cost = this.calculateCost(promptTokens, completionTokens, usageDetail);
+        const cost = this.calculateCost(pTokens, cTokens, usageDetail);
         this.taskCostUsd += cost;
         this.sessionCostUsd = (this.sessionCostUsd || 0) + cost;
         const { daily, cumulative } = await withUsageLock(async () => {
