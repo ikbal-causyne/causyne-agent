@@ -81,10 +81,11 @@ export const fsWrite = {
         if (typeof args.content !== 'string') {
             return { success: false, error: 'fs_write requires content as a string. Do not infer or invent missing file content.' };
         }
-        if (args.path.endsWith('/') || args.path.endsWith('\\')) {
+        const trimmedPath = args.path.trim();
+        if (trimmedPath.endsWith('/') || trimmedPath.endsWith('\\')) {
             return { success: false, error: `Target ${args.path} ends in a directory separator. Add a filename such as index.html.` };
         }
-        const target = path.resolve(expandHome(args.path.trim()));
+        const target = path.resolve(expandHome(trimmedPath));
         let temporary = '';
         try {
             await checkScope(target, context);
