@@ -12,8 +12,10 @@ function withUsageLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+let usageTempCounter = 0;
 function writeUsageFile(file: string, payload: unknown): void {
-  const temp = `${file}.tmp_${process.pid}`;
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = `${file}.tmp_${process.pid}_${++usageTempCounter}`;
   fs.writeFileSync(temp, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(temp, file);
 }
@@ -278,17 +280,20 @@ export class TokenTracker {
     this.taskCostUsd += cost;
     this.sessionCostUsd = (this.sessionCostUsd || 0) + cost;
 
-    const cumulative = await this.getCumulativeUsage();
-    const daily = await this.getDailyUsage();
-    daily.totalTokens += equivalentTokens;
-    daily.totalCalls += 1;
-    daily.totalCostUsd = (daily.totalCostUsd || 0) + cost;
-    await this.saveDailyUsage(daily);
+    const { daily } = await withUsageLock(async () => {
+      const cumulative = await this.getCumulativeUsage();
+      const daily = await this.getDailyUsage();
+      daily.totalTokens += equivalentTokens;
+      daily.totalCalls += 1;
+      daily.totalCostUsd = (daily.totalCostUsd || 0) + cost;
+      await this.saveDailyUsage(daily);
 
-    cumulative.totalTokens += equivalentTokens;
-    cumulative.totalCalls += 1;
-    cumulative.totalCostUsd = (cumulative.totalCostUsd || 0) + cost;
-    await this.saveCumulativeUsage(cumulative);
+      cumulative.totalTokens += equivalentTokens;
+      cumulative.totalCalls += 1;
+      cumulative.totalCostUsd = (cumulative.totalCostUsd || 0) + cost;
+      await this.saveCumulativeUsage(cumulative);
+      return { daily };
+    });
 
     if (!this.budget.enabled) {
       return { allowed: true, used: daily.totalTokens, costUsd: daily.totalCostUsd, taskCostUsd: this.taskCostUsd, equivalentTokens };
