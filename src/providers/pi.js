@@ -29,6 +29,12 @@ export class PiProvider extends LLMProvider {
         const prompt = this.formatter.formatConversation(messages, options.tools || [])
             .replace('over ACP.', 'over Pi RPC.');
         return new Promise((resolve, reject) => {
+            if (options.signal?.aborted) {
+                const err = new Error('Pi request aborted');
+                err.name = 'AbortError';
+                reject(err);
+                return;
+            }
             const child = spawn(this.command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'],
                 env: process.env, shell: false });
             let buffer = '';
