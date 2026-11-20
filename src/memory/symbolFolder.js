@@ -161,6 +161,7 @@ function extractCollapsedSignature(lines, startIndex, kind) {
 function findBraceBlockEnd(lines, startIndex, kind) {
     const isCallable = kind === 'function' || kind === 'method';
     let inBlockComment = false;
+    let inTemplate = false;
     let parenDepth = 0;
     let seenParamsOpen = false;
     let seenParamsClose = !isCallable;
@@ -172,7 +173,6 @@ function findBraceBlockEnd(lines, startIndex, kind) {
         const line = lines[i] ?? '';
         let inSingleQuote = false;
         let inDoubleQuote = false;
-        let inTemplate = false;
         for (let c = 0; c < line.length; c++) {
             const ch = line[c] ?? '';
             const next = line[c + 1] ?? '';
