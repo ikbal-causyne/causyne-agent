@@ -334,13 +334,19 @@ export async function testPeerHandshake(
   const client = new AcpClient(clientOptions);
 
   const timeoutMs = options.timeoutMs || 12000;
+  let timer: NodeJS.Timeout | undefined;
   try {
     const init = await Promise.race([
       client.start(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`ACP initialization timed out after ${timeoutMs}ms`)), timeoutMs)
-      )
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`ACP initialization timed out after ${timeoutMs}ms`)), timeoutMs);
+        timer.unref?.();
+      })
     ]);
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
 
     const agentInfo = init.agentInfo ? { name: init.agentInfo.name, version: init.agentInfo.version } : undefined;
     const authMethods = Array.isArray(init.authMethods)
@@ -371,6 +377,7 @@ export async function testPeerHandshake(
     const msg = initErr instanceof Error ? initErr.message : String(initErr);
     return { ready: false, error: msg };
   } finally {
+    if (timer) clearTimeout(timer);
     await client.close().catch(() => {});
   }
 }
