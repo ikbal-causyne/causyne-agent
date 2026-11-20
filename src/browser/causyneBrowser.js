@@ -580,7 +580,7 @@ const SEARCH_EXTRACT_SCRIPT = `(() => {
       if (parsed.hostname.includes('google.') && parsed.pathname === '/url') {
         href = parsed.searchParams.get('q') || parsed.searchParams.get('url') || href;
       }
-      if (/(^|\.)duckduckgo\.com$/i.test(parsed.hostname) && parsed.pathname.startsWith('/l/')) {
+      if (/(^|\\.)duckduckgo\\.com$/i.test(parsed.hostname) && parsed.pathname.startsWith('/l/')) {
         href = parsed.searchParams.get('uddg') || href;
       }
       const clean = new URL(href, document.baseURI);
