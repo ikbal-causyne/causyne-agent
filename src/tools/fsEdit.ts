@@ -19,31 +19,47 @@ export interface FsEditResult {
   error?: string;
 }
 
+const MAX_FUZZY_CHARS = 8_192;
+
 function getLevenshteinDistance(a: string, b: string): number {
-  const matrix: number[][] = Array(a.length + 1)
-    .fill(null)
-    .map(() => Array(b.length + 1).fill(0));
-
-  for (let i = 0; i <= a.length; i++) matrix[i]![0] = i;
-  for (let j = 0; j <= b.length; j++) matrix[0]![j] = j;
-
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
-      matrix[i]![j] = Math.min(
-        matrix[i - 1]![j]! + 1, // deletion
-        matrix[i]![j - 1]! + 1, // insertion
-        matrix[i - 1]![j - 1]! + indicator // substitution
-      );
-    }
+  let s1 = a;
+  let s2 = b;
+  if (s1.length > s2.length) {
+    const tmp = s1;
+    s1 = s2;
+    s2 = tmp;
   }
-  return matrix[a.length]![b.length]!;
+  const m = s1.length;
+  const n = s2.length;
+  if (m === 0) return n;
+  let prev = new Int32Array(m + 1);
+  let curr = new Int32Array(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+
+  for (let i = 1; i <= n; i++) {
+    curr[0] = i;
+    const ch2 = s2.charCodeAt(i - 1);
+    for (let j = 1; j <= m; j++) {
+      const cost = s1.charCodeAt(j - 1) === ch2 ? 0 : 1;
+      const del = prev[j]! + 1;
+      const ins = curr[j - 1]! + 1;
+      const sub = prev[j - 1]! + cost;
+      curr[j] = del < ins ? (del < sub ? del : sub) : (ins < sub ? ins : sub);
+    }
+    const swap = prev;
+    prev = curr;
+    curr = swap;
+  }
+  return prev[m]!;
 }
 
 function calculateConfidence(original: string, match: string): number {
-  const dist = getLevenshteinDistance(original, match);
   const maxLen = Math.max(original.length, match.length);
   if (maxLen === 0) return 100;
+  if (maxLen > MAX_FUZZY_CHARS) return 0;
+  // Impossible to reach 90% confidence when length difference alone exceeds 10%
+  if (Math.abs(original.length - match.length) / maxLen > 0.1) return 0;
+  const dist = getLevenshteinDistance(original, match);
   return ((maxLen - dist) / maxLen) * 100;
 }
 
