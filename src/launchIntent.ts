@@ -88,7 +88,7 @@ export function readOnlyScopeError(
     }
     if (tool === 'sysRun' || tool === 'sysRunBg' || tool === 'terminal_persistent_shell') {
       const command = String(args.command ?? args.input ?? '').trim();
-      if (READ_ONLY_COMMAND.test(command) && !MUTATING_INSPECTION_OPTIONS.test(command) && !/[;&|><`$()]/.test(command)) {
+      if (READ_ONLY_COMMAND.test(command) && !MUTATING_INSPECTION_OPTIONS.test(command) && !hasShellControlOperators(command)) {
         return null;
       }
       return 'A read-only inquiry authorizes only non-mutating status inspection commands (e.g. pwd, git status, cat), not arbitrary execution.';
