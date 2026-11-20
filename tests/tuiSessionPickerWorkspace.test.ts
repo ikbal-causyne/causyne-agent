@@ -87,18 +87,22 @@ describe('workspaceIdentity dynamic detection and safety', () => {
 describe('workspace-aware /sessions partitioning, deduplication, and rendering', () => {
   it('places current workspace sessions first with identical date sorting and zero duplicates in All Sessions', () => {
     const now = Date.now();
+    // Anchor timestamps to local midnight so the test never flakes at 00:00–00:59 UTC/local
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const startMs = todayStart.getTime();
     const currentWs = '/work/alpha/suika-game';
     const otherWs = '/work/beta/payments-api';
     const sameBasenameOtherWs = '/work/gamma/suika-game';
 
     const sessions = [
-      { id: 'ws-old', workspace: currentWs, workspaceKey: 'a', title: 'Old suika tweak', createdAt: now - 4 * DAY_MS, updatedAt: now - 4 * DAY_MS, messageCount: 7 },
-      { id: 'other-today', workspace: otherWs, workspaceKey: 'b', title: 'API rate limit fix', createdAt: now - 1 * HOUR_MS, updatedAt: now - 1 * HOUR_MS, messageCount: 4 },
-      { id: 'ws-today', workspace: currentWs, workspaceKey: 'a', title: 'Adventure overlay fix', createdAt: now - 10 * 60000, updatedAt: now - 5 * 60000, messageCount: 6 },
+      { id: 'ws-old', workspace: currentWs, workspaceKey: 'a', title: 'Old suika tweak', createdAt: startMs - 4 * DAY_MS + 12 * HOUR_MS, updatedAt: startMs - 4 * DAY_MS + 12 * HOUR_MS, messageCount: 7 },
+      { id: 'other-today', workspace: otherWs, workspaceKey: 'b', title: 'API rate limit fix', createdAt: startMs + 100, updatedAt: startMs + 100, messageCount: 4 },
+      { id: 'ws-today', workspace: currentWs, workspaceKey: 'a', title: 'Adventure overlay fix', createdAt: startMs + 150, updatedAt: startMs + 200, messageCount: 6 },
       // Duplicate ID entry to verify strict deduplication
-      { id: 'ws-today', workspace: currentWs, workspaceKey: 'a', title: 'Adventure overlay fix', createdAt: now - 10 * 60000, updatedAt: now - 5 * 60000, messageCount: 6 },
-      { id: 'same-name-diff-path', workspace: sameBasenameOtherWs, workspaceKey: 'c', title: 'Different suika repo', createdAt: now - 2 * DAY_MS, updatedAt: now - 2 * DAY_MS, messageCount: 3 },
-      { id: 'ws-yesterday', workspace: currentWs, workspaceKey: 'a', title: 'Balloon physics tuning', createdAt: now - 26 * HOUR_MS, updatedAt: now - 26 * HOUR_MS, messageCount: 11 }
+      { id: 'ws-today', workspace: currentWs, workspaceKey: 'a', title: 'Adventure overlay fix', createdAt: startMs + 150, updatedAt: startMs + 200, messageCount: 6 },
+      { id: 'same-name-diff-path', workspace: sameBasenameOtherWs, workspaceKey: 'c', title: 'Different suika repo', createdAt: startMs - 2 * DAY_MS + 12 * HOUR_MS, updatedAt: startMs - 2 * DAY_MS + 12 * HOUR_MS, messageCount: 3 },
+      { id: 'ws-yesterday', workspace: currentWs, workspaceKey: 'a', title: 'Balloon physics tuning', createdAt: startMs - 12 * HOUR_MS, updatedAt: startMs - 12 * HOUR_MS, messageCount: 11 }
     ];
 
     const items = buildSessionPickerItems(sessions, 'ws-today', currentWs);
