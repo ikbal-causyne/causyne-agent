@@ -85,8 +85,11 @@ function managedPrefix(packageRoot = PACKAGE_ROOT, env = process.env) {
     ];
     for (const marker of markers) {
         const index = packageRoot.lastIndexOf(marker);
-        if (index >= 0 && index + marker.length === packageRoot.length) {
-            return packageRoot.slice(0, index).replace(/[\\/]$/, '');
+        const atBoundary = index === 0 || packageRoot[index - 1] === '/' || packageRoot[index - 1] === '\\';
+        if (index >= 0 && atBoundary && index + marker.length === packageRoot.length) {
+            const rawPrefix = packageRoot.slice(0, index);
+            const root = path.parse(rawPrefix).root;
+            return rawPrefix === root ? rawPrefix : rawPrefix.replace(/[\\/]$/, '');
         }
     }
     return null;
