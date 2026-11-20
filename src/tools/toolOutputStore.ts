@@ -92,17 +92,19 @@ export class ToolOutputStore {
     if (lines.length === 1) {
       const budget = Math.max(0, this.config.maxChars - notice.length);
       const half = Math.floor(budget / 2);
-      head = text.slice(0, half);
-      tail = text.slice(-half);
+      head = half > 0 ? text.slice(0, half) : '';
+      tail = half > 0 ? text.slice(-half) : '';
     } else {
-      const rawHead = lines.slice(0, this.config.headLines).join('\n');
-      const rawTail = lines.slice(-this.config.tailLines).join('\n');
+      const headCount = Math.max(0, Math.floor(this.config.headLines));
+      const tailCount = Math.max(0, Math.floor(this.config.tailLines));
+      const rawHead = headCount > 0 ? lines.slice(0, headCount).join('\n') : '';
+      const rawTail = tailCount > 0 ? lines.slice(-tailCount).join('\n') : '';
       const maxBudget = this.config.maxChars;
       if (rawHead.length + rawTail.length + notice.length > maxBudget) {
         const budget = Math.max(0, maxBudget - notice.length);
         const half = Math.floor(budget / 2);
-        head = rawHead.slice(0, half);
-        tail = rawTail.slice(-half);
+        head = half > 0 ? rawHead.slice(0, half) : '';
+        tail = half > 0 ? rawTail.slice(-half) : '';
       } else {
         head = rawHead;
         tail = rawTail;
