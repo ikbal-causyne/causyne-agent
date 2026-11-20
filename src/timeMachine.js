@@ -142,7 +142,13 @@ export class TimeMachine {
                     : ''
             };
         }
-        const error = typeof value.error === 'string' ? value.error : '';
+        const error = typeof value.error === 'string'
+            ? value.error
+            : result instanceof Error
+                ? result.message
+                : typeof value.message === 'string'
+                    ? value.message
+                    : '';
         const needsHuman = value.failureKind !== 'site_refusal'
             && (classification === 'permission' || value.requiresConsent === true || value.requiresApproval === true || value.authenticationRequired === true || /user denied|approval required|authentication required/i.test(error));
         const attempt = Math.min(TIME_MACHINE_MAX_ATTEMPTS, (this.failures.get(key) || 0) + 1);

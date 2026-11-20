@@ -15,3 +15,9 @@ test('an Error object is not treated as a successful tool response', () => {
   assert.notEqual(next.kind, 'resolved');
   assert.equal(machine.observe('exec', args, { success: true, exitCode: 0 }).kind, 'resolved');
 });
+
+test('an Error object carrying an approval or auth message routes to human intervention', () => {
+  const machine = new TimeMachine();
+  const decision = machine.observe('exec', { command: 'gh auth status' }, new Error('Authentication required'));
+  assert.equal(decision.kind, 'human');
+});
