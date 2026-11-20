@@ -282,28 +282,28 @@ export const peerAgentTool = {
     });
 
     try {
-      await client.start();
-      const sessionId = await client.newSession(workspaceRoot);
+      await client.start(context?.signal);
+      const sessionId = await client.newSession(workspaceRoot, [], context?.signal);
 
       // Optional model selection if specified
-      if (args.model && client.agentCapabilities?.promptCapabilities) {
+      if (typeof safeArgs.model === 'string' && safeArgs.model.trim()) {
         try {
-          await client.setSessionModel(sessionId, args.model);
+          await client.setSessionModel(sessionId, safeArgs.model.trim(), context?.signal);
         } catch {
           // If model selection fails, continue with default model
         }
       }
 
       // Optional mode selection if specified
-      if (args.mode) {
+      if (typeof safeArgs.mode === 'string' && safeArgs.mode.trim()) {
         try {
-          await client.setSessionMode(sessionId, args.mode);
+          await client.setSessionMode(sessionId, safeArgs.mode.trim());
         } catch {
           // If mode selection fails, continue with default mode
         }
       }
 
-      const result = await client.prompt(sessionId, prompt);
+      const result = await client.prompt(sessionId, prompt, context?.signal);
       if (result.stopReason === 'cancelled') {
         return { success: false, error: `The peer agent "${peerId}" cancelled the task.` };
       }
