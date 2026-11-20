@@ -4646,13 +4646,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 // wall-clock limits, before deciding whether recovery is possible.
                 if (e?.partialUsage) {
                     const usage = e.partialUsage;
-                    if (usage.promptTokens + usage.completionTokens > 0) {
-                        await this.tokenTracker.trackUsage(usage.promptTokens, usage.completionTokens, (message) => this.emitEvent({ type: 'budget_warning', message }), usage);
+                    const promptTokens = Number.isFinite(Number(usage.promptTokens)) ? Math.max(0, Number(usage.promptTokens)) : 0;
+                    const completionTokens = Number.isFinite(Number(usage.completionTokens)) ? Math.max(0, Number(usage.completionTokens)) : 0;
+                    const cachedPromptTokens = Number.isFinite(Number(usage.cachedPromptTokens)) ? Math.max(0, Number(usage.cachedPromptTokens)) : 0;
+                    if (promptTokens + completionTokens > 0) {
+                        await this.tokenTracker.trackUsage(promptTokens, completionTokens, (message) => this.emitEvent({ type: 'budget_warning', message }), usage);
                         auditLog.log({
                             event: 'model_usage', scope: 'agent_loop_primary', taskId: this.taskId,
                             step: this.stepsCompleted, provider: this.config.provider || 'unknown',
-                            promptTokens: usage.promptTokens, completionTokens: usage.completionTokens,
-                            cachedPromptTokens: usage.cachedPromptTokens || 0,
+                            promptTokens, completionTokens,
+                            cachedPromptTokens,
                             measurement: 'provider_reported_partial', costBasis: 'external_subscription_unavailable'
                         });
                     }
