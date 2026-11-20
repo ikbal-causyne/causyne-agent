@@ -19,24 +19,27 @@ const execFileAsync = util.promisify(execFile);
 // ─────────────────────────────────────────────────────────────────────────────
 // NATIVE BINARY PARSERS (Pure Node.js Zero-Dependency Fallback)
 // ─────────────────────────────────────────────────────────────────────────────
-function parseMachO(buffer) {
+function parseMachO(buffer, depth = 0) {
+    if (buffer.length < 8) {
+        return { format: 'Mach-O', architecture: 'unknown' };
+    }
     const magic = buffer.readUInt32BE(0);
     const is64 = magic === 0xfeedfacf || magic === 0xcffaedfe;
-    const isLe = magic === 0xfeedfacf || magic === 0xfeedface;
+    const isLe = magic === 0xcffaedfe || magic === 0xcefaedfe;
     const isFat = magic === 0xcafebabe || magic === 0xbebafeca;
     if (isFat) {
         let architecture = 'Universal FAT (Mach-O)';
         const nfat_arch = buffer.readUInt32BE(4);
-        if (buffer.length >= 8 + nfat_arch * 20) {
+        if (depth < 2 && nfat_arch > 0 && nfat_arch <= 32 && buffer.length >= 8 + nfat_arch * 20) {
             for (let i = 0; i < nfat_arch; i++) {
                 const offset = 8 + i * 20;
                 const cputype = buffer.readInt32BE(offset);
                 const sliceOffset = buffer.readUInt32BE(offset + 8);
                 const sliceSize = buffer.readUInt32BE(offset + 12);
-                if (sliceOffset + 8 <= buffer.length) {
+                if (sliceOffset > 0 && sliceOffset + 28 <= buffer.length) {
                     const sliceBuf = buffer.subarray(sliceOffset, Math.min(sliceOffset + sliceSize, buffer.length));
-                    if (sliceBuf.length >= 8) {
-                        const inner = parseMachO(sliceBuf);
+                    if (sliceBuf.length >= 28) {
+                        const inner = parseMachO(sliceBuf, depth + 1);
                         return {
                             format: 'Mach-O',
                             architecture: `Universal FAT (slice: ${inner.architecture || 'unknown'}, cputype: ${cputype})`,
@@ -57,6 +60,9 @@ function parseMachO(buffer) {
             fileType: 'Mach-O Universal Binary',
             mitigations: { pie: true, nx: true, aslr: true, codeSigned: true }
         };
+    }
+    if (buffer.length < 28) {
+        return { format: 'Mach-O', architecture: 'unknown', is64Bit: is64, byteOrder: isLe ? 'little-endian' : 'big-endian' };
     }
     const cputype = isLe ? buffer.readInt32LE(4) : buffer.readInt32BE(4);
     let architecture = 'unknown';
