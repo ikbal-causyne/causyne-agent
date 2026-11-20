@@ -2,6 +2,51 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
+function expandHomePath(raw) {
+    const trimmed = raw.trim();
+    if (trimmed === '~')
+        return os.homedir();
+    if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+        return path.join(os.homedir(), trimmed.slice(2));
+    }
+    return trimmed;
+}
+function isWithinRoot(root, candidate) {
+    const rel = path.relative(root, candidate);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+function checkReadScope(target, context) {
+    if (!context || context.grantAllAccess === true)
+        return null;
+    const configured = Array.isArray(context.workspacePaths)
+        ? context.workspacePaths.filter((p) => typeof p === 'string' && p.trim().length > 0).map(p => p.trim())
+        : [];
+    const roots = configured.length > 0
+        ? configured
+        : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+            .filter((p) => typeof p === 'string' && p.trim().length > 0)
+            .map(p => p.trim());
+    if (roots.length === 0)
+        return null;
+    let realTarget;
+    try {
+        realTarget = fs.realpathSync(target);
+    }
+    catch {
+        return null;
+    }
+    for (const root of roots) {
+        try {
+            const realRoot = fs.realpathSync(path.resolve(expandHomePath(root)));
+            if (isWithinRoot(realRoot, realTarget))
+                return null;
+        }
+        catch {
+            continue;
+        }
+    }
+    return `Target resolves outside the selected workspace: ${target}`;
+}
 const BINARY_EXTENSIONS = /\.(png|jpe?g|webp|gif|svg|bmp|ico|blend\d?|glb|gltf|wasm|zip|tar|gz|bz2|xz|7z|rar|mp4|mov|avi|mkv|webm|mp3|wav|ogg|flac|aac|m4a|pdf|exe|dll|dylib|so|bin|iso|dmg)$/i;
 /** Fast Binary Detection: inspect the first 1024 bytes for a null byte. */
 async function isBinary(filePath) {
@@ -39,14 +84,24 @@ export const fsRead = {
             required: ['path']
         }
     },
-    async execute(args) {
+    async execute(args, context) {
         try {
             if (!args || typeof args.path !== 'string' || !args.path.trim()) {
                 return { success: false, error: 'Missing required parameter: path' };
             }
-            const target = args.path.replace(/^~\//, os.homedir() + '/');
+            const expanded = expandHomePath(args.path);
+            const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+                || context?.workspaceRoot?.trim()
+                || context?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim();
+            const target = path.isAbsolute(expanded)
+                ? path.resolve(expanded)
+                : path.resolve(baseRoot ? path.resolve(expandHomePath(baseRoot)) : process.cwd(), expanded);
             if (!fs.existsSync(target)) {
                 return { success: false, error: 'File does not exist.' };
+            }
+            const scopeErr = checkReadScope(target, context);
+            if (scopeErr) {
+                return { success: false, error: scopeErr };
             }
             const ext = path.extname(target).toLowerCase();
             const isKnownBinaryExt = BINARY_EXTENSIONS.test(ext);

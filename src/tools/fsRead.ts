@@ -9,6 +9,56 @@ export interface FsReadArgs {
   endLine?: number;
 }
 
+export interface FsReadContext {
+  workspaceRoot?: string;
+  workspacePaths?: string[];
+  grantAllAccess?: boolean;
+  signal?: AbortSignal;
+  parentLoop?: { workspaceRoot?: string };
+}
+
+function expandHomePath(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed === '~') return os.homedir();
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+function checkReadScope(target: string, context?: FsReadContext): string | null {
+  if (!context || context.grantAllAccess === true) return null;
+  const configured = Array.isArray(context.workspacePaths)
+    ? context.workspacePaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).map(p => p.trim())
+    : [];
+  const roots = configured.length > 0
+    ? configured
+    : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+      .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+      .map(p => p.trim());
+  if (roots.length === 0) return null;
+  let realTarget: string;
+  try {
+    realTarget = fs.realpathSync(target);
+  } catch {
+    return null;
+  }
+  for (const root of roots) {
+    try {
+      const realRoot = fs.realpathSync(path.resolve(expandHomePath(root)));
+      if (isWithinRoot(realRoot, realTarget)) return null;
+    } catch {
+      continue;
+    }
+  }
+  return `Target resolves outside the selected workspace: ${target}`;
+}
+
 export interface FsReadResult {
   success: boolean;
   output?: string;
@@ -54,16 +104,26 @@ export const fsRead = {
     }
   },
 
-  async execute(args: FsReadArgs): Promise<FsReadResult> {
+  async execute(args: FsReadArgs, context?: FsReadContext): Promise<FsReadResult> {
     try {
       if (!args || typeof args.path !== 'string' || !args.path.trim()) {
         return { success: false, error: 'Missing required parameter: path' };
       }
 
-      const target = args.path.replace(/^~\//, os.homedir() + '/');
+      const expanded = expandHomePath(args.path);
+      const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+        || context?.workspaceRoot?.trim()
+        || context?.workspacePaths?.find((p): p is string => typeof p === 'string' && p.trim().length > 0)?.trim();
+      const target = path.isAbsolute(expanded)
+        ? path.resolve(expanded)
+        : path.resolve(baseRoot ? path.resolve(expandHomePath(baseRoot)) : process.cwd(), expanded);
 
       if (!fs.existsSync(target)) {
         return { success: false, error: 'File does not exist.' };
+      }
+      const scopeErr = checkReadScope(target, context);
+      if (scopeErr) {
+        return { success: false, error: scopeErr };
       }
 
       const ext = path.extname(target).toLowerCase();
