@@ -84,9 +84,13 @@ export function validateMediaPayload(buffer, kind, limits = {}) {
     };
 }
 export function sanitizeTextPayload(text, maxChars = DEFAULT_PAYLOAD_LIMITS.maxTextChars) {
-    if (text.length <= maxChars)
+    const limit = Number.isFinite(maxChars) ? Math.floor(maxChars) : DEFAULT_PAYLOAD_LIMITS.maxTextChars;
+    if (limit <= 0)
+        return '';
+    if (text.length <= limit)
         return text;
-    const half = Math.floor(maxChars / 2);
-    const omitted = text.length - maxChars;
-    return text.slice(0, half) + `\n[... ${omitted} characters sanitized to protect context budget ...]\n` + text.slice(-half);
+    const half = Math.floor(limit / 2);
+    const omitted = text.length - limit;
+    const tail = half > 0 ? text.slice(-half) : '';
+    return text.slice(0, half) + `\n[... ${omitted} characters sanitized to protect context budget ...]\n` + tail;
 }

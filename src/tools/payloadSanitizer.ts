@@ -106,8 +106,11 @@ export function validateMediaPayload(
 }
 
 export function sanitizeTextPayload(text: string, maxChars: number = DEFAULT_PAYLOAD_LIMITS.maxTextChars): string {
-  if (text.length <= maxChars) return text;
-  const half = Math.floor(maxChars / 2);
-  const omitted = text.length - maxChars;
-  return text.slice(0, half) + `\n[... ${omitted} characters sanitized to protect context budget ...]\n` + text.slice(-half);
+  const limit = Number.isFinite(maxChars) ? Math.floor(maxChars) : DEFAULT_PAYLOAD_LIMITS.maxTextChars;
+  if (limit <= 0) return '';
+  if (text.length <= limit) return text;
+  const half = Math.floor(limit / 2);
+  const omitted = text.length - limit;
+  const tail = half > 0 ? text.slice(-half) : '';
+  return text.slice(0, half) + `\n[... ${omitted} characters sanitized to protect context budget ...]\n` + tail;
 }
