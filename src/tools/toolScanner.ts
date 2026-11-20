@@ -970,7 +970,7 @@ function applyAtPath(
   const target = node as Record<string, unknown>;
 
   const [head, ...rest] = path;
-  if (!head) return;
+  if (!head || head === '__proto__' || head === 'constructor' || head === 'prototype') return;
 
   if (head === '[]') {
     if (!Array.isArray(node)) return;
@@ -978,10 +978,10 @@ function applyAtPath(
     return;
   }
 
+  if (!Object.hasOwn(target, head)) return;
+
   if (rest.length === 0) {
-    if (head in target) {
-      target[head] = transform(target[head]);
-    }
+    target[head] = transform(target[head]);
     return;
   }
 

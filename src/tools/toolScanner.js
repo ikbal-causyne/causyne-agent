@@ -808,7 +808,7 @@ function applyAtPath(node, path, transform) {
         return;
     const target = node;
     const [head, ...rest] = path;
-    if (!head)
+    if (!head || head === '__proto__' || head === 'constructor' || head === 'prototype')
         return;
     if (head === '[]') {
         if (!Array.isArray(node))
@@ -817,10 +817,10 @@ function applyAtPath(node, path, transform) {
             applyAtPath(entry, rest, transform);
         return;
     }
+    if (!Object.hasOwn(target, head))
+        return;
     if (rest.length === 0) {
-        if (head in target) {
-            target[head] = transform(target[head]);
-        }
+        target[head] = transform(target[head]);
         return;
     }
     applyAtPath(target[head], rest, transform);
