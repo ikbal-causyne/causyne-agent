@@ -140,16 +140,26 @@ export const fsRead = {
             let currentLine = 1;
             const outputLines = [];
             let totalLines = 0;
+            const stream = fs.createReadStream(target);
             const rl = readline.createInterface({
-                input: fs.createReadStream(target),
+                input: stream,
                 crlfDelay: Infinity
             });
-            for await (const line of rl) {
-                totalLines++;
-                if (currentLine >= start && currentLine <= end) {
-                    outputLines.push(line);
+            try {
+                for await (const line of rl) {
+                    if (context?.signal?.aborted) {
+                        return { success: false, error: 'File read aborted.' };
+                    }
+                    totalLines++;
+                    if (currentLine >= start && currentLine <= end) {
+                        outputLines.push(line);
+                    }
+                    currentLine++;
                 }
-                currentLine++;
+            }
+            finally {
+                rl.close();
+                stream.destroy();
             }
             let finalOutput = outputLines.join('\n');
             if (totalLines > end) {
