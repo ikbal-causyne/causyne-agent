@@ -5,6 +5,7 @@
 // passed as argv arrays with shell disabled, and the only accepted package is
 // the public @causyne/agent package from the npm registry.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,8 @@ import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { UI } from './utils/cli_ui.js';
 import { causyneHome } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
+import { probeOsSandbox, resolveOsSandboxMode } from './tools/osSandbox.js';
+import { probeOsKeychain, resolveKeychainMode } from './osKeychain.js';
 
 const PACKAGE_NAME = '@causyne/agent';
 const REGISTRY_LATEST = 'https://registry.npmjs.org/@causyne%2fagent/latest';
@@ -46,6 +49,15 @@ export interface CheckUpdateOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
+  requireProvenance?: boolean;
+}
+
+export interface VerifiedReleaseMetadata {
+  version: string;
+  tarballUrl?: string | undefined;
+  integrity?: string | undefined;
+  provenanceVerified: boolean;
+  attestationUrl?: string | undefined;
 }
 
 export interface SelfUpdateOptions extends CheckUpdateOptions {
@@ -61,6 +73,8 @@ export interface CheckResult {
   current: string;
   latest: string;
   available: boolean;
+  provenanceVerified?: boolean | undefined;
+  integrity?: string | undefined;
 }
 
 export interface UpdateResult extends InstallationInfo {
@@ -76,6 +90,8 @@ export interface DiagnosisResult extends InstallationInfo {
   current?: string | undefined;
   latest?: string | null | undefined;
   available?: boolean | undefined;
+  provenanceVerified?: boolean | undefined;
+  integrity?: string | undefined;
   autoUpdates: boolean;
   error?: string | undefined;
 }
@@ -202,21 +218,128 @@ function writeState(state: UpdateState, options: { stateFile?: string; env?: Nod
   }
 }
 
-export async function latestPackageVersion(options: CheckUpdateOptions = {}): Promise<string> {
+const SRI_PATTERN = /^(sha512|sha384|sha256)-([A-Za-z0-9+/]+={0,2})$/;
+
+function isOfficialRegistryHttpsUrl(rawUrl: unknown): rawUrl is string {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return false;
+  try {
+    const parsed = new URL(rawUrl.trim());
+    return parsed.protocol === 'https:' && parsed.hostname === 'registry.npmjs.org';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verifies constant-time SRI integrity (`sha512-...`, `sha384-...`, or `sha256-...`)
+ * of a downloaded tarball buffer against the registry-declared integrity string.
+ */
+export function verifyTarballIntegrity(data: Buffer, expectedIntegrity: string): boolean {
+  if (!Buffer.isBuffer(data) || typeof expectedIntegrity !== 'string') return false;
+  const match = expectedIntegrity.trim().match(SRI_PATTERN);
+  if (!match) return false;
+  const algorithm = match[1]!;
+  const expectedDigest = Buffer.from(match[2]!, 'base64');
+  const actualDigest = crypto.createHash(algorithm).update(data).digest();
+  if (expectedDigest.length !== actualDigest.length) return false;
+  return crypto.timingSafeEqual(expectedDigest, actualDigest);
+}
+
+/**
+ * Validates npm registry metadata for `@causyne/agent`, enforcing official HTTPS
+ * tarball origin, valid SRI integrity format, and optional Sigstore provenance
+ * attestation checks (`requireProvenance` or `CAUSYNE_REQUIRE_PROVENANCE=1`).
+ */
+export function verifyRegistryMetadataIntegrity(
+  metadata: unknown,
+  options: { requireProvenance?: boolean | undefined } = {}
+): VerifiedReleaseMetadata {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    throw new Error('npm registry returned invalid package metadata');
+  }
+  const record = metadata as {
+    name?: unknown;
+    version?: unknown;
+    dist?: {
+      tarball?: unknown;
+      integrity?: unknown;
+      attestations?: {
+        url?: unknown;
+        provenance?: { predicateType?: unknown };
+      };
+    };
+  };
+
+  if (record.name !== PACKAGE_NAME || typeof record.version !== 'string' || !versionParts(record.version)) {
+    throw new Error('npm registry returned invalid package metadata');
+  }
+
+  let tarballUrl: string | undefined;
+  let integrity: string | undefined;
+  let attestationUrl: string | undefined;
+  let provenanceVerified = false;
+
+  if (record.dist !== undefined) {
+    if (!record.dist || typeof record.dist !== 'object' || Array.isArray(record.dist)) {
+      throw new Error('npm registry returned malformed dist metadata');
+    }
+    if (record.dist.tarball !== undefined) {
+      if (!isOfficialRegistryHttpsUrl(record.dist.tarball)) {
+        throw new Error('npm registry tarball URL must use HTTPS on registry.npmjs.org');
+      }
+      tarballUrl = record.dist.tarball;
+    }
+    if (record.dist.integrity !== undefined) {
+      if (typeof record.dist.integrity !== 'string' || !SRI_PATTERN.test(record.dist.integrity.trim())) {
+        throw new Error('npm registry returned malformed SRI integrity digest');
+      }
+      integrity = record.dist.integrity.trim();
+    }
+    if (record.dist.attestations && typeof record.dist.attestations === 'object') {
+      const attUrl = record.dist.attestations.url;
+      const predicateType = record.dist.attestations.provenance?.predicateType;
+      if (isOfficialRegistryHttpsUrl(attUrl) && typeof predicateType === 'string' && predicateType.length > 0) {
+        attestationUrl = attUrl;
+        provenanceVerified = true;
+      }
+    }
+  }
+
+  if (options.requireProvenance && !provenanceVerified) {
+    throw new Error(`Release ${PACKAGE_NAME}@${record.version} lacks verified npm provenance attestations.`);
+  }
+
+  return {
+    version: record.version,
+    ...(tarballUrl ? { tarballUrl } : {}),
+    ...(integrity ? { integrity } : {}),
+    provenanceVerified,
+    ...(attestationUrl ? { attestationUrl } : {})
+  };
+}
+
+export async function latestPackageRelease(options: CheckUpdateOptions = {}): Promise<VerifiedReleaseMetadata> {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new Error('This Node.js runtime has no fetch implementation.');
   const timeoutMs = options.timeoutMs || 3500;
   const signal = options.signal || AbortSignal.timeout(timeoutMs);
+  const env = options.env || process.env;
+  const requireProvenance = options.requireProvenance
+    ?? (env.CAUSYNE_REQUIRE_PROVENANCE === '1' || env.CAUSYNE_REQUIRE_PROVENANCE === 'true');
+
   const response = await fetchImpl(REGISTRY_LATEST, {
     headers: { accept: 'application/json', 'user-agent': `causyne/${getPackageVersion()}` },
+    redirect: 'error',
     signal
   });
   if (!response.ok) throw new Error(`npm registry returned HTTP ${response.status}`);
-  const metadata = (await response.json()) as { name?: string; version?: string };
-  if (metadata.name !== PACKAGE_NAME || !versionParts(metadata.version)) {
-    throw new Error('npm registry returned invalid package metadata');
-  }
-  return metadata.version as string;
+  const metadata: unknown = await response.json();
+  return verifyRegistryMetadataIntegrity(metadata, { requireProvenance });
+}
+
+export async function latestPackageVersion(options: CheckUpdateOptions = {}): Promise<string> {
+  const release = await latestPackageRelease(options);
+  return release.version;
 }
 
 function installLatest(info: InstallationInfo, options: SelfUpdateOptions = {}): void {
@@ -260,8 +383,14 @@ function installLatest(info: InstallationInfo, options: SelfUpdateOptions = {}):
 
 export async function checkForUpdate(options: CheckUpdateOptions = {}): Promise<CheckResult> {
   const current = options.currentVersion || getPackageVersion();
-  const latest = await latestPackageVersion(options);
-  return { current, latest, available: compareVersions(latest, current) > 0 };
+  const release = await latestPackageRelease(options);
+  return {
+    current,
+    latest: release.version,
+    available: compareVersions(release.version, current) > 0,
+    provenanceVerified: release.provenanceVerified,
+    ...(release.integrity ? { integrity: release.integrity } : {})
+  };
 }
 
 export async function runSelfUpdate(verbose: boolean = false, options: SelfUpdateOptions = {}): Promise<UpdateResult> {
@@ -344,14 +473,21 @@ export async function diagnoseInstallation(options: CheckUpdateOptions = {}): Pr
 }
 
 export function formatDoctorReport(status: DiagnosisResult, runtime: typeof process = process): string {
+  const sandboxCap = probeOsSandbox();
+  const sandboxMode = resolveOsSandboxMode(runtime.env);
+  const keychainCap = probeOsKeychain({ env: runtime.env });
+  const keychainMode = resolveKeychainMode(runtime.env);
   const rows = [
     `Version       : ${status.current || 'unknown'}`,
     `Latest        : ${status.latest || `unavailable (${status.error || 'unknown error'})`}`,
+    `Provenance    : ${status.provenanceVerified ? 'verified (npm Sigstore attestation)' : 'unverified / not reported'}`,
     `Installation  : ${status.type}`,
     `Package root  : ${status.packageRoot}`,
     `NPM command   : ${status.npmCommand}`,
     `Node.js       : ${runtime.version}`,
     `Platform      : ${runtime.platform} ${runtime.arch}`,
+    `OS Sandbox    : ${sandboxMode.mode} (backend: ${sandboxCap.backend}${sandboxCap.available ? ', available' : ', unavailable'})`,
+    `OS Keychain   : ${keychainMode} (backend: ${keychainCap.backend}${keychainCap.available ? ', available' : ', unavailable'})`,
     `Auto updates  : ${status.autoUpdates ? 'enabled' : 'disabled'}`,
     `Workspace     : ${runtime.cwd()}`
   ];

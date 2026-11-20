@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { loadVaultKeyFromKeychain, resolveKeychainMode, saveVaultKeyToKeychain } from './osKeychain.js';
 export const VAULT_KEY_BYTES = 32;
 export const VAULT_GCM_IV_BYTES = 12;
 export const VAULT_LEGACY_GCM_IV_BYTES = 16;
@@ -81,10 +82,40 @@ export function atomicWriteSecretFileSync(targetPath, content) {
 }
 /**
  * Loads or atomically initializes the 256-bit local vault key with `0o600` permissions.
+ * When `CAUSYNE_KEYCHAIN=on|auto|strict` is enabled, uses the OS Keychain backend
+ * first (migrating an existing file key if present) and fails closed on `strict`.
  */
-export function getOrCreateVaultKey(keyFilePath) {
+export function getOrCreateVaultKey(keyFilePath, keychainOptions) {
     const resolved = path.resolve(keyFilePath);
-    ensureVaultDir(path.dirname(resolved));
+    const vaultDir = path.dirname(resolved);
+    ensureVaultDir(vaultDir);
+    const keychainMode = resolveKeychainMode(keychainOptions?.env ?? process.env);
+    if (keychainMode !== 'off') {
+        const fromKeychain = loadVaultKeyFromKeychain(vaultDir, keychainOptions);
+        if (fromKeychain && fromKeychain.length === VAULT_KEY_BYTES) {
+            return fromKeychain;
+        }
+        // If a file key already exists, migrate it cleanly into the OS Keychain
+        if (fs.existsSync(resolved)) {
+            const existingFileKey = fs.readFileSync(resolved);
+            if (existingFileKey.length === VAULT_KEY_BYTES) {
+                const stored = saveVaultKeyToKeychain(vaultDir, existingFileKey, keychainOptions);
+                if (stored || keychainMode !== 'strict') {
+                    return existingFileKey;
+                }
+                throw new Error('Strict OS keychain mode requested (CAUSYNE_KEYCHAIN=strict) but storing the vault key failed.');
+            }
+        }
+        // Generate a fresh key and persist into OS Keychain
+        const generated = crypto.randomBytes(VAULT_KEY_BYTES);
+        if (saveVaultKeyToKeychain(vaultDir, generated, keychainOptions)) {
+            return generated;
+        }
+        if (keychainMode === 'strict') {
+            throw new Error('Strict OS keychain mode requested (CAUSYNE_KEYCHAIN=strict) but OS keychain storage is unavailable.');
+        }
+        // Non-strict (`on`/`auto`) degrades cleanly to atomic 0600 file storage below
+    }
     if (fs.existsSync(resolved)) {
         if (process.platform !== 'win32') {
             try {
