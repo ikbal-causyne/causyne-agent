@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 const PALETTES = {
     corporate: {
@@ -303,6 +304,7 @@ export async function renderHtmlToPdf(htmlFilePath, outputPdfPath, timeoutMs = 2
     }
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-pdf-profile-'));
     return new Promise((resolve) => {
+        let settled = false;
         const proc = spawn(chromePath, [
             '--headless',
             '--disable-gpu',
@@ -310,7 +312,7 @@ export async function renderHtmlToPdf(htmlFilePath, outputPdfPath, timeoutMs = 2
             '--no-pdf-header-footer',
             `--user-data-dir=${profileDir}`,
             `--print-to-pdf=${absOut}`,
-            `file://${absHtml}`
+            pathToFileURL(absHtml).href
         ], { stdio: 'ignore' });
         let prevSize = -1;
         let stableCount = 0;
@@ -318,25 +320,36 @@ export async function renderHtmlToPdf(htmlFilePath, outputPdfPath, timeoutMs = 2
         let elapsed = 0;
         const timer = setInterval(() => {
             elapsed += interval;
-            if (fs.existsSync(absOut)) {
-                const stat = fs.statSync(absOut);
-                if (stat.size === prevSize && stat.size > 0) {
-                    stableCount++;
-                    if (stableCount >= 3) {
-                        cleanupAndResolve(true);
-                        return;
+            try {
+                if (fs.existsSync(absOut)) {
+                    const stat = fs.statSync(absOut);
+                    if (stat.size === prevSize && stat.size > 0) {
+                        stableCount++;
+                        if (stableCount >= 3) {
+                            cleanupAndResolve(true);
+                            return;
+                        }
+                    }
+                    else {
+                        stableCount = 0;
+                        prevSize = stat.size;
                     }
                 }
-                else {
-                    stableCount = 0;
-                    prevSize = stat.size;
-                }
+            }
+            catch {
+                // Ignore transient stat race while PDF is being written
             }
             if (elapsed >= timeoutMs) {
                 cleanupAndResolve(false, 'Render timed out waiting for PDF file stabilization.');
             }
         }, interval);
+        proc.on('error', (err) => {
+            cleanupAndResolve(false, `Failed to launch Chrome: ${err.message}`);
+        });
         function cleanupAndResolve(success, error) {
+            if (settled)
+                return;
+            settled = true;
             clearInterval(timer);
             try {
                 proc.kill();
@@ -350,7 +363,14 @@ export async function renderHtmlToPdf(htmlFilePath, outputPdfPath, timeoutMs = 2
                 resolve({ success: false, error: error || 'Failed to generate PDF.' });
                 return;
             }
-            const stat = fs.statSync(absOut);
+            let stat;
+            try {
+                stat = fs.statSync(absOut);
+            }
+            catch {
+                resolve({ success: false, error: 'Failed to stat generated PDF.' });
+                return;
+            }
             const sizeKb = Math.round(stat.size / 1024);
             const exceeds2Mb = sizeKb > 2048;
             resolve({
