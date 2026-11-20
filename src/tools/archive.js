@@ -120,21 +120,37 @@ async function compressArchive(source, dest) {
     try {
         const archiver = await loadCapabilityPackage('archiver');
         if (typeof archiver === 'function') {
-            return await new Promise(async (resolve) => {
+            return await new Promise((resolve) => {
+                let settled = false;
+                const settle = (res) => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    resolve(res);
+                };
                 const output = createWriteStream(dest);
                 const format = dest.toLowerCase().endsWith('.tar') || dest.toLowerCase().endsWith('.tar.gz') ? 'tar' : 'zip';
                 const archiveStream = archiver(format, { zlib: { level: 9 } });
-                output.on('close', () => resolve({ success: true, output: `Compressed ${archiveStream.pointer()} total bytes to ${dest}` }));
-                archiveStream.on('error', (err) => resolve({ success: false, error: err.message }));
+                output.on('close', () => settle({ success: true, output: `Compressed ${archiveStream.pointer()} total bytes to ${dest}` }));
+                output.on('error', (err) => settle({ success: false, error: err?.message || String(err) }));
+                archiveStream.on('error', (err) => settle({ success: false, error: err?.message || String(err) }));
                 archiveStream.pipe(output);
-                const stat = statSync(source);
-                if (stat.isDirectory()) {
-                    archiveStream.directory(source, false);
+                try {
+                    const stat = statSync(source);
+                    if (stat.isDirectory()) {
+                        archiveStream.directory(source, false);
+                    }
+                    else {
+                        archiveStream.file(source, { name: path.basename(source) });
+                    }
+                    Promise.resolve(archiveStream.finalize()).catch((err) => {
+                        settle({ success: false, error: err?.message || String(err) });
+                    });
                 }
-                else {
-                    archiveStream.file(source, { name: path.basename(source) });
+                catch (err) {
+                    output.destroy();
+                    settle({ success: false, error: err?.message || String(err) });
                 }
-                await archiveStream.finalize();
             });
         }
     }
