@@ -56,11 +56,14 @@ async function physicalTarget(target: string): Promise<string> {
 
 async function checkScope(target: string, context?: FsWriteContext): Promise<void> {
   if (!context || context.grantAllAccess === true) return;
-  const roots = Array.isArray(context.workspacePaths) && context.workspacePaths.length > 0
-    ? context.workspacePaths
-    : [context.parentLoop?.workspaceRoot, context.workspaceRoot].filter(
-      (value): value is string => typeof value === 'string' && value.length > 0
-    );
+  const configuredPaths = Array.isArray(context.workspacePaths)
+    ? context.workspacePaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map(value => value.trim())
+    : [];
+  const roots = configuredPaths.length > 0
+    ? configuredPaths
+    : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map(value => value.trim());
   if (roots.length === 0) return;
   const physical = await physicalTarget(target);
   for (const root of roots) {
