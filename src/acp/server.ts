@@ -223,13 +223,17 @@ export class AcpServer {
     }
   }
 
-  private async drainBuffer(): Promise<void> {
+  private drainBuffer(): void {
+    const lines: string[] = [];
     let index = this.buffer.indexOf('\n');
     while (index >= 0) {
       const line = this.buffer.slice(0, index).trim();
       this.buffer = this.buffer.slice(index + 1);
-      if (line) await this.handleLine(line);
+      if (line) lines.push(line);
       index = this.buffer.indexOf('\n');
+    }
+    for (const line of lines) {
+      void this.handleLine(line).catch(() => {});
     }
   }
 

@@ -140,14 +140,18 @@ export class AcpServer {
             this.pending.delete(id);
         }
     }
-    async drainBuffer() {
+    drainBuffer() {
+        const lines = [];
         let index = this.buffer.indexOf('\n');
         while (index >= 0) {
             const line = this.buffer.slice(0, index).trim();
             this.buffer = this.buffer.slice(index + 1);
             if (line)
-                await this.handleLine(line);
+                lines.push(line);
             index = this.buffer.indexOf('\n');
+        }
+        for (const line of lines) {
+            void this.handleLine(line).catch(() => { });
         }
     }
     async handleLine(line) {
