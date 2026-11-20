@@ -1013,8 +1013,10 @@ export async function runGameEngineBridge(value, workspace = process.cwd(), sign
     }
     if (job.canonicalEngine === 'unity') {
         const destRel = (job.destinationFolder || 'Assets/CausyneAssets').replace(/^\/+|\/+$/g, '');
-        const normalizedDestRel = destRel.startsWith('Assets') ? destRel : path.join('Assets', destRel);
-        const destAbs = path.join(projectRoot, normalizedDestRel);
+        const normalizedDestRel = (destRel === 'Assets' || destRel.startsWith('Assets/') || destRel.startsWith('Assets\\'))
+            ? destRel
+            : path.join('Assets', destRel);
+        const destAbs = await resolveWorkspacePath(normalizedDestRel, projectRoot, false);
         const editorDir = path.join(projectRoot, 'Assets', 'Editor');
         await fs.mkdir(destAbs, { recursive: true });
         await fs.mkdir(editorDir, { recursive: true });
@@ -1066,7 +1068,7 @@ export async function runGameEngineBridge(value, workspace = process.cwd(), sign
     }
     // Godot 4 Engine Bridge
     const destRel = (job.destinationFolder || 'assets/causyne').replace(/^res:\/\/|^\/+|\/+$/g, '');
-    const destAbs = path.join(projectRoot, destRel);
+    const destAbs = await resolveWorkspacePath(destRel || 'assets/causyne', projectRoot, false);
     await fs.mkdir(destAbs, { recursive: true });
     const resPaths = [];
     for (const srcFile of resolvedAssets) {
