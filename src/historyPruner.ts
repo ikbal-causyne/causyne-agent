@@ -170,7 +170,7 @@ export function buildRecoverableDroppedSummary(
     if (message.role === 'user' && typeof message.content === 'string'
       && message.content.startsWith('[COMPACTED CONTEXT SUMMARY — ')) {
       for (const line of message.content.split('\n')) {
-        const prior = /^([^\n]+ \((?:reported success|reported failure|outcome unverified)\): (\/[^\n]+))$/.exec(line);
+        const prior = /^([^\n]+ \((?:reported success|reported failure|outcome unverified)\): ((?:\/|[A-Za-z]:[\\/]|\\\\)[^\n]+))$/.exec(line);
         if (prior?.[2]) paths.set(prior[2], line);
       }
     }
