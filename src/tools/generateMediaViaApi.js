@@ -31,12 +31,14 @@ function validateMagicNumbers(buffer) {
         return true; // PNG
     if (hex.startsWith('52494646'))
         return true; // WAV/RIFF
-    if (hex.startsWith('494433'))
-        return true; // MP3 (ID3)
-    // MP4 video container check: box size (4 bytes) followed by box type 'ftyp' (66747970 in hex) or 'moov' or 'mdat'
+    if (hex.startsWith('494433') || hex.startsWith('FFFB') || hex.startsWith('FFFA') || hex.startsWith('FFF3') || hex.startsWith('FFF2') || hex.startsWith('FFE3'))
+        return true; // MP3 (ID3 or MPEG frame sync)
+    // MP4 video container check: valid ISO BMFF box size (4 bytes) followed by box type 'ftyp', 'moov', 'mdat', or 'free'
     if (buffer.length >= 8) {
+        const boxSize = buffer.readUInt32BE(0);
         const boxType = buffer.toString('ascii', 4, 8);
-        if (['ftyp', 'moov', 'mdat', 'free'].includes(boxType))
+        const validBoxSize = boxSize === 0 || boxSize === 1 || (boxSize >= 8 && boxSize <= buffer.length);
+        if (validBoxSize && ['ftyp', 'moov', 'mdat', 'free'].includes(boxType))
             return true;
     }
     return false;
