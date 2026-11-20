@@ -82,10 +82,13 @@ function isMatch(
       lowerFilename.length <= MAX_FUZZY_LENGTH
     ) {
       const maxDistance = Math.floor(lowerKw.length / 4);
-      const winLen = lowerKw.length + 1;
-      for (let i = 0; i <= lowerFilename.length - lowerKw.length + 1; i++) {
-        const chunk = lowerFilename.slice(i, i + winLen);
-        if (levenshteinDistance(chunk, lowerKw) <= maxDistance) return true;
+      const winLengths = [lowerKw.length, lowerKw.length + 1, Math.max(1, lowerKw.length - 1)];
+      for (const winLen of winLengths) {
+        const maxStart = Math.max(0, lowerFilename.length - winLen);
+        for (let i = 0; i <= maxStart; i++) {
+          const chunk = lowerFilename.slice(i, i + winLen);
+          if (levenshteinDistance(chunk, lowerKw) <= maxDistance) return true;
+        }
       }
     }
   }
