@@ -209,7 +209,17 @@ export const deferredMcpSearch = {
 
       // Whole-pack load. Cheaper than five searches when the agent already
       // knows it is starting a game or a media pipeline.
-      if (requestedPack && requestedPack !== 'all' && Object.hasOwn(PACKS, requestedPack)) {
+      if (requestedPack === 'all') {
+        const allPackTools = definitions.filter(d => !isResidentTool(d.name));
+        return {
+          success: true,
+          output: `Loaded all capability packs (${allPackTools.length} tools). These are now callable:\n` +
+            allPackTools.map(d => `- ${d.name}: ${hints.get(d.name) || 'tool'}`).join('\n'),
+          _unlock_packs: [...PACK_NAMES],
+          _unlock_tools: allPackTools.map(d => d.name)
+        };
+      }
+      if (requestedPack && Object.hasOwn(PACKS, requestedPack)) {
         const packTools = definitions.filter(d => packForTool(d.name) === requestedPack);
         return {
           success: true,
