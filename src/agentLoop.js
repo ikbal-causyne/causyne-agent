@@ -6,6 +6,9 @@ import { getProcessEntitlementGate, EntitlementAccessError } from './licensing/e
 import { repairUnansweredToolCalls, validateToolCallBatch } from './agent/toolTurnIntegrity.js';
 import { waitForAbortableDelay } from './agent/abortableDelay.js';
 import { normalizeAgentFailure } from './agent/providerFailure.js';
+import { classifyAgentError, getRetryHintForError } from './agent/errorClassifier.js';
+import { isActionableTaskPrompt, isGenericHandoffResponse, isDesktopWallpaperChangePrompt, isExecutionOrLaunchTaskPrompt, isCodeAuthoringTaskPrompt, extractSkillIdFromPrompt, isDirectGameTask, isProviderPlanOrQuotaRefusal, isMidTaskProgressText } from './agent/promptIntent.js';
+import { validateAndNormalizeToolArgs } from './agent/toolArgValidator.js';
 import { resolveTaskTokenCeiling, peerCallTokenCeiling, isAntigravityPeer, isTerminalBudgetFailure, desktopDeadline, remainingDesktopTime, DEFAULT_AGY_TASK_TOKENS } from './budget/budgetPolicy.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import { createHash, randomUUID } from 'crypto';
@@ -49,7 +52,7 @@ import { determineToolScope, resolveLazyPlaybooks, refineToolDecision, SmartTool
 import { buildToolsList, renderToolsList, omittedCustomCount } from './toolsList.js';
 import { assessVerification } from './verificationPlan.js';
 import { SmartTools } from './SmartTools.js';
-import { decideTools, isDirectGameTask as isDirectGameTaskDecision } from './decideTools.js';
+import { decideTools } from './decideTools.js';
 import { SavedTools, readSavedTools, writeSavedTools } from './saveTools.js';
 import { CHARS_PER_TOKEN, resolveCharPool, measureMessages, resultCapFor, decayToolResults, buildWindow, compactInPlace, describeDroppedMessages, sanitizeSequences, applyProgressiveCompaction, snipOversizedToolOutputs } from './contextManager.js';
 // Provider imports
@@ -98,46 +101,7 @@ function spillErrorField(result) {
     const error = nonEmptyErrorText(result);
     return error !== undefined ? { error: error.slice(0, 500) } : {};
 }
-export function isActionableTaskPrompt(text) {
-    const t = (text || '').trim();
-    if (!t)
-        return false;
-    // A no-execution request can be satisfied by analysis without mandatory tool calls.
-    if (isNoExecutionPrompt(t))
-        return false;
-    const pureGreeting = /^(hi|hello|hey|yo|halo|hai|p|assalamu['a]?[l]?aikum|good\s+(morning|afternoon|evening))[.!?, ]*$/i.test(t);
-    if (pureGreeting)
-        return false;
-    const actionKeywords = /\b(continue|resume|proceed|lanjut\w*|create|build|make|write|code|implement|fix|optimize|refactor|generate|add|setup|install|run|open|launch|start|play|serve|preview|deploy|delete|remove|update|change|test|review|inspect|search|find|download|buat\w*|bikin\w*|perbaik\w*|tambah\w*|ubah\w*|hapus\w*|jalan\w*|pasang\w*|analis\w*|cek\w*|rancang\w*|desain\w*|kerjakan\w*|tolong\w*|bantu\w*|ganti\w*|tulis\w*|kembangkan\w*)\b/i;
-    if (actionKeywords.test(t))
-        return true;
-    return false; // Length alone does not turn an information question into an execution order.
-}
-export function isGenericHandoffResponse(text) {
-    const answer = (text || '').trim();
-    if (!answer || answer.length > 500)
-        return false;
-    const lower = answer.toLowerCase();
-    const handoff = /\b(let me know what you would like to do next|what would you like me to do next|how (can|may) i help|what can i help you with|feel free to (ask|tell me))\b/i.test(lower);
-    const verifiedOutcome = /\b(completed|changed|set the (desktop|wallpaper)|saved|created|installed|verified|downloaded|finished)\b/i.test(lower);
-    return handoff && !verifiedOutcome;
-}
-export function isDesktopWallpaperChangePrompt(text) {
-    const t = (text || '').trim();
-    if (!t)
-        return false;
-    // Explanatory questions or prompts that explicitly forbid execution are never wallpaper mutation requests
-    if (isNoExecutionPrompt(t) || isReadOnlyOrExplanatoryPrompt(t))
-        return false;
-    if (/^(?:why|how|what|does|can\s+you\s+explain|explain|tell\s+me|show\s+me\s+how)\b/i.test(t))
-        return false;
-    if (/\b(?:why|how)\s+does\b/i.test(t))
-        return false;
-    // Debugging wallpaper-related source or regexes is not a request to mutate macOS.
-    if (/\b(?:test|review|audit|analy[sz]e|debug|refactor|inspect|explain|write|implement)\b[\s\S]{0,140}\b(?:regex|code|source|logic|verification|readback|function|script|test)\b/i.test(t))
-        return false;
-    return /\b(?:change|set|switch|replace)\s+(?:(?:my|the|this|current|desktop|mac|macos)\s+){0,4}(?:desktop picture|wallpaper|desktop background)\b/i.test(t);
-}
+export { isActionableTaskPrompt, isGenericHandoffResponse, isDesktopWallpaperChangePrompt, isExecutionOrLaunchTaskPrompt, isCodeAuthoringTaskPrompt, extractSkillIdFromPrompt, isDirectGameTask, isProviderPlanOrQuotaRefusal, isMidTaskProgressText };
 function readMacDesktopPictures() {
     try {
         return execFileSync('osascript', ['-e', 'tell application "System Events" to get picture of every desktop'], {
@@ -147,160 +111,6 @@ function readMacDesktopPictures() {
     catch {
         return null;
     }
-}
-export function isExecutionOrLaunchTaskPrompt(text) {
-    const t = (text || '').trim();
-    if (!t)
-        return false;
-    return /\b(open|launch|start|run|play|serve|preview)\b/i.test(t)
-        && !/\b(create|build|make|write|code|implement|generate|refactor)\b/i.test(t);
-}
-export function isCodeAuthoringTaskPrompt(text) {
-    const t = (text || '').trim();
-    if (!t)
-        return false;
-    if (isExecutionOrLaunchTaskPrompt(t))
-        return false;
-    return /\b(create|build|make|write|code|implement|generate|game|3js|three?\.?js|three?js|app)\b/i.test(t);
-}
-export function extractSkillIdFromPrompt(prompt) {
-    const text = String(prompt || '').trim();
-    if (!text)
-        return '';
-    const stopWords = new Set([
-        'the', 'a', 'an', 'this', 'that', 'from', 'in', 'with',
-        'using', 'for', 'to', 'by', 'and', 'or', 'of'
-    ]);
-    const leadingTrim = new Set(['`', '"', "'", '(', '[']);
-    const trailingTrim = new Set(['`', '"', "'", ')', ',', '.', ';', ':', '!', '?', ']', '\\']);
-    const cleanCandidate = (raw) => {
-        const trimmed = raw.trim();
-        let start = 0;
-        let end = trimmed.length;
-        while (start < end && leadingTrim.has(trimmed[start]))
-            start++;
-        while (end > start && trailingTrim.has(trimmed[end - 1]))
-            end--;
-        const stripped = trimmed.slice(start, end);
-        if (!stripped || stopWords.has(stripped.toLowerCase()))
-            return '';
-        if (/^(?:fs_read_skill|fs_read_skil|read_skill|read_skil|tool_search)$/i.test(stripped)) {
-            return '';
-        }
-        return stripped;
-    };
-    const isFileExt = (candidate) => /\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|json|html|css|gradle|apk|aab|dex)$/i.test(candidate);
-    const cuedSlashMatch = text.match(/(?:\bskill_id|\bskill|\bfs_read_skil{1,2})(?:\s*[:=]\s*|\s+)[`"']?([a-zA-Z0-9][a-zA-Z0-9_.-]{0,80}\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,120})[`"']?/i);
-    if (cuedSlashMatch?.[1]) {
-        const candidate = cleanCandidate(cuedSlashMatch[1]);
-        if (candidate && !isFileExt(candidate)) {
-            return candidate;
-        }
-    }
-    for (const m of text.matchAll(/\b([a-zA-Z0-9][a-zA-Z0-9_.-]{0,80}\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,120})\b/g)) {
-        const candidate = cleanCandidate(m[1] || '');
-        if (candidate && !isFileExt(candidate)) {
-            return candidate;
-        }
-    }
-    const explicitQuotedMatch = text.match(/(?:\bskill_id|\bskill)(?:\s*[:=]\s*|\s+)(?:the\s+)?[`"']([^`"'\n\r]{2,120})[`"']/i);
-    if (explicitQuotedMatch?.[1]) {
-        const candidate = cleanCandidate(explicitQuotedMatch[1]);
-        if (candidate)
-            return candidate;
-    }
-    const bareMatch = text.match(/(?:\bskill_id\s*[:=]\s*|\bskill\s*[:=]\s*|\bskill\s+(?:called\s+|named\s+)?)([a-zA-Z0-9][a-zA-Z0-9_.-]{1,120})/i);
-    if (bareMatch?.[1]) {
-        const candidate = cleanCandidate(bareMatch[1]);
-        if (candidate)
-            return candidate;
-    }
-    return '';
-}
-export function isDirectGameTask(text) {
-    return isDirectGameTaskDecision(text);
-}
-export function isProviderPlanOrQuotaRefusal(text) {
-    if (!text || typeof text !== 'string')
-        return false;
-    const trimmed = text.trim();
-    if (!trimmed || trimmed.length > 320)
-        return false;
-    if (/^upgrade your plan to continue\.?$/i.test(trimmed))
-        return true;
-    return /\b(upgrade your plan to continue|insufficient[_ ]quota|credit balance is too low|billing hard limit|quota exceeded for|plan limit reached|subscription required to continue)\b/i.test(trimmed);
-}
-/**
- * Detects when an agent response is an intermediate mid-task progress note or
- * transition announcement (e.g. "Real assets verified. Writing the Tesla-style
- * redesign now." or "Let me look at the newer assets... Pulling their real
- * stills and confirming embeddability.") rather than a finished answer.
- */
-export function isMidTaskProgressText(text) {
-    if (!text || typeof text !== 'string')
-        return false;
-    const trimmed = text.trim();
-    if (!trimmed || trimmed.length > 480)
-        return false;
-    const lower = trimmed.toLowerCase();
-    if (lower.includes('?') ||
-        lower.includes('let me know') ||
-        lower.includes('how can i help') ||
-        lower.includes('how may i help') ||
-        lower.includes('how can i assist') ||
-        lower.includes('what would you like') ||
-        lower.includes('what can i help') ||
-        lower.includes('feel free to')) {
-        return false;
-    }
-    if (trimmed.includes('```'))
-        return false;
-    const sentences = trimmed
-        .split(/(?:(?<=[.!])\s+|\n+)/)
-        .map(s => s.trim())
-        .filter(Boolean);
-    const lastSentence = (sentences[sentences.length - 1] || trimmed).trim();
-    const lastLower = lastSentence.toLowerCase();
-    if (trimmed.length <= 280 && (trimmed.endsWith(':') || trimmed.endsWith('...') || trimmed.endsWith('…'))) {
-        return true;
-    }
-    const intentPrefixes = [
-        'let me ',
-        "i'll ",
-        'i will ',
-        'now i ',
-        'now let me ',
-        "now i'll ",
-        'now i will ',
-        'next, i ',
-        'next i ',
-        "next, i'll ",
-        "next i'll ",
-        'first, i ',
-        'first i ',
-        'let us ',
-        "let's ",
-        'i shall ',
-        'we will ',
-        "we'll ",
-        'i am going to ',
-        "i'm going to ",
-        'going to '
-    ];
-    if (intentPrefixes.some(prefix => lastLower.startsWith(prefix) || (trimmed.length <= 280 && lower.startsWith(prefix)))) {
-        if (!/\b(?:task completed|all done|everything is ready|finished|complete\.)\b/i.test(lastSentence)) {
-            return true;
-        }
-    }
-    const gerundStart = /^(?:now\s+|next,?\s+|currently\s+|still\s+)?(?:writing|pulling|checking|inspecting|building|creating|updating|applying|implementing|generating|fetching|downloading|testing|running|fixing|setting up|configuring|refactoring|adding|modifying|replacing|launching|starting|verifying|confirming|reading|searching|analyzing|preparing|compiling|rendering|extracting|installing|opening|switching|retrying|continuing)\b/i;
-    if (gerundStart.test(lastSentence) && lastSentence.length <= 220) {
-        return true;
-    }
-    const actionNowSuffix = /\b(?:writing|pulling|checking|inspecting|building|creating|updating|applying|implementing|generating|fetching|downloading|testing|running|fixing|configuring|refactoring|adding|modifying|replacing|launching|starting|verifying|confirming|reading|searching|analyzing|preparing|compiling|rendering|extracting)\b[^.!?\n]{1,120}\b(?:now|next)\.?$/i;
-    if (actionNowSuffix.test(lastSentence)) {
-        return true;
-    }
-    return false;
 }
 const SYSTEM_PROMPT = `You are Causyne Agent, an autonomous local AI agent. Your capabilities are the tools actually available in this session. Never invent a capability or claim an action occurred without evidence.
 
@@ -5039,69 +4849,11 @@ You are operating in a text-and-code modality without direct image pixel renderi
     }
     // V5: Classify errors for intelligent retry decisions
     classifyError(error) {
-        if (error?.code === 'PROVIDER_NO_PROGRESS')
-            return 'fatal';
-        if (error?.code === 'AGY_NATIVE_ACTION_DENIED'
-            || error?.code === 'AGY_NATIVE_ACTION_BUDGET'
-            || error?.code === 'AGY_DESKTOP_TASK_LIMIT')
-            return 'fatal';
-        // A provider may have charged for completed steps before the turn failed.
-        // Replaying that turn can repeat actions and spend the same tokens again.
-        const spent = Number(error?.partialUsage?.promptTokens || 0)
-            + Number(error?.partialUsage?.completionTokens || 0);
-        if (spent > 0)
-            return 'fatal';
-        const msg = (typeof error === 'string' ? error : error?.message || '').toLowerCase();
-        if (error?.name === 'OpenRouterPrivacyConstraintError'
-            || msg.includes('matching the privacy policy')
-            || msg.includes('data_collection=')) {
-            return 'fatal';
-        }
-        if (msg.includes('free usage limit') || msg.includes('subscribe to opencode') || msg.includes('opencode.ai/go') || msg.includes('insufficient_quota') || msg.includes('credit balance is too low')) {
-            return 'fatal';
-        }
-        if (msg.includes('syntax') || msg.includes('unexpected token') || msg.includes('invalid json')) {
-            return 'syntax_error';
-        }
-        if (msg.includes('enoent') || msg.includes('no such file') || msg.includes('not found') || msg.includes('does not exist')) {
-            return 'path_not_found';
-        }
-        if (msg.includes('econnrefused') || msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('fetch failed') || msg.includes('network')) {
-            return "network_error";
-        }
-        if (msg.includes('rate limit') || msg.includes('429') || msg.includes('too many requests') || msg.includes('quota')) {
-            return 'rate_limit';
-        }
-        if (msg.includes('eacces') || msg.includes('permission denied') || msg.includes('eperm')) {
-            return 'permission_denied';
-        }
-        if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('api key')) {
-            return 'auth_error';
-        }
-        if (msg.includes('400') || msg.includes('invalid_parameter') || msg.includes('invalid_request') || msg.includes('required property') || msg.includes('bad request')) {
-            return 'invalid_request_error';
-        }
-        if (msg.includes('kill') || msg.includes('abort') || msg.includes('signal') || msg.includes('fatal')) {
-            return 'fatal';
-        }
-        if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) {
-            return 'fatal';
-        }
-        return 'unknown_error';
+        return classifyAgentError(error);
     }
     // V5: Provide actionable retry hints per error type
     getRetryHint(errorType) {
-        const hints = {
-            'syntax_error': 'Check your command syntax or JSON structure. Ensure quotes are balanced.',
-            'path_not_found': 'The file or directory does not exist. Use fs.list to verify the path first, or create it with fs.write/mkdir.',
-            ["network_error"]: "Network connectivity issue. Wait a moment and retry. If persistent, check if the URL is correct.",
-            'rate_limit': 'API rate limit hit. Wait 5-10 seconds before retrying.',
-            'permission_denied': 'Permission denied. Check if the path is within allowed workspace paths. Try a different directory.',
-            'auth_error': 'Authentication failed. Do NOT retry — the API key may be invalid.',
-            'invalid_request_error': 'API request format error (400 Bad Request). Do NOT retry — check model parameter compliance.',
-            'unknown_error': 'An unexpected error occurred. Try a different approach entirely.'
-        };
-        return hints[errorType] || hints['unknown_error'];
+        return getRetryHintForError(errorType);
     }
     async runPreToolUse(toolName, args, toolCallId) {
         return runConfiguredHooks({
@@ -5127,89 +4879,6 @@ You are operating in a text-and-code modality without direct image pixel renderi
     }
     // V5: Validate tool call arguments before execution
     validateToolArgs(toolName, args) {
-        if (!args || typeof args !== 'object') {
-            return 'Tool arguments must be a JSON object';
-        }
-        const baseDir = this.workspaceRoot || process.cwd();
-        const resolveOne = (raw) => {
-            const val = raw.trim();
-            if (!val || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(val)) {
-                return null;
-            }
-            if (val === '~' || val.startsWith('~/') || val.startsWith('~\\')) {
-                return val.replace(/^~(?=$|[\\/])/, os.homedir());
-            }
-            if (!path.isAbsolute(val)) {
-                return path.resolve(baseDir, val);
-            }
-            return val;
-        };
-        // 1. File operations must have absolute paths (fs_read_skill uses skill-relative file_path)
-        const nonPathTargetTools = new Set(['vision_inspect_ui', 'astryx_oracle', 'desktop_act']);
-        if (toolName !== 'fs_read_skill') {
-            const pathFields = [
-                'path', 'searchPath', 'cwd', 'directory',
-                'source', 'destination', 'file_path', 'filePath', 'filepath',
-                'targetFile', 'outputFile', 'outputPath',
-                ...(nonPathTargetTools.has(toolName) ? [] : ['target'])
-            ];
-            for (const field of pathFields) {
-                if (args[field] && typeof args[field] === 'string') {
-                    const resolved = resolveOne(args[field]);
-                    if (resolved !== null) {
-                        args[field] = resolved;
-                    }
-                }
-            }
-            if (Array.isArray(args.target_directories)) {
-                args.target_directories = args.target_directories.map((entry) => {
-                    if (typeof entry !== 'string')
-                        return entry;
-                    return resolveOne(entry) ?? entry;
-                });
-            }
-        }
-        // 2. Terminal commands must have a command string
-        if ((toolName === 'sysRun' || toolName === 'sysRunBg') && !args.command) {
-            return 'Missing required "command" argument';
-        }
-        // 3. File write must have a path AND content.
-        //
-        // These branches were dead: canonicalToolName() (called on every tool name
-        // before this runs) normalises '.'→'_', so `toolName` is 'fs_write', never
-        // 'fs.write'. The old 'fs.write' / 'codebase.search' / 'web.search' literals
-        // could never match, so the model's missing-argument mistakes reached the
-        // tool as runtime exceptions instead of a corrective message. Matched on the
-        // canonical names now, and fs_write's `content` is actually checked (the old
-        // comment said "must have content" but the code only looked at `path`).
-        if (toolName === 'fs_write' && !args.path) {
-            return 'Missing required "path" argument';
-        }
-        if (toolName === 'fs_write' && args.content === undefined) {
-            return 'Missing required "content" argument';
-        }
-        // 4. Search must have a query
-        if ((toolName === 'codebase_search' || toolName === 'web_search') && !args.query) {
-            return 'Missing required "query" argument';
-        }
-        // 5. Tool search must have a query, pack, or names array
-        if (toolName === 'tool_search') {
-            const q = typeof args.query === 'string'
-                ? args.query.trim()
-                : (Array.isArray(args.query) ? args.query.map(String).join(' ').trim() : '');
-            const p = typeof args.pack === 'string' ? args.pack.trim() : '';
-            const n = Array.isArray(args.names) && args.names.length > 0;
-            if (!q && !p && !n) {
-                return 'Missing required "query" or "pack" argument';
-            }
-        }
-        // 6. Skill reader must have a non-empty skill_id
-        if (toolName === 'fs_read_skill') {
-            const sid = typeof args.skill_id === 'string' ? args.skill_id.trim() : '';
-            if (!sid) {
-                return 'Missing required "skill_id" argument';
-            }
-        }
-        return null; // No validation errors
+        return validateAndNormalizeToolArgs(toolName, args, this.workspaceRoot || process.cwd());
     }
 }

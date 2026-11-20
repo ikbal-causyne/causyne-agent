@@ -31,11 +31,18 @@ export interface CodexCompactedState {
   readonly toolsSummary: string;
 }
 
+export interface PlanStepAnchor {
+  readonly step?: string | undefined;
+  readonly title?: string | undefined;
+  readonly status?: string | undefined;
+}
+
 export interface CompactionOptions {
   readonly keepRecentTurns?: number;
   readonly taskId?: string;
   readonly originalPrompt?: string;
   readonly maxCharPool?: number;
+  readonly activePlan?: readonly PlanStepAnchor[] | undefined;
 }
 
 export interface CompactionResult {
@@ -50,12 +57,57 @@ export interface CompactionResult {
 }
 
 /**
+ * Adjusts a candidate compaction split index so compaction NEVER severs a
+ * `role: 'tool'` result from its preceding `role: 'assistant'` `tool_calls`
+ * message (which would cause HTTP 400 invalid tool-turn errors on OpenAI,
+ * Anthropic, and Gemini).
+ *
+ * Returns a safe `splitIndex` in `[1, messages.length - 2]`, or `-1` if no
+ * safe split exists.
+ */
+export function findSafeCompactionSplitIndex(
+  messages: ReadonlyArray<{ role?: string; tool_calls?: unknown }>,
+  targetSplitIndex: number
+): number {
+  const maxSplit = messages.length - 2;
+  if (maxSplit < 1) return -1;
+  let split = Math.min(Math.max(1, targetSplitIndex), maxSplit);
+
+  // If the first retained message (`split + 1`) is a `tool` result, walk back
+  // until the owning `assistant` message with `tool_calls` is also retained.
+  if (messages[split + 1]?.role === 'tool') {
+    let back = split;
+    while (back >= 1 && messages[back + 1]?.role === 'tool') {
+      back -= 1;
+    }
+    // Also retain the owning `assistant` message if `back + 1` was still `tool`
+    if (back >= 1 && messages[back]?.role === 'assistant' && Array.isArray(messages[back]?.tool_calls)) {
+      back -= 1;
+    }
+    if (back >= 1 && messages[back + 1]?.role !== 'tool') {
+      return back;
+    }
+    // Otherwise walk forward past the contiguous `tool` results while keeping at least 1 recent message
+    let forward = split;
+    while (forward < maxSplit && messages[forward + 1]?.role === 'tool') {
+      forward += 1;
+    }
+    if (forward <= maxSplit && messages[forward + 1]?.role !== 'tool') {
+      return forward;
+    }
+    return -1;
+  }
+
+  return split;
+}
+
+/**
  * Extracts a high-fidelity, structured state summary from dropped message history.
- * Mirrors the state preservation architecture of OpenAI Codex and Claude Code.
  */
 export function buildCodexStyleSummary(
   droppedMessages: readonly ToolObservation[],
-  originalPrompt?: string
+  originalPrompt?: string,
+  extra?: { activePlan?: readonly PlanStepAnchor[] | undefined }
 ): string {
   const createdFiles = new Set<string>();
   const modifiedFiles = new Set<string>();
@@ -77,11 +129,11 @@ export function buildCodexStyleSummary(
           if (typeof rawArgs === 'string') {
             const parsed = JSON.parse(rawArgs);
             if (parsed && typeof parsed === 'object') {
-              const target = String(parsed.path || parsed.file_path || parsed.target || '');
+              const target = String(parsed.path || parsed.file_path || parsed.target || parsed.destination || '');
               if (target) {
                 if (['fs_write', 'write_to_file', 'writeFile'].includes(fnName)) {
                   createdFiles.add(target);
-                } else if (['fs_edit', 'replace_file_content', 'multi_replace_file_content'].includes(fnName)) {
+                } else if (['fs_edit', 'MultiEdit', 'multi_edit', 'fs_move', 'replace_file_content', 'multi_replace_file_content'].includes(fnName)) {
                   modifiedFiles.add(target);
                 } else if (['fs_read', 'view_file', 'readFile'].includes(fnName)) {
                   inspectedFiles.add(target);
@@ -167,6 +219,21 @@ export function buildCodexStyleSummary(
     sections.push(`**Prior Failures Handled:** ${[...failures].slice(0, 4).join(' | ')}`);
   }
 
+  if (Array.isArray(extra?.activePlan) && extra.activePlan.length > 0) {
+    const planLines = extra.activePlan
+      .slice(0, 12)
+      .map(item => {
+        const label = String(item.step || item.title || '').trim();
+        if (!label) return '';
+        const status = String(item.status || 'pending').trim();
+        return `- [${status}] ${label}`;
+      })
+      .filter(Boolean);
+    if (planLines.length > 0) {
+      sections.push(`**Active Implementation Plan:**\n${planLines.join('\n')}`);
+    }
+  }
+
   sections.push(
     '**Directive for Continuation:** Completed workspace files and session artifacts on disk are preserved. '
     + 'Do not re-scan or repeat verified setup steps. Continue forward execution and complete the remaining requirements.'
@@ -215,9 +282,10 @@ export function compactSessionMessages(
     taskId: options.taskId ?? 'compaction'
   });
 
-  // Calculate split index for physical compaction:
+  // Calculate turn-boundary-safe split index for physical compaction:
   // Messages from index 1 to splitIndex will be collapsed into a single summary
-  const splitIndex = messages.length - keepRecentTurns - 1;
+  // without ever orphaning a `role: 'tool'` result from its `assistant` `tool_calls`.
+  const splitIndex = findSafeCompactionSplitIndex(messages, messages.length - keepRecentTurns - 1);
   if (splitIndex < 1) {
     return {
       compacted: false,
@@ -227,7 +295,7 @@ export function compactSessionMessages(
       initialChars,
       finalChars: measureMessages(messages),
       summaryText: '',
-      reason: 'Split index out of range.'
+      reason: 'Split index out of range or would break an active tool-call turn.'
     };
   }
 
@@ -236,7 +304,9 @@ export function compactSessionMessages(
     ? messages[0].content
     : options.originalPrompt;
 
-  const structuredSummary = buildCodexStyleSummary(dropped, rootPrompt);
+  const structuredSummary = buildCodexStyleSummary(dropped, rootPrompt, {
+    activePlan: options.activePlan
+  });
   const fullRecoverableSummary = buildRecoverableDroppedSummary(dropped, structuredSummary);
 
   const removed = compactInPlace(messages, splitIndex, fullRecoverableSummary);
@@ -275,7 +345,8 @@ export function autoCompactIfUnderPressure(
     const result = compactSessionMessages(loop.messages, {
       keepRecentTurns: 4,
       taskId: loop.taskId,
-      originalPrompt: loop.currentTaskPrompt || loop.userPrompt
+      originalPrompt: loop.currentTaskPrompt || loop.userPrompt,
+      activePlan: Array.isArray(loop._implementationPlan) ? loop._implementationPlan : undefined
     });
 
     if (result.compacted) {
@@ -320,7 +391,8 @@ export async function runCompactSlashCommand(
   const result = compactSessionMessages(loop.messages, {
     keepRecentTurns: 4,
     taskId: loop.taskId || 'manual-compact',
-    originalPrompt: loop.currentTaskPrompt || loop.userPrompt
+    originalPrompt: loop.currentTaskPrompt || loop.userPrompt,
+    activePlan: Array.isArray(loop._implementationPlan) ? loop._implementationPlan : undefined
   });
 
   if (!result.compacted) {
@@ -338,7 +410,7 @@ export async function runCompactSlashCommand(
   const finalKb = (result.finalChars / 1024).toFixed(1);
 
   const report = [
-    '✔ Context successfully compacted (OpenAI Codex structured state model).',
+    '✔ Context successfully compacted (Causyne structured state model).',
     '',
     `  • Earlier messages condensed: ${result.removedCount}`,
     `  • Memory reclaimed: ${reclaimedKb} KB (~${result.reclaimedTokens.toLocaleString()} tokens)`,
