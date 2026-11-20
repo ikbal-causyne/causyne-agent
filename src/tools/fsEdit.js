@@ -105,18 +105,19 @@ export const fsEdit = {
                 // Fuzzy Match Fallback
                 const lines = workingContent.split('\n');
                 const oldLines = edit.searchContent.split('\n');
-                let bestMatch = null;
+                let bestIndex = -1;
                 let highestConfidence = 0;
                 for (let j = 0; j <= lines.length - oldLines.length; j++) {
                     const chunk = lines.slice(j, j + oldLines.length).join('\n');
                     const conf = calculateConfidence(edit.searchContent, chunk);
                     if (conf > highestConfidence) {
                         highestConfidence = conf;
-                        bestMatch = chunk;
+                        bestIndex = j;
                     }
                 }
-                if (highestConfidence >= 90 && bestMatch) {
-                    workingContent = workingContent.replace(bestMatch, () => edit.replaceContent);
+                if (highestConfidence >= 90 && bestIndex !== -1) {
+                    lines.splice(bestIndex, oldLines.length, edit.replaceContent);
+                    workingContent = lines.join('\n');
                     replacements++;
                 }
                 else {
