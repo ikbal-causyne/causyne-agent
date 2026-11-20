@@ -503,9 +503,17 @@ except Exception as e:
 `;
 
   return new Promise((resolve) => {
-    const py = spawn('python3', ['-c', script, absPdf, outputImagesDir || '']);
+    let settled = false;
+    const pyBin = process.platform === 'win32' ? 'python' : 'python3';
+    const py = spawn(pyBin, ['-c', script, absPdf, outputImagesDir || '']);
     let stdout = '';
     let stderr = '';
+
+    py.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      resolve({ success: false, error: `Failed to spawn ${pyBin}: ${err.message}` });
+    });
 
     py.stdout.on('data', (d) => {
       stdout += d.toString();
@@ -515,6 +523,8 @@ except Exception as e:
     });
 
     py.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       if (code !== 0) {
         resolve({ success: false, error: stderr.trim() || `Python process exited with code ${code}` });
         return;
