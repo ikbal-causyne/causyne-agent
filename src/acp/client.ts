@@ -290,13 +290,12 @@ export class AcpClient {
         collected = `${collected}${update.content.text}`.slice(0, MAX_UPDATE_CHARS);
       }
     };
-    const previous = this.updateListener;
-    this.updateListener = (sessionIdFromEvent, update) => {
+    const listener = (sessionIdFromEvent: string, update: SessionUpdate): void => {
       if (signal?.aborted) return;
       this.notifyPendingActivity();
-      previous?.(sessionIdFromEvent, update);
       if (sessionIdFromEvent === sessionId) collector(update);
     };
+    this.updateListeners.add(listener);
     const onAbort = (): void => {
       try {
         this.notifyCancel(sessionId);
@@ -320,7 +319,7 @@ export class AcpClient {
       };
     } finally {
       signal?.removeEventListener('abort', onAbort);
-      this.updateListener = previous;
+      this.updateListeners.delete(listener);
       this.clearOpenToolCalls(sessionId);
     }
   }
@@ -407,7 +406,7 @@ export class AcpClient {
     });
   }
 
-  private updateListener: ((sessionId: string, update: SessionUpdate) => void) | null = null;
+  private readonly updateListeners = new Set<(sessionId: string, update: SessionUpdate) => void>();
 
   private write(message: JsonRpcRequest<unknown> | JsonRpcResponse | JsonRpcNotification<unknown>): void {
     if (!this.child || this.closed) return;
@@ -449,7 +448,9 @@ export class AcpClient {
       if (params && typeof params.sessionId === 'string' && params.update) {
         this.recordSessionModels(params.sessionId, params.update);
         this.trackToolCall(params.sessionId, params.update);
-        this.updateListener?.(params.sessionId, params.update);
+        for (const listener of [...this.updateListeners]) {
+          listener(params.sessionId, params.update);
+        }
         this.options.onUpdate?.(params.sessionId, params.update);
       }
     }
