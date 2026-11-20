@@ -320,6 +320,8 @@ export function validateRegexSafety(pattern) {
             const parent = stack[stack.length - 1];
             if (popped.hasMultiRepeat)
                 parent.hasMultiRepeat = true;
+            if (popped.hasAlternation)
+                parent.hasAlternation = true;
             lastGroupFrame = popped;
             lastTokenWasQuantifiable = true;
             continue;
