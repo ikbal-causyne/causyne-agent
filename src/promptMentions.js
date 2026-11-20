@@ -38,8 +38,8 @@ export function extractMentions(text) {
     // Matches @ preceded by start-of-line or whitespace, not part of an email address
     const unquotedRegex = /(?:^|\s)@([a-zA-Z0-9_.\-/\\]+)(?=$|\s|[.,;:?!)\]}])/g;
     while ((match = unquotedRegex.exec(text)) !== null) {
-        const raw = match[0].trim();
-        const cleanPath = (match[1] ?? '').trim();
+        const cleanPath = (match[1] ?? '').trim().replace(/([^./\\])\.+$/, '$1');
+        const raw = `@${cleanPath}`;
         // Skip if already captured via quotes or if empty
         if (!cleanPath || seen.has(cleanPath))
             continue;
