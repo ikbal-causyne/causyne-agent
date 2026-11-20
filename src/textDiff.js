@@ -101,6 +101,7 @@ export function unifiedDiff(before, after, pathLabel = 'file') {
     let index = 0;
     let oldLine = 1;
     let newLine = 1;
+    let lastHunkEnd = 0;
     while (index < ops.length) {
         const opIndex = ops[index];
         if (opIndex[0] === ' ') {
@@ -110,14 +111,18 @@ export function unifiedDiff(before, after, pathLabel = 'file') {
             continue;
         }
         // Walk back for leading context, then forward to the end of the change.
-        const start = Math.max(0, index - CONTEXT);
+        const start = Math.max(lastHunkEnd, index - CONTEXT);
         let end = index;
         let quiet = 0;
         while (end < ops.length && quiet <= CONTEXT * 2) {
             quiet = ops[end][0] === ' ' ? quiet + 1 : 0;
             end++;
         }
+        if (quiet > CONTEXT) {
+            end -= quiet - CONTEXT;
+        }
         end = Math.min(ops.length, end);
+        lastHunkEnd = end;
         let oldStart = oldLine;
         let newStart = newLine;
         for (let k = start; k < index; k++) {
