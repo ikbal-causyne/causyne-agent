@@ -376,7 +376,8 @@ export const generateMediaViaApi = {
             if (!buffer)
                 return { success: false, error: 'Media generation did not produce a file.' };
             // Generation pricing is service-dependent; do not advertise this route as free.
-            await tokenTracker.trackMediaUsage('pollinations', mediaType, 'flux', 1);
+            const trackedModel = model || targetModel || (mediaType === 'audio_tts' ? 'openai-audio' : 'flux');
+            await tokenTracker.trackMediaUsage('pollinations', mediaType, trackedModel, 1);
             // Write to cache and output
             fs.writeFileSync(cachedFile, buffer);
             fs.writeFileSync(outputPath, buffer);
