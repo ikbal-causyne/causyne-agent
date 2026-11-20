@@ -104,6 +104,14 @@ export const fsEdit = {
         ? path.join(os.homedir(), targetPath.slice(2))
         : path.resolve(targetPath);
 
+      const stat = await fs.lstat(target);
+      if (stat.isSymbolicLink()) {
+        return { success: false, error: `Refusing to edit symbolic link ${target}; edit a regular file in the selected workspace.` };
+      }
+      if (!stat.isFile()) {
+        return { success: false, error: `Target is not a regular file: ${target}` };
+      }
+      const originalMode = stat.mode & 0o777;
       const originalContent = await fs.readFile(target, 'utf8');
       let workingContent = originalContent;
       let replacements = 0;
@@ -151,8 +159,8 @@ export const fsEdit = {
         }
       }
 
-      // Commit the transaction atomically
-      atomicWriteFileSync(target, workingContent, { encoding: 'utf8' });
+      // Commit the transaction atomically, preserving original file permissions
+      atomicWriteFileSync(target, workingContent, { encoding: 'utf8', mode: originalMode });
       return { success: true, output: `Transaction Success: ${replacements} replacement(s) safely applied to ${args.path}` };
     } catch (e: unknown) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
