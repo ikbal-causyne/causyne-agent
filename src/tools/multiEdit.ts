@@ -110,10 +110,10 @@ export const multiEdit = {
 
       for (let i = 0; i < args.edits.length; i++) {
         const edit = args.edits[i];
-        if (!edit || typeof edit.old_string !== 'string' || typeof edit.new_string !== 'string') {
+        if (!edit || typeof edit.old_string !== 'string' || edit.old_string.length === 0 || typeof edit.new_string !== 'string') {
           return {
             success: false,
-            error: `ATOMIC ROLLBACK: Edit index ${i} is missing valid old_string or new_string. Rollback complete.`
+            error: `ATOMIC ROLLBACK: Edit index ${i} is missing valid non-empty old_string or new_string. Rollback complete.`
           };
         }
 
