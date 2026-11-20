@@ -197,7 +197,7 @@ function inspectSchemaForProvider(
   provider: string,
   issues: ToolScanIssue[]
 ): void {
-  if (!isPlainObject(schema)) return;
+  if (path.length > 32 || !isPlainObject(schema)) return;
   const pathStr = path.join('.');
   const isGemini = provider === 'gemini';
 

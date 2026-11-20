@@ -141,7 +141,7 @@ function pushRewrittenPath(rewritten, path) {
  * Recursively inspect a schema for raw or residual provider incompatibilities.
  */
 function inspectSchemaForProvider(toolName, schema, path, provider, issues) {
-    if (!isPlainObject(schema))
+    if (path.length > 32 || !isPlainObject(schema))
         return;
     const pathStr = path.join('.');
     const isGemini = provider === 'gemini';
