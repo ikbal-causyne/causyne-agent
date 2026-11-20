@@ -337,8 +337,10 @@ export const sysRun = {
         else timeoutMs = val <= 600 ? Math.round(val * 1000) : Math.round(val);
       }
     }
-    if (timeoutMs < 1000) {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1000) {
       timeoutMs = 1000;
+    } else if (timeoutMs > 2_147_483_647) {
+      timeoutMs = 2_147_483_647;
     }
     const signal = context.signal;
 
