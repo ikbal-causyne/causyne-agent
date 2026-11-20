@@ -40,7 +40,7 @@ function normalizeWorkspace(workspace?: string | null): string | undefined {
 
 function isPathWithinOrSame(candidatePath: string, rootPath: string): boolean {
   const rel = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
 function extractEmbeddedAbsolutePaths(text: string): string[] {
