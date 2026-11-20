@@ -19,6 +19,50 @@ export interface FsEditResult {
   error?: string;
 }
 
+export interface FsEditContext {
+  workspaceRoot?: string;
+  workspacePaths?: string[];
+  grantAllAccess?: boolean;
+  parentLoop?: { workspaceRoot?: string };
+}
+
+function expandHome(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '~') return os.homedir();
+  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function insideRoot(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+async function assertWithinEditScope(target: string, context?: FsEditContext): Promise<void> {
+  if (!context || context.grantAllAccess === true) return;
+  const configured = Array.isArray(context.workspacePaths)
+    ? context.workspacePaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).map(p => p.trim())
+    : [];
+  const roots = configured.length > 0
+    ? configured
+    : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+      .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+      .map(p => p.trim());
+  if (roots.length === 0) return;
+  const realTarget = await fs.realpath(target);
+  for (const root of roots) {
+    try {
+      const realRoot = await fs.realpath(path.resolve(expandHome(root)));
+      if (insideRoot(realRoot, realTarget)) return;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(`Target resolves outside the selected workspace: ${target}`);
+}
+
 const MAX_FUZZY_CHARS = 8_192;
 
 function getLevenshteinDistance(a: string, b: string): number {
@@ -87,7 +131,7 @@ export const fsEdit = {
     }
   },
 
-  async execute(args: FsEditArgs): Promise<FsEditResult> {
+  async execute(args: FsEditArgs, context?: FsEditContext): Promise<FsEditResult> {
     try {
       if (!args || typeof args !== 'object') {
         return { success: false, error: 'fs_edit requires an object with path and edits array.' };
@@ -99,10 +143,13 @@ export const fsEdit = {
         return { success: false, error: 'fs_edit requires a non-empty edits array.' };
       }
 
-      const targetPath = args.path.trim();
-      const target = targetPath.startsWith('~/') || targetPath.startsWith('~\\')
-        ? path.join(os.homedir(), targetPath.slice(2))
-        : path.resolve(targetPath);
+      const expandedPath = expandHome(args.path);
+      const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+        || context?.workspaceRoot?.trim()
+        || context?.workspacePaths?.find((p): p is string => typeof p === 'string' && p.trim().length > 0)?.trim();
+      const target = path.isAbsolute(expandedPath)
+        ? path.resolve(expandedPath)
+        : path.resolve(baseRoot ? path.resolve(expandHome(baseRoot)) : process.cwd(), expandedPath);
 
       const stat = await fs.lstat(target);
       if (stat.isSymbolicLink()) {
@@ -111,6 +158,7 @@ export const fsEdit = {
       if (!stat.isFile()) {
         return { success: false, error: `Target is not a regular file: ${target}` };
       }
+      await assertWithinEditScope(target, context);
       const originalMode = stat.mode & 0o777;
       const originalContent = await fs.readFile(target, 'utf8');
       let workingContent = originalContent;
