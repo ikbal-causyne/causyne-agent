@@ -63,24 +63,41 @@ export const STALL_GUARD_MAX_CYCLE_PERIOD = 4;
 export const STALL_GUARD_CYCLE_HISTORY = 64;
 export const IDENTICAL_RESULT_STUB_MIN_CHARS = 512;
 export const RESEARCH_INSPECTION_NUDGE_AFTER = 25;
-function stableSortObject(value) {
+function stableSortObject(value, seen = new WeakSet()) {
     if (value === null || typeof value !== 'object') {
-        return value;
+        return typeof value === 'bigint' ? value.toString() : value;
     }
-    if (Array.isArray(value)) {
-        return value.map(stableSortObject);
+    if (seen.has(value)) {
+        return '[Circular]';
     }
-    const sorted = {};
-    for (const key of Object.keys(value).sort()) {
-        sorted[key] = stableSortObject(value[key]);
+    seen.add(value);
+    try {
+        if (Array.isArray(value)) {
+            return value.map((item) => stableSortObject(item, seen));
+        }
+        const sorted = {};
+        for (const key of Object.keys(value).sort()) {
+            sorted[key] = stableSortObject(value[key], seen);
+        }
+        return sorted;
     }
-    return sorted;
+    finally {
+        seen.delete(value);
+    }
+}
+function safeJsonStringify(value) {
+    try {
+        return JSON.stringify(stableSortObject(value)) ?? '';
+    }
+    catch {
+        return String(value);
+    }
 }
 export function canonicalToolArgs(args) {
     if (!args || typeof args !== 'object') {
-        return JSON.stringify(args ?? {});
+        return safeJsonStringify(args ?? {});
     }
-    return JSON.stringify(stableSortObject(args));
+    return safeJsonStringify(args);
 }
 export function buildToolCallSignature(toolName, args) {
     const canonical = canonicalToolArgs(args);
@@ -90,7 +107,7 @@ export function buildToolCallSignature(toolName, args) {
 export function computeResultHash(result) {
     if (result === null || result === undefined)
         return '';
-    const str = typeof result === 'string' ? result : JSON.stringify(result);
+    const str = typeof result === 'string' ? result : safeJsonStringify(result);
     return createHash('sha256').update(str).digest('hex').slice(0, 24);
 }
 function ordinal(n) {
@@ -220,7 +237,7 @@ export class StallGuardController {
     observeCall(toolName, args = {}, result, toolCallId = '', failed = false) {
         const signature = buildToolCallSignature(toolName, args);
         const sigKey = `${signature.toolName}:${signature.argsHash}`;
-        const resultStr = typeof result === 'string' ? result : JSON.stringify(result ?? {});
+        const resultStr = typeof result === 'string' ? result : safeJsonStringify(result ?? {});
         const rHash = computeResultHash(resultStr);
         const repeatable = this.isRepeatable(toolName, args);
         const mutating = this.isMutating(toolName, args);
