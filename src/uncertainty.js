@@ -82,7 +82,8 @@ export function assessStep(signals = {}) {
         score += capped;
         fired.push(name);
     };
-    const failures = Number(signals.consecutiveFailures) || 0;
+    const rawFailures = Number(signals.consecutiveFailures);
+    const failures = Number.isFinite(rawFailures) && rawFailures > 0 ? Math.floor(rawFailures) : 0;
     if (failures > 0)
         add(Math.min(failures, 3) * WEIGHTS.consecutiveFailure, `failures:${failures}`);
     if (signals.lastResult) {
@@ -96,8 +97,12 @@ export function assessStep(signals = {}) {
     if (signals.vfePlateau) {
         add(WEIGHTS.vfePlateau, 'vfe_plateau');
     }
-    const bestPrior = Math.max(Number(signals.planSimilarity) || 0, Number(signals.lessonSimilarity) || 0);
-    if (bestPrior === 0)
+    const finiteSim = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+    };
+    const bestPrior = Math.max(0, finiteSim(signals.planSimilarity), finiteSim(signals.lessonSimilarity));
+    if (bestPrior <= 0)
         add(WEIGHTS.noPriorArt, 'no_prior_art');
     if (typeof signals.assistantText === 'string' && HEDGE.test(signals.assistantText)) {
         add(WEIGHTS.hedging, 'model_hedged');
