@@ -963,11 +963,15 @@ export function extractWriteTargetsFromRaw(rawCommand) {
             continue;
         }
         if (ch === '>') {
-            // Handle `>>`, `>|`, and ignore descriptor duplications `>&1`, `>&2`, `>&-`
+            // Handle `>>`, `>|`, and `>&`: FD duplications (`2>&1`, `>&2`, `>&-`) are not files,
+            // whereas `>& file` in Bash/Zsh redirects stdout+stderr to `file`.
             let next = i + 1;
             if (rawCommand[next] === '&') {
-                // Descriptor duplication (e.g. `2>&1`, `>&2`) is not a file target
-                i = next + 1;
+                const { word, nextIndex } = readShellWord(next + 1);
+                if (word && !/^(?:\d+-?|-)$/.test(word)) {
+                    targets.push(word);
+                }
+                i = nextIndex;
                 continue;
             }
             if (rawCommand[next] === '>' || rawCommand[next] === '|') {
