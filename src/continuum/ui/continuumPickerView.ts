@@ -96,7 +96,8 @@ function pairedRow(left: string, right: string, columns: number): string {
 }
 
 function sourceName(value: ContinuumSessionSummary): string {
-  return clean(value.sourceLabel) || PLATFORM_NAMES[value.sourcePlatform] || 'Other';
+  const platformName = Object.hasOwn(PLATFORM_NAMES, value.sourcePlatform) ? PLATFORM_NAMES[value.sourcePlatform] : undefined;
+  return clean(value.sourceLabel) || platformName || 'Other';
 }
 
 /**
@@ -262,7 +263,7 @@ export class ContinuumPickerLayer extends SelectLayer {
     const h = Number.isFinite(height) ? Math.max(1, Math.min(200, Math.floor(height))) : 1;
     const rows: string[] = [];
     const scope = this.scope;
-    const label = scope === 'all' ? 'ALL SOURCES' : PLATFORM_NAMES[scope];
+    const label = scope === 'all' ? 'ALL SOURCES' : (Object.hasOwn(PLATFORM_NAMES, scope) ? PLATFORM_NAMES[scope] : 'Other');
     const filtered = this.list.filtered;
     const count = filtered.length;
     const total = this.items.length;

@@ -62,7 +62,8 @@ function pairedRow(left, right, columns) {
     return title + ' '.repeat(Math.max(1, width - visibleWidth(title) - rightWidth)) + right;
 }
 function sourceName(value) {
-    return clean(value.sourceLabel) || PLATFORM_NAMES[value.sourcePlatform] || 'Other';
+    const platformName = Object.hasOwn(PLATFORM_NAMES, value.sourcePlatform) ? PLATFORM_NAMES[value.sourcePlatform] : undefined;
+    return clean(value.sourceLabel) || platformName || 'Other';
 }
 /**
  * Group by agent with recency inside each source. A stable tie-breaker means
@@ -201,7 +202,7 @@ export class ContinuumPickerLayer extends SelectLayer {
         const h = Number.isFinite(height) ? Math.max(1, Math.min(200, Math.floor(height))) : 1;
         const rows = [];
         const scope = this.scope;
-        const label = scope === 'all' ? 'ALL SOURCES' : PLATFORM_NAMES[scope];
+        const label = scope === 'all' ? 'ALL SOURCES' : (Object.hasOwn(PLATFORM_NAMES, scope) ? PLATFORM_NAMES[scope] : 'Other');
         const filtered = this.list.filtered;
         const count = filtered.length;
         const total = this.items.length;
