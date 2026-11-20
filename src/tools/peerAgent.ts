@@ -118,7 +118,8 @@ export const peerAgentTool = {
     agent?: string;
     stopReason?: string;
   }> {
-    const action = args.action || (args.peer || args.prompt !== undefined ? 'delegate' : 'list');
+    const safeArgs: PeerAgentArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+    const action = safeArgs.action || (safeArgs.peer || safeArgs.prompt !== undefined ? 'delegate' : 'list');
 
     // 1. Action: list
     if (action === 'list' || action === 'status') {
@@ -139,8 +140,8 @@ export const peerAgentTool = {
     }
 
     // 2. Action: delegate
-    const peerId = String(args.peer || '').trim();
-    const prompt = String(args.prompt || '').trim().slice(0, MAX_PROMPT_CHARS);
+    const peerId = String(safeArgs.peer || '').trim();
+    const prompt = String(safeArgs.prompt || '').trim().slice(0, MAX_PROMPT_CHARS);
 
     if (!peerId) {
       const available = listAllPeers().map((p) => p.id);
@@ -159,8 +160,8 @@ export const peerAgentTool = {
       return { success: false, error: `Unknown peer profile: ${peerId}. Run with action "list" to see available peers.` };
     }
 
-    const requestedTimeout = typeof args.timeoutSeconds === 'number' && Number.isFinite(args.timeoutSeconds)
-      ? Math.round(args.timeoutSeconds)
+    const requestedTimeout = typeof safeArgs.timeoutSeconds === 'number' && Number.isFinite(safeArgs.timeoutSeconds)
+      ? Math.round(safeArgs.timeoutSeconds)
       : profile.timeoutSeconds;
     const timeoutSeconds = Math.max(5, Math.min(Math.min(profile.timeoutSeconds, requestedTimeout), 1800));
 
@@ -245,7 +246,8 @@ export const peerAgentTool = {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       const isAuthError = /auth|login|credentials|unauthorized/i.test(msg);
-      const preset = BUILTIN_PEER_PRESETS[peerId.toLowerCase()];
+      const presetKey = peerId.toLowerCase();
+      const preset = Object.hasOwn(BUILTIN_PEER_PRESETS, presetKey) ? BUILTIN_PEER_PRESETS[presetKey] : undefined;
       const instruction = preset?.setupInstruction ? `\nGuidance: ${preset.setupInstruction}` : '';
 
       return {
