@@ -32,7 +32,8 @@ export function compactContinuumMessages(
     ? messages[rootIndex]!
     : { role: 'user', content: 'Initial user turn' };
 
-  const recentStart = messages.length - recentTurns;
+  const safeRecent = Number.isFinite(recentTurns) ? Math.max(0, Math.min(messages.length, Math.floor(recentTurns))) : 12;
+  const recentStart = Math.max(0, messages.length - safeRecent);
   const recent = messages.slice(recentStart);
 
   // If the root intent is already within the recent window, simply return recent
