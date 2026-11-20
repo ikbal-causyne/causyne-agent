@@ -144,21 +144,30 @@ export class ToolOutputStore {
     try {
       const sessions = fs.readdirSync(this.config.storageDir);
       for (const session of sessions) {
-        const sessionPath = path.join(this.config.storageDir, session);
-        const stat = fs.lstatSync(sessionPath);
-        if (stat.isDirectory()) {
-          const files = fs.readdirSync(sessionPath);
-          for (const file of files) {
-            const filePath = path.join(sessionPath, file);
-            const fileStat = fs.statSync(filePath);
-            if (now - fileStat.mtimeMs > maxAgeMs) {
-              fs.unlinkSync(filePath);
-              pruned++;
+        try {
+          const sessionPath = path.join(this.config.storageDir, session);
+          const stat = fs.lstatSync(sessionPath);
+          if (stat.isDirectory() && !stat.isSymbolicLink()) {
+            const files = fs.readdirSync(sessionPath);
+            for (const file of files) {
+              try {
+                const filePath = path.join(sessionPath, file);
+                const fileStat = fs.lstatSync(filePath);
+                if (!fileStat.isFile()) continue;
+                if (now - fileStat.mtimeMs > maxAgeMs) {
+                  fs.unlinkSync(filePath);
+                  pruned++;
+                }
+              } catch {
+                // Skip unreadable or transient entries without aborting remaining cleanup
+              }
+            }
+            if (fs.readdirSync(sessionPath).length === 0) {
+              fs.rmdirSync(sessionPath);
             }
           }
-          if (fs.readdirSync(sessionPath).length === 0) {
-            fs.rmdirSync(sessionPath);
-          }
+        } catch {
+          // Continue pruning remaining session directories
         }
       }
     } catch {
