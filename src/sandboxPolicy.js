@@ -1134,11 +1134,25 @@ export function isFetchAndExecPipeline(pipelines) {
                 continue;
             if (SHELL_INTERPRETERS.has(stage.executable))
                 return true;
-            // Handle `curl ... | sudo bash` or `curl ... | sudo -E sh`
+            // Handle `curl ... | sudo bash`, `curl ... | sudo -E sh`, `curl ... | sudo -u root bash`
             if (stage.executable === 'sudo' || stage.executable === 'su') {
-                for (const arg of stage.args) {
-                    if (arg.startsWith('-'))
+                const valueFlags = new Set([
+                    '-u', '-g', '-c', '-d', '-h', '-p', '-r', '-t', '-a', '-s',
+                    '--user', '--group', '--prompt', '--chdir', '--shell'
+                ]);
+                for (let i = 0; i < stage.args.length; i++) {
+                    const arg = stage.args[i];
+                    if (arg === '--') {
+                        const next = stage.args[i + 1];
+                        if (next && SHELL_INTERPRETERS.has(resolveExecutableBasename(next)))
+                            return true;
+                        break;
+                    }
+                    if (arg.startsWith('-')) {
+                        if (valueFlags.has(arg))
+                            i++;
                         continue;
+                    }
                     if (SHELL_INTERPRETERS.has(resolveExecutableBasename(arg)))
                         return true;
                     break;
