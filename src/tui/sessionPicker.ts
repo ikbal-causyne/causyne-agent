@@ -240,8 +240,9 @@ export function formatSessionsTextReport(
   }
 
   const formatRow = (s: Omit<SessionRecord, 'messages'> & { messageCount: number }): string => {
-    const when = Number.isFinite(s.updatedAt)
-      ? new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ')
+    const dt = Number.isFinite(s.updatedAt) ? new Date(s.updatedAt) : null;
+    const when = dt && Number.isFinite(dt.getTime())
+      ? dt.toISOString().slice(0, 16).replace('T', ' ')
       : 'unknown date';
     const where = s.workspace ? shortenWorkspacePath(s.workspace) : '(no workspace)';
     const mark = s.id === activeId ? '*' : ' ';
