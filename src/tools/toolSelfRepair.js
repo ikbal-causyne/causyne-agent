@@ -454,6 +454,11 @@ function sanitizeUnescapedStringLiterals(input) {
                 result += '\\t';
                 continue;
             }
+            const code = char.charCodeAt(0);
+            if (code < 0x20) {
+                result += `\\u${code.toString(16).padStart(4, '0')}`;
+                continue;
+            }
         }
         result += char;
     }
