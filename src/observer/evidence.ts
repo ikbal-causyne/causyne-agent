@@ -333,7 +333,9 @@ function scanWrite(toolName: string, args: Record<string, unknown>, workspaceRoo
   const base = path.basename(resolved.physical);
 
   if (!resolved.inside) {
-    const temporary = resolved.physical.startsWith(safeRealpath(os.tmpdir()));
+    const tmpRoot = safeRealpath(os.tmpdir());
+    const tmpRel = path.relative(tmpRoot, resolved.physical);
+    const temporary = tmpRel === '' || (tmpRel !== '..' && !tmpRel.startsWith(`..${path.sep}`) && !path.isAbsolute(tmpRel));
     add(
       evidence,
       temporary ? 'write-temporary' : 'write-outside-workspace',

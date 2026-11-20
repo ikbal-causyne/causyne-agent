@@ -275,7 +275,9 @@ function scanWrite(toolName, args, workspaceRoot, evidence) {
     const resolved = resolveTarget(workspaceRoot, rawTarget);
     const base = path.basename(resolved.physical);
     if (!resolved.inside) {
-        const temporary = resolved.physical.startsWith(safeRealpath(os.tmpdir()));
+        const tmpRoot = safeRealpath(os.tmpdir());
+        const tmpRel = path.relative(tmpRoot, resolved.physical);
+        const temporary = tmpRel === '' || (tmpRel !== '..' && !tmpRel.startsWith(`..${path.sep}`) && !path.isAbsolute(tmpRel));
         add(evidence, temporary ? 'write-temporary' : 'write-outside-workspace', temporary ? 'low' : 'high', `${toolName} writes outside the workspace: ${rawTarget}`, 0.82);
     }
     if (resolved.physical.includes(`${path.sep}.git${path.sep}`) || base === '.git') {
