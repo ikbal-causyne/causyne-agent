@@ -131,8 +131,8 @@ export const fsRead = {
                         : `Cannot read binary file '${path.basename(target)}' as plain text. File size: ${sizeStr}.`
                 };
             }
-            const start = typeof args.startLine === 'number' && args.startLine > 0 ? Math.floor(args.startLine) : 1;
-            let end = typeof args.endLine === 'number' && args.endLine >= start ? Math.floor(args.endLine) : start + 799;
+            const start = typeof args.startLine === 'number' && Number.isFinite(args.startLine) && args.startLine > 0 ? Math.floor(args.startLine) : 1;
+            let end = typeof args.endLine === 'number' && Number.isFinite(args.endLine) && args.endLine >= start ? Math.floor(args.endLine) : start + 799;
             // Mandatory Paging Limit: at most 800 lines per read to preserve context
             if (end - start + 1 > 800) {
                 end = start + 799;
