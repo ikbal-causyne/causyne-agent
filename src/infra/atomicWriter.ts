@@ -25,7 +25,10 @@ export function atomicWriteFileSync(
 ): void {
   const resolved = path.resolve(targetPath);
   const dir = path.dirname(resolved);
-  fs.mkdirSync(dir, { recursive: true, mode: options.mode ?? 0o755 });
+  const dirMode = options.mode !== undefined
+    ? (options.mode | ((options.mode & 0o444) >> 2))
+    : 0o755;
+  fs.mkdirSync(dir, { recursive: true, mode: dirMode });
 
   const randomSuffix = crypto.randomBytes(6).toString('hex');
   const tempPath = path.join(dir, `.${path.basename(resolved)}.${randomSuffix}.tmp`);
