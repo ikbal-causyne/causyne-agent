@@ -177,19 +177,41 @@ const SIMPLE_FILE_OP_PATTERN =
 const EXPLICIT_MEDIA_GENERATION_PATTERN =
   /\b(blender|3d model|render 3d|render frame|render animation|da vinci|resolve|photoshop|premiere|after\s*effects|illustrator|indesign|media\s*encoder|uxp|audio synth|synthesizer|text to speech|tts|voiceover|dubbing)\b|\.(blend\d*|psd|prproj|aep|ai|indd|ccx)\b/i;
 
-// Explicit web engineering intent
-const EXPLICIT_WEB_ENGINEERING_PATTERN =
-  /\b(build|create|make|design|develop|implement|redesign|buat\w*)\b[\s\S]*(?:\b(web|website|webpage|webapp|landing page|dashboard|ui|frontend|webgl|canvas|cad view|cad viewer|cad style view|3d view|3d viewer|3d configurator|3d visualizer)\b|(?:threejs|three\.js|thre\.?js|3js|babylon\.?js|pixi\.js|d3\.js|p5\.js|chart\.js)\b)/i;
+function matchesOrdered(text: string, first: RegExp, second: RegExp): boolean {
+  const m = first.exec(text);
+  return m !== null && second.test(text.slice(m.index + m[0].length));
+}
+
+// Explicit web engineering intent (linear-time two-phase match to avoid polynomial ReDoS)
+const WEB_VERB_RE = /\b(?:build|create|make|design|develop|implement|redesign|buat\w*)\b/i;
+const WEB_TARGET_RE = /(?:\b(?:web|website|webpage|webapp|landing page|dashboard|ui|frontend|webgl|canvas|cad view|cad viewer|cad style view|3d view|3d viewer|3d configurator|3d visualizer)\b|(?:threejs|three\.js|thre\.?js|3js|babylon\.?js|pixi\.js|d3\.js|p5\.js|chart\.js)\b)/i;
+const EXPLICIT_WEB_ENGINEERING_PATTERN = {
+  test(text: string): boolean {
+    return matchesOrdered(text, WEB_VERB_RE, WEB_TARGET_RE);
+  }
+};
 
 // Explicit game development intent
-const EXPLICIT_GAME_DEV_PATTERN =
-  /(?:\b(?:build|create|make|design|develop|scaffold|render|animate|code|program|buat\w*|bikin\w*)[\s\S]*(?:game|simulation|simulator|simulasi|interactive|3d|three\.?js|threejs|webgl|canvas3d|babylonjs|godot|unity|unreal|platformer|rpg|arcade)\b|\b(?:game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive)\b|\b3d\s*(?:game|app|simulator|simulation|scene|city|world|view|body|human|anatomy|model|mesh|character|rendering|visualization|experience|space|environment)\b|\bin 3d\b|[-_]3d\b|\b3d[-_]|\b(?:threejs|three\.js|webgl|canvas3d|babylonjs)\b)/i;
+const GAME_STANDALONE_RE = /(?:\b(?:game|gamedev|godot|unity|unreal|platformer|rpg|arcade|simulator|simulation|simulasi|interactive)\b|\b3d\s*(?:game|app|simulator|simulation|scene|city|world|view|body|human|anatomy|model|mesh|character|rendering|visualization|experience|space|environment)\b|\bin 3d\b|[-_]3d\b|\b3d[-_]|\b(?:threejs|three\.js|webgl|canvas3d|babylonjs)\b)/i;
+const GAME_VERB_RE = /\b(?:build|create|make|design|develop|scaffold|render|animate|code|program|buat\w*|bikin\w*)/i;
+const GAME_TARGET_RE = /(?:game|simulation|simulator|simulasi|interactive|3d|three\.?js|threejs|webgl|canvas3d|babylonjs|godot|unity|unreal|platformer|rpg|arcade)\b/i;
+const EXPLICIT_GAME_DEV_PATTERN = {
+  test(text: string): boolean {
+    return GAME_STANDALONE_RE.test(text) || matchesOrdered(text, GAME_VERB_RE, GAME_TARGET_RE);
+  }
+};
 
 // Explicit reverse engineering and binary analysis intent is defined in toolPacks.ts (isReverseEngineeringIntent).
 
 // Explicit software and systems engineering intent (backend, APIs, refactoring, algorithms, testing, architecture, CLI tools, Android/mobile)
-const EXPLICIT_SOFTWARE_ENGINEERING_PATTERN =
-  /(?:\b(?:build|create|code|program|develop|refactor|debug|fix|implement|test|optimize|write|add|modify|migrate|architect|architecture|engineer|benchmark|profile|audit|scaffold|bump|export)\b[\s\S]*\b(?:api|backend|service|microservice|server|database|schema|endpoint|controller|auth|test|spec|algorithm|function|module|class|feature|script|pipeline|codebase|repo|repository|bug|issue|engine|tool|cli|library|sdk|migration|handler|worker|queue|stream|app|application|compose|jetpack|android|gradle|package|apk|aab|bundle|version)\b|\b(?:python|rust|golang|c\+\+|cpp|java|kotlin|swift|csharp|typescript|javascript|ruby|php|sql|bash|shell|docker|k8s|kubernetes|gradle|compose|android|apk|aab)\b)/i;
+const SWE_STANDALONE_RE = /\b(?:python|rust|golang|c\+\+|cpp|java|kotlin|swift|csharp|typescript|javascript|ruby|php|sql|bash|shell|docker|k8s|kubernetes|gradle|compose|android|apk|aab)\b/i;
+const SWE_VERB_RE = /\b(?:build|create|code|program|develop|refactor|debug|fix|implement|test|optimize|write|add|modify|migrate|architect|architecture|engineer|benchmark|profile|audit|scaffold|bump|export)\b/i;
+const SWE_TARGET_RE = /\b(?:api|backend|service|microservice|server|database|schema|endpoint|controller|auth|test|spec|algorithm|function|module|class|feature|script|pipeline|codebase|repo|repository|bug|issue|engine|tool|cli|library|sdk|migration|handler|worker|queue|stream|app|application|compose|jetpack|android|gradle|package|apk|aab|bundle|version)\b/i;
+const EXPLICIT_SOFTWARE_ENGINEERING_PATTERN = {
+  test(text: string): boolean {
+    return SWE_STANDALONE_RE.test(text) || matchesOrdered(text, SWE_VERB_RE, SWE_TARGET_RE);
+  }
+};
 
 /**
  * Select tools to preload based on prompt intent. This is never an allowlist:
