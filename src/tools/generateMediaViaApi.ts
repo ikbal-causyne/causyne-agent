@@ -2,7 +2,13 @@ import { causyneHome, resolveUserPath } from '../utils/paths.js';
 import { validateToolArguments } from './argumentValidation.js';
 import type { ParameterSchema } from './toolSelfRepair.js';
 interface MediaArgs { mediaType: 'image' | 'audio_tts' | 'video_animation'; prompt: string; outputPath?: string; width?: number; height?: number; model?: string; voice?: string; targetProvider?: string; targetModel?: string; durationSeconds?: number; }
-interface MediaContext { isPathAllowed?: (path: string) => boolean; waitForApproval?: (id: string) => Promise<boolean>; emitEvent?: (event: Record<string, unknown>) => void; signal?: AbortSignal; workspaceRoot?: string; workspacePaths?: string[]; parentLoop?: { workspaceRoot?: string; sandbox?: { isPathAllowed?: (path: string) => boolean } }; }
+interface ApprovalHost { waitForApproval?: (id: string) => Promise<boolean>; emitEvent?: (event: Record<string, unknown>) => void; }
+interface MediaContext extends ApprovalHost { isPathAllowed?: (path: string) => boolean; signal?: AbortSignal; workspaceRoot?: string; workspacePaths?: string[]; parentLoop?: ApprovalHost & { workspaceRoot?: string; sandbox?: { isPathAllowed?: (path: string) => boolean } }; }
+function resolveApprovalHost(sandbox?: MediaContext): ApprovalHost | undefined {
+  if (typeof sandbox?.waitForApproval === 'function') return sandbox;
+  if (typeof sandbox?.parentLoop?.waitForApproval === 'function') return sandbox.parentLoop;
+  return undefined;
+}
 interface RouteResult { success?: boolean; buffer?: Buffer; provider?: string; model?: string; costUsd?: number; equivalentTokens?: number; fallbackToPollinations?: boolean; error?: string; [key: string]: unknown; }
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 import fs from 'fs';
@@ -84,13 +90,14 @@ async function routeMultimediaRequest(args: MediaArgs, config: Record<string, an
   const estimatedTokens = Math.round(estimatedCost / 0.000002);
 
   // Pre-Flight Consent Modal (`approval_request`) for Paid API Handoffs (unless in Mode C/Super Max and pre-approved)
-  if (sandbox && typeof sandbox.waitForApproval === 'function') {
+  const approvalHost = resolveApprovalHost(sandbox);
+  if (approvalHost && typeof approvalHost.waitForApproval === 'function') {
     // The paid-media consent modal is skipped in Mode C (pre-approved) and in
     // hardened developer emulator mode (secret-gated — see devMode.js).
     if (!isDevEmulator(config) && config.autonomyMode !== 'C') {
       const approvalId = `media_${crypto.randomUUID()}`;
-      if (typeof sandbox.emitEvent === 'function') {
-        sandbox.emitEvent({
+      if (typeof approvalHost.emitEvent === 'function') {
+        approvalHost.emitEvent({
           type: 'approval_request',
           toolCallId: approvalId,
           tool: 'generate_media_via_api (Auto-Switch)',
@@ -106,7 +113,7 @@ async function routeMultimediaRequest(args: MediaArgs, config: Record<string, an
         });
       }
       
-      const approved = await sandbox.waitForApproval(approvalId);
+      const approved = await approvalHost.waitForApproval(approvalId);
       if (!approved) {
         return { success: false, code: 'MEDIA_APPROVAL_DENIED', error: 'Paid media generation was declined. No media artifact was produced.' };
       }
@@ -274,10 +281,11 @@ export const generateMediaViaApi: { schema: { name: string; description: string;
         nextAction: 'Use another already configured capability when it satisfies the request. If procedural drawing is an appropriate alternative, identify it accurately. If a generation service is essential, report the missing credentials without repeatedly retrying or asking for secrets in chat.'
       };
       if (mediaType === 'video_animation') return { success: false, code: 'MEDIA_PROVIDER_UNAVAILABLE', error: 'No supported video endpoint is configured. No media artifact was produced.' };
-      if (sandbox?.waitForApproval && !isDevEmulator(config) && config.autonomyMode !== 'C') {
+      const approvalHost = resolveApprovalHost(sandbox);
+      if (approvalHost?.waitForApproval && !isDevEmulator(config) && config.autonomyMode !== 'C') {
         const approvalId = `media_${crypto.randomUUID()}`;
-        sandbox.emitEvent?.({ type: 'approval_request', toolCallId: approvalId, tool: 'generate_media_via_api', args: { mediaType, targetProvider: 'pollinations' }, risk: 'monetary_cost' });
-        if (!await sandbox.waitForApproval(approvalId)) return { success: false, code: 'MEDIA_APPROVAL_DENIED', error: 'Media generation was declined. No artifact was produced.' };
+        approvalHost.emitEvent?.({ type: 'approval_request', toolCallId: approvalId, tool: 'generate_media_via_api', args: { mediaType, targetProvider: 'pollinations' }, risk: 'monetary_cost' });
+        if (!await approvalHost.waitForApproval(approvalId)) return { success: false, code: 'MEDIA_APPROVAL_DENIED', error: 'Media generation was declined. No artifact was produced.' };
       }
       const query = new URLSearchParams(mediaType === 'image'
         ? { width: String(width || 1024), height: String(height || 1024), model: model || targetModel || 'flux', seed: String(Date.now()) }

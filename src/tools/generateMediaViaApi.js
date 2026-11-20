@@ -1,5 +1,12 @@
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
 import { validateToolArguments } from './argumentValidation.js';
+function resolveApprovalHost(sandbox) {
+    if (typeof sandbox?.waitForApproval === 'function')
+        return sandbox;
+    if (typeof sandbox?.parentLoop?.waitForApproval === 'function')
+        return sandbox.parentLoop;
+    return undefined;
+}
 const errorMessage = (error) => error instanceof Error ? error.message : String(error);
 import fs from 'fs';
 import path from 'path';
@@ -83,13 +90,14 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
     const estimatedCost = unitPrice * quantity;
     const estimatedTokens = Math.round(estimatedCost / 0.000002);
     // Pre-Flight Consent Modal (`approval_request`) for Paid API Handoffs (unless in Mode C/Super Max and pre-approved)
-    if (sandbox && typeof sandbox.waitForApproval === 'function') {
+    const approvalHost = resolveApprovalHost(sandbox);
+    if (approvalHost && typeof approvalHost.waitForApproval === 'function') {
         // The paid-media consent modal is skipped in Mode C (pre-approved) and in
         // hardened developer emulator mode (secret-gated — see devMode.js).
         if (!isDevEmulator(config) && config.autonomyMode !== 'C') {
             const approvalId = `media_${crypto.randomUUID()}`;
-            if (typeof sandbox.emitEvent === 'function') {
-                sandbox.emitEvent({
+            if (typeof approvalHost.emitEvent === 'function') {
+                approvalHost.emitEvent({
                     type: 'approval_request',
                     toolCallId: approvalId,
                     tool: 'generate_media_via_api (Auto-Switch)',
@@ -104,7 +112,7 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
                     risk: 'monetary_cost'
                 });
             }
-            const approved = await sandbox.waitForApproval(approvalId);
+            const approved = await approvalHost.waitForApproval(approvalId);
             if (!approved) {
                 return { success: false, code: 'MEDIA_APPROVAL_DENIED', error: 'Paid media generation was declined. No media artifact was produced.' };
             }
@@ -271,10 +279,11 @@ export const generateMediaViaApi = {
                 };
             if (mediaType === 'video_animation')
                 return { success: false, code: 'MEDIA_PROVIDER_UNAVAILABLE', error: 'No supported video endpoint is configured. No media artifact was produced.' };
-            if (sandbox?.waitForApproval && !isDevEmulator(config) && config.autonomyMode !== 'C') {
+            const approvalHost = resolveApprovalHost(sandbox);
+            if (approvalHost?.waitForApproval && !isDevEmulator(config) && config.autonomyMode !== 'C') {
                 const approvalId = `media_${crypto.randomUUID()}`;
-                sandbox.emitEvent?.({ type: 'approval_request', toolCallId: approvalId, tool: 'generate_media_via_api', args: { mediaType, targetProvider: 'pollinations' }, risk: 'monetary_cost' });
-                if (!await sandbox.waitForApproval(approvalId))
+                approvalHost.emitEvent?.({ type: 'approval_request', toolCallId: approvalId, tool: 'generate_media_via_api', args: { mediaType, targetProvider: 'pollinations' }, risk: 'monetary_cost' });
+                if (!await approvalHost.waitForApproval(approvalId))
                     return { success: false, code: 'MEDIA_APPROVAL_DENIED', error: 'Media generation was declined. No artifact was produced.' };
             }
             const query = new URLSearchParams(mediaType === 'image'
