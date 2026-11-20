@@ -52,11 +52,11 @@ export class ScrollAcceleration {
         this.streakTimeout = Number.isFinite(streakTimeout) && streakTimeout >= 0 ? streakTimeout : 150;
         this.minTickInterval = Number.isFinite(minTickInterval) && minTickInterval >= 0 ? minTickInterval : 6;
         this.intervals = [];
-        this.lastTick = 0;
+        this.lastTick = null;
     }
     reset() {
         this.intervals = [];
-        this.lastTick = 0;
+        this.lastTick = null;
     }
     tick(now = Date.now()) {
         if (!Number.isFinite(now))
@@ -64,13 +64,13 @@ export class ScrollAcceleration {
         const A = 0.8;
         const tau = 3;
         const maxMultiplier = 6;
-        const gap = this.lastTick ? now - this.lastTick : Infinity;
+        const gap = this.lastTick !== null ? now - this.lastTick : Infinity;
         if (gap === Infinity || gap > this.streakTimeout) {
             this.lastTick = now;
             this.intervals = [];
             return 1;
         }
-        if (gap < Math.max(0, this.minTickInterval))
+        if (gap <= 0 || gap < Math.max(0, this.minTickInterval))
             return 1;
         this.lastTick = now;
         if (this.historySize > 0) {
