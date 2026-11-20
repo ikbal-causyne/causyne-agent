@@ -478,10 +478,15 @@ export class TokenTracker {
   }
 
   extendBudget(extraTokens: number): void {
+    if (!Number.isFinite(extraTokens) || extraTokens <= 0) return;
     if (this.budget && typeof this.budget === 'object') {
       const current = Number(this.budget.maxTokensPerTask || 0);
       if (current > 0) {
-        this.budget.maxTokensPerTask = Math.max(current + extraTokens, this.taskTokens + extraTokens);
+        const next = Math.max(current + extraTokens, this.taskTokens + extraTokens);
+        this.budget.maxTokensPerTask = next;
+        if (this.enforcedTaskTokenLimit !== null) {
+          this.enforcedTaskTokenLimit = Math.floor(next);
+        }
       }
     }
   }
