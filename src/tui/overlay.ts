@@ -208,10 +208,12 @@ export class Layer {
     const maxH = vh - 4 >= 5 ? vh - 4 : vh;
     const wanted = Math.max(3, Math.min(safePreferred, layerHeight));
     const height = Math.min(wanted, Math.max(3, maxH));
+    const slackY = Math.max(0, vh - height);
+    const topGap = slackY > 0 ? Math.min(slackY, Math.max(1, Math.floor(slackY / 4))) : 0;
     return {
       x: vx + Math.floor((vw - width) / 2),
       // A quarter down reads as centred; dead centre sits visually too low.
-      y: vy + Math.max(1, Math.floor((vh - height) / 4)),
+      y: vy + topGap,
       width,
       height
     };
