@@ -357,7 +357,7 @@ function scanWrite(toolName: string, args: Record<string, unknown>, workspaceRoo
 
   const originalSize = readSize(resolved.physical);
   let replacementSize: number | null = null;
-  if (toolName === 'fs_write') {
+  if (toolName === 'fs_write' || toolName === 'write_file' || toolName === 'write_to_file' || toolName === 'write') {
     const content = typeof args.content === 'string' ? args.content : typeof args.text === 'string' ? args.text : '';
     replacementSize = Buffer.byteLength(content, 'utf8');
     if (replacementSize === 0 && originalSize !== null && originalSize > 0) {
@@ -464,7 +464,7 @@ export function scanMutation(toolName: string, args: Record<string, unknown>, co
   const evidence: RiskEvidence[] = [];
   const workspaceRoot = context.workspaceRoot || process.cwd();
 
-  if (['sysRun', 'sysRunBg', 'terminal_persistent_shell'].includes(toolName)) {
+  if (['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'bash', 'execute'].includes(toolName)) {
     const command = typeof args.command === 'string'
       ? args.command
       : typeof args.cmd === 'string' ? args.cmd : '';
@@ -472,7 +472,11 @@ export function scanMutation(toolName: string, args: Record<string, unknown>, co
   } else if (toolName === 'gitOp') {
     const command = typeof args.command === 'string' ? `git ${args.command}` : '';
     scanShell(command, workspaceRoot, evidence);
-  } else if (toolName === 'fs_write' || toolName === 'fs_edit' || toolName === 'MultiEdit') {
+  } else if ([
+    'fs_write', 'fs_edit', 'MultiEdit',
+    'write_file', 'write_to_file', 'write',
+    'edit_file', 'replace_file_content', 'multi_replace_file_content', 'edit', 'multiedit'
+  ].includes(toolName)) {
     scanWrite(toolName, args, workspaceRoot, evidence);
   } else if (toolName === 'fs_delete') {
     scanDelete(args, workspaceRoot, evidence);
