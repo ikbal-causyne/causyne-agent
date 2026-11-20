@@ -90,10 +90,10 @@ export const fsEdit = {
             let replacements = 0;
             for (let i = 0; i < args.edits.length; i++) {
                 const edit = args.edits[i];
-                if (!edit || typeof edit.searchContent !== 'string' || typeof edit.replaceContent !== 'string') {
+                if (!edit || typeof edit.searchContent !== 'string' || edit.searchContent.length === 0 || typeof edit.replaceContent !== 'string') {
                     return {
                         success: false,
-                        error: `ATOMIC ROLLBACK: Edit index ${i} is missing valid searchContent or replaceContent strings. Rollback complete.`
+                        error: `ATOMIC ROLLBACK: Edit index ${i} is missing valid non-empty searchContent or replaceContent strings. Rollback complete.`
                     };
                 }
                 // Try exact match first
