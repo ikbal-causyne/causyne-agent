@@ -88,7 +88,8 @@ const PALETTES: Record<DocumentPalette, { primary: string; primaryDark: string; 
  * Compile formal publication document to pixel-perfect HTML + CSS Paged Media.
  */
 export function compileDocumentHtml(spec: FormalDocumentSpec): { html: string; css: string } {
-  const p = PALETTES[spec.palette || 'corporate'];
+  const paletteKey = spec.palette && Object.hasOwn(PALETTES, spec.palette) ? spec.palette : 'corporate';
+  const p = PALETTES[paletteKey];
 
   const css = `
 :root {

@@ -38,7 +38,8 @@ const PALETTES = {
  * Compile formal publication document to pixel-perfect HTML + CSS Paged Media.
  */
 export function compileDocumentHtml(spec) {
-    const p = PALETTES[spec.palette || 'corporate'];
+    const paletteKey = spec.palette && Object.hasOwn(PALETTES, spec.palette) ? spec.palette : 'corporate';
+    const p = PALETTES[paletteKey];
     const css = `
 :root {
   --primary: ${p.primary};
