@@ -241,20 +241,23 @@ export const peerAgentTool = {
 
     if (peerId.toLowerCase() === 'antigravity') {
       try {
-        const agyModel = args.model || 'Gemini 3.8 Flash (Low)';
-        const { stdout } = await execFileAsync(profile.command, [
-          '--output-format',
-          'json',
-          `--model=${agyModel}`,
-          `-p=${prompt}`
-        ], {
+        const agyArgs = ['--output-format', 'json'];
+        if (typeof safeArgs.model === 'string' && safeArgs.model.trim()) {
+          agyArgs.push(`--model=${safeArgs.model.trim()}`);
+        }
+        agyArgs.push(`-p=${prompt}`);
+        const { stdout } = await execFileAsync(profile.command, agyArgs, {
           cwd: workspaceRoot,
-          timeout: timeoutSeconds * 1000
+          env: peerEnvironment(profile),
+          timeout: timeoutSeconds * 1000,
+          maxBuffer: 16 * 1024 * 1024,
+          windowsHide: true,
+          ...(context?.signal ? { signal: context.signal } : {})
         });
         let outputText = stdout.trim();
         try {
-          const parsed = JSON.parse(outputText);
-          if (parsed.response) outputText = parsed.response.trim();
+          const parsed = JSON.parse(outputText) as { response?: unknown };
+          if (typeof parsed?.response === 'string') outputText = parsed.response.trim();
         } catch {
           // keep raw stdout
         }
