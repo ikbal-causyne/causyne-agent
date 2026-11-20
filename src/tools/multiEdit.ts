@@ -104,7 +104,7 @@ export const multiEdit = {
 
         // Try exact match first
         if (workingContent.includes(edit.old_string)) {
-          workingContent = workingContent.replace(edit.old_string, edit.new_string);
+          workingContent = workingContent.replace(edit.old_string, () => edit.new_string);
           replacements++;
           continue;
         }
@@ -125,7 +125,7 @@ export const multiEdit = {
         }
 
         if (highestConfidence >= 90 && bestMatch) {
-          workingContent = workingContent.replace(bestMatch, edit.new_string);
+          workingContent = workingContent.replace(bestMatch, () => edit.new_string);
           replacements++;
         } else {
           return {

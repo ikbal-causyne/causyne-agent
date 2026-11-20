@@ -103,7 +103,7 @@ export const fsEdit = {
 
         // Try exact match first
         if (workingContent.includes(edit.searchContent)) {
-          workingContent = workingContent.replace(edit.searchContent, edit.replaceContent);
+          workingContent = workingContent.replace(edit.searchContent, () => edit.replaceContent);
           replacements++;
           continue;
         }
@@ -124,7 +124,7 @@ export const fsEdit = {
         }
 
         if (highestConfidence >= 90 && bestMatch) {
-          workingContent = workingContent.replace(bestMatch, edit.replaceContent);
+          workingContent = workingContent.replace(bestMatch, () => edit.replaceContent);
           replacements++;
         } else {
           return {
