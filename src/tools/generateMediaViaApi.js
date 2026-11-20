@@ -1,4 +1,5 @@
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
+import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 import { validateToolArguments } from './argumentValidation.js';
 function resolveApprovalHost(sandbox) {
     if (typeof sandbox?.waitForApproval === 'function')
@@ -188,8 +189,22 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
     }
     else if (data.url || (data.data && data.data[0]?.url)) {
         const mediaUrl = data.url || data.data[0].url;
-        const mediaResp = await fetch(mediaUrl);
+        const verifiedUrl = await assertPublicWebUrl(mediaUrl);
+        if (verifiedUrl.protocol !== 'https:') {
+            return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: `Provider ${provider} returned a non-HTTPS media download URL.` };
+        }
+        const mediaResp = await fetch(verifiedUrl, { redirect: 'error', signal: buildMediaSignal(sandbox?.signal) });
+        if (!mediaResp.ok) {
+            return { success: false, code: 'MEDIA_PROVIDER_ERROR', status: mediaResp.status, error: `Media download returned HTTP ${mediaResp.status}.` };
+        }
+        const declaredLen = Number(mediaResp.headers.get('content-length') ?? '0');
+        if (Number.isFinite(declaredLen) && declaredLen > 50 * 1024 * 1024) {
+            return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: 'Media download exceeds 50 MB limit.' };
+        }
         const ab = await mediaResp.arrayBuffer();
+        if (ab.byteLength > 50 * 1024 * 1024) {
+            return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: 'Media download exceeds 50 MB limit.' };
+        }
         buffer = Buffer.from(ab);
     }
     if (!buffer || !validateMagicNumbers(buffer))
