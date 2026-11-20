@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 // RAW photo development, color grading, HDR merge, and tone-mapping engine for Causyne Agent.
 // Headless RAW pipeline, non-destructive develop adjustments, and photo library automation.
@@ -56,7 +57,7 @@ export const lightEngine = {
             case 'inspect':
             case 'probe': {
                 const file = request.action === 'inspect' ? requireProject(context, 'inspect') : positional(request.query ?? '');
-                args = ['render', file, '-o', '/dev/null'];
+                args = ['render', file, '-o', os.devNull];
                 break;
             }
             case 'execute':

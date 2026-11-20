@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 import type {
   NativeEngineAction,
@@ -69,7 +70,7 @@ export const designEngine: NativeEngineAdapter = {
       case 'inspect':
       case 'probe': {
         const file = request.action === 'inspect' ? requireProject(context, 'inspect') : positional(request.query ?? '');
-        args = ['run', '--in', file, '--export', '/dev/null'];
+        args = ['run', '--in', file, '--export', os.devNull];
         break;
       }
       case 'execute':

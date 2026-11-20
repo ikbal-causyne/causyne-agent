@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 // Multi-page layout, vector illustration, and publication engine for Causyne Agent.
 // Headless document composer, IDML/ePub/PDF/SVG/PNG renderer, and batch pipeline.
@@ -56,7 +57,7 @@ export const designEngine = {
             case 'inspect':
             case 'probe': {
                 const file = request.action === 'inspect' ? requireProject(context, 'inspect') : positional(request.query ?? '');
-                args = ['run', '--in', file, '--export', '/dev/null'];
+                args = ['run', '--in', file, '--export', os.devNull];
                 break;
             }
             case 'execute':
