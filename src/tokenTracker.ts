@@ -276,7 +276,8 @@ export class TokenTracker {
     this.applyEnforcedTaskLimit();
 
     const unitPrice = this.getMediaPricing(provider, model, mediaType);
-    const cost = unitPrice * (quantityUnits || 1);
+    const safeUnits = Number.isFinite(quantityUnits) ? Math.max(0, Number(quantityUnits)) : 1;
+    const cost = unitPrice * safeUnits;
 
     const equivalentTokens = Math.round(cost / 0.000002);
 
