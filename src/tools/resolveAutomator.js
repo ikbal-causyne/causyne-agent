@@ -231,6 +231,9 @@ export async function runResolveBridge(args, options = {}) {
                     error: errorData.trim() || outputData.trim() || `Python process exited with code ${String(code)}`
                 });
             });
+            child.stdin.on('error', () => {
+                // Ignore EPIPE when Python fails to spawn or exits before reading stdin
+            });
             child.stdin.write(PYTHON_SCRIPT);
             child.stdin.end();
         });

@@ -263,6 +263,9 @@ export async function runResolveBridge(
         });
       });
 
+      child.stdin.on('error', () => {
+        // Ignore EPIPE when Python fails to spawn or exits before reading stdin
+      });
       child.stdin.write(PYTHON_SCRIPT);
       child.stdin.end();
     });
