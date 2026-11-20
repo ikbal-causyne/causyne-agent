@@ -114,6 +114,7 @@
     "src/tools/fsEdit.ts",
     "src/tools/multiEdit.ts",
     "src/tools/subprocessEnv.ts",
+    "src/tools/osSandbox.ts",
     "src/tools/sysRun.ts",
     "src/sandboxPolicy.ts",
     "src/tools/desktopOpen.ts",

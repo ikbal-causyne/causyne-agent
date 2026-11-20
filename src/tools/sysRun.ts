@@ -16,6 +16,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { isLaunchOnlyPrompt, isServerLaunchCommand } from '../launchIntent.js';
 import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import {
+  resolveOsSandboxMode,
+  wrapCommandWithOsSandbox,
+  type OsSandboxMode,
+  type OsSandboxWrapOptions
+} from './osSandbox.js';
 
 export interface SysRunArgs {
   command: string;
@@ -37,7 +43,14 @@ export interface SysRunResult {
 export interface SysRunContext {
   signal?: AbortSignal | undefined;
   skipCache?: boolean | undefined;
-  parentLoop?: { currentTaskPrompt?: string; userPrompt?: string } | undefined;
+  osSandbox?: OsSandboxMode | Partial<OsSandboxWrapOptions> | undefined;
+  parentLoop?: {
+    currentTaskPrompt?: string;
+    userPrompt?: string;
+    workspaceRoot?: string;
+    config?: { osSandbox?: string };
+    sandbox?: { workspacePaths?: string[] };
+  } | undefined;
 }
 
 export interface SysRunBgArgs {
@@ -369,11 +382,35 @@ export const sysRun = {
 
       let child: ReturnType<typeof spawn>;
       try {
-        child = spawn(shell, shellArgs, {
+        const resolvedMode = resolveOsSandboxMode(process.env, context.parentLoop?.config?.osSandbox);
+        const explicitSandbox = context.osSandbox;
+        const wrapOptions: OsSandboxWrapOptions = typeof explicitSandbox === 'string'
+          ? {
+              mode: explicitSandbox,
+              strict: resolvedMode.strict,
+              allowNetwork: resolvedMode.allowNetwork,
+              cwd,
+              workspaceRoots: context.parentLoop?.sandbox?.workspacePaths ?? [cwd]
+            }
+          : {
+              mode: explicitSandbox?.mode ?? resolvedMode.mode,
+              strict: explicitSandbox?.strict ?? resolvedMode.strict,
+              allowNetwork: explicitSandbox?.allowNetwork ?? resolvedMode.allowNetwork,
+              cwd,
+              workspaceRoots: explicitSandbox?.workspaceRoots ?? context.parentLoop?.sandbox?.workspacePaths ?? [cwd],
+              ...(explicitSandbox?.allowDevCaches !== undefined ? { allowDevCaches: explicitSandbox.allowDevCaches } : {}),
+              ...(explicitSandbox?.includeTempDirs !== undefined ? { includeTempDirs: explicitSandbox.includeTempDirs } : {}),
+              ...(explicitSandbox?.extraDenyReadPaths ? { extraDenyReadPaths: explicitSandbox.extraDenyReadPaths } : {}),
+              ...(explicitSandbox?.homeDir ? { homeDir: explicitSandbox.homeDir } : {}),
+              ...(explicitSandbox?.tmpDir ? { tmpDir: explicitSandbox.tmpDir } : {})
+            };
+
+        const wrapped = wrapCommandWithOsSandbox(shell, shellArgs, wrapOptions);
+        child = spawn(wrapped.command, wrapped.args, {
           cwd,
           signal,
           env: getEnhancedEnv(),
-          ...(os.platform() === 'win32' ? { windowsVerbatimArguments: true } : {})
+          ...(os.platform() === 'win32' && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
         });
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -547,18 +584,26 @@ export const sysRunBg = {
     }
   },
 
-  async execute(args: SysRunBgArgs): Promise<SysRunBgResult> {
+  async execute(args: SysRunBgArgs, context: SysRunContext = {}): Promise<SysRunBgResult> {
     try {
       const cwd = args.cwd ? args.cwd.replace(/^~\//, os.homedir() + '/') : process.cwd();
       const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
       const shellArgs = os.platform() === 'win32' ? ['/c', args.command] : ['-c', args.command];
+      const resolvedMode = resolveOsSandboxMode(process.env, context.parentLoop?.config?.osSandbox);
+      const wrapped = wrapCommandWithOsSandbox(shell, shellArgs, {
+        mode: resolvedMode.mode,
+        strict: resolvedMode.strict,
+        allowNetwork: resolvedMode.allowNetwork,
+        cwd,
+        workspaceRoots: context.parentLoop?.sandbox?.workspacePaths ?? [cwd]
+      });
       return await new Promise<SysRunBgResult>(resolve => {
-        const child = spawn(shell, shellArgs, {
+        const child = spawn(wrapped.command, wrapped.args, {
           cwd,
           detached: true,
           stdio: 'ignore',
           env: getEnhancedEnv(),
-          ...(os.platform() === 'win32' ? { windowsVerbatimArguments: true } : {})
+          ...(os.platform() === 'win32' && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
         });
         child.once('error', error => resolve({ success: false, error: error.message }));
         child.once('spawn', () => {
