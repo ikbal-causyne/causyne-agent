@@ -276,20 +276,30 @@ const TRAILING_PARTIAL_THINK_TAG = /<\/?(?:t(?:h(?:i(?:n(?:k(?:i(?:n(?:g)?)?)?)?
 export function stripToolCallMarkup(text) {
     if (!text || typeof text !== 'string')
         return '';
-    return text
-        .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+|$)/gi, '')
-        .replace(/<[｜|]DSML[｜|][\s\S]*?(?:<\/[｜|]DSML[｜|]\s*calls>|$)/gi, '')
-        .replace(/(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+/gi, '')
-        .replace(TRAILING_PARTIAL_TOOL_TAG, '')
-        .trim();
+    let out = text;
+    let prev;
+    do {
+        prev = out;
+        out = out
+            .replace(/<tool_call>[\s\S]*?(?:<\/tool_call>|(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+|$)/gi, '')
+            .replace(/<[｜|]DSML[｜|][\s\S]*?(?:<\/[｜|]DSML[｜|]\s*calls>|$)/gi, '')
+            .replace(/(?:\s*<\/?[｜|]DSML[｜|][^>]*>)+/gi, '')
+            .replace(TRAILING_PARTIAL_TOOL_TAG, '');
+    } while (out !== prev);
+    return out.trim();
 }
 export function stripThinkBlocks(text) {
     if (!text || typeof text !== 'string')
         return '';
-    return text
-        .replace(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>[\s\S]*?(?:<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>|$)/gi, '')
-        .replace(TRAILING_PARTIAL_THINK_TAG, '')
-        .trim();
+    let out = text;
+    let prev;
+    do {
+        prev = out;
+        out = out
+            .replace(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>[\s\S]*?(?:<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>|$)/gi, '')
+            .replace(TRAILING_PARTIAL_THINK_TAG, '');
+    } while (out !== prev);
+    return out.trim();
 }
 export function extractLivePlanFromText(text, allowTrailing = false) {
     if (!text || typeof text !== 'string')
