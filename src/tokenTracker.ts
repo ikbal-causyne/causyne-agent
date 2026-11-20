@@ -417,17 +417,15 @@ export class TokenTracker {
   }
 
   async resetDailyUsage(): Promise<void> {
-    const file = this.getDailyFile();
-    if (fs.existsSync(file)) {
-      fs.unlinkSync(file);
-    }
+    await withUsageLock(async () => {
+      fs.rmSync(this.getDailyFile(), { force: true });
+    });
   }
 
   async resetCumulativeUsage(): Promise<void> {
-    const file = this.getCumulativeFile();
-    if (fs.existsSync(file)) {
-      fs.unlinkSync(file);
-    }
+    await withUsageLock(async () => {
+      fs.rmSync(this.getCumulativeFile(), { force: true });
+    });
   }
 
   async getReportedUsage(): Promise<{
