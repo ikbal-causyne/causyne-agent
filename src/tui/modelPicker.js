@@ -419,7 +419,6 @@ export class ModelPickerLayer extends SelectLayer {
             return result === 'keep' ? 'handled' : 'close';
         }
         if (action === 'cancel') {
-            this.settled = true;
             return 'close';
         }
         return action ? 'handled' : null;
