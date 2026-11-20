@@ -45,10 +45,12 @@ export function detectMagicFormat(buffer: Buffer): string | null {
   if (hex.startsWith('52494646') && buffer.length >= 12 && buffer.toString('ascii', 8, 12) === 'WAVE') return 'wav';
   if (hex.startsWith('494433') || hex.startsWith('FFFB') || hex.startsWith('FFFA') || hex.startsWith('FFF3') || hex.startsWith('FFF2') || hex.startsWith('FFE3')) return 'mp3';
 
-  // Video: box size followed by 'ftyp' or 'moov'
+  // Video: valid ISO BMFF box size followed by 'ftyp', 'moov', 'mdat', or 'free'
   if (buffer.length >= 8) {
+    const boxSize = buffer.readUInt32BE(0);
     const boxType = buffer.toString('ascii', 4, 8);
-    if (['ftyp', 'moov', 'mdat', 'free'].includes(boxType)) return 'mp4';
+    const validBoxSize = boxSize === 0 || boxSize === 1 || (boxSize >= 8 && boxSize <= buffer.length);
+    if (validBoxSize && ['ftyp', 'moov', 'mdat', 'free'].includes(boxType)) return 'mp4';
   }
 
   return null;
