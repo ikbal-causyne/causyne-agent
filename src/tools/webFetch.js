@@ -286,9 +286,14 @@ export const webFetch = {
         const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
         const requestSignal = sandbox?.signal ? AbortSignal.any([sandbox.signal, controller.signal]) : controller.signal;
         try {
-            if (!args.url)
+            if (!args || typeof args !== 'object' || typeof args.url !== 'string' || !args.url.trim()) {
                 return { success: false, error: 'url is required' };
-            const workspace = path.resolve(sandbox?.workspacePaths?.[0] ?? sandbox?.workspaceRoot ?? process.cwd());
+            }
+            const rawWorkspace = sandbox?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim()
+                ?? sandbox?.parentLoop?.workspaceRoot?.trim()
+                ?? sandbox?.workspaceRoot?.trim()
+                ?? process.cwd();
+            const workspace = path.resolve(rawWorkspace);
             if (args.method !== undefined && typeof args.method !== 'string') {
                 return { success: false, error: 'HTTP method must be a string' };
             }
@@ -298,6 +303,16 @@ export const webFetch = {
             }
             if (args.outputFile !== undefined && (typeof args.outputFile !== 'string' || !args.outputFile.trim())) {
                 return { success: false, error: 'Download outputFile must be a non-empty string' };
+            }
+            if (args.outputFile) {
+                const trimmedOut = args.outputFile.trim();
+                if (trimmedOut.endsWith('/') || trimmedOut.endsWith('\\')) {
+                    return { success: false, error: 'Download outputFile must point to a file, not a directory' };
+                }
+                const preTarget = path.resolve(workspace, trimmedOut);
+                if (!isWithin(workspace, preTarget)) {
+                    return { success: false, error: 'Download target must stay inside the selected workspace' };
+                }
             }
             if (method === 'HEAD' && args.outputFile) {
                 return { success: false, error: 'HEAD responses cannot be downloaded as resource files' };
