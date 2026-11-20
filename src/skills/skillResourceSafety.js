@@ -251,12 +251,18 @@ export function listSkillResourcePaths(root, domain, name, limit = MAX_ADVERTISE
         if (out.length >= bound || depth > 3)
             return;
         const directory = path.join(skillDir, ...relative.split('/'));
-        if (!inspectDirectory(directory, true))
+        let entries;
+        try {
+            if (!inspectDirectory(directory, true))
+                return;
+            entries = fs.readdirSync(directory, { withFileTypes: true })
+                .filter(item => !item.name.startsWith('.'))
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .slice(0, 128);
+        }
+        catch {
             return;
-        const entries = fs.readdirSync(directory, { withFileTypes: true })
-            .filter(item => !item.name.startsWith('.'))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .slice(0, 128);
+        }
         for (const entry of entries) {
             if (out.length >= bound)
                 break;
@@ -266,9 +272,14 @@ export function listSkillResourcePaths(root, domain, name, limit = MAX_ADVERTISE
             if (entry.isDirectory())
                 walk(next, depth + 1);
             else if (entry.isFile() && TEXT_EXTENSIONS.has(path.posix.extname(next).toLowerCase())) {
-                const stat = fs.lstatSync(path.join(directory, entry.name));
-                if (stat.size <= MAX_SKILL_RESOURCE_BYTES && !stat.isSymbolicLink())
-                    out.push(next);
+                try {
+                    const stat = fs.lstatSync(path.join(directory, entry.name));
+                    if (stat.size <= MAX_SKILL_RESOURCE_BYTES && !stat.isSymbolicLink())
+                        out.push(next);
+                }
+                catch {
+                    // Skip vanished or unreadable support file
+                }
             }
         }
     };

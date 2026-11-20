@@ -266,19 +266,28 @@ export function listSkillResourcePaths(
   const walk = (relative: string, depth: number): void => {
     if (out.length >= bound || depth > 3) return;
     const directory = path.join(skillDir, ...relative.split('/'));
-    if (!inspectDirectory(directory, true)) return;
-    const entries = fs.readdirSync(directory, { withFileTypes: true })
-      .filter(item => !item.name.startsWith('.'))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 128);
+    let entries: fs.Dirent[];
+    try {
+      if (!inspectDirectory(directory, true)) return;
+      entries = fs.readdirSync(directory, { withFileTypes: true })
+        .filter(item => !item.name.startsWith('.'))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 128);
+    } catch {
+      return;
+    }
     for (const entry of entries) {
       if (out.length >= bound) break;
       if (entry.isSymbolicLink()) continue;
       const next = `${relative}/${entry.name}`;
       if (entry.isDirectory()) walk(next, depth + 1);
       else if (entry.isFile() && TEXT_EXTENSIONS.has(path.posix.extname(next).toLowerCase())) {
-        const stat = fs.lstatSync(path.join(directory, entry.name));
-        if (stat.size <= MAX_SKILL_RESOURCE_BYTES && !stat.isSymbolicLink()) out.push(next);
+        try {
+          const stat = fs.lstatSync(path.join(directory, entry.name));
+          if (stat.size <= MAX_SKILL_RESOURCE_BYTES && !stat.isSymbolicLink()) out.push(next);
+        } catch {
+          // Skip vanished or unreadable support file
+        }
       }
     }
   };
