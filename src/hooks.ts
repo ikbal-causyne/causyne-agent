@@ -113,6 +113,9 @@ function runOneHook(rule: NormalizedHookRule, payload: UnknownRecord, cwd: strin
     child.stderr.on('data', (chunk: Buffer | string) => { stderr = collect(stderr, chunk); });
     child.on('error', (error: Error) => finish({ exitCode: null, spawnError: error.message, stdout, stderr }));
     child.on('close', (code: number | null) => finish({ exitCode: code, stdout, stderr }));
+    child.stdin.on('error', () => {
+      // Ignore EPIPE when a hook exits immediately without draining stdin
+    });
     child.stdin.end(JSON.stringify(payload));
   });
 }
