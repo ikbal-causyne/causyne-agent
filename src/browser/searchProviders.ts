@@ -27,7 +27,7 @@ function decodeEntities(value: string): string {
       return Number.isInteger(point) && point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
         ? String.fromCodePoint(point) : full;
     }
-    return named[normalized] ?? full;
+    return Object.hasOwn(named, normalized) ? named[normalized]! : full;
   });
 }
 
