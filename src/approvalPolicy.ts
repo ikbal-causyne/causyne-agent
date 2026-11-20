@@ -46,7 +46,7 @@ export function isWholeFileDeletion(tool: string, args: Record<string, unknown>)
     : SHELL_TOOLS.has(tool)
       ? String(args.command ?? args.input ?? args.cmd ?? '')
       : '';
-  if (/^\s*git\s+rm\s+--cached\b/i.test(command)) return false;
+  if (/^\s*git\s+rm\s+--cached\b[^;&|\n`$()]*$/i.test(command)) return false;
   return command.length > 0
     && (WHOLE_FILE_DELETE.test(command) || DELETE_API_CALL.test(command) || NESTED_SHELL_DELETE.test(command));
 }
