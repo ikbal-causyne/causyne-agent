@@ -1027,11 +1027,12 @@ function coerceValueBySchema(
       if (timeMatch && timeMatch[1]) {
         const rawVal = parseFloat(timeMatch[1]);
         const unit = (timeMatch[2] || '').toLowerCase();
+        const isExplicitMsKey = key === 'timeoutMs' || key === 'timeout_ms';
         let ms = rawVal;
         if (unit === 'ms') ms = rawVal;
         else if (unit === 'm') ms = rawVal * 60 * 1000;
         else if (unit === 's') ms = rawVal * 1000;
-        else ms = rawVal <= 600 ? rawVal * 1000 : rawVal;
+        else ms = (!isExplicitMsKey && rawVal <= 600) ? rawVal * 1000 : rawVal;
         const normalized = expectedType === 'integer' ? Math.round(ms) : ms;
         repairs.push(`Normalized time string "${val}" -> ${normalized}ms for parameter '${pathLabel}'`);
         return normalized;
@@ -1042,7 +1043,7 @@ function coerceValueBySchema(
           return num;
         }
       }
-    } else if (typeof val === 'number' && (key === 'timeout' || key === 'timeoutMs')) {
+    } else if (typeof val === 'number' && key === 'timeout' && pathLabel === 'timeout') {
       if (val > 0 && val <= 600) {
         const ms = Math.round(val * 1000);
         repairs.push(`Scaled timeout from seconds (${val}s) -> ${ms}ms for parameter '${pathLabel}'`);
