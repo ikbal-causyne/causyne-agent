@@ -60,7 +60,14 @@ export function validateMediaPayload(
   limits: Partial<PayloadLimits> = {}
 ): MediaValidationResult {
   const byteLength = buffer.length;
-  const activeLimits: PayloadLimits = { ...DEFAULT_PAYLOAD_LIMITS, ...limits };
+  const safeLimit = (value: number | undefined, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback;
+  const activeLimits: PayloadLimits = {
+    maxImageBytes: safeLimit(limits.maxImageBytes, DEFAULT_PAYLOAD_LIMITS.maxImageBytes),
+    maxAudioBytes: safeLimit(limits.maxAudioBytes, DEFAULT_PAYLOAD_LIMITS.maxAudioBytes),
+    maxVideoBytes: safeLimit(limits.maxVideoBytes, DEFAULT_PAYLOAD_LIMITS.maxVideoBytes),
+    maxTextChars: safeLimit(limits.maxTextChars, DEFAULT_PAYLOAD_LIMITS.maxTextChars)
+  };
 
   let maxAllowed = activeLimits.maxImageBytes;
   if (kind === 'audio') maxAllowed = activeLimits.maxAudioBytes;
