@@ -91,8 +91,8 @@ export const filmEngine: NativeEngineAdapter = {
     }
 
     args.push('--compact');
-    if (request.saveAs) artifacts = [request.saveAs];
-    else if (request.save && context.project) artifacts = [context.project];
+    if (context.saveAs) artifacts.push(context.saveAs);
+    else if (context.save && context.project) artifacts.push(context.project);
 
     return {
       args,
