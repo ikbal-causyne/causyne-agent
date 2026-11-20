@@ -44,7 +44,7 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
     const { mediaType, prompt, targetProvider = 'auto', targetModel, durationSeconds = 5 } = args;
     // Auto-resolve provider based on available keys and media type
     let provider = targetProvider;
-    let model = targetModel;
+    let model = targetModel || args.model;
     if (provider === 'auto') {
         if (mediaType === 'video_animation') {
             if (config.geminiApiKey || (config.provider === 'gemini' && config.apiKey)) {
@@ -132,13 +132,18 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
     let headers = { 'Content-Type': 'application/json' };
     let body = {};
     if (provider === 'gemini') {
+        model = model || (mediaType === 'video_animation' ? 'veo-2.0-generate-001' : 'imagen-3.0-generate-002');
+        if (!/^[A-Za-z0-9._-]+$/.test(model)) {
+            return { success: false, code: 'INVALID_TOOL_ARGUMENTS', error: 'Invalid Gemini media model identifier.' };
+        }
+        const encodedModel = encodeURIComponent(model);
         headers['x-goog-api-key'] = apiKey;
         if (mediaType === 'video_animation') {
-            targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict`;
+            targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodedModel}:predict`;
             body = { instances: [{ prompt }], parameters: { durationSeconds } };
         }
         else {
-            targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict`;
+            targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodedModel}:predict`;
             body = { instances: [{ prompt }], parameters: { sampleCount: 1 } };
         }
     }
