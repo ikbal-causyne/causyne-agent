@@ -1118,7 +1118,7 @@ function coerceObjectBySchema(obj, schema, pathPrefix, repairs, depth) {
         return obj;
     const modified = { ...obj };
     for (const [key, propSchema] of Object.entries(schema.properties)) {
-        if (!(key in modified))
+        if (!Object.hasOwn(modified, key))
             continue;
         const label = pathPrefix ? `${pathPrefix}.${key}` : key;
         modified[key] = coerceValueBySchema(key, modified[key], propSchema, label, repairs, depth);

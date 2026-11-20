@@ -1163,7 +1163,7 @@ function coerceObjectBySchema(
   if (depth > 8 || !schema.properties) return obj;
   const modified: Record<string, unknown> = { ...obj };
   for (const [key, propSchema] of Object.entries(schema.properties)) {
-    if (!(key in modified)) continue;
+    if (!Object.hasOwn(modified, key)) continue;
     const label = pathPrefix ? `${pathPrefix}.${key}` : key;
     modified[key] = coerceValueBySchema(key, modified[key], propSchema, label, repairs, depth);
   }
