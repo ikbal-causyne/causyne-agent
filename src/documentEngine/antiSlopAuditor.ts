@@ -166,12 +166,18 @@ export function auditBudgetArithmetic(spec: ArithmeticBudgetSpec): {
   let differenceFromTarget: number | undefined;
 
   if (spec.grossUpTaxRate !== undefined) {
-    const divisor = 1 - spec.grossUpTaxRate;
-    grossCalculated = Math.round(grandTotal / divisor);
-    taxCalculated = grossCalculated - grandTotal;
+    if (!Number.isFinite(spec.grossUpTaxRate) || spec.grossUpTaxRate < 0 || spec.grossUpTaxRate >= 1) {
+      categoryErrors.push(
+        `Invalid grossUpTaxRate "${spec.grossUpTaxRate}": must be a finite fraction in [0, 1)`
+      );
+    } else {
+      const divisor = 1 - spec.grossUpTaxRate;
+      grossCalculated = Math.round(grandTotal / divisor);
+      taxCalculated = grossCalculated - grandTotal;
 
-    if (spec.targetGross !== undefined) {
-      differenceFromTarget = grossCalculated - spec.targetGross;
+      if (spec.targetGross !== undefined) {
+        differenceFromTarget = grossCalculated - spec.targetGross;
+      }
     }
   }
 
