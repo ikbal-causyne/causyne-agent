@@ -87,6 +87,9 @@ async function routeMultimediaRequest(args: MediaArgs, config: Record<string, an
   if (provider === 'pollinations' || provider === 'local' || !['gemini', 'openai', 'qwen', 'muse'].includes(provider)) {
     return null;
   }
+  if (provider === 'qwen') {
+    return { success: false, code: 'MEDIA_PROVIDER_UNAVAILABLE', error: `No supported authenticated ${mediaType} endpoint is configured for ${provider}. No media artifact was produced.` };
+  }
 
   // Calculate estimated cost and equivalent tokens
   const quantity = mediaType === 'video_animation' ? durationSeconds : 1;
