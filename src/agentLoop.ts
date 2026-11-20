@@ -4624,7 +4624,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
 
               // Active Inference: Record step prediction error into VFE rolling tracker
               if (this.vfeTracker) {
-                const isThrash = isThrashing((this._planSteps || []).map((s) => s.tool), functionName);
+                const isThrash = isThrashing((this._planSteps || []).map((s) => s.tool));
                 const vfeOutcome = this.vfeTracker.recordStep({
                   tool: functionName,
                   success: stepSuccess,
