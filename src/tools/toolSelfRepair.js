@@ -595,9 +595,9 @@ export function resolveParameterAliases(toolName, args, schema) {
     // 1. Specialized structural healing: fs_edit vs MultiEdit
     if (canonicalName === 'fs_edit') {
         // If edits is missing, synthesize from top-level fields
-        if (!modified.edits && (modified.searchContent || modified.old_string || modified.oldText || modified.find)) {
-            const search = (modified.searchContent || modified.old_string || modified.oldText || modified.find || '');
-            const replace = (modified.replaceContent || modified.new_string || modified.newText || modified.replacement || '');
+        if (!modified.edits && (modified.searchContent !== undefined || modified.old_string !== undefined || modified.oldText !== undefined || modified.find !== undefined)) {
+            const search = (modified.searchContent ?? modified.old_string ?? modified.oldText ?? modified.find ?? '');
+            const replace = (modified.replaceContent ?? modified.new_string ?? modified.newText ?? modified.replacement ?? '');
             modified.edits = [{ searchContent: search, replaceContent: replace }];
             delete modified.searchContent;
             delete modified.old_string;
@@ -614,20 +614,20 @@ export function resolveParameterAliases(toolName, args, schema) {
                 if (!item || typeof item !== 'object')
                     return item;
                 const normalizedItem = { ...item };
-                if (!normalizedItem.searchContent && (normalizedItem.old_string || normalizedItem.oldText || normalizedItem.find)) {
-                    normalizedItem.searchContent = normalizedItem.old_string || normalizedItem.oldText || normalizedItem.find;
+                if (normalizedItem.searchContent === undefined && (normalizedItem.old_string !== undefined || normalizedItem.oldText !== undefined || normalizedItem.find !== undefined)) {
+                    normalizedItem.searchContent = normalizedItem.old_string ?? normalizedItem.oldText ?? normalizedItem.find;
                 }
-                if (!normalizedItem.replaceContent && (normalizedItem.new_string || normalizedItem.newText || normalizedItem.replace)) {
-                    normalizedItem.replaceContent = normalizedItem.new_string || normalizedItem.newText || normalizedItem.replace;
+                if (normalizedItem.replaceContent === undefined && (normalizedItem.new_string !== undefined || normalizedItem.newText !== undefined || normalizedItem.replace !== undefined)) {
+                    normalizedItem.replaceContent = normalizedItem.new_string ?? normalizedItem.newText ?? normalizedItem.replace;
                 }
                 return normalizedItem;
             });
         }
     }
     else if (canonicalName === 'MultiEdit') {
-        if (!modified.edits && (modified.old_string || modified.searchContent || modified.oldText || modified.find)) {
-            const search = (modified.old_string || modified.searchContent || modified.oldText || modified.find || '');
-            const replace = (modified.new_string || modified.replaceContent || modified.newText || modified.replacement || '');
+        if (!modified.edits && (modified.old_string !== undefined || modified.searchContent !== undefined || modified.oldText !== undefined || modified.find !== undefined)) {
+            const search = (modified.old_string ?? modified.searchContent ?? modified.oldText ?? modified.find ?? '');
+            const replace = (modified.new_string ?? modified.replaceContent ?? modified.newText ?? modified.replacement ?? '');
             modified.edits = [{ old_string: search, new_string: replace }];
             delete modified.searchContent;
             delete modified.old_string;
@@ -644,11 +644,11 @@ export function resolveParameterAliases(toolName, args, schema) {
                 if (!item || typeof item !== 'object')
                     return item;
                 const normalizedItem = { ...item };
-                if (!normalizedItem.old_string && (normalizedItem.searchContent || normalizedItem.oldText || normalizedItem.find)) {
-                    normalizedItem.old_string = normalizedItem.searchContent || normalizedItem.oldText || normalizedItem.find;
+                if (normalizedItem.old_string === undefined && (normalizedItem.searchContent !== undefined || normalizedItem.oldText !== undefined || normalizedItem.find !== undefined)) {
+                    normalizedItem.old_string = normalizedItem.searchContent ?? normalizedItem.oldText ?? normalizedItem.find;
                 }
-                if (!normalizedItem.new_string && (normalizedItem.replaceContent || normalizedItem.newText || normalizedItem.replace)) {
-                    normalizedItem.new_string = normalizedItem.replaceContent || normalizedItem.newText || normalizedItem.replace;
+                if (normalizedItem.new_string === undefined && (normalizedItem.replaceContent !== undefined || normalizedItem.newText !== undefined || normalizedItem.replace !== undefined)) {
+                    normalizedItem.new_string = normalizedItem.replaceContent ?? normalizedItem.newText ?? normalizedItem.replace;
                 }
                 return normalizedItem;
             });
