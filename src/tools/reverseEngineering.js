@@ -189,13 +189,15 @@ function parseAsarHeader(buffer) {
     const magic = buffer.readUInt32LE(0);
     if (magic !== 4)
         return null;
+    const pickleSize = buffer.readUInt32LE(4);
     const headerSize = buffer.readUInt32LE(12);
-    if (16 + headerSize > buffer.length)
+    const dataOffset = 8 + pickleSize;
+    if (16 + headerSize > buffer.length || dataOffset < 16 + headerSize || dataOffset > buffer.length)
         return null;
     try {
         const headerJson = buffer.toString('utf8', 16, 16 + headerSize);
         const header = JSON.parse(headerJson);
-        return { headerSize: 16 + headerSize, header };
+        return { headerSize: dataOffset, header };
     }
     catch {
         return null;
@@ -1106,24 +1108,40 @@ export const reverseEngineering = {
                             message: `Listed ${files.length} files in ASAR archive.`
                         };
                     }
-                    await fsp.mkdir(dest, { recursive: true });
+                    const destRoot = path.resolve(dest);
+                    await fsp.mkdir(destRoot, { recursive: true });
                     const baseOffset = asar.headerSize;
                     let extractedCount = 0;
                     const extractEntry = async (entry, currPath) => {
+                        const resolvedCurr = path.resolve(currPath);
+                        const rel = path.relative(destRoot, resolvedCurr);
+                        if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+                            throw new Error(`Refusing ASAR path traversal outside destination: ${currPath}`);
+                        }
                         if ('files' in entry && entry.files) {
-                            await fsp.mkdir(currPath, { recursive: true });
+                            await fsp.mkdir(resolvedCurr, { recursive: true });
                             for (const [name, child] of Object.entries(entry.files)) {
-                                await extractEntry(child, path.join(currPath, name));
+                                if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+                                    throw new Error(`Refusing unsafe ASAR entry name: ${name}`);
+                                }
+                                await extractEntry(child, path.join(resolvedCurr, name));
                             }
                         }
                         else if ('size' in entry && typeof entry.offset !== 'undefined') {
-                            const fileOffset = baseOffset + parseInt(String(entry.offset), 10);
+                            const offsetVal = Number.parseInt(String(entry.offset), 10);
+                            if (!Number.isFinite(offsetVal) || offsetVal < 0 || !Number.isFinite(entry.size) || entry.size < 0) {
+                                throw new Error(`Invalid ASAR file entry offset/size at ${resolvedCurr}`);
+                            }
+                            const fileOffset = baseOffset + offsetVal;
+                            if (fileOffset + entry.size > fileBuf.length) {
+                                throw new Error(`ASAR entry exceeds archive bounds at ${resolvedCurr}`);
+                            }
                             const fileData = fileBuf.subarray(fileOffset, fileOffset + entry.size);
-                            await fsp.writeFile(currPath, fileData);
+                            await fsp.writeFile(resolvedCurr, fileData);
                             extractedCount++;
                         }
                     };
-                    await extractEntry(asar.header, dest);
+                    await extractEntry(asar.header, destRoot);
                     return {
                         success: true,
                         action: 'unpack',
