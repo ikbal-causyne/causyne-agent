@@ -48,8 +48,28 @@ function errorString(error: unknown): string {
   return typeof error === 'string' ? error : String(error);
 }
 
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    const seen = new WeakSet<object>();
+    try {
+      return JSON.stringify(value, (_key, item: unknown) => {
+        if (typeof item === 'bigint') return item.toString();
+        if (item !== null && typeof item === 'object') {
+          if (seen.has(item)) return '[Circular]';
+          seen.add(item);
+        }
+        return item;
+      });
+    } catch {
+      return JSON.stringify({ success: false, error: 'Tool returned an unserializable payload.' });
+    }
+  }
+}
+
 export function toolResultMessage(toolCallId: string, name: string, payload: ToolPayload): ToolResultMessage {
-  return { role: 'tool', tool_call_id: toolCallId, name, content: JSON.stringify(payload) };
+  return { role: 'tool', tool_call_id: toolCallId, name, content: safeJsonStringify(payload) };
 }
 
 export function mergeHookFeedback<T extends ToolPayload>(

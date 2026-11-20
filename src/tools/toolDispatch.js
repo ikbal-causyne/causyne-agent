@@ -11,8 +11,31 @@ function errorString(error) {
         return error.message;
     return typeof error === 'string' ? error : String(error);
 }
+function safeJsonStringify(value) {
+    try {
+        return JSON.stringify(value);
+    }
+    catch {
+        const seen = new WeakSet();
+        try {
+            return JSON.stringify(value, (_key, item) => {
+                if (typeof item === 'bigint')
+                    return item.toString();
+                if (item !== null && typeof item === 'object') {
+                    if (seen.has(item))
+                        return '[Circular]';
+                    seen.add(item);
+                }
+                return item;
+            });
+        }
+        catch {
+            return JSON.stringify({ success: false, error: 'Tool returned an unserializable payload.' });
+        }
+    }
+}
 export function toolResultMessage(toolCallId, name, payload) {
-    return { role: 'tool', tool_call_id: toolCallId, name, content: JSON.stringify(payload) };
+    return { role: 'tool', tool_call_id: toolCallId, name, content: safeJsonStringify(payload) };
 }
 export function mergeHookFeedback(payload, messages, denied = false) {
     if (!messages || messages.length === 0)
