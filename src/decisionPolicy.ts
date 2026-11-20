@@ -85,7 +85,7 @@ function splitCommandSegments(command: string): string[] {
       continue;
     }
     if (!inSingle && !inDouble) {
-      if (ch === ';') {
+      if (ch === ';' || ch === '\n' || ch === '\r') {
         if (current.trim()) segments.push(current.trim());
         current = '';
         continue;
@@ -96,10 +96,20 @@ function splitCommandSegments(command: string): string[] {
         i++;
         continue;
       }
-      if (ch === '|' && command[i + 1] === '|') {
+      if (ch === '&' && command[i - 1] !== '>' && command[i + 1] !== '>') {
+        if (current.trim()) segments.push(current.trim());
+        current = '';
+        continue;
+      }
+      if (ch === '|' && (command[i + 1] === '|' || command[i + 1] === '&')) {
         if (current.trim()) segments.push(current.trim());
         current = '';
         i++;
+        continue;
+      }
+      if (ch === '|') {
+        if (current.trim()) segments.push(current.trim());
+        current = '';
         continue;
       }
     }
@@ -110,7 +120,7 @@ function splitCommandSegments(command: string): string[] {
 }
 
 const READ_ONLY_CMD_PATTERNS = [
-  String.raw`^\s*(?:pwd|ls|find|rg|grep|cat|sed|awk|head|tail|wc|diff|file|stat|which|whereis|type|du|df|pdfinfo|pdftotext|identify|mediainfo|ffprobe|otool|readelf|nm|ps|lsof|top|uptime|whoami|id|uname|env|printenv|echo|printf|pytest)\b`,
+  String.raw`(?:pwd|ls|find|rg|grep|cat|sed|awk|head|tail|wc|diff|file|stat|which|whereis|type|du|df|pdfinfo|pdftotext|identify|mediainfo|ffprobe|otool|readelf|nm|ps|lsof|top|uptime|whoami|id|uname|env|printenv|echo|printf|pytest)\b`,
   String.raw`(?:\.\/)?gradlew?\s+(?:test\S*|check\S*|lint\S*)\b`,
   String.raw`mvn\s+(?:test\S*|verify\S*)\b`,
   String.raw`git\s+(?:status|diff|log|show|branch|tag|remote|rev-parse|describe)\b`,
@@ -126,7 +136,7 @@ const READ_ONLY_CMD_PATTERNS = [
   String.raw`go\s+test\b`,
   String.raw`curl\s+(?:-I|-sI|-s\b|--head)\b`
 ];
-const READ_ONLY_CMD_REGEX = new RegExp(READ_ONLY_CMD_PATTERNS.join('|'), 'i');
+const READ_ONLY_CMD_REGEX = new RegExp(`^\\s*(?:${READ_ONLY_CMD_PATTERNS.join('|')})`, 'i');
 
 export function isReadOnlyShellCommand(command: string): boolean {
   const trimmed = command.trim();
