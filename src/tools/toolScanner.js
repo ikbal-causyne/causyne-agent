@@ -681,8 +681,11 @@ export function scanAndAdaptToolsForProvider(tools, provider, options = {}) {
         let adapted;
         if (isGemini) {
             const declaration = { name, description };
-            if (rawSchema && !isEmptyObjectSchema(rawSchema)) {
-                declaration['parameters'] = adaptSchemaForGemini(rawSchema, [], rewritten);
+            if (rawSchema) {
+                const compiled = adaptSchemaForGemini(rawSchema, [], rewritten);
+                if (!isEmptyObjectSchema(compiled)) {
+                    declaration['parameters'] = compiled;
+                }
             }
             adapted = declaration;
         }

@@ -827,8 +827,11 @@ export function scanAndAdaptToolsForProvider(
 
     if (isGemini) {
       const declaration: Record<string, unknown> = { name, description };
-      if (rawSchema && !isEmptyObjectSchema(rawSchema)) {
-        declaration['parameters'] = adaptSchemaForGemini(rawSchema, [], rewritten);
+      if (rawSchema) {
+        const compiled = adaptSchemaForGemini(rawSchema, [], rewritten);
+        if (!isEmptyObjectSchema(compiled)) {
+          declaration['parameters'] = compiled;
+        }
       }
       adapted = declaration;
     } else if (isAnthropic) {
