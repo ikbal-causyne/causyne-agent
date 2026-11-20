@@ -101,7 +101,7 @@ export function resolveRoute(config: RouterConfig | undefined | null, kind: Rout
     };
   }
 
-  const cheap = UTILITY_MODEL_BY_PROVIDER[provider];
+  const cheap = Object.hasOwn(UTILITY_MODEL_BY_PROVIDER, provider) ? UTILITY_MODEL_BY_PROVIDER[provider] : undefined;
   if (!cheap) {
     return { ...stay, reason: `no published utility tier for ${provider}; paying full rate` };
   }
