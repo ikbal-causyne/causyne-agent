@@ -185,7 +185,7 @@ export function isFinalCommandSearch(rawCommand) {
     }
     const pipeParts = lastStmt.split('|');
     const finalCmd = pipeParts.at(-1)?.trim().replace(/["'\)\s]+$/, '') || '';
-    return /(?:^|\s)(grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep|find)\b/.test(finalCmd);
+    return /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:\/(?:usr\/)?bin\/)?(?:grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep|find))(?:\s|$)/.test(finalCmd);
 }
 /**
  * Commands that are strictly read-only and idempotent.
