@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { resolveUserPath } from './utils/paths.js';
 
 const SKIP_DIRECTORIES = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', 'target',
@@ -60,7 +61,7 @@ export interface WorkspaceContextData {
 
 export class WorkspacePerception {
   async buildContext(workspacePath: string): Promise<WorkspaceContextData> {
-    const resolvedPath = workspacePath.replace(/^~\//, os.homedir() + '/');
+    const resolvedPath = resolveUserPath(workspacePath);
 
     const context: Partial<WorkspaceContextData> = {
       cwd: resolvedPath,
@@ -437,7 +438,7 @@ export class WorkspacePerception {
   }
 
   async detectGitInfo(dir: string): Promise<GitInfo> {
-    let current = dir;
+    let current = path.resolve(dir);
     for (let depth = 0; depth < 5; depth++) {
       const gitDir = path.join(current, '.git');
       try {
