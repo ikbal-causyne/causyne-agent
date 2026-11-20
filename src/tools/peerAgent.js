@@ -6,6 +6,7 @@
  * a prompt; it never chooses the raw executable or unrestricted arguments.
  * Those come from the catalog presets or the user's `~/.causyne/peers.json`.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -15,6 +16,36 @@ import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 const execFileAsync = promisify(execFile);
 const MAX_PROMPT_CHARS = 2_000_000;
 const READ_ONLY_KINDS = new Set(['read', 'search', 'fetch', 'think']);
+function resolveCanonicalPath(target) {
+    const resolved = path.resolve(target);
+    try {
+        return fs.realpathSync(resolved);
+    }
+    catch {
+        let current = resolved;
+        const missing = [];
+        for (let depth = 0; depth < 64; depth++) {
+            const parent = path.dirname(current);
+            if (parent === current)
+                break;
+            missing.unshift(path.basename(current));
+            current = parent;
+            try {
+                return path.join(fs.realpathSync(current), ...missing);
+            }
+            catch {
+                continue;
+            }
+        }
+        return resolved;
+    }
+}
+function isWithinWorkspaceRoot(workspaceRoot, candidatePath) {
+    const canonicalRoot = resolveCanonicalPath(workspaceRoot);
+    const canonicalTarget = resolveCanonicalPath(path.resolve(canonicalRoot, candidatePath));
+    const rel = path.relative(canonicalRoot, canonicalTarget);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
 function selectPermission(profile, request, workspaceRoot) {
     const kind = request.toolCall.kind;
     const readLike = typeof kind === 'string' && READ_ONLY_KINDS.has(kind);
@@ -27,12 +58,9 @@ function selectPermission(profile, request, workspaceRoot) {
         return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
     }
     if (profile.policy === 'workspace') {
-        // If locations are provided, verify they are inside workspaceRoot
+        // If locations are provided, verify canonical realpaths stay inside workspaceRoot
         const locations = request.toolCall.locations || [];
-        const isInsideWorkspace = locations.length === 0 || locations.every((loc) => {
-            const resolved = path.resolve(workspaceRoot, loc.path);
-            return !path.relative(workspaceRoot, resolved).startsWith('..') && !path.isAbsolute(path.relative(workspaceRoot, resolved));
-        });
+        const isInsideWorkspace = locations.length === 0 || locations.every((loc) => typeof loc?.path === 'string' && loc.path.trim().length > 0 && isWithinWorkspaceRoot(workspaceRoot, loc.path.trim()));
         if (isInsideWorkspace) {
             const allow = request.options.find((option) => option.kind === 'allow_once' || option.kind === 'allow_always');
             return allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
