@@ -179,15 +179,38 @@ export function renderSpillDocument(result, meta = {}) {
     ];
     const sections = [];
     const scalars = [];
+    const safeStringify = (input, indent) => {
+        try {
+            return JSON.stringify(input, null, indent);
+        }
+        catch {
+            const seen = new WeakSet();
+            try {
+                return JSON.stringify(input, (_k, v) => {
+                    if (typeof v === 'bigint')
+                        return v.toString();
+                    if (v !== null && typeof v === 'object') {
+                        if (seen.has(v))
+                            return '[Circular]';
+                        seen.add(v);
+                    }
+                    return v;
+                }, indent);
+            }
+            catch {
+                return String(input);
+            }
+        }
+    };
     for (const [key, value] of Object.entries(result)) {
         if (typeof value === 'string' && value.length > 500) {
             sections.push(`\n--- field: ${key} (${value.length} chars) ---\n${value}`);
         }
         else if (value !== null && typeof value === 'object') {
-            sections.push(`\n--- field: ${key} (JSON) ---\n${JSON.stringify(value, null, 2)}`);
+            sections.push(`\n--- field: ${key} (JSON) ---\n${safeStringify(value, 2)}`);
         }
         else {
-            scalars.push(`${key}: ${JSON.stringify(value)}`);
+            scalars.push(`${key}: ${safeStringify(value)}`);
         }
     }
     if (scalars.length > 0)
