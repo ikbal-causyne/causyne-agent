@@ -221,9 +221,18 @@ export class PluginsFactory {
       };
     }
 
-    if (fs.existsSync(targetDir)) {
-      const targetStat = fs.lstatSync(targetDir);
-      if (targetStat.isSymbolicLink()) {
+    const safeLstat = (p: string): fs.Stats | null => {
+      try {
+        return fs.lstatSync(p);
+      } catch (err: any) {
+        if (err && err.code === 'ENOENT') return null;
+        throw err;
+      }
+    };
+
+    const existingTargetStat = safeLstat(targetDir);
+    if (existingTargetStat) {
+      if (existingTargetStat.isSymbolicLink()) {
         return {
           success: false,
           route,
@@ -233,7 +242,7 @@ export class PluginsFactory {
           error: `Target path must not be a symlink: ${targetDir}`
         };
       }
-      if (!targetStat.isDirectory()) {
+      if (!existingTargetStat.isDirectory()) {
         return {
           success: false,
           route,
@@ -288,14 +297,12 @@ export class PluginsFactory {
       for (const file of payload.files) {
         const filePath = path.join(targetDir, file.relativePath);
         const fileDir = path.dirname(filePath);
-        if (fs.existsSync(fileDir)) {
-          const dirStat = fs.lstatSync(fileDir);
-          if (dirStat.isSymbolicLink()) {
-            throw new Error(`Refusing to write through symlinked directory: ${fileDir}`);
-          }
+        const dirStat = safeLstat(fileDir);
+        if (dirStat?.isSymbolicLink()) {
+          throw new Error(`Refusing to write through symlinked directory: ${fileDir}`);
         }
-        if (fs.existsSync(filePath)) {
-          const fileStat = fs.lstatSync(filePath);
+        const fileStat = safeLstat(filePath);
+        if (fileStat) {
           if (fileStat.isSymbolicLink()) {
             throw new Error(`Refusing to overwrite symlinked file: ${filePath}`);
           }
