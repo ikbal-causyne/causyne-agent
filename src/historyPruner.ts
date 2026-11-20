@@ -182,7 +182,8 @@ export function buildRecoverableDroppedSummary(
     paths.set(message.spillPath, `${message.name ?? 'tool'} (${verdict}): ${message.spillPath}`);
   }
   if (paths.size === 0) return baseSummary;
-  const recent = [...paths.values()].slice(-Math.max(0, maxPointers));
+  const limit = Number.isFinite(maxPointers) ? Math.max(0, Math.floor(maxPointers)) : 8;
+  const recent = limit === 0 ? [] : [...paths.values()].slice(-limit);
   const omitted = paths.size - recent.length;
   const index = `Recoverable prior tool output (${paths.size} saved; local files expire after retention):\n`
     + recent.join('\n')
