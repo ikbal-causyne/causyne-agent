@@ -119,8 +119,26 @@ export function sanitizeTextPayload(text: string, maxChars: number = DEFAULT_PAY
   const limit = Number.isFinite(maxChars) ? Math.floor(maxChars) : DEFAULT_PAYLOAD_LIMITS.maxTextChars;
   if (limit <= 0) return '';
   if (text.length <= limit) return text;
-  const half = Math.floor(limit / 2);
-  const omitted = text.length - limit;
-  const tail = half > 0 ? text.slice(-half) : '';
-  return text.slice(0, half) + `\n[... ${omitted} characters sanitized to protect context budget ...]\n` + tail;
+  const buildMarker = (count: number): string =>
+    `\n[... ${count} characters sanitized to protect context budget ...]\n`;
+  let marker = buildMarker(text.length);
+  if (limit <= marker.length) return text.slice(0, limit);
+  let keep = limit - marker.length;
+  let headLen = Math.ceil(keep / 2);
+  let tailLen = Math.floor(keep / 2);
+  let omitted = text.length - headLen - tailLen;
+  marker = buildMarker(omitted);
+  if (limit <= marker.length) return text.slice(0, limit);
+  keep = limit - marker.length;
+  headLen = Math.ceil(keep / 2);
+  tailLen = Math.floor(keep / 2);
+  omitted = text.length - headLen - tailLen;
+  const finalMarker = buildMarker(omitted);
+  if (headLen + finalMarker.length + tailLen > limit) {
+    const excess = headLen + finalMarker.length + tailLen - limit;
+    tailLen = Math.max(0, tailLen - excess);
+    omitted = text.length - headLen - tailLen;
+  }
+  const tail = tailLen > 0 ? text.slice(-tailLen) : '';
+  return text.slice(0, headLen) + buildMarker(omitted) + tail;
 }
