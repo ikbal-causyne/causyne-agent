@@ -512,6 +512,8 @@ export class ModelPickerLayer extends SelectLayer {
     }
 
     if (action === 'cancel') {
+      this.settled = true;
+      this.onPick?.(null);
       return 'close';
     }
     return action ? 'handled' : null;
