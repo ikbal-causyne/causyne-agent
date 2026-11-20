@@ -385,7 +385,13 @@ export class SessionPickerLayer extends SelectLayer {
             const selected = Math.max(0, Math.min(Math.floor(this.list.selected || 0), entries.length - 1));
             const window = renderSessionRows(entries, offset, selected, this.lastWidth, available, this.renderOptions(entries));
             const page = Math.max(1, window.lastIndex - offset + 1);
-            this.list.move(event.name === 'pageup' ? -page : page, available);
+            const target = Math.max(0, Math.min(entries.length - 1, selected + (event.name === 'pageup' ? -page : page)));
+            if (typeof this.list.moveTo === 'function') {
+                this.list.moveTo(target, available);
+            }
+            else {
+                this.list.move(target - selected, available);
+            }
             return 'handled';
         }
         const previousQuery = this.list.query;
