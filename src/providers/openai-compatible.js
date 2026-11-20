@@ -9,6 +9,7 @@ import {
   resolveTemperature,
   safeProviderFetchJson
 } from './byokHttp.js';
+import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 
 export class OpenAICompatibleProvider extends LLMProvider {
   constructor(config) {
@@ -69,18 +70,29 @@ export class OpenAICompatibleProvider extends LLMProvider {
       requireApiKey(this.apiKey, 'OpenAI-Compatible');
     }
 
-    const data = await safeProviderFetchJson({
+    const requestOpts = {
       url: this.baseUrl,
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'OpenAI-Compatible',
       secrets: trimmedKey ? [trimmedKey] : [],
       hasApiKey: Boolean(trimmedKey),
       allowInsecureHttp: this.allowInsecureHttp
-    });
+    };
+
+    const data = wantsStreaming(options)
+      ? await streamOpenAICompatibleChat({
+          ...requestOpts,
+          payload,
+          onChunk: options.onChunk,
+          onReasoningChunk: options.onReasoningChunk
+        })
+      : await safeProviderFetchJson({
+          ...requestOpts,
+          body: JSON.stringify(payload)
+        });
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_oai',
       freeFormPaths

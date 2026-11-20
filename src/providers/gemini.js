@@ -18,6 +18,7 @@ import {
   resolveTemperature,
   safeProviderFetchJson
 } from './byokHttp.js';
+import { streamGeminiGenerateContent, wantsStreaming } from './byokStream.js';
 
 export { adaptSchemaForGemini, isEmptyObjectSchema };
 
@@ -229,20 +230,31 @@ export class GeminiProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const data = await safeProviderFetchJson({
+    const requestOpts = {
       url: this.baseUrl,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-goog-api-key': apiKey
       },
-      body: JSON.stringify(payload),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'Gemini',
       secrets: [apiKey],
       hasApiKey: true
-    });
+    };
+
+    const data = wantsStreaming(options)
+      ? await streamGeminiGenerateContent({
+          ...requestOpts,
+          payload,
+          onChunk: options.onChunk,
+          onReasoningChunk: options.onReasoningChunk
+        })
+      : await safeProviderFetchJson({
+          ...requestOpts,
+          body: JSON.stringify(payload)
+        });
 
     const firstCandidate = data.candidates?.[0];
     if (!firstCandidate) {
@@ -250,12 +262,17 @@ export class GeminiProvider extends LLMProvider {
     }
 
     let content = '';
+    let reasoningContent = typeof data.reasoningContent === 'string' ? data.reasoningContent : '';
     let toolCalls = [];
     const candidateParts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
 
     for (const part of candidateParts) {
       if (part.text) {
-        content += part.text;
+        if (part.thought === true) {
+          reasoningContent += part.text;
+        } else {
+          content += part.text;
+        }
       } else if (part.functionCall) {
         const callName = normalizeToolName(part.functionCall.name || '');
         const serializedArgs = serializeAndDecodeArguments(part.functionCall.args || {}, callName, freeFormPaths);
@@ -273,6 +290,7 @@ export class GeminiProvider extends LLMProvider {
     return {
       content: content.trim(),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      ...(reasoningContent.trim() ? { reasoningContent: reasoningContent.trim() } : {}),
       usage: this.normalizeUsage(geminiUsageToOpenAIShape(data.usageMetadata))
     };
   }

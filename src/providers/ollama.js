@@ -9,6 +9,7 @@ import {
 } from './wireNormalizer.js';
 import { stripToolCallMarkup } from '../implementationPlan.js';
 import { resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { streamOllamaChat, wantsStreaming } from './byokStream.js';
 
 export class OllamaProvider extends LLMProvider {
   constructor(config) {
@@ -68,21 +69,33 @@ export class OllamaProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const data = await safeProviderFetchJson({
+    const requestOpts = {
       url: this.baseUrl,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'Ollama',
       hasApiKey: false,
       allowInsecureHttp: this.allowInsecureHttp
-    });
+    };
+
+    const data = wantsStreaming(options)
+      ? await streamOllamaChat({
+          ...requestOpts,
+          payload,
+          onChunk: options.onChunk,
+          onReasoningChunk: options.onReasoningChunk
+        })
+      : await safeProviderFetchJson({
+          ...requestOpts,
+          body: JSON.stringify(payload)
+        });
 
     // Ollama returns tool calls with no id and object arguments instead of JSON strings.
     // Normalize through wireNormalizer so sanitizeSequences and toolSelfRepair see one contract.
     let content = typeof data.message?.content === 'string' ? data.message.content : '';
+    const reasoningContent = typeof data.message?.thinking === 'string' ? data.message.thinking.trim() : '';
     let toolCalls = normalizeOpenAIToolCalls(data.message?.tool_calls, freeFormPaths, 'call_ollama');
     if (toolCalls.length === 0 && content) {
       const extracted = extractTextToolCalls(content, 'call_ollama_text', freeFormPaths);
@@ -95,6 +108,7 @@ export class OllamaProvider extends LLMProvider {
     return {
       content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      ...(reasoningContent ? { reasoningContent } : {}),
       usage: {
         promptTokens: data.prompt_eval_count || 0,
         completionTokens: data.eval_count || 0

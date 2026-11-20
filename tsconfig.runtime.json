@@ -70,6 +70,7 @@
     "src/auth/openrouterAuth.ts",
     "src/providers/openrouter.ts",
     "src/providers/byokHttp.ts",
+    "src/providers/byokStream.ts",
     "src/providers/wireNormalizer.ts",
     "src/providers/loopGuard.ts",
     "src/providers/toolContracts.ts",

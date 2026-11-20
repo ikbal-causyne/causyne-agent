@@ -8,6 +8,7 @@ import {
   resolveTemperature,
   safeProviderFetchJson
 } from './byokHttp.js';
+import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 
 export class XAIProvider extends LLMProvider {
   constructor(config) {
@@ -41,20 +42,31 @@ export class XAIProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const data = await safeProviderFetchJson({
+    const requestOpts = {
       url: this.baseUrl,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify(payload),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'xAI',
       secrets: [apiKey],
       hasApiKey: true
-    });
+    };
+
+    const data = wantsStreaming(options)
+      ? await streamOpenAICompatibleChat({
+          ...requestOpts,
+          payload,
+          onChunk: options.onChunk,
+          onReasoningChunk: options.onReasoningChunk
+        })
+      : await safeProviderFetchJson({
+          ...requestOpts,
+          body: JSON.stringify(payload)
+        });
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_xai',
       freeFormPaths

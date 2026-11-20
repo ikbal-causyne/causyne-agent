@@ -8,6 +8,7 @@ import {
   resolveTemperature,
   safeProviderFetchJson
 } from './byokHttp.js';
+import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 
 // Direct DashScope API connection for BYOK (unlike dashscope.js which is the proxy for Free Demo)
 export class DashscopeByokProvider extends LLMProvider {
@@ -52,14 +53,13 @@ export class DashscopeByokProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
     }
 
-    const data = await safeProviderFetchJson({
+    const requestOpts = {
       url: this.baseUrl,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`
       },
-      body: JSON.stringify(payload),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'Qwen DashScope',
@@ -72,7 +72,19 @@ export class DashscopeByokProvider extends LLMProvider {
           throw new Error(`\n[QWEN WORKSPACE CONFIGURATION ERROR]\n\nYou are using a Workspace-bound API Key (starts with sk-ws-), but you haven't configured your Workspace Base URL!\n\nAlibaba requires a specific URL for these keys.\n\nHOW TO FIX THIS:\n1. Open your computer terminal.\n2. Run command: causyne-agent config\n3. When asked for 'Custom Base URL', paste your Workspace URL from Alibaba (e.g. https://{Your-Workspace-ID}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions).\n\nAlternatively, use a Standard API Key (starts with sk-) which does not require a custom URL.`);
         }
       }
-    });
+    };
+
+    const data = wantsStreaming(options)
+      ? await streamOpenAICompatibleChat({
+          ...requestOpts,
+          payload,
+          onChunk: options.onChunk,
+          onReasoningChunk: options.onReasoningChunk
+        })
+      : await safeProviderFetchJson({
+          ...requestOpts,
+          body: JSON.stringify(payload)
+        });
     const normalized = normalizeOpenAIChatChoiceResponse(data, {
       prefix: 'call_dashscope',
       freeFormPaths

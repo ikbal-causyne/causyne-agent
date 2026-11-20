@@ -1,0 +1,657 @@
+/**
+ * Causyne Agent — Hardened Real-Time SSE & NDJSON Streaming for BYOK Providers
+ *
+ * Brings real-time token & reasoning streaming (`onChunk`, `onReasoningChunk`)
+ * to all BYOK providers (OpenAI / OpenAI-Compatible / Muse, Anthropic, Gemini,
+ * DeepSeek, xAI, Moonshot, Qwen, DashScope, and Ollama) while inheriting every
+ * transport guarantee from `byokHttp.ts`:
+ *   - Endpoint URL validation & `redirect: 'error'`
+ *   - Cooperative AbortSignal (`Esc` / `/stop`) + bounded timeout
+ *   - Strict SSE/NDJSON line buffer cap (4 MiB) & total stream cap (32 MiB)
+ *   - Secret redaction, ANSI sanitization & `Retry-After` preservation
+ *   - Graceful fallback when an upstream proxy returns non-streaming JSON
+ */
+import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, ProviderHttpError, parseRetryAfterMs, readBoundedResponseText, redactProviderSecrets, safeProviderFetch } from './byokHttp.js';
+export function wantsStreaming(options) {
+    if (!options || typeof options !== 'object')
+        return false;
+    const candidate = options;
+    return typeof candidate.onChunk === 'function' || typeof candidate.onReasoningChunk === 'function';
+}
+function getHeader(response, name) {
+    const headers = response.headers;
+    if (headers && typeof headers.get === 'function') {
+        return headers.get(name) ?? '';
+    }
+    return '';
+}
+function isJsonContentType(contentType) {
+    const lower = contentType.toLowerCase();
+    return lower.includes('application/json') || lower.includes('+json');
+}
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+async function openHardenedStream(options) {
+    const { response, cleanup } = await safeProviderFetch(options);
+    if (!response.ok) {
+        try {
+            const rawError = await readBoundedResponseText(response, options.maxErrorBytes ?? MAX_PROVIDER_ERROR_BYTES, { truncate: true, label: options.providerLabel }).catch(() => '');
+            const cleanError = redactProviderSecrets(rawError, options.secrets);
+            const retryAfterMs = parseRetryAfterMs(getHeader(response, 'retry-after') || null);
+            if (options.onHttpError) {
+                options.onHttpError({
+                    status: response.status,
+                    errorText: cleanError,
+                    retryAfterMs,
+                    response
+                });
+            }
+            const retryNote = retryAfterMs !== undefined
+                ? ` (retry after ${Math.ceil(retryAfterMs / 1000)}s)`
+                : '';
+            throw new ProviderHttpError(`${options.providerLabel} API Error (${response.status})${retryNote}: ${cleanError}`, { status: response.status, retryAfterMs });
+        }
+        finally {
+            cleanup();
+        }
+    }
+    const contentType = getHeader(response, 'content-type');
+    const hasStreamReader = Boolean(response.body && typeof response.body.getReader === 'function');
+    // If the endpoint responded with regular JSON (or a minimal unit-test mock without a stream),
+    // parse it safely rather than failing stream consumption.
+    if (!hasStreamReader || isJsonContentType(contentType)) {
+        try {
+            if (!hasStreamReader && typeof response.text !== 'function' && typeof response.json === 'function') {
+                const parsed = await response.json();
+                return { mode: 'json', data: isRecord(parsed) ? parsed : {} };
+            }
+            const rawText = await readBoundedResponseText(response, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, { truncate: false, label: options.providerLabel });
+            try {
+                const parsed = JSON.parse(rawText);
+                return { mode: 'json', data: isRecord(parsed) ? parsed : {} };
+            }
+            catch {
+                const preview = redactProviderSecrets(rawText.slice(0, 240), options.secrets);
+                throw new Error(`${options.providerLabel} returned a non-JSON response (HTTP ${response.status}): ${preview}`);
+            }
+        }
+        finally {
+            cleanup();
+        }
+    }
+    return { mode: 'stream', response, cleanup };
+}
+async function consumeSseStream(response, providerLabel, maxBytes, onEvent) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let totalBytes = 0;
+    let currentEvent = '';
+    let dataLines = [];
+    const flushEvent = () => {
+        if (dataLines.length === 0) {
+            currentEvent = '';
+            return;
+        }
+        const payload = dataLines.join('\n');
+        const eventName = currentEvent || 'message';
+        currentEvent = '';
+        dataLines = [];
+        onEvent({ event: eventName, data: payload });
+    };
+    const processLine = (rawLine) => {
+        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+        if (line === '') {
+            flushEvent();
+            return;
+        }
+        if (line.startsWith(':'))
+            return; // SSE comment / keep-alive
+        if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+            return;
+        }
+        if (line.startsWith('data:')) {
+            const value = line.slice(5);
+            dataLines.push(value.startsWith(' ') ? value.slice(1) : value);
+        }
+    };
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            if (!value)
+                continue;
+            totalBytes += value.byteLength;
+            if (totalBytes > maxBytes) {
+                await reader.cancel().catch(() => { });
+                throw new Error(`${providerLabel} stream exceeded maximum allowed size (${maxBytes} bytes).`);
+            }
+            buffer += decoder.decode(value, { stream: true });
+            if (Buffer.byteLength(buffer, 'utf8') > MAX_SSE_BUFFER_BYTES) {
+                await reader.cancel().catch(() => { });
+                throw new Error(`${providerLabel} SSE event buffer exceeded safety limit (${MAX_SSE_BUFFER_BYTES} bytes).`);
+            }
+            let newlineIdx = buffer.indexOf('\n');
+            while (newlineIdx !== -1) {
+                const line = buffer.slice(0, newlineIdx);
+                buffer = buffer.slice(newlineIdx + 1);
+                processLine(line);
+                newlineIdx = buffer.indexOf('\n');
+            }
+        }
+        buffer += decoder.decode();
+        if (buffer.length > 0) {
+            for (const tailLine of buffer.split('\n')) {
+                processLine(tailLine);
+            }
+        }
+        flushEvent();
+    }
+    finally {
+        reader.releaseLock();
+    }
+}
+async function consumeNdjsonStream(response, providerLabel, maxBytes, onObject) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let totalBytes = 0;
+    const processLine = (rawLine) => {
+        const trimmed = rawLine.trim();
+        if (!trimmed)
+            return;
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (isRecord(parsed))
+                onObject(parsed);
+        }
+        catch {
+            // Ignore malformed trailing fragments
+        }
+    };
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            if (!value)
+                continue;
+            totalBytes += value.byteLength;
+            if (totalBytes > maxBytes) {
+                await reader.cancel().catch(() => { });
+                throw new Error(`${providerLabel} stream exceeded maximum allowed size (${maxBytes} bytes).`);
+            }
+            buffer += decoder.decode(value, { stream: true });
+            if (Buffer.byteLength(buffer, 'utf8') > MAX_SSE_BUFFER_BYTES) {
+                await reader.cancel().catch(() => { });
+                throw new Error(`${providerLabel} NDJSON line buffer exceeded safety limit (${MAX_SSE_BUFFER_BYTES} bytes).`);
+            }
+            let newlineIdx = buffer.indexOf('\n');
+            while (newlineIdx !== -1) {
+                const line = buffer.slice(0, newlineIdx);
+                buffer = buffer.slice(newlineIdx + 1);
+                processLine(line);
+                newlineIdx = buffer.indexOf('\n');
+            }
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+            processLine(buffer);
+        }
+    }
+    finally {
+        reader.releaseLock();
+    }
+}
+/**
+ * Streams an OpenAI-compatible `/chat/completions` request via SSE and returns
+ * a standard OpenAI chat-completion JSON shape (`choices[0].message` + `usage`)
+ * so callers reuse the exact same `normalizeOpenAIChatChoiceResponse` pipeline.
+ */
+export async function streamOpenAICompatibleChat(options) {
+    const streamPayload = {
+        ...options.payload,
+        stream: true,
+        stream_options: { include_usage: true }
+    };
+    const opened = await openHardenedStream({
+        ...options,
+        headers: {
+            Accept: 'text/event-stream, application/json',
+            ...(options.headers ?? {})
+        },
+        body: JSON.stringify(streamPayload)
+    });
+    if (opened.mode === 'json') {
+        const choices = Array.isArray(opened.data.choices) ? opened.data.choices : [];
+        const first = isRecord(choices[0]) ? choices[0] : null;
+        const message = first && isRecord(first.message) ? first.message : null;
+        if (message) {
+            const reasoning = typeof message.reasoning_content === 'string'
+                ? message.reasoning_content
+                : (typeof message.reasoning === 'string' ? message.reasoning : '');
+            if (reasoning && options.onReasoningChunk)
+                options.onReasoningChunk(reasoning);
+            if (typeof message.content === 'string' && message.content && options.onChunk) {
+                options.onChunk(message.content);
+            }
+        }
+        return opened.data;
+    }
+    let content = '';
+    let reasoningContent = '';
+    let usage;
+    let finishReason = null;
+    const toolCallMap = new Map();
+    try {
+        await consumeSseStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, ({ data }) => {
+            const trimmed = data.trim();
+            if (!trimmed || trimmed === '[DONE]')
+                return;
+            let parsed;
+            try {
+                parsed = JSON.parse(trimmed);
+            }
+            catch {
+                return;
+            }
+            if (!isRecord(parsed))
+                return;
+            if (isRecord(parsed.error)) {
+                const msg = redactProviderSecrets(typeof parsed.error.message === 'string' ? parsed.error.message : JSON.stringify(parsed.error), options.secrets);
+                throw new Error(`${options.providerLabel} stream error: ${msg}`);
+            }
+            if (isRecord(parsed.usage)) {
+                usage = parsed.usage;
+            }
+            const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+            const first = isRecord(choices[0]) ? choices[0] : null;
+            if (!first)
+                return;
+            if (typeof first.finish_reason === 'string')
+                finishReason = first.finish_reason;
+            const delta = isRecord(first.delta) ? first.delta : null;
+            if (!delta)
+                return;
+            const rChunk = typeof delta.reasoning_content === 'string'
+                ? delta.reasoning_content
+                : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
+            if (rChunk) {
+                reasoningContent += rChunk;
+                options.onReasoningChunk?.(rChunk);
+            }
+            if (typeof delta.content === 'string' && delta.content.length > 0) {
+                content += delta.content;
+                options.onChunk?.(delta.content);
+            }
+            if (Array.isArray(delta.tool_calls)) {
+                for (let pos = 0; pos < delta.tool_calls.length; pos++) {
+                    const tc = delta.tool_calls[pos];
+                    if (!isRecord(tc))
+                        continue;
+                    const idx = typeof tc.index === 'number' && Number.isInteger(tc.index) ? tc.index : pos;
+                    let entry = toolCallMap.get(idx);
+                    if (!entry) {
+                        entry = { id: '', type: 'function', function: { name: '', arguments: '' } };
+                        toolCallMap.set(idx, entry);
+                    }
+                    if (typeof tc.id === 'string' && tc.id)
+                        entry.id = tc.id;
+                    if (isRecord(tc.function)) {
+                        if (typeof tc.function.name === 'string' && tc.function.name) {
+                            entry.function.name += tc.function.name;
+                        }
+                        if (typeof tc.function.arguments === 'string' && tc.function.arguments) {
+                            entry.function.arguments += tc.function.arguments;
+                        }
+                    }
+                }
+            }
+        });
+    }
+    finally {
+        opened.cleanup();
+    }
+    const orderedToolCalls = [...toolCallMap.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, tc]) => tc);
+    const message = {
+        role: 'assistant',
+        content
+    };
+    if (reasoningContent)
+        message.reasoning_content = reasoningContent;
+    if (orderedToolCalls.length > 0)
+        message.tool_calls = orderedToolCalls;
+    return {
+        choices: [{ index: 0, message, finish_reason: finishReason }],
+        ...(usage ? { usage } : {})
+    };
+}
+/**
+ * Streams an Anthropic `/v1/messages` request via SSE and reconstructs the
+ * canonical Anthropic Messages JSON response (`content` blocks including signed
+ * `thinking` blocks, `tool_use` inputs, and full cache-aware `usage`).
+ */
+export async function streamAnthropicMessages(options) {
+    const streamPayload = {
+        ...options.payload,
+        stream: true
+    };
+    const opened = await openHardenedStream({
+        ...options,
+        headers: {
+            Accept: 'text/event-stream, application/json',
+            ...(options.headers ?? {})
+        },
+        body: JSON.stringify(streamPayload)
+    });
+    if (opened.mode === 'json') {
+        const blocks = Array.isArray(opened.data.content) ? opened.data.content : [];
+        for (const block of blocks) {
+            if (!isRecord(block))
+                continue;
+            if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
+                options.onReasoningChunk?.(block.thinking);
+            }
+            else if (block.type === 'text' && typeof block.text === 'string' && block.text) {
+                options.onChunk?.(block.text);
+            }
+        }
+        return opened.data;
+    }
+    const blockMap = new Map();
+    const usage = {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0
+    };
+    try {
+        await consumeSseStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, ({ data }) => {
+            const trimmed = data.trim();
+            if (!trimmed)
+                return;
+            let parsed;
+            try {
+                parsed = JSON.parse(trimmed);
+            }
+            catch {
+                return;
+            }
+            if (!isRecord(parsed))
+                return;
+            const eventType = typeof parsed.type === 'string' ? parsed.type : '';
+            if (eventType === 'error') {
+                const errObj = isRecord(parsed.error) ? parsed.error : parsed;
+                const msg = redactProviderSecrets(typeof errObj.message === 'string' ? errObj.message : JSON.stringify(errObj), options.secrets);
+                throw new Error(`${options.providerLabel} stream error: ${msg}`);
+            }
+            if (eventType === 'message_start' && isRecord(parsed.message) && isRecord(parsed.message.usage)) {
+                const u = parsed.message.usage;
+                if (typeof u.input_tokens === 'number')
+                    usage.input_tokens = u.input_tokens;
+                if (typeof u.output_tokens === 'number')
+                    usage.output_tokens = u.output_tokens;
+                if (typeof u.cache_read_input_tokens === 'number')
+                    usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                if (typeof u.cache_creation_input_tokens === 'number')
+                    usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                return;
+            }
+            if (eventType === 'message_delta' && isRecord(parsed.usage)) {
+                const u = parsed.usage;
+                if (typeof u.input_tokens === 'number')
+                    usage.input_tokens = u.input_tokens;
+                if (typeof u.output_tokens === 'number')
+                    usage.output_tokens = u.output_tokens;
+                if (typeof u.cache_read_input_tokens === 'number')
+                    usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                if (typeof u.cache_creation_input_tokens === 'number')
+                    usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                return;
+            }
+            if (eventType === 'content_block_start' && typeof parsed.index === 'number' && isRecord(parsed.content_block)) {
+                const initial = { ...parsed.content_block };
+                if (initial.type === 'text' && typeof initial.text === 'string' && initial.text) {
+                    options.onChunk?.(initial.text);
+                }
+                else if (initial.type === 'thinking' && typeof initial.thinking === 'string' && initial.thinking) {
+                    options.onReasoningChunk?.(initial.thinking);
+                }
+                blockMap.set(parsed.index, { block: initial, partialJson: '' });
+                return;
+            }
+            if (eventType === 'content_block_delta' && typeof parsed.index === 'number' && isRecord(parsed.delta)) {
+                const acc = blockMap.get(parsed.index);
+                if (!acc)
+                    return;
+                const delta = parsed.delta;
+                const deltaType = typeof delta.type === 'string' ? delta.type : '';
+                if (deltaType === 'text_delta' && typeof delta.text === 'string') {
+                    acc.block.text = `${typeof acc.block.text === 'string' ? acc.block.text : ''}${delta.text}`;
+                    if (delta.text)
+                        options.onChunk?.(delta.text);
+                }
+                else if (deltaType === 'thinking_delta' && typeof delta.thinking === 'string') {
+                    acc.block.thinking = `${typeof acc.block.thinking === 'string' ? acc.block.thinking : ''}${delta.thinking}`;
+                    if (delta.thinking)
+                        options.onReasoningChunk?.(delta.thinking);
+                }
+                else if (deltaType === 'signature_delta' && typeof delta.signature === 'string') {
+                    acc.block.signature = `${typeof acc.block.signature === 'string' ? acc.block.signature : ''}${delta.signature}`;
+                }
+                else if (deltaType === 'input_json_delta' && typeof delta.partial_json === 'string') {
+                    acc.partialJson += delta.partial_json;
+                }
+            }
+        });
+    }
+    finally {
+        opened.cleanup();
+    }
+    const contentBlocks = [...blockMap.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, acc]) => {
+        if (acc.block.type === 'tool_use' && acc.partialJson.trim().length > 0) {
+            try {
+                const parsedInput = JSON.parse(acc.partialJson);
+                if (isRecord(parsedInput)) {
+                    acc.block.input = parsedInput;
+                }
+            }
+            catch {
+                // Keep existing input object if partial JSON could not be parsed
+            }
+        }
+        return acc.block;
+    });
+    return { content: contentBlocks, usage };
+}
+/**
+ * Converts a Gemini `:generateContent` endpoint URL to `:streamGenerateContent?alt=sse`
+ * while preserving the host, model path, and avoiding any API key in the query string.
+ */
+export function buildGeminiStreamUrl(generateContentUrl) {
+    const parsed = new URL(generateContentUrl);
+    if (parsed.pathname.endsWith(':generateContent')) {
+        parsed.pathname = `${parsed.pathname.slice(0, -':generateContent'.length)}:streamGenerateContent`;
+    }
+    parsed.searchParams.set('alt', 'sse');
+    return parsed.toString();
+}
+/**
+ * Streams a Gemini `:streamGenerateContent?alt=sse` response and reconstructs
+ * the standard Gemini response (`candidates[0].content.parts`, `usageMetadata`,
+ * plus optional accumulated `reasoningContent` from `thought: true` parts).
+ */
+export async function streamGeminiGenerateContent(options) {
+    const streamUrl = buildGeminiStreamUrl(options.url);
+    const opened = await openHardenedStream({
+        ...options,
+        url: streamUrl,
+        headers: {
+            Accept: 'text/event-stream, application/json',
+            ...(options.headers ?? {})
+        },
+        body: JSON.stringify(options.payload)
+    });
+    if (opened.mode === 'json') {
+        const candidates = Array.isArray(opened.data.candidates) ? opened.data.candidates : [];
+        const first = isRecord(candidates[0]) ? candidates[0] : null;
+        const content = first && isRecord(first.content) ? first.content : null;
+        const parts = content && Array.isArray(content.parts) ? content.parts : [];
+        let reasoning = '';
+        for (const part of parts) {
+            if (!isRecord(part) || typeof part.text !== 'string' || !part.text)
+                continue;
+            if (part.thought === true) {
+                reasoning += part.text;
+                options.onReasoningChunk?.(part.text);
+            }
+            else {
+                options.onChunk?.(part.text);
+            }
+        }
+        return reasoning ? { ...opened.data, reasoningContent: reasoning } : opened.data;
+    }
+    let textContent = '';
+    let reasoningContent = '';
+    const functionCallParts = [];
+    let usageMetadata;
+    let sawCandidate = false;
+    try {
+        await consumeSseStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, ({ data }) => {
+            const trimmed = data.trim();
+            if (!trimmed || trimmed === '[DONE]')
+                return;
+            let parsed;
+            try {
+                parsed = JSON.parse(trimmed);
+            }
+            catch {
+                return;
+            }
+            if (!isRecord(parsed))
+                return;
+            if (isRecord(parsed.error)) {
+                const msg = redactProviderSecrets(typeof parsed.error.message === 'string' ? parsed.error.message : JSON.stringify(parsed.error), options.secrets);
+                throw new Error(`${options.providerLabel} stream error: ${msg}`);
+            }
+            if (isRecord(parsed.usageMetadata)) {
+                usageMetadata = parsed.usageMetadata;
+            }
+            const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+            const first = isRecord(candidates[0]) ? candidates[0] : null;
+            if (!first)
+                return;
+            sawCandidate = true;
+            const content = isRecord(first.content) ? first.content : null;
+            const parts = content && Array.isArray(content.parts) ? content.parts : [];
+            for (const part of parts) {
+                if (!isRecord(part))
+                    continue;
+                if (typeof part.text === 'string' && part.text.length > 0) {
+                    if (part.thought === true) {
+                        reasoningContent += part.text;
+                        options.onReasoningChunk?.(part.text);
+                    }
+                    else {
+                        textContent += part.text;
+                        options.onChunk?.(part.text);
+                    }
+                }
+                else if (isRecord(part.functionCall)) {
+                    functionCallParts.push({ functionCall: part.functionCall });
+                }
+            }
+        });
+    }
+    finally {
+        opened.cleanup();
+    }
+    const finalParts = [];
+    if (textContent)
+        finalParts.push({ text: textContent });
+    finalParts.push(...functionCallParts);
+    return {
+        candidates: sawCandidate ? [{ content: { role: 'model', parts: finalParts } }] : [],
+        ...(usageMetadata ? { usageMetadata } : {}),
+        ...(reasoningContent ? { reasoningContent } : {})
+    };
+}
+/**
+ * Streams an Ollama `/api/chat` request via NDJSON (`stream: true`) and returns
+ * the standard Ollama response shape (`message.content`, `message.thinking`,
+ * `message.tool_calls`, `prompt_eval_count`, `eval_count`).
+ */
+export async function streamOllamaChat(options) {
+    const streamPayload = {
+        ...options.payload,
+        stream: true
+    };
+    const opened = await openHardenedStream({
+        ...options,
+        headers: {
+            Accept: 'application/x-ndjson, application/json',
+            ...(options.headers ?? {})
+        },
+        body: JSON.stringify(streamPayload)
+    });
+    if (opened.mode === 'json') {
+        const msg = isRecord(opened.data.message) ? opened.data.message : null;
+        if (msg) {
+            if (typeof msg.thinking === 'string' && msg.thinking)
+                options.onReasoningChunk?.(msg.thinking);
+            if (typeof msg.content === 'string' && msg.content)
+                options.onChunk?.(msg.content);
+        }
+        return opened.data;
+    }
+    let content = '';
+    let thinking = '';
+    const toolCalls = [];
+    let promptEvalCount = 0;
+    let evalCount = 0;
+    try {
+        await consumeNdjsonStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, (chunk) => {
+            if (typeof chunk.error === 'string' && chunk.error) {
+                throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(chunk.error, options.secrets)}`);
+            }
+            const msg = isRecord(chunk.message) ? chunk.message : null;
+            if (msg) {
+                if (typeof msg.thinking === 'string' && msg.thinking.length > 0) {
+                    thinking += msg.thinking;
+                    options.onReasoningChunk?.(msg.thinking);
+                }
+                if (typeof msg.content === 'string' && msg.content.length > 0) {
+                    content += msg.content;
+                    options.onChunk?.(msg.content);
+                }
+                if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+                    toolCalls.push(...msg.tool_calls);
+                }
+            }
+            if (typeof chunk.prompt_eval_count === 'number')
+                promptEvalCount = chunk.prompt_eval_count;
+            if (typeof chunk.eval_count === 'number')
+                evalCount = chunk.eval_count;
+        });
+    }
+    finally {
+        opened.cleanup();
+    }
+    const message = { role: 'assistant', content };
+    if (thinking)
+        message.thinking = thinking;
+    if (toolCalls.length > 0)
+        message.tool_calls = toolCalls;
+    return {
+        message,
+        prompt_eval_count: promptEvalCount,
+        eval_count: evalCount
+    };
+}

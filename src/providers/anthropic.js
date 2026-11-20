@@ -13,6 +13,7 @@ import {
   resolveTemperature,
   safeProviderFetchJson
 } from './byokHttp.js';
+import { streamAnthropicMessages, wantsStreaming } from './byokStream.js';
 
 // Models that support server-side tool search (defer_loading + tool_reference
 // expansion). On these, Causyne hands Anthropic the complete 69-tool catalogue
@@ -356,7 +357,7 @@ export class AnthropicProvider extends LLMProvider {
       }
     }
 
-    const data = await safeProviderFetchJson({
+    const requestOpts = {
       url: this.baseUrl,
       method: 'POST',
       headers: {
@@ -364,13 +365,24 @@ export class AnthropicProvider extends LLMProvider {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify(payload),
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'Anthropic',
       secrets: [apiKey],
       hasApiKey: true
-    });
+    };
+
+    const data = wantsStreaming(options)
+      ? await streamAnthropicMessages({
+          ...requestOpts,
+          payload,
+          onChunk: options.onChunk,
+          onReasoningChunk: options.onReasoningChunk
+        })
+      : await safeProviderFetchJson({
+          ...requestOpts,
+          body: JSON.stringify(payload)
+        });
 
     // Extract text content and tool calls
     let content = '';
