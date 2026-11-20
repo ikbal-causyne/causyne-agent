@@ -211,11 +211,71 @@ export class OpenRouterProvider extends LLMProvider {
         let buffer = '';
         const toolCallsMap = new Map();
         let rawUsage = null;
+        const processLine = (line) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(':'))
+                return; // Skip comments/keepalive
+            if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]')
+                return;
+            if (trimmed.startsWith('data:')) {
+                const jsonStr = trimmed.slice(5).replace(/^ /, '');
+                let parsed;
+                try {
+                    parsed = JSON.parse(jsonStr);
+                }
+                catch {
+                    return;
+                }
+                if (parsed.usage) {
+                    rawUsage = parsed.usage;
+                }
+                const choice = parsed.choices?.[0];
+                if (!choice)
+                    return;
+                const delta = choice.delta;
+                if (delta) {
+                    // 1. Text chunk
+                    if (delta.content) {
+                        content += delta.content;
+                        if (options.onChunk) {
+                            options.onChunk(delta.content);
+                        }
+                    }
+                    // 2. Reasoning chunk
+                    const reasoning = delta.reasoning || delta.reasoning_content;
+                    if (reasoning) {
+                        reasoningContent += reasoning;
+                        if (options.onReasoningChunk) {
+                            options.onReasoningChunk(reasoning);
+                        }
+                    }
+                    // 3. Tool calls assembly
+                    if (Array.isArray(delta.tool_calls)) {
+                        for (const tc of delta.tool_calls) {
+                            const idx = typeof tc.index === 'number' ? tc.index : toolCallsMap.size;
+                            let existing = toolCallsMap.get(idx);
+                            if (!existing) {
+                                existing = { id: tc.id || `call_${idx}_${Date.now()}`, name: '', arguments: '' };
+                                toolCallsMap.set(idx, existing);
+                            }
+                            if (tc.id)
+                                existing.id = tc.id;
+                            if (tc.function?.name)
+                                existing.name += tc.function.name;
+                            if (tc.function?.arguments)
+                                existing.arguments += tc.function.arguments;
+                        }
+                    }
+                }
+            }
+        };
         try {
             while (true) {
                 if (options.signal?.aborted) {
                     await reader.cancel().catch(() => { });
-                    break;
+                    const abortErr = new Error('OpenRouter request aborted');
+                    abortErr.name = 'AbortError';
+                    throw abortErr;
                 }
                 const { done, value } = await reader.read();
                 if (done)
@@ -228,62 +288,13 @@ export class OpenRouterProvider extends LLMProvider {
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
                 for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed || trimmed.startsWith(':'))
-                        continue; // Skip comments/keepalive
-                    if (trimmed === 'data: [DONE]')
-                        continue;
-                    if (trimmed.startsWith('data: ')) {
-                        const jsonStr = trimmed.slice(6);
-                        let parsed;
-                        try {
-                            parsed = JSON.parse(jsonStr);
-                        }
-                        catch {
-                            continue;
-                        }
-                        if (parsed.usage) {
-                            rawUsage = parsed.usage;
-                        }
-                        const choice = parsed.choices?.[0];
-                        if (!choice)
-                            continue;
-                        const delta = choice.delta;
-                        if (delta) {
-                            // 1. Text chunk
-                            if (delta.content) {
-                                content += delta.content;
-                                if (options.onChunk) {
-                                    options.onChunk(delta.content);
-                                }
-                            }
-                            // 2. Reasoning chunk
-                            const reasoning = delta.reasoning || delta.reasoning_content;
-                            if (reasoning) {
-                                reasoningContent += reasoning;
-                                if (options.onReasoningChunk) {
-                                    options.onReasoningChunk(reasoning);
-                                }
-                            }
-                            // 3. Tool calls assembly
-                            if (Array.isArray(delta.tool_calls)) {
-                                for (const tc of delta.tool_calls) {
-                                    const idx = typeof tc.index === 'number' ? tc.index : toolCallsMap.size;
-                                    let existing = toolCallsMap.get(idx);
-                                    if (!existing) {
-                                        existing = { id: tc.id || `call_${idx}_${Date.now()}`, name: '', arguments: '' };
-                                        toolCallsMap.set(idx, existing);
-                                    }
-                                    if (tc.id)
-                                        existing.id = tc.id;
-                                    if (tc.function?.name)
-                                        existing.name += tc.function.name;
-                                    if (tc.function?.arguments)
-                                        existing.arguments += tc.function.arguments;
-                                }
-                            }
-                        }
-                    }
+                    processLine(line);
+                }
+            }
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+                for (const line of buffer.split('\n')) {
+                    processLine(line);
                 }
             }
         }
