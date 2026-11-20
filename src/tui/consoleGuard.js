@@ -36,7 +36,9 @@ export function runWithStageWrite(fn) {
 function chunkToText(chunk, encodingOrCb) {
     if (typeof chunk === 'string')
         return chunk;
-    const encoding = typeof encodingOrCb === 'string' ? encodingOrCb : 'utf8';
+    const encoding = typeof encodingOrCb === 'string' && Buffer.isEncoding(encodingOrCb)
+        ? encodingOrCb
+        : 'utf8';
     if (Buffer.isBuffer(chunk))
         return chunk.toString(encoding);
     if (chunk instanceof Uint8Array)
@@ -48,7 +50,7 @@ export function isAnyStageReservedOnStdout() {
         return true;
     }
     for (const host of activeStageHosts) {
-        if (host.stage?.reserved && (!host.out || host.out === process.stdout)) {
+        if (host?.stage?.reserved && (!host.out || host.out === process.stdout)) {
             return true;
         }
     }
@@ -116,6 +118,8 @@ export function setStageConsoleGuardActive(active) {
  * Register a StageSurface host so raw console writes are suppressed while its Stage is reserved.
  */
 export function registerStageConsoleGuard(host) {
+    if (!host || typeof host !== 'object')
+        return () => { };
     ensureConsoleGuardInstalled();
     activeStageHosts.add(host);
     return () => {
@@ -128,6 +132,8 @@ const noticeTimers = new WeakMap();
  * if nothing else has overwritten `host.notice` in the meantime.
  */
 export function setTransientNotice(host, message, ttlMs = 4000) {
+    if (!host || typeof host !== 'object')
+        return;
     const existing = noticeTimers.get(host);
     if (existing) {
         clearTimeout(existing);
@@ -137,7 +143,8 @@ export function setTransientNotice(host, message, ttlMs = 4000) {
         ? safeDisplay(message).replace(/\s+/g, ' ').trim()
         : '';
     host.notice = cleanMessage;
-    host.scheduleDraw();
+    if (typeof host.scheduleDraw === 'function')
+        host.scheduleDraw();
     const safeTtlMs = !Number.isFinite(ttlMs)
         ? (Number.isNaN(ttlMs) ? 4000 : 0)
         : Math.min(Math.floor(ttlMs), 2_147_483_647);
@@ -147,7 +154,8 @@ export function setTransientNotice(host, message, ttlMs = 4000) {
         noticeTimers.delete(host);
         if (host.notice === cleanMessage) {
             host.notice = '';
-            host.scheduleDraw();
+            if (typeof host.scheduleDraw === 'function')
+                host.scheduleDraw();
         }
     }, safeTtlMs);
     timer.unref?.();
