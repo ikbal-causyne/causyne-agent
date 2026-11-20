@@ -144,7 +144,7 @@ export function detectWorkspaceDomains(workspaceRoot) {
 }
 export { MAX_INDEXED_SKILLS, UNIVERSAL_DOMAINS };
 export function ensureSkillRepo(domain) {
-    if (compiledSkillsCatalog[domain]) {
+    if (Object.hasOwn(compiledSkillsCatalog, domain) && compiledSkillsCatalog[domain]) {
         return true;
     }
     return false;
@@ -310,10 +310,10 @@ export function readCompiledSkill(domain, skillId) {
         .find((skill) => skill.domain === domain && skill.id === skillId);
     if (pluginSkill)
         return pluginSkill.content;
-    const domainSkills = compiledSkillsCatalog[domain];
+    const domainSkills = Object.hasOwn(compiledSkillsCatalog, domain) ? compiledSkillsCatalog[domain] : undefined;
     if (!domainSkills)
         return `Error: Domain ${domain} not found in compiled skills.`;
-    const skillData = domainSkills[skillId];
+    const skillData = Object.hasOwn(domainSkills, skillId) ? domainSkills[skillId] : undefined;
     if (!skillData)
         return `Error: Skill ${skillId} not found in domain ${domain}.`;
     return skillData.content;
