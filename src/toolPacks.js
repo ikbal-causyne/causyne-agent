@@ -377,7 +377,9 @@ export function routePacks(prompt, workspaceContext = null) {
     for (const packName of PACK_NAMES) {
         const matched = packName === 'reverse_engineering'
             ? isReverseEngineeringIntent(text)
-            : INTENT_MATCHERS[packName].test(text);
+            : packName === 'web'
+                ? isWebIntent(text)
+                : INTENT_MATCHERS[packName].test(text);
         if (matched) {
             unlocked.add(packName);
         }
