@@ -29,7 +29,7 @@ export const NATIVE_ENGINES = {
     [effectEngine.id]: effectEngine
 };
 export function nativeEngine(id) {
-    return NATIVE_ENGINES[id] ?? null;
+    return Object.hasOwn(NATIVE_ENGINES, id) ? NATIVE_ENGINES[id] : null;
 }
 export function engineInstallDir(adapter) {
     return path.join(causyneHome(), 'engines', adapter.id);

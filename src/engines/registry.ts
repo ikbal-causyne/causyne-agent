@@ -33,7 +33,7 @@ export const NATIVE_ENGINES: Record<string, NativeEngineAdapter> = {
 };
 
 export function nativeEngine(id: string): NativeEngineAdapter | null {
-  return NATIVE_ENGINES[id] ?? null;
+  return Object.hasOwn(NATIVE_ENGINES, id) ? NATIVE_ENGINES[id]! : null;
 }
 
 export function engineInstallDir(adapter: NativeEngineAdapter): string {
