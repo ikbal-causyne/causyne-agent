@@ -124,7 +124,7 @@ function resolveLocalRef(ref, defs, activeRefs) {
     else if (ref.startsWith('#/definitions/')) {
         key = ref.slice('#/definitions/'.length);
     }
-    if (!key)
+    if (!key || !Object.hasOwn(defs, key))
         return null;
     const target = defs[key];
     return isPlainObject(target) ? target : null;

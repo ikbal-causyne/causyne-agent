@@ -174,7 +174,7 @@ function resolveLocalRef(
   } else if (ref.startsWith('#/definitions/')) {
     key = ref.slice('#/definitions/'.length);
   }
-  if (!key) return null;
+  if (!key || !Object.hasOwn(defs, key)) return null;
   const target = defs[key];
   return isPlainObject(target) ? target : null;
 }
