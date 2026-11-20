@@ -566,6 +566,9 @@ export class AgentLoop {
         this.approvalScope = createApprovalScope();
         this.autonomyOverride = null;
         this.circuitBreakerUnlocked = false;
+        for (const toolCallId of [...this.pendingApprovals.keys()]) {
+            this.handleApprovalResponse(toolCallId, false);
+        }
         this.pendingApprovals.clear();
     }
     // V6: Adaptive Temperature based on task intent
