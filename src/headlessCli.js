@@ -34,7 +34,8 @@ export function parsePermissionMode(raw) {
 export function parseMaxTurns(raw) {
     if (raw === undefined || raw === null || raw === '')
         return undefined;
-    const parsed = typeof raw === 'number' ? raw : Number.parseInt(String(raw).trim(), 10);
+    const trimmed = String(raw).trim();
+    const parsed = typeof raw === 'number' ? raw : (/^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN);
     if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_HEADLESS_TURNS) {
         throw new Error(`Invalid --max-turns "${raw}". Expected an integer between 1 and ${MAX_HEADLESS_TURNS}.`);
     }
