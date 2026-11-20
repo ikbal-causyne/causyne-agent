@@ -76,14 +76,17 @@ export const computerUse = {
   },
 
   async execute(args: ComputerUseArgs = {}, context: any = {}): Promise<{ success: boolean; output?: string; error?: string; actions?: any[] }> {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+      return { success: false, error: 'computer_use requires an arguments object.' };
+    }
     const screen: ScreenContext = args.screenContext || { width: 1920, height: 1080, scaleFactor: 1 };
     const app = typeof args.app === 'string' ? args.app.trim() : '';
 
     let desktopActions: any[] = [];
 
     // Mode 1: Parse full model prediction from vision grounding engine
-    if (args.prediction || args.action === 'execute_prediction') {
-      const pred = args.prediction || '';
+    if (args.prediction !== undefined || args.action === 'execute_prediction') {
+      const pred = typeof args.prediction === 'string' ? args.prediction : '';
       if (!pred.trim()) {
         return { success: false, error: 'No prediction string provided for execute_prediction.' };
       }
