@@ -39,12 +39,19 @@ export function cleanUserText(text) {
 export function cleanAssistantText(text, maxChars = 2000) {
     if (!text)
         return '';
+    const limit = Number.isFinite(maxChars) ? Math.max(0, Math.floor(maxChars)) : 2000;
+    if (limit === 0)
+        return '';
     const str = String(text).trim();
-    if (str.length <= maxChars) {
+    const chars = Array.from(str);
+    if (chars.length <= limit) {
         return str;
     }
-    const half = Math.floor(maxChars / 2);
-    return `${str.slice(0, half)}\n\n... [output condensed for context efficiency] ...\n\n${str.slice(-half)}`;
+    if (limit === 1) {
+        return chars[0] ?? '';
+    }
+    const half = Math.floor(limit / 2);
+    return `${chars.slice(0, half).join('')}\n\n... [output condensed for context efficiency] ...\n\n${chars.slice(-half).join('')}`;
 }
 /** Extract a clean, meaningful title from the first user request. */
 export function deriveSessionTitle(firstPrompt, fallback = 'Untitled Session') {
