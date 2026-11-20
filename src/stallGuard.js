@@ -133,15 +133,17 @@ export class StallGuardController {
     _researchNudgeEmitted = false;
     _haltDecision = null;
     constructor(config) {
+        const posInt = (value, fallback) => typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback;
+        const nonNegInt = (value, fallback) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
         this.config = {
             warningsEnabled: config?.warningsEnabled ?? true,
             hardStopEnabled: config?.hardStopEnabled ?? false,
-            identicalCallWarnAfter: config?.identicalCallWarnAfter ?? STALL_GUARD_IDENTICAL_CALL_THRESHOLD,
-            identicalCallHaltAfter: config?.identicalCallHaltAfter ?? STALL_GUARD_IDENTICAL_CALL_HALT,
-            cycleWarnAfter: config?.cycleWarnAfter ?? STALL_GUARD_IDENTICAL_CALL_THRESHOLD,
-            cycleHaltAfter: config?.cycleHaltAfter ?? STALL_GUARD_IDENTICAL_CALL_HALT,
-            researchNudgeAfter: config?.researchNudgeAfter ?? RESEARCH_INSPECTION_NUDGE_AFTER,
-            stubMinChars: config?.stubMinChars ?? IDENTICAL_RESULT_STUB_MIN_CHARS
+            identicalCallWarnAfter: posInt(config?.identicalCallWarnAfter, STALL_GUARD_IDENTICAL_CALL_THRESHOLD),
+            identicalCallHaltAfter: posInt(config?.identicalCallHaltAfter, STALL_GUARD_IDENTICAL_CALL_HALT),
+            cycleWarnAfter: posInt(config?.cycleWarnAfter, STALL_GUARD_IDENTICAL_CALL_THRESHOLD),
+            cycleHaltAfter: posInt(config?.cycleHaltAfter, STALL_GUARD_IDENTICAL_CALL_HALT),
+            researchNudgeAfter: posInt(config?.researchNudgeAfter, RESEARCH_INSPECTION_NUDGE_AFTER),
+            stubMinChars: nonNegInt(config?.stubMinChars, IDENTICAL_RESULT_STUB_MIN_CHARS)
         };
     }
     get haltDecision() {
@@ -286,7 +288,9 @@ export class StallGuardController {
             });
         }
         if (!repeatable && count >= this.config.identicalCallWarnAfter) {
-            notice = `[STALL GUARD: This is the ${ordinal(count)} consecutive identical call to '${toolName}' with identical arguments returning the unchanged result. Do not repeat it — change arguments, use a different tool, or proceed with what you have.]`;
+            if (this.config.warningsEnabled) {
+                notice = `[STALL GUARD: This is the ${ordinal(count)} consecutive identical call to '${toolName}' with identical arguments returning the unchanged result. Do not repeat it — change arguments, use a different tool, or proceed with what you have.]`;
+            }
             if (this.config.hardStopEnabled && count >= this.config.identicalCallHaltAfter && !this._haltDecision) {
                 decision = {
                     action: 'halt',
@@ -303,11 +307,13 @@ export class StallGuardController {
         if (this._callHistory.length > STALL_GUARD_CYCLE_HISTORY) {
             this._callHistory.shift();
         }
-        if (!notice) {
+        if (!notice && !decision) {
             const cycle = this.detectIdenticalCycle();
             if (cycle) {
                 const { period, laps } = cycle;
-                notice = `[STALL GUARD: The last ${laps} rounds repeated the same cycle of ${period} tool calls (ending with '${toolName}') with identical arguments and identical results. Do not repeat the batch — change arguments, synthesize findings, or proceed.]`;
+                if (this.config.warningsEnabled) {
+                    notice = `[STALL GUARD: The last ${laps} rounds repeated the same cycle of ${period} tool calls (ending with '${toolName}') with identical arguments and identical results. Do not repeat the batch — change arguments, synthesize findings, or proceed.]`;
+                }
                 if (this.config.hardStopEnabled && laps >= this.config.cycleHaltAfter && !this._haltDecision) {
                     decision = {
                         action: 'halt',
@@ -322,7 +328,7 @@ export class StallGuardController {
                 }
             }
         }
-        if (!notice && !this._researchNudgeEmitted && this._distinctInspectionCount >= this.config.researchNudgeAfter) {
+        if (this.config.warningsEnabled && !notice && !this._researchNudgeEmitted && this._distinctInspectionCount >= this.config.researchNudgeAfter) {
             this._researchNudgeEmitted = true;
             notice = `[RESEARCH PROGRESS NOTICE: You have performed ${this._distinctInspectionCount} consecutive inspection steps across the workspace. If sufficient context has been gathered, consider proceeding to implementation or updating the plan.]`;
         }
