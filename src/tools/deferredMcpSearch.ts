@@ -176,28 +176,30 @@ export const deferredMcpSearch = {
 
   async execute(args: SearchArgs, context: SearchContext = {}): Promise<SearchResult> {
     try {
-      const rawQueries = (args as any).queries;
+      const safeArgs: SearchArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+      const safeContext: SearchContext = context && typeof context === 'object' ? context : {};
+      const rawQueries = (safeArgs as any).queries;
       const joinedQueries = Array.isArray(rawQueries)
         ? rawQueries.map((item) => String(item ?? '').trim()).filter(Boolean).join(' ')
         : (typeof rawQueries === 'string' ? rawQueries : '');
-      const rawQuery = Array.isArray(args.query)
-        ? args.query.map((item) => String(item ?? '').trim()).filter(Boolean).join(' ')
-        : args.query;
+      const rawQuery = Array.isArray(safeArgs.query)
+        ? safeArgs.query.map((item) => String(item ?? '').trim()).filter(Boolean).join(' ')
+        : safeArgs.query;
       const query = String(
-        rawQuery ?? (args as any).q ?? (args as any).search ?? (args as any).term ??
-        (args as any).regex ?? (args as any).description ?? (args as any).pattern ?? joinedQueries ?? ''
+        rawQuery ?? (safeArgs as any).q ?? (safeArgs as any).search ?? (safeArgs as any).term ??
+        (safeArgs as any).regex ?? (safeArgs as any).description ?? (safeArgs as any).pattern ?? joinedQueries ?? ''
       ).trim();
       if (query.length > MAX_TOOL_SEARCH_QUERY) {
         return { success: false, error: `Search query exceeds ${MAX_TOOL_SEARCH_QUERY} characters. Use a shorter capability description.` };
       }
-      const requestedPack = args.pack ? String(args.pack).toLowerCase() : null;
-      const definitions = context.parentLoop?.searchableTools
-        ? await context.parentLoop.searchableTools() : await toolDefinitions();
+      const requestedPack = safeArgs.pack ? String(safeArgs.pack).toLowerCase() : null;
+      const definitions = safeContext.parentLoop?.searchableTools
+        ? await safeContext.parentLoop.searchableTools() : await toolDefinitions();
       const hints = new Map(buildToolsList(definitions).map((entry) => [entry.name, entry.hint]));
-      if (Array.isArray(args.names) && args.names.length > 0) {
+      if (Array.isArray(safeArgs.names) && safeArgs.names.length > 0) {
         const available = new Map(definitions.map((definition) => [definition.name.toLowerCase(), definition.name]));
-        const chosen = [...new Set(args.names.map((name) => available.get(String(name).toLowerCase())).filter((name): name is string => Boolean(name)))];
-        if (chosen.length !== new Set(args.names.map((name) => String(name).toLowerCase())).size) {
+        const chosen = [...new Set(safeArgs.names.map((name) => available.get(String(name).toLowerCase())).filter((name): name is string => Boolean(name)))];
+        if (chosen.length !== new Set(safeArgs.names.map((name) => String(name).toLowerCase())).size) {
           return { success: false, error: 'One or more selected tools are unavailable under the current policy. Select exact names from the current catalog.' };
         }
         return { success: true, output: `Selected ${chosen.length} tool schemas for your next turn:\n${chosen.map((name) => `- ${name}: ${hints.get(name) || 'tool'}`).join('\n')}`, _unlock_tools: chosen };
@@ -230,7 +232,7 @@ export const deferredMcpSearch = {
         };
       }
 
-      const limit = typeof args.limit === 'number' && Number.isInteger(args.limit) && args.limit > 0 ? Math.min(args.limit, 25) : 8;
+      const limit = typeof safeArgs.limit === 'number' && Number.isInteger(safeArgs.limit) && safeArgs.limit > 0 ? Math.min(safeArgs.limit, 25) : 8;
       const lower = query.toLowerCase();
       const terms = queryTerms(query);
       const pattern = buildPattern(query);
