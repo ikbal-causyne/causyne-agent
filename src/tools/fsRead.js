@@ -5,11 +5,11 @@ import os from 'node:os';
 const BINARY_EXTENSIONS = /\.(png|jpe?g|webp|gif|svg|bmp|ico|blend\d?|glb|gltf|wasm|zip|tar|gz|bz2|xz|7z|rar|mp4|mov|avi|mkv|webm|mp3|wav|ogg|flac|aac|m4a|pdf|exe|dll|dylib|so|bin|iso|dmg)$/i;
 /** Fast Binary Detection: inspect the first 1024 bytes for a null byte. */
 async function isBinary(filePath) {
+    let fd = null;
     try {
-        const fd = await fs.promises.open(filePath, 'r');
+        fd = await fs.promises.open(filePath, 'r');
         const buffer = Buffer.alloc(1024);
         const { bytesRead } = await fd.read(buffer, 0, 1024, 0);
-        await fd.close();
         for (let i = 0; i < bytesRead; i++) {
             if (buffer[i] === 0)
                 return true;
@@ -18,6 +18,11 @@ async function isBinary(filePath) {
     }
     catch {
         return false;
+    }
+    finally {
+        if (fd) {
+            await fd.close().catch(() => { });
+        }
     }
 }
 export const fsRead = {

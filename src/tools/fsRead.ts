@@ -20,11 +20,11 @@ const BINARY_EXTENSIONS = /\.(png|jpe?g|webp|gif|svg|bmp|ico|blend\d?|glb|gltf|w
 
 /** Fast Binary Detection: inspect the first 1024 bytes for a null byte. */
 async function isBinary(filePath: string): Promise<boolean> {
+  let fd: fs.promises.FileHandle | null = null;
   try {
-    const fd = await fs.promises.open(filePath, 'r');
+    fd = await fs.promises.open(filePath, 'r');
     const buffer = Buffer.alloc(1024);
     const { bytesRead } = await fd.read(buffer, 0, 1024, 0);
-    await fd.close();
 
     for (let i = 0; i < bytesRead; i++) {
       if (buffer[i] === 0) return true;
@@ -32,6 +32,10 @@ async function isBinary(filePath: string): Promise<boolean> {
     return false;
   } catch {
     return false;
+  } finally {
+    if (fd) {
+      await fd.close().catch(() => {});
+    }
   }
 }
 
