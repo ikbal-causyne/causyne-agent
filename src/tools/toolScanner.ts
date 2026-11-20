@@ -246,7 +246,7 @@ function inspectSchemaForProvider(
   if (schema['type'] === 'object' && Array.isArray(schema['required']) && isPlainObject(schema['properties'])) {
     const props = schema['properties'];
     for (const req of schema['required']) {
-      if (typeof req === 'string' && !(req in props)) {
+      if (typeof req === 'string' && !Object.hasOwn(props, req)) {
         issues.push({
           tool: toolName,
           path: `${pathStr}.required.${req}`,
@@ -636,7 +636,7 @@ function compileSchemaNode(
 
   if (adapted['type'] === 'object' && Array.isArray(adapted['required']) && isPlainObject(adapted['properties'])) {
     const props = adapted['properties'];
-    const filtered = adapted['required'].filter((k): k is string => typeof k === 'string' && k in props);
+    const filtered = adapted['required'].filter((k): k is string => typeof k === 'string' && Object.hasOwn(props, k));
     if (filtered.length > 0) {
       adapted['required'] = filtered;
     } else {
