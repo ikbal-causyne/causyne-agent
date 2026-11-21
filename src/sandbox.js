@@ -96,7 +96,8 @@ export class Sandbox {
         this.workspacePaths = [path.resolve(workspaceRoot)];
         const devMode = isDevEmulator(this.config);
         this.grantAllAccess = devMode ? true : (this.config.grantAllAccess || false);
-        this.allowedTools = devMode ? ['*'] : (this.config.allowedTools || ['*']);
+        const rawAllowed = devMode ? ['*'] : (Array.isArray(this.config.allowedTools) ? this.config.allowedTools : ['*']);
+        this.allowedTools = rawAllowed.map((name) => String(name).replace(/\./g, '_'));
         this.deniedTools = new Set((devMode ? [] : (this.config.deniedTools || []))
             .map((name) => String(name).replace(/\./g, '_')));
     }
@@ -127,7 +128,7 @@ export class Sandbox {
         if (this.deniedTools.has(canonicalToolName)) {
             return { allowed: false, reason: `Tool ${toolName} is denied by local policy`, risk: 'forbidden' };
         }
-        if (!this.allowedTools.includes('*') && !this.allowedTools.includes(toolName)) {
+        if (!this.allowedTools.includes('*') && !this.allowedTools.includes(canonicalToolName)) {
             return { allowed: false, reason: `Tool ${toolName} not allowed on current tier`, risk: 'forbidden' };
         }
         const safeArgs = args && typeof args === 'object' ? args : {};
@@ -172,7 +173,7 @@ export class Sandbox {
                     : `Touches credential material: ${credentialPathHit}`
             };
         };
-        if (toolName === 'sysRun' || toolName === 'sysRunBg' || toolName === 'terminal_persistent_shell') {
+        if (canonicalToolName === 'sysRun' || canonicalToolName === 'sysRunBg' || canonicalToolName === 'terminal_persistent_shell') {
             const command = safeArgs.command || safeArgs.input;
             if (command) {
                 const risk = this.classifyCommandRisk(command);
@@ -183,7 +184,7 @@ export class Sandbox {
             }
             return withCredentialEscalation({ allowed: true, risk: 'moderate' });
         }
-        if (toolName === 'gitOp') {
+        if (canonicalToolName === 'gitOp') {
             const command = String(safeArgs.command || '');
             const risk = this.classifyCommandRisk(`git ${command}`);
             if (risk === 'forbidden') {
@@ -191,7 +192,7 @@ export class Sandbox {
             }
             return withCredentialEscalation({ allowed: true, risk: /\bbranch\s+-D\b/.test(command) ? 'dangerous' : risk });
         }
-        if (toolName === 'web_fetch' && safeArgs.url) {
+        if (canonicalToolName === 'web_fetch' && safeArgs.url) {
             if (this.isInternalUrl(safeArgs.url)) {
                 return { allowed: false, reason: 'Cannot access internal/local network URLs (SSRF Protection)', risk: 'forbidden' };
             }
@@ -199,59 +200,59 @@ export class Sandbox {
                 return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads network content to disk' });
             }
         }
-        if (toolName === 'browser_act') {
+        if (canonicalToolName === 'browser_act') {
             return withCredentialEscalation(validateBrowserActSandbox(safeArgs, this.workspacePaths[0] || process.cwd(), url => this.isInternalUrl(url, { allowLoopback: true }), targetPath => this.isPathAllowed(targetPath)));
         }
-        if (toolName === 'creative_apps') {
+        if (canonicalToolName === 'creative_apps') {
             const isReadOnly = safeArgs.action === 'status' ||
                 safeArgs.action === 'verify_bridge' ||
                 (safeArgs.action === 'live_bridge' && safeArgs.liveOperation === 'inspect_active');
             return withCredentialEscalation({ allowed: true, risk: isReadOnly ? 'safe' : 'dangerous' });
         }
-        if (toolName === 'native_engine') {
+        if (canonicalToolName === 'native_engine') {
             if (safeArgs.action === 'install') {
                 return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads and installs a native engine binary' });
             }
             const readOnly = ['status', 'catalog', 'describe', 'inspect', 'probe'];
             return withCredentialEscalation({ allowed: true, risk: readOnly.includes(String(safeArgs.action ?? '')) ? 'safe' : 'dangerous' });
         }
-        if (toolName === 'game_asset_fetch' && safeArgs.action === 'download_asset') {
+        if (canonicalToolName === 'game_asset_fetch' && safeArgs.action === 'download_asset') {
             if (!safeArgs.url || this.isInternalUrl(safeArgs.url)) {
                 return { allowed: false, reason: 'Cannot download from an internal or invalid URL', risk: 'forbidden' };
             }
             return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads a third-party asset to disk' });
         }
-        if (toolName === 'manage_local_dependencies') {
+        if (canonicalToolName === 'manage_local_dependencies') {
             const heavyActions = ['pipInst', 'grant_capability', 'grant_mcp_server'];
             if (heavyActions.includes(String(safeArgs.action ?? ''))) {
                 return withCredentialEscalation({ allowed: true, risk: 'extreme' });
             }
             return withCredentialEscalation({ allowed: true, risk: 'moderate' });
         }
-        if (toolName === 'plugin_manager') {
+        if (canonicalToolName === 'plugin_manager') {
             return withCredentialEscalation(['create', 'enable'].includes(String(safeArgs.action ?? ''))
                 ? { allowed: true, risk: 'extreme', reason: 'Creates or trusts executable plugin code' }
                 : { allowed: true, risk: 'safe' });
         }
-        if (toolName.startsWith('plugin__')) {
+        if (canonicalToolName.startsWith('plugin__')) {
             return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Executes an enabled local plugin' });
         }
-        if (toolName === 'fs_delete') {
+        if (canonicalToolName === 'fs_delete') {
             if (typeof safeArgs.path === 'string' && !safeArgs.path.includes('.')) {
                 return withCredentialEscalation({ allowed: true, risk: 'extreme' });
             }
             return withCredentialEscalation({ allowed: true, risk: 'dangerous' });
         }
-        if (toolName === 'proc_term') {
+        if (canonicalToolName === 'proc_term') {
             return withCredentialEscalation({ allowed: true, risk: 'dangerous' });
         }
-        if (toolName === 'desktop_act' || toolName === 'computer_use') {
+        if (canonicalToolName === 'desktop_act' || canonicalToolName === 'computer_use') {
             return withCredentialEscalation({ allowed: true, risk: 'extreme' });
         }
-        if (toolName === 'ui_forge' || toolName === 'document_forge') {
+        if (canonicalToolName === 'ui_forge' || canonicalToolName === 'document_forge') {
             return withCredentialEscalation({ allowed: true, risk: 'safe' });
         }
-        if (toolName === 'fs_write' || toolName === 'fs_move' || toolName === 'fs_edit' || toolName === 'MultiEdit') {
+        if (canonicalToolName === 'fs_write' || canonicalToolName === 'fs_move' || canonicalToolName === 'fs_edit' || canonicalToolName === 'MultiEdit') {
             return withCredentialEscalation({ allowed: true, risk: 'moderate' });
         }
         return withCredentialEscalation({ allowed: true, risk: 'safe' });
