@@ -376,8 +376,9 @@ export async function safeProviderFetchJson(options) {
             return (await response.json());
         }
         const rawText = await readBoundedResponseText(response, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, { truncate: false, label: options.providerLabel });
+        const cleanText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
         try {
-            return JSON.parse(rawText);
+            return JSON.parse(cleanText);
         }
         catch {
             const preview = redactProviderSecrets(rawText.slice(0, 240), options.secrets);

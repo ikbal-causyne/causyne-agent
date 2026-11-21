@@ -477,8 +477,9 @@ export async function safeProviderFetchJson<T = Record<string, unknown>>(
       { truncate: false, label: options.providerLabel }
     );
 
+    const cleanText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
     try {
-      return JSON.parse(rawText) as T;
+      return JSON.parse(cleanText) as T;
     } catch {
       const preview = redactProviderSecrets(rawText.slice(0, 240), options.secrets);
       throw new Error(
