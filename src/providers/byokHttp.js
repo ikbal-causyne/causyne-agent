@@ -342,7 +342,9 @@ export async function safeProviderFetch(options) {
             throw new Error(`${options.providerLabel} refused an HTTP redirect to protect API credentials.`);
         }
         const safeMsg = redactProviderSecrets(rawMsg, options.secrets);
-        throw new Error(`${options.providerLabel} network error: ${safeMsg}`);
+        const safeCause = causeMsg ? redactProviderSecrets(causeMsg, options.secrets) : '';
+        const detail = safeCause && !safeMsg.includes(safeCause) ? `${safeMsg} (${safeCause})` : safeMsg;
+        throw new Error(`${options.providerLabel} network error: ${detail}`);
     }
 }
 /**
