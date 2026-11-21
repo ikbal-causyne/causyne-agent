@@ -198,8 +198,16 @@ export function normalizeOpenAIChatChoiceResponse(data, options = {}) {
                     .join('');
             }
             rawToolCalls = message['tool_calls'];
-            const rc = message['reasoning_content'] ?? message['reasoning'];
-            reasoningContent = typeof rc === 'string' ? rc : '';
+            const rc = message['reasoning_content'] ?? message['reasoning'] ?? message['thinking'];
+            if (typeof rc === 'string') {
+                reasoningContent = rc;
+            }
+            else if (Array.isArray(message['reasoning_details'])) {
+                reasoningContent = message['reasoning_details']
+                    .map((d) => (isPlainObject(d) ? (typeof d['text'] === 'string' ? d['text'] : (typeof d['summary'] === 'string' ? d['summary'] : '')) : ''))
+                    .filter(Boolean)
+                    .join('\n');
+            }
         }
     }
     let toolCalls = normalizeOpenAIToolCalls(rawToolCalls, options.freeFormPaths, prefix);
