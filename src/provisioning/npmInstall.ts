@@ -1,11 +1,21 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 /** Install optional capabilities without writing over the active terminal UI. */
 export function installCapabilityManifest(directory: string): void {
+  if (typeof directory !== 'string' || !directory.trim() || directory.includes('\0')) {
+    throw new Error('Invalid capability installation directory');
+  }
+  const resolvedDir = path.resolve(directory);
+  const dirStat = fs.lstatSync(resolvedDir);
+  if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+    throw new Error('Refusing symlink or non-directory capability installation target');
+  }
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   try {
     execFileSync(npm, ['install', '--ignore-scripts', '--no-fund'], {
-      cwd: directory,
+      cwd: resolvedDir,
       stdio: 'pipe',
       encoding: 'utf8',
       maxBuffer: 2 * 1024 * 1024,
