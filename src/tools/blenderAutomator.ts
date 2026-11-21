@@ -226,7 +226,7 @@ export const blenderAct = {
       required: ['actions']
     }
   },
-  async execute(args: BlenderActArgs = {}, _context?: ToolWorkspaceContext): Promise<Record<string, unknown>> {
+  async execute(args: BlenderActArgs = {}, context?: ToolWorkspaceContext): Promise<Record<string, unknown>> {
     const simulateMissing = args?.simulateMissing || false;
     const blenderBin = getBlenderExecutablePath();
     if (simulateMissing || !blenderBin || !fs.existsSync(blenderBin)) {
@@ -242,8 +242,12 @@ export const blenderAct = {
       };
     }
 
-    const actions = Array.isArray(args?.actions) ? args.actions : [];
+    const actions = Array.isArray(args?.actions) ? args.actions.slice(0, MAX_BLENDER_ACTIONS) : [];
     const results: string[] = [];
+    let anyFailed = false;
+    const recordOutcome = (res: { success: boolean }): void => {
+      if (!res.success) anyFailed = true;
+    };
 
     for (const action of actions) {
       if (!action || typeof action !== 'object') continue;
@@ -256,7 +260,7 @@ export const blenderAct = {
       } else if (action.type === 'modifyObject') {
         results.push('[Layer 3 Fallback] Bridge not active; cannot modify live object directly.');
       } else if (action.type === 'autoFrameCamera') {
-        const focal = Number.isFinite(Number(action.focal_length)) ? Number(action.focal_length) : 65.0;
+        const focal = boundedFiniteNumber(action.focal_length, 65.0, 1.0, 2000.0);
         const camCode = `import bpy, math
 cam = bpy.context.scene.camera
 if not cam:
@@ -271,7 +275,7 @@ if hasattr(cam.data, "lens"):
 print('Headless camera framed at studio angle')`;
         await runHeadlessCli(null, camCode, results);
       } else if (action.type === 'smartGeometry') {
-        const bevelWidth = Number.isFinite(Number(action.bevel_width)) ? Number(action.bevel_width) : 0.015;
+        const bevelWidth = boundedFiniteNumber(action.bevel_width, 0.015, 0.0001, 10.0);
         const subsurfPy = action.subsurf !== false ? 'True' : 'False';
         const geomCode = `import bpy, math, json
 target_name = json.loads(${JSON.stringify(JSON.stringify(String(action.name || '')))})
@@ -332,8 +336,8 @@ for o in targets:
 print(f"Headless applied Smart PBR Material ({preset})")`;
         await runHeadlessCli(null, matCode, results);
       } else if (action.type === 'cinematicAtmosphere') {
-        const sunElev = Number.isFinite(Number(action.sun_elevation)) ? Number(action.sun_elevation) : 12.0;
-        const fogDensity = Number.isFinite(Number(action.fog_density)) ? Number(action.fog_density) : 0.015;
+        const sunElev = boundedFiniteNumber(action.sun_elevation, 12.0, -90.0, 90.0);
+        const fogDensity = boundedFiniteNumber(action.fog_density, 0.015, 0.0, 1.0);
         const fogPy = action.volumetric_fog !== false ? 'True' : 'False';
         const atmoCode = `import bpy, math
 w = bpy.context.scene.world or bpy.data.worlds.new("CausyneWorld")
@@ -396,7 +400,7 @@ for o in targets:
 print(f"Headless attached Geometry Nodes ({gen})")`;
         await runHeadlessCli(null, gnCode, results);
       } else if (action.type === 'setupStudioLighting') {
-        const keyEnergy = Number.isFinite(Number(action.key_energy)) ? Number(action.key_energy) : 800;
+        const keyEnergy = boundedFiniteNumber(action.key_energy, 800, 0, 1_000_000);
         const lightCode = `import bpy, math
 for o in list(bpy.context.scene.objects):
   if o.type == 'LIGHT':
@@ -411,9 +415,11 @@ bpy.context.scene.collection.objects.link(ko)
 print('Headless studio lighting built')`;
         await runHeadlessCli(null, lightCode, results);
       } else if (action.type === 'exportAsset') {
-        const destDir = action.directory || path.join(getWorkspaceTempDir(), 'causyne_3d_exports');
-        const prefix = action.filename || `causyne_asset_${Date.now()}`;
-        const fmts = Array.isArray(action.formats) ? action.formats.map(String) : ['blend', 'glb'];
+        const destDir = action.directory
+          ? resolveScopedPath(action.directory, context)
+          : path.join(getWorkspaceTempDir(context), 'causyne_3d_exports');
+        const prefix = safeSlugIdentifier(action.filename, `causyne_asset_${Date.now()}`, 80);
+        const fmts = Array.isArray(action.formats) ? action.formats.map(String).filter((f) => ['blend', 'glb', 'obj', 'fbx'].includes(f)) : ['blend', 'glb'];
         const paramsJson = JSON.stringify({ destDir, prefix, fmts });
         const exportCode = `import bpy, os, json
 params = json.loads(${JSON.stringify(paramsJson)})
@@ -443,21 +449,28 @@ print("Headless cleared scene meshes")`;
         await runHeadlessCli(null, clearCode, results);
       } else if (action.type === 'executePython') {
         let pyCode = action.code || '';
-        if (action.scriptPath && fs.existsSync(action.scriptPath)) {
-          pyCode = fs.readFileSync(action.scriptPath, 'utf8');
+        let safeScriptPath: string | null = null;
+        if (action.scriptPath) {
+          const checked = await assertSafeWorkspaceInput(action.scriptPath, context, { maxBytes: 2 * 1024 * 1024 });
+          safeScriptPath = checked.resolved;
+          pyCode = fs.readFileSync(safeScriptPath, 'utf8');
         }
         if (!pyCode) {
+          anyFailed = true;
           results.push('[Error] No code or valid scriptPath provided for executePython.');
           continue;
         }
         results.push('[Layer 3 Fallback] Live bridge not active. Executing via standalone Blender background CLI...');
         try {
-          await runHeadlessCli(action.scriptPath, pyCode, results);
+          recordOutcome(await runHeadlessCli(safeScriptPath, pyCode, results));
         } catch (cliErr: unknown) {
-          results.push(`[Layer 3 Error] ${getErrorMessage(cliErr)}`);
+          anyFailed = true;
+          results.push(`[Layer 3 Error] ${sanitizeToolError(cliErr)}`);
         }
       } else if (action.type === 'captureViewport') {
-        const targetPath = action.filepath || path.join(getWorkspaceTempDir(), `causyne_3d_preview_${Date.now()}.png`);
+        const targetPath = action.filepath
+          ? await assertSafeWorkspaceOutput(action.filepath, context)
+          : path.join(getWorkspaceTempDir(context), `causyne_3d_preview_${Date.now()}.png`);
         const captureCode = `import bpy, os, json
 target = json.loads(${JSON.stringify(JSON.stringify(targetPath))})
 os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -469,11 +482,15 @@ print("Captured headless viewport to", target)`;
           results.push(`[Layer 3 Capture Error] ${getErrorMessage(cliErr)}`);
         }
       } else if (action.type === 'renderFrame' || action.type === 'renderAnimation') {
-        const targetPath = action.filepath || path.join(getWorkspaceTempDir(), `causyne_3d_render_${Date.now()}.${action.type === 'renderAnimation' ? 'mp4' : 'png'}`);
+        const targetPath = action.filepath
+          ? await assertSafeWorkspaceOutput(action.filepath, context)
+          : path.join(getWorkspaceTempDir(context), `causyne_3d_render_${Date.now()}.${action.type === 'renderAnimation' ? 'mp4' : 'png'}`);
         const isAnimation = Boolean(action.animation) || action.type === 'renderAnimation' || targetPath.toLowerCase().endsWith('.mp4') || targetPath.toLowerCase().endsWith('.mov') || targetPath.toLowerCase().endsWith('.mkv');
-        const startFrame = Number.isFinite(Number(action.frame_start)) ? Math.max(1, Math.round(Number(action.frame_start))) : 1;
-        const endFrame = Number.isFinite(Number(action.frame_end)) ? Math.max(startFrame, Math.round(Number(action.frame_end))) : 60;
-        const renderParams = JSON.stringify({ targetPath, engine: String(action.engine || ''), startFrame, endFrame });
+        const startFrame = boundedInteger(action.frame_start, 1, 1, 100_000);
+        const endFrame = boundedInteger(action.frame_end, Math.max(startFrame, 60), startFrame, startFrame + 3600);
+        const requestedEngine = typeof action.engine === 'string' ? action.engine.trim() : '';
+        const safeEngine = requestedEngine && ALLOWED_BLENDER_ENGINES.has(requestedEngine) ? requestedEngine : '';
+        const renderParams = JSON.stringify({ targetPath, engine: safeEngine, startFrame, endFrame });
         const renderCode = isAnimation
           ? `import bpy, os, time, json
 params = json.loads(${JSON.stringify(renderParams)})
@@ -527,13 +544,17 @@ print("Rendered still frame to", target)`;
         }
       } else if (action.type === 'runHeadless') {
         let pyCode = action.code || '';
-        if (action.scriptPath && fs.existsSync(action.scriptPath)) {
-          pyCode = fs.readFileSync(action.scriptPath, 'utf8');
+        let safeScriptPath: string | null = null;
+        if (action.scriptPath) {
+          const checked = await assertSafeWorkspaceInput(action.scriptPath, context, { maxBytes: 2 * 1024 * 1024 });
+          safeScriptPath = checked.resolved;
+          pyCode = fs.readFileSync(safeScriptPath, 'utf8');
         }
         try {
-          await runHeadlessCli(action.scriptPath, pyCode, results);
+          recordOutcome(await runHeadlessCli(safeScriptPath, pyCode, results));
         } catch (cliErr: unknown) {
-          results.push(`[Layer 3 Error] ${getErrorMessage(cliErr)}`);
+          anyFailed = true;
+          results.push(`[Layer 3 Error] ${sanitizeToolError(cliErr)}`);
         }
       }
     }
