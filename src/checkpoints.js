@@ -159,9 +159,18 @@ function readObject(hash) {
     return buf;
 }
 export function resolveToolPath(value) {
-    if (typeof value !== 'string' || value.length === 0)
+    if (typeof value !== 'string' || value.length === 0 || value.includes('\0'))
         return null;
-    const expanded = value.replace(/^~\//, os.homedir() + '/');
+    const trimmed = value.trim();
+    if (!trimmed)
+        return null;
+    let expanded = trimmed;
+    if (trimmed === '~') {
+        expanded = os.homedir();
+    }
+    else if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+        expanded = path.join(os.homedir(), trimmed.slice(2));
+    }
     return path.resolve(expanded);
 }
 function appendJournal(entry) {

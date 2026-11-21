@@ -220,8 +220,15 @@ function readObject(hash: string): Buffer {
 }
 
 export function resolveToolPath(value: unknown): string | null {
-  if (typeof value !== 'string' || value.length === 0) return null;
-  const expanded = value.replace(/^~\//, os.homedir() + '/');
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  let expanded = trimmed;
+  if (trimmed === '~') {
+    expanded = os.homedir();
+  } else if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    expanded = path.join(os.homedir(), trimmed.slice(2));
+  }
   return path.resolve(expanded);
 }
 
