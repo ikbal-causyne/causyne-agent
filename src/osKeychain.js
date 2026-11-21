@@ -103,6 +103,8 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'pipe'],
             timeout: 5000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
             shell: false
         });
         if (res.status !== 0 || typeof res.stdout !== 'string')
@@ -115,6 +117,8 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'pipe'],
             timeout: 5000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
             shell: false
         });
         if (res.status !== 0 || typeof res.stdout !== 'string')
@@ -141,6 +145,8 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
             timeout: 8000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
             shell: false
         });
         if (res.status !== 0 || typeof res.stdout !== 'string')
@@ -169,6 +175,8 @@ export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
             timeout: 5000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
             shell: false
         });
         return res.status === 0;
@@ -179,6 +187,8 @@ export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
             timeout: 5000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
             shell: false
         });
         return res.status === 0;
@@ -196,6 +206,8 @@ export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe'],
             timeout: 8000,
+            maxBuffer: 1024 * 1024,
+            windowsHide: true,
             shell: false
         });
         if (res.status !== 0 || typeof res.stdout !== 'string' || !res.stdout.trim())
