@@ -35,10 +35,18 @@ export const visionInspector = {
     }
   },
 
-  async execute(args: VisionArgs) {
+  async execute(args: VisionArgs, context: { signal?: AbortSignal } = {}) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+      return { success: false, error: 'vision.inspect_ui requires an arguments object' };
+    }
     const target = args.target;
     if (target !== 'desktop' && target !== 'android_adb') {
       return { success: false, error: 'target must be desktop or android_adb' };
+    }
+    if (args.deviceSerial !== undefined) {
+      if (typeof args.deviceSerial !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(args.deviceSerial) || args.deviceSerial.startsWith('-')) {
+        return { success: false, error: 'Invalid Android ADB deviceSerial format' };
+      }
     }
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'causyne-vision-inspect-'));
     const imagePath = path.join(tempDir, 'screen.png');
@@ -46,7 +54,11 @@ export const visionInspector = {
       if (target === 'android_adb') {
         const adbArgs = args.deviceSerial ? ['-s', args.deviceSerial] : [];
         const { stdout } = await execFileAsync('adb', [...adbArgs, 'shell', 'screencap', '-p'], {
-          encoding: 'buffer', maxBuffer: 20 * 1024 * 1024
+          encoding: 'buffer',
+          maxBuffer: 20 * 1024 * 1024,
+          timeout: 30_000,
+          windowsHide: true,
+          ...(context?.signal ? { signal: context.signal } : {})
         });
         const bytes = process.platform === 'win32'
           ? Buffer.from(stdout.toString('binary').replace(/\r\n/g, '\n'), 'binary')
@@ -82,7 +94,7 @@ export const visionInspector = {
               ? words.map(word => `- [${word.text}] X:${Math.floor((word.bbox.x0 + word.bbox.x1) / 2)}, Y:${Math.floor((word.bbox.y0 + word.bbox.y1) / 2)}`).join('\n')
               : 'No confident OCR text tokens detected.';
           } finally {
-            await worker.terminate();
+            await worker.terminate().catch(() => {});
           }
         }
       } catch (error: unknown) {
