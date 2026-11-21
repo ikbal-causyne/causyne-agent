@@ -38,7 +38,7 @@ function hardenedGitEnv(baseEnv) {
     return env;
 }
 function runGit(args, options = {}) {
-    if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) {
+    if (!Array.isArray(args) || args.some((a) => typeof a !== 'string' || a.includes('\0'))) {
         throw new Error('git arguments must be an array of strings');
     }
     return execFileSync('git', args, {
@@ -53,7 +53,7 @@ function runGit(args, options = {}) {
 }
 const execFileAsync = promisify(execFile);
 async function runGitAsync(args, options = {}) {
-    if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) {
+    if (!Array.isArray(args) || args.some((a) => typeof a !== 'string' || a.includes('\0'))) {
         throw new Error('git arguments must be an array of strings');
     }
     const { stdout } = await execFileAsync('git', args, {
@@ -97,6 +97,8 @@ export function isGitAvailable() {
 }
 /** The worktree root for `dir`, or null when it is not inside a git repository. */
 export function resolveWorktree(dir) {
+    if (typeof dir !== 'string' || !dir.trim() || dir.includes('\0'))
+        return null;
     try {
         const out = runGit(['rev-parse', '--show-toplevel'], { cwd: dir });
         const root = out.trim();
