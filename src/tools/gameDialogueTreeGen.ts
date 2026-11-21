@@ -1,7 +1,19 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceInput,
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  isSafePlainKey,
+  resolveScopedPath,
+  sanitizeToolError,
+  stripDangerousKeysDeep,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const MAX_DIALOGUE_DB_BYTES = 4 * 1024 * 1024;
+const MAX_DIALOGUE_NODES = 256;
 
 export interface GameDialogueArgs {
   action?: string | undefined;
@@ -57,12 +69,16 @@ export const gameDialogueTreeGen = {
     }
   },
 
-  async execute(args: GameDialogueArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameDialogueArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, npcId = 'npc_default', npcName = 'NPC', nodes = [], projectDir } = args || {};
+      if (!isSafePlainKey(npcId)) {
+        return { success: false, error: 'Invalid npcId: disallowed prototype or empty key.' };
+      }
+      const cleanNodes = Array.isArray(nodes) ? stripDangerousKeysDeep(nodes.slice(0, MAX_DIALOGUE_NODES)) : [];
 
       if (action === 'create_tree') {
-        const defaultNodes = Array.isArray(nodes) && nodes.length > 0 ? nodes : [
+        const defaultNodes = cleanNodes.length > 0 ? cleanNodes : [
           {
             node_id: 'start',
             text: 'Greetings, traveler. Have you ventured into the Whispering Woods recently? The darkness deepens with every moon.',
@@ -101,40 +117,43 @@ export const gameDialogueTreeGen = {
           nodes: defaultNodes
         };
 
-        if (projectDir && fsSync.existsSync(projectDir)) {
-          const dataDir = path.join(projectDir, 'data');
-          await fs.mkdir(dataDir, { recursive: true });
-          const dbPath = path.join(dataDir, 'dialogue_trees.json');
-          let currentDb: Record<string, unknown> = {};
-          if (fsSync.existsSync(dbPath)) {
-            try {
-              const parsed: unknown = JSON.parse(await fs.readFile(dbPath, 'utf8'));
-              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                currentDb = parsed as Record<string, unknown>;
-              }
-            } catch { /* ignore */ }
+        if (projectDir) {
+          const scopedDir = resolveScopedPath(projectDir, sandbox);
+          if (fsSync.existsSync(scopedDir)) {
+            const dbPath = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'dialogue_trees.json'), sandbox, { scopeRoot: scopedDir });
+            let currentDb: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+            if (fsSync.existsSync(dbPath)) {
+              try {
+                const checked = await assertSafeWorkspaceInput(dbPath, sandbox, { scopeRoot: scopedDir, maxBytes: MAX_DIALOGUE_DB_BYTES });
+                const parsed: unknown = JSON.parse(await fs.readFile(checked.resolved, 'utf8'));
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                  currentDb = Object.assign(Object.create(null) as Record<string, unknown>, stripDangerousKeysDeep(parsed as Record<string, unknown>));
+                }
+              } catch { /* ignore */ }
+            }
+            currentDb[npcId] = treeObject;
+            await atomicWriteFileSafe(dbPath, JSON.stringify(currentDb, null, 2));
           }
-          currentDb[npcId] = treeObject;
-          await fs.writeFile(dbPath, JSON.stringify(currentDb, null, 2), 'utf8');
         }
 
         return { success: true, output: JSON.stringify(treeObject, null, 2) };
       }
 
       if (action === 'save_dialogue_db') {
-        if (!projectDir || !fsSync.existsSync(projectDir)) {
+        const scopedDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+        if (!scopedDir || !fsSync.existsSync(scopedDir)) {
           return { success: false, error: 'projectDir is required to save dialogue database.' };
         }
-        const dataDir = path.join(projectDir, 'data');
-        await fs.mkdir(dataDir, { recursive: true });
-        const dbPath = path.join(dataDir, 'dialogue_trees.json');
-        await fs.writeFile(dbPath, JSON.stringify({ [npcId]: { npc_id: npcId, npc_name: npcName, nodes } }, null, 2), 'utf8');
+        const dbPath = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'dialogue_trees.json'), sandbox, { scopeRoot: scopedDir });
+        const payload: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+        payload[npcId] = { npc_id: npcId, npc_name: npcName, nodes: cleanNodes };
+        await atomicWriteFileSafe(dbPath, JSON.stringify(payload, null, 2));
         return { success: true, output: JSON.stringify({ status: 'SAVED_DIALOGUE_DB', path: dbPath }, null, 2) };
       }
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
