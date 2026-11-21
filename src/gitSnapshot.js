@@ -189,12 +189,13 @@ function excludeOversizedUntracked(gitDir, worktree) {
     }
     const oversized = [];
     for (const rel of listing.split('\0')) {
-        if (!rel)
+        if (!rel || rel.includes('\r') || rel.includes('\n'))
             continue;
         try {
-            const stat = fs.statSync(path.join(worktree, rel));
-            if (stat.isFile() && stat.size > MAX_UNTRACKED_BYTES)
+            const stat = fs.lstatSync(path.join(worktree, rel));
+            if (!stat.isSymbolicLink() && stat.isFile() && stat.size > MAX_UNTRACKED_BYTES) {
                 oversized.push(rel);
+            }
         }
         catch {
             // skip inaccessible entry
