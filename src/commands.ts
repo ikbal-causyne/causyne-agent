@@ -203,25 +203,36 @@ export const COMMANDS: SlashCommandDefinition[] = [
     run: async (argv, ctx) => {
       const target = argv.join(' ').trim().replace(/^["']|["']$/g, '');
       if (!target) {
-        return ok(`Current working directory: ${process.cwd()}`);
+        return ok(`Current working directory: ${safeDisplay(process.cwd())}`);
       }
-      const resolved = path.resolve(process.cwd(), target.replace(/^~\//, os.homedir() + '/'));
-      if (!fs.existsSync(resolved)) {
-        return fail(`Directory not found: ${resolved}`);
+      if (target.includes('\0')) {
+        return fail('Invalid directory path.');
       }
-      const stat = fs.statSync(resolved);
+      const expanded = target === '~'
+        ? os.homedir()
+        : (target.startsWith('~/') || target.startsWith('~\\') ? path.join(os.homedir(), target.slice(2)) : target);
+      const resolved = path.resolve(process.cwd(), expanded);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(resolved);
+      } catch {
+        return fail(`Directory not found: ${safeDisplay(resolved)}`);
+      }
       if (!stat.isDirectory()) {
-        return fail(`Not a directory: ${resolved}`);
+        return fail(`Not a directory: ${safeDisplay(resolved)}`);
       }
       // Do not mutate the existing AgentLoop: its workspaceRoot, Sandbox,
       // MemoryManager and loaded session belong to the previous workspace.
       // The chat controller rebuilds the loop after this explicit command.
-      let canonicalRoot;
+      let canonicalRoot: string;
       try {
         canonicalRoot = fs.realpathSync(resolved);
+        if (isBlockedWorkspaceRoot(canonicalRoot)) {
+          return fail(`Refusing to switch workspace into blocked system directory: ${safeDisplay(canonicalRoot)}`);
+        }
         process.chdir(canonicalRoot);
       } catch (err) {
-        return fail(`Cannot switch to ${resolved}: ${errMsg(err)}`);
+        return fail(`Cannot switch to ${safeDisplay(resolved)}: ${errMsg(err)}`);
       }
       if (ctx.prompt && typeof ctx.prompt.setWorkingRoot === 'function') {
         ctx.prompt.setWorkingRoot(canonicalRoot);
