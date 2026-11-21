@@ -129,7 +129,7 @@ test('MemoryManager handles circular message content and nullish history entries
 
 test('cliProbe strips secret env vars and rejects NUL bytes and protected workspace roots', async () => {
   const prevSecret = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'sk-sector7-secret-should-not-leak';
+  process.env.OPENAI_API_KEY = 'test-openai-sentinel-value';
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-cliprobe-sec7-'));
   try {
     const res = await runCliProbe({
