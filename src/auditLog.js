@@ -1,6 +1,36 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
+function sanitizeAuditValue(value, depth = 0, seen = new WeakSet()) {
+    if (value === null || value === undefined)
+        return value;
+    if (typeof value === 'string')
+        return redactProviderSecrets(value);
+    if (typeof value === 'number' || typeof value === 'boolean')
+        return value;
+    if (typeof value === 'bigint')
+        return value.toString();
+    if (depth >= 6 || typeof value !== 'object')
+        return '[omitted]';
+    if (seen.has(value))
+        return '[circular]';
+    seen.add(value);
+    if (Array.isArray(value)) {
+        return value.slice(0, 64).map(item => sanitizeAuditValue(item, depth + 1, seen));
+    }
+    const out = {};
+    let count = 0;
+    for (const [k, v] of Object.entries(value)) {
+        if (count >= 64)
+            break;
+        if (k === '__proto__' || k === 'constructor' || k === 'prototype')
+            continue;
+        out[k] = sanitizeAuditValue(v, depth + 1, seen);
+        count++;
+    }
+    return out;
+}
 function resolveLogDir() {
     return path.join(causyneHome(), 'logs');
 }
@@ -37,9 +67,10 @@ export class AuditLog {
         }
     }
     log(eventData) {
+        const sanitized = sanitizeAuditValue(eventData);
         const entry = {
             ts: new Date().toISOString(),
-            ...eventData
+            ...(sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) ? sanitized : {})
         };
         try {
             this.ensureLogDir();

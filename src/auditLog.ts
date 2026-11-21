@@ -1,11 +1,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
 
 export type AuditLogEvent = Record<string, unknown>;
 
 export interface AuditLogEntry extends AuditLogEvent {
   ts: string;
+}
+
+function sanitizeAuditValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return redactProviderSecrets(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'bigint') return value.toString();
+  if (depth >= 6 || typeof value !== 'object') return '[omitted]';
+  if (seen.has(value)) return '[circular]';
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.slice(0, 64).map(item => sanitizeAuditValue(item, depth + 1, seen));
+  }
+  const out: Record<string, unknown> = {};
+  let count = 0;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (count >= 64) break;
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    out[k] = sanitizeAuditValue(v, depth + 1, seen);
+    count++;
+  }
+  return out;
 }
 
 function resolveLogDir(): string {
@@ -42,9 +65,10 @@ export class AuditLog {
   }
 
   log(eventData: AuditLogEvent): void {
+    const sanitized = sanitizeAuditValue(eventData) as AuditLogEvent;
     const entry: AuditLogEntry = {
       ts: new Date().toISOString(),
-      ...eventData
+      ...(sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) ? sanitized : {})
     };
 
     try {
