@@ -77,7 +77,7 @@ function parseProfile(raw) {
     }
     const policy = record.policy === 'read-only'
         ? 'read-only'
-        : (record.policy === 'ask' ? 'ask' : 'workspace');
+        : (record.policy === 'workspace' ? 'workspace' : 'ask');
     const timeoutSeconds = typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
         ? Math.max(5, Math.min(1800, Math.round(record.timeoutSeconds)))
         : 120;
