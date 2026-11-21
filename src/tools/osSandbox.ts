@@ -115,6 +115,9 @@ export function escapeSeatbeltPath(rawPath: string): string | null {
 }
 
 function resolveCanonicalPaths(rawPath: string): string[] {
+  if (typeof rawPath !== 'string' || rawPath.length === 0 || rawPath.includes('\0')) {
+    return [];
+  }
   const resolved = path.resolve(rawPath);
   const out = new Set<string>();
   try {

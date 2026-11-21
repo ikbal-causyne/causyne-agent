@@ -65,6 +65,9 @@ export function escapeSeatbeltPath(rawPath) {
     return rawPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 function resolveCanonicalPaths(rawPath) {
+    if (typeof rawPath !== 'string' || rawPath.length === 0 || rawPath.includes('\0')) {
+        return [];
+    }
     const resolved = path.resolve(rawPath);
     const out = new Set();
     try {
