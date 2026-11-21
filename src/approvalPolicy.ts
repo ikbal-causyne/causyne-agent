@@ -34,9 +34,28 @@ export function isAutonomousToolContext(context: unknown): boolean {
 }
 
 const SHELL_TOOLS = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell']);
-const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|command|env)\s+)*(?:rm|unlink|rmdir|del|erase|Remove-Item)\b|\bfind\b[^\n;]*\s-delete\b|\bgit\s+(?:rm\b|clean\b[^\n;&|]*(?:-[a-zA-Z0-9]*f[a-zA-Z0-9]*|--force\b))/i;
+const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|doas|pkexec|command|env)\s+)*(?:rm|unlink|rmdir|shred|srm|del|erase|Remove-Item)\b|\bgit\s+rm\b/i;
 const DELETE_API_CALL = /\b(?:os\.(?:remove|unlink)|shutil\.rmtree|fs\.(?:rm|unlink)(?:Sync)?|\.unlink|\.rmdir)\s*\(/i;
-const NESTED_SHELL_DELETE = /\b(?:bash|sh|zsh|dash)\s+-c\s+['"]\s*(?:rm|unlink|rmdir)\b|\b(?:powershell|pwsh)\s+(?:-Command|-c)\s+['"]?\s*Remove-Item\b/i;
+const NESTED_SHELL_DELETE = /\b(?:bash|sh|zsh|dash)\s+-c\s+['"]\s*(?:rm|unlink|rmdir|shred|srm)\b|\b(?:powershell|pwsh)\s+(?:-Command|-c)\s+['"]?\s*Remove-Item\b/i;
+
+function hasFindDelete(command: string): boolean {
+  for (const segment of command.split(/[\n;]/)) {
+    const findMatch = /\bfind\b/i.exec(segment);
+    if (!findMatch) continue;
+    if (/\s-delete\b/i.test(segment.slice(findMatch.index + findMatch[0].length))) return true;
+  }
+  return false;
+}
+
+function hasGitForceClean(command: string): boolean {
+  for (const segment of command.split(/[\n;&|]/)) {
+    const cleanMatch = /\bgit\s+clean\b/i.exec(segment);
+    if (!cleanMatch) continue;
+    const tail = segment.slice(cleanMatch.index + cleanMatch[0].length);
+    if (/(?:^|\s)(?:-[a-zA-Z0-9]*f[a-zA-Z0-9]*|--force)\b/i.test(tail)) return true;
+  }
+  return false;
+}
 
 /** A deletion is a whole filesystem entry, not removal of lines in an edit. */
 function canonicalPolicyTool(tool: unknown): string {
