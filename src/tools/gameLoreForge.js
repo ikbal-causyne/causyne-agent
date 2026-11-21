@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe, resolveScopedPath, safeSlugIdentifier, sanitizeToolError, stripDangerousKeysDeep } from './toolPathSafety.js';
+const MAX_LORE_BYTES = 4 * 1024 * 1024;
 export const gameLoreForge = {
     schema: {
         name: 'game.lore_forge',
@@ -23,20 +24,24 @@ export const gameLoreForge = {
             required: ['action', 'title']
         }
     },
-    async execute(args = {}, _sandbox) {
+    async execute(args = {}, sandbox) {
         try {
             const { action, title = 'Untitled', genre = 'medieval_fantasy', keyElements = [], projectDir, customLoreData } = args || {};
             const safeTitle = String(title ?? 'Untitled');
             const safeElements = Array.isArray(keyElements) ? keyElements.map(String) : [];
+            const titleSlug = safeSlugIdentifier(safeTitle.toLowerCase(), 'untitled', 64);
             if (action === 'save_lore_to_project') {
-                if (!projectDir || !fsSync.existsSync(projectDir)) {
+                const scopedDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+                if (!scopedDir || !fsSync.existsSync(scopedDir)) {
                     return { success: false, error: `Valid projectDir is required to save lore. Found: ${String(projectDir ?? '')}` };
                 }
-                const dataDir = path.join(projectDir, 'data');
-                await fs.mkdir(dataDir, { recursive: true });
-                const filePath = path.join(dataDir, `${safeTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64)}_lore.json`);
-                const body = JSON.stringify(customLoreData || { title: safeTitle, genre, timestamp: Date.now() }, null, 2);
-                await fs.writeFile(filePath, body, 'utf8');
+                const filePath = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', `${titleSlug}_lore.json`), sandbox, { scopeRoot: scopedDir });
+                const cleanLore = customLoreData ? stripDangerousKeysDeep(customLoreData) : { title: safeTitle, genre, timestamp: Date.now() };
+                const body = JSON.stringify(cleanLore, null, 2);
+                if (Buffer.byteLength(body, 'utf8') > MAX_LORE_BYTES) {
+                    return { success: false, error: `customLoreData exceeds maximum size of ${MAX_LORE_BYTES} bytes.` };
+                }
+                await atomicWriteFileSafe(filePath, body);
                 const stat = await fs.stat(filePath);
                 return {
                     success: true,
@@ -64,10 +69,12 @@ export const gameLoreForge = {
                         { era: 'Age of Shadows (Current)', description: 'A tense era of declining magic and rising necromancy.' }
                     ]
                 };
-                if (projectDir && fsSync.existsSync(projectDir)) {
-                    const dataDir = path.join(projectDir, 'data');
-                    await fs.mkdir(dataDir, { recursive: true });
-                    await fs.writeFile(path.join(dataDir, 'world_lore.json'), JSON.stringify(loreTemplate, null, 2), 'utf8');
+                if (projectDir) {
+                    const scopedDir = resolveScopedPath(projectDir, sandbox);
+                    if (fsSync.existsSync(scopedDir)) {
+                        const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'world_lore.json'), sandbox, { scopeRoot: scopedDir });
+                        await atomicWriteFileSafe(target, JSON.stringify(loreTemplate, null, 2));
+                    }
                 }
                 return { success: true, output: JSON.stringify(loreTemplate, null, 2) };
             }
@@ -84,10 +91,12 @@ export const gameLoreForge = {
                         secret: 'Prevent the awakening of the Void Sovereign locked within their own soul.'
                     }
                 };
-                if (projectDir && fsSync.existsSync(projectDir)) {
-                    const dataDir = path.join(projectDir, 'data');
-                    await fs.mkdir(dataDir, { recursive: true });
-                    await fs.writeFile(path.join(dataDir, `char_${safeTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64)}.json`), JSON.stringify(bioTemplate, null, 2), 'utf8');
+                if (projectDir) {
+                    const scopedDir = resolveScopedPath(projectDir, sandbox);
+                    if (fsSync.existsSync(scopedDir)) {
+                        const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', `char_${titleSlug}.json`), sandbox, { scopeRoot: scopedDir });
+                        await atomicWriteFileSafe(target, JSON.stringify(bioTemplate, null, 2));
+                    }
                 }
                 return { success: true, output: JSON.stringify(bioTemplate, null, 2) };
             }
@@ -104,17 +113,19 @@ export const gameLoreForge = {
                     },
                     resources: ['Shadow Shards', 'Enchanted Steel', 'Ancient Grimoires']
                 };
-                if (projectDir && fsSync.existsSync(projectDir)) {
-                    const dataDir = path.join(projectDir, 'data');
-                    await fs.mkdir(dataDir, { recursive: true });
-                    await fs.writeFile(path.join(dataDir, `faction_${safeTitle.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64)}.json`), JSON.stringify(factionTemplate, null, 2), 'utf8');
+                if (projectDir) {
+                    const scopedDir = resolveScopedPath(projectDir, sandbox);
+                    if (fsSync.existsSync(scopedDir)) {
+                        const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', `faction_${titleSlug}.json`), sandbox, { scopeRoot: scopedDir });
+                        await atomicWriteFileSafe(target, JSON.stringify(factionTemplate, null, 2));
+                    }
                 }
                 return { success: true, output: JSON.stringify(factionTemplate, null, 2) };
             }
             return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
