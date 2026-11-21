@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { existsSync, statSync, createWriteStream } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, statSync, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveUserPath } from '../utils/paths.js';
@@ -9,6 +9,68 @@ export interface ArchiveArgs {
   action: 'compress' | 'extract';
   source: string;
   destination: string;
+}
+
+export interface ArchiveContext {
+  workspaceRoot?: string;
+  workspacePaths?: string[];
+  grantAllAccess?: boolean;
+  parentLoop?: { workspaceRoot?: string };
+}
+
+function expandArchivePath(raw: string, baseRoot?: string): string {
+  const trimmed = raw.trim();
+  if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return resolveUserPath(trimmed);
+  }
+  if (path.isAbsolute(trimmed)) return path.resolve(trimmed);
+  return path.resolve(baseRoot ? resolveUserPath(baseRoot) : process.cwd(), trimmed);
+}
+
+function canonicalArchivePath(target: string): string {
+  const resolved = path.resolve(target);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    let current = resolved;
+    const missing: string[] = [];
+    for (let i = 0; i < 64; i++) {
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      missing.unshift(path.basename(current));
+      current = parent;
+      try {
+        return path.join(realpathSync(current), ...missing);
+      } catch {
+        continue;
+      }
+    }
+    return resolved;
+  }
+}
+
+function assertArchiveScope(target: string, context?: ArchiveContext): void {
+  if (!context || context.grantAllAccess === true) return;
+  const configured = Array.isArray(context.workspacePaths)
+    ? context.workspacePaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).map(p => p.trim())
+    : [];
+  const roots = configured.length > 0
+    ? configured
+    : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+      .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+      .map(p => p.trim());
+  if (roots.length === 0) return;
+  const physical = canonicalArchivePath(target);
+  for (const root of roots) {
+    try {
+      const realRoot = realpathSync(resolveUserPath(root));
+      const rel = path.relative(realRoot, physical);
+      if (rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))) return;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(`Archive path resolves outside the selected workspace: ${target}`);
 }
 
 export interface ArchiveResult {
@@ -33,17 +95,25 @@ export const archive = {
     }
   },
 
-  async execute(args: ArchiveArgs): Promise<ArchiveResult> {
+  async execute(args: ArchiveArgs, context?: ArchiveContext): Promise<ArchiveResult> {
     try {
-      if (!args || !args.action || !args.source || !args.destination) {
+      if (!args || typeof args !== 'object' || typeof args.action !== 'string' || typeof args.source !== 'string' || typeof args.destination !== 'string' || !args.source.trim() || !args.destination.trim()) {
         return { success: false, error: 'Missing required arguments: action, source, destination' };
       }
 
-      const source = resolveUserPath(args.source);
-      const dest = resolveUserPath(args.destination);
+      const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+        || context?.workspaceRoot?.trim()
+        || context?.workspacePaths?.find((p): p is string => typeof p === 'string' && p.trim().length > 0)?.trim();
+      const source = expandArchivePath(args.source, baseRoot);
+      const dest = expandArchivePath(args.destination, baseRoot);
+      assertArchiveScope(source, context);
+      assertArchiveScope(dest, context);
 
       if (!existsSync(source)) {
         return { success: false, error: `Archive source path not found: ${source}` };
+      }
+      if (existsSync(dest) && lstatSync(dest).isSymbolicLink()) {
+        return { success: false, error: `Refusing to write through symbolic link destination: ${dest}` };
       }
 
       if (args.action === 'extract') {
