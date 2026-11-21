@@ -26,6 +26,7 @@ export interface NormalizedChoiceResult {
 }
 
 const VALID_ID_CHARS = /[^a-zA-Z0-9_-]/g;
+let toolIdSequence = 0;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -61,7 +62,10 @@ export function sanitizeProviderToolId(rawId: unknown, prefix = 'call', index = 
     ? rawId.trim().replace(VALID_ID_CHARS, '_')
     : '';
   if (cleaned.length > 0) return cleaned.slice(0, 64);
-  return `${prefix.replace(VALID_ID_CHARS, '_')}_${Date.now()}_${index}`.slice(0, 64);
+  const safePrefix = (typeof prefix === 'string' ? prefix.replace(VALID_ID_CHARS, '_') : '') || 'call';
+  const safeIndex = typeof index === 'number' && Number.isFinite(index) ? Math.max(0, Math.floor(index)) : 0;
+  toolIdSequence = (toolIdSequence + 1) % 100_000;
+  return `${safePrefix}_${Date.now()}_${safeIndex}_${toolIdSequence}`.slice(0, 64);
 }
 
 function resolveFreeFormPaths(
