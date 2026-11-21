@@ -67,8 +67,10 @@ function resolveCommand(workspace, program) {
 export async function runPtyProbe(options = {}) {
     const safeOptions = options && typeof options === 'object' ? options : {};
     const { workspace, program = 'node', args = [], input = '', contains = null, timeoutMs = 5000, inputDelayMs = 100, outputLimit = 65536, expectedExitCode = 0 } = safeOptions;
-    if (typeof workspace !== 'string' || !Array.isArray(args)
-        || !args.every(a => typeof a === 'string') || typeof input !== 'string') {
+    if (typeof workspace !== 'string' || workspace.includes('\0')
+        || typeof program !== 'string' || program.includes('\0')
+        || !Array.isArray(args) || !args.every(a => typeof a === 'string' && !a.includes('\0'))
+        || typeof input !== 'string') {
         throw new TypeError('workspace, argv, and input must be valid strings');
     }
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60000
