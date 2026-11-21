@@ -740,6 +740,7 @@ async function runPluginTool(tool, args, context) {
                 finish({ success: false, error: `Plugin returned invalid JSON: ${error instanceof Error ? error.message : String(error)}` });
             }
         });
+        child.stdin.on('error', () => { });
         child.stdin.end(payload);
     });
 }

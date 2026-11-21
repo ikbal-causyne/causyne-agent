@@ -782,6 +782,7 @@ async function runPluginTool(tool: EnabledPluginTool, args: unknown, context: an
         finish({ success: false, error: `Plugin returned invalid JSON: ${error instanceof Error ? error.message : String(error)}` });
       }
     });
+    child.stdin.on('error', () => { /* ignore EPIPE if child exited before reading stdin */ });
     child.stdin.end(payload);
   });
 }
