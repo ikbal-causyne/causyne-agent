@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
+import { safeDisplay } from '../tui/text.js';
 const KINDS = new Set(['architecture', 'product', 'data', 'security', 'workflow', 'other']);
 function text(value, name, limit) {
     if (typeof value !== 'string')
         throw new Error(`${name} must be a string`);
-    const cleaned = value.replace(/\s+/g, ' ').trim();
+    const cleaned = safeDisplay(value).replace(/\s+/g, ' ').trim();
     if (!cleaned)
         throw new Error(`${name} must not be empty`);
     if (cleaned.length > limit)
@@ -11,6 +12,9 @@ function text(value, name, limit) {
     return cleaned;
 }
 function normalizeRequest(args) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+        throw new Error('Decision arguments must be an object');
+    }
     const kind = String(args.kind ?? 'other');
     if (!KINDS.has(kind))
         throw new Error('kind is invalid');
@@ -19,7 +23,10 @@ function normalizeRequest(args) {
     }
     const ids = new Set();
     const options = args.options.map((raw, index) => {
-        const option = (raw && typeof raw === 'object' ? raw : {});
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            throw new Error(`options[${index}] must be an object`);
+        }
+        const option = raw;
         const id = text(option.id ?? `option-${index + 1}`, `options[${index}].id`, 48);
         if (ids.has(id))
             throw new Error(`Duplicate option id: ${id}`);
@@ -71,7 +78,7 @@ export const requestDecision = {
     },
     async execute(args, context = {}) {
         try {
-            if (!context.parentLoop || typeof context.parentLoop.requestDecision !== 'function') {
+            if (!context?.parentLoop || typeof context.parentLoop.requestDecision !== 'function') {
                 return { success: false, error: 'Structured decisions require an active Causyne session' };
             }
             const request = normalizeRequest(args);

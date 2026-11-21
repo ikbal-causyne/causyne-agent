@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { DecisionKind, DecisionRequest } from '../decisionPolicy.js';
+import { safeDisplay } from '../tui/text.js';
 
 interface ToolContext {
   parentLoop?: {
@@ -25,13 +26,16 @@ const KINDS = new Set<DecisionKind>(['architecture', 'product', 'data', 'securit
 
 function text(value: unknown, name: string, limit: number): string {
   if (typeof value !== 'string') throw new Error(`${name} must be a string`);
-  const cleaned = value.replace(/\s+/g, ' ').trim();
+  const cleaned = safeDisplay(value).replace(/\s+/g, ' ').trim();
   if (!cleaned) throw new Error(`${name} must not be empty`);
   if (cleaned.length > limit) throw new Error(`${name} exceeds ${limit} characters`);
   return cleaned;
 }
 
 function normalizeRequest(args: RawInput): DecisionRequest {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error('Decision arguments must be an object');
+  }
   const kind = String(args.kind ?? 'other') as DecisionKind;
   if (!KINDS.has(kind)) throw new Error('kind is invalid');
   if (!Array.isArray(args.options) || args.options.length < 2 || args.options.length > 4) {
@@ -39,7 +43,10 @@ function normalizeRequest(args: RawInput): DecisionRequest {
   }
   const ids = new Set<string>();
   const options = args.options.map((raw, index) => {
-    const option = (raw && typeof raw === 'object' ? raw : {}) as RawOption;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`options[${index}] must be an object`);
+    }
+    const option = raw as RawOption;
     const id = text(option.id ?? `option-${index + 1}`, `options[${index}].id`, 48);
     if (ids.has(id)) throw new Error(`Duplicate option id: ${id}`);
     ids.add(id);
@@ -92,7 +99,7 @@ export const requestDecision = {
 
   async execute(args: RawInput, context: ToolContext = {}) {
     try {
-      if (!context.parentLoop || typeof context.parentLoop.requestDecision !== 'function') {
+      if (!context?.parentLoop || typeof context.parentLoop.requestDecision !== 'function') {
         return { success: false, error: 'Structured decisions require an active Causyne session' };
       }
       const request = normalizeRequest(args);
