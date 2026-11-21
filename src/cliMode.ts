@@ -102,7 +102,7 @@ function makeApprovalHandler(conn: LocalCLIConnection, dialogs: any = null): (to
 
     let message = 'Approve this action?';
     if (detail) {
-      message = `Allow ${bold(detail.tool)} to run once?`;
+      message = `Allow ${bold(safeDisplay(String(detail.tool ?? '')))} to run once?`;
     } else if (String(toolCallId).startsWith('circuit_breaker_')) {
       message = 'The agent has run 100 steps. Let it continue?';
     } else if (String(toolCallId).startsWith('tier_extension_')) {
