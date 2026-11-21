@@ -2,9 +2,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runInteractivePty } from './interactivePty.js';
+function resolveVerifyWorkspace(rawWorkspace) {
+    if (rawWorkspace === undefined)
+        return process.cwd();
+    if (typeof rawWorkspace !== 'string' || !rawWorkspace.trim() || rawWorkspace.includes('\0')) {
+        throw new TypeError('workspace must be a valid path string');
+    }
+    return rawWorkspace;
+}
 export async function verifyCausyneTui(options = {}) {
     const safeOptions = options && typeof options === 'object' ? options : {};
-    const workspace = safeOptions.workspace || process.cwd();
+    const workspace = resolveVerifyWorkspace(safeOptions.workspace);
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-ui-verify-'));
     try {
         const result = await runInteractivePty({
@@ -36,7 +44,7 @@ export async function verifyCausyneTui(options = {}) {
 }
 export async function verifyCausyneChatMode(options = {}) {
     const safeOptions = options && typeof options === 'object' ? options : {};
-    const workspace = safeOptions.workspace || process.cwd();
+    const workspace = resolveVerifyWorkspace(safeOptions.workspace);
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-chat-verify-'));
     try {
         const result = await runInteractivePty({

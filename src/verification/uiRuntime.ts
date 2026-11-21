@@ -15,9 +15,17 @@ export type VerifyUiResult = InteractivePtyResult & {
   evidence: string;
 };
 
+function resolveVerifyWorkspace(rawWorkspace: unknown): string {
+  if (rawWorkspace === undefined) return process.cwd();
+  if (typeof rawWorkspace !== 'string' || !rawWorkspace.trim() || rawWorkspace.includes('\0')) {
+    throw new TypeError('workspace must be a valid path string');
+  }
+  return rawWorkspace;
+}
+
 export async function verifyCausyneTui(options: VerifyUiOptions = {}): Promise<VerifyUiResult> {
   const safeOptions = options && typeof options === 'object' ? options : {};
-  const workspace = safeOptions.workspace || process.cwd();
+  const workspace = resolveVerifyWorkspace(safeOptions.workspace);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-ui-verify-'));
   try {
     const result = await runInteractivePty({
@@ -49,7 +57,7 @@ export async function verifyCausyneTui(options: VerifyUiOptions = {}): Promise<V
 
 export async function verifyCausyneChatMode(options: VerifyUiOptions = {}): Promise<VerifyUiResult> {
   const safeOptions = options && typeof options === 'object' ? options : {};
-  const workspace = safeOptions.workspace || process.cwd();
+  const workspace = resolveVerifyWorkspace(safeOptions.workspace);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-chat-verify-'));
   try {
     const result = await runInteractivePty({
