@@ -68,7 +68,10 @@ export class AuditLog {
         }
     }
     log(eventData) {
-        const sanitized = sanitizeAuditValue(eventData);
+        const normalized = eventData && typeof eventData === 'object' && !Array.isArray(eventData)
+            ? eventData
+            : { message: eventData == null ? '' : String(eventData) };
+        const sanitized = sanitizeAuditValue(normalized);
         const entry = {
             ts: new Date().toISOString(),
             ...(sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) ? sanitized : {})
