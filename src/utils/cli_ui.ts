@@ -1,5 +1,5 @@
 import { paint, bold as themeBold, dim as themeDim, GLYPHS, HAS_COLOR, terminalWidth } from '../tui/theme.js';
-import { visibleWidth, truncate, padEnd } from '../tui/text.js';
+import { visibleWidth, truncate, padEnd, safeDisplay } from '../tui/text.js';
 
 export interface SpinnerHandle {
   start(): SpinnerHandle;
@@ -98,8 +98,10 @@ export const UI: UIInterface = {
   box: BOX,
 
   printHeader(title: string, subtitle?: string): void {
+    const safeTitle = safeDisplay(String(title ?? ''));
+    const safeSub = subtitle ? safeDisplay(String(subtitle)) : '';
     console.log('');
-    console.log(`  ${themeBold(paint('accent', title))}${subtitle ? themeDim(`  ${GLYPHS.dot}  ${subtitle}`) : ''}`);
+    console.log(`  ${themeBold(paint('accent', safeTitle))}${safeSub ? themeDim(`  ${GLYPHS.dot}  ${safeSub}`) : ''}`);
     console.log(themeDim(`  ${GLYPHS.hLine.repeat(Math.max(10, Math.min(60, terminalWidth() - 4)))}`));
   },
 

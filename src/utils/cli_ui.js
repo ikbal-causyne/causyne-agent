@@ -1,5 +1,5 @@
 import { paint, bold as themeBold, dim as themeDim, GLYPHS, HAS_COLOR, terminalWidth } from '../tui/theme.js';
-import { visibleWidth, truncate, padEnd } from '../tui/text.js';
+import { visibleWidth, truncate, padEnd, safeDisplay } from '../tui/text.js';
 const ESC = '\x1b';
 const RESET = HAS_COLOR ? `${ESC}[0m` : '';
 const CLEAR_EOL = `${ESC}[K`;
@@ -72,8 +72,10 @@ export const UI = {
     colors: COLORS,
     box: BOX,
     printHeader(title, subtitle) {
+        const safeTitle = safeDisplay(String(title ?? ''));
+        const safeSub = subtitle ? safeDisplay(String(subtitle)) : '';
         console.log('');
-        console.log(`  ${themeBold(paint('accent', title))}${subtitle ? themeDim(`  ${GLYPHS.dot}  ${subtitle}`) : ''}`);
+        console.log(`  ${themeBold(paint('accent', safeTitle))}${safeSub ? themeDim(`  ${GLYPHS.dot}  ${safeSub}`) : ''}`);
         console.log(themeDim(`  ${GLYPHS.hLine.repeat(Math.max(10, Math.min(60, terminalWidth() - 4)))}`));
     },
     printCard(title, bodyLines, highlight = false) {
