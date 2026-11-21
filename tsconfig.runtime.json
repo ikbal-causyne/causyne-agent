@@ -302,7 +302,8 @@
     "src/tui/workspaceIdentity.ts",
     "src/tui/sessionPickerView.ts",
     "src/licensing/policy.ts",
-    "src/licensing/entitlements.ts"
+    "src/licensing/entitlements.ts",
+    "src/provisioning/capabilityConsent.ts"
   ],
   "exclude": [
     "node_modules",

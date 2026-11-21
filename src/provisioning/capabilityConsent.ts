@@ -1,0 +1,25 @@
+// Consent state for capability groups, readable without loading the installer.
+//
+// Three states matter and only three: granted (true), declined (false), and
+// never asked (absent). Collapsing "declined" into "not granted" would make the
+// agent re-ask forever, which is how a consent prompt becomes noise the user
+// learns to dismiss.
+
+import { loadConfig } from '../config.js';
+
+export function consentMap(): Record<string, boolean> {
+  try {
+    const raw = loadConfig().capabilityConsent;
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function isGroupGranted(group: string): boolean {
+  return consentMap()[group] === true;
+}
+
+export function isGroupDeclined(group: string): boolean {
+  return consentMap()[group] === false;
+}

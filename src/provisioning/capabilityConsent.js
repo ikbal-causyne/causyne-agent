@@ -4,21 +4,19 @@
 // never asked (absent). Collapsing "declined" into "not granted" would make the
 // agent re-ask forever, which is how a consent prompt becomes noise the user
 // learns to dismiss.
-
 import { loadConfig } from '../config.js';
-
 export function consentMap() {
-  try {
-    return loadConfig().capabilityConsent || {};
-  } catch (e) {
-    return {};
-  }
+    try {
+        const raw = loadConfig().capabilityConsent;
+        return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    }
+    catch {
+        return {};
+    }
 }
-
 export function isGroupGranted(group) {
-  return consentMap()[group] === true;
+    return consentMap()[group] === true;
 }
-
 export function isGroupDeclined(group) {
-  return consentMap()[group] === false;
+    return consentMap()[group] === false;
 }
