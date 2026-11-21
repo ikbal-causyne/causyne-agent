@@ -223,7 +223,9 @@ export class AnthropicProvider extends LLMProvider {
       model: this.model,
       system: systemBlocks,
       messages: anthropicMessages,
-      max_tokens: options.maxTokens || 16000
+      max_tokens: typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1
+        ? Math.floor(options.maxTokens)
+        : 16000
     };
 
     const thinking = this.buildThinking();
@@ -233,8 +235,9 @@ export class AnthropicProvider extends LLMProvider {
     }
 
     if (thinking) {
-      if (thinking['type'] === 'enabled' && typeof thinking['budget_tokens'] === 'number' && payload['max_tokens'] > 1024) {
-        thinking['budget_tokens'] = Math.max(1024, Math.min(thinking['budget_tokens'], payload['max_tokens'] - 1));
+      if (thinking['type'] === 'enabled' && typeof thinking['budget_tokens'] === 'number' && Number.isFinite(thinking['budget_tokens'])) {
+        if (payload['max_tokens'] <= 1024) payload['max_tokens'] = 2048;
+        thinking['budget_tokens'] = Math.max(1024, Math.min(Math.floor(thinking['budget_tokens']), payload['max_tokens'] - 1));
       }
       payload['thinking'] = thinking;
     }
