@@ -392,7 +392,8 @@
     "src/tools/gameAssetHarvester.ts",
     "src/tools/gameAudioSynth.ts",
     "src/tools/gameUiHudBuilder.ts",
-    "src/tools/gameAssetFetcher.ts"
+    "src/tools/gameAssetFetcher.ts",
+    "src/tools/gameBuilder.ts"
   ],
   "exclude": [
     "node_modules",

@@ -1,20 +1,19 @@
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-
+import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
+import path from 'node:path';
+import { getErrorMessage } from './toolPathSafety.js';
 function getWorkspaceTempDir() {
-  const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
-  if (!fsSync.existsSync(tmpDir)) {
-    fsSync.mkdirSync(tmpDir, { recursive: true });
-  }
-  return tmpDir;
+    const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
+    if (!fsSync.existsSync(tmpDir)) {
+        fsSync.mkdirSync(tmpDir, { recursive: true });
+    }
+    return tmpDir;
 }
-
 // -----------------------------------------------------------------------------
 // Benchmark Template 1: 3D Space Defense (Three.js WebGL + Web Audio + Joysticks)
 // -----------------------------------------------------------------------------
-function getSpaceDefense3dTemplate(title, includeAudio = true) {
-  return `<!DOCTYPE html>
+function getSpaceDefense3dTemplate(title, _includeAudio = true) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -419,12 +418,11 @@ function getSpaceDefense3dTemplate(title, includeAudio = true) {
 </body>
 </html>`;
 }
-
 // -----------------------------------------------------------------------------
 // Benchmark Template 2: 2D Cyberpunk Platformer (Canvas 2D + Web Audio)
 // -----------------------------------------------------------------------------
-function getArcadePlatformer2dTemplate(title, includeAudio = true) {
-  return `<!DOCTYPE html>
+function getArcadePlatformer2dTemplate(title, _includeAudio = true) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -676,12 +674,11 @@ function getArcadePlatformer2dTemplate(title, includeAudio = true) {
 </body>
 </html>`;
 }
-
 // -----------------------------------------------------------------------------
 // Benchmark Template 3: 3D Cyberpunk Highway Racer (Three.js + Web Audio)
 // -----------------------------------------------------------------------------
-function getCyberpunkRacer3dTemplate(title, includeAudio = true) {
-  return `<!DOCTYPE html>
+function getCyberpunkRacer3dTemplate(title, _includeAudio = true) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -761,12 +758,11 @@ function getCyberpunkRacer3dTemplate(title, includeAudio = true) {
 </body>
 </html>`;
 }
-
 // -----------------------------------------------------------------------------
 // Benchmark Template 4: 2D Top-Down RPG (Canvas 2D + Web Audio)
 // -----------------------------------------------------------------------------
-function getTopdownRpg2dTemplate(title, includeAudio = true) {
-  return `<!DOCTYPE html>
+function getTopdownRpg2dTemplate(title, _includeAudio = true) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -817,70 +813,69 @@ function getTopdownRpg2dTemplate(title, includeAudio = true) {
 </body>
 </html>`;
 }
-
 export const gameBuilder = {
-  schema: {
-    name: 'game.build_html5',
-    description: 'Instant Sovereign HTML5 Game Engine Builder (`100% offline edge ready`). Generates complete, browser-playable 3D WebGL (Three.js) or 2D Arcade (Canvas 2D) games with procedural sound effects (`SFX`), looping background music (`BGM`), mobile touch controls, and WASD controls directly inside local workspace buffers (`space_defense_3d`, `arcade_platformer_2d`, `cyberpunk_racer_3d`, `topdown_rpg_2d`, `custom`).',
-    parameters: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: 'Title of the game (`Sovereign Space Defense`, `Cyberpunk Racer 3D`).' },
-        engine: { type: 'string', enum: ['threejs', 'canvas2d'], description: 'Game engine selection: `threejs` (3D WebGL) or `canvas2d` (2D Arcade Physics).' },
-        template: {
-          type: 'string',
-          enum: ['space_defense_3d', 'arcade_platformer_2d', 'cyberpunk_racer_3d', 'topdown_rpg_2d', 'custom'],
-          description: 'Preset benchmark template (`space_defense_3d`, `arcade_platformer_2d`, `cyberpunk_racer_3d`, `topdown_rpg_2d`) or `custom` for custom script.'
-        },
-        audio: { type: 'boolean', description: 'Whether to embed the SovereignAudioEngine for procedural SFX & Synthwave BGM (default: true).' },
-        customScript: { type: 'string', description: 'Complete custom HTML/JS code if `template` is `custom`.' },
-        outputDir: { type: 'string', description: 'Target output directory. Defaults to `.tmp_causyne_3d` in current workspace.' },
-        filename: { type: 'string', description: 'Name of HTML file to write (default: `game.html`).' }
-      },
-      required: ['title', 'engine']
+    schema: {
+        name: 'game.build_html5',
+        description: 'Instant Sovereign HTML5 Game Engine Builder (`100% offline edge ready`). Generates complete, browser-playable 3D WebGL (Three.js) or 2D Arcade (Canvas 2D) games with procedural sound effects (`SFX`), looping background music (`BGM`), mobile touch controls, and WASD controls directly inside local workspace buffers (`space_defense_3d`, `arcade_platformer_2d`, `cyberpunk_racer_3d`, `topdown_rpg_2d`, `custom`).',
+        parameters: {
+            type: 'object',
+            properties: {
+                title: { type: 'string', description: 'Title of the game (`Sovereign Space Defense`, `Cyberpunk Racer 3D`).' },
+                engine: { type: 'string', enum: ['threejs', 'canvas2d'], description: 'Game engine selection: `threejs` (3D WebGL) or `canvas2d` (2D Arcade Physics).' },
+                template: {
+                    type: 'string',
+                    enum: ['space_defense_3d', 'arcade_platformer_2d', 'cyberpunk_racer_3d', 'topdown_rpg_2d', 'custom'],
+                    description: 'Preset benchmark template (`space_defense_3d`, `arcade_platformer_2d`, `cyberpunk_racer_3d`, `topdown_rpg_2d`) or `custom` for custom script.'
+                },
+                audio: { type: 'boolean', description: 'Whether to embed the SovereignAudioEngine for procedural SFX & Synthwave BGM (default: true).' },
+                customScript: { type: 'string', description: 'Complete custom HTML/JS code if `template` is `custom`.' },
+                outputDir: { type: 'string', description: 'Target output directory. Defaults to `.tmp_causyne_3d` in current workspace.' },
+                filename: { type: 'string', description: 'Name of HTML file to write (default: `game.html`).' }
+            },
+            required: ['title', 'engine']
+        }
+    },
+    async execute(args = {}, _sandbox) {
+        try {
+            const { title = 'Untitled Game', engine = 'canvas2d', template, audio = true, customScript, outputDir, filename = 'game.html' } = args || {};
+            const targetDir = outputDir || getWorkspaceTempDir();
+            if (!fsSync.existsSync(targetDir)) {
+                await fs.mkdir(targetDir, { recursive: true });
+            }
+            let htmlContent = '';
+            if (template === 'custom' && customScript) {
+                htmlContent = customScript;
+            }
+            else if (template === 'cyberpunk_racer_3d') {
+                htmlContent = getCyberpunkRacer3dTemplate(title, audio);
+            }
+            else if (template === 'topdown_rpg_2d') {
+                htmlContent = getTopdownRpg2dTemplate(title, audio);
+            }
+            else if (engine === 'threejs' || template === 'space_defense_3d') {
+                htmlContent = getSpaceDefense3dTemplate(title, audio);
+            }
+            else {
+                htmlContent = getArcadePlatformer2dTemplate(title, audio);
+            }
+            const filePath = path.join(targetDir, filename);
+            await fs.writeFile(filePath, htmlContent, 'utf8');
+            return {
+                success: true,
+                output: JSON.stringify({
+                    engine: engine === 'threejs' ? 'Three.js (3D WebGL + Web Audio)' : 'Canvas 2D Arcade Engine (+ Web Audio)',
+                    template: template || (engine === 'threejs' ? 'space_defense_3d' : 'arcade_platformer_2d'),
+                    title: title,
+                    audio_enabled: audio,
+                    output_file: filePath,
+                    size_bytes: Buffer.byteLength(htmlContent, 'utf8'),
+                    ready_to_play: true,
+                    instructions: `Open ${filePath} directly in Google Chrome or via browser_act to play instantly across Desktop and Mobile.`
+                }, null, 2)
+            };
+        }
+        catch (e) {
+            return { success: false, error: getErrorMessage(e) };
+        }
     }
-  },
-
-  async execute(args) {
-    try {
-      const { title, engine, template, audio = true, customScript, outputDir, filename = 'game.html' } = args;
-      const targetDir = outputDir || getWorkspaceTempDir();
-      if (!fsSync.existsSync(targetDir)) {
-        await fs.mkdir(targetDir, { recursive: true });
-      }
-
-      let htmlContent = '';
-      if (template === 'custom' && customScript) {
-        htmlContent = customScript;
-      } else if (template === 'cyberpunk_racer_3d') {
-        htmlContent = getCyberpunkRacer3dTemplate(title, audio);
-      } else if (template === 'topdown_rpg_2d') {
-        htmlContent = getTopdownRpg2dTemplate(title, audio);
-      } else if (engine === 'threejs' || template === 'space_defense_3d') {
-        htmlContent = getSpaceDefense3dTemplate(title, audio);
-      } else {
-        htmlContent = getArcadePlatformer2dTemplate(title, audio);
-      }
-
-      const filePath = path.join(targetDir, filename);
-      await fs.writeFile(filePath, htmlContent, 'utf8');
-
-      return {
-        success: true,
-        output: JSON.stringify({
-          engine: engine === 'threejs' ? 'Three.js (3D WebGL + Web Audio)' : 'Canvas 2D Arcade Engine (+ Web Audio)',
-          template: template || (engine === 'threejs' ? 'space_defense_3d' : 'arcade_platformer_2d'),
-          title: title,
-          audio_enabled: audio,
-          output_file: filePath,
-          size_bytes: Buffer.byteLength(htmlContent, 'utf8'),
-          ready_to_play: true,
-          instructions: `Open ${filePath} directly in Google Chrome or via browser_act to play instantly across Desktop and Mobile.`
-        }, null, 2)
-      };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
-  }
 };
-
