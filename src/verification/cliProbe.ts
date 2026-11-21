@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { realpathSync } from 'node:fs';
+import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 
 export interface CliProbeOptions {
   workspace?: string;
@@ -127,7 +128,7 @@ export async function runCliProbe(options: CliProbeOptions = {}): Promise<CliPro
     try {
       child = spawn(resolvedProgram, args, {
         cwd, shell: false, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-        env: { ...process.env, CAUSYNE_VERIFY_PROBE: '1' }
+        env: { ...sanitizeSubprocessEnv(process.env), CAUSYNE_VERIFY_PROBE: '1' }
       });
       child.stdout?.on('data', (chunk: Buffer) => collect('stdout', chunk));
       child.stderr?.on('data', (chunk: Buffer) => collect('stderr', chunk));

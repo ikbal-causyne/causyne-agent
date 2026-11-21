@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { realpathSync } from 'node:fs';
+import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 function inside(root, candidate) {
     const lexicalRoot = path.resolve(root);
     const base = realpathSync(root);
@@ -99,7 +100,7 @@ export async function runCliProbe(options = {}) {
         try {
             child = spawn(resolvedProgram, args, {
                 cwd, shell: false, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-                env: { ...process.env, CAUSYNE_VERIFY_PROBE: '1' }
+                env: { ...sanitizeSubprocessEnv(process.env), CAUSYNE_VERIFY_PROBE: '1' }
             });
             child.stdout?.on('data', (chunk) => collect('stdout', chunk));
             child.stderr?.on('data', (chunk) => collect('stderr', chunk));
