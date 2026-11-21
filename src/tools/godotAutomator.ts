@@ -1,15 +1,40 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { causyneHome } from '../utils/paths.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import {
+  getErrorMessage,
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  boundedInteger,
+  escapeGodotString,
+  resolveScopedPath,
+  resolveToolWorkspaceRoots,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  sanitizeToolText,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const GODOT_CLI_TIMEOUT_MS = 120_000;
+
+function assertSafeCliArg(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes('\0') || trimmed.startsWith('-')) {
+    throw new Error(`Invalid ${label}: must be non-empty and must not start with "-" or contain NUL bytes.`);
+  }
+  return trimmed;
+}
 
 const execFileAsync = promisify(execFile);
 
-function getWorkspaceTempDir(): string {
-  const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
+function getWorkspaceTempDir(context?: ToolWorkspaceContext): string {
+  const baseDir = resolveToolWorkspaceRoots(context).primaryRoot || process.cwd();
+  const tmpDir = path.join(baseDir, '.tmp_causyne_3d');
   if (!fsSync.existsSync(tmpDir)) {
     fsSync.mkdirSync(tmpDir, { recursive: true });
   }
@@ -19,8 +44,7 @@ function getWorkspaceTempDir(): string {
 function getGodotBinary(): string | null {
   const isWin = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
-  const homeDir = os.homedir();
-  const causyneGodotDir = path.join(homeDir, '.causyne', 'engines', 'godot');
+  const causyneGodotDir = path.join(causyneHome(), 'engines', 'godot');
 
   const candidates: string[] = [];
   if (isMac) {
@@ -126,7 +150,7 @@ export const godotAutomator = {
     }
   },
 
-  async execute(args: GodotAutomatorArgs = {}, _context?: ToolWorkspaceContext): Promise<Record<string, unknown>> {
+  async execute(args: GodotAutomatorArgs = {}, context?: ToolWorkspaceContext): Promise<Record<string, unknown>> {
     try {
       const {
         action, simulateMissing, projectDir, projectName,
@@ -141,7 +165,7 @@ export const godotAutomator = {
           output: JSON.stringify({
             godot_binary: bin || 'Not installed / simulateMissing=true',
             status: bin ? 'available_for_local_cli' : 'fallback_required',
-            workspace_temp_dir: getWorkspaceTempDir()
+            workspace_temp_dir: getWorkspaceTempDir(context)
           }, null, 2)
         };
       }

@@ -1,13 +1,24 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getErrorMessage } from './toolPathSafety.js';
+import { causyneHome } from '../utils/paths.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, assertSafeWorkspaceOutput, atomicWriteFileSafe, boundedInteger, escapeGodotString, resolveScopedPath, resolveToolWorkspaceRoots, safeSlugIdentifier, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const GODOT_CLI_TIMEOUT_MS = 120_000;
+function assertSafeCliArg(value, label) {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes('\0') || trimmed.startsWith('-')) {
+        throw new Error(`Invalid ${label}: must be non-empty and must not start with "-" or contain NUL bytes.`);
+    }
+    return trimmed;
+}
 const execFileAsync = promisify(execFile);
-function getWorkspaceTempDir() {
-    const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
+function getWorkspaceTempDir(context) {
+    const baseDir = resolveToolWorkspaceRoots(context).primaryRoot || process.cwd();
+    const tmpDir = path.join(baseDir, '.tmp_causyne_3d');
     if (!fsSync.existsSync(tmpDir)) {
         fsSync.mkdirSync(tmpDir, { recursive: true });
     }
@@ -16,8 +27,7 @@ function getWorkspaceTempDir() {
 function getGodotBinary() {
     const isWin = process.platform === 'win32';
     const isMac = process.platform === 'darwin';
-    const homeDir = os.homedir();
-    const causyneGodotDir = path.join(homeDir, '.causyne', 'engines', 'godot');
+    const causyneGodotDir = path.join(causyneHome(), 'engines', 'godot');
     const candidates = [];
     if (isMac) {
         candidates.push(path.join(causyneGodotDir, 'godot'), '/Applications/Godot.app/Contents/MacOS/Godot', '/Applications/Godot_4.app/Contents/MacOS/Godot', '/opt/homebrew/bin/godot', '/usr/local/bin/godot');
@@ -94,7 +104,7 @@ export const godotAutomator = {
             required: ['action']
         }
     },
-    async execute(args = {}, _context) {
+    async execute(args = {}, context) {
         try {
             const { action, simulateMissing, projectDir, projectName, gameType = '2d', targetFile, scenePath, durationFrames = 300, scriptPath, exportPreset, outputPath } = args || {};
             if (action === 'check_status') {
@@ -104,7 +114,7 @@ export const godotAutomator = {
                     output: JSON.stringify({
                         godot_binary: bin || 'Not installed / simulateMissing=true',
                         status: bin ? 'available_for_local_cli' : 'fallback_required',
-                        workspace_temp_dir: getWorkspaceTempDir()
+                        workspace_temp_dir: getWorkspaceTempDir(context)
                     }, null, 2)
                 };
             }
