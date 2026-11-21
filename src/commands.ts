@@ -2010,10 +2010,16 @@ export const COMMANDS: SlashCommandDefinition[] = [
         if (peerId === 'antigravity') {
           const { resolveAgyBinary } = await import('./providers/antigravity.js');
           const bin = resolveAgyBinary();
+          if (!path.isAbsolute(bin) || !fs.existsSync(bin)) {
+            return fail(
+              '✕ Agent Peer Test Failed: "antigravity"\n\n'
+              + 'Error: Antigravity CLI binary (agy) was not found on PATH or standard install locations.'
+            );
+          }
           return ok(
             `✓ Agent Peer Test Passed: "antigravity"\n\n`
             + `Agent: Google Antigravity (AGY)\n`
-            + `Command: ${bin} --output-format json\n`
+            + `Command: ${safeDisplay(bin)} --output-format json\n`
             + `Policy: local-cli\n`
             + `Frontier Models: Gemini 4 Argon, Gemini 3.8 Flash, Claude Sonnet 5.5\n\n`
             + `Ready to serve as primary AI provider or peer delegation.`
@@ -2041,9 +2047,9 @@ export const COMMANDS: SlashCommandDefinition[] = [
           );
         } else {
           return fail(
-            `✕ ACP Peer Test Failed: "${peerId}"\n\n`
-            + `Error: ${handshake.error || 'Handshake failed'}\n`
-            + `Command: ${profile.command} ${profile.args.join(' ')}`
+            `✕ ACP Peer Test Failed: "${safeDisplay(peerId)}"\n\n`
+            + `Error: ${safeDisplay(redactProviderSecrets(handshake.error || 'Handshake failed'))}\n`
+            + `Command: ${safeDisplay(profile.command)} ${safeDisplay(profile.args.join(' '))}`
           );
         }
       }
