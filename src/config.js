@@ -81,12 +81,15 @@ export function loadConfig() {
                     parsed.providerKeys[parsed.provider] = parsed.apiKey;
                 }
             }
-            const canonicalModel = canonicalModelId(parsed.model);
-            if (canonicalModel !== parsed.model) {
-                parsed.model = canonicalModel;
-                saveConfig(parsed);
+            if (typeof parsed.model === 'string' && parsed.model.trim()) {
+                const canonicalModel = canonicalModelId(parsed.model);
+                if (canonicalModel !== parsed.model) {
+                    parsed.model = canonicalModel;
+                    if (!hadDecryptFailure)
+                        saveConfig(parsed);
+                }
             }
-            if ((parsed.provider === 'dashscope' || parsed.provider === 'dashscope-byok') && !parsed.apiKey) {
+            if ((parsed.provider === 'dashscope' || parsed.provider === 'dashscope-byok') && !parsed.apiKey && !hadDecryptFailure) {
                 const envDetected = detectEnvironmentProvider();
                 if (envDetected && envDetected.apiKey) {
                     parsed.provider = envDetected.provider;
