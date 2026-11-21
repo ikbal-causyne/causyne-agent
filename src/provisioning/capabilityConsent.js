@@ -26,7 +26,10 @@ export function consentMap() {
     }
 }
 export function isGroupGranted(group) {
-    return consentMap()[group] === true;
+    if (typeof group !== 'string' || !GROUP_KEY_RE.test(group) || FORBIDDEN_CONSENT_KEYS.has(group))
+        return false;
+    const map = consentMap();
+    return Object.hasOwn(map, group) && map[group] === true;
 }
 export function isGroupDeclined(group) {
     return consentMap()[group] === false;

@@ -26,7 +26,9 @@ export function consentMap(): Record<string, boolean> {
 }
 
 export function isGroupGranted(group: string): boolean {
-  return consentMap()[group] === true;
+  if (typeof group !== 'string' || !GROUP_KEY_RE.test(group) || FORBIDDEN_CONSENT_KEYS.has(group)) return false;
+  const map = consentMap();
+  return Object.hasOwn(map, group) && map[group] === true;
 }
 
 export function isGroupDeclined(group: string): boolean {
