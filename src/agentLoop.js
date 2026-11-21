@@ -1450,16 +1450,19 @@ export class AgentLoop {
         }
     }
     async requestDecision(request) {
+        if (!request || typeof request !== 'object')
+            return null;
         if (this.stopRequested || this.abortController?.signal?.aborted)
             return null;
+        const safeOptions = Array.isArray(request.options) ? request.options : [];
         const fingerprint = createHash('sha256')
-            .update(JSON.stringify({ kind: request.kind, question: request.question, options: request.options.map((option) => option.id) }))
+            .update(JSON.stringify({ kind: request.kind, question: request.question, options: safeOptions.map((option) => option?.id ?? null) }))
             .digest('hex');
         const remembered = request.ephemeral === true ? null : this._decisionAnswers.get(fingerprint);
         if (remembered)
             return remembered;
         this.emitEvent({ type: 'decision_request', request });
-        auditLog.log({ event: 'decision_requested', taskId: this.taskId, kind: request.kind, optionCount: request.options.length });
+        auditLog.log({ event: 'decision_requested', taskId: this.taskId, kind: request.kind, optionCount: safeOptions.length });
         // CAUSYNE_ENTITLEMENT_V1: unresolved durable decisions do not consume fresh leases.
         this._entitlementGate?.pause();
         let answer;
