@@ -2703,7 +2703,31 @@ export function resolveCommand(name: unknown): SlashCommandDefinition | null {
  * a file dump rather than a procedure.
  */
 function stripFrontmatter(content: unknown): string {
-  return String(content == null ? '' : content).replace(/^---\n[\s\S]*?\n---\n*/, '');
+  const text = String(content == null ? '' : content);
+  let start = -1;
+  if (text.startsWith('---\n')) {
+    start = 4;
+  } else if (text.startsWith('---\r\n')) {
+    start = 5;
+  }
+  if (start === -1) return text;
+  let pos = start;
+  while (pos <= text.length) {
+    const nl = text.indexOf('\n', pos);
+    const lineEnd = nl === -1 ? text.length : nl;
+    const rawLine = text.slice(pos, lineEnd);
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    if (line === '---') {
+      let restStart = nl === -1 ? text.length : nl + 1;
+      while (restStart < text.length && (text.charCodeAt(restStart) === 10 || text.charCodeAt(restStart) === 13)) {
+        restStart++;
+      }
+      return text.slice(restStart);
+    }
+    if (nl === -1) break;
+    pos = nl + 1;
+  }
+  return text;
 }
 
 export function listCommands(surface = 'terminal'): SlashCommandDefinition[] {
