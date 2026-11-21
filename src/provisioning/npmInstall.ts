@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { safeDisplay } from '../tui/text.js';
 
 /** Install optional capabilities without writing over the active terminal UI. */
 export function installCapabilityManifest(directory: string): void {
@@ -30,7 +32,8 @@ export function installCapabilityManifest(directory: string): void {
       }
     });
   } catch (error: unknown) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Capability installation failed: ${reason.slice(0, 600)}`, { cause: error });
+    const rawReason = error instanceof Error ? error.message : String(error);
+    const reason = safeDisplay(redactProviderSecrets(rawReason)).slice(0, 600);
+    throw new Error(`Capability installation failed: ${reason}`, { cause: error });
   }
 }
