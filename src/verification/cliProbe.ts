@@ -31,6 +31,7 @@ export interface CliProbeResult {
 }
 
 function inside(root: string, candidate: string): boolean {
+  if (root.includes('\0') || candidate.includes('\0')) return false;
   const lexicalRoot = path.resolve(root);
   const base = realpathSync(root);
   const lexical = path.relative(lexicalRoot, path.resolve(candidate));
