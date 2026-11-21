@@ -528,8 +528,12 @@ async function inspectApkZipAndManifest(apkPath: string): Promise<Partial<Binary
       return { format: 'APK/ZIP', fileType: 'Android Application Package (APK)' };
     }
 
+    const MAX_ZIP_SLICE_BYTES = 64 * 1024 * 1024;
     const cdSize = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 12);
     const cdOffset = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 16);
+    if (cdSize > MAX_ZIP_SLICE_BYTES || cdOffset + cdSize > stat.size) {
+      return { format: 'APK/ZIP', fileType: 'Android Application Package (APK)' };
+    }
     const cdBuf = Buffer.alloc(cdSize);
     await fd.read(cdBuf, 0, cdSize, cdOffset);
 
@@ -575,14 +579,20 @@ async function inspectApkZipAndManifest(apkPath: string): Promise<Partial<Binary
     let manifestStrings: string[] = [];
     if (manifestEntry) {
       const localHdr = Buffer.alloc(30);
-      await fd.read(localHdr, 0, 30, manifestEntry.localHeaderOffset);
-      const fnLen = localHdr.readUInt16LE(26);
-      const extraLen = localHdr.readUInt16LE(28);
-      const dataOffset = manifestEntry.localHeaderOffset + 30 + fnLen + extraLen;
-      const compData = Buffer.alloc(manifestEntry.compSize);
-      await fd.read(compData, 0, manifestEntry.compSize, dataOffset);
-      const xmlBuf = manifestEntry.method === 8 ? zlib.inflateRawSync(compData) : compData;
-      manifestStrings = parseAxmlStrings(xmlBuf);
+      const { bytesRead } = await fd.read(localHdr, 0, 30, manifestEntry.localHeaderOffset);
+      if (bytesRead === 30 && localHdr.readUInt32LE(0) === 0x04034b50) {
+        const fnLen = localHdr.readUInt16LE(26);
+        const extraLen = localHdr.readUInt16LE(28);
+        const dataOffset = manifestEntry.localHeaderOffset + 30 + fnLen + extraLen;
+        if (manifestEntry.compSize <= MAX_ZIP_SLICE_BYTES && dataOffset + manifestEntry.compSize <= stat.size) {
+          const compData = Buffer.alloc(manifestEntry.compSize);
+          await fd.read(compData, 0, manifestEntry.compSize, dataOffset);
+          const xmlBuf = manifestEntry.method === 8
+            ? zlib.inflateRawSync(compData, { maxOutputLength: MAX_ZIP_SLICE_BYTES })
+            : compData;
+          manifestStrings = parseAxmlStrings(xmlBuf);
+        }
+      }
     }
 
     const permissions = manifestStrings.filter(s => s.includes('permission.') || s.startsWith('android.permission'));
@@ -668,8 +678,12 @@ async function searchClassesInApk(apkPath: string, query: string): Promise<{ mat
 
     if (eocdOffset === -1) return { matchedClasses: [], totalInspected: 0 };
 
+    const MAX_ZIP_SLICE_BYTES = 64 * 1024 * 1024;
     const cdSize = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 12);
     const cdOffset = endBuf.readUInt32LE(eocdOffset - (stat.size - endSize) + 16);
+    if (cdSize > MAX_ZIP_SLICE_BYTES || cdOffset + cdSize > stat.size) {
+      return { matchedClasses: [], totalInspected: 0 };
+    }
     const cdBuf = Buffer.alloc(cdSize);
     await fd.read(cdBuf, 0, cdSize, cdOffset);
 
