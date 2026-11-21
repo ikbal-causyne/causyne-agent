@@ -302,7 +302,17 @@ export function prepareMessagesForAnthropic(
 export function normalizeMessagesForOllama(messages: unknown[]): any[] {
   if (!Array.isArray(messages)) return [];
   return messages.map((msg) => {
-    if (!isPlainObject(msg) || msg['role'] !== 'assistant' || !Array.isArray(msg['tool_calls'])) {
+    if (!isPlainObject(msg)) return msg;
+    if (msg['role'] === 'tool' && typeof msg['content'] !== 'string') {
+      let str = '';
+      try {
+        str = msg['content'] == null ? '' : JSON.stringify(msg['content']);
+      } catch {
+        str = String(msg['content'] ?? '');
+      }
+      return { ...msg, content: str };
+    }
+    if (msg['role'] !== 'assistant' || !Array.isArray(msg['tool_calls'])) {
       return msg;
     }
     return {
