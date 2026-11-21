@@ -437,6 +437,17 @@ export async function streamAnthropicMessages(options) {
         cache_read_input_tokens: 0,
         cache_creation_input_tokens: 0
     };
+    let stopReason;
+    const applyUsage = (u) => {
+        if (typeof u.input_tokens === 'number' && Number.isFinite(u.input_tokens) && u.input_tokens >= 0)
+            usage.input_tokens = u.input_tokens;
+        if (typeof u.output_tokens === 'number' && Number.isFinite(u.output_tokens) && u.output_tokens >= 0)
+            usage.output_tokens = u.output_tokens;
+        if (typeof u.cache_read_input_tokens === 'number' && Number.isFinite(u.cache_read_input_tokens) && u.cache_read_input_tokens >= 0)
+            usage.cache_read_input_tokens = u.cache_read_input_tokens;
+        if (typeof u.cache_creation_input_tokens === 'number' && Number.isFinite(u.cache_creation_input_tokens) && u.cache_creation_input_tokens >= 0)
+            usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+    };
     try {
         await consumeSseStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, ({ data }) => {
             const trimmed = data.trim();
@@ -458,30 +469,19 @@ export async function streamAnthropicMessages(options) {
                 throw new Error(`${options.providerLabel} stream error: ${msg}`);
             }
             if (eventType === 'message_start' && isRecord(parsed.message) && isRecord(parsed.message.usage)) {
-                const u = parsed.message.usage;
-                if (typeof u.input_tokens === 'number')
-                    usage.input_tokens = u.input_tokens;
-                if (typeof u.output_tokens === 'number')
-                    usage.output_tokens = u.output_tokens;
-                if (typeof u.cache_read_input_tokens === 'number')
-                    usage.cache_read_input_tokens = u.cache_read_input_tokens;
-                if (typeof u.cache_creation_input_tokens === 'number')
-                    usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                applyUsage(parsed.message.usage);
                 return;
             }
-            if (eventType === 'message_delta' && isRecord(parsed.usage)) {
-                const u = parsed.usage;
-                if (typeof u.input_tokens === 'number')
-                    usage.input_tokens = u.input_tokens;
-                if (typeof u.output_tokens === 'number')
-                    usage.output_tokens = u.output_tokens;
-                if (typeof u.cache_read_input_tokens === 'number')
-                    usage.cache_read_input_tokens = u.cache_read_input_tokens;
-                if (typeof u.cache_creation_input_tokens === 'number')
-                    usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+            if (eventType === 'message_delta') {
+                if (isRecord(parsed.delta) && typeof parsed.delta.stop_reason === 'string') {
+                    stopReason = parsed.delta.stop_reason;
+                }
+                if (isRecord(parsed.usage)) {
+                    applyUsage(parsed.usage);
+                }
                 return;
             }
-            if (eventType === 'content_block_start' && typeof parsed.index === 'number' && isRecord(parsed.content_block)) {
+            if (eventType === 'content_block_start' && typeof parsed.index === 'number' && Number.isInteger(parsed.index) && parsed.index >= 0 && isRecord(parsed.content_block)) {
                 const initial = { ...parsed.content_block };
                 if (initial.type === 'text' && typeof initial.text === 'string' && initial.text) {
                     options.onChunk?.(initial.text);
@@ -536,7 +536,7 @@ export async function streamAnthropicMessages(options) {
         }
         return acc.block;
     });
-    return { content: contentBlocks, usage };
+    return { content: contentBlocks, usage, ...(stopReason ? { stop_reason: stopReason } : {}) };
 }
 /**
  * Converts a Gemini `:generateContent` endpoint URL to `:streamGenerateContent?alt=sse`
