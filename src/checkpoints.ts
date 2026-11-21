@@ -937,17 +937,22 @@ export function undoTask(taskId: string, options: UndoOptions = {}): any {
     try {
       const root = causyneHome();
       const resolved = path.resolve(target);
-      if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      const realRoot = physicalPath(root);
+      const realTarget = physicalPath(resolved);
+      if (!realRoot || !realTarget || !isWithinPhysicalPath(realTarget, realRoot)) {
         throw new Error('conversation snapshot points outside the Causyne state directory');
       }
 
       if (fs.existsSync(resolved)) {
-        const buffer = fs.readFileSync(resolved);
-        appendJournal({
-          id: newId(), ts: Date.now(), type: 'task_start', taskId: undoTaskId,
-          prompt: 'undo restore point',
-          history: { hash: writeObject(buffer), size: buffer.length, file: resolved }
-        });
+        const curStat = fs.lstatSync(resolved);
+        if (!curStat.isSymbolicLink() && curStat.isFile()) {
+          const buffer = fs.readFileSync(resolved);
+          appendJournal({
+            id: newId(), ts: Date.now(), type: 'task_start', taskId: undoTaskId,
+            prompt: 'undo restore point',
+            history: { hash: writeObject(buffer), size: buffer.length, file: resolved }
+          });
+        }
       }
       const snapshot = readObject(start.history.hash);
       if (path.extname(resolved) === '.jsonl') {
@@ -955,8 +960,21 @@ export function undoTask(taskId: string, options: UndoOptions = {}): any {
         if (!historyRestored) throw new Error('conversation journal snapshot could not be projected');
       } else {
         assertSafeTarget(resolved);
-        fs.mkdirSync(path.dirname(resolved), { recursive: true });
-        fs.writeFileSync(resolved, snapshot, { mode: 0o600 });
+        fs.mkdirSync(path.dirname(resolved), { recursive: true, mode: 0o700 });
+        const temp = `${resolved}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+        try {
+          const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+          try {
+            fs.writeSync(fd, snapshot, 0, snapshot.length);
+            fs.fsyncSync(fd);
+          } finally {
+            fs.closeSync(fd);
+          }
+          fs.renameSync(temp, resolved);
+        } catch (writeErr: unknown) {
+          try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
+          throw writeErr;
+        }
         historyRestored = true;
       }
     } catch (e: unknown) {
