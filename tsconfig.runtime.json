@@ -341,7 +341,8 @@
     "src/utils/cli_ui.ts",
     "src/cliMode.ts",
     "src/entrypoint.ts",
-    "src/benchmarks/planCache.ts"
+    "src/benchmarks/planCache.ts",
+    "src/verification/featureMap.ts"
   ],
   "exclude": [
     "node_modules",
