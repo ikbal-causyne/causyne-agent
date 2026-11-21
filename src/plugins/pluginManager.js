@@ -143,6 +143,8 @@ function regularFile(file, maxBytes) {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink())
         throw new Error(`${file} must be a regular file`);
+    if (stat.nlink > 1)
+        throw new Error(`${file} must not be a hardlink`);
     if (stat.size > maxBytes)
         throw new Error(`${file} exceeds ${Math.round(maxBytes / 1024)} KB`);
     return stat;
