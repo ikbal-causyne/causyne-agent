@@ -205,7 +205,7 @@ export function analyzeSource(text) {
 export function analyzeFiles(files) {
     const merged = new Map();
     const scanned = [];
-    for (const file of files || []) {
+    for (const file of Array.isArray(files) ? files : []) {
         if (!file || !isScannableFile(file.path))
             continue;
         scanned.push(file.path);
@@ -221,11 +221,15 @@ export function analyzeFiles(files) {
     return { score, verdict: verdictFor(score), findings, scanned };
 }
 export function formatFindings(result, movementBrief = '') {
+    const safeResult = result && typeof result === 'object' ? result : { score: 0, verdict: 'clean', findings: [] };
+    const safeFindings = Array.isArray(safeResult.findings) ? safeResult.findings : [];
     const lines = [];
-    lines.push(`[ANTI-SLOP GATE: the generated design scores ${result.score} (${result.verdict}) against Vision §7.]`);
+    lines.push(`[ANTI-SLOP GATE: the generated design scores ${safeResult.score} (${safeResult.verdict}) against Vision §7.]`);
     lines.push('');
     lines.push('Detected signatures:');
-    for (const finding of result.findings) {
+    for (const finding of safeFindings) {
+        if (!finding || typeof finding !== 'object')
+            continue;
         lines.push(`- ${finding.id}${finding.path ? ` (${finding.path})` : ''}: ${finding.evidence}`);
         lines.push(`  → ${finding.fix}`);
     }

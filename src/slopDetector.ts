@@ -240,7 +240,7 @@ export function analyzeFiles(files: readonly (ScannableFileInput | null | undefi
   const merged = new Map<string, SlopFinding>();
   const scanned: string[] = [];
 
-  for (const file of files || []) {
+  for (const file of Array.isArray(files) ? files : []) {
     if (!file || !isScannableFile(file.path)) continue;
     scanned.push(file.path);
     for (const finding of analyzeSource(file.content).findings) {
@@ -257,11 +257,14 @@ export function analyzeFiles(files: readonly (ScannableFileInput | null | undefi
 }
 
 export function formatFindings(result: SlopAnalysisResult, movementBrief = ''): string {
+  const safeResult = result && typeof result === 'object' ? result : { score: 0, verdict: 'clean' as SlopVerdict, findings: [] };
+  const safeFindings = Array.isArray(safeResult.findings) ? safeResult.findings : [];
   const lines: string[] = [];
-  lines.push(`[ANTI-SLOP GATE: the generated design scores ${result.score} (${result.verdict}) against Vision §7.]`);
+  lines.push(`[ANTI-SLOP GATE: the generated design scores ${safeResult.score} (${safeResult.verdict}) against Vision §7.]`);
   lines.push('');
   lines.push('Detected signatures:');
-  for (const finding of result.findings) {
+  for (const finding of safeFindings) {
+    if (!finding || typeof finding !== 'object') continue;
     lines.push(`- ${finding.id}${finding.path ? ` (${finding.path})` : ''}: ${finding.evidence}`);
     lines.push(`  → ${finding.fix}`);
   }
