@@ -4,6 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 const benchmarkHome = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-plan-cache-bench-'));
+try {
+    fs.chmodSync(benchmarkHome, 0o700);
+}
+catch { /* ignore on unsupported fs */ }
 process.env.CAUSYNE_HOME = benchmarkHome;
 const { forgetPlans, lookupPlan, planStats, prewarmPlans } = await import('../planCache.js');
 const sizes = [1, 10, 20, 50, 100, 200];
@@ -129,5 +133,8 @@ try {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
 finally {
-    fs.rmSync(benchmarkHome, { recursive: true, force: true });
+    try {
+        fs.rmSync(benchmarkHome, { recursive: true, force: true });
+    }
+    catch { /* best-effort cleanup */ }
 }

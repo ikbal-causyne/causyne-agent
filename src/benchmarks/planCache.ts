@@ -14,6 +14,7 @@ interface BenchmarkMeasurement {
 }
 
 const benchmarkHome = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-plan-cache-bench-'));
+try { fs.chmodSync(benchmarkHome, 0o700); } catch { /* ignore on unsupported fs */ }
 process.env.CAUSYNE_HOME = benchmarkHome;
 
 const {
@@ -158,5 +159,5 @@ try {
 
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 } finally {
-  fs.rmSync(benchmarkHome, { recursive: true, force: true });
+  try { fs.rmSync(benchmarkHome, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
 }
