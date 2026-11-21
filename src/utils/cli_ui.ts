@@ -125,10 +125,10 @@ export const UI: UIInterface = {
     console.log('');
   },
 
-  printSuccess(msg: string): void { console.log(`  ${paint('success', GLYPHS.check)} ${msg}`); },
-  printInfo(msg: string): void { console.log(`  ${paint('accent', GLYPHS.bullet)} ${msg}`); },
-  printWarning(msg: string): void { console.log(`  ${paint('warn', GLYPHS.bullet)} ${msg}`); },
-  printError(msg: string): void { console.log(`  ${paint('danger', GLYPHS.cross)} ${msg}`); },
+  printSuccess(msg: string): void { console.log(`  ${paint('success', GLYPHS.check)} ${safeDisplay(String(msg ?? ''))}`); },
+  printInfo(msg: string): void { console.log(`  ${paint('accent', GLYPHS.bullet)} ${safeDisplay(String(msg ?? ''))}`); },
+  printWarning(msg: string): void { console.log(`  ${paint('warn', GLYPHS.bullet)} ${safeDisplay(String(msg ?? ''))}`); },
+  printError(msg: string): void { console.log(`  ${paint('danger', GLYPHS.cross)} ${safeDisplay(String(msg ?? ''))}`); },
 
   printFatalBox(title: string, lines: string[]): void {
     const safeLines = Array.isArray(lines) ? lines : [String(lines)];

@@ -96,10 +96,10 @@ export const UI = {
         console.log(`  ${paint(role, (BOX.bl ?? '+') + (BOX.h ?? '-').repeat(inner) + (BOX.br ?? '+'))}`);
         console.log('');
     },
-    printSuccess(msg) { console.log(`  ${paint('success', GLYPHS.check)} ${msg}`); },
-    printInfo(msg) { console.log(`  ${paint('accent', GLYPHS.bullet)} ${msg}`); },
-    printWarning(msg) { console.log(`  ${paint('warn', GLYPHS.bullet)} ${msg}`); },
-    printError(msg) { console.log(`  ${paint('danger', GLYPHS.cross)} ${msg}`); },
+    printSuccess(msg) { console.log(`  ${paint('success', GLYPHS.check)} ${safeDisplay(String(msg ?? ''))}`); },
+    printInfo(msg) { console.log(`  ${paint('accent', GLYPHS.bullet)} ${safeDisplay(String(msg ?? ''))}`); },
+    printWarning(msg) { console.log(`  ${paint('warn', GLYPHS.bullet)} ${safeDisplay(String(msg ?? ''))}`); },
+    printError(msg) { console.log(`  ${paint('danger', GLYPHS.cross)} ${safeDisplay(String(msg ?? ''))}`); },
     printFatalBox(title, lines) {
         const safeLines = Array.isArray(lines) ? lines : [String(lines)];
         const width = cardWidth(safeLines, title);
