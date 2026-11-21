@@ -435,6 +435,9 @@ export class AcpClient {
     this.closed = true;
     const child = this.child;
     this.child = null;
+    this.buffer = '';
+    this.openToolCalls.clear();
+    this.updateListeners.clear();
     this.failAll(new Error('client closed'));
     if (!child) return;
     if (child.exitCode !== null || child.signalCode !== null) return;
@@ -815,64 +818,81 @@ export class AcpClient {
     const id = this.nextId++;
     const requestStartMs = Date.now();
     return new Promise<T>((resolve, reject) => {
+      let settled = false;
       let inactivityTimer: NodeJS.Timeout | undefined;
       let snifferInterval: NodeJS.Timeout | undefined;
 
       const cleanup = (): void => {
         signal?.removeEventListener('abort', onAbort);
-        if (inactivityTimer) clearTimeout(inactivityTimer);
-        if (snifferInterval) clearInterval(snifferInterval);
+        if (inactivityTimer) {
+          clearTimeout(inactivityTimer);
+          inactivityTimer = undefined;
+        }
+        if (snifferInterval) {
+          clearInterval(snifferInterval);
+          snifferInterval = undefined;
+        }
       };
-      const onAbort = (): void => {
+      const settleResolve = (value: unknown): void => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         cleanup();
         this.pending.delete(id);
-        reject(createAbortError());
+        resolve(value as T);
       };
-      const timer = setTimeout(() => {
+      const settleReject = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         cleanup();
         this.pending.delete(id);
+        reject(error);
+      };
+      const onAbort = (): void => {
+        settleReject(createAbortError());
+      };
+      const timer = setTimeout(() => {
         const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
         if (diag) {
-          reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
+          settleReject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
         } else {
-          reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+          settleReject(new Error(`${method} timed out after ${timeoutMs}ms`));
         }
       }, timeoutMs);
       if (typeof timer.unref === 'function') timer.unref();
 
       const resetInactivity = (): void => {
+        if (settled) return;
         const timeoutMsInact = options?.inactivityTimeoutMs;
         if (!timeoutMsInact) return;
         if (inactivityTimer) clearTimeout(inactivityTimer);
         inactivityTimer = setTimeout(() => {
+          if (settled) return;
           if (this.hasOpenToolCall(options?.sessionId) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
             resetInactivity();
             return;
           }
-          cleanup();
-          clearTimeout(timer);
-          this.pending.delete(id);
           const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
           if (diag) {
-            reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
+            settleReject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
           } else {
-            reject(new Error(`${method} stalled: no activity from peer in ${Math.round(timeoutMsInact / 1000)}s`));
+            settleReject(new Error(`${method} stalled: no activity from peer in ${Math.round(timeoutMsInact / 1000)}s`));
           }
         }, timeoutMsInact);
         if (typeof inactivityTimer.unref === 'function') inactivityTimer.unref();
+        const entry = this.pending.get(id);
+        if (entry) entry.inactivityTimer = inactivityTimer;
       };
 
       const sid = options?.sessionId;
       if (sid) {
         snifferInterval = setInterval(() => {
+          if (settled) return;
           const fatalDiag = this.inspectPeerDiagnostics(sid, requestStartMs);
           if (fatalDiag) {
-            cleanup();
-            clearTimeout(timer);
-            this.pending.delete(id);
             try { this.notifyCancel(sid); } catch { /* ignore */ }
-            reject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${fatalDiag}`));
+            settleReject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${fatalDiag}`));
           }
         }, 1500);
         if (typeof snifferInterval.unref === 'function') snifferInterval.unref();
@@ -881,8 +901,8 @@ export class AcpClient {
       resetInactivity();
       signal?.addEventListener('abort', onAbort, { once: true });
       this.pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
+        resolve: settleResolve,
+        reject: settleReject,
         timer,
         inactivityTimer,
         snifferInterval,
