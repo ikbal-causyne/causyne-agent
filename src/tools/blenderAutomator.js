@@ -1,12 +1,22 @@
+import crypto from 'node:crypto';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
-import { getErrorMessage } from './toolPathSafety.js';
+import { causyneHome } from '../utils/paths.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, assertSafeWorkspaceInput, assertSafeWorkspaceOutput, boundedFiniteNumber, boundedInteger, resolveScopedPath, resolveToolWorkspaceRoots, safeSlugIdentifier, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const ALLOWED_BLENDER_ENGINES = new Set([
+    'BLENDER_EEVEE_NEXT',
+    'BLENDER_EEVEE',
+    'CYCLES',
+    'BLENDER_WORKBENCH'
+]);
+const MAX_BLENDER_ACTIONS = 32;
+const MAX_BLENDER_OUTPUT_BYTES = 2 * 1024 * 1024;
 function getBlenderExecutablePath() {
     const platform = os.platform();
-    const homeDir = os.homedir();
-    const causyneBlenderDir = path.join(homeDir, '.causyne', 'engines', 'blender');
+    const causyneBlenderDir = path.join(causyneHome(), 'engines', 'blender');
     const candidates = platform === 'darwin' ? [
         path.join(causyneBlenderDir, 'blender'),
         '/Applications/Blender.app/Contents/MacOS/Blender',
@@ -24,7 +34,7 @@ function getBlenderExecutablePath() {
         if (!fs.existsSync(cand))
             continue;
         try {
-            const reply = execFileSync(cand, ['--version'], { timeout: 8000, encoding: 'utf8' });
+            const reply = execFileSync(cand, ['--version'], { timeout: 8000, encoding: 'utf8', maxBuffer: 1024 * 1024, windowsHide: true, env: sanitizeSubprocessEnv(process.env) });
             if (/^blender\s+\d/i.test(String(reply).trim()))
                 return cand;
         }
@@ -34,16 +44,12 @@ function getBlenderExecutablePath() {
     }
     return null;
 }
-function getWorkspaceTempDir() {
-    const wsTmp = path.join(process.cwd(), '.tmp_causyne_3d');
-    try {
-        if (!fs.existsSync(wsTmp))
-            fs.mkdirSync(wsTmp, { recursive: true });
-        return wsTmp;
-    }
-    catch {
-        return os.tmpdir();
-    }
+function getWorkspaceTempDir(context) {
+    const baseDir = resolveToolWorkspaceRoots(context).primaryRoot || process.cwd();
+    const wsTmp = path.join(baseDir, '.tmp_causyne_3d');
+    if (!fs.existsSync(wsTmp))
+        fs.mkdirSync(wsTmp, { recursive: true });
+    return wsTmp;
 }
 async function runHeadlessCli(scriptPath, customCode, results, simulateMissing = false) {
     const blenderBin = getBlenderExecutablePath();
