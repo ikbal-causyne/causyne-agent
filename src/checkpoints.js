@@ -50,6 +50,7 @@ const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_FILES = 5000;
 const MAX_TREE_BYTES = 64 * 1024 * 1024;
 const MAX_TREE_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_OBJECT_BYTES = 32 * 1024 * 1024;
 const IGNORED_DIRECTORIES = new Set([
     '.git', 'node_modules', 'dist', 'build', 'out', 'target',
     '.next', '.nuxt', '.svelte-kit', '.turbo', '.cache', '.parcel-cache',
@@ -143,7 +144,19 @@ function writeObject(buffer) {
     return hash;
 }
 function readObject(hash) {
-    return fs.readFileSync(objectPath(hash));
+    const target = objectPath(hash);
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new Error('refusing to read symlink or non-regular checkpoint object');
+    }
+    if (stat.size > MAX_OBJECT_BYTES) {
+        throw new Error('refusing oversized checkpoint object');
+    }
+    const buf = fs.readFileSync(target);
+    if (sha256(buf) !== hash) {
+        throw new Error('checkpoint object integrity mismatch');
+    }
+    return buf;
 }
 export function resolveToolPath(value) {
     if (typeof value !== 'string' || value.length === 0)
