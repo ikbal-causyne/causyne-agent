@@ -12,15 +12,23 @@ export class DeepSeekProvider extends LLMProvider {
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['deepseek']) || '');
         this.visionModels = ['-vl'];
         this.audioModels = [];
+        this.preserveReasoningContent = this.isReasonerModel();
+    }
+    isReasonerModel() {
+        const lowered = (this.model || '').trim().toLowerCase();
+        return lowered.includes('reasoner') || lowered.startsWith('deepseek-r1');
     }
     async chat(messages, options = {}) {
         const apiKey = requireApiKey(this.apiKey, 'DeepSeek');
+        this.preserveReasoningContent = this.isReasonerModel();
         const sanitizedMessages = this.prepareMessages(messages);
         const payload = {
             model: this.model,
-            messages: sanitizedMessages,
-            temperature: resolveTemperature(options.temperature, 0.1)
+            messages: sanitizedMessages
         };
+        if (!this.isReasonerModel()) {
+            payload['temperature'] = resolveTemperature(options.temperature, 0.1);
+        }
         if (options.jsonMode) {
             payload['response_format'] = { type: 'json_object' };
         }
