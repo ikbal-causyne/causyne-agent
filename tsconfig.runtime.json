@@ -359,7 +359,8 @@
     "src/tools/toolForge.ts",
     "src/tools/pluginManager.ts",
     "src/tools/astryxOracle.ts",
-    "src/tools/procTerm.ts"
+    "src/tools/procTerm.ts",
+    "src/tools/gitExec.ts"
   ],
   "exclude": [
     "node_modules",
