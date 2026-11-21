@@ -350,7 +350,8 @@
     "src/verification/cliProbe.ts",
     "src/verification/uiRuntime.ts",
     "src/tools/toolPathSafety.ts",
-    "src/tools/clipboard.ts"
+    "src/tools/clipboard.ts",
+    "src/tools/processList.ts"
   ],
   "exclude": [
     "node_modules",
