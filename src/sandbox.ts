@@ -249,12 +249,16 @@ export class Sandbox {
     }
 
     if (canonicalToolName === 'gitOp') {
-      const command = String(safeArgs.command || '');
+      const command = String(safeArgs.command ?? safeArgs.action ?? '');
       const risk = this.classifyCommandRisk(`git ${command}`);
       if (risk === 'forbidden') {
         return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
       }
-      return withCredentialEscalation({ allowed: true, risk: /\bbranch\s+-D\b/.test(command) ? 'dangerous' : risk });
+      const destructiveGit = /\b(?:branch\s+-D|clean\s+-[a-zA-Z]*f|reset\s+--hard|push\s+(?:--force|-f)\b)/.test(command);
+      return withCredentialEscalation({
+        allowed: true,
+        risk: risk === 'extreme' ? 'extreme' : (destructiveGit ? 'dangerous' : risk)
+      });
     }
 
     if (canonicalToolName === 'web_fetch' && safeArgs.url) {
