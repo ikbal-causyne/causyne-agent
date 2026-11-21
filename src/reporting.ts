@@ -441,11 +441,16 @@ export function canDrawPanel(): boolean {
 /**
  * Render a report for whichever surface is listening.
  */
-export function renderReport(text: unknown, { title = '', force = null }: ReportRenderOptions = {}): string {
-  const draw = force === null ? canDrawPanel() : force;
-  if (!draw) return String(text);
-  const width = Math.min(readableWidth() + 4, terminalWidth());
-  const rows = String(text).split('\n');
+export function renderReport(text: unknown, options?: ReportRenderOptions | null): string {
+  const safeOpts: ReportRenderOptions = options && typeof options === 'object' ? options : {};
+  const title = typeof safeOpts.title === 'string' ? safeOpts.title : '';
+  const force = safeOpts.force === undefined ? null : safeOpts.force;
+  const draw = force === null ? canDrawPanel() : Boolean(force);
+  const textStr = text == null ? '' : String(text);
+  if (!draw) return textStr;
+  const rawWidth = Math.min(readableWidth() + 4, terminalWidth());
+  const width = Number.isFinite(rawWidth) ? Math.max(20, Math.floor(rawWidth)) : 80;
+  const rows = textStr.split('\n');
   const body = title && rows[0] === title ? rows.slice(1) : rows;
   return panel(body, title ? { width, title } : { width }).join('\n');
 }
