@@ -265,7 +265,13 @@ export class EntitlementClient {
                 parsed = await response.json().catch(() => ({}));
             }
             if (!response.ok) {
-                throw new EntitlementAccessError(typeof parsed?.error === 'string' && parsed.error ? parsed.error : 'SERVICE_ERROR', typeof parsed?.message === 'string' ? parsed.message : `Entitlement service returned HTTP ${response.status}.`);
+                const errCode = typeof parsed?.error === 'string' && /^[A-Z0-9_]{1,64}$/i.test(parsed.error)
+                    ? parsed.error
+                    : 'SERVICE_ERROR';
+                const errMessage = typeof parsed?.message === 'string' && parsed.message.trim()
+                    ? safeDisplay(redactProviderSecrets(parsed.message)).slice(0, 400)
+                    : `Entitlement service returned HTTP ${response.status}.`;
+                throw new EntitlementAccessError(errCode, errMessage);
             }
             return parsed;
         }
