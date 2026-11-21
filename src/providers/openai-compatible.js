@@ -52,12 +52,21 @@ export class OpenAICompatibleProvider extends LLMProvider {
         if (this.reasoningEffort && this.reasoningEffort !== 'off') {
             payload['reasoning_effort'] = this.reasoningEffort;
         }
-        if (options.jsonMode) {
+        if (typeof opts.maxTokens === 'number' && Number.isFinite(opts.maxTokens) && opts.maxTokens >= 1) {
+            const tokenLimit = Math.floor(opts.maxTokens);
+            if (this.usesMaxCompletionTokens()) {
+                payload['max_completion_tokens'] = tokenLimit;
+            }
+            else {
+                payload['max_tokens'] = tokenLimit;
+            }
+        }
+        if (opts.jsonMode) {
             payload['response_format'] = { type: 'json_object' };
         }
         let freeFormPaths = new Map();
-        if (options.tools && options.tools.length > 0) {
-            const scanReport = scanAndAdaptToolsForProvider(options.tools, 'openai');
+        if (Array.isArray(opts.tools) && opts.tools.length > 0) {
+            const scanReport = scanAndAdaptToolsForProvider(opts.tools, 'openai');
             payload['tools'] = scanReport.adaptedTools;
             payload['tool_choice'] = 'auto';
             freeFormPaths = scanReport.freeFormPaths;
@@ -84,19 +93,19 @@ export class OpenAICompatibleProvider extends LLMProvider {
             url: endpoint,
             method: 'POST',
             headers,
-            signal: options.signal,
-            timeoutMs: options.timeoutMs,
+            signal: opts.signal,
+            timeoutMs: opts.timeoutMs,
             providerLabel: this.providerLabel,
             secrets: trimmedKey ? [trimmedKey] : [],
             hasApiKey: Boolean(trimmedKey),
             allowInsecureHttp: this.allowInsecureHttp
         };
-        const data = wantsStreaming(options)
+        const data = wantsStreaming(opts)
             ? await streamOpenAICompatibleChat({
                 ...requestOpts,
                 payload,
-                onChunk: options.onChunk,
-                onReasoningChunk: options.onReasoningChunk
+                onChunk: opts.onChunk,
+                onReasoningChunk: opts.onReasoningChunk
             })
             : await safeProviderFetchJson({
                 ...requestOpts,
