@@ -299,27 +299,31 @@ export function printCheckpoints(limit = 15): void {
 // Undo
 // ---------------------------------------------------------------------------
 
-function runUndo(taskId: string | undefined, options: UndoCommandOptions = {}): any {
-  const opts = { dryRun: options.dryRun, full: options.full, workspaceRoot: options.workspaceRoot };
-  return options.step
-    ? undoStep({ dryRun: options.dryRun })
+function runUndo(taskId: string | undefined, options?: UndoCommandOptions | null): any {
+  const safeOpts: UndoCommandOptions = options && typeof options === 'object' ? options : {};
+  const opts = { dryRun: safeOpts.dryRun, full: safeOpts.full, workspaceRoot: safeOpts.workspaceRoot };
+  return safeOpts.step
+    ? undoStep({ dryRun: safeOpts.dryRun, workspaceRoot: safeOpts.workspaceRoot })
     : (taskId ? undoTask(taskId, opts) : undoLast(opts));
 }
 
-export function buildUndoText(taskId?: string, options: UndoCommandOptions = {}): UndoRenderResult {
+export function buildUndoText(taskId?: string, options?: UndoCommandOptions | null): UndoRenderResult {
   const result = runUndo(taskId, options);
-  if (!result.ok) return { ok: false, text: `[UNDO] ${safeDisplay(result.error)}` };
+  if (!result || !result.ok) return { ok: false, text: `[UNDO] ${safeDisplay(result?.error || 'undo failed')}` };
   return renderUndo(result);
 }
 
 /** Render a completed undo result as the plain text both terminals expect. */
 function renderUndo(result: any): UndoRenderResult {
   const lines: string[] = [];
-  lines.push(`${result.dryRun ? 'Undo preview (nothing written)' : 'Undo'}${result.taskId ? `  —  task ${safeDisplay(result.taskId)}` : ''}`);
+  const entries = Array.isArray(result?.results) ? result.results : [];
+  const driftItems = Array.isArray(result?.drift) ? result.drift : [];
+  const skippedTrees = Array.isArray(result?.skippedTrees) ? result.skippedTrees : [];
+  lines.push(`${result?.dryRun ? 'Undo preview (nothing written)' : 'Undo'}${result?.taskId ? `  —  task ${safeDisplay(result.taskId)}` : ''}`);
   lines.push('');
 
-  if (result.results.length === 0) {
-    const drifted = (result.drift || []).reduce((total: number, item: { files: unknown[] }) => total + item.files.length, 0);
+  if (entries.length === 0) {
+    const drifted = driftItems.reduce((total: number, item: { files?: unknown[] }) => total + (Array.isArray(item?.files) ? item.files.length : 0), 0);
     if (drifted > 0) {
       lines.push('  No tool announced a file change, but the workspace tree did move —');
       lines.push('  see below. That is what a terminal command looks like to undo.');
@@ -332,7 +336,7 @@ function renderUndo(result: any): UndoRenderResult {
   }
 
   let failures = 0;
-  for (const item of result.results) {
+  for (const item of entries) {
     if (String(item.action).startsWith('FAILED')) failures++;
     lines.push(`  ${safeDisplay(item.action)}  ${safeDisplay(item.path)}`);
   }
@@ -347,7 +351,7 @@ function renderUndo(result: any): UndoRenderResult {
     }
   }
 
-  for (const item of result.drift || []) {
+  for (const item of driftItems) {
     lines.push('');
     lines.push(`  ${item.files.length} file(s) under ${safeDisplay(item.root)} also changed during this task`);
     lines.push('  but were not announced by a tool (typically a terminal command):');
@@ -357,7 +361,7 @@ function renderUndo(result: any): UndoRenderResult {
     lines.push('  by hand while the task ran, so review the list first).');
   }
 
-  for (const tree of result.skippedTrees || []) {
+  for (const tree of skippedTrees) {
     lines.push('');
     lines.push(`  Note: the workspace tree at ${safeDisplay(tree.root)} was not snapshotted (${safeDisplay(tree.reason)}),`);
     lines.push('  so changes made there by terminal commands are not covered by this undo.');
