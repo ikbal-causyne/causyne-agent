@@ -1,6 +1,6 @@
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { getErrorMessage, resolveToolWorkspaceRoots, sanitizeToolError, type ToolWorkspaceContext } from './toolPathSafety.js';
 
 export interface SystemSpecsResult {
   success: boolean;
@@ -44,15 +44,13 @@ export const checkSystemSpecs = {
 
       let diskSpace = 'Unknown';
       try {
-        const candidatePath = sandbox?.workspacePaths?.[0];
-        const checkPath = typeof candidatePath === 'string' && candidatePath.trim()
-          ? candidatePath
-          : process.cwd();
+        const scope = resolveToolWorkspaceRoots(sandbox);
+        const checkPath = scope.primaryRoot || process.cwd();
         const stats = await fs.statfs(checkPath);
         const freeBytes = stats.bavail * stats.bsize;
         diskSpace = Math.round(freeBytes / 1024 / 1024 / 1024) + ' GB available';
       } catch (e: unknown) {
-        diskSpace = 'Could not verify disk space: ' + getErrorMessage(e);
+        diskSpace = 'Could not verify disk space: ' + sanitizeToolError(e, 200);
       }
 
       return {
@@ -69,7 +67,7 @@ export const checkSystemSpecs = {
           : 'OK: Sufficient memory for Stage 2 (Local AI Models Mode B/C) execution.'
       };
     } catch (err: unknown) {
-      return { success: false, error: getErrorMessage(err) };
+      return { success: false, error: sanitizeToolError(err) };
     }
   }
 };

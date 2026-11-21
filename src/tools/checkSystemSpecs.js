@@ -1,6 +1,6 @@
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, resolveToolWorkspaceRoots, sanitizeToolError } from './toolPathSafety.js';
 export const checkSystemSpecs = {
     schema: {
         name: 'check_system_specs',
@@ -27,16 +27,14 @@ export const checkSystemSpecs = {
             }
             let diskSpace = 'Unknown';
             try {
-                const candidatePath = sandbox?.workspacePaths?.[0];
-                const checkPath = typeof candidatePath === 'string' && candidatePath.trim()
-                    ? candidatePath
-                    : process.cwd();
+                const scope = resolveToolWorkspaceRoots(sandbox);
+                const checkPath = scope.primaryRoot || process.cwd();
                 const stats = await fs.statfs(checkPath);
                 const freeBytes = stats.bavail * stats.bsize;
                 diskSpace = Math.round(freeBytes / 1024 / 1024 / 1024) + ' GB available';
             }
             catch (e) {
-                diskSpace = 'Could not verify disk space: ' + getErrorMessage(e);
+                diskSpace = 'Could not verify disk space: ' + sanitizeToolError(e, 200);
             }
             return {
                 success: true,
@@ -53,7 +51,7 @@ export const checkSystemSpecs = {
             };
         }
         catch (err) {
-            return { success: false, error: getErrorMessage(err) };
+            return { success: false, error: sanitizeToolError(err) };
         }
     }
 };
