@@ -198,14 +198,18 @@ export class GeminiProvider extends LLMProvider {
             });
         const firstCandidate = data['candidates']?.[0];
         if (!firstCandidate) {
-            throw new Error('No candidate returned from Gemini');
+            const blockReason = data['promptFeedback']?.blockReason;
+            const detail = typeof blockReason === 'string' && blockReason ? ` (blockReason: ${blockReason})` : '';
+            throw new Error(`No candidate returned from Gemini${detail}`);
         }
         let content = '';
         let reasoningContent = typeof data['reasoningContent'] === 'string' ? data['reasoningContent'] : '';
         const toolCalls = [];
         const candidateParts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
         for (const part of candidateParts) {
-            if (part.text) {
+            if (!part || typeof part !== 'object')
+                continue;
+            if (typeof part.text === 'string' && part.text) {
                 if (part.thought === true) {
                     reasoningContent += part.text;
                 }
@@ -213,8 +217,10 @@ export class GeminiProvider extends LLMProvider {
                     content += part.text;
                 }
             }
-            else if (part.functionCall) {
+            else if (part.functionCall && typeof part.functionCall === 'object') {
                 const callName = normalizeToolName(part.functionCall.name || '');
+                if (!callName)
+                    continue;
                 const serializedArgs = serializeAndDecodeArguments(part.functionCall.args || {}, callName, freeFormPaths);
                 const sig = typeof part.thoughtSignature === 'string' ? part.thoughtSignature : (typeof part.thought_signature === 'string' ? part.thought_signature : undefined);
                 toolCalls.push({
