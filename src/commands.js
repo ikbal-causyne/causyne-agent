@@ -403,9 +403,12 @@ export const COMMANDS = [
                     output: `${domain}/${id}`
                 };
             }
-            const skills = COMPILED_SKILLS[target];
+            if (/[\r\n\0]/.test(target)) {
+                return fail('Invalid skill domain.');
+            }
+            const skills = Object.hasOwn(COMPILED_SKILLS, target) ? COMPILED_SKILLS[target] : undefined;
             if (!skills) {
-                return fail(`No skill domain "${target}". Available: ${Object.keys(COMPILED_SKILLS).join(', ')}`);
+                return fail(`No skill domain "${safeDisplay(target)}". Available: ${Object.keys(COMPILED_SKILLS).join(', ')}`);
             }
             const names = Object.keys(skills);
             if (names.length === 0)
