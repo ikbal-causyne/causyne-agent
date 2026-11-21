@@ -184,13 +184,15 @@ export const subagentOrchestrator = {
             const prompt = profile
                 ? `${profile.instructions}\n\nDelegated task:\n${String(requestedPrompt || '')}`
                 : requestedPrompt;
-            if (typeof prompt !== 'string' || !prompt)
+            if (typeof prompt !== 'string' || !prompt.trim())
                 return { success: false, error: 'A prompt is required to delegate a task.' };
+            if (prompt.length > 200_000)
+                return { success: false, error: 'Delegated prompt exceeds 200000 characters.' };
             const depth = args.depth !== undefined ? args.depth : 1;
-            if (depth > 1) {
+            if (!Number.isInteger(depth) || depth < 0 || depth > 1) {
                 return {
                     success: false,
-                    error: `Subagent hierarchy depth violation: depth ${depth} exceeds the 2-tier boundary (master -> worker). Subagents cannot delegate further.`
+                    error: `Subagent hierarchy depth violation: depth ${String(depth)} exceeds the 2-tier boundary (master -> worker). Subagents cannot delegate further.`
                 };
             }
             if (parentLoop && parentLoop.subagentDepth !== undefined) {
@@ -326,7 +328,7 @@ export const subagentOrchestrator = {
             };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
