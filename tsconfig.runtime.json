@@ -342,7 +342,8 @@
     "src/cliMode.ts",
     "src/entrypoint.ts",
     "src/benchmarks/planCache.ts",
-    "src/verification/featureMap.ts"
+    "src/verification/featureMap.ts",
+    "src/verification/skillCatalog.ts"
   ],
   "exclude": [
     "node_modules",
