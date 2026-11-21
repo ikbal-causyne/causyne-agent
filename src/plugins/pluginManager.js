@@ -595,7 +595,27 @@ function permissionArgs(tool, workspaceRoot) {
     return args;
 }
 async function runPluginTool(tool, args, context) {
-    const workspaceRoot = path.resolve(context?.workspaceRoot || context?.workspacePaths?.[0] || process.cwd());
+    // Re-verify trust and whole-directory digest immediately before spawning to
+    // close TOCTOU tampering between tool resolution and execution.
+    try {
+        const state = readState();
+        const trust = Object.hasOwn(state.plugins, tool.plugin) ? safeObject(state.plugins[tool.plugin]) : {};
+        const fresh = readPlugin(tool.pluginDirectory);
+        if (!trust.enabled || trust.digest !== fresh.digest) {
+            return { success: false, error: 'Plugin trust revoked or modified before execution' };
+        }
+    }
+    catch (verifyErr) {
+        return {
+            success: false,
+            error: `Plugin integrity check failed: ${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}`
+        };
+    }
+    const rawWorkspace = context?.workspaceRoot || context?.workspacePaths?.[0] || process.cwd();
+    if (typeof rawWorkspace !== 'string' || !rawWorkspace.trim() || rawWorkspace.includes('\0')) {
+        return { success: false, error: 'Invalid workspace root for plugin execution' };
+    }
+    const workspaceRoot = path.resolve(rawWorkspace);
     // Resolve filesystem aliases before handing paths to Node's permission
     // model. On macOS, /var and /tmp are symlinks into /private; authorizing the
     // alias while the module loader opens the canonical target causes a false
