@@ -209,20 +209,23 @@ export function spillToolResult(result: unknown, meta: SpillMeta = {}): SpillRec
  * drives the model back into a re-run.
  */
 export function buildSpillNotice(spill: Pick<SpillRecord, 'path' | 'bytes' | 'lines'> | null | undefined): string {
-  if (!spill) {
+  if (!spill || typeof spill.path !== 'string' || !spill.path.trim()) {
     return '\n\n[... OUTPUT TRUNCATED TO PROTECT THE CONTEXT WINDOW. Narrow your arguments and retry if you need more ...]';
   }
-  const kb = (spill.bytes / 1024).toFixed(1);
-  return `\n\n[... OUTPUT TRUNCATED HERE (${kb} KB, ${spill.lines} lines total). `
-    + `THE COMPLETE OUTPUT IS SAVED AT: ${spill.path} — `
+  const cleanPath = spill.path.replace(/[\r\n\0]/g, '');
+  const kb = ((Number.isFinite(spill.bytes) ? spill.bytes : 0) / 1024).toFixed(1);
+  const lines = Number.isFinite(spill.lines) ? spill.lines : 0;
+  return `\n\n[... OUTPUT TRUNCATED HERE (${kb} KB, ${lines} lines total). `
+    + `THE COMPLETE OUTPUT IS SAVED AT: ${cleanPath} — `
     + `read a line range from that file with fs_read, or search it with code_search_ripgrep. `
     + `DO NOT re-run the tool just to see the rest ...]`;
 }
 
 /** The one-line form the decay stub uses once the payload leaves the window. */
 export function buildDecayPointer(spill: { path?: string | undefined } | null | undefined): string {
-  if (!spill || !spill.path) return '';
-  return ` The full output is still on disk at ${spill.path} — read or search that file instead of re-running the tool.`;
+  if (!spill || typeof spill.path !== 'string' || !spill.path.trim()) return '';
+  const cleanPath = spill.path.replace(/[\r\n\0]/g, '');
+  return ` The full output is still on disk at ${cleanPath} — read or search that file instead of re-running the tool.`;
 }
 
 /**
