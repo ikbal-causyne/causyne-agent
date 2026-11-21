@@ -47,12 +47,16 @@ export class GeminiProvider extends LLMProvider {
                 if (msg.content)
                     parts.push({ text: String(msg.content) });
                 for (const tc of msg.tool_calls) {
-                    parts.push({
+                    const fcPart = {
                         functionCall: {
                             name: normalizeToolName(tc.function?.name || ''),
                             args: safeParseJsonObject(tc.function?.arguments)
                         }
-                    });
+                    };
+                    const sig = typeof tc.thoughtSignature === 'string' ? tc.thoughtSignature : (typeof tc.thought_signature === 'string' ? tc.thought_signature : undefined);
+                    if (sig)
+                        fcPart['thoughtSignature'] = sig;
+                    parts.push(fcPart);
                 }
                 contents.push({ role, parts });
             }
@@ -175,13 +179,15 @@ export class GeminiProvider extends LLMProvider {
             else if (part.functionCall) {
                 const callName = normalizeToolName(part.functionCall.name || '');
                 const serializedArgs = serializeAndDecodeArguments(part.functionCall.args || {}, callName, freeFormPaths);
+                const sig = typeof part.thoughtSignature === 'string' ? part.thoughtSignature : (typeof part.thought_signature === 'string' ? part.thought_signature : undefined);
                 toolCalls.push({
                     id: sanitizeProviderToolId(part.functionCall.id, 'call_gemini', toolCalls.length),
                     type: 'function',
                     function: {
                         name: callName,
                         arguments: serializedArgs
-                    }
+                    },
+                    ...(sig ? { thoughtSignature: sig } : {})
                 });
             }
         }
