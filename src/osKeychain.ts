@@ -156,8 +156,14 @@ export function loadVaultKeyFromKeychain(
   if (platform === 'win32') {
     const blobFile = dpapiBlobPath(vaultDir);
     if (!fs.existsSync(blobFile)) return null;
+    try {
+      const stat = fs.lstatSync(blobFile);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0 || stat.size > 65_536) return null;
+    } catch {
+      return null;
+    }
     const protectedBase64 = fs.readFileSync(blobFile, 'utf8').trim();
-    if (!protectedBase64) return null;
+    if (!protectedBase64 || !/^[A-Za-z0-9+/=]+$/.test(protectedBase64)) return null;
     const script = [
       'Add-Type -AssemblyName System.Security',
       '$b64 = [Console]::In.ReadToEnd().Trim()',
