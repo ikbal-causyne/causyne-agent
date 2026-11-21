@@ -341,11 +341,12 @@ export function skillSystemMessage(skill) {
         }];
 }
 export function explainNetworkError(error, config = {}) {
+    const safeConfig = config && typeof config === 'object' ? config : {};
     const cause = error && error.cause;
-    const code = (cause && (cause.code || cause.errno)) || '';
+    const code = String((cause && (cause.code || cause.errno)) || '');
     let host = '';
     try {
-        const raw = config.baseUrl && String(config.baseUrl).trim();
+        const raw = safeConfig.baseUrl && String(safeConfig.baseUrl).trim();
         if (raw)
             host = new URL(raw).host;
     }
@@ -366,9 +367,9 @@ export function explainNetworkError(error, config = {}) {
         UNABLE_TO_VERIFY_LEAF_SIGNATURE: 'the TLS certificate could not be verified — a proxy may be intercepting',
         SELF_SIGNED_CERT_IN_CHAIN: 'a self-signed certificate is in the chain — a proxy may be intercepting'
     };
-    const reason = REASONS[code] || (code ? `the connection failed (${code})` : 'the connection failed');
+    const reason = (Object.hasOwn(REASONS, code) ? REASONS[code] : undefined) || (code ? `the connection failed (${code})` : 'the connection failed');
     const where = host ? ` reaching ${host}` : '';
-    const provider = config.provider ? ` via ${config.provider}` : '';
+    const provider = safeConfig.provider ? ` via ${safeConfig.provider}` : '';
     const checks = [];
     if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || code === 'ENETUNREACH') {
         checks.push('confirm this machine is online');
