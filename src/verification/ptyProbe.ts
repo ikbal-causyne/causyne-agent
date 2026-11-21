@@ -173,7 +173,13 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
         stdout += text;
       }
     });
-    child.stderr.on('data', (bytes: Buffer) => { stderr += bytes.toString('utf8'); });
+    const MAX_NODE_STDERR = 262144;
+    child.stderr.on('data', (bytes: Buffer) => {
+      stderr += bytes.toString('utf8');
+      if (stderr.length > MAX_NODE_STDERR) {
+        stderr = stderr.slice(-MAX_NODE_STDERR);
+      }
+    });
     child.on('error', (error: Error) => { spawnedError = String(error.message || error); });
     child.on('close', () => {
       if (spawnedError && /ENOENT/.test(spawnedError)) {
