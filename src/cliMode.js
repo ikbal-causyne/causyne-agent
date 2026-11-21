@@ -369,7 +369,7 @@ export async function chatMode({ home = false } = {}) {
                     approvalHandler: makeApprovalHandler(conn, prompt),
                     decisionHandler: makeDecisionHandler(conn, prompt)
                 });
-                conn.renderer.write(`\n  Workspace switched to: ${nextRoot}\n`);
+                conn.renderer.write(`\n  Workspace switched to: ${safeDisplay(String(nextRoot ?? ''))}\n`);
             }
             catch (error) {
                 try {
@@ -380,7 +380,8 @@ export async function chatMode({ home = false } = {}) {
                     prompt?.setWorkingRoot(previousWorkspaceRoot);
                 }
                 catch { /* report below */ }
-                conn.renderer.write(`\n  Workspace switch failed: ${error instanceof Error ? error.message : String(error)}\n`);
+                const safeErr = safeDisplay(redactProviderSecrets(error instanceof Error ? error.message : String(error)));
+                conn.renderer.write(`\n  Workspace switch failed: ${safeErr}\n`);
             }
             continue;
         }
