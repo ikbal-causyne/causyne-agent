@@ -46,10 +46,11 @@ function canonicalPolicyTool(tool: unknown): string {
 export function isWholeFileDeletion(tool: string, args: Record<string, unknown>): boolean {
   const canonical = canonicalPolicyTool(tool);
   if (canonical === 'fs_delete') return true;
+  const safeArgs = args && typeof args === 'object' ? args : {};
   const command = canonical === 'gitOp'
-    ? `git ${String(args.command ?? args.action ?? '')}`
+    ? `git ${String(safeArgs.command ?? safeArgs.action ?? '')}`
     : SHELL_TOOLS.has(canonical)
-      ? String(args.command ?? args.input ?? args.cmd ?? '')
+      ? String(safeArgs.command ?? safeArgs.input ?? safeArgs.cmd ?? '')
       : '';
   if (/^\s*git\s+rm\s+--cached\b[^;&|\n`$()]*$/i.test(command)) return false;
   return command.length > 0
@@ -73,6 +74,7 @@ export function isRoutineBrowserVerification(tool: string, args: Record<string, 
 
 /** Prompt policy only. Sandbox denial, workspace checks, and observer veto run separately. */
 export function requiresToolApproval(input: ToolApprovalInput): boolean {
+  if (!input || typeof input !== 'object') return true;
   const canonical = canonicalPolicyTool(input.tool);
   if (input.mode === 'C') {
     if (!isWholeFileDeletion(canonical, input.args)) return false;
