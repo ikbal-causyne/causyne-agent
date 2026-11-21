@@ -3,7 +3,9 @@ import { spawn } from 'node:child_process';
 import { resolveChannel } from '../appChannel.js';
 import { auditLog } from '../auditLog.js';
 import { recordActuation } from '../embodimentSession.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, sanitizeToolText } from './toolPathSafety.js';
+const MAX_ACT_OUTPUT_CHARS = 64 * 1024;
 const MAC_ACT_SCRIPT = readFileSync(new URL('../tool-scripts/desktop_act.applescript', import.meta.url), 'utf8');
 const MAC_INTERPRETER = 'osascript';
 const MAX_ACTIONS = 12;
@@ -13,7 +15,7 @@ function runWithScriptOnStdin(binary, args, scriptText, timeoutMs) {
     return new Promise((resolve) => {
         let child;
         try {
-            child = spawn(binary, args);
+            child = spawn(binary, args, { env: sanitizeSubprocessEnv(process.env), windowsHide: true });
         }
         catch (e) {
             resolve({ code: -1, stdout: '', stderr: getErrorMessage(e) });
@@ -31,13 +33,23 @@ function runWithScriptOnStdin(binary, args, scriptText, timeoutMs) {
         };
         const timer = setTimeout(() => {
             try {
-                child.kill();
+                child.kill('SIGTERM');
             }
             catch { /* already gone */ }
+            setTimeout(() => { try {
+                child.kill('SIGKILL');
+            }
+            catch { /* already gone */ } }, 1000).unref();
             done({ code: -1, stdout, stderr: stderr + '\ntimed out' });
         }, timeoutMs);
-        child.stdout.on('data', (d) => { stdout += d.toString(); });
-        child.stderr.on('data', (d) => { stderr += d.toString(); });
+        child.stdout.on('data', (d) => {
+            if (stdout.length < MAX_ACT_OUTPUT_CHARS)
+                stdout += d.toString('utf8').slice(0, MAX_ACT_OUTPUT_CHARS - stdout.length);
+        });
+        child.stderr.on('data', (d) => {
+            if (stderr.length < MAX_ACT_OUTPUT_CHARS)
+                stderr += d.toString('utf8').slice(0, MAX_ACT_OUTPUT_CHARS - stderr.length);
+        });
         child.on('error', (e) => { done({ code: -1, stdout, stderr: e.message }); });
         child.on('close', (code) => { done({ code: code ?? -1, stdout, stderr }); });
         child.stdin.on('error', () => { });
