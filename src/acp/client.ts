@@ -238,6 +238,9 @@ export class AcpClient {
   }
 
   async newSession(cwd: string, mcpServers: unknown[] = [], signal?: AbortSignal): Promise<string> {
+    if (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0')) {
+      throw new Error('newSession requires a valid cwd');
+    }
     const result = await this.request<{ sessionId?: unknown }>(ACP_METHODS.NEW_SESSION, {
       cwd,
       mcpServers
@@ -544,8 +547,12 @@ export class AcpClient {
         return;
       }
       try {
-        const outcome = await handler(request.params as unknown as RequestPermissionRequest);
-        this.write({ jsonrpc: '2.0', id: request.id, result: { outcome } });
+        const rawOutcome = await handler(request.params as unknown as RequestPermissionRequest);
+        const validOutcome: RequestPermissionResponse['outcome'] =
+          rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string'
+            ? { outcome: 'selected', optionId: rawOutcome.optionId }
+            : { outcome: 'cancelled' };
+        this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
       } catch {
         this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: { outcome: 'cancelled' } } });
       }

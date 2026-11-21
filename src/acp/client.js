@@ -164,6 +164,9 @@ export class AcpClient {
         return result;
     }
     async newSession(cwd, mcpServers = [], signal) {
+        if (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0')) {
+            throw new Error('newSession requires a valid cwd');
+        }
         const result = await this.request(ACP_METHODS.NEW_SESSION, {
             cwd,
             mcpServers
@@ -481,8 +484,11 @@ export class AcpClient {
                 return;
             }
             try {
-                const outcome = await handler(request.params);
-                this.write({ jsonrpc: '2.0', id: request.id, result: { outcome } });
+                const rawOutcome = await handler(request.params);
+                const validOutcome = rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string'
+                    ? { outcome: 'selected', optionId: rawOutcome.optionId }
+                    : { outcome: 'cancelled' };
+                this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
             }
             catch {
                 this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: { outcome: 'cancelled' } } });
