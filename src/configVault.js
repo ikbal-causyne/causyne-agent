@@ -17,6 +17,8 @@ export const VAULT_GCM_IV_BYTES = 12;
 export const VAULT_LEGACY_GCM_IV_BYTES = 16;
 export const VAULT_GCM_AUTH_TAG_BYTES = 16;
 export const VAULT_ENC_PREFIX = 'ENC:';
+const MAX_SECRET_HEX_CHARS = 1_048_576;
+const STRICT_HEX_PATTERN = /^[0-9a-fA-F]+$/;
 export function isEncryptedVaultSecret(value) {
     return typeof value === 'string' && value.startsWith(VAULT_ENC_PREFIX);
 }
@@ -227,8 +229,13 @@ export function encryptVaultSecret(text, keyFilePath) {
  * or legacy 16-byte GCM IV. Returns empty string on authentication failure.
  */
 export function decryptVaultSecret(encryptedText, keyFilePath) {
-    if (!encryptedText || !isEncryptedVaultSecret(encryptedText))
+    if (typeof encryptedText !== 'string' || !encryptedText)
+        return '';
+    if (!isEncryptedVaultSecret(encryptedText))
         return encryptedText;
+    if (encryptedText.length > MAX_SECRET_HEX_CHARS)
+        return '';
+    let key = null;
     try {
         const parts = encryptedText.split(':');
         if (parts.length !== 4)
@@ -236,13 +243,18 @@ export function decryptVaultSecret(encryptedText, keyFilePath) {
         const ivHex = parts[1] ?? '';
         const authTagHex = parts[2] ?? '';
         const ciphertextHex = parts[3] ?? '';
-        const iv = Buffer.from(ivHex, 'hex');
-        const authTag = Buffer.from(authTagHex, 'hex');
-        if ((iv.length !== VAULT_GCM_IV_BYTES && iv.length !== VAULT_LEGACY_GCM_IV_BYTES) ||
-            authTag.length !== VAULT_GCM_AUTH_TAG_BYTES) {
+        if (!STRICT_HEX_PATTERN.test(ivHex) ||
+            !STRICT_HEX_PATTERN.test(authTagHex) ||
+            (ciphertextHex.length > 0 && (ciphertextHex.length % 2 !== 0 || !STRICT_HEX_PATTERN.test(ciphertextHex)))) {
             return '';
         }
-        const key = getOrCreateVaultKey(keyFilePath);
+        if ((ivHex.length !== VAULT_GCM_IV_BYTES * 2 && ivHex.length !== VAULT_LEGACY_GCM_IV_BYTES * 2) ||
+            authTagHex.length !== VAULT_GCM_AUTH_TAG_BYTES * 2) {
+            return '';
+        }
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(authTagHex, 'hex');
+        key = getOrCreateVaultKey(keyFilePath);
         const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
         decipher.setAuthTag(authTag);
         let decrypted = decipher.update(ciphertextHex, 'hex', 'utf8');
@@ -251,5 +263,9 @@ export function decryptVaultSecret(encryptedText, keyFilePath) {
     }
     catch {
         return '';
+    }
+    finally {
+        if (key)
+            key.fill(0);
     }
 }
