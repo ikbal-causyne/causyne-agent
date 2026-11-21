@@ -88,9 +88,10 @@ export function isTerminalSafe(value: unknown): boolean {
  * paths and under-ranks the file the user meant.
  */
 export function score(candidate: string, query: string): number {
-  if (!query) return 0;
-  const full = candidate.toLocaleLowerCase();
-  const needle = query.toLocaleLowerCase();
+  if (typeof candidate !== 'string') return -1;
+  if (typeof query !== 'string' || !query) return 0;
+  const full = (candidate.length > 1024 ? candidate.slice(0, 1024) : candidate).toLocaleLowerCase();
+  const needle = (query.length > 256 ? query.slice(0, 256) : query).toLocaleLowerCase();
   const leaf = full.replace(/\/$/, '').split('/').at(-1) || '';
   const isDirectory = candidate.endsWith('/');
   const pathPenalty = Math.min(candidate.length, 180);
