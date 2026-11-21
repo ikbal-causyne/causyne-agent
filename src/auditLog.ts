@@ -15,10 +15,15 @@ function resolveLogDir(): string {
 export class AuditLog {
   logFile: string;
 
-  constructor() {
-    this.ensureLogDir();
+  private currentLogFile(): string {
     const date = new Date().toISOString().split('T')[0] || 'unknown';
     this.logFile = path.join(resolveLogDir(), `audit-${date}.jsonl`);
+    return this.logFile;
+  }
+
+  constructor() {
+    this.logFile = path.join(resolveLogDir(), `audit-${new Date().toISOString().split('T')[0] || 'unknown'}.jsonl`);
+    try { this.ensureLogDir(); } catch { /* fail open on init */ }
   }
 
   ensureLogDir(): void {

@@ -6,10 +6,17 @@ function resolveLogDir() {
 }
 export class AuditLog {
     logFile;
-    constructor() {
-        this.ensureLogDir();
+    currentLogFile() {
         const date = new Date().toISOString().split('T')[0] || 'unknown';
         this.logFile = path.join(resolveLogDir(), `audit-${date}.jsonl`);
+        return this.logFile;
+    }
+    constructor() {
+        this.logFile = path.join(resolveLogDir(), `audit-${new Date().toISOString().split('T')[0] || 'unknown'}.jsonl`);
+        try {
+            this.ensureLogDir();
+        }
+        catch { /* fail open on init */ }
     }
     ensureLogDir() {
         const dir = resolveLogDir();
