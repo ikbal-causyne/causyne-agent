@@ -1,6 +1,5 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe, escapeGodotString, resolveToolWorkspaceRoots, safeSlugIdentifier, sanitizeToolError } from './toolPathSafety.js';
 export const gameUiHudBuilder = {
     schema: {
         name: 'game.ui_hud_builder',
@@ -18,10 +17,13 @@ export const gameUiHudBuilder = {
             required: ['action']
         }
     },
-    async execute(args = {}, _sandbox) {
+    async execute(args = {}, sandbox) {
         try {
             const { action, uiName = 'GameUI', gameTitle = 'Chronicles of Aetheria', hasStaminaBar = true, inventorySlots = 24, outputPath } = args || {};
-            const safeUiName = String(uiName ?? 'GameUI');
+            const safeUiName = escapeGodotString(uiName ?? 'GameUI', 100);
+            const safeUiSlug = safeSlugIdentifier(uiName, 'GameUI', 64);
+            const safeTitle = escapeGodotString(gameTitle ?? 'Chronicles of Aetheria', 120);
+            const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
             if (action === 'build_hud' || (action === 'save_ui_scene' && safeUiName.includes('HUD'))) {
                 const hudContent = `[gd_scene load_steps=2 format=3]
 
@@ -78,9 +80,9 @@ size_flags_vertical = 8
 text = "Gold: 0"
 `;
                 if (outputPath || action === 'save_ui_scene') {
-                    const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `${safeUiName}.tscn`);
-                    await fs.mkdir(path.dirname(finalPath), { recursive: true });
-                    await fs.writeFile(finalPath, hudContent, 'utf8');
+                    const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `${safeUiSlug}.tscn`);
+                    const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+                    await atomicWriteFileSafe(finalPath, hudContent);
                 }
                 return {
                     success: true,
@@ -131,7 +133,7 @@ theme_override_constants/separation = 16
 [node name="TitleLabel" type="Label" parent="VBoxContainer"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 36
-text = "${gameTitle}"
+text = "${safeTitle}"
 horizontal_alignment = 1
 
 [node name="StartButton" type="Button" parent="VBoxContainer"]
@@ -147,8 +149,8 @@ layout_mode = 2
 text = "Quit"
 `;
                 if (outputPath) {
-                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-                    await fs.writeFile(outputPath, menuContent, 'utf8');
+                    const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+                    await atomicWriteFileSafe(finalPath, menuContent);
                 }
                 return {
                     success: true,
@@ -204,8 +206,8 @@ text = "Dialogue text goes here..."
 layout_mode = 2
 `;
                 if (outputPath) {
-                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-                    await fs.writeFile(outputPath, boxContent, 'utf8');
+                    const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+                    await atomicWriteFileSafe(finalPath, boxContent);
                 }
                 return {
                     success: true,
@@ -246,8 +248,8 @@ columns = 6
 # Inventory grid slots count: ${safeSlots}
 `;
                 if (outputPath) {
-                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-                    await fs.writeFile(outputPath, gridContent, 'utf8');
+                    const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+                    await atomicWriteFileSafe(finalPath, gridContent);
                 }
                 return {
                     success: true,
@@ -264,7 +266,7 @@ columns = 6
             return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
