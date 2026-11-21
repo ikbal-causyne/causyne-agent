@@ -358,7 +358,8 @@
     "src/tools/fsMove.ts",
     "src/tools/toolForge.ts",
     "src/tools/pluginManager.ts",
-    "src/tools/astryxOracle.ts"
+    "src/tools/astryxOracle.ts",
+    "src/tools/procTerm.ts"
   ],
   "exclude": [
     "node_modules",
