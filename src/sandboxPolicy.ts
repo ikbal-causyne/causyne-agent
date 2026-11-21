@@ -145,7 +145,18 @@ function isWithinForPlatform(child: string, parent: string, platform: NodeJS.Pla
   return isWithinPhysicalPath(child, parent);
 }
 
-function isBlockedResolvedRoot(candidate: string, platform: NodeJS.Platform): boolean {
+function stripWindowsDevicePrefix(candidate: string): string {
+  if (candidate.startsWith('\\\\?\\') || candidate.startsWith('\\\\.\\')) {
+    return candidate.slice(4);
+  }
+  if (candidate.startsWith('//?/') || candidate.startsWith('//./')) {
+    return candidate.slice(4);
+  }
+  return candidate;
+}
+
+function isBlockedResolvedRoot(rawCandidate: string, platform: NodeJS.Platform): boolean {
+  const candidate = platform === 'win32' ? stripWindowsDevicePrefix(rawCandidate) : rawCandidate;
   const pathApi = platform === 'win32' ? path.win32 : path.posix;
   const parsedRoot = pathApi.parse(candidate).root;
   if (parsedRoot && candidate.toLowerCase() === parsedRoot.toLowerCase()) {

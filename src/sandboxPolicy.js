@@ -132,7 +132,17 @@ function isWithinForPlatform(child, parent, platform) {
     }
     return isWithinPhysicalPath(child, parent);
 }
-function isBlockedResolvedRoot(candidate, platform) {
+function stripWindowsDevicePrefix(candidate) {
+    if (candidate.startsWith('\\\\?\\') || candidate.startsWith('\\\\.\\')) {
+        return candidate.slice(4);
+    }
+    if (candidate.startsWith('//?/') || candidate.startsWith('//./')) {
+        return candidate.slice(4);
+    }
+    return candidate;
+}
+function isBlockedResolvedRoot(rawCandidate, platform) {
+    const candidate = platform === 'win32' ? stripWindowsDevicePrefix(rawCandidate) : rawCandidate;
     const pathApi = platform === 'win32' ? path.win32 : path.posix;
     const parsedRoot = pathApi.parse(candidate).root;
     if (parsedRoot && candidate.toLowerCase() === parsedRoot.toLowerCase()) {
