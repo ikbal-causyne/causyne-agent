@@ -14,7 +14,10 @@ import { PiProvider, isPiProvider } from './pi.js';
 import { AntigravityProvider, isAntigravityProvider } from './antigravity.js';
 import { OpenRouterProvider } from './openrouter.js';
 export function createProvider(config) {
-    const p = config.provider?.toLowerCase();
+    if (!config || typeof config !== 'object') {
+        throw new Error('API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.');
+    }
+    const p = typeof config.provider === 'string' ? config.provider.trim().toLowerCase() : undefined;
     if (p === 'openai')
         return new OpenAIProvider(config);
     if (p === 'anthropic')
