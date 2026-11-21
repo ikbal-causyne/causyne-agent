@@ -155,7 +155,7 @@ function rgbTo256(r, g, b) {
 }
 /** Open the escape sequence for a role, or '' when colour is off. */
 function open(role) {
-    if (!HAS_COLOR)
+    if (!HAS_COLOR || typeof role !== 'string' || !Object.hasOwn(PALETTE, role))
         return '';
     const rgb = PALETTE[role];
     if (!rgb)
@@ -164,7 +164,8 @@ function open(role) {
         return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
     if (COLOR_DEPTH >= 256)
         return `\x1b[38;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m`;
-    return `\x1b[${BASIC_CODES[role] || 39}m`;
+    const basic = Object.hasOwn(BASIC_CODES, role) ? (BASIC_CODES[role] ?? 39) : 39;
+    return `\x1b[${basic}m`;
 }
 const RESET = '\x1b[0m';
 /** Paint `text` in a semantic role. A no-op when colour is unavailable. */
