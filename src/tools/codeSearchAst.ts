@@ -32,7 +32,7 @@ export const codeSearchAst = {
     }
   },
 
-  async execute(args: CodeSearchAstArgs = {}, context?: ToolWorkspaceContext): Promise<string | { success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: CodeSearchAstArgs = {}, context?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { resolved } = await assertSafeWorkspaceInput(args?.targetFile, context, { maxBytes: MAX_AST_FILE_BYTES });
       const code = await fs.readFile(resolved, 'utf8');
@@ -69,9 +69,9 @@ export const codeSearchAst = {
           } else {
             output += structures.join('\n');
           }
-          return output;
+          return { success: true, output: sanitizeToolText(output, 120_000) };
         } catch (acornError: unknown) {
-          output += `[AST Parse Warning: ${getErrorMessage(acornError)}. Falling back to Regex Pseudo-AST]\n`;
+          output += `[AST Parse Warning: ${sanitizeToolText(getErrorMessage(acornError), 200)}. Falling back to Regex Pseudo-AST]\n`;
         }
       }
 
@@ -79,7 +79,7 @@ export const codeSearchAst = {
       const results: string[] = [];
       const functionRegex = /^(?:export\s+)?(?:async\s+)?(?:function\s+|class\s+|const\s+\w+\s*=\s*(?:async\s*)?(?:\([^)]{0,256}\)|[a-zA-Z0-9_$]+)\s*=>|def\s+|func\s+|public\s+class\s+|public\s+static\s+|type\s+|interface\s+)/;
 
-      for (let i = 0; i < lines.length; i++) {
+      for (let i = 0; i < lines.length && results.length < 500; i++) {
         const line = (lines[i] ?? '').trim();
         if (line.length <= 512 && functionRegex.test(line)) {
           const signature = line.replace(/\{$/, '').trim();
@@ -93,9 +93,9 @@ export const codeSearchAst = {
         output += results.join('\n');
       }
 
-      return output;
+      return { success: true, output: sanitizeToolText(output, 120_000) };
     } catch (e: unknown) {
-      return `Error analyzing file: ${getErrorMessage(e)}`;
+      return { success: false, error: `Error analyzing file: ${sanitizeToolError(e)}` };
     }
   }
 };
