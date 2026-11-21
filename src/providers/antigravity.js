@@ -14,6 +14,7 @@ import { determineToolScope } from '../smartToolsUse.js';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { isLaunchOnlyPrompt } from '../launchIntent.js';
 import { LLMProvider } from './base.js';
@@ -268,12 +269,18 @@ export function isAntigravityModel(input) {
     return true;
 }
 export function resolveAgyBinary() {
-    const envPath = process.env.PATH || '';
+    const envPath = process.env.PATH || process.env.Path || '';
+    const home = os.homedir();
+    const homeDirs = home && path.isAbsolute(home)
+        ? [
+            path.join(home, '.local', 'bin'),
+            path.join(home, '.antigravity', 'antigravity', 'bin'),
+            path.join(home, '.gemini', 'antigravity-ide', 'bin')
+        ]
+        : [];
     const searchDirs = [
         ...envPath.split(path.delimiter),
-        path.join(process.env.HOME || '', '.local/bin'),
-        path.join(process.env.HOME || '', '.antigravity/antigravity/bin'),
-        path.join(process.env.HOME || '', '.gemini/antigravity-ide/bin'),
+        ...homeDirs,
         '/Applications/Antigravity.app/Contents/Resources/app/bin',
         '/Applications/Antigravity IDE.app/Contents/Resources/app/bin'
     ];
