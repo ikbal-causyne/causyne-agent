@@ -289,11 +289,14 @@ export function probeOsSandbox(options) {
  *      selected that directory as their workspace).
  */
 export function buildSeatbeltProfile(options) {
+    if (!options || typeof options !== 'object' || typeof options.cwd !== 'string' || !options.cwd.trim() || options.cwd.includes('\0')) {
+        throw new TypeError('buildSeatbeltProfile requires a valid cwd');
+    }
     const mode = options.mode ?? 'workspace-write';
     const homeDir = options.homeDir ?? os.homedir();
     const tmpDir = options.tmpDir ?? os.tmpdir();
     const configuredWorkspaces = (options.workspaceRoots ?? [])
-        .filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+        .filter((entry) => typeof entry === 'string' && entry.trim().length > 0 && !entry.includes('\0'));
     const workspaces = configuredWorkspaces.length > 0 ? configuredWorkspaces : [options.cwd];
     const lines = [
         '(version 1)',
