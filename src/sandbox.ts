@@ -43,6 +43,7 @@ const READ_ONLY_INVOCATIONS: Record<string, RegExp> = {
 function isReadOnlyInvocation(segment: unknown): boolean {
   const text = String(segment || '').trim();
   const leadingWord = text.split(/\s+/)[0] || '';
+  if (!leadingWord || !Object.hasOwn(READ_ONLY_INVOCATIONS, leadingWord)) return false;
   const pattern = READ_ONLY_INVOCATIONS[leadingWord];
   return Boolean(pattern && pattern.test(text));
 }
@@ -67,7 +68,7 @@ const CREDENTIAL_PATHS: readonly RegExp[] = [
 ];
 
 export function isCredentialPath(targetPath: unknown): boolean {
-  if (typeof targetPath !== 'string' || targetPath.length === 0) return false;
+  if (typeof targetPath !== 'string' || targetPath.length === 0 || targetPath.includes('\0')) return false;
   const normalized = targetPath.replace(/\\/g, '/');
   return CREDENTIAL_PATHS.some(pattern => pattern.test(normalized)) || isExtendedCredentialPath(normalized);
 }

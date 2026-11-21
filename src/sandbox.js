@@ -21,6 +21,8 @@ const READ_ONLY_INVOCATIONS = {
 function isReadOnlyInvocation(segment) {
     const text = String(segment || '').trim();
     const leadingWord = text.split(/\s+/)[0] || '';
+    if (!leadingWord || !Object.hasOwn(READ_ONLY_INVOCATIONS, leadingWord))
+        return false;
     const pattern = READ_ONLY_INVOCATIONS[leadingWord];
     return Boolean(pattern && pattern.test(text));
 }
@@ -42,7 +44,7 @@ const CREDENTIAL_PATHS = [
     /(^|\/)\.my\.cnf$/i
 ];
 export function isCredentialPath(targetPath) {
-    if (typeof targetPath !== 'string' || targetPath.length === 0)
+    if (typeof targetPath !== 'string' || targetPath.length === 0 || targetPath.includes('\0'))
         return false;
     const normalized = targetPath.replace(/\\/g, '/');
     return CREDENTIAL_PATHS.some(pattern => pattern.test(normalized)) || isExtendedCredentialPath(normalized);
