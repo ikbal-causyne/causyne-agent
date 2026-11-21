@@ -14,4 +14,13 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
     this.audioModels = ['gpt-4o-audio', 'gpt-4o-mini-audio', 'gpt-audio', 'gpt-realtime'];
     this.audioPayloadFormat = 'openai';
   }
+
+  override rejectsSamplingParameters(): boolean {
+    const lowered = (this.model || '').trim().toLowerCase();
+    return /^o[134](?:$|[-.])/.test(lowered);
+  }
+
+  override usesMaxCompletionTokens(): boolean {
+    return this.rejectsSamplingParameters();
+  }
 }
