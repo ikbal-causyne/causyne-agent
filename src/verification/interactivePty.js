@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 const DRIVER = String.raw `import base64, fcntl, json, os, pty, select, signal, struct, sys, termios, time
 cfg=json.loads(sys.argv[1])
 pid,fd=pty.fork()
@@ -274,7 +275,7 @@ export async function runInteractivePty(options = {}) {
                 observations,
                 stdout,
                 stderr: cleanedStderr,
-                reason: detail ? null : (spawnError?.message || 'No valid PTY evidence'),
+                reason: detail ? null : (spawnError?.message ? redactProviderSecrets(String(spawnError.message)).slice(0, 512) : 'No valid PTY evidence'),
                 limitation: 'Actual TUI components run in a PTY; host screenshots, mouse forwarding, and the full CLI launch are separate checks'
             });
         });
