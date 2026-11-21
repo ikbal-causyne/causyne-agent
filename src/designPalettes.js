@@ -74,8 +74,14 @@ export function suggestMovements(recentlyUsedIds = [], count = 3) {
 }
 /** A compact briefing the agent can be handed when its output scores as slop. */
 export function formatMovementBrief(movements) {
-    return movements.map(movement => {
-        const palette = Object.entries(movement.palette).map(([role, hex]) => `${role} ${hex}`).join(', ');
-        return `- ${movement.name}: ${movement.principles}\n  palette: ${palette}\n  type: ${movement.fonts.display} / ${movement.fonts.body}`;
+    if (!Array.isArray(movements))
+        return '';
+    return movements
+        .filter((movement) => Boolean(movement) && typeof movement === 'object')
+        .map(movement => {
+        const palette = movement.palette && typeof movement.palette === 'object'
+            ? Object.entries(movement.palette).map(([role, hex]) => `${role} ${hex}`).join(', ')
+            : '';
+        return `- ${movement.name}: ${movement.principles}\n  palette: ${palette}\n  type: ${movement.fonts?.display || ''} / ${movement.fonts?.body || ''}`;
     }).join('\n');
 }
