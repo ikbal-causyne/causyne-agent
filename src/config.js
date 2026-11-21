@@ -79,8 +79,10 @@ export function loadConfig() {
             if (needsEncryptedResave && !hadDecryptFailure) {
                 saveConfig(parsed);
             }
-            if (parsed.apiKey && parsed.provider) {
-                parsed.providerKeys = parsed.providerKeys || {};
+            if (typeof parsed.apiKey === 'string' && parsed.apiKey && typeof parsed.provider === 'string' && parsed.provider && !FORBIDDEN_CONFIG_KEYS.has(parsed.provider)) {
+                if (!parsed.providerKeys || typeof parsed.providerKeys !== 'object' || Array.isArray(parsed.providerKeys)) {
+                    parsed.providerKeys = {};
+                }
                 if (!parsed.providerKeys[parsed.provider]) {
                     parsed.providerKeys[parsed.provider] = parsed.apiKey;
                 }
