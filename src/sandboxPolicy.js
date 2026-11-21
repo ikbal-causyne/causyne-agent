@@ -1180,8 +1180,12 @@ export function isFetchAndExecPipeline(pipelines) {
                 continue;
             if (SHELL_INTERPRETERS.has(stage.executable))
                 return true;
-            // Handle `curl ... | sudo bash`, `curl ... | sudo -E sh`, `curl ... | sudo -u root bash`
-            if (stage.executable === 'sudo' || stage.executable === 'su') {
+            // Handle `curl ... | sudo|su|doas|pkexec|xargs bash`
+            if (stage.executable === 'sudo' ||
+                stage.executable === 'su' ||
+                stage.executable === 'doas' ||
+                stage.executable === 'pkexec' ||
+                stage.executable === 'xargs') {
                 const valueFlags = new Set([
                     '-u', '-g', '-c', '-d', '-h', '-p', '-r', '-t', '-a', '-s',
                     '--user', '--group', '--prompt', '--chdir', '--shell'
