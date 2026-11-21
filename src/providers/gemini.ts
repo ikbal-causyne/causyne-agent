@@ -100,9 +100,14 @@ export class GeminiProvider extends LLMProvider {
           const mappedParts = msg.content.map((part: any) => {
             if (part.type === 'text') return { text: part.text };
             if (part.type === 'image_url') {
-              const b64 = part.image_url.url.split('base64,')[1];
-              const mime = part.image_url.url.split(';')[0].replace('data:', '');
-              return { inlineData: { mimeType: mime, data: b64 } };
+              const rawUrl = typeof part.image_url?.url === 'string' ? part.image_url.url : '';
+              const marker = rawUrl.indexOf('base64,');
+              if (rawUrl.startsWith('data:') && marker !== -1) {
+                const mime = rawUrl.slice(5, marker).split(';')[0] || 'image/png';
+                const b64 = rawUrl.slice(marker + 7);
+                if (b64) return { inlineData: { mimeType: mime, data: b64 } };
+              }
+              return { text: '' };
             }
             if (part.type === 'image' && part.source?.type === 'base64') {
               return { inlineData: { mimeType: part.source.media_type, data: part.source.data } };
