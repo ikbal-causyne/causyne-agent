@@ -142,7 +142,9 @@ export class AcpServer {
             this.input.off('end', this.endListener);
         if (this.input && this.errorListener)
             this.input.off('error', this.errorListener);
+        this.buffer = '';
         for (const session of this.sessions.values()) {
+            session.cancelled = true;
             try {
                 session.loop?.abort();
             }
@@ -150,6 +152,7 @@ export class AcpServer {
                 // Shutdown never blocks on a misbehaving tool.
             }
         }
+        this.sessions.clear();
         for (const [id, pending] of this.pending) {
             clearTimeout(pending.timer);
             pending.reject(new Error('server stopped'));
