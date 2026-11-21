@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
@@ -47,7 +48,7 @@ while True:
             done=True
         break
 os.write(1,bytes(out))
-os.write(2,("PTY_RESULT:"+json.dumps({"exit":status,"timeout":elapsed>cfg["timeout"]/1000,"truncated":overflow,"inputSent":sent})+"\n").encode())
+os.write(2,(cfg["marker"]+json.dumps({"exit":status,"timeout":elapsed>cfg["timeout"]/1000,"truncated":overflow,"inputSent":sent})+"\n").encode())
 `;
 function resolveCommand(workspace, program) {
     const base = realpathSync(workspace);
@@ -89,8 +90,10 @@ export async function runPtyProbe(options = {}) {
             surface: 'none'
         };
     }
+    const markerPrefix = `PTY_RESULT:${crypto.randomBytes(12).toString('hex')}:`;
     const config = {
         cwd,
+        marker: markerPrefix,
         argv: [executable, ...args],
         input: Buffer.from(input).toString('base64'),
         delay: inputDelayMs,
@@ -121,13 +124,21 @@ export async function runPtyProbe(options = {}) {
                 });
                 return;
             }
-            const marker = stderr.match(/PTY_RESULT:(\{[^\n]+\})/);
+            const markerIdx = stderr.lastIndexOf(markerPrefix);
             let detail = null;
-            try {
-                detail = marker && marker[1] ? JSON.parse(marker[1]) : null;
-            }
-            catch {
-                detail = null;
+            let cleanedStderr = stderr;
+            if (markerIdx !== -1) {
+                const jsonStart = markerIdx + markerPrefix.length;
+                const lineEnd = stderr.indexOf('\n', jsonStart);
+                const rawJson = (lineEnd === -1 ? stderr.slice(jsonStart) : stderr.slice(jsonStart, lineEnd)).replace(/\r$/, '');
+                try {
+                    detail = JSON.parse(rawJson);
+                }
+                catch {
+                    detail = null;
+                }
+                const afterLine = lineEnd === -1 ? '' : stderr.slice(lineEnd + 1);
+                cleanedStderr = stderr.slice(0, markerIdx) + afterLine;
             }
             const success = Boolean(detail && !detail.timeout && !detail.truncated
                 && detail.exit === expectedExitCode && detail.inputSent
@@ -137,7 +148,7 @@ export async function runPtyProbe(options = {}) {
                 success,
                 surface: detail ? 'posix-pty' : 'unverified',
                 stdout,
-                stderr: stderr.replace(/PTY_RESULT:\{[^\n]+\}\n?/, ''),
+                stderr: cleanedStderr,
                 exitCode: detail?.exit ?? null,
                 timedOut: detail?.timeout ?? null,
                 truncated: detail?.truncated ?? null,
