@@ -22,8 +22,9 @@ function initMemory() {
 export function getMemory() {
     try {
         const filePath = initMemory();
+        const MAX_MEMORY_BYTES = 4 * 1024 * 1024;
         const stat = fs.lstatSync(filePath);
-        if (!stat.isFile())
+        if (!stat.isFile() || stat.size > MAX_MEMORY_BYTES)
             return normalizeMemoryData({ facts: [] });
         const data = fs.readFileSync(filePath, 'utf-8');
         return normalizeMemoryData(JSON.parse(data));
