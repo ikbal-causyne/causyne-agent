@@ -44,7 +44,8 @@ function decryptString(encryptedText: string): string {
 export function loadConfig(): CausyneConfig {
   ensureConfigDir();
   const file = configFile();
-  if (fs.existsSync(file)) {
+  const hadExistingFile = fs.existsSync(file);
+  if (hadExistingFile) {
     try {
       const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as CausyneConfig;
       let needsEncryptedResave = false;

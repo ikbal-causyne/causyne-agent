@@ -25,7 +25,8 @@ function decryptString(encryptedText) {
 export function loadConfig() {
     ensureConfigDir();
     const file = configFile();
-    if (fs.existsSync(file)) {
+    const hadExistingFile = fs.existsSync(file);
+    if (hadExistingFile) {
         try {
             const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
             let needsEncryptedResave = false;
