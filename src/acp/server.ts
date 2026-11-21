@@ -96,9 +96,9 @@ interface AcpSession {
 }
 
 const MODE_TO_AUTONOMY: Record<string, 'A' | 'B' | 'C'> = {
-  autonomous: 'A',
+  autonomous: 'C',
   standard: 'B',
-  supervised: 'C'
+  supervised: 'A'
 };
 
 const MODES: SessionModeState = {
