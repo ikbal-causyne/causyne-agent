@@ -92,10 +92,15 @@ export const palmierAutomator = {
 
     const sendMcpRequest = async (method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> => {
       try {
+        const timeoutSignal = AbortSignal.timeout(PALMIER_TIMEOUT_MS);
+        const signal = context?.signal
+          ? AbortSignal.any([context.signal, timeoutSignal])
+          : timeoutSignal;
         const response = await fetch(MCP_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           redirect: 'error',
+          signal,
           body: JSON.stringify({
             jsonrpc: '2.0',
             id: Date.now(),
@@ -108,7 +113,8 @@ export const palmierAutomator = {
           throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
         }
 
-        const data = await response.json() as { error?: { message?: string }; result?: Record<string, unknown> };
+        const rawBody = await readBoundedText(response, MAX_PALMIER_RESPONSE_BYTES);
+        const data = JSON.parse(rawBody || '{}') as { error?: { message?: string }; result?: Record<string, unknown> };
         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
         return data?.result && typeof data.result === 'object' ? data.result : {};
       } catch (err: unknown) {
