@@ -422,21 +422,20 @@ export class EntitlementGate {
         });
         return this.pending;
     }
-    async begin(onBlocked = () => { }) {
+    async begin(onBlocked) {
         if (!this.enabled)
             return;
         await this.ensureLease();
         this.activeRuns++;
-        this.listeners.add(onBlocked);
-        if (this.activeRuns === 1) {
+        if (typeof onBlocked === 'function') {
+            this.listeners.add(onBlocked);
+        }
+        if (this.activeRuns === 1 && !this.timer) {
             // In-process only while tasks run. No daemon or remotely accessible port.
-            this.timer = setInterval(async () => {
+            this.timer = setInterval(() => {
                 if (this.pausedRuns >= this.activeRuns || Date.now() < this.leaseUntil)
                     return;
-                try {
-                    await this.ensureLease();
-                }
-                catch (error) {
+                void this.ensureLease().catch((error) => {
                     this.blockedError = error;
                     for (const listener of this.listeners) {
                         try {
@@ -444,7 +443,7 @@ export class EntitlementGate {
                         }
                         catch { /* do not crash current tool */ }
                     }
-                }
+                });
             }, 1000);
             this.timer.unref?.();
         }
