@@ -102,9 +102,10 @@ export class MemoryManager {
                 const hasMedia = content.some((block) => block && (block.type === 'image' || block.type === 'image_url' || block.type === 'input_audio'));
                 if (hasMedia) {
                     const captions = content
-                        .filter((block) => block && block.type === 'text' && block.text)
+                        .filter((block) => block && block.type === 'text' && typeof block.text === 'string' && block.text.trim())
                         .map((block) => block.text)
-                        .join(' ');
+                        .join(' ')
+                        .slice(0, MAX_SINGLE_MESSAGE_CHARS);
                     content = `[media attachment not persisted] ${captions}`.trim();
                 }
             }
