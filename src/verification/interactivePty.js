@@ -163,6 +163,8 @@ export async function runInteractivePty(options = {}) {
         let nodeStdoutTruncated = false;
         let stderr = '';
         let spawnError = null;
+        let hardTimedOut = false;
+        let killTimer = null;
         const child = spawn('python3', ['-c', DRIVER, JSON.stringify(cfg)], {
             cwd,
             shell: false,
@@ -199,8 +201,31 @@ export async function runInteractivePty(options = {}) {
                 stderr = stderr.slice(-MAX_NODE_STDERR);
             }
         });
-        child.on('error', (e) => { spawnError = e; });
+        const hardTimer = setTimeout(() => {
+            hardTimedOut = true;
+            try {
+                child.kill('SIGTERM');
+            }
+            catch { }
+            killTimer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { }
+            }, 1500);
+            killTimer.unref();
+        }, timeoutMs + 5000);
+        hardTimer.unref();
+        const clearTimers = () => {
+            clearTimeout(hardTimer);
+            if (killTimer) {
+                clearTimeout(killTimer);
+                killTimer = null;
+            }
+        };
+        child.on('error', (e) => { spawnError = e; clearTimers(); });
         child.on('close', () => {
+            clearTimers();
             if (spawnError?.code === 'ENOENT') {
                 resolve({
                     status: 'unavailable',
@@ -228,7 +253,8 @@ export async function runInteractivePty(options = {}) {
             }
             const observations = Array.isArray(detail?.steps) ? detail.steps : [];
             const truncated = Boolean(detail?.truncated || nodeStdoutTruncated);
-            const success = Boolean(detail && !detail.timeout && !truncated
+            const timedOut = Boolean(detail?.timeout || hardTimedOut);
+            const success = Boolean(detail && !timedOut && !truncated
                 && detail.completed && detail.exit === 0
                 && observations.length === steps.length
                 && observations.every(item => item.matched));
@@ -237,7 +263,7 @@ export async function runInteractivePty(options = {}) {
                 success,
                 surface: detail ? 'posix-pty' : 'unverified',
                 exitCode: detail?.exit ?? null,
-                timedOut: detail?.timeout ?? null,
+                timedOut: detail ? timedOut : (hardTimedOut ? true : null),
                 truncated: detail ? truncated : (nodeStdoutTruncated ? true : null),
                 completed: detail?.completed ?? false,
                 observations,
