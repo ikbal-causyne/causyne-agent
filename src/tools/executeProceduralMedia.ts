@@ -111,9 +111,10 @@ export const executeProceduralMedia = {
 
       if (fs.existsSync(outputFilePath)) {
         const stat = fs.lstatSync(outputFilePath);
-        if (!stat.isFile()) {
-          return { success: false, error: '[AUTO-CORRECTION REQUIRED] Output path is not a regular file.' };
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+          return { success: false, error: '[AUTO-CORRECTION REQUIRED] Output path must be a regular file, not a symlink or directory.' };
         }
+        resolveScopedPath(outputFilePath, sandbox);
         if (stat.size === 0) {
           return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed but output file (${args.outputFileName}) is 0 bytes. Code failed to generate valid media.` };
         }
