@@ -1911,9 +1911,19 @@ export class AgentLoop {
                         const fs = await import('fs');
                         const path = await import('path');
                         // Ensure unique name to prevent overwriting
+                        const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024;
+                        if (att.base64.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 64) {
+                            this.notice('skipped oversized document attachment (exceeds 16 MiB limit)', 'warn');
+                            continue;
+                        }
+                        const decodedBytes = Buffer.from(att.base64, 'base64');
+                        if (decodedBytes.length > MAX_ATTACHMENT_BYTES) {
+                            this.notice('skipped oversized document attachment (exceeds 16 MiB limit)', 'warn');
+                            continue;
+                        }
                         const safeName = att.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
                         const writePath = path.join(this.workspaceRoot, safeName);
-                        fs.writeFileSync(writePath, Buffer.from(att.base64, 'base64'));
+                        fs.writeFileSync(writePath, decodedBytes);
                         contentArray[0].text += `\n\n[SYSTEM NOTIFICATION: The user attached a document named '${safeName}'. It has been saved to your workspace at ./${safeName}. Please use your file reading tools to examine its contents.]`;
                         this.notice(`saved attached document to ${writePath}`);
                     }
