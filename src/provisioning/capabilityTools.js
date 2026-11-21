@@ -16,6 +16,16 @@ export const TOOLS_BY_GROUP = Object.freeze({
     desktop: Object.freeze(['clipboard']),
     archive: Object.freeze(['archive'])
 });
+/** Returns the capability group required by a catalogue tool, or null. */
+export function groupForTool(toolName) {
+    if (typeof toolName !== 'string' || !toolName)
+        return null;
+    for (const [group, tools] of Object.entries(TOOLS_BY_GROUP)) {
+        if (tools.includes(toolName))
+            return group;
+    }
+    return null;
+}
 /** Catalogue names the user has explicitly declined the capability for. */
 export function declinedToolNames() {
     const declined = new Set();
