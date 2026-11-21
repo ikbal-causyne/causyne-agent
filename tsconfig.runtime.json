@@ -66,6 +66,7 @@
     "src/osKeychain.ts",
     "src/configVault.ts",
     "src/config.ts",
+    "src/auditLog.ts",
     "src/infra/telemetry.ts",
     "src/session/sidechainEvents.ts",
     "src/session/cachePressure.ts",
