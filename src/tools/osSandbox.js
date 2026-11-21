@@ -141,9 +141,12 @@ export function resolveOsSandboxMode(env = process.env, configMode) {
     return { mode: 'off', strict: false, allowNetwork };
 }
 function findExecutableInPath(binaryName, env = process.env) {
-    const pathVal = env.PATH || '';
+    if (typeof binaryName !== 'string' || binaryName.length === 0 || binaryName.includes('\0') || binaryName.includes('/') || binaryName.includes('\\')) {
+        return null;
+    }
+    const pathVal = (env && typeof env.PATH === 'string') ? env.PATH : '';
     for (const dir of pathVal.split(path.delimiter)) {
-        if (!dir)
+        if (!dir || dir.includes('\0') || !path.isAbsolute(dir))
             continue;
         const candidate = path.join(dir, binaryName);
         try {

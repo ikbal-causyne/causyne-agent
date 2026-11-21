@@ -194,9 +194,12 @@ export function resolveOsSandboxMode(
 }
 
 function findExecutableInPath(binaryName: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  const pathVal = env.PATH || '';
+  if (typeof binaryName !== 'string' || binaryName.length === 0 || binaryName.includes('\0') || binaryName.includes('/') || binaryName.includes('\\')) {
+    return null;
+  }
+  const pathVal = (env && typeof env.PATH === 'string') ? env.PATH : '';
   for (const dir of pathVal.split(path.delimiter)) {
-    if (!dir) continue;
+    if (!dir || dir.includes('\0') || !path.isAbsolute(dir)) continue;
     const candidate = path.join(dir, binaryName);
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
