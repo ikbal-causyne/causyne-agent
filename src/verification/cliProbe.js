@@ -23,8 +23,9 @@ function inside(root, candidate) {
 export async function runCliProbe(options = {}) {
     const safeOptions = options && typeof options === 'object' ? options : {};
     const { workspace, program, args = [], timeoutMs = 8_000, outputLimit = 32_768, expectedExitCode = 0, contains = null } = safeOptions;
-    if (typeof workspace !== 'string' || typeof program !== 'string'
-        || !Array.isArray(args) || !args.every(a => typeof a === 'string')) {
+    if (typeof workspace !== 'string' || workspace.includes('\0')
+        || typeof program !== 'string' || program.includes('\0')
+        || !Array.isArray(args) || !args.every(a => typeof a === 'string' && !a.includes('\0'))) {
         throw new TypeError('workspace, program, and string argv are required');
     }
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 10 || timeoutMs > 60_000) {
