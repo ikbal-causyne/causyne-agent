@@ -307,7 +307,8 @@
     "src/provisioning/capabilityTools.ts",
     "src/provisioning/capabilityProvisioner.ts",
     "src/plugins/pluginRunner.ts",
-    "src/plugins/pluginManager.ts"
+    "src/plugins/pluginManager.ts",
+    "src/verification/ptyProbe.ts"
   ],
   "exclude": [
     "node_modules",
