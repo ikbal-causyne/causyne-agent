@@ -100,7 +100,9 @@ export function loadInstallationIdentity(stateRoot = causyneHome(), depth = 0) {
     let fd;
     try {
         fd = fs.openSync(file, 'wx', 0o600);
-        fs.writeFileSync(fd, JSON.stringify(identity), 'utf8');
+        const buf = Buffer.from(JSON.stringify(identity), 'utf8');
+        fs.writeSync(fd, buf, 0, buf.length);
+        fs.fsyncSync(fd);
     }
     catch (error) {
         const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
@@ -111,6 +113,12 @@ export function loadInstallationIdentity(stateRoot = causyneHome(), depth = 0) {
     finally {
         if (fd !== undefined)
             fs.closeSync(fd);
+    }
+    if (process.platform !== 'win32') {
+        try {
+            fs.chmodSync(file, 0o600);
+        }
+        catch { /* ignore */ }
     }
     return { ...identity, file };
 }
