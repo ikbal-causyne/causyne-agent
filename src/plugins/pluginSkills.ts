@@ -54,6 +54,7 @@ function cleanLine(value: unknown, maximum: number): string {
 function readSkillFile(file: string): string {
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${file} must be a regular file`);
+  if (stat.nlink > 1) throw new Error(`${file} must not be a hardlink`);
   if (stat.size > MAX_SKILL_BYTES) throw new Error(`${file} exceeds ${MAX_SKILL_BYTES / 1024} KB`);
   return fs.readFileSync(file, 'utf8')
     // Keep newlines and tabs, but remove control bytes that can corrupt a prompt.
