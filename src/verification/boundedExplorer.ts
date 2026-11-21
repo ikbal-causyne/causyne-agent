@@ -51,7 +51,15 @@ export function exploreStateMachine<TState = any, TAction = any>(
   const maxDepth = boundedInteger(safeOptions.maxDepth, DEFAULT_DEPTH, 32);
   const maxStates = boundedInteger(safeOptions.maxStates, DEFAULT_STATES, 100_000);
   if (maxStates === 0) throw new RangeError('maxStates must be positive');
-  const key = safeOptions.stateKey || JSON.stringify;
+  const key = safeOptions.stateKey || ((value: TState): string => {
+    try {
+      const serialized = JSON.stringify(value);
+      if (typeof serialized !== 'string') throw new TypeError('stateKey must produce a string');
+      return serialized;
+    } catch {
+      throw new TypeError('State must be JSON-serializable or provide a custom stateKey');
+    }
+  });
   if (typeof key !== 'function') throw new TypeError('stateKey must be a function');
 
   const checkedState = <T>(value: T): T => {
