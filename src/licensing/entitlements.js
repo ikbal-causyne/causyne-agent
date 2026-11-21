@@ -521,9 +521,9 @@ export async function runLicenseCommand(action = 'status', plan = '') {
         console.log('Model-provider inference has separate limits and costs.');
         return;
     }
-    if (action === 'buy') {
-        const result = await client.checkout(plan);
-        console.log(`Checkout: ${result.url}`);
+    if (normalizedAction === 'buy') {
+        const result = await client.checkout(normalizedPlan);
+        console.log(`Checkout: ${safeDisplay(result.url)}`);
         console.log('Your entitlement activates only after the provider confirms payment.');
         return;
     }
