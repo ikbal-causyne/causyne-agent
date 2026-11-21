@@ -21,9 +21,18 @@ export function isEncryptedVaultSecret(value) {
     return typeof value === 'string' && value.startsWith(VAULT_ENC_PREFIX);
 }
 export function ensureVaultDir(dir) {
+    if (typeof dir !== 'string' || !dir.trim() || dir.includes('\0')) {
+        throw new Error('Invalid vault directory path');
+    }
     const resolved = path.resolve(dir);
     if (!fs.existsSync(resolved)) {
         fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
+    }
+    else {
+        const stat = fs.lstatSync(resolved);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+            throw new Error('Refusing to use symlink or non-directory as vault directory');
+        }
     }
     if (process.platform !== 'win32') {
         try {

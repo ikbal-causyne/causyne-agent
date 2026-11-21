@@ -30,9 +30,17 @@ export function isEncryptedVaultSecret(value: unknown): value is string {
 }
 
 export function ensureVaultDir(dir: string): void {
+  if (typeof dir !== 'string' || !dir.trim() || dir.includes('\0')) {
+    throw new Error('Invalid vault directory path');
+  }
   const resolved = path.resolve(dir);
   if (!fs.existsSync(resolved)) {
     fs.mkdirSync(resolved, { recursive: true, mode: 0o700 });
+  } else {
+    const stat = fs.lstatSync(resolved);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error('Refusing to use symlink or non-directory as vault directory');
+    }
   }
   if (process.platform !== 'win32') {
     try {
