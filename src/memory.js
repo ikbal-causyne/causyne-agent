@@ -75,9 +75,12 @@ export function saveMemory(data) {
     }
 }
 export function addFact(factStr, options = {}) {
+    if (typeof factStr !== 'string' || !factStr.trim())
+        return;
+    const safeOptions = options && typeof options === 'object' ? options : {};
     const mem = getMemory();
-    const { memory, alreadyKnown } = recordScopedFact(mem, factStr, options);
-    if (!alreadyKnown || options.workspace) {
+    const { memory, alreadyKnown } = recordScopedFact(mem, factStr, safeOptions);
+    if (!alreadyKnown || safeOptions.workspace) {
         saveMemory(memory);
     }
 }
