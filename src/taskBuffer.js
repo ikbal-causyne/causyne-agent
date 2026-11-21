@@ -64,9 +64,22 @@ export class TaskBuffer {
         if (!stat.isFile() || stat.size > MAX_BUFFER_FILE_BYTES)
             return [];
         const content = fs.readFileSync(file, 'utf8');
-        return content.split('\n')
-            .filter(l => l.trim())
-            .map(l => JSON.parse(l));
+        const entries = [];
+        for (const line of content.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed)
+                continue;
+            try {
+                const parsed = JSON.parse(trimmed);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    entries.push(parsed);
+                }
+            }
+            catch {
+                // Ignore truncated/corrupt JSONL line rather than losing the entire buffer.
+            }
+        }
+        return entries;
     }
     async clearBuffer(taskId) {
         const file = this.getBufferPath(taskId);
