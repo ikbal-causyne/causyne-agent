@@ -772,9 +772,9 @@ export class AcpClient {
         if (line.includes('level=ERROR') || line.includes('AI_APICallError') || line.includes('Free usage limit reached') || line.includes('AI_RetryError')) {
           const match = line.match(/error\.error="([^"]+)"/) || line.match(/message="([^"]+)"/);
           if (match && match[1]) {
-            return match[1].replace(/\\n/g, ' ').trim();
+            return redactProviderSecrets(match[1].replace(/\\n/g, ' ')).trim();
           }
-          return line.trim();
+          return redactProviderSecrets(line).trim();
         }
       }
     } catch {
