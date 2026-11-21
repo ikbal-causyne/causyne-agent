@@ -1,6 +1,11 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  boundedFiniteNumber,
+  escapeGodotString,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface CinematicWaypoint {
   time?: number | undefined;
@@ -54,7 +59,7 @@ export const gameCinematicSequencer = {
     }
   },
 
-  async execute(args: GameCinematicArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameCinematicArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, sequenceName = 'Cutscene', cameraType = '2d', durationSeconds = 8.0, waypoints = [], outputPath } = args || {};
       const safeDuration = Number.isFinite(Number(durationSeconds)) ? Math.max(0.1, Math.min(300, Number(durationSeconds))) : 8.0;
@@ -67,18 +72,18 @@ export const gameCinematicSequencer = {
           { time: safeDuration, pos_x: 0, pos_y: 0, pos_z: 0, zoom: 1.0 }
         ];
         const pts = rawPts.map((p) => ({
-          time: Number.isFinite(Number(p?.time)) ? Number(p?.time) : 0,
-          pos_x: Number.isFinite(Number(p?.pos_x)) ? Number(p?.pos_x) : 0,
-          pos_y: Number.isFinite(Number(p?.pos_y)) ? Number(p?.pos_y) : 0,
-          pos_z: Number.isFinite(Number(p?.pos_z)) ? Number(p?.pos_z) : 0,
-          zoom: Number.isFinite(Number(p?.zoom)) ? Number(p?.zoom) : 1.0
+          time: boundedFiniteNumber(p?.time, 0, 0, safeDuration),
+          pos_x: boundedFiniteNumber(p?.pos_x, 0, -100_000, 100_000),
+          pos_y: boundedFiniteNumber(p?.pos_y, 0, -100_000, 100_000),
+          pos_z: boundedFiniteNumber(p?.pos_z, 0, -100_000, 100_000),
+          zoom: boundedFiniteNumber(p?.zoom, 1.0, 0.05, 100.0)
         }));
 
         const camNode = cameraType === '3d' ? 'Camera3D' : 'Camera2D';
         const posProperty = 'position';
 
         const animContent = `[sub_resource type="Animation" id="Animation_cutscene"]
-resource_name = "${sequenceName}"
+resource_name = "${escapeGodotString(sequenceName, 100)}"
 length = ${safeDuration.toFixed(2)}
 tracks/0/type = "value"
 tracks/0/imported = false
@@ -107,8 +112,8 @@ tracks/1/keys = {
 `;
 
         if (outputPath) {
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, animContent, 'utf8');
+          const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+          await atomicWriteFileSafe(finalPath, animContent);
         }
 
         return {
@@ -154,7 +159,7 @@ func _process(delta: float) -> void:
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
