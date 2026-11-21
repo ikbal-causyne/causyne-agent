@@ -118,9 +118,13 @@ export class Sandbox {
   parentLoop?: any;
   signal?: AbortSignal | undefined;
 
-  constructor({ workspaceRoot = process.cwd() }: SandboxOptions = {}) {
+  constructor(options?: SandboxOptions | null) {
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    const candidateRoot = typeof safeOptions.workspaceRoot === 'string' && safeOptions.workspaceRoot.trim()
+      ? safeOptions.workspaceRoot.trim()
+      : process.cwd();
     this.config = loadConfig();
-    this.workspacePaths = [path.resolve(workspaceRoot)];
+    this.workspacePaths = isBlockedWorkspaceRoot(candidateRoot) ? [] : [path.resolve(candidateRoot)];
     const devMode = isDevEmulator(this.config);
     this.grantAllAccess = devMode ? true : (this.config.grantAllAccess || false);
     const rawAllowed = devMode ? ['*'] : (Array.isArray(this.config.allowedTools) ? this.config.allowedTools : ['*']);
