@@ -120,20 +120,24 @@ export const persistentShell = {
 
       const activeSession = session;
       return await new Promise<PersistentShellResult>((resolve) => {
-        const markerToken = `__CAUSYNE_PTY_DONE_${Date.now()}_${crypto.randomBytes(6).toString('hex')}__`;
+        const markerToken = `__CAUSYNE_PTY_DONE_${Date.now()}_${crypto.randomBytes(8).toString('hex')}__`;
         let outputBuffer = '';
         let errorBuffer = '';
         let isDone = false;
 
         const onData = (data: Buffer): void => {
-          outputBuffer += data.toString('utf8');
+          if (outputBuffer.length < MAX_BUFFER_CHARS) {
+            outputBuffer += data.toString('utf8').slice(0, MAX_BUFFER_CHARS - outputBuffer.length);
+          }
           if (outputBuffer.includes(markerToken)) {
             finish();
           }
         };
 
         const onErrorData = (data: Buffer): void => {
-          errorBuffer += data.toString('utf8');
+          if (errorBuffer.length < MAX_BUFFER_CHARS) {
+            errorBuffer += data.toString('utf8').slice(0, MAX_BUFFER_CHARS - errorBuffer.length);
+          }
         };
 
         const onExit = (): void => {
@@ -151,9 +155,10 @@ export const persistentShell = {
           if (!isDone) {
             isDone = true;
             cleanupListeners();
+            try { activeSession.process.kill('SIGINT'); } catch { /* ignore */ }
             resolve({
               success: false,
-              error: `Command timed out after ${timeoutMs}ms. Output captured so far:\n${outputBuffer}\n${errorBuffer}`
+              error: `Command timed out after ${timeoutMs}ms. Output captured so far:\n${sanitizeToolText(outputBuffer, 4096)}\n${sanitizeToolText(errorBuffer, 2048)}`
             });
           }
         }, timeoutMs);
