@@ -1,22 +1,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
-const SESSION_DIR = path.join(causyneHome(), 'embodiment');
+function sessionDir() {
+    return path.join(causyneHome(), 'embodiment');
+}
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 export function isSessionTrackingEnabled() {
     return process.env.CAUSYNE_EMBODIMENT_SESSION !== '0';
 }
 function ensureSessionDir() {
-    if (!fs.existsSync(SESSION_DIR)) {
-        fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
-    }
+    fs.mkdirSync(sessionDir(), { recursive: true, mode: 0o700 });
 }
 function safeTaskId(taskId) {
     const cleaned = String(taskId || 'default').replace(/[^a-zA-Z0-9_-]/g, '');
     return cleaned === '' ? 'default' : cleaned.slice(0, 64);
 }
 function sessionFile(taskId) {
-    return path.join(SESSION_DIR, `${safeTaskId(taskId)}.json`);
+    return path.join(sessionDir(), `${safeTaskId(taskId)}.json`);
 }
 function digestOf(text) {
     let hash = 5381;
@@ -100,11 +100,12 @@ export function clearSession(taskId) {
 }
 export function pruneSessions() {
     try {
-        if (!fs.existsSync(SESSION_DIR))
+        const dir = sessionDir();
+        if (!fs.existsSync(dir))
             return;
         const cutoff = Date.now() - RETENTION_MS;
-        for (const name of fs.readdirSync(SESSION_DIR)) {
-            const file = path.join(SESSION_DIR, name);
+        for (const name of fs.readdirSync(dir)) {
+            const file = path.join(dir, name);
             try {
                 if (fs.statSync(file).mtimeMs < cutoff)
                     fs.unlinkSync(file);
@@ -117,5 +118,5 @@ export function pruneSessions() {
     }
 }
 export function getSessionDir() {
-    return SESSION_DIR;
+    return sessionDir();
 }

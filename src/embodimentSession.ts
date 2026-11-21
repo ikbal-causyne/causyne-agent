@@ -11,7 +11,9 @@ export interface EmbodimentSessionState {
   actedAt?: string;
 }
 
-const SESSION_DIR = path.join(causyneHome(), 'embodiment');
+function sessionDir(): string {
+  return path.join(causyneHome(), 'embodiment');
+}
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export function isSessionTrackingEnabled(): boolean {
@@ -19,9 +21,7 @@ export function isSessionTrackingEnabled(): boolean {
 }
 
 function ensureSessionDir(): void {
-  if (!fs.existsSync(SESSION_DIR)) {
-    fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
-  }
+  fs.mkdirSync(sessionDir(), { recursive: true, mode: 0o700 });
 }
 
 function safeTaskId(taskId: unknown): string {
@@ -30,7 +30,7 @@ function safeTaskId(taskId: unknown): string {
 }
 
 function sessionFile(taskId: unknown): string {
-  return path.join(SESSION_DIR, `${safeTaskId(taskId)}.json`);
+  return path.join(sessionDir(), `${safeTaskId(taskId)}.json`);
 }
 
 function digestOf(text: unknown): string {
@@ -113,10 +113,11 @@ export function clearSession(taskId: unknown): void {
 
 export function pruneSessions(): void {
   try {
-    if (!fs.existsSync(SESSION_DIR)) return;
+    const dir = sessionDir();
+    if (!fs.existsSync(dir)) return;
     const cutoff = Date.now() - RETENTION_MS;
-    for (const name of fs.readdirSync(SESSION_DIR)) {
-      const file = path.join(SESSION_DIR, name);
+    for (const name of fs.readdirSync(dir)) {
+      const file = path.join(dir, name);
       try {
         if (fs.statSync(file).mtimeMs < cutoff) fs.unlinkSync(file);
       } catch { /* skip this one */ }
@@ -127,5 +128,5 @@ export function pruneSessions(): void {
 }
 
 export function getSessionDir(): string {
-  return SESSION_DIR;
+  return sessionDir();
 }
