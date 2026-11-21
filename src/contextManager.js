@@ -273,9 +273,13 @@ export function compactInPlace(messages, splitIndex, summaryText) {
     return removed - 1;
 }
 export function describeDroppedMessages(dropped) {
+    if (!Array.isArray(dropped) || dropped.length === 0)
+        return 'Earlier exchange omitted.';
     const toolCalls = new Map();
     let userTurns = 0;
     for (const msg of dropped) {
+        if (!msg)
+            continue;
         if (msg.role === 'tool' && msg.name) {
             toolCalls.set(msg.name, (toolCalls.get(msg.name) || 0) + 1);
         }

@@ -337,11 +337,13 @@ export function compactInPlace(messages: ContextMessage[], splitIndex: number, s
   return removed - 1;
 }
 
-export function describeDroppedMessages(dropped: readonly ContextMessage[]): string {
+export function describeDroppedMessages(dropped: readonly ContextMessage[] | null | undefined): string {
+  if (!Array.isArray(dropped) || dropped.length === 0) return 'Earlier exchange omitted.';
   const toolCalls = new Map<string, number>();
   let userTurns = 0;
 
   for (const msg of dropped) {
+    if (!msg) continue;
     if (msg.role === 'tool' && msg.name) {
       toolCalls.set(msg.name, (toolCalls.get(msg.name) || 0) + 1);
     } else if (msg.role === 'user') {
