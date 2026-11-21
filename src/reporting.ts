@@ -192,8 +192,19 @@ export function printContextReport(): void {
 
 export async function buildUsageText(): Promise<string> {
   const tracker = new TokenTracker();
-  const usage = await tracker.getReportedUsage();
-  const config = loadConfig();
+  const usage = (await tracker.getReportedUsage()) || {
+    taskTokens: 0,
+    taskCostUsd: 0,
+    dailyTokens: 0,
+    costUsd: 0,
+    lifetimeTokens: 0,
+    lifetimeCostUsd: 0
+  };
+  const config = loadConfig() || {};
+  const safeUsd = (v: unknown, digits: number): string => {
+    const n = Number(v);
+    return (Number.isFinite(n) && n >= 0 ? n : 0).toFixed(digits);
+  };
   const budget = (config.tokenBudget || {}) as Record<string, unknown>;
   const lines: string[] = [];
 
@@ -206,16 +217,16 @@ export async function buildUsageText(): Promise<string> {
 
   lines.push(`Token usage ${billingNote}`);
   lines.push(`  Provider / model : ${safeDisplay(config.provider || 'default')} / ${safeDisplay(config.model || 'default')}`);
-  lines.push(`  This task        : ${formatNumber(usage.taskTokens)} tokens   $${Number(usage.taskCostUsd || 0).toFixed(4)}`);
-  lines.push(`  Today            : ${formatNumber(usage.dailyTokens)} tokens   $${Number(usage.costUsd || 0).toFixed(4)}`);
-  lines.push(`  Lifetime         : ${formatNumber(usage.lifetimeTokens)} tokens   $${Number(usage.lifetimeCostUsd || 0).toFixed(4)}`);
+  lines.push(`  This task        : ${formatNumber(usage.taskTokens)} tokens   $${safeUsd(usage.taskCostUsd, 4)}`);
+  lines.push(`  Today            : ${formatNumber(usage.dailyTokens)} tokens   $${safeUsd(usage.costUsd, 4)}`);
+  lines.push(`  Lifetime         : ${formatNumber(usage.lifetimeTokens)} tokens   $${safeUsd(usage.lifetimeCostUsd, 4)}`);
 
   if (budget.enabled) {
     const limit = Number(budget.maxTokensPerDay || 0);
-    const pct = limit > 0 ? ((usage.dailyTokens / limit) * 100).toFixed(1) : '0.0';
+    const pct = Number.isFinite(limit) && limit > 0 ? ((Number(usage.dailyTokens || 0) / limit) * 100).toFixed(1) : '0.0';
     lines.push(`  Daily budget     : ${formatNumber(limit)} tokens (${pct}% used)`);
     if (budget.maxCostUsd) {
-      lines.push(`  Cost ceiling     : $${Number(budget.maxCostUsd).toFixed(2)}${budget.hardStop ? ' (hard stop)' : ''}`);
+      lines.push(`  Cost ceiling     : $${safeUsd(budget.maxCostUsd, 2)}${budget.hardStop ? ' (hard stop)' : ''}`);
     }
   } else {
     lines.push('  Daily budget     : disabled');
@@ -383,8 +394,9 @@ export function formatUptime(ms: number): string {
 /**
  * Local runtime status.
  */
-export function buildStatusText({ loop = null }: { loop?: any } = {}): string {
-  const config = loadConfig();
+export function buildStatusText(options?: { loop?: any } | null): string {
+  const loop = options && typeof options === 'object' ? options.loop ?? null : null;
+  const config = loadConfig() || {};
   const liveConfig = loop?.config || {};
   const provider = String(liveConfig.provider || config.provider || 'default');
   const model = String(liveConfig.model || config.model || 'default');
