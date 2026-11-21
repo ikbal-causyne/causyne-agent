@@ -461,6 +461,15 @@ export class EntitlementGate {
             return;
         await this.ensureLease();
     }
+    dispose() {
+        this.activeRuns = 0;
+        this.pausedRuns = 0;
+        this.listeners.clear();
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+    }
     end(onBlocked) {
         if (!this.enabled)
             return;
