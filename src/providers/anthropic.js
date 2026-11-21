@@ -340,19 +340,22 @@ export class AnthropicProvider extends LLMProvider {
             }
         }
         const rawUsage = data['usage'];
+        const nonNeg = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+        const inputTokens = nonNeg(rawUsage?.input_tokens);
+        const cacheReadTokens = nonNeg(rawUsage?.cache_read_input_tokens);
+        const cacheCreateTokens = nonNeg(rawUsage?.cache_creation_input_tokens);
+        const outputTokens = nonNeg(rawUsage?.output_tokens);
         return {
             content: content.trim(),
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
             thinkingBlocks: thinkingBlocks.length > 0 ? thinkingBlocks : undefined,
             reasoningContent: reasoningContent.trim() || undefined,
             usage: {
-                promptTokens: (rawUsage?.input_tokens || 0) +
-                    (rawUsage?.cache_read_input_tokens || 0) +
-                    (rawUsage?.cache_creation_input_tokens || 0),
-                completionTokens: rawUsage?.output_tokens || 0,
-                cachedPromptTokens: rawUsage?.cache_read_input_tokens || 0,
+                promptTokens: inputTokens + cacheReadTokens + cacheCreateTokens,
+                completionTokens: outputTokens,
+                cachedPromptTokens: cacheReadTokens,
                 cacheWriteMultiplier: this.cacheTtl === '5m' ? 1.25 : 2.0,
-                cacheWriteTokens: rawUsage?.cache_creation_input_tokens || 0
+                cacheWriteTokens: cacheCreateTokens
             }
         };
     }
