@@ -1206,19 +1206,23 @@ export const COMMANDS = [
                 const res = runPasteCommand([], ctx);
                 return res.ok ? ok(res.output, { effect: 'silent' }) : fail(res.output);
             }
-            const rawPath = argv.join(' ');
+            const rawPath = argv.join(' ').trim();
+            if (!rawPath || rawPath.includes('\0')) {
+                return fail('Invalid image path.');
+            }
             const img = loadLocalImageAttachment(rawPath);
             if (!img) {
-                return fail(`Could not load image at "${rawPath}". Ensure file exists and is a valid image (PNG, JPEG, WebP, GIF).`);
+                return fail(`Could not load image at "${safeDisplay(rawPath)}". Ensure file exists and is a valid image (PNG, JPEG, WebP, GIF).`);
             }
             if (!Array.isArray(ctx.prompt.pendingAttachments)) {
                 ctx.prompt.pendingAttachments = [];
             }
             ctx.prompt.pendingAttachments.push(img);
-            ctx.prompt.editor.insert(`[Image: ${img.name}] `);
-            ctx.prompt.notice = `attached image ${img.name} (${formatByteSize(img.size)})`;
-            ctx.prompt.scheduleDraw();
-            return ok(`Attached image ${img.name} (${formatByteSize(img.size)}) to chat prompt.`, { effect: 'silent' });
+            const cleanImgName = safeDisplay(img.name);
+            ctx.prompt.editor?.insert?.(`[Image: ${cleanImgName}] `);
+            ctx.prompt.notice = `attached image ${cleanImgName} (${formatByteSize(img.size)})`;
+            ctx.prompt.scheduleDraw?.();
+            return ok(`Attached image ${cleanImgName} (${formatByteSize(img.size)}) to chat prompt.`, { effect: 'silent' });
         }
     },
     {
