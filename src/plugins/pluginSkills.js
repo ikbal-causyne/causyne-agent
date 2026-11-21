@@ -108,7 +108,7 @@ export function parsePluginSkills(directory, pluginName, value) {
         const content = readSkillFile(file);
         if (!content.trim())
             throw new Error(`Plugin skill ${id} is empty`);
-        return {
+        return Object.freeze({
             domain,
             id,
             name,
@@ -117,7 +117,7 @@ export function parsePluginSkills(directory, pluginName, value) {
             source: 'plugin',
             plugin: pluginName,
             path: file
-        };
+        });
     });
 }
 export { MAX_SKILLS_PER_PLUGIN, MAX_SKILL_BYTES };

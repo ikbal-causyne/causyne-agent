@@ -129,7 +129,7 @@ export function parsePluginSkills(
     const content = readSkillFile(file);
     if (!content.trim()) throw new Error(`Plugin skill ${id} is empty`);
 
-    return {
+    return Object.freeze({
       domain,
       id,
       name,
@@ -138,7 +138,7 @@ export function parsePluginSkills(
       source: 'plugin' as const,
       plugin: pluginName,
       path: file
-    };
+    });
   });
 }
 
