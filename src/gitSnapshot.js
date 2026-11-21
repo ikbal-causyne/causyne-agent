@@ -106,8 +106,14 @@ export function shadowDirFor(worktree) {
 export function initShadow(worktree) {
     const gitDir = shadowDirFor(worktree);
     const alreadyInitialised = fs.existsSync(path.join(gitDir, 'HEAD'));
+    if (fs.existsSync(gitDir)) {
+        const stat = fs.lstatSync(gitDir);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+            throw new Error('Refusing symlink or non-directory shadow git repository');
+        }
+    }
     if (!alreadyInitialised) {
-        fs.mkdirSync(gitDir, { recursive: true });
+        fs.mkdirSync(gitDir, { recursive: true, mode: 0o700 });
         runGit(['--git-dir', gitDir, 'init', '--bare', '--quiet']);
         // Tuning that matters on large trees, applied once at creation.
         const tuning = [
