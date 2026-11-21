@@ -720,7 +720,7 @@ export class AgentLoop {
         return Boolean(answer && answer.optionId === 'allow');
     }
     recordWebArtifact(candidate) {
-        if (typeof candidate !== 'string' || !isScannableFile(candidate))
+        if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 4096 || candidate.includes('\0') || !isScannableFile(candidate))
             return;
         const lower = candidate.toLowerCase();
         // Exclude test files, spec files, python scripts, and backend code from invalidating web verification

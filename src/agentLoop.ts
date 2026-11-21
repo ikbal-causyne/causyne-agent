@@ -853,7 +853,7 @@ export class AgentLoop {
   }
 
   recordWebArtifact(candidate: unknown): void {
-    if (typeof candidate !== 'string' || !isScannableFile(candidate)) return;
+    if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 4096 || candidate.includes('\0') || !isScannableFile(candidate)) return;
     const lower = candidate.toLowerCase();
     // Exclude test files, spec files, python scripts, and backend code from invalidating web verification
     if (/\b(?:test|spec|bench|unittest)\b/i.test(lower) || /\.(py|sh|rb|go|rs|json|ya?ml|md|sql)$/i.test(lower)) {
