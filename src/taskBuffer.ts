@@ -18,8 +18,19 @@ export class TaskBuffer {
     }
   }
 
-  getBufferPath(taskId: string): string {
-    return path.join(bufferDir(), `${taskId}.jsonl`);
+  safeTaskId(taskId: unknown): string {
+    const cleaned = String(taskId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+/, '');
+    return cleaned.length > 0 ? cleaned.slice(0, 64) : 'default';
+  }
+
+  getBufferPath(taskId: unknown): string {
+    const dir = path.resolve(bufferDir());
+    const target = path.resolve(dir, `${this.safeTaskId(taskId)}.jsonl`);
+    const rel = path.relative(dir, target);
+    if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      throw new Error('Invalid task buffer identifier');
+    }
+    return target;
   }
 
   async appendOutput(taskId: string, stepData: Record<string, unknown>): Promise<void> {
