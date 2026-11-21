@@ -7,6 +7,7 @@ const TOKEN_FILE = 'installation-identity.json';
 const USER_AGENT = 'Causyne-Agent/entitlements-v1';
 const AUTH_TIMEOUT_MS = 10000;
 const MAX_IDENTITY_BYTES = 64 * 1024;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export class EntitlementAccessError extends Error {
     code;
     constructor(code, message) {
@@ -40,12 +41,18 @@ function requireIdentityFields(value) {
     const privateKeyPem = record.privateKeyPem;
     const publicKey = record.publicKey;
     const installationId = record.installationId;
-    const key = crypto.createPrivateKey(privateKeyPem);
-    const derived = base64url(crypto.createPublicKey(key).export({ type: 'spki', format: 'der' }));
+    let derived;
+    try {
+        const key = crypto.createPrivateKey(privateKeyPem);
+        derived = base64url(crypto.createPublicKey(key).export({ type: 'spki', format: 'der' }));
+    }
+    catch {
+        throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Installation private key is unreadable or corrupted.');
+    }
     if (derived !== publicKey) {
         throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Installation public/private keys disagree.');
     }
-    if (installationId && (typeof installationId !== 'string' || !/^[\da-f-]{36}$/i.test(installationId))) {
+    if (installationId && (typeof installationId !== 'string' || !UUID_RE.test(installationId))) {
         throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Installation ID is invalid.');
     }
     return {
