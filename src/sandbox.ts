@@ -208,7 +208,7 @@ export class Sandbox {
     };
 
     if (toolName === 'sysRun' || toolName === 'sysRunBg' || toolName === 'terminal_persistent_shell') {
-      const command = args.command || args.input;
+      const command = safeArgs.command || safeArgs.input;
       if (command) {
         const risk = this.classifyCommandRisk(command);
         if (risk === 'forbidden') {
@@ -220,7 +220,7 @@ export class Sandbox {
     }
 
     if (toolName === 'gitOp') {
-      const command = String(args.command || '');
+      const command = String(safeArgs.command || '');
       const risk = this.classifyCommandRisk(`git ${command}`);
       if (risk === 'forbidden') {
         return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
@@ -228,18 +228,18 @@ export class Sandbox {
       return withCredentialEscalation({ allowed: true, risk: /\bbranch\s+-D\b/.test(command) ? 'dangerous' : risk });
     }
 
-    if (toolName === 'web_fetch' && args.url) {
-      if (this.isInternalUrl(args.url)) {
+    if (toolName === 'web_fetch' && safeArgs.url) {
+      if (this.isInternalUrl(safeArgs.url)) {
         return { allowed: false, reason: 'Cannot access internal/local network URLs (SSRF Protection)', risk: 'forbidden' };
       }
-      if (args.outputFile) {
+      if (safeArgs.outputFile) {
         return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads network content to disk' });
       }
     }
 
     if (toolName === 'browser_act') {
       return withCredentialEscalation(validateBrowserActSandbox(
-        args,
+        safeArgs,
         this.workspacePaths[0] || process.cwd(),
         url => this.isInternalUrl(url, { allowLoopback: true }),
         targetPath => this.isPathAllowed(targetPath)
@@ -248,22 +248,22 @@ export class Sandbox {
 
     if (toolName === 'creative_apps') {
       const isReadOnly =
-        args.action === 'status' ||
-        args.action === 'verify_bridge' ||
-        (args.action === 'live_bridge' && args.liveOperation === 'inspect_active');
+        safeArgs.action === 'status' ||
+        safeArgs.action === 'verify_bridge' ||
+        (safeArgs.action === 'live_bridge' && safeArgs.liveOperation === 'inspect_active');
       return withCredentialEscalation({ allowed: true, risk: isReadOnly ? 'safe' : 'dangerous' });
     }
 
     if (toolName === 'native_engine') {
-      if (args.action === 'install') {
+      if (safeArgs.action === 'install') {
         return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads and installs a native engine binary' });
       }
       const readOnly = ['status', 'catalog', 'describe', 'inspect', 'probe'];
-      return withCredentialEscalation({ allowed: true, risk: readOnly.includes(args.action) ? 'safe' : 'dangerous' });
+      return withCredentialEscalation({ allowed: true, risk: readOnly.includes(String(safeArgs.action ?? '')) ? 'safe' : 'dangerous' });
     }
 
-    if (toolName === 'game_asset_fetch' && args.action === 'download_asset') {
-      if (!args.url || this.isInternalUrl(args.url)) {
+    if (toolName === 'game_asset_fetch' && safeArgs.action === 'download_asset') {
+      if (!safeArgs.url || this.isInternalUrl(safeArgs.url)) {
         return { allowed: false, reason: 'Cannot download from an internal or invalid URL', risk: 'forbidden' };
       }
       return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads a third-party asset to disk' });
@@ -271,14 +271,14 @@ export class Sandbox {
 
     if (toolName === 'manage_local_dependencies') {
       const heavyActions = ['pipInst', 'grant_capability', 'grant_mcp_server'];
-      if (heavyActions.includes(args.action)) {
+      if (heavyActions.includes(String(safeArgs.action ?? ''))) {
         return withCredentialEscalation({ allowed: true, risk: 'extreme' });
       }
       return withCredentialEscalation({ allowed: true, risk: 'moderate' });
     }
 
     if (toolName === 'plugin_manager') {
-      return withCredentialEscalation(['create', 'enable'].includes(args.action)
+      return withCredentialEscalation(['create', 'enable'].includes(String(safeArgs.action ?? ''))
         ? { allowed: true, risk: 'extreme', reason: 'Creates or trusts executable plugin code' }
         : { allowed: true, risk: 'safe' });
     }
@@ -287,7 +287,7 @@ export class Sandbox {
     }
 
     if (toolName === 'fs_delete') {
-      if (args.path && !args.path.includes('.')) {
+      if (typeof safeArgs.path === 'string' && !safeArgs.path.includes('.')) {
         return withCredentialEscalation({ allowed: true, risk: 'extreme' });
       }
       return withCredentialEscalation({ allowed: true, risk: 'dangerous' });
