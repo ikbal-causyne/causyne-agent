@@ -11,9 +11,13 @@ import {
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 
 export class DeepSeekProvider extends LLMProvider {
+  allowInsecureHttp: boolean;
+
   constructor(config: ProviderConfig = {}) {
     super(config);
-    this.baseUrl = 'https://api.deepseek.com/v1/chat/completions';
+    const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+    this.baseUrl = customUrl || 'https://api.deepseek.com/v1/chat/completions';
+    this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['deepseek']) || '');
     this.visionModels = ['-vl'];
     this.audioModels = [];
@@ -36,6 +40,10 @@ export class DeepSeekProvider extends LLMProvider {
     };
     if (!this.isReasonerModel()) {
       payload['temperature'] = resolveTemperature(options.temperature, 0.1);
+    }
+
+    if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+      payload['max_tokens'] = Math.floor(options.maxTokens);
     }
 
     if (options.jsonMode) {
@@ -62,7 +70,8 @@ export class DeepSeekProvider extends LLMProvider {
       timeoutMs: options.timeoutMs,
       providerLabel: 'DeepSeek',
       secrets: [apiKey],
-      hasApiKey: true
+      hasApiKey: true,
+      allowInsecureHttp: this.allowInsecureHttp
     };
 
     const data = wantsStreaming(options)
