@@ -100,9 +100,18 @@ export class AcpClient {
         if (this.child)
             throw new Error('client already started');
         const args = this.options.args ?? [];
+        let childEnv;
+        if (this.options.env) {
+            childEnv = this.options.env;
+        }
+        else {
+            childEnv = { ...process.env };
+            delete childEnv.CAUSYNE_VAULT_KEY;
+            delete childEnv.CAUSYNE_DEV_SECRET;
+        }
         const child = spawn(this.options.command, args, {
             cwd: this.options.cwd,
-            env: this.options.env ?? process.env,
+            env: childEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true
         });
