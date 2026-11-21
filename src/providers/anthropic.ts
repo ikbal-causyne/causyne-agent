@@ -86,10 +86,13 @@ export class AnthropicProvider extends LLMProvider {
   reasoningEffort: string | null;
   showReasoning: boolean;
   reasoningBudgetTokens: number | null;
+  allowInsecureHttp: boolean;
 
   constructor(config: ProviderConfig = {}) {
     super(config);
-    this.baseUrl = 'https://api.anthropic.com/v1/messages';
+    const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+    this.baseUrl = customUrl || 'https://api.anthropic.com/v1/messages';
+    this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['anthropic']) || '');
     this.visionModels = ['*'];
     this.audioModels = [];
@@ -317,7 +320,8 @@ export class AnthropicProvider extends LLMProvider {
       timeoutMs: options.timeoutMs,
       providerLabel: 'Anthropic',
       secrets: [apiKey],
-      hasApiKey: true
+      hasApiKey: true,
+      allowInsecureHttp: this.allowInsecureHttp
     };
 
     const data: Record<string, any> = wantsStreaming(options)
