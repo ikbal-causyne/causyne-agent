@@ -79,6 +79,10 @@ export function loadConfig(): CausyneConfig {
 
       if (parsed.providerKeys && typeof parsed.providerKeys === 'object' && !Array.isArray(parsed.providerKeys)) {
         for (const [provider, keyVal] of Object.entries(parsed.providerKeys)) {
+          if (FORBIDDEN_CONFIG_KEYS.has(provider)) {
+            delete parsed.providerKeys[provider];
+            continue;
+          }
           if (typeof keyVal === 'string' && keyVal) {
             if (!isEncryptedVaultSecret(keyVal)) {
               needsEncryptedResave = true;
@@ -285,13 +289,20 @@ export function detectLocalAgentProvider(): DetectedProviderConfig | null {
 }
 
 export function saveConfig(config: CausyneConfig): void {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error('saveConfig requires a plain configuration object');
+  }
   ensureConfigDir();
   const configToSave = JSON.parse(JSON.stringify(config)) as CausyneConfig;
-  if (configToSave.apiKey) {
+  if (typeof configToSave.apiKey === 'string' && configToSave.apiKey) {
     configToSave.apiKey = encryptString(configToSave.apiKey);
   }
-  if (configToSave.providerKeys && typeof configToSave.providerKeys === 'object') {
+  if (configToSave.providerKeys && typeof configToSave.providerKeys === 'object' && !Array.isArray(configToSave.providerKeys)) {
     for (const [provider, keyVal] of Object.entries(configToSave.providerKeys)) {
+      if (FORBIDDEN_CONFIG_KEYS.has(provider)) {
+        delete configToSave.providerKeys[provider];
+        continue;
+      }
       if (typeof keyVal === 'string' && keyVal) {
         configToSave.providerKeys[provider] = encryptString(keyVal);
       }
