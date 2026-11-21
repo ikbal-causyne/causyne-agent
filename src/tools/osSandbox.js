@@ -391,6 +391,15 @@ export function buildSeatbeltProfile(options) {
  * Generates shell-free argv for Linux `bwrap` (bubblewrap) isolation.
  */
 export function buildBubblewrapArgs(shell, shellArgs, options) {
+    if (!options || typeof options !== 'object' || typeof options.cwd !== 'string' || !options.cwd.trim() || options.cwd.includes('\0')) {
+        throw new TypeError('buildBubblewrapArgs requires a valid cwd');
+    }
+    if (typeof shell !== 'string' || !shell.trim() || shell.includes('\0')) {
+        throw new TypeError('buildBubblewrapArgs requires a valid shell');
+    }
+    if (!Array.isArray(shellArgs) || shellArgs.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
+        throw new TypeError('buildBubblewrapArgs requires valid shellArgs');
+    }
     const mode = options.mode ?? 'workspace-write';
     const homeDir = options.homeDir ?? os.homedir();
     const configuredWorkspaces = (options.workspaceRoots ?? [])
