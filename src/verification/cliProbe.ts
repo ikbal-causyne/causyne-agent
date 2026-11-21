@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 
@@ -88,6 +88,15 @@ export async function runCliProbe(options: CliProbeOptions = {}): Promise<CliPro
   if ((executable.includes('/') || executable.includes('\\')) && !inside(cwd, resolvedProgram)
       && resolvedProgram !== process.execPath) {
     throw new Error('Executable must remain inside workspace');
+  }
+  if (resolvedProgram !== process.execPath) {
+    try {
+      if (!statSync(resolvedProgram).isFile()) {
+        throw new Error('Executable must be a regular file');
+      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+    }
   }
 
   const started = Date.now();
