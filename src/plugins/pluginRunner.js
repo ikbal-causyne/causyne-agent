@@ -68,7 +68,17 @@ async function main() {
         ? result
         : { success: true, output: result });
 }
-console.log = (...values) => process.stderr.write(`${values.map(String).join(' ')}\n`);
+function formatConsoleValue(value) {
+    if (typeof value === 'symbol')
+        return value.toString();
+    try {
+        return String(value);
+    }
+    catch {
+        return '[unprintable]';
+    }
+}
+console.log = (...values) => process.stderr.write(`${values.map(formatConsoleValue).join(' ')}\n`);
 console.info = console.log;
 console.warn = console.log;
 console.error = console.log;

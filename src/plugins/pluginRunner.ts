@@ -73,7 +73,16 @@ async function main(): Promise<void> {
     : { success: true, output: result });
 }
 
-console.log = (...values: unknown[]) => process.stderr.write(`${values.map(String).join(' ')}\n`);
+function formatConsoleValue(value: unknown): string {
+  if (typeof value === 'symbol') return value.toString();
+  try {
+    return String(value);
+  } catch {
+    return '[unprintable]';
+  }
+}
+
+console.log = (...values: unknown[]) => process.stderr.write(`${values.map(formatConsoleValue).join(' ')}\n`);
 console.info = console.log;
 console.warn = console.log;
 console.error = console.log;
