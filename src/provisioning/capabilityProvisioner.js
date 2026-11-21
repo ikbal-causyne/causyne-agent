@@ -137,6 +137,8 @@ export function isPackageInstalled(packageName) {
     }
 }
 export function isGroupInstalled(group) {
+    if (!isKnownGroup(group))
+        return false;
     const packages = GROUP_PACKAGES[group] || [];
     return packages.length > 0 && packages.every(([name]) => isPackageInstalled(name));
 }
@@ -148,13 +150,13 @@ export function isGroupInstalled(group) {
  * dead end the model should route around rather than retry.
  */
 export function groupStatus(group) {
-    if (!GROUP_PACKAGES[group])
-        return { state: 'unknown', group };
+    if (!isKnownGroup(group))
+        return { state: 'unknown', group: typeof group === 'string' ? group : '' };
     if (isGroupInstalled(group))
         return { state: 'ready', group };
     if (isGroupGranted(group))
         return { state: 'granted-not-installed', group };
-    const description = GROUP_DESCRIPTIONS[group];
+    const description = Object.hasOwn(GROUP_DESCRIPTIONS, group) ? GROUP_DESCRIPTIONS[group] : undefined;
     return description !== undefined ? { state: 'needs-consent', group, description } : { state: 'needs-consent', group };
 }
 // ---------------------------------------------------------------------------
