@@ -2628,7 +2628,7 @@ export function listCommands(surface = 'terminal') {
  * immediately after the slash keeps absolute paths out of the command namespace.
  */
 export function parseCommand(input) {
-    if (typeof input !== 'string')
+    if (typeof input !== 'string' || input.length > 65_536 || input.includes('\0'))
         return null;
     const trimmed = input.trim();
     if (!trimmed.startsWith('/'))
