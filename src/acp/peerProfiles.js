@@ -199,14 +199,35 @@ export function listAllPeers() {
     }
     return all;
 }
+const BLOCKED_PEER_ENV_KEYS = new Set([
+    'LD_PRELOAD',
+    'LD_LIBRARY_PATH',
+    'DYLD_INSERT_LIBRARIES',
+    'DYLD_LIBRARY_PATH',
+    'DYLD_FRAMEWORK_PATH',
+    'NODE_OPTIONS',
+    'BASH_ENV',
+    'ENV',
+    'PYTHONSTARTUP'
+]);
 export function peerEnvironment(profile) {
     const env = {};
-    for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'SYSTEMROOT']) {
+    const baseKeys = [
+        'PATH', 'Path', 'PATHEXT', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
+        'USER', 'LOGNAME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL',
+        'SYSTEMROOT', 'SystemRoot', 'COMSPEC', 'ComSpec', 'ProgramData'
+    ];
+    for (const name of baseKeys) {
         const value = process.env[name];
         if (typeof value === 'string')
             env[name] = value;
     }
-    for (const [name, value] of Object.entries(profile.env))
+    for (const [name, value] of Object.entries(profile.env)) {
+        if (BLOCKED_PEER_ENV_KEYS.has(name.toUpperCase()))
+            continue;
+        if (!ENV_NAME.test(name) || typeof value !== 'string' || value.includes('\0'))
+            continue;
         env[name] = value;
+    }
     return env;
 }
