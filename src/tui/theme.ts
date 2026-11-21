@@ -346,7 +346,10 @@ export const HAS_HYPERLINKS: boolean = detectHyperlinkSupport();
  */
 export function link(text: unknown, url: unknown): string {
   if (!HAS_HYPERLINKS) return String(text);
-  return `\x1b]8;;${String(url)}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
+  const rawUrl = String(url ?? '');
+  // eslint-disable-next-line no-control-regex
+  if (!rawUrl || rawUrl.length > 4096 || /[\x00-\x1f\x7f]/.test(rawUrl)) return String(text);
+  return `\x1b]8;;${rawUrl}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
 }
 
 /**

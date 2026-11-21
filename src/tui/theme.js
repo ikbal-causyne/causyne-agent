@@ -313,7 +313,11 @@ export const HAS_HYPERLINKS = detectHyperlinkSupport();
 export function link(text, url) {
     if (!HAS_HYPERLINKS)
         return String(text);
-    return `\x1b]8;;${String(url)}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
+    const rawUrl = String(url ?? '');
+    // eslint-disable-next-line no-control-regex
+    if (!rawUrl || rawUrl.length > 4096 || /[\x00-\x1f\x7f]/.test(rawUrl))
+        return String(text);
+    return `\x1b]8;;${rawUrl}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
 }
 /**
  * A link for a URL that came from a model reply or from tool output.
