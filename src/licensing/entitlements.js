@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from '../utils/paths.js';
-import { LICENSE_API_BASE, LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX, LICENSE_ENFORCEMENT_ENABLED, LICENSE_PLAN_KEYS, MAX_ENTITLEMENT_RESPONSE_BYTES, isValidLicensePlan } from './policy.js';
+import { LICENSE_API_BASE, LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX, LICENSE_ENFORCEMENT_ENABLED, MAX_ENTITLEMENT_RESPONSE_BYTES, isValidLicensePlan } from './policy.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { safeDisplay } from '../tui/text.js';
 const TOKEN_FILE = 'installation-identity.json';
@@ -338,7 +338,7 @@ export class EntitlementClient {
         return this.call('/v1/leases', { requestId, sessionId });
     }
     async checkout(plan) {
-        if (!LICENSE_PLAN_KEYS.includes(plan)) {
+        if (!isValidLicensePlan(plan)) {
             throw new EntitlementAccessError('INVALID_PLAN', 'Unknown Causyne plan.');
         }
         const result = await this.call('/v1/checkout', { plan });

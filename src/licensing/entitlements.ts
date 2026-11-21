@@ -6,7 +6,6 @@ import {
   LICENSE_API_BASE,
   LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX,
   LICENSE_ENFORCEMENT_ENABLED,
-  LICENSE_PLAN_KEYS,
   MAX_ENTITLEMENT_RESPONSE_BYTES,
   isValidLicensePlan
 } from './policy.js';
@@ -348,7 +347,7 @@ export class EntitlementClient {
   }
 
   async checkout(plan: string): Promise<any> {
-    if (!(LICENSE_PLAN_KEYS as readonly string[]).includes(plan)) {
+    if (!isValidLicensePlan(plan)) {
       throw new EntitlementAccessError('INVALID_PLAN', 'Unknown Causyne plan.');
     }
     const result = await this.call('/v1/checkout', { plan });
