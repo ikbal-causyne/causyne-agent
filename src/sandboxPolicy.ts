@@ -181,7 +181,7 @@ export function isBlockedWorkspaceRoot(
   targetPath: string,
   options?: { platform?: NodeJS.Platform | undefined }
 ): boolean {
-  if (typeof targetPath !== 'string' || targetPath.trim().length === 0) return true;
+  if (typeof targetPath !== 'string' || targetPath.trim().length === 0 || targetPath.includes('\0')) return true;
   const platform = options?.platform ?? process.platform;
   const expanded = expandLeadingTilde(targetPath.trim());
   const resolved = platform === 'win32' ? path.win32.resolve(expanded) : path.resolve(expanded);
@@ -203,7 +203,7 @@ export function isBlockedWorkspaceRoot(
  * `.env.template`, and `.env.dist` templates to prevent developer false positives.
  */
 export function isExtendedCredentialPath(targetPath: string): boolean {
-  if (typeof targetPath !== 'string' || targetPath.length === 0) return false;
+  if (typeof targetPath !== 'string' || targetPath.length === 0 || targetPath.includes('\0')) return false;
   const normalized = targetPath.replace(/\\/g, '/').trim();
   if (!normalized) return false;
 
@@ -251,7 +251,7 @@ export function isExtendedCredentialPath(targetPath: string): boolean {
  * for shell redirection (`>`, `>>`) or `tee`.
  */
 export function isSensitiveWriteTarget(rawTarget: string): boolean {
-  if (typeof rawTarget !== 'string' || rawTarget.length === 0) return false;
+  if (typeof rawTarget !== 'string' || rawTarget.length === 0 || rawTarget.includes('\0')) return false;
 
   let target = rawTarget.trim();
   if (

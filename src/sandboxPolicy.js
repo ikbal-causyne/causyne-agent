@@ -161,7 +161,7 @@ function isBlockedResolvedRoot(candidate, platform) {
  * Used uniformly by `updateWorkspacePaths()` and `addWorkspacePath()`.
  */
 export function isBlockedWorkspaceRoot(targetPath, options) {
-    if (typeof targetPath !== 'string' || targetPath.trim().length === 0)
+    if (typeof targetPath !== 'string' || targetPath.trim().length === 0 || targetPath.includes('\0'))
         return true;
     const platform = options?.platform ?? process.platform;
     const expanded = expandLeadingTilde(targetPath.trim());
@@ -183,7 +183,7 @@ export function isBlockedWorkspaceRoot(targetPath, options) {
  * `.env.template`, and `.env.dist` templates to prevent developer false positives.
  */
 export function isExtendedCredentialPath(targetPath) {
-    if (typeof targetPath !== 'string' || targetPath.length === 0)
+    if (typeof targetPath !== 'string' || targetPath.length === 0 || targetPath.includes('\0'))
         return false;
     const normalized = targetPath.replace(/\\/g, '/').trim();
     if (!normalized)
@@ -230,7 +230,7 @@ export function isExtendedCredentialPath(targetPath) {
  * for shell redirection (`>`, `>>`) or `tee`.
  */
 export function isSensitiveWriteTarget(rawTarget) {
-    if (typeof rawTarget !== 'string' || rawTarget.length === 0)
+    if (typeof rawTarget !== 'string' || rawTarget.length === 0 || rawTarget.includes('\0'))
         return false;
     let target = rawTarget.trim();
     if ((target.startsWith('"') && target.endsWith('"') && target.length >= 2) ||
