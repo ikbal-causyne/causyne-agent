@@ -55,7 +55,7 @@ export const clipboard = {
         return { success: false, error: 'Invalid clipboard action; expected "read" or "write".' };
       }
     } catch (error: unknown) {
-      return { success: false, error: `Clipboard action failed: ${getErrorMessage(error)}` };
+      return { success: false, error: `Clipboard action failed: ${sanitizeToolError(error)}` };
     }
   }
 };

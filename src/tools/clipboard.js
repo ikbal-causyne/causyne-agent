@@ -41,7 +41,7 @@ export const clipboard = {
             }
         }
         catch (error) {
-            return { success: false, error: `Clipboard action failed: ${getErrorMessage(error)}` };
+            return { success: false, error: `Clipboard action failed: ${sanitizeToolError(error)}` };
         }
     }
 };
