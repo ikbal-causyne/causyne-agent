@@ -4,6 +4,8 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
+import { isCredentialPath } from '../sandbox.js';
 import {
   ACP_ERROR_CODES,
   ACP_METHODS,
@@ -502,7 +504,16 @@ export class AcpClient {
           if (params?.limit !== undefined) readOpts.limit = params.limit;
           content = await this.options.fsReadHandler(targetPath, readOpts);
         } else {
+          if (targetPath.includes('\0')) {
+            throw new Error('File path contains invalid NUL byte');
+          }
           const resolved = path.resolve(this.options.cwd, targetPath);
+          if (!isPhysicalPathAllowed(resolved, [this.options.cwd], false)) {
+            throw new Error('File path is outside the allowed workspace');
+          }
+          if (isCredentialPath(resolved)) {
+            throw new Error('Reading credential files via ACP host bridge is prohibited');
+          }
           content = await fs.readFile(resolved, 'utf8');
         }
         this.write({
