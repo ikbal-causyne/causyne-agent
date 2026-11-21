@@ -7,6 +7,7 @@ import { LICENSE_API_BASE, LICENSE_ENFORCEMENT_ENABLED, LICENSE_PLAN_KEYS } from
 const TOKEN_FILE = 'installation-identity.json';
 const USER_AGENT = 'Causyne-Agent/entitlements-v1';
 const AUTH_TIMEOUT_MS = 10000;
+const MAX_IDENTITY_BYTES = 64 * 1024;
 
 export interface InstallationIdentity {
   version: number;
@@ -103,9 +104,14 @@ export function loadInstallationIdentity(stateRoot = causyneHome()): Installatio
   }
   const file = path.join(resolvedRoot, TOKEN_FILE);
   try {
+    const fileStat = fs.lstatSync(file);
+    if (fileStat.isSymbolicLink() || !fileStat.isFile() || fileStat.size > MAX_IDENTITY_BYTES) {
+      throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Installation identity file must be a regular non-symlink file.');
+    }
     const value = requireIdentityFields(JSON.parse(fs.readFileSync(file, 'utf8')));
     return { ...value, file };
   } catch (error: unknown) {
+    if (error instanceof EntitlementAccessError) throw error;
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
     if (code !== 'ENOENT') throw error;
   }
