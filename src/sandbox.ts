@@ -253,7 +253,7 @@ export class Sandbox {
     };
 
     if (canonicalToolName === 'sysRun' || canonicalToolName === 'sysRunBg' || canonicalToolName === 'terminal_persistent_shell') {
-      const command = safeArgs.command || safeArgs.input;
+      const command = safeArgs.command || safeArgs.input || safeArgs.cmd;
       if (command) {
         const risk = this.classifyCommandRisk(command);
         if (risk === 'forbidden') {
