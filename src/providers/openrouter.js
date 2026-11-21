@@ -288,17 +288,21 @@ export class OpenRouterProvider extends LLMProvider {
                     // 3. Tool calls assembly
                     if (Array.isArray(delta.tool_calls)) {
                         for (const tc of delta.tool_calls) {
-                            const idx = typeof tc.index === 'number' ? tc.index : toolCallsMap.size;
+                            if (!tc || typeof tc !== 'object')
+                                continue;
+                            const idx = typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0
+                                ? tc.index
+                                : Math.max(-1, ...toolCallsMap.keys()) + 1;
                             let existing = toolCallsMap.get(idx);
                             if (!existing) {
-                                existing = { id: tc.id || `call_${idx}_${Date.now()}`, name: '', arguments: '' };
+                                existing = { id: sanitizeProviderToolId(tc.id, 'call_openrouter', idx), name: '', arguments: '' };
                                 toolCallsMap.set(idx, existing);
                             }
-                            if (tc.id)
-                                existing.id = tc.id;
-                            if (tc.function?.name)
+                            if (typeof tc.id === 'string' && tc.id)
+                                existing.id = sanitizeProviderToolId(tc.id, 'call_openrouter', idx);
+                            if (typeof tc.function?.name === 'string')
                                 existing.name += tc.function.name;
-                            if (tc.function?.arguments)
+                            if (typeof tc.function?.arguments === 'string')
                                 existing.arguments += tc.function.arguments;
                         }
                     }
@@ -345,11 +349,14 @@ export class OpenRouterProvider extends LLMProvider {
             reader.releaseLock();
         }
         const toolCalls = [];
-        for (const item of toolCallsMap.values()) {
+        const sortedItems = [...toolCallsMap.entries()].sort((a, b) => a[0] - b[0]);
+        for (const [idx, item] of sortedItems) {
             if (item.name) {
                 const cleanName = normalizeToolName(item.name);
+                if (!cleanName)
+                    continue;
                 toolCalls.push({
-                    id: item.id,
+                    id: sanitizeProviderToolId(item.id, 'call_openrouter', idx),
                     type: 'function',
                     function: {
                         name: cleanName,
@@ -359,9 +366,10 @@ export class OpenRouterProvider extends LLMProvider {
             }
         }
         if (toolCalls.length === 0 && content) {
-            const extracted = extractTextToolCalls(content, 'call_text', freeFormPaths);
+            const extracted = extractTextToolCalls(content, 'call_openrouter_text', freeFormPaths);
             if (extracted.length > 0) {
                 toolCalls.push(...extracted);
+                content = stripToolCallMarkup(content).trim();
             }
         }
         const usage = this.normalizeUsage(rawUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
