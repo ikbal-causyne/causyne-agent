@@ -422,10 +422,13 @@ export function createPlugin(input) {
         : trimmedCode.startsWith('async ') || trimmedCode.startsWith('(async ')
             ? `export const execute = ${trimmedCode};\n`
             : `export async function execute(args, context) {\n${trimmedCode}\n}\n`;
+    let created = false;
     try {
         fs.mkdirSync(directory, { recursive: false, mode: 0o700 });
-        fs.writeFileSync(path.join(directory, 'plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-        fs.writeFileSync(path.join(directory, entryName), source, { mode: 0o600 });
+        created = true;
+        fs.writeFileSync(path.join(directory, 'plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+        fs.writeFileSync(path.join(directory, entryName), source, { mode: 0o600, flag: 'wx' });
+        readPlugin(directory);
         return {
             ok: true,
             name,
@@ -435,6 +438,12 @@ export function createPlugin(input) {
         };
     }
     catch (error) {
+        if (created) {
+            try {
+                fs.rmSync(directory, { recursive: true, force: true });
+            }
+            catch { /* ignore */ }
+        }
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
 }
