@@ -24,34 +24,29 @@
 //     approval prompt can repaint the prompt.
 //
 // Pure Node over ./theme.js and ./text.js. No dependency, no shell.
-
 import fs from 'fs';
 import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, safeDisplay, shortenHome } from './text.js';
-
 // Per side, for the LCS table. 600x600 int cells is ~1.4 MB and a few ms.
 const MAX_SIDE_LINES = 600;
-
 // Rows that reach the terminal. Deliberately smaller than a screen so the
 // approval question stays visible under the diff.
 const MAX_RENDER_LINES = 40;
-
 // Unchanged rows kept either side of a change, so an edit has context.
 const CONTEXT = 2;
-
 // A file larger than this is not read to build a diff. At that size the diff is
 // not readable anyway, and the read is on the interactive path.
 const MAX_FILE_BYTES = 512 * 1024;
-
 /** Split into lines without inventing a trailing empty row for a final \n. */
 function splitLines(text) {
-  const normalised = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
-  if (normalised === '') return [];
-  const lines = normalised.split('\n');
-  if (lines[lines.length - 1] === '') lines.pop();
-  return lines;
+    const normalised = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    if (normalised === '')
+        return [];
+    const lines = normalised.split('\n');
+    if (lines[lines.length - 1] === '')
+        lines.pop();
+    return lines;
 }
-
 /**
  * Line diff by longest common subsequence.
  *
@@ -62,60 +57,62 @@ function splitLines(text) {
  * minimal.
  */
 export function diffLines(before, after) {
-  const a = splitLines(before);
-  const b = splitLines(after);
-
-  // Bound BEFORE building the table, not after.
-  const truncated = a.length > MAX_SIDE_LINES || b.length > MAX_SIDE_LINES;
-  const left = truncated ? a.slice(0, MAX_SIDE_LINES) : a;
-  const right = truncated ? b.slice(0, MAX_SIDE_LINES) : b;
-
-  const rows = left.length;
-  const cols = right.length;
-
-  // lengths[i][j] = LCS length of left[i..] and right[j..], flattened.
-  const width = cols + 1;
-  const lengths = new Int32Array((rows + 1) * width);
-  for (let i = rows - 1; i >= 0; i--) {
-    for (let j = cols - 1; j >= 0; j--) {
-      lengths[i * width + j] = left[i] === right[j]
-        ? lengths[(i + 1) * width + (j + 1)] + 1
-        : Math.max(lengths[(i + 1) * width + j], lengths[i * width + (j + 1)]);
+    const a = splitLines(before);
+    const b = splitLines(after);
+    // Bound BEFORE building the table, not after.
+    const truncated = a.length > MAX_SIDE_LINES || b.length > MAX_SIDE_LINES;
+    const left = truncated ? a.slice(0, MAX_SIDE_LINES) : a;
+    const right = truncated ? b.slice(0, MAX_SIDE_LINES) : b;
+    const rows = left.length;
+    const cols = right.length;
+    // lengths[i][j] = LCS length of left[i..] and right[j..], flattened.
+    const width = cols + 1;
+    const lengths = new Int32Array((rows + 1) * width);
+    for (let i = rows - 1; i >= 0; i--) {
+        for (let j = cols - 1; j >= 0; j--) {
+            lengths[i * width + j] = left[i] === right[j]
+                ? (lengths[(i + 1) * width + (j + 1)] ?? 0) + 1
+                : Math.max(lengths[(i + 1) * width + j] ?? 0, lengths[i * width + (j + 1)] ?? 0);
+        }
     }
-  }
-
-  const ops = [];
-  let i = 0;
-  let j = 0;
-  while (i < rows && j < cols) {
-    if (left[i] === right[j]) {
-      ops.push({ kind: 'ctx', text: left[i] });
-      i++; j++;
-    } else if (lengths[(i + 1) * width + j] >= lengths[i * width + (j + 1)]) {
-      ops.push({ kind: 'del', text: left[i] });
-      i++;
-    } else {
-      ops.push({ kind: 'add', text: right[j] });
-      j++;
+    const ops = [];
+    let i = 0;
+    let j = 0;
+    while (i < rows && j < cols) {
+        const leftLine = left[i] ?? '';
+        const rightLine = right[j] ?? '';
+        if (leftLine === rightLine) {
+            ops.push({ kind: 'ctx', text: leftLine });
+            i++;
+            j++;
+        }
+        else if ((lengths[(i + 1) * width + j] ?? 0) >= (lengths[i * width + (j + 1)] ?? 0)) {
+            ops.push({ kind: 'del', text: leftLine });
+            i++;
+        }
+        else {
+            ops.push({ kind: 'add', text: rightLine });
+            j++;
+        }
     }
-  }
-  while (i < rows) ops.push({ kind: 'del', text: left[i++] });
-  while (j < cols) ops.push({ kind: 'add', text: right[j++] });
-
-  return { ops, truncated };
+    while (i < rows)
+        ops.push({ kind: 'del', text: left[i++] ?? '' });
+    while (j < cols)
+        ops.push({ kind: 'add', text: right[j++] ?? '' });
+    return { ops, truncated };
 }
-
 /** Added/removed counts, for the one-line summary. */
 export function diffStat(ops) {
-  let added = 0;
-  let removed = 0;
-  for (const op of ops) {
-    if (op.kind === 'add') added++;
-    else if (op.kind === 'del') removed++;
-  }
-  return { added, removed };
+    let added = 0;
+    let removed = 0;
+    for (const op of ops) {
+        if (op.kind === 'add')
+            added++;
+        else if (op.kind === 'del')
+            removed++;
+    }
+    return { added, removed };
 }
-
 /**
  * Keep only the changed rows plus CONTEXT unchanged rows either side.
  *
@@ -123,31 +120,33 @@ export function diffStat(ops) {
  * one change — which is how a diff scrolls the approval question off screen.
  */
 function collapse(ops) {
-  const keep = new Array(ops.length).fill(false);
-  for (let index = 0; index < ops.length; index++) {
-    if (ops[index].kind === 'ctx') continue;
-    const from = Math.max(0, index - CONTEXT);
-    const to = Math.min(ops.length - 1, index + CONTEXT);
-    for (let k = from; k <= to; k++) keep[k] = true;
-  }
-
-  const out = [];
-  let skipping = 0;
-  for (let index = 0; index < ops.length; index++) {
-    if (keep[index]) {
-      if (skipping > 0) {
-        out.push({ kind: 'gap', count: skipping });
-        skipping = 0;
-      }
-      out.push(ops[index]);
-    } else {
-      skipping++;
+    const keep = new Array(ops.length).fill(false);
+    for (let index = 0; index < ops.length; index++) {
+        if (ops[index]?.kind === 'ctx')
+            continue;
+        const from = Math.max(0, index - CONTEXT);
+        const to = Math.min(ops.length - 1, index + CONTEXT);
+        for (let k = from; k <= to; k++)
+            keep[k] = true;
     }
-  }
-  // A trailing run of unchanged rows needs no marker — nothing follows it.
-  return out;
+    const out = [];
+    let skipping = 0;
+    for (let index = 0; index < ops.length; index++) {
+        const op = ops[index];
+        if (keep[index] && op) {
+            if (skipping > 0) {
+                out.push({ kind: 'gap', count: skipping });
+                skipping = 0;
+            }
+            out.push(op);
+        }
+        else {
+            skipping++;
+        }
+    }
+    // A trailing run of unchanged rows needs no marker — nothing follows it.
+    return out;
 }
-
 /**
  * Render ops as terminal rows.
  *
@@ -156,66 +155,66 @@ function collapse(ops) {
  * meaning on their own, which is what makes the no-colour output still readable.
  */
 export function renderDiffOps(ops, options = {}) {
-  if (!Array.isArray(ops)) return { rows: [], clipped: false };
-  const safeWidth = Number.isFinite(options?.width) && options.width > 0 ? Math.floor(options.width) : 80;
-  const width = Math.max(20, safeWidth - 8);
-  const maxLines = Number.isFinite(options?.maxLines) && options.maxLines > 0
-    ? Math.floor(options.maxLines)
-    : MAX_RENDER_LINES;
-  const collapsed = collapse(ops);
-  const rendered = [];
-
-  for (const op of collapsed) {
-    if (rendered.length >= maxLines) break;
-
-    if (op.kind === 'gap') {
-      rendered.push(dim(`     ${GLYPHS.ellipsis} ${op.count} unchanged line${op.count === 1 ? '' : 's'}`));
-      continue;
+    if (!Array.isArray(ops))
+        return { rows: [], clipped: false };
+    const safeWidth = typeof options?.width === 'number' && Number.isFinite(options.width) && options.width > 0 ? Math.floor(options.width) : 80;
+    const width = Math.max(20, safeWidth - 8);
+    const maxLines = typeof options?.maxLines === 'number' && Number.isFinite(options.maxLines) && options.maxLines > 0
+        ? Math.floor(options.maxLines)
+        : MAX_RENDER_LINES;
+    const collapsed = collapse(ops);
+    const rendered = [];
+    for (const op of collapsed) {
+        if (rendered.length >= maxLines)
+            break;
+        if (op.kind === 'gap') {
+            rendered.push(dim(`     ${GLYPHS.ellipsis} ${op.count} unchanged line${op.count === 1 ? '' : 's'}`));
+            continue;
+        }
+        // Untrusted content: a file can carry escapes, and a credential the model
+        // echoed back into an edit must not be printed.
+        const body = truncate(safeDisplay(op.text), width, GLYPHS.ellipsis);
+        if (op.kind === 'add')
+            rendered.push(`     ${paint('success', '+')} ${paint('success', body)}`);
+        else if (op.kind === 'del')
+            rendered.push(`     ${paint('danger', '-')} ${paint('danger', body)}`);
+        else
+            rendered.push(`     ${dim(' ')} ${dim(body)}`);
     }
-
-    // Untrusted content: a file can carry escapes, and a credential the model
-    // echoed back into an edit must not be printed.
-    const body = truncate(safeDisplay(op.text), width, GLYPHS.ellipsis);
-
-    if (op.kind === 'add') rendered.push(`     ${paint('success', '+')} ${paint('success', body)}`);
-    else if (op.kind === 'del') rendered.push(`     ${paint('danger', '-')} ${paint('danger', body)}`);
-    else rendered.push(`     ${dim(' ')} ${dim(body)}`);
-  }
-
-  const clipped = collapsed.length > rendered.length;
-  return { rows: rendered, clipped };
+    const clipped = collapsed.length > rendered.length;
+    return { rows: rendered, clipped };
 }
-
 /** Convenience: two texts straight to rows. */
 export function renderDiff(before, after, options = {}) {
-  const { ops, truncated } = diffLines(before, after);
-  const { rows, clipped } = renderDiffOps(ops, options);
-  return { rows, stat: diffStat(ops), clipped: clipped || truncated };
+    const { ops, truncated } = diffLines(before, after);
+    const { rows, clipped } = renderDiffOps(ops, options);
+    return { rows, stat: diffStat(ops), clipped: clipped || truncated };
 }
-
 /** Read a file for diffing, or null when that is not sensible. */
 function readForDiff(pathish) {
-  if (!pathish) return null;
-  try {
-    const target = String(pathish).replace(/^~(?=\/|\\|$)/, process.env.HOME || '~');
-    const stat = fs.statSync(target);
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null;
-    return fs.readFileSync(target, 'utf8');
-  } catch (e) {
-    // Missing file is the normal case for a create; anything else (permission,
-    // a directory, a binary) simply means no diff, never a broken transcript.
-    return null;
-  }
+    if (!pathish)
+        return null;
+    try {
+        const target = String(pathish).replace(/^~(?=\/|\\|$)/, process.env.HOME || '~');
+        const stat = fs.statSync(target);
+        if (!stat.isFile() || stat.size > MAX_FILE_BYTES)
+            return null;
+        return fs.readFileSync(target, 'utf8');
+    }
+    catch {
+        // Missing file is the normal case for a create; anything else (permission,
+        // a directory, a binary) simply means no diff, never a broken transcript.
+        return null;
+    }
 }
-
 function firstString(args, keys) {
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  return '';
+    for (const key of keys) {
+        const value = args[key];
+        if (typeof value === 'string' && value.length > 0)
+            return value;
+    }
+    return '';
 }
-
 /**
  * Concatenate the search/replace sides of an edit list into two texts.
  *
@@ -224,47 +223,49 @@ function firstString(args, keys) {
  * it. One diff, in edit order, matches what they are consenting to.
  */
 function editSides(edits) {
-  const before = [];
-  const after = [];
-  for (const edit of edits) {
-    if (!edit || typeof edit !== 'object') continue;
-    const from = firstString(edit, ['searchContent', 'old_string', 'oldText', 'search']);
-    const to = firstString(edit, ['replaceContent', 'new_string', 'newText', 'replace']);
-    if (from) before.push(from);
-    if (to) after.push(to);
-  }
-  return { before: before.join('\n'), after: after.join('\n') };
+    const before = [];
+    const after = [];
+    for (const edit of edits) {
+        if (!edit || typeof edit !== 'object')
+            continue;
+        const record = edit;
+        const from = firstString(record, ['searchContent', 'old_string', 'oldText', 'search']);
+        const to = firstString(record, ['replaceContent', 'new_string', 'newText', 'replace']);
+        if (from)
+            before.push(from);
+        if (to)
+            after.push(to);
+    }
+    return { before: before.join('\n'), after: after.join('\n') };
 }
-
-
 const DIFF_BUILDERS = new Map([
-  ['fs_write', (args) => {
-    const path = firstString(args, ['path', 'file_path']);
-    const content = typeof args.content === 'string' ? args.content : '';
-    const existing = readForDiff(path);
-    return {
-      path,
-      before: existing === null ? '' : existing,
-      after: content,
-      note: existing === null ? 'new file' : ''
-    };
-  }],
-  ['fs_edit', (args) => {
-    const sides = editSides(Array.isArray(args.edits) ? args.edits : []);
-    return { path: firstString(args, ['path', 'file_path']), before: sides.before, after: sides.after, note: '' };
-  }],
-  ['MultiEdit', (args) => {
-    const sides = editSides(Array.isArray(args.edits) ? args.edits : []);
-    return { path: firstString(args, ['file_path', 'path']), before: sides.before, after: sides.after, note: '' };
-  }],
-  ['fs_delete', (args) => {
-    const path = firstString(args, ['path', 'file_path']);
-    const existing = readForDiff(path);
-    if (existing === null) return null;
-    return { path, before: existing, after: '', note: 'entire file' };
-  }]
+    ['fs_write', (args) => {
+            const filePath = firstString(args, ['path', 'file_path']);
+            const content = typeof args.content === 'string' ? args.content : '';
+            const existing = readForDiff(filePath);
+            return {
+                path: filePath,
+                before: existing === null ? '' : existing,
+                after: content,
+                note: existing === null ? 'new file' : ''
+            };
+        }],
+    ['fs_edit', (args) => {
+            const sides = editSides(Array.isArray(args.edits) ? args.edits : []);
+            return { path: firstString(args, ['path', 'file_path']), before: sides.before, after: sides.after, note: '' };
+        }],
+    ['MultiEdit', (args) => {
+            const sides = editSides(Array.isArray(args.edits) ? args.edits : []);
+            return { path: firstString(args, ['file_path', 'path']), before: sides.before, after: sides.after, note: '' };
+        }],
+    ['fs_delete', (args) => {
+            const filePath = firstString(args, ['path', 'file_path']);
+            const existing = readForDiff(filePath);
+            if (existing === null)
+                return null;
+            return { path: filePath, before: existing, after: '', note: 'entire file' };
+        }]
 ]);
-
 /**
  * The diff block for one approval, or null when the tool does not mutate a file.
  *
@@ -272,29 +273,30 @@ const DIFF_BUILDERS = new Map([
  * approval question itself.
  */
 export function approvalDiff(toolName, args, options = {}) {
-  try {
-    const builder = DIFF_BUILDERS.get(toolName);
-    if (!builder) return null;
-
-    const safeArgs = args && typeof args === 'object' ? args : {};
-    const plan = builder(safeArgs);
-    if (!plan) return null;
-    if (plan.before === plan.after) return null;
-
-    const { rows, stat, clipped } = renderDiff(plan.before, plan.after, options);
-    if (rows.length === 0) return null;
-
-    return {
-      path: plan.path ? safeDisplay(shortenHome(plan.path)).replace(/[\r\n]+/g, ' ') : '',
-      note: plan.note ? safeDisplay(plan.note).replace(/[\r\n]+/g, ' ') : '',
-      rows,
-      added: stat.added,
-      removed: stat.removed,
-      clipped
-    };
-  } catch (e) {
-    return null;
-  }
+    try {
+        const builder = typeof toolName === 'string' ? DIFF_BUILDERS.get(toolName) : undefined;
+        if (!builder)
+            return null;
+        const safeArgs = args && typeof args === 'object' ? args : {};
+        const plan = builder(safeArgs);
+        if (!plan)
+            return null;
+        if (plan.before === plan.after)
+            return null;
+        const { rows, stat, clipped } = renderDiff(plan.before, plan.after, options);
+        if (rows.length === 0)
+            return null;
+        return {
+            path: plan.path ? safeDisplay(shortenHome(plan.path)).replace(/[\r\n]+/g, ' ') : '',
+            note: plan.note ? safeDisplay(plan.note).replace(/[\r\n]+/g, ' ') : '',
+            rows,
+            added: stat.added,
+            removed: stat.removed,
+            clipped
+        };
+    }
+    catch {
+        return null;
+    }
 }
-
 export { MAX_SIDE_LINES, MAX_RENDER_LINES, CONTEXT };

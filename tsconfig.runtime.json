@@ -314,7 +314,8 @@
     "src/tui/invocation.ts",
     "src/tui/theme.ts",
     "src/tui/history.ts",
-    "src/tui/transcript.ts"
+    "src/tui/transcript.ts",
+    "src/tui/diff.ts"
   ],
   "exclude": [
     "node_modules",
