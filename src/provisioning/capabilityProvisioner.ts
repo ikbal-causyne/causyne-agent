@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -24,6 +25,15 @@ export interface GroupStatusResult {
 export interface ProvisionResult {
   installed: string[];
   skipped: boolean;
+}
+
+const NPM_PACKAGE_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]{0,63}\/)?[a-z0-9][a-z0-9._-]{0,127}$/i;
+
+export function isValidNpmPackageName(packageName: unknown): packageName is string {
+  if (typeof packageName !== 'string' || packageName.length === 0 || packageName.length > 214) return false;
+  if (packageName.includes('\0') || packageName.includes('..') || packageName.includes('\\')) return false;
+  if (packageName.startsWith('.') || packageName.startsWith('/') || packageName.includes(':')) return false;
+  return NPM_PACKAGE_NAME_RE.test(packageName);
 }
 
 function capabilityDir(): string {
