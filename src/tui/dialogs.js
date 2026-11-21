@@ -787,7 +787,9 @@ export class DecisionLayer extends Layer {
                 return 'handled';
             }
             if (event.name === 'paste') {
-                this.editor.insert(event.text);
+                const clean = safeDisplay(String(event.text || '')).replace(/[\r\n]+/g, ' ').slice(0, MAX_DIALOG_PASTE_CHARS);
+                if (clean)
+                    this.editor.insert(clean);
                 return 'handled';
             }
             if (event.name === 'char') {

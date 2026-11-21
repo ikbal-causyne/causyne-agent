@@ -810,7 +810,11 @@ export class DecisionLayer extends Layer {
       if (event.name === 'right') { this.editor.moveRight(); return 'handled'; }
       if (event.name === 'home') { this.editor.moveHome(); return 'handled'; }
       if (event.name === 'end') { this.editor.moveEnd(); return 'handled'; }
-      if (event.name === 'paste') { this.editor.insert(event.text); return 'handled'; }
+      if (event.name === 'paste') {
+        const clean = safeDisplay(String(event.text || '')).replace(/[\r\n]+/g, ' ').slice(0, MAX_DIALOG_PASTE_CHARS);
+        if (clean) this.editor.insert(clean);
+        return 'handled';
+      }
       if (event.name === 'char') { this.editor.insert(event.text); return 'handled'; }
       return 'handled';
     }
