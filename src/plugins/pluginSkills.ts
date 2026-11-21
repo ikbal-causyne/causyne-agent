@@ -104,8 +104,8 @@ export function parsePluginSkills(
     const description = cleanLine(input.description, 400);
     if (!name) throw new Error(`Plugin skill ${id} needs a name`);
     if (!description) throw new Error(`Plugin skill ${id} needs a description`);
-    if (typeof input.file !== 'string' || !input.file) {
-      throw new Error(`Plugin skill ${id} needs a file`);
+    if (typeof input.file !== 'string' || !input.file || input.file.length > 512 || path.isAbsolute(input.file)) {
+      throw new Error(`Plugin skill ${id} needs a valid relative file path`);
     }
     const file = resolveInside(directory, input.file);
     const content = readSkillFile(file);
