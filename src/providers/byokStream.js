@@ -83,13 +83,17 @@ async function openHardenedStream(options) {
     }
     return { mode: 'stream', response, cleanup };
 }
-async function consumeSseStream(response, providerLabel, maxBytes, onEvent) {
+async function consumeSseStream(response, providerLabel, maxBytes, onEvent, signal) {
+    const safeMaxBytes = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 1
+        ? Math.floor(maxBytes)
+        : MAX_PROVIDER_JSON_BYTES;
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let totalBytes = 0;
     let currentEvent = '';
     let dataLines = [];
+    let sawFirstLine = false;
     const flushEvent = () => {
         if (dataLines.length === 0) {
             currentEvent = '';

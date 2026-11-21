@@ -139,14 +139,19 @@ async function consumeSseStream(
   response: Response,
   providerLabel: string,
   maxBytes: number,
-  onEvent: (event: SseEvent) => void
+  onEvent: (event: SseEvent) => void,
+  signal?: AbortSignal | undefined
 ): Promise<void> {
+  const safeMaxBytes = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 1
+    ? Math.floor(maxBytes)
+    : MAX_PROVIDER_JSON_BYTES;
   const reader = response.body!.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let totalBytes = 0;
   let currentEvent = '';
   let dataLines: string[] = [];
+  let sawFirstLine = false;
 
   const flushEvent = (): void => {
     if (dataLines.length === 0) {
