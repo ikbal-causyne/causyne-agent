@@ -1,16 +1,7 @@
 // One question, asked properly, outside the chat surface.
 //
 // `causyne config` and `causyne pair` run with no chat session behind them, so
-// there is no live region for a dialog to draw into. That is why they were the
-// last two surfaces still on a second prompt framework, with its own colours,
-// glyphs, NO_COLOR handling, and list
-// widget that looks nothing like the picker the same user sees inside `causyne`.
-//
-// The fix is NOT a second app shell. That was tried once: screen.js, layout.js,
-// transcript.js and appShell.js existed, took over the terminal, and were
-// deleted under UX-01 when it turned out there is no way to detect a terminal
-// that ignores the alternate buffer. Rebuilding a host would walk straight back
-// into that.
+// there is no live region for a dialog to draw into.
 //
 // Instead this borrows the host that already works. ChatPrompt owns raw mode,
 // key decoding, the bounded live region and the layer stack, and `attach()` —
@@ -22,11 +13,9 @@
 // Every helper degrades. If stdin is not a terminal, or raw mode cannot be
 // taken, they fall back to a plain readline question — a better editor must
 // never be the reason a command refuses to run.
-
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './prompt.js';
 import { SelectLayer, InputLayer, ConfirmLayer, DecisionLayer } from './dialogs.js';
-
 /**
  * Run one layer on a temporary prompt host.
  *
@@ -35,150 +24,143 @@ import { SelectLayer, InputLayer, ConfirmLayer, DecisionLayer } from './dialogs.
  * prints next lands in a clean terminal.
  */
 function hostOneLayer(build) {
-  return new Promise((resolve) => {
-    let prompt;
-    let settled = false;
-
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      try { if (prompt) prompt.stop(); } catch (e) { /* already stopped */ }
-      // Let the terminal settle before the caller writes over the same rows.
-      setImmediate(() => resolve(value));
-    };
-
-    try {
-      prompt = new ChatPrompt({
-        commands: [],
-        // ctrl+c during a question is a cancel, not an exit: the caller decides
-        // what "no answer" means for it. An exit here would kill the process
-        // mid-configuration and leave a half-written config.json.
-        onInterrupt: () => finish(null),
-        onExit: () => finish(null)
-      });
-      prompt.start();
-    } catch (e) {
-      resolve(undefined); // signals "no TTY host" — caller falls back
-      return;
-    }
-
-    prompt.openLayer(build(finish));
-  });
+    return new Promise((resolve) => {
+        let prompt;
+        let settled = false;
+        const finish = (value) => {
+            if (settled)
+                return;
+            settled = true;
+            try {
+                if (prompt)
+                    prompt.stop();
+            }
+            catch { /* already stopped */ }
+            // Let the terminal settle before the caller writes over the same rows.
+            setImmediate(() => resolve(value));
+        };
+        try {
+            prompt = new ChatPrompt({
+                commands: [],
+                // ctrl+c during a question is a cancel, not an exit: the caller decides
+                // what "no answer" means for it. An exit here would kill the process
+                // mid-configuration and leave a half-written config.json.
+                onInterrupt: () => finish(null),
+                onExit: () => finish(null)
+            });
+            prompt.start();
+        }
+        catch {
+            resolve(undefined); // signals "no TTY host" — caller falls back
+            return;
+        }
+        prompt.openLayer(build(finish));
+    });
 }
-
 /** True when a panel-based question can be asked at all. */
 export function canAskInPanel() {
-  return isInteractive();
+    return isInteractive();
 }
-
 /** Plain readline, for pipes, CI and any terminal that refuses raw mode. */
 export function fallbackQuestion(question, { mask = false, input = process.stdin, output = process.stdout } = {}) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const rl = readline.createInterface({ input, output });
-    const done = (value) => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    rl.once('close', () => done(null));
-    rl.question(`${question} `, (answer) => {
-      rl.close();
-      done(answer);
+    return new Promise((resolve) => {
+        let settled = false;
+        const rl = readline.createInterface({ input, output });
+        const done = (value) => {
+            if (settled)
+                return;
+            settled = true;
+            resolve(value);
+        };
+        rl.once('close', () => done(null));
+        rl.question(`${question} `, (answer) => {
+            rl.close();
+            done(answer);
+        });
+        if (mask) {
+            // Suppress the echo of what is typed. `_writeToOutput` is readline's own
+            // hook for exactly this; the prompt itself still has to be drawn or the
+            // user sees nothing at all.
+            rl._writeToOutput = function (text) {
+                if (text.includes(question) && rl.output)
+                    rl.output.write(text);
+            };
+        }
     });
-    if (mask) {
-      // Suppress the echo of what is typed. `_writeToOutput` is readline's own
-      // hook for exactly this; the prompt itself still has to be drawn or the
-      // user sees nothing at all.
-      rl._writeToOutput = function (text) {
-        if (text.includes(question)) rl.output.write(text);
-      };
-    }
-  });
 }
-
 /**
  * Pick one of a list.
- *
- * @param {object} options
- * @param {string} options.title
- * @param {Array}  options.items  `{ id, label, description }`
- * @returns {Promise<object|null>} the chosen item, or null if dismissed
  */
 export async function askSelect(options = {}) {
-  const { title = '', items = [] } = options && typeof options === 'object' ? options : {};
-  if (!Array.isArray(items) || items.length === 0) return null;
-
-  if (canAskInPanel()) {
-    const answer = await hostOneLayer((resolve) => new SelectLayer({
-      title,
-      items: items.map((item) => ({ ...item, value: item })),
-      onPick: (picked) => resolve(picked ? picked.value : null)
-    }));
-    if (answer !== undefined) return answer;
-  }
-
-  // Numbered list is the honest fallback: it needs no cursor control at all.
-  console.log(`\n${title}`);
-  items.forEach((item, index) => {
-    console.log(`  ${String(index + 1).padStart(2)}. ${item.label}${item.description ? `  — ${item.description}` : ''}`);
-  });
-  const raw = await fallbackQuestion(`Choose 1-${items.length}:`);
-  if (raw === null) return null;
-  const choice = Number(String(raw).trim());
-  return Number.isInteger(choice) && choice >= 1 && choice <= items.length ? items[choice - 1] : null;
+    const { title = '', items = [] } = options && typeof options === 'object' ? options : {};
+    if (!Array.isArray(items) || items.length === 0)
+        return null;
+    if (canAskInPanel()) {
+        const answer = await hostOneLayer((resolve) => new SelectLayer({
+            title,
+            items: items.map((item) => ({ ...item, value: item })),
+            onPick: (picked) => resolve(picked ? picked.value : null)
+        }));
+        if (answer !== undefined)
+            return answer;
+    }
+    // Numbered list is the honest fallback: it needs no cursor control at all.
+    console.log(`\n${title}`);
+    items.forEach((item, index) => {
+        console.log(`  ${String(index + 1).padStart(2)}. ${item.label}${item.description ? `  — ${item.description}` : ''}`);
+    });
+    const raw = await fallbackQuestion(`Choose 1-${items.length}:`);
+    if (raw === null)
+        return null;
+    const choice = Number(String(raw).trim());
+    return Number.isInteger(choice) && choice >= 1 && choice <= items.length ? (items[choice - 1] ?? null) : null;
 }
-
 /**
  * Ask for a line of text.
- *
- * @returns {Promise<string|null>} the answer, or null if dismissed
  */
 export async function askText(options = {}) {
-  let { title = '', lines = [], value = '', placeholder = '', mask = false, validate = null } =
-    options && typeof options === 'object' ? options : {};
-  lines = Array.isArray(lines) ? lines : [];
-  while (true) {
-    let answer;
-
-    if (canAskInPanel()) {
-      answer = await hostOneLayer((resolve) => new InputLayer({
-        title, lines, value, placeholder, mask,
-        onSubmit: (text) => resolve(text),
-        onCancel: () => resolve(null)
-      }));
-      if (answer === undefined) answer = await fallbackQuestion(`${title}:`, { mask });
-    } else {
-      if (lines.length) console.log('\n' + lines.join('\n'));
-      answer = await fallbackQuestion(`${title}:`, { mask });
+    let { title = '', lines = [], value = '', placeholder = '', mask = false, validate = null } = options && typeof options === 'object' ? options : {};
+    lines = Array.isArray(lines) ? lines : [];
+    while (true) {
+        let answer;
+        if (canAskInPanel()) {
+            answer = await hostOneLayer((resolve) => new InputLayer({
+                title, lines, value, placeholder, mask,
+                onSubmit: (text) => resolve(text),
+                onCancel: () => resolve(null)
+            }));
+            if (answer === undefined)
+                answer = await fallbackQuestion(`${title}:`, { mask });
+        }
+        else {
+            if (lines.length)
+                console.log('\n' + lines.join('\n'));
+            answer = await fallbackQuestion(`${title}:`, { mask });
+        }
+        if (answer === null)
+            return null;
+        const problem = validate ? validate(answer) : null;
+        if (!problem)
+            return answer;
+        console.log(`  ${problem}`);
+        value = answer;
     }
-
-    if (answer === null) return null;
-
-    // Re-ask rather than accept something the caller has said is wrong. This is
-    
-    
-    const problem = validate ? validate(answer) : null;
-    if (!problem) return answer;
-    console.log(`  ${problem}`);
-    value = answer;
-  }
 }
-
 /** A yes/no, defaulting to no on dismissal. */
 export async function askConfirm(message) {
-  if (canAskInPanel()) {
-    const answer = await hostOneLayer((resolve) => new ConfirmLayer({
-      message,
-      onAnswer: (yes) => resolve(Boolean(yes))
-    }));
-    if (answer !== undefined) return Boolean(answer);
-  }
-  const raw = await fallbackQuestion(`${message} [y/N]`);
-  if (raw === null) return false;
-  return /^y(es)?$/i.test(String(raw).trim());
+    if (canAskInPanel()) {
+        const answer = await hostOneLayer((resolve) => new ConfirmLayer({
+            message,
+            onAnswer: (yes) => resolve(Boolean(yes))
+        }));
+        if (answer !== undefined)
+            return Boolean(answer);
+    }
+    const raw = await fallbackQuestion(`${message} [y/N]`);
+    if (raw === null)
+        return false;
+    return /^y(es)?$/i.test(String(raw).trim());
 }
-
 /**
  * Ask for a durable product or architecture choice.
  *
@@ -186,39 +168,42 @@ export async function askConfirm(message) {
  * never grants a tool the right to mutate files or execute a command.
  */
 export async function askDecision(request = {}) {
-  const safeRequest = request && typeof request === 'object' ? request : {};
-  const options = Array.isArray(safeRequest.options) ? safeRequest.options : [];
-  if (options.length === 0 && safeRequest.allowCustom === false) return null;
-
-  if (canAskInPanel()) {
-    const answer = await hostOneLayer((resolve) => new DecisionLayer({
-      request: safeRequest,
-      onAnswer: resolve
-    }));
-    if (answer !== undefined) return answer;
-  }
-
-  const custom = { id: '__custom__', label: 'Type your own answer', description: '' };
-  const items = safeRequest.allowCustom === false ? options : [...options, custom];
-  if (items.length === 0 || (options.length === 0 && !safeRequest.id && !safeRequest.question)) return null;
-  const selected = await askSelect({
-    title: safeRequest.header || 'Decision required',
-    items
-  });
-  if (!selected) return null;
-  if (selected.id === custom.id) {
-    const label = await askText({
-      title: safeRequest.question || 'Describe the direction you want',
-      lines: safeRequest.reason ? [safeRequest.reason] : [],
-      validate: (value) => String(value).trim() ? null : 'An answer is required.'
+    const safeRequest = request && typeof request === 'object' ? request : {};
+    const options = Array.isArray(safeRequest.options) ? safeRequest.options : [];
+    if (options.length === 0 && safeRequest.allowCustom === false)
+        return null;
+    if (canAskInPanel()) {
+        const answer = await hostOneLayer((resolve) => new DecisionLayer({
+            request: safeRequest,
+            onAnswer: resolve
+        }));
+        if (answer !== undefined)
+            return answer;
+    }
+    const custom = { id: '__custom__', label: 'Type your own answer', description: '' };
+    const items = safeRequest.allowCustom === false ? options : [...options, custom];
+    if (items.length === 0 || (options.length === 0 && !safeRequest.id && !safeRequest.question))
+        return null;
+    const selected = await askSelect({
+        title: safeRequest.header || 'Decision required',
+        items
     });
-    if (!label) return null;
-    return { requestId: safeRequest.id, optionId: null, label: String(label).trim(), custom: true };
-  }
-  return {
-    requestId: safeRequest.id,
-    optionId: selected.id,
-    label: selected.label,
-    custom: false
-  };
+    if (!selected)
+        return null;
+    if (selected.id === custom.id) {
+        const label = await askText({
+            title: safeRequest.question || 'Describe the direction you want',
+            lines: safeRequest.reason ? [safeRequest.reason] : [],
+            validate: (value) => String(value).trim() ? null : 'An answer is required.'
+        });
+        if (!label)
+            return null;
+        return { requestId: safeRequest.id, optionId: null, label: String(label).trim(), custom: true };
+    }
+    return {
+        requestId: safeRequest.id,
+        optionId: selected.id,
+        label: String(selected.label || ''),
+        custom: false
+    };
 }
