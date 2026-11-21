@@ -52,9 +52,10 @@ export const executeProceduralMedia = {
                 }
                 catch (jsErr) {
                     const e = jsErr;
+                    const detail = e?.stderr ? sanitizeToolText(e.stderr, 1200) : sanitizeToolError(jsErr, 1200);
                     return {
                         success: false,
-                        error: `[AUTO-CORRECTION REQUIRED] JavaScript Execution Error: ${e?.stderr || getErrorMessage(jsErr)}\nPlease fix the math/syntax in the script and retry.`
+                        error: `[AUTO-CORRECTION REQUIRED] JavaScript Execution Error: ${detail}\nPlease fix the math/syntax in the script and retry.`
                     };
                 }
                 finally {
@@ -81,9 +82,10 @@ export const executeProceduralMedia = {
                 }
                 catch (pyError) {
                     const e = pyError;
+                    const detail = e?.stderr ? sanitizeToolText(e.stderr, 1200) : sanitizeToolError(pyError, 1200);
                     return {
                         success: false,
-                        error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${e?.message || e?.stderr || getErrorMessage(pyError)}\nPlease fix the math/syntax and retry.`
+                        error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${detail}\nPlease fix the math/syntax and retry.`
                     };
                 }
                 finally {
@@ -116,7 +118,7 @@ export const executeProceduralMedia = {
             }
         }
         catch (err) {
-            return { success: false, error: getErrorMessage(err) };
+            return { success: false, error: sanitizeToolError(err) };
         }
     }
 };

@@ -75,9 +75,10 @@ export const executeProceduralMedia = {
           await execFilePromise(process.execPath, [scriptPath], execOpts);
         } catch (jsErr: unknown) {
           const e = jsErr as { stderr?: string; message?: string };
+          const detail = e?.stderr ? sanitizeToolText(e.stderr, 1200) : sanitizeToolError(jsErr, 1200);
           return {
             success: false,
-            error: `[AUTO-CORRECTION REQUIRED] JavaScript Execution Error: ${e?.stderr || getErrorMessage(jsErr)}\nPlease fix the math/syntax in the script and retry.`
+            error: `[AUTO-CORRECTION REQUIRED] JavaScript Execution Error: ${detail}\nPlease fix the math/syntax in the script and retry.`
           };
         } finally {
           try { fs.unlinkSync(scriptPath); } catch { /* ignore */ }
@@ -98,9 +99,10 @@ export const executeProceduralMedia = {
           await execFilePromise(pythonBin, [scriptPath], execOpts);
         } catch (pyError: unknown) {
           const e = pyError as { stderr?: string; message?: string };
+          const detail = e?.stderr ? sanitizeToolText(e.stderr, 1200) : sanitizeToolError(pyError, 1200);
           return {
             success: false,
-            error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${e?.message || e?.stderr || getErrorMessage(pyError)}\nPlease fix the math/syntax and retry.`
+            error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${detail}\nPlease fix the math/syntax and retry.`
           };
         } finally {
           try { fs.unlinkSync(scriptPath); } catch { /* ignore */ }
@@ -127,7 +129,7 @@ export const executeProceduralMedia = {
         return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed, but expected output file (${args.outputFileName}) was not created.` };
       }
     } catch (err: unknown) {
-      return { success: false, error: getErrorMessage(err) };
+      return { success: false, error: sanitizeToolError(err) };
     }
   }
 };
