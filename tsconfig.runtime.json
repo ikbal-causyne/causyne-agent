@@ -380,7 +380,8 @@
     "src/tools/gameDataForge.ts",
     "src/tools/gameCinematicSequencer.ts",
     "src/tools/gameQuestArcBuilder.ts",
-    "src/tools/gameLoreForge.ts"
+    "src/tools/gameLoreForge.ts",
+    "src/tools/gameSceneBuilder.ts"
   ],
   "exclude": [
     "node_modules",
