@@ -352,7 +352,8 @@
     "src/tools/toolPathSafety.ts",
     "src/tools/clipboard.ts",
     "src/tools/processList.ts",
-    "src/tools/checkSystemSpecs.ts"
+    "src/tools/checkSystemSpecs.ts",
+    "src/tools/dynamicLoader.ts"
   ],
   "exclude": [
     "node_modules",
