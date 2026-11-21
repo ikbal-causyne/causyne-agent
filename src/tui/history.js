@@ -40,6 +40,12 @@ export class PromptHistory {
     }
     load() {
         try {
+            const stat = fs.lstatSync(this.file);
+            if (!stat.isFile()) {
+                this.entries = [];
+                this.cursor = -1;
+                return;
+            }
             const raw = fs.readFileSync(this.file, 'utf8');
             this.entries = raw.split('\n')
                 .map((line) => line.trim())
