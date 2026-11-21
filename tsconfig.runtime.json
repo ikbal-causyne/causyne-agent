@@ -310,7 +310,8 @@
     "src/plugins/pluginManager.ts",
     "src/verification/ptyProbe.ts",
     "src/verification/interactivePty.ts",
-    "src/tui/terminalInputFramer.ts"
+    "src/tui/terminalInputFramer.ts",
+    "src/tui/invocation.ts"
   ],
   "exclude": [
     "node_modules",
