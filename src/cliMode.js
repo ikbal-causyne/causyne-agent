@@ -535,7 +535,7 @@ export async function chatMode(options) {
         loop.userPrompt = task;
         loop.currentTaskPrompt = task;
         loop.taskIntentPrompt = task;
-        loop.taskId = nextCliTaskId('cli_chat');
+        loop.taskId = `cli_chat_${Date.now()}`;
         if (prompt && typeof prompt.consumeAttachments === 'function') {
             const atts = prompt.consumeAttachments();
             if (atts && atts.length > 0) {
