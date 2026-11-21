@@ -1455,9 +1455,14 @@ export class AgentLoop {
         if (this.stopRequested || this.abortController?.signal?.aborted)
             return null;
         const safeOptions = Array.isArray(request.options) ? request.options : [];
-        const fingerprint = createHash('sha256')
-            .update(JSON.stringify({ kind: request.kind, question: request.question, options: safeOptions.map((option) => option?.id ?? null) }))
-            .digest('hex');
+        let fingerprintInput;
+        try {
+            fingerprintInput = JSON.stringify({ kind: request.kind, question: request.question, options: safeOptions.map((option) => option?.id ?? null) });
+        }
+        catch {
+            fingerprintInput = `${String(request.kind || '')}:${String(request.question || '')}`;
+        }
+        const fingerprint = createHash('sha256').update(fingerprintInput).digest('hex');
         const remembered = request.ephemeral === true ? null : this._decisionAnswers.get(fingerprint);
         if (remembered)
             return remembered;
