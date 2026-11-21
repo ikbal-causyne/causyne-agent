@@ -104,9 +104,20 @@ export interface ConfirmLayerOptions extends LayerOptions {
   [key: string]: any;
 }
 
+const MAX_DIALOG_PASTE_CHARS = 65536;
+
 const cleanDialogText = (value: unknown): string => (
   value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim()
 );
+
+function safeJsonPreview(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
+}
 
 /**
  * A picker. `items` are SelectList items; `onPick(item)` fires on enter.
@@ -603,7 +614,7 @@ export class ApprovalLayer extends Layer {
       // No diff means this is not a file mutation; show the arguments instead,
       // because "approve sysRun" with the command hidden is not consent either.
       for (const [key, value] of Object.entries(this.request.args).slice(0, 8)) {
-        const shown = typeof value === 'string' ? shortenHome(value) : JSON.stringify(value);
+        const shown = typeof value === 'string' ? shortenHome(value) : safeJsonPreview(value);
         for (const line of wrap(`${paint('muted', key)}  ${paint('ink', safeDisplay(String(shown)))}`, width).slice(0, 4)) {
           rows.push(line);
           if (rows.length >= height) break;
