@@ -399,8 +399,12 @@ export class LineEditor {
 
   yank(): void {
     if (!this.killRing) {
-      const clip = readClipboardSync();
-      if (clip) this.killRing = clip;
+      try {
+        const clip = readClipboardSync();
+        if (clip) this.killRing = clip;
+      } catch {
+        // Clipboard helper failure must never break editing.
+      }
     }
     if (this.killRing) this.insert(this.killRing);
   }
