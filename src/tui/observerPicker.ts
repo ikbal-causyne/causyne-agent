@@ -2,7 +2,6 @@
 // Authored in Strict TypeScript for Causyne Agent.
 // Source-available under BUSL-1.1.
 
-// @ts-expect-error untyped local TUI dialogs
 import { SelectLayer, InputLayer, TextLayer } from './dialogs.js';
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { safeDisplay } from './text.js';

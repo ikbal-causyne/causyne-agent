@@ -3,7 +3,6 @@
  * This is a presentation-only layer over the existing SelectLayer/SelectList.
  * No adapter, journal, tool policy or adoption behavior is changed here.
  */
-// @ts-expect-error The existing dialog component is implemented in JavaScript.
 import { SelectLayer } from '../../tui/dialogs.js';
 import { bold, dim, paint, GLYPHS } from '../../tui/theme.js';
 import { safeDisplay, truncate, visibleWidth } from '../../tui/text.js';

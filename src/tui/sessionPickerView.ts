@@ -3,7 +3,6 @@
  * Preserves the date-grouped placement algorithm while elevating the active workspace's
  * sessions (or an explicit Empty state) above deduplicated All Sessions.
  */
-// @ts-expect-error The existing dialog component is authored in JavaScript.
 import { SelectLayer } from './dialogs.js';
 import { bold, dim, paint, GLYPHS } from './theme.js';
 import { safeDisplay, truncate, visibleWidth } from './text.js';
@@ -363,22 +362,7 @@ export function renderSessionRows(
   return { rows, lastIndex };
 }
 
-export class SessionPickerLayer extends SelectLayer {
-  // SelectLayer is currently an untyped JavaScript class in the repository.
-  // Declare the inherited API used here without introducing runtime fields.
-  declare list: {
-    all: SessionPickerItem[];
-    filtered: Array<{ item: SessionPickerItem }>;
-    selected: number;
-    offset: number;
-    query: string;
-    current: SessionPickerItem | null;
-    lastItemRows?: number;
-    setItems(items: SessionPickerItem[]): void;
-    move(delta: number, visibleRows: number): void;
-    moveTo(index: number, visibleRows: number): void;
-  };
-  declare cursor: { x: number; y: number } | null;
+export class SessionPickerLayer extends SelectLayer<SessionPickerItem> {
   readonly currentWorkspace: string;
   readonly activeId: string | null;
   readonly allItems: SessionPickerItem[];
@@ -426,7 +410,7 @@ export class SessionPickerLayer extends SelectLayer {
     };
   }
 
-  preferredHeight(): number {
+  override preferredHeight(): number {
     // Modals with a few sessions do not retain a large blank area.
     const entries = this.list.filtered as Array<{ item: SessionPickerItem }>;
     const rendered = renderSessionRows(
@@ -459,7 +443,7 @@ export class SessionPickerLayer extends SelectLayer {
     this.list.offset = 0;
   }
 
-  key(event: Key): string | null {
+  override key(event: Key): string | null {
     if (event?.name === 'tab') {
       this.toggleWorkspace();
       return 'handled';
@@ -489,7 +473,7 @@ export class SessionPickerLayer extends SelectLayer {
     return result;
   }
 
-  body(width: number, height: number): string[] {
+  override body(width: number, height: number): string[] {
     const w = Math.max(12, Number.isFinite(width) ? Math.floor(width) : 60);
     const h = Math.max(1, Number.isFinite(height) ? Math.floor(height) : 20);
     this.lastWidth = w;

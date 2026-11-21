@@ -3,7 +3,6 @@
  * Preserves the date-grouped placement algorithm while elevating the active workspace's
  * sessions (or an explicit Empty state) above deduplicated All Sessions.
  */
-// @ts-expect-error The existing dialog component is authored in JavaScript.
 import { SelectLayer } from './dialogs.js';
 import { bold, dim, paint, GLYPHS } from './theme.js';
 import { safeDisplay, truncate, visibleWidth } from './text.js';

@@ -3,7 +3,6 @@
  * This is a presentation-only layer over the existing SelectLayer/SelectList.
  * No adapter, journal, tool policy or adoption behavior is changed here.
  */
-// @ts-expect-error The existing dialog component is implemented in JavaScript.
 import { SelectLayer } from '../../tui/dialogs.js';
 import { bold, dim, paint, GLYPHS } from '../../tui/theme.js';
 import { safeDisplay, truncate, visibleWidth } from '../../tui/text.js';
@@ -166,21 +165,7 @@ export function renderContinuumWindow(
   return { rows, firstIndex: safeStart, lastIndex, itemCount };
 }
 
-export class ContinuumPickerLayer extends SelectLayer {
-  // Inherited instance fields from the existing JavaScript SelectLayer.
-  declare list: {
-    all: ContinuumPickerItem[];
-    filtered: FilteredEntry[];
-    selected: number;
-    offset: number;
-    query: string;
-    current: ContinuumPickerItem | null;
-    lastItemRows?: number;
-    setItems(items: ContinuumPickerItem[]): void;
-    moveTo(index: number, visibleRows: number): void;
-    refilter(): void;
-  };
-  declare cursor: { x: number; y: number } | null;
+export class ContinuumPickerLayer extends SelectLayer<ContinuumPickerItem> {
   private readonly items: ContinuumPickerItem[];
   private readonly scopes: Scope[];
   private readonly onPreview: ((session: ContinuumSessionSummary) => void) | undefined;
@@ -208,7 +193,7 @@ export class ContinuumPickerLayer extends SelectLayer {
   get scope(): Scope { return this.scopes[this.scopeIndex] ?? 'all'; }
   get availableScopes(): readonly Scope[] { return this.scopes; }
 
-  preferredHeight(): number {
+  override preferredHeight(): number {
     // No fixed 34-row empty frame when the machine has only a few sessions.
     const items = this.list.filtered.length;
     const categories = new Set(this.list.filtered.map(({ item }: FilteredEntry) => sourceName(item.value))).size;
@@ -230,7 +215,7 @@ export class ContinuumPickerLayer extends SelectLayer {
     this.list.offset = 0;
   }
 
-  key(event: KeyEvent | null): string | null {
+  override key(event: KeyEvent | null): string | null {
     if (!event) return null;
     if (event.name === 'tab') {
       this.setScope(event.shift ? -1 : 1);
@@ -257,7 +242,7 @@ export class ContinuumPickerLayer extends SelectLayer {
     return result;
   }
 
-  body(width: number, height: number): string[] {
+  override body(width: number, height: number): string[] {
     const w = Number.isFinite(width) ? Math.max(8, Math.min(512, Math.floor(width))) : 80;
     const h = Number.isFinite(height) ? Math.max(1, Math.min(200, Math.floor(height))) : 1;
     const rows: string[] = [];

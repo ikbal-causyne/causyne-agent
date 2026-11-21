@@ -2,7 +2,6 @@ import { writeUserSkill, validateSegment, skillTemplate } from '../userSkills.js
 import { invalidateUserSkills } from '../skillsManager.js';
 import { safeDisplay } from './text.js';
 import { paint } from './theme.js';
-// @ts-expect-error dialogs.js is awaiting TypeScript migration.
 import { InputLayer, SelectLayer } from './dialogs.js';
 // @ts-expect-error prompt.js is awaiting TypeScript migration.
 import type { ChatPrompt } from './prompt.js';

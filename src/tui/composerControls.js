@@ -1,7 +1,6 @@
 import { loadConfig, saveConfig } from '../config.js';
 import { getAvailableProvidersOverview } from '../dynamicCatalogue.js';
 import { writeClipboardSync } from './clipboardSync.js';
-// @ts-expect-error dialogs.js is awaiting TypeScript migration.
 import { SelectLayer } from './dialogs.js';
 export function openModeControl(prompt, loop) {
     const config = loadConfig();

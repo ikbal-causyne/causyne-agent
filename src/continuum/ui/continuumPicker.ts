@@ -1,7 +1,6 @@
 // Continuum TUI Picker: interactive modal dialog for browsing and adopting peer agent sessions.
 // Authorship: Strict TypeScript (Causyne Agent).
 
-// @ts-expect-error untyped local TUI dialogs
 import { TextLayer } from '../../tui/dialogs.js';
 import { GLYPHS } from '../../tui/theme.js';
 import { safeDisplay } from '../../tui/text.js';

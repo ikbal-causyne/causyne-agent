@@ -2,7 +2,6 @@
 //
 // Pure Node over ./dialogs.js, ../dynamicCatalogue.js, and ../config.js.
 // No shell, zero malware, source-available under BUSL-1.1.
-// @ts-expect-error untyped local TUI dialogs
 import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { fuzzyFilter } from './selectList.js';

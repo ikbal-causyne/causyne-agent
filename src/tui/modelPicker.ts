@@ -3,7 +3,6 @@
 // Pure Node over ./dialogs.js, ../dynamicCatalogue.js, and ../config.js.
 // No shell, zero malware, source-available under BUSL-1.1.
 
-// @ts-expect-error untyped local TUI dialogs
 import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { fuzzyFilter } from './selectList.js';
@@ -419,12 +418,12 @@ export class ModelPickerLayer extends SelectLayer {
     }
   }
 
-  preferredHeight(): number {
+  override preferredHeight(): number {
     const categories = new Set(this.list.filtered.map((entry: any) => entry.item?.category).filter(Boolean));
     return 2 + 2 + this.list.filtered.length + categories.size + 2;
   }
 
-  body(width: number, height: number): string[] {
+  override body(width: number, height: number): string[] {
     const safeWidth = Number.isFinite(width) ? Math.max(4, Math.floor(width)) : 64;
     const safeHeight = Number.isFinite(height) ? Math.max(3, Math.floor(height)) : 12;
     const tabACP = this.activeTab === 'acp' ? paint('accent', bold('● ACP')) : dim('ACP');
@@ -444,7 +443,7 @@ export class ModelPickerLayer extends SelectLayer {
     return [tabBar, separator, ...rows];
   }
 
-  key(event: any): string | null {
+  override key(event: any): string | null {
     if (!event) return null;
 
     // 1. Tab switching via Tab, Left/Right arrows, or PgLeft/PgRight mappings

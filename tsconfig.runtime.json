@@ -319,7 +319,8 @@
     "src/tui/keys.ts",
     "src/tui/lineEditor.ts",
     "src/tui/selectList.ts",
-    "src/tui/completion.ts"
+    "src/tui/completion.ts",
+    "src/tui/dialogs.ts"
   ],
   "exclude": [
     "node_modules",
