@@ -7,6 +7,7 @@ import { runSelfUpdate, diagnoseInstallation, formatDoctorReport } from './autoU
 import { printContextReport, printUsageReport, printCheckpoints, printUndo, buildStatusText, printReport } from './reporting.js';
 import { runCommand } from './commands.js';
 import { resolveInvocation } from './tui/invocation.js';
+import { safeDisplay } from './tui/text.js';
 import { resolveUserPath } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
 function requestedWorkingDirectory(argv = []) {
@@ -53,9 +54,20 @@ async function confirmDestructive(question) {
         return false;
     const readline = (await import('node:readline')).default;
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const safeQuestion = safeDisplay(String(question ?? ''));
     try {
-        const answer = await new Promise((resolve) => rl.question(`${question} [y/N] `, resolve));
-        return /^y(es)?$/i.test(String(answer).trim());
+        const answer = await new Promise((resolve) => {
+            let settled = false;
+            const done = (value) => {
+                if (settled)
+                    return;
+                settled = true;
+                resolve(value);
+            };
+            rl.once('close', () => done(null));
+            rl.question(`${safeQuestion} [y/N] `, (input) => done(input));
+        });
+        return answer !== null && /^y(es)?$/i.test(String(answer).trim());
     }
     finally {
         rl.close();
