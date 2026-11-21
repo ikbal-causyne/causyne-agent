@@ -127,6 +127,10 @@ export class KeyDecoder {
             offset += consumed;
         }
         this.pending = this.pending.subarray(offset);
+        if (!this.inPaste && this.pending.length > 4096) {
+            this.pending = Buffer.alloc(0);
+            events.push(makeKey('unknown', { sequence: '' }));
+        }
         return events;
     }
     /** Clear an abandoned control sequence rather than swallowing later typing. */

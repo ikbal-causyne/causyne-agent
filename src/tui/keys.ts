@@ -158,6 +158,10 @@ export class KeyDecoder {
     }
 
     this.pending = this.pending.subarray(offset);
+    if (!this.inPaste && this.pending.length > 4096) {
+      this.pending = Buffer.alloc(0);
+      events.push(makeKey('unknown', { sequence: '' }));
+    }
     return events;
   }
 
