@@ -1,7 +1,14 @@
-import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  resolveScopedPath,
+  resolveToolWorkspaceRoots,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface GameEntitySpawnerArgs {
   action?: string | undefined;
@@ -26,7 +33,7 @@ export const gameEntitySpawner = {
     }
   },
 
-  async execute(args: GameEntitySpawnerArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameEntitySpawnerArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, prefabType = 'player_hero_2d', entityName, projectDir } = args || {};
 
@@ -54,7 +61,7 @@ export const gameEntitySpawner = {
 
         for (const pt of typesToSpawn) {
           const defaultName = pt === 'player_hero_2d' ? 'PlayerHero' : pt === 'skeleton_warrior_ai' ? 'SkeletonWarrior' : pt === 'treasure_chest' ? 'TreasureChest' : 'PortalGate';
-          const name = action === 'batch_spawn_entities' ? defaultName : (entityName || defaultName);
+          const name = action === 'batch_spawn_entities' ? defaultName : safeSlugIdentifier(entityName, defaultName, 64);
           let gdScript = '';
           let tscnContent = '';
 
@@ -166,19 +173,20 @@ script = ExtResource("1_interact")
 `;
           }
 
-          if (projectDir && fsSync.existsSync(projectDir)) {
-            const scriptPath = path.join(projectDir, 'scripts/actors', `${name}.gd`);
-            const scenePath = path.join(projectDir, 'scenes/actors', `${name}.tscn`);
-            await fs.mkdir(path.dirname(scriptPath), { recursive: true });
-            await fs.mkdir(path.dirname(scenePath), { recursive: true });
-            await fs.writeFile(scriptPath, gdScript, 'utf8');
-            await fs.writeFile(scenePath, tscnContent, 'utf8');
+          const scopedProjectDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+          if (scopedProjectDir && fsSync.existsSync(scopedProjectDir)) {
+            const scriptPath = await assertSafeWorkspaceOutput(path.join(scopedProjectDir, 'scripts/actors', `${name}.gd`), sandbox, { scopeRoot: scopedProjectDir });
+            const scenePath = await assertSafeWorkspaceOutput(path.join(scopedProjectDir, 'scenes/actors', `${name}.tscn`), sandbox, { scopeRoot: scopedProjectDir });
+            await atomicWriteFileSafe(scriptPath, gdScript);
+            await atomicWriteFileSafe(scenePath, tscnContent);
             results.push({ prefab: pt, node_name: name, script: scriptPath, scene: scenePath });
           } else {
-            const tempDir = path.join(process.cwd(), '.tmp_causyne_3d/prefabs');
-            await fs.mkdir(tempDir, { recursive: true });
-            await fs.writeFile(path.join(tempDir, `${name}.gd`), gdScript, 'utf8');
-            await fs.writeFile(path.join(tempDir, `${name}.tscn`), tscnContent, 'utf8');
+            const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+            const tempDir = path.join(defaultRoot, '.tmp_causyne_3d/prefabs');
+            const scriptPath = await assertSafeWorkspaceOutput(path.join(tempDir, `${name}.gd`), sandbox);
+            const scenePath = await assertSafeWorkspaceOutput(path.join(tempDir, `${name}.tscn`), sandbox);
+            await atomicWriteFileSafe(scriptPath, gdScript);
+            await atomicWriteFileSafe(scenePath, tscnContent);
             results.push({ prefab: pt, node_name: name, temp_path: tempDir });
           }
         }
@@ -195,7 +203,7 @@ script = ExtResource("1_interact")
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
