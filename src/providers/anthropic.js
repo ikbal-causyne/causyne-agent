@@ -182,24 +182,31 @@ export class AnthropicProvider extends LLMProvider {
                     anthropicMessages.push({ role: 'user', content: [toolResultBlock] });
                 }
             }
-            else if (msg.role === 'assistant' && msg.tool_calls) {
+            else if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
                 const contentBlocks = [];
                 if (Array.isArray(msg.thinking_blocks)) {
                     contentBlocks.push(...msg.thinking_blocks);
                 }
-                if (msg.content) {
+                if (typeof msg.content === 'string' && msg.content.length > 0) {
                     contentBlocks.push({ type: 'text', text: msg.content });
                 }
                 for (let idx = 0; idx < msg.tool_calls.length; idx++) {
                     const tc = msg.tool_calls[idx];
+                    if (!tc || typeof tc !== 'object')
+                        continue;
+                    const toolName = normalizeToolName(tc.function?.name || '');
+                    if (!toolName)
+                        continue;
                     contentBlocks.push({
                         type: 'tool_use',
                         id: sanitizeProviderToolId(tc.id, 'toolu', idx),
-                        name: normalizeToolName(tc.function?.name || ''),
+                        name: toolName,
                         input: safeParseJsonObject(tc.function?.arguments)
                     });
                 }
-                anthropicMessages.push({ role: 'assistant', content: contentBlocks });
+                if (contentBlocks.length > 0) {
+                    anthropicMessages.push({ role: 'assistant', content: contentBlocks });
+                }
             }
             else {
                 const { cacheAnchor: _c, thinking_blocks: _tb, reasoning_content: _rc, spillPath: _sp, ...clean } = msg;
