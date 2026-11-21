@@ -105,11 +105,19 @@ export function parsePluginSkills(
       throw new Error(`Skill ${index + 1} must be an object`);
     }
     const input = raw as PluginSkillManifestInput;
-    const id = String(input.id ?? '');
-    if (!SKILL_ID.test(id)) throw new Error(`Invalid plugin skill id ${JSON.stringify(id)}`);
+    if (typeof input.id !== 'string' || !SKILL_ID.test(input.id)) {
+      throw new Error(`Invalid plugin skill id ${JSON.stringify(input.id)}`);
+    }
+    const id = input.id;
     if (ids.has(id)) throw new Error(`Duplicate plugin skill id ${id}`);
     ids.add(id);
 
+    if (input.name !== undefined && typeof input.name !== 'string') {
+      throw new Error(`Plugin skill ${id} name must be a string`);
+    }
+    if (typeof input.description !== 'string') {
+      throw new Error(`Plugin skill ${id} description must be a string`);
+    }
     const name = cleanLine(input.name ?? id, 120);
     const description = cleanLine(input.description, 400);
     if (!name) throw new Error(`Plugin skill ${id} needs a name`);
