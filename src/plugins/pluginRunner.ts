@@ -83,6 +83,7 @@ main().catch((error: unknown) => {
   const details = [error instanceof Error ? error.message : String(error)];
   if (errObj?.permission) details.push(`permission=${String(errObj.permission)}`);
   if (errObj?.resource) details.push(`resource=${String(errObj.resource)}`);
-  writeResult({ success: false, error: details.join(' ') });
+  const message = details.join(' ').replace(/[\r\n\0]+/g, ' ').slice(0, 2000);
+  writeResult({ success: false, error: message || 'Plugin execution failed' });
   process.exitCode = 1;
 });
