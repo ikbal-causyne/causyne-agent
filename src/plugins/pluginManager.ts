@@ -491,7 +491,7 @@ export function createPlugin(input?: {
   }
 }
 
-export function createSkillPlugin(input: {
+export function createSkillPlugin(input?: {
   name?: unknown;
   description?: unknown;
   skillId?: unknown;
@@ -499,9 +499,12 @@ export function createSkillPlugin(input: {
   skillDescription?: unknown;
   skillContent?: unknown;
   licenseText?: unknown;
-} = {}): any {
-  const { name, description, skillId, skillName, skillDescription, skillContent, licenseText } = input;
-  if (typeof name !== 'string' || !NAME.test(name)) return { ok: false, error: 'Invalid plugin name' };
+} | null): any {
+  const safeInput = input && typeof input === 'object' ? input : {};
+  const { name, description, skillId, skillName, skillDescription, skillContent, licenseText } = safeInput;
+  if (typeof name !== 'string' || !NAME.test(name) || FORBIDDEN_KEYS.has(name)) {
+    return { ok: false, error: 'Invalid plugin name' };
+  }
   if (typeof skillId !== 'string' || !NAME.test(skillId)) return { ok: false, error: 'Invalid skill id' };
   if (typeof description !== 'string' || !description.trim() || description.length > 1000) {
     return { ok: false, error: 'Plugin description must be 1..1000 characters' };
@@ -513,11 +516,11 @@ export function createSkillPlugin(input: {
       || skillDescription.length > 400) {
     return { ok: false, error: 'Skill description must be 1..400 characters' };
   }
-  if (typeof skillContent !== 'string' || !skillContent.trim()
+  if (typeof skillContent !== 'string' || !skillContent.trim() || skillContent.includes('\0')
       || Buffer.byteLength(skillContent, 'utf8') > 32 * 1024) {
     return { ok: false, error: 'Skill content must be nonempty and at most 32 KB' };
   }
-  if (typeof licenseText !== 'string' || licenseText.length > 32 * 1024) {
+  if (typeof licenseText !== 'string' || licenseText.includes('\0') || licenseText.length > 32 * 1024) {
     return { ok: false, error: 'Full third-party license text is required' };
   }
 

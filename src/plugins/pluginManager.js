@@ -447,10 +447,12 @@ export function createPlugin(input) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
 }
-export function createSkillPlugin(input = {}) {
-    const { name, description, skillId, skillName, skillDescription, skillContent, licenseText } = input;
-    if (typeof name !== 'string' || !NAME.test(name))
+export function createSkillPlugin(input) {
+    const safeInput = input && typeof input === 'object' ? input : {};
+    const { name, description, skillId, skillName, skillDescription, skillContent, licenseText } = safeInput;
+    if (typeof name !== 'string' || !NAME.test(name) || FORBIDDEN_KEYS.has(name)) {
         return { ok: false, error: 'Invalid plugin name' };
+    }
     if (typeof skillId !== 'string' || !NAME.test(skillId))
         return { ok: false, error: 'Invalid skill id' };
     if (typeof description !== 'string' || !description.trim() || description.length > 1000) {
@@ -463,11 +465,11 @@ export function createSkillPlugin(input = {}) {
         || skillDescription.length > 400) {
         return { ok: false, error: 'Skill description must be 1..400 characters' };
     }
-    if (typeof skillContent !== 'string' || !skillContent.trim()
+    if (typeof skillContent !== 'string' || !skillContent.trim() || skillContent.includes('\0')
         || Buffer.byteLength(skillContent, 'utf8') > 32 * 1024) {
         return { ok: false, error: 'Skill content must be nonempty and at most 32 KB' };
     }
-    if (typeof licenseText !== 'string' || licenseText.length > 32 * 1024) {
+    if (typeof licenseText !== 'string' || licenseText.includes('\0') || licenseText.length > 32 * 1024) {
         return { ok: false, error: 'Full third-party license text is required' };
     }
     const isMit = /^MIT License\s*$/mi.test(licenseText)
