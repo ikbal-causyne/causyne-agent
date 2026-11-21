@@ -230,7 +230,7 @@ function readForDiff(pathish: unknown): string | null {
   if (typeof pathish !== 'string' || !pathish.trim() || pathish.includes('\0')) return null;
   try {
     const target = pathish.replace(/^~(?=\/|\\|$)/, os.homedir());
-    const stat = fs.statSync(target);
+    const stat = fs.lstatSync(target);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null;
     return fs.readFileSync(target, 'utf8');
   } catch {
