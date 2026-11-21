@@ -41,6 +41,9 @@ export function requireApiKey(apiKey, providerLabel) {
     if (!trimmed) {
         throw new Error(`${providerLabel} API requires a valid API key (BYOK mode). Configure it with \`causyne config\`.`);
     }
+    if (/[\r\n\0]/.test(trimmed)) {
+        throw new Error(`${providerLabel} API key contains invalid control characters.`);
+    }
     return trimmed;
 }
 /**
