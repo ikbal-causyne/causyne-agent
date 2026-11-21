@@ -508,13 +508,13 @@ export async function runLicenseCommand(action = 'status', plan = ''): Promise<v
     console.log('One-time passes are non-recurring; pricing is shown at merchant checkout.');
     return;
   }
-  if (action === 'status') {
+  if (normalizedAction === 'status') {
     const data = await client.status();
-    console.log(`Causyne software entitlement: ${data.entitlement}`);
-    if (data.paidUntil) console.log(`Paid through: ${data.paidUntil}`);
+    console.log(`Causyne software entitlement: ${safeDisplay(data.entitlement ?? 'unknown')}`);
+    if (data.paidUntil) console.log(`Paid through: ${safeDisplay(data.paidUntil)}`);
     else {
       console.log(`Free allowance remaining: ${Math.floor(data.remainingSeconds / 60)} of ${Math.floor(data.dailySeconds / 60)} minutes`);
-      console.log(`UTC reset: ${data.resetsAt}`);
+      console.log(`UTC reset: ${safeDisplay(data.resetsAt ?? 'unknown')}`);
     }
     console.log('Model-provider inference has separate limits and costs.');
     return;
