@@ -306,6 +306,9 @@ export class AcpServer {
 
   private async handleRequest(request: JsonRpcRequest): Promise<void> {
     try {
+      if (!this.isPlainParams(request.params)) {
+        throw this.paramsError('params must be a JSON object');
+      }
       switch (request.method) {
         case ACP_METHODS.INITIALIZE:
           this.writeResult(request.id, this.initialize(request.params as InitializeRequest | undefined));

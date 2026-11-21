@@ -222,6 +222,9 @@ export class AcpServer {
     }
     async handleRequest(request) {
         try {
+            if (!this.isPlainParams(request.params)) {
+                throw this.paramsError('params must be a JSON object');
+            }
             switch (request.method) {
                 case ACP_METHODS.INITIALIZE:
                     this.writeResult(request.id, this.initialize(request.params));
