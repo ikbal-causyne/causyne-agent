@@ -76,9 +76,9 @@ function parseProfile(raw) {
             return null;
         }
     }
-    const policy = record.policy === 'read-only'
-        ? 'read-only'
-        : (record.policy === 'workspace' ? 'workspace' : 'ask');
+    const policy = record.policy === undefined
+        ? 'workspace'
+        : (record.policy === 'read-only' ? 'read-only' : (record.policy === 'workspace' ? 'workspace' : 'ask'));
     const timeoutSeconds = typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
         ? Math.max(5, Math.min(1800, Math.round(record.timeoutSeconds)))
         : 120;
