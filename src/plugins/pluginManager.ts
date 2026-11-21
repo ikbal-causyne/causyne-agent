@@ -5,6 +5,10 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { causyneHome } from '../utils/paths.js';
 import { parsePluginSkills, type PluginSkill } from './pluginSkills.js';
+import { isWithinPhysicalPath, physicalPath } from '../agent/workspaceBoundary.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { safeDisplay } from '../tui/text.js';
 
 function pluginRoot(): string {
   return path.join(causyneHome(), 'plugins');
@@ -162,10 +166,18 @@ function writeState(state: PluginState): void {
 }
 
 function resolveInside(root: string, relativePath: unknown): string {
+  if (typeof relativePath !== 'string' || !relativePath || relativePath.includes('\0') || path.isAbsolute(relativePath)) {
+    throw new Error(`Invalid plugin relative path: ${String(relativePath)}`);
+  }
   const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(root, String(relativePath || ''));
+  const resolved = path.resolve(root, relativePath);
   if (resolved === resolvedRoot || !resolved.startsWith(resolvedRoot + path.sep)) {
-    throw new Error(`Path escapes plugin root: ${String(relativePath)}`);
+    throw new Error(`Path escapes plugin root: ${relativePath}`);
+  }
+  const realRoot = physicalPath(resolvedRoot);
+  const realTarget = physicalPath(resolved);
+  if (!realRoot || !realTarget || realTarget === realRoot || !isWithinPhysicalPath(realTarget, realRoot)) {
+    throw new Error(`Path escapes plugin root physically: ${relativePath}`);
   }
   return resolved;
 }
