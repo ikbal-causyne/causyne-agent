@@ -389,7 +389,8 @@
     "src/tools/gameAnimationRig.ts",
     "src/tools/gameEntitySpawner.ts",
     "src/tools/gameAiBehaviorTree.ts",
-    "src/tools/gameAssetHarvester.ts"
+    "src/tools/gameAssetHarvester.ts",
+    "src/tools/gameAudioSynth.ts"
   ],
   "exclude": [
     "node_modules",
