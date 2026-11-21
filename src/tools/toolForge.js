@@ -50,31 +50,44 @@ export const toolForgeTool = {
         }
     },
     async execute(args = {}) {
-        const toolName = normaliseToolName(args.toolName);
-        if (!toolName)
-            return { success: false, error: 'toolName is invalid' };
-        let parameters;
         try {
-            parameters = JSON.parse(String(args.parametersSchema ?? ''));
+            const safeArgs = args && typeof args === 'object' ? args : {};
+            const toolName = normaliseToolName(safeArgs.toolName);
+            if (!toolName)
+                return { success: false, error: 'toolName is invalid' };
+            if (typeof safeArgs.parametersSchema !== 'string' || safeArgs.parametersSchema.length > 65536) {
+                return { success: false, error: 'parametersSchema must be a bounded JSON string.' };
+            }
+            let parameters;
+            try {
+                const parsed = JSON.parse(safeArgs.parametersSchema);
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    return { success: false, error: 'parametersSchema must parse to a JSON object.' };
+                }
+                parameters = stripDangerousKeysDeep(parsed);
+            }
+            catch (error) {
+                return { success: false, error: `parametersSchema is invalid JSON: ${sanitizeToolError(error)}` };
+            }
+            const result = createPlugin({
+                name: pluginNameFor(toolName),
+                description: `Custom Causyne plugin for ${toolName}`,
+                toolName,
+                toolDescription: typeof safeArgs.toolDescription === 'string' ? safeArgs.toolDescription : '',
+                parameters,
+                code: typeof safeArgs.javascriptCode === 'string' ? safeArgs.javascriptCode : '',
+                capabilities: Array.isArray(safeArgs.capabilities) ? safeArgs.capabilities : []
+            });
+            if (!result.ok)
+                return { success: false, error: result.error };
+            return {
+                success: true,
+                ...result,
+                message: `${sanitizeToolText(result.message, 400)} Use plugin_manager with action "enable" and name "${sanitizeToolText(result.name, 100)}" after review.`
+            };
         }
         catch (error) {
-            return { success: false, error: `parametersSchema is invalid JSON: ${getErrorMessage(error)}` };
+            return { success: false, error: sanitizeToolError(error) };
         }
-        const result = createPlugin({
-            name: pluginNameFor(toolName),
-            description: `Custom Causyne plugin for ${toolName}`,
-            toolName,
-            toolDescription: args.toolDescription ?? '',
-            parameters,
-            code: args.javascriptCode ?? '',
-            capabilities: Array.isArray(args.capabilities) ? args.capabilities : []
-        });
-        if (!result.ok)
-            return { success: false, error: result.error };
-        return {
-            success: true,
-            ...result,
-            message: `${result.message} Use plugin_manager with action "enable" and name "${result.name}" after review.`
-        };
     }
 };
