@@ -22,14 +22,22 @@ function writeResult(payload: unknown): void {
 }
 
 async function readInput(): Promise<Record<string, unknown>> {
-  let input = '';
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of process.stdin) {
-    input += String(chunk);
-    if (Buffer.byteLength(input, 'utf8') > MAX_INPUT_BYTES) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    totalBytes += buf.length;
+    if (totalBytes > MAX_INPUT_BYTES) {
       throw new Error('Plugin input exceeds 1 MB');
     }
+    chunks.push(buf);
   }
-  return JSON.parse(input || '{}') as Record<string, unknown>;
+  const text = Buffer.concat(chunks, totalBytes).toString('utf8').trim();
+  if (!text) return {};
+  const parsed: unknown = JSON.parse(text);
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
 }
 
 async function main(): Promise<void> {

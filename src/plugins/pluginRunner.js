@@ -20,14 +20,23 @@ function writeResult(payload) {
     process.stdout.write(`${RESULT_PREFIX}${serialized}\n`);
 }
 async function readInput() {
-    let input = '';
+    const chunks = [];
+    let totalBytes = 0;
     for await (const chunk of process.stdin) {
-        input += String(chunk);
-        if (Buffer.byteLength(input, 'utf8') > MAX_INPUT_BYTES) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+        totalBytes += buf.length;
+        if (totalBytes > MAX_INPUT_BYTES) {
             throw new Error('Plugin input exceeds 1 MB');
         }
+        chunks.push(buf);
     }
-    return JSON.parse(input || '{}');
+    const text = Buffer.concat(chunks, totalBytes).toString('utf8').trim();
+    if (!text)
+        return {};
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : {};
 }
 async function main() {
     const entry = process.argv[2];
