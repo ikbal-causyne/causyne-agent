@@ -27,8 +27,9 @@ const MAX_SESSIONS = 128;
 function textFromPrompt(prompt) {
     const parts = [];
     for (const block of prompt) {
-        if (block.type !== 'text')
+        if (!block || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') {
             return null;
+        }
         parts.push(block.text);
     }
     return parts.join('\n').slice(0, MAX_PROMPT_CHARS);

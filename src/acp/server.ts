@@ -121,7 +121,9 @@ const MAX_SESSIONS = 128;
 function textFromPrompt(prompt: ContentBlock[]): string | null {
   const parts: string[] = [];
   for (const block of prompt) {
-    if (block.type !== 'text') return null;
+    if (!block || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') {
+      return null;
+    }
     parts.push(block.text);
   }
   return parts.join('\n').slice(0, MAX_PROMPT_CHARS);
