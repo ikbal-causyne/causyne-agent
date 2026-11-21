@@ -63,7 +63,7 @@ class Spinner implements SpinnerHandle {
   live: boolean;
 
   constructor(text: string) {
-    this.text = text;
+    this.text = safeDisplay(String(text ?? ''));
     this.frames = GLYPHS.spinner;
     this.index = 0;
     this.timer = null;
@@ -71,13 +71,18 @@ class Spinner implements SpinnerHandle {
   }
 
   start(): SpinnerHandle {
+    if (this.timer) { clearInterval(this.timer); this.timer = null; }
     if (!this.live) {
-      process.stdout.write(`  ${this.text}\n`);
+      try { process.stdout.write(`  ${this.text}\n`); } catch { /* ignore */ }
       return this;
     }
     this.timer = setInterval(() => {
-      this.index = (this.index + 1) % this.frames.length;
-      process.stdout.write(`\r  ${paint('accent', this.frames[this.index] ?? '*')} ${this.text}${CLEAR_EOL}`);
+      try {
+        this.index = (this.index + 1) % this.frames.length;
+        process.stdout.write(`\r  ${paint('accent', this.frames[this.index] ?? '*')} ${this.text}${CLEAR_EOL}`);
+      } catch {
+        if (this.timer) { clearInterval(this.timer); this.timer = null; }
+      }
     }, 80);
     if (typeof this.timer.unref === 'function') this.timer.unref();
     return this;
@@ -85,8 +90,9 @@ class Spinner implements SpinnerHandle {
 
   end(glyph: string, role: string, text?: string): void {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
-    const line = `  ${paint(role, glyph)} ${text || this.text}`;
-    process.stdout.write(this.live ? `\r${line}${CLEAR_EOL}\n` : `${line}\n`);
+    const label = text ? safeDisplay(String(text)) : this.text;
+    const line = `  ${paint(role, glyph)} ${label}`;
+    try { process.stdout.write(this.live ? `\r${line}${CLEAR_EOL}\n` : `${line}\n`); } catch { /* ignore */ }
   }
 
   stop(successText?: string): void { this.end(GLYPHS.check, 'success', successText); }
