@@ -132,6 +132,10 @@ export class OpenRouterProvider extends LLMProvider {
       }
     };
 
+    if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+      payload['max_tokens'] = Math.floor(options.maxTokens);
+    }
+
     if (options['jsonMode']) {
       payload['response_format'] = { type: 'json_object' };
     }
