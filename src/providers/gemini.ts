@@ -68,12 +68,14 @@ export class GeminiProvider extends LLMProvider {
 
       const role = msg.role === 'assistant' ? 'model' : 'user';
 
-      if (msg.tool_calls) {
+      if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
         const parts: Array<Record<string, any>> = [];
-        if (msg.content) parts.push({ text: String(msg.content) });
+        if (typeof msg.content === 'string' && msg.content) parts.push({ text: msg.content });
         for (const tc of msg.tool_calls) {
+          if (!tc || typeof tc !== 'object') continue;
           const normalizedName = normalizeToolName(tc.function?.name || '');
-          if (typeof tc.id === 'string' && tc.id && normalizedName) toolNameById.set(tc.id, normalizedName);
+          if (!normalizedName) continue;
+          if (typeof tc.id === 'string' && tc.id) toolNameById.set(tc.id, normalizedName);
           const fcPart: Record<string, any> = {
             functionCall: {
               name: normalizedName,
@@ -84,7 +86,7 @@ export class GeminiProvider extends LLMProvider {
           if (sig) fcPart['thoughtSignature'] = sig;
           parts.push(fcPart);
         }
-        contents.push({ role, parts });
+        if (parts.length > 0) contents.push({ role, parts });
       } else if (msg.role === 'tool') {
         const resolvedName = normalizeToolName(msg.name || (typeof msg.tool_call_id === 'string' ? toolNameById.get(msg.tool_call_id) : '') || 'tool');
         const responsePart = {
