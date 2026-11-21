@@ -378,7 +378,8 @@
     "src/tools/gameCanvasAudit.ts",
     "src/tools/gameVfxEmitterGen.ts",
     "src/tools/gameDataForge.ts",
-    "src/tools/gameCinematicSequencer.ts"
+    "src/tools/gameCinematicSequencer.ts",
+    "src/tools/gameQuestArcBuilder.ts"
   ],
   "exclude": [
     "node_modules",
