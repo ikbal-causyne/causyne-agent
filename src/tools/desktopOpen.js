@@ -8,6 +8,24 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+function isUnsafeUriScheme(value) {
+    const match = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(value);
+    if (!match)
+        return false;
+    const scheme = match[1].toLowerCase();
+    // Allow single-letter Windows drive paths like C:\foo
+    if (scheme.length === 1 && (value[2] === '\\' || value[2] === '/'))
+        return false;
+    return scheme !== 'http' && scheme !== 'https';
+}
+function hasControlChars(value) {
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code < 0x20 || code === 0x7f)
+            return true;
+    }
+    return false;
+}
 export function resolveOpenTarget(rawTarget, workspaceRoot = process.cwd()) {
     let target = (rawTarget || '').trim();
     if (!target)
@@ -96,6 +114,13 @@ export const desktopOpen = {
     async execute(args, context = {}) {
         if (!args || typeof args.target !== 'string' || !args.target.trim()) {
             return { success: false, error: 'Missing required "target" parameter for desktop.open' };
+        }
+        const rawTarget = args.target.trim();
+        if (hasControlChars(rawTarget)) {
+            return { success: false, error: 'Target contains disallowed control characters.' };
+        }
+        if (isUnsafeUriScheme(rawTarget)) {
+            return { success: false, error: `Unsupported or unsafe URI scheme in target: "${rawTarget}". Only http://, https://, and local file paths are allowed.` };
         }
         const workspaceRoot = context?.parentLoop?.workspaceRoot || process.cwd();
         const resolvedTarget = resolveOpenTarget(args.target, workspaceRoot);
