@@ -16,6 +16,7 @@ import { redactSecrets } from './text.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { causyneHome } from '../utils/paths.js';
 export const MAX_ENTRIES = 500;
+const MAX_HISTORY_BYTES = 2 * 1024 * 1024;
 function historyPath() {
     return path.join(causyneHome(), 'history');
 }
@@ -41,7 +42,7 @@ export class PromptHistory {
     load() {
         try {
             const stat = fs.lstatSync(this.file);
-            if (!stat.isFile()) {
+            if (!stat.isFile() || stat.size > MAX_HISTORY_BYTES) {
                 this.entries = [];
                 this.cursor = -1;
                 return;

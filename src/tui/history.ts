@@ -18,6 +18,7 @@ import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { causyneHome } from '../utils/paths.js';
 
 export const MAX_ENTRIES = 500;
+const MAX_HISTORY_BYTES = 2 * 1024 * 1024;
 
 export interface PromptHistoryOptions {
   file?: string;
@@ -51,7 +52,7 @@ export class PromptHistory {
   load(): void {
     try {
       const stat = fs.lstatSync(this.file);
-      if (!stat.isFile()) { this.entries = []; this.cursor = -1; return; }
+      if (!stat.isFile() || stat.size > MAX_HISTORY_BYTES) { this.entries = []; this.cursor = -1; return; }
       const raw = fs.readFileSync(this.file, 'utf8');
       this.entries = raw.split('\n')
         .map((line) => line.trim())
