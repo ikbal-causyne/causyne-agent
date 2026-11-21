@@ -2011,7 +2011,8 @@ export class AgentLoop {
               this.notice('skipped oversized document attachment (exceeds 16 MiB limit)', 'warn');
               continue;
             }
-            const safeName = att.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+            const baseName = path.basename(att.name).replace(/[^a-zA-Z0-9.\-_]/g, '_').replace(/^\.+/, '');
+            const safeName = (!baseName || baseName === '.' || baseName === '..') ? 'attachment.bin' : baseName.slice(0, 128);
             const writePath = path.join(this.workspaceRoot, safeName);
             fs.writeFileSync(writePath, decodedBytes);
             

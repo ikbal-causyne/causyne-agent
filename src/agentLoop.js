@@ -1921,7 +1921,8 @@ export class AgentLoop {
                             this.notice('skipped oversized document attachment (exceeds 16 MiB limit)', 'warn');
                             continue;
                         }
-                        const safeName = att.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+                        const baseName = path.basename(att.name).replace(/[^a-zA-Z0-9.\-_]/g, '_').replace(/^\.+/, '');
+                        const safeName = (!baseName || baseName === '.' || baseName === '..') ? 'attachment.bin' : baseName.slice(0, 128);
                         const writePath = path.join(this.workspaceRoot, safeName);
                         fs.writeFileSync(writePath, decodedBytes);
                         contentArray[0].text += `\n\n[SYSTEM NOTIFICATION: The user attached a document named '${safeName}'. It has been saved to your workspace at ./${safeName}. Please use your file reading tools to examine its contents.]`;
