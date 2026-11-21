@@ -7,15 +7,17 @@ import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byok
 import { streamGeminiGenerateContent, wantsStreaming } from './byokStream.js';
 export { adaptSchemaForGemini, isEmptyObjectSchema };
 export function geminiUsageToOpenAIShape(usageMetadata) {
-    const prompt = usageMetadata?.['promptTokenCount'] || 0;
-    const candidates = usageMetadata?.['candidatesTokenCount'] || 0;
-    const thoughts = usageMetadata?.['thoughtsTokenCount'] || 0;
-    const total = usageMetadata?.['totalTokenCount'] || 0;
+    const nonNeg = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+    const prompt = nonNeg(usageMetadata?.['promptTokenCount']);
+    const candidates = nonNeg(usageMetadata?.['candidatesTokenCount']);
+    const thoughts = nonNeg(usageMetadata?.['thoughtsTokenCount']);
+    const total = nonNeg(usageMetadata?.['totalTokenCount']);
+    const cached = nonNeg(usageMetadata?.['cachedContentTokenCount']);
     const completion = total > prompt ? total - prompt : candidates + thoughts;
     return {
         prompt_tokens: prompt,
         completion_tokens: completion,
-        prompt_tokens_details: { cached_tokens: usageMetadata?.['cachedContentTokenCount'] || 0 }
+        prompt_tokens_details: { cached_tokens: cached }
     };
 }
 export class GeminiProvider extends LLMProvider {
