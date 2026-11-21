@@ -28,6 +28,7 @@ const GIT_TIMEOUT_MS = 20000;
 
 /** Untracked files above this are excluded rather than stored. */
 const MAX_UNTRACKED_BYTES = 2 * 1024 * 1024;
+const MAX_PATCH_CHARS = 256 * 1024;
 const GIT_SHA_PATTERN = /^[0-9a-f]{40,64}$/i;
 
 function isValidGitSha(sha: unknown): sha is string {
@@ -301,10 +302,13 @@ export function previewRestore(worktree: string, fromTree: string): GitPreviewCh
 
       let patch = '';
       try {
-        patch = runGit(
+        const rawPatch = runGit(
           ['--git-dir', gitDir, 'diff', '--unified=3', current, fromTree, '--', file],
           { env }
         );
+        patch = rawPatch.length > MAX_PATCH_CHARS
+          ? `${rawPatch.slice(0, MAX_PATCH_CHARS)}\n[... patch truncated ...]\n`
+          : rawPatch;
       } catch {
         // A binary file has no textual patch; the counts still describe it.
       }
