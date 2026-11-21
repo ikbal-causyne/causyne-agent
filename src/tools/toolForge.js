@@ -1,11 +1,18 @@
 import { createPlugin } from '../plugins/pluginManager.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText, stripDangerousKeysDeep } from './toolPathSafety.js';
 function normaliseToolName(value) {
-    return String(value || '')
+    const lowered = String(value || '')
+        .slice(0, 128)
         .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
         .replace(/[^a-zA-Z0-9_-]/g, '_')
-        .toLowerCase()
-        .replace(/^_+|_+$/g, '');
+        .toLowerCase();
+    let start = 0;
+    let end = lowered.length;
+    while (start < end && (lowered[start] === '_' || lowered[start] === '-'))
+        start++;
+    while (end > start && (lowered[end - 1] === '_' || lowered[end - 1] === '-'))
+        end--;
+    return lowered.slice(start, end);
 }
 function pluginNameFor(toolName) {
     return `forged-${toolName.replace(/_/g, '-')}`.slice(0, 64);
