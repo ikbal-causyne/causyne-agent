@@ -111,14 +111,15 @@ export const pdfRead = {
         };
       }
 
-      const maxLimit = args.maxChars || 30000;
+      extractedText = sanitizeToolText(extractedText, 120_000);
+      const maxLimit = boundedInteger(args?.maxChars, 30000, 100, 100_000);
       if (extractedText.length > maxLimit) {
         extractedText = extractedText.substring(0, maxLimit) + `\n\n[... PDF TEXT TRUNCATED TO ${maxLimit} CHARACTERS ...]`;
       }
 
       return { success: true, output: extractedText, charCount: extractedText.length };
     } catch (e: unknown) {
-      return { success: false, error: `Failed to read PDF: ${getErrorMessage(e)}` };
+      return { success: false, error: `Failed to read PDF: ${sanitizeToolError(e)}` };
     }
   }
 };
