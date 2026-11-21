@@ -31,8 +31,9 @@ function normalizeToolName(toolName) {
 /** Record a standing approval for one canonical tool name. */
 export function grantAlways(toolName) {
     const name = normalizeToolName(toolName);
-    if (name)
+    if (name && (standingApprovals.has(name) || standingApprovals.size < MAX_STANDING_APPROVALS)) {
         standingApprovals.add(name);
+    }
 }
 /** True when this tool may run without asking again. */
 export function isAlwaysAllowed(toolName) {
@@ -58,8 +59,9 @@ export function createApprovalScope() {
     return {
         grantAlways(toolName) {
             const name = normalizeToolName(toolName);
-            if (name)
+            if (name && (approvals.has(name) || approvals.size < MAX_STANDING_APPROVALS)) {
                 approvals.add(name);
+            }
         },
         isAlwaysAllowed(toolName) {
             return approvals.has(normalizeToolName(toolName));
