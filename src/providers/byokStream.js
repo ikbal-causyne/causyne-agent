@@ -682,6 +682,13 @@ export async function streamOllamaChat(options) {
         body: JSON.stringify(streamPayload)
     });
     if (opened.mode === 'json') {
+        if (typeof opened.data.error === 'string' && opened.data.error) {
+            throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(opened.data.error, options.secrets)}`);
+        }
+        if (isRecord(opened.data.error)) {
+            const errMsg = typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error);
+            throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(errMsg, options.secrets)}`);
+        }
         const msg = isRecord(opened.data.message) ? opened.data.message : null;
         if (msg) {
             if (typeof msg.thinking === 'string' && msg.thinking)
@@ -701,6 +708,10 @@ export async function streamOllamaChat(options) {
             if (typeof chunk.error === 'string' && chunk.error) {
                 throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(chunk.error, options.secrets)}`);
             }
+            if (isRecord(chunk.error)) {
+                const errMsg = typeof chunk.error.message === 'string' ? chunk.error.message : JSON.stringify(chunk.error);
+                throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(errMsg, options.secrets)}`);
+            }
             const msg = isRecord(chunk.message) ? chunk.message : null;
             if (msg) {
                 if (typeof msg.thinking === 'string' && msg.thinking.length > 0) {
@@ -715,11 +726,11 @@ export async function streamOllamaChat(options) {
                     toolCalls.push(...msg.tool_calls);
                 }
             }
-            if (typeof chunk.prompt_eval_count === 'number')
+            if (typeof chunk.prompt_eval_count === 'number' && Number.isFinite(chunk.prompt_eval_count) && chunk.prompt_eval_count >= 0)
                 promptEvalCount = chunk.prompt_eval_count;
-            if (typeof chunk.eval_count === 'number')
+            if (typeof chunk.eval_count === 'number' && Number.isFinite(chunk.eval_count) && chunk.eval_count >= 0)
                 evalCount = chunk.eval_count;
-        });
+        }, options.signal);
     }
     finally {
         opened.cleanup();
