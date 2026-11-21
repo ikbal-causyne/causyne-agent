@@ -2419,7 +2419,12 @@ export const COMMANDS: SlashCommandDefinition[] = [
     dialogTitle: 'Workspace Init',
     run: async (argv, ctx = {}) => {
       const ws = ctx.loop?.workspaceRoot || process.cwd();
-      const files = fs.existsSync(ws) ? fs.readdirSync(ws) : [];
+      let files: string[] = [];
+      try {
+        if (fs.existsSync(ws)) files = fs.readdirSync(ws);
+      } catch {
+        files = [];
+      }
       const hasPkg = files.includes('package.json');
       const hasCargo = files.includes('Cargo.toml');
       const hasPy = files.includes('pyproject.toml') || files.includes('requirements.txt');
