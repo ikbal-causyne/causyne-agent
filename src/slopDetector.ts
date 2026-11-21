@@ -207,6 +207,8 @@ const SIGNALS: ReadonlyArray<(text: string) => SlopFinding | null> = [
   detectGradientText
 ];
 
+const MAX_SLOP_SCAN_CHARS = 512 * 1024;
+
 export const BORDERLINE_SCORE = 30;
 export const SLOP_SCORE = 45;
 
@@ -217,7 +219,8 @@ export function verdictFor(score: number): SlopVerdict {
 }
 
 export function analyzeSource(text: unknown): SlopAnalysisResult {
-  const source = typeof text === 'string' ? text : '';
+  const rawSource = typeof text === 'string' ? text : '';
+  const source = rawSource.length > MAX_SLOP_SCAN_CHARS ? rawSource.slice(0, MAX_SLOP_SCAN_CHARS) : rawSource;
   const findings: SlopFinding[] = [];
 
   for (const signal of SIGNALS) {
