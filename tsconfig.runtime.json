@@ -343,7 +343,8 @@
     "src/entrypoint.ts",
     "src/benchmarks/planCache.ts",
     "src/verification/featureMap.ts",
-    "src/verification/skillCatalog.ts"
+    "src/verification/skillCatalog.ts",
+    "src/verification/boundedExplorer.ts"
   ],
   "exclude": [
     "node_modules",
