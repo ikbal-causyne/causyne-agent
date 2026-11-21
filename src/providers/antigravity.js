@@ -340,10 +340,12 @@ export function isReadOnlyNativeInspection(name, parameters) {
     if (!/^(runcommand|command|sysrun|terminal|bash|shell)$/.test(action))
         return false;
     const command = cleanCommandString(parameters.CommandLine ?? parameters.command ?? parameters.cmd ?? '');
-    if (!command)
+    if (!command || command.length > 100_000 || command.includes('\0'))
         return false;
     // Single or compound read-only shell commands (e.g. ps aux | grep -i blender)
     if (/^(?:ls|rg|grep|head|tail|cat|sed|ps|pgrep|which|file|sips|mdls|git\s+status|git\s+diff|git\s+log)\b/i.test(command)) {
+        if (/(?:^|[^0-9&])>|\$\(|\`/.test(command))
+            return false;
         if (/[;&|]/.test(command)) {
             const parts = command.split(/[;&|]/).map(p => p.trim()).filter(Boolean);
             return parts.every(p => /^(?:ls|rg|grep|head|tail|cat|sed|ps|pgrep|which|file|sips|mdls|awk|cut|sort|uniq|wc)\b/i.test(p));
