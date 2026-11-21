@@ -7,6 +7,7 @@ import { createApprovalScope } from '../approvalGrants.js';
 import type { ApprovalScope } from '../approvalGrants.js';
 import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { safeDisplay } from '../tui/text.js';
 import {
   ACP_ERROR_CODES,
   ACP_METHODS,
@@ -163,8 +164,8 @@ function bounded(value: unknown, limit = MAX_RAW_CHARS): string {
 
 function toolTitle(name: string, args: Record<string, unknown>): string {
   const detail = args.path || args.file_path || args.command || args.cmd || args.query || args.url || args.action;
-  const suffix = typeof detail === 'string' && detail.trim() ? ` ${detail.trim()}` : '';
-  const title = `${name}${suffix}`;
+  const rawSuffix = typeof detail === 'string' && detail.trim() ? ` ${detail.trim()}` : '';
+  const title = safeDisplay(`${name}${rawSuffix}`).replace(/\s+/g, ' ').trim();
   return title.length > 200 ? `${title.slice(0, 200)}…` : title;
 }
 

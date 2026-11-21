@@ -5,6 +5,7 @@ import { AgentLoop } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
 import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { safeDisplay } from '../tui/text.js';
 import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, isJsonRpcNotification, isJsonRpcRequest, isJsonRpcResponse } from './protocol.js';
 const MODE_TO_AUTONOMY = {
     autonomous: 'C',
@@ -78,8 +79,8 @@ function bounded(value, limit = MAX_RAW_CHARS) {
 }
 function toolTitle(name, args) {
     const detail = args.path || args.file_path || args.command || args.cmd || args.query || args.url || args.action;
-    const suffix = typeof detail === 'string' && detail.trim() ? ` ${detail.trim()}` : '';
-    const title = `${name}${suffix}`;
+    const rawSuffix = typeof detail === 'string' && detail.trim() ? ` ${detail.trim()}` : '';
+    const title = safeDisplay(`${name}${rawSuffix}`).replace(/\s+/g, ' ').trim();
     return title.length > 200 ? `${title.slice(0, 200)}…` : title;
 }
 export class AcpServer {
