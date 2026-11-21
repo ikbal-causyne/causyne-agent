@@ -326,7 +326,8 @@
     "src/tui/chatRenderer.ts",
     "src/tui/prompt.ts",
     "src/tui/ask.ts",
-    "src/version.ts"
+    "src/version.ts",
+    "src/devMode.ts"
   ],
   "exclude": [
     "node_modules",
