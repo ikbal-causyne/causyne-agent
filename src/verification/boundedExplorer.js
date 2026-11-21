@@ -12,7 +12,9 @@ function isThenable(value) {
     return Boolean(value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function');
 }
 export function exploreStateMachine(options) {
-    const safeOptions = (options && typeof options === 'object' ? options : {});
+    if (!options || typeof options !== 'object')
+        throw new TypeError('options object is required');
+    const safeOptions = options;
     const { initial, actions, transition, invariant } = safeOptions;
     if (!Array.isArray(actions) || actions.length === 0)
         throw new TypeError('actions must be nonempty');

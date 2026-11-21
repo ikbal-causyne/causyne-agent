@@ -37,7 +37,8 @@ function isThenable(value: unknown): boolean {
 export function exploreStateMachine<TState = any, TAction = any>(
   options: ExploreStateMachineOptions<TState, TAction>
 ): ExploreStateMachineResult<TState, TAction> {
-  const safeOptions = (options && typeof options === 'object' ? options : {}) as Partial<ExploreStateMachineOptions<TState, TAction>>;
+  if (!options || typeof options !== 'object') throw new TypeError('options object is required');
+  const safeOptions = options as Partial<ExploreStateMachineOptions<TState, TAction>>;
   const { initial, actions, transition, invariant } = safeOptions;
   if (!Array.isArray(actions) || actions.length === 0) throw new TypeError('actions must be nonempty');
   if (actions.length > 10000) throw new RangeError('Too many actions to explore safely');
