@@ -347,10 +347,6 @@ export function safeLink(text, url) {
     catch {
         return String(text);
     }
-    if (parsed.protocol === 'file:') {
-        const safeUrl = encodeURI(parsed.href).replace(/[\x00-\x1f\x7f]/g, '');
-        return `\x1b]8;;${safeUrl}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
-    }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
         return String(text);
     if (!parsed.hostname)
