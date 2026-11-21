@@ -9,7 +9,7 @@ function hexToHue(hex) {
     const full = clean.length === 3
         ? clean.split('').map(c => c + c).join('')
         : clean;
-    if (full.length !== 6)
+    if (!/^[0-9a-f]{6}$/i.test(full))
         return null;
     const r = parseInt(full.slice(0, 2), 16) / 255;
     const g = parseInt(full.slice(2, 4), 16) / 255;
