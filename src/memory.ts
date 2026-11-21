@@ -72,7 +72,7 @@ export function getMemory(): MemoryStoreData {
 export function saveMemory(data: MemoryStoreData): void {
   try {
     const filePath = initMemory();
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    writeMemoryAtomic(filePath, data);
   } catch (e: unknown) {
     console.error('Failed to write memory.json:', e instanceof Error ? e.message : String(e));
   }
