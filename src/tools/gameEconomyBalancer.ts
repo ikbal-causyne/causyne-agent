@@ -1,7 +1,13 @@
-import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  resolveScopedPath,
+  sanitizeToolError,
+  stripDangerousKeysDeep,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface GameEconomyArgs {
   action?: string | undefined;
@@ -48,7 +54,7 @@ export const gameEconomyBalancer = {
     }
   },
 
-  async execute(args: GameEconomyArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameEconomyArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, maxLevel = 50, difficultyCurve = 'exponential', baseHp = 100, baseXp = 500, lootEntries = [], projectDir } = args || {};
       const safeMaxLevel = Number.isFinite(Number(maxLevel)) ? Math.max(1, Math.min(1000, Math.floor(Number(maxLevel)))) : 50;
@@ -76,10 +82,12 @@ export const gameEconomyBalancer = {
           });
         }
 
-        if (projectDir && fsSync.existsSync(projectDir)) {
-          const dataDir = path.join(projectDir, 'data');
-          await fs.mkdir(dataDir, { recursive: true });
-          await fs.writeFile(path.join(dataDir, 'enemy_scaling.json'), JSON.stringify(scalingTable, null, 2), 'utf8');
+        if (projectDir) {
+          const scopedDir = resolveScopedPath(projectDir, sandbox);
+          if (fsSync.existsSync(scopedDir)) {
+            const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'enemy_scaling.json'), sandbox, { scopeRoot: scopedDir });
+            await atomicWriteFileSafe(target, JSON.stringify(scalingTable, null, 2));
+          }
         }
 
         return {
@@ -95,7 +103,7 @@ export const gameEconomyBalancer = {
       }
 
       if (action === 'generate_loot_table') {
-        const table = Array.isArray(lootEntries) && lootEntries.length > 0 ? lootEntries.slice(0, 256) : [
+        const table = Array.isArray(lootEntries) && lootEntries.length > 0 ? stripDangerousKeysDeep(lootEntries.slice(0, 256)) : [
           { item_id: 'gold_coins', drop_chance_pct: 85.0, min_qty: 10, max_qty: 45 },
           { item_id: 'health_potion', drop_chance_pct: 40.0, min_qty: 1, max_qty: 2 },
           { item_id: 'shadow_shard', drop_chance_pct: 25.0, min_qty: 1, max_qty: 3 },
@@ -103,10 +111,12 @@ export const gameEconomyBalancer = {
           { item_id: 'relic_silver_key', drop_chance_pct: 2.5, min_qty: 1, max_qty: 1 }
         ];
 
-        if (projectDir && fsSync.existsSync(projectDir)) {
-          const dataDir = path.join(projectDir, 'data');
-          await fs.mkdir(dataDir, { recursive: true });
-          await fs.writeFile(path.join(dataDir, 'loot_tables.json'), JSON.stringify({ default_enemy_loot: table }, null, 2), 'utf8');
+        if (projectDir) {
+          const scopedDir = resolveScopedPath(projectDir, sandbox);
+          if (fsSync.existsSync(scopedDir)) {
+            const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'loot_tables.json'), sandbox, { scopeRoot: scopedDir });
+            await atomicWriteFileSafe(target, JSON.stringify({ default_enemy_loot: table }, null, 2));
+          }
         }
 
         return {
@@ -132,10 +142,12 @@ export const gameEconomyBalancer = {
           });
         }
 
-        if (projectDir && fsSync.existsSync(projectDir)) {
-          const dataDir = path.join(projectDir, 'data');
-          await fs.mkdir(dataDir, { recursive: true });
-          await fs.writeFile(path.join(dataDir, 'xp_curve.json'), JSON.stringify(xpCurve, null, 2), 'utf8');
+        if (projectDir) {
+          const scopedDir = resolveScopedPath(projectDir, sandbox);
+          if (fsSync.existsSync(scopedDir)) {
+            const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'xp_curve.json'), sandbox, { scopeRoot: scopedDir });
+            await atomicWriteFileSafe(target, JSON.stringify(xpCurve, null, 2));
+          }
         }
 
         return {
@@ -150,18 +162,25 @@ export const gameEconomyBalancer = {
       }
 
       if (action === 'save_economy_data') {
-        if (!projectDir || !fsSync.existsSync(projectDir)) {
+        const scopedDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+        if (!scopedDir || !fsSync.existsSync(scopedDir)) {
           return { success: false, error: 'projectDir is required to save economy data.' };
         }
+        const expected = ['enemy_scaling.json', 'loot_tables.json', 'xp_curve.json'];
+        const existingFiles = expected.filter((name) => fsSync.existsSync(path.join(scopedDir, 'data', name)));
         return {
           success: true,
-          output: JSON.stringify({ status: 'SAVED_ALL_ECONOMY_DATA', project_dir: projectDir }, null, 2)
+          output: JSON.stringify({
+            status: existingFiles.length > 0 ? 'VERIFIED_ECONOMY_DATA' : 'NO_ECONOMY_DATA_FOUND',
+            project_dir: scopedDir,
+            files_present: existingFiles
+          }, null, 2)
         };
       }
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
