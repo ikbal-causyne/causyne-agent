@@ -1,6 +1,8 @@
 import { sendSignal } from '../procSignal.js';
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const ALLOWED_SIGNALS = new Set(['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGKILL', 'SIGQUIT', 'SIGUSR1', 'SIGUSR2']);
+const MAX_SIGNAL_TARGETS = 16;
 export const procTerm = {
     schema: {
         name: 'proc.term',
@@ -17,10 +19,24 @@ export const procTerm = {
     },
     async execute(args = {}) {
         try {
-            const signal = args.signal || 'SIGTERM';
+            const safeArgs = args && typeof args === 'object' ? args : {};
+            const signal = typeof safeArgs.signal === 'string' && safeArgs.signal.trim()
+                ? safeArgs.signal.trim().toUpperCase()
+                : 'SIGTERM';
+            if (!ALLOWED_SIGNALS.has(signal)) {
+                return { success: false, error: `Unsupported signal "${sanitizeToolText(signal, 32)}". Allowed: ${[...ALLOWED_SIGNALS].join(', ')}` };
+            }
+            const protectedPids = new Set([process.pid, process.ppid].filter((p) => Number.isInteger(p) && p > 0));
             let targetPids = [];
-            if (args.pid !== undefined) {
-                targetPids.push(Number(args.pid));
+            if (safeArgs.pid !== undefined) {
+                const numericPid = Number(safeArgs.pid);
+                if (!Number.isInteger(numericPid) || numericPid <= 1) {
+                    return { success: false, error: 'pid must be a positive integer greater than 1.' };
+                }
+                if (protectedPids.has(numericPid)) {
+                    return { success: false, error: 'Refusing to terminate the active Causyne process or its parent shell.' };
+                }
+                targetPids.push(numericPid);
             }
             else if (args.name || args.port !== undefined) {
                 const capability = await ensureCapability('system');
