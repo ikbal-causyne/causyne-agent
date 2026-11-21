@@ -125,7 +125,7 @@ export function loadConfig(): CausyneConfig {
       hardStop: true
     }
   };
-  if (!envDetected || !envDetected.apiKey) {
+  if (!hadExistingFile && (!envDetected || !envDetected.apiKey)) {
     saveConfig(defaultConfig);
   }
   return defaultConfig;
