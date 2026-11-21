@@ -43,7 +43,10 @@ export async function verifyCausyneTui(options = {}) {
         };
     }
     finally {
-        fs.rmSync(home, { recursive: true, force: true });
+        try {
+            fs.rmSync(home, { recursive: true, force: true });
+        }
+        catch { /* best-effort cleanup */ }
     }
 }
 export async function verifyCausyneChatMode(options = {}) {
@@ -77,6 +80,9 @@ export async function verifyCausyneChatMode(options = {}) {
         };
     }
     finally {
-        fs.rmSync(home, { recursive: true, force: true });
+        try {
+            fs.rmSync(home, { recursive: true, force: true });
+        }
+        catch { /* best-effort cleanup */ }
     }
 }

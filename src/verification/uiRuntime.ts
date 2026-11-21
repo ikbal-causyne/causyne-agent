@@ -52,7 +52,7 @@ export async function verifyCausyneTui(options: VerifyUiOptions = {}): Promise<V
       evidence: 'Observed actual ChatPrompt and StageSurface terminal output at each input boundary'
     };
   } finally {
-    fs.rmSync(home, { recursive: true, force: true });
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
   }
 }
 
@@ -83,6 +83,6 @@ export async function verifyCausyneChatMode(options: VerifyUiOptions = {}): Prom
       evidence: 'Launched Causyne chatMode and observed command handling in real POSIX PTY'
     };
   } finally {
-    fs.rmSync(home, { recursive: true, force: true });
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
   }
 }
