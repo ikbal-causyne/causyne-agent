@@ -332,8 +332,13 @@ export class AcpServer {
   }
 
   private initialize(params: InitializeRequest | undefined): InitializeResult {
-    if (!params || typeof params.protocolVersion !== 'number') {
-      throw this.paramsError('initialize requires protocolVersion');
+    if (
+      !params ||
+      typeof params.protocolVersion !== 'number' ||
+      !Number.isInteger(params.protocolVersion) ||
+      params.protocolVersion < 1
+    ) {
+      throw this.paramsError('initialize requires a valid positive integer protocolVersion');
     }
     const capabilities: AgentCapabilities = {
       loadSession: true,
