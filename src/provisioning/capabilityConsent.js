@@ -7,6 +7,9 @@
 import { loadConfig } from '../config.js';
 const FORBIDDEN_CONSENT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const GROUP_KEY_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+export function isValidGroupKey(group) {
+    return typeof group === 'string' && GROUP_KEY_RE.test(group) && !FORBIDDEN_CONSENT_KEYS.has(group);
+}
 export function consentMap() {
     const clean = Object.create(null);
     try {
