@@ -269,15 +269,19 @@ export class AcpServer {
     resolveWorkspace(cwd) {
         if (typeof cwd !== 'string' || !cwd.trim())
             throw this.paramsError('cwd is required');
+        let resolved;
         try {
-            const resolved = fs.realpathSync(path.resolve(cwd));
+            resolved = fs.realpathSync(path.resolve(cwd));
             if (!fs.statSync(resolved).isDirectory())
                 throw new Error('not a directory');
-            return resolved;
         }
         catch {
             throw this.paramsError(`cwd is not an accessible directory: ${cwd}`);
         }
+        if (isBlockedWorkspaceRoot(resolved)) {
+            throw this.paramsError(`cwd points to a blocked system directory: ${cwd}`);
+        }
+        return resolved;
     }
     bindWorkspace(cwd) {
         if (this.workspaceRoot === null) {
