@@ -183,6 +183,7 @@ export class EntitlementClient {
     stateRoot;
     fetchFn;
     identity;
+    registerPromise;
     constructor(options) {
         const safeOpts = options && typeof options === 'object' ? options : {};
         const apiBase = safeOpts.apiBase ?? LICENSE_API_BASE;
@@ -203,6 +204,7 @@ export class EntitlementClient {
         this.stateRoot = stateRoot;
         this.fetchFn = fetchFn;
         this.identity = null;
+        this.registerPromise = null;
     }
     async call(pathname, body, { register = false } = {}) {
         if (typeof pathname !== 'string'
@@ -288,19 +290,26 @@ export class EntitlementClient {
         const identity = this.identity ||= loadInstallationIdentity(this.stateRoot);
         if (identity.installationId)
             return identity.installationId;
-        const nonce = crypto.randomBytes(24).toString('base64url');
-        const response = await this.call('/v1/installations', {
-            publicKey: identity.publicKey,
-            nonce,
-            proof: sign(registrationText(identity.publicKey, nonce), identity.privateKeyPem)
-        }, { register: true });
-        if (typeof response?.installationId !== 'string' || !/^[\da-f-]{36}$/i.test(response.installationId)) {
-            throw new EntitlementAccessError('REGISTRATION_ERROR', 'Licensing service returned an invalid installation ID.');
-        }
-        const nextId = response.installationId;
-        identity.installationId = nextId;
-        saveInstallationIdentity(identity);
-        return nextId;
+        if (this.registerPromise)
+            return this.registerPromise;
+        this.registerPromise = (async () => {
+            const nonce = crypto.randomBytes(24).toString('base64url');
+            const response = await this.call('/v1/installations', {
+                publicKey: identity.publicKey,
+                nonce,
+                proof: sign(registrationText(identity.publicKey, nonce), identity.privateKeyPem)
+            }, { register: true });
+            if (typeof response?.installationId !== 'string' || !/^[\da-f-]{36}$/i.test(response.installationId)) {
+                throw new EntitlementAccessError('REGISTRATION_ERROR', 'Licensing service returned an invalid installation ID.');
+            }
+            const nextId = response.installationId;
+            identity.installationId = nextId;
+            saveInstallationIdentity(identity);
+            return nextId;
+        })().finally(() => {
+            this.registerPromise = null;
+        });
+        return this.registerPromise;
     }
     status() {
         return this.call('/v1/status');
