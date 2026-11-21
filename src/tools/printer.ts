@@ -126,7 +126,7 @@ export const printerPrint = {
     } catch (error: unknown) {
       return {
         success: false,
-        error: `Failed to print document: ${getErrorMessage(error)}`
+        error: `Failed to print document: ${sanitizeToolError(error)}`
       };
     }
   }
@@ -146,7 +146,7 @@ export const printerList = {
       const platform = os.platform();
 
       if (platform === 'darwin' || platform === 'linux') {
-        const { stdout } = await execFileAsync('lpstat', ['-p', '-d']).catch((e: unknown) => ({
+        const { stdout } = await execFileAsync('lpstat', ['-p', '-d'], { timeout: 15_000, maxBuffer: 1024 * 1024, env: sanitizeSubprocessEnv(process.env), windowsHide: true }).catch((e: unknown) => ({
           stdout: String((e as { stdout?: string })?.stdout || '')
         }));
         const lines = (stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
@@ -196,7 +196,7 @@ export const printerList = {
           '-NonInteractive',
           '-Command',
           psScript
-        ]);
+        ], { timeout: 15_000, maxBuffer: 1024 * 1024, env: sanitizeSubprocessEnv(process.env), windowsHide: true });
 
         let raw: Array<Record<string, unknown>> = [];
         try {
@@ -234,7 +234,7 @@ export const printerList = {
         return { success: false, error: `Unsupported OS platform: ${platform}` };
       }
     } catch (error: unknown) {
-      return { success: false, error: `Failed to list printers: ${getErrorMessage(error)}` };
+      return { success: false, error: `Failed to list printers: ${sanitizeToolError(error)}` };
     }
   }
 };
@@ -255,12 +255,13 @@ export const printerStatus = {
   },
   execute: async (args: PrinterStatusArgs = {}, _context?: ToolWorkspaceContext): Promise<Record<string, unknown>> => {
     try {
-      const { printerName } = args || {};
+      const safePrinter = validatePrinterName(args?.printerName);
       const platform = os.platform();
+      const env = sanitizeSubprocessEnv(process.env);
 
       if (platform === 'darwin' || platform === 'linux') {
-        const lpArgs = printerName ? ['-o', printerName] : ['-o'];
-        const { stdout } = await execFileAsync('lpstat', lpArgs).catch((e: unknown) => ({
+        const lpArgs = safePrinter ? ['-o', safePrinter] : ['-o'];
+        const { stdout } = await execFileAsync('lpstat', lpArgs, { timeout: 15_000, maxBuffer: 1024 * 1024, env, windowsHide: true }).catch((e: unknown) => ({
           stdout: String((e as { stdout?: string })?.stdout || '')
         }));
         const lines = (stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
@@ -289,9 +290,12 @@ export const printerStatus = {
           '-Command',
           psScript
         ], {
+          timeout: 15_000,
+          maxBuffer: 1024 * 1024,
+          windowsHide: true,
           env: {
-            ...process.env,
-            CAUSYNE_PRINTER_FILTER: printerName || ''
+            ...env,
+            CAUSYNE_PRINTER_FILTER: safePrinter || ''
           }
         });
 
@@ -314,7 +318,7 @@ export const printerStatus = {
         return { success: false, error: `Unsupported OS platform: ${platform}` };
       }
     } catch (error: unknown) {
-      return { success: false, error: `Failed to inspect printer status: ${getErrorMessage(error)}` };
+      return { success: false, error: `Failed to inspect printer status: ${sanitizeToolError(error)}` };
     }
   }
 };
