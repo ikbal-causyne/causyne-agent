@@ -63,7 +63,7 @@ function schemaTokens(names) {
 // Context accounting
 // ---------------------------------------------------------------------------
 export function buildContextReport() {
-    const config = loadConfig();
+    const config = loadConfig() || {};
     const tier = String(config.tier || 'premium');
     const provider = String(config.provider || 'default');
     const model = String(config.model || 'default');
@@ -86,7 +86,7 @@ export function buildContextReport() {
         name,
         tools: tools.length,
         tokens: schemaTokens(tools),
-        playbookTokens: playbooks[name] ? tokensOf(playbooks[name]) : 0
+        playbookTokens: Object.hasOwn(playbooks, name) && playbooks[name] ? tokensOf(playbooks[name]) : 0
     }));
     const spills = listSpills(1000);
     const newestSpill = spills[0];
@@ -104,7 +104,7 @@ export function buildContextReport() {
             dir: getOutputDir(),
             files: spills.length,
             bytes: spills.reduce((sum, item) => sum + item.bytes, 0),
-            newest: newestSpill ? new Date(newestSpill.modified).toISOString() : null
+            newest: newestSpill && Number.isFinite(newestSpill.modified) ? new Date(newestSpill.modified).toISOString() : null
         }
     };
 }
