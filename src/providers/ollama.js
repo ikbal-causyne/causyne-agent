@@ -36,7 +36,9 @@ export class OllamaProvider extends LLMProvider {
         const text = [];
         const images = [];
         for (const block of msg.content) {
-            if (block.type === 'text') {
+            if (!block || typeof block !== 'object')
+                continue;
+            if (block.type === 'text' && typeof block.text === 'string') {
                 text.push(block.text);
             }
             else if (block.type === 'image' && block.source?.type === 'base64') {
@@ -75,14 +77,19 @@ export class OllamaProvider extends LLMProvider {
             freeFormPaths = scanReport.freeFormPaths;
         }
         const endpoint = this.baseUrl || 'http://localhost:11434/api/chat';
+        const trimmedKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
+        const headers = { 'Content-Type': 'application/json' };
+        if (trimmedKey)
+            headers['Authorization'] = `Bearer ${trimmedKey}`;
         const requestOpts = {
             url: endpoint,
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             signal: options.signal,
             timeoutMs: options.timeoutMs,
             providerLabel: 'Ollama',
-            hasApiKey: false,
+            secrets: trimmedKey ? [trimmedKey] : [],
+            hasApiKey: Boolean(trimmedKey),
             allowInsecureHttp: this.allowInsecureHttp
         };
         const data = wantsStreaming(options)
@@ -111,8 +118,8 @@ export class OllamaProvider extends LLMProvider {
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
             ...(reasoningContent ? { reasoningContent } : {}),
             usage: {
-                promptTokens: data['prompt_eval_count'] || 0,
-                completionTokens: data['eval_count'] || 0
+                promptTokens: typeof data['prompt_eval_count'] === 'number' && Number.isFinite(data['prompt_eval_count']) && data['prompt_eval_count'] > 0 ? data['prompt_eval_count'] : 0,
+                completionTokens: typeof data['eval_count'] === 'number' && Number.isFinite(data['eval_count']) && data['eval_count'] > 0 ? data['eval_count'] : 0
             }
         };
     }
