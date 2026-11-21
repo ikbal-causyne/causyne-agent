@@ -166,25 +166,54 @@ async function extractArchive(source: string, dest: string): Promise<ArchiveResu
     }
   }
 
-  // 4. Cross-platform Python standard library fallback
+  // 4. Cross-platform Python standard library fallback (Zip-Slip & Tar-Slip safe)
   try {
     execFileSync('python3', [
       '-c',
-      'import zipfile, tarfile, sys, os\n' +
-      'src, dst = sys.argv[1], sys.argv[2]\n' +
+      'import zipfile, tarfile, sys, os, stat\n' +
+      'src, dst = sys.argv[1], os.path.realpath(sys.argv[2])\n' +
+      'max_bytes = 256 * 1024 * 1024\n' +
+      'def safe_target(name):\n' +
+      '    if not name or name.startswith("/") or name.startswith("\\\\") or (len(name) > 1 and name[1] == ":"):\n' +
+      '        raise ValueError(f"Unsafe archive entry path: {name}")\n' +
+      '    out = os.path.realpath(os.path.join(dst, name))\n' +
+      '    if out != dst and not out.startswith(dst + os.sep):\n' +
+      '        raise ValueError(f"Archive path traversal blocked: {name}")\n' +
+      '    return out\n' +
       'if zipfile.is_zipfile(src):\n' +
       '    with zipfile.ZipFile(src, "r") as z:\n' +
+      '        total = 0\n' +
+      '        for info in z.infolist():\n' +
+      '            if stat.S_ISLNK(info.external_attr >> 16):\n' +
+      '                raise ValueError(f"Refusing symlink archive entry: {info.filename}")\n' +
+      '            total += info.file_size\n' +
+      '            if total > max_bytes:\n' +
+      '                raise ValueError("Archive exceeds 256 MB uncompressed safety limit")\n' +
+      '            safe_target(info.filename)\n' +
       '        z.extractall(dst)\n' +
       'elif tarfile.is_tarfile(src):\n' +
       '    with tarfile.open(src, "r:*") as t:\n' +
-      '        t.extractall(dst)\n' +
+      '        total = 0\n' +
+      '        members = t.getmembers()\n' +
+      '        for m in members:\n' +
+      '            if m.issym() or m.islnk() or m.isdev() or m.isfifo():\n' +
+      '                raise ValueError(f"Refusing unsafe tar entry: {m.name}")\n' +
+      '            total += max(0, m.size)\n' +
+      '            if total > max_bytes:\n' +
+      '                raise ValueError("Archive exceeds 256 MB uncompressed safety limit")\n' +
+      '            safe_target(m.name)\n' +
+      '        t.extractall(dst, members=members)\n' +
       'else:\n' +
       '    raise ValueError("Unrecognized archive format")\n',
       source,
       dest
-    ], { stdio: 'pipe' });
+    ], { stdio: 'pipe', timeout: 60_000, maxBuffer: 10 * 1024 * 1024, windowsHide: true });
     return { success: true, output: `Extracted successfully to ${dest} (via python3)` };
-  } catch {
+  } catch (pyErr: any) {
+    const pyMsg = String(pyErr?.stderr || pyErr?.message || '');
+    if (/traversal|unsafe|symlink|256 MB/i.test(pyMsg)) {
+      return { success: false, error: `Refused unsafe archive extraction: ${pyMsg.trim()}` };
+    }
     // Fall through
   }
 
