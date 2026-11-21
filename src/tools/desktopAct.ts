@@ -121,15 +121,26 @@ function encodeAction(action: unknown, index: number): { ok: true; argv: string 
     }
   }
 
+  if (verb === 'wait') {
+    const secs = Number(act.seconds);
+    if (!Number.isFinite(secs) || secs <= 0 || secs > 10) {
+      return { ok: false, error: `action ${index}: wait requires seconds between 0 and 10` };
+    }
+    return { ok: true, argv: `wait::${secs}` };
+  }
+
   const value = verb === 'press' ? act.target
     : verb === 'type' ? act.text
-      : verb === 'key' ? act.keyCode
-        : act.seconds;
+      : act.keyCode;
 
   if (value === undefined || value === null || String(value).trim() === '') {
     return { ok: false, error: `action ${index}: "${verb}" is missing its argument` };
   }
-  return { ok: true, argv: `${verb}::${clean(value)}` };
+  const strValue = String(value);
+  if (verb === 'type' && strValue.length > 2000) {
+    return { ok: false, error: `action ${index}: type text exceeds 2000 characters` };
+  }
+  return { ok: true, argv: `${verb}::${clean(strValue)}` };
 }
 
 export const desktopAct: {
@@ -169,7 +180,7 @@ export const desktopAct: {
   },
 
   async execute(args: DesktopActArgs = {}, context: ToolWorkspaceContext = {}): Promise<DesktopActResult> {
-    const app = typeof args?.app === 'string' ? args.app.trim() : '';
+    const app = typeof args?.app === 'string' ? sanitizeToolText(args.app.trim(), 120) : '';
     const actions = Array.isArray(args?.actions) ? args.actions : [];
 
     if (actions.length === 0) {
