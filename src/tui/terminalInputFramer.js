@@ -21,7 +21,9 @@ export class TerminalInputFramer {
     push(input) {
         if (input == null)
             return [];
-        const incoming = Buffer.isBuffer(input) ? input : Buffer.from(String(input), 'utf8');
+        const incoming = Buffer.isBuffer(input)
+            ? input
+            : (input instanceof Uint8Array ? Buffer.from(input.buffer, input.byteOffset, input.byteLength) : Buffer.from(String(input), 'utf8'));
         if (incoming.length === 0)
             return [];
         const bytes = this.pending.length ? Buffer.concat([this.pending, incoming]) : incoming;

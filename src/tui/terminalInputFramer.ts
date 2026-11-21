@@ -28,9 +28,11 @@ export class TerminalInputFramer {
     return this.pending.length !== 0;
   }
 
-  push(input: Buffer | string | null | undefined): Buffer[] {
+  push(input: Buffer | Uint8Array | string | null | undefined): Buffer[] {
     if (input == null) return [];
-    const incoming = Buffer.isBuffer(input) ? input : Buffer.from(String(input), 'utf8');
+    const incoming = Buffer.isBuffer(input)
+      ? input
+      : (input instanceof Uint8Array ? Buffer.from(input.buffer, input.byteOffset, input.byteLength) : Buffer.from(String(input), 'utf8'));
     if (incoming.length === 0) return [];
     const bytes = this.pending.length ? Buffer.concat([this.pending, incoming]) : incoming;
     this.pending = Buffer.alloc(0);
