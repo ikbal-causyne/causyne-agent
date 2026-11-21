@@ -31,8 +31,8 @@ export const CAPABILITY_MIN_RANK: Record<string, number> = {
 export function isCapabilityAllowed(tier: unknown, capability: unknown): boolean {
   if (!CAPABILITY_GATING_ENABLED) return true;
   if (typeof capability !== 'string') return true;
-  const need = CAPABILITY_MIN_RANK[capability];
+  const need = Object.hasOwn(CAPABILITY_MIN_RANK, capability) ? CAPABILITY_MIN_RANK[capability] : undefined;
   if (need == null) return true;
-  const rank = typeof tier === 'string' ? (TIER_RANK[tier] ?? 0) : 0;
+  const rank = typeof tier === 'string' && Object.hasOwn(TIER_RANK, tier) ? (TIER_RANK[tier] ?? 0) : 0;
   return rank >= need;
 }
