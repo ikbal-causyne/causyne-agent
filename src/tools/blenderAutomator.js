@@ -51,7 +51,7 @@ function getWorkspaceTempDir(context) {
         fs.mkdirSync(wsTmp, { recursive: true });
     return wsTmp;
 }
-async function runHeadlessCli(scriptPath, customCode, results, simulateMissing = false) {
+async function runHeadlessCli(scriptPath, customCode, results, simulateMissing = false, context, timeoutMs) {
     const blenderBin = getBlenderExecutablePath();
     if (simulateMissing || !blenderBin || !fs.existsSync(blenderBin)) {
         results.push(`[ENGINE MISSING or SIMULATED] Blender executable not found locally (${String(blenderBin ?? 'none')}). Cascading to Sovereign Fallback...`);
@@ -64,38 +64,100 @@ async function runHeadlessCli(scriptPath, customCode, results, simulateMissing =
         throw err;
     }
     let targetPythonPath = scriptPath || null;
+    let ownsTempScript = false;
     if (!targetPythonPath && customCode) {
-        const tempDir = path.join(getWorkspaceTempDir(), 'causyne_blender');
+        const tempDir = path.join(getWorkspaceTempDir(context), 'causyne_blender');
         if (!fs.existsSync(tempDir))
             fs.mkdirSync(tempDir, { recursive: true });
-        targetPythonPath = path.join(tempDir, `causyne_3d_gen_${Date.now()}.py`);
-        fs.writeFileSync(targetPythonPath, customCode, 'utf8');
+        targetPythonPath = path.join(tempDir, `causyne_3d_gen_${process.pid}_${crypto.randomBytes(8).toString('hex')}.py`);
+        fs.writeFileSync(targetPythonPath, customCode, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        ownsTempScript = true;
     }
     if (!targetPythonPath || !fs.existsSync(targetPythonPath)) {
         throw new Error('No valid Python script provided for headless Blender execution.');
     }
     const finalScript = targetPythonPath;
+    const boundedTimeout = boundedInteger(timeoutMs, 60_000, 1_000, 300_000);
     return new Promise((resolve) => {
-        results.push(`[Layer 3 Headless] Launching Blender CLI in background: ${blenderBin} --background --python ${finalScript}`);
-        const child = spawn(blenderBin, ['--background', '--python', finalScript], {
-            stdio: ['ignore', 'pipe', 'pipe']
+        const cleanup = () => {
+            if (ownsTempScript) {
+                try {
+                    fs.unlinkSync(finalScript);
+                }
+                catch { /* ignore */ }
+            }
+        };
+        results.push(`[Layer 3 Headless] Launching Blender CLI in background: ${blenderBin} --background --factory-startup --disable-autoexec --python-exit-code 1 --python ${finalScript}`);
+        const child = spawn(blenderBin, ['--background', '--factory-startup', '--disable-autoexec', '--python-exit-code', '1', '--python', finalScript], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            env: sanitizeSubprocessEnv(process.env)
         });
         let stdout = '';
         let stderr = '';
-        child.stdout.on('data', (data) => { stdout += data.toString(); });
-        child.stderr.on('data', (data) => { stderr += data.toString(); });
+        let settled = false;
+        let killTimer = null;
+        const finish = (outcome) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(timeoutHandle);
+            if (killTimer)
+                clearTimeout(killTimer);
+            if (context?.signal)
+                context.signal.removeEventListener('abort', onAbort);
+            cleanup();
+            resolve(outcome);
+        };
+        const terminateChild = (reason) => {
+            try {
+                child.kill('SIGTERM');
+            }
+            catch { /* ignore */ }
+            killTimer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { /* ignore */ }
+            }, 2000);
+            killTimer.unref();
+            results.push(`[Layer 3 Headless] ${reason}`);
+            finish({ success: false, error: reason, log: results });
+        };
+        const timeoutHandle = setTimeout(() => terminateChild(`Blender CLI timed out after ${boundedTimeout}ms`), boundedTimeout);
+        timeoutHandle.unref();
+        const onAbort = () => terminateChild('Blender CLI aborted by cancellation signal');
+        if (context?.signal) {
+            if (context.signal.aborted) {
+                onAbort();
+                return;
+            }
+            context.signal.addEventListener('abort', onAbort, { once: true });
+        }
+        child.stdout.on('data', (data) => {
+            if (stdout.length < MAX_BLENDER_OUTPUT_BYTES) {
+                stdout += data.toString('utf8').slice(0, MAX_BLENDER_OUTPUT_BYTES - stdout.length);
+            }
+        });
+        child.stderr.on('data', (data) => {
+            if (stderr.length < MAX_BLENDER_OUTPUT_BYTES) {
+                stderr += data.toString('utf8').slice(0, MAX_BLENDER_OUTPUT_BYTES - stderr.length);
+            }
+        });
         child.on('error', (err) => {
-            results.push(`[Layer 3 Headless] Spawn failed: ${err.message}`);
-            resolve({ success: false, error: err.message, log: results });
+            const msg = sanitizeToolError(err);
+            results.push(`[Layer 3 Headless] Spawn failed: ${msg}`);
+            finish({ success: false, error: msg, log: results });
         });
         child.on('close', (code) => {
             if (code === 0) {
-                results.push(`[Layer 3 Headless] Execution successful:\n${stdout.trim()}`);
-                resolve({ success: true, log: results });
+                results.push(`[Layer 3 Headless] Execution successful:\n${sanitizeToolText(stdout.trim(), 4000)}`);
+                finish({ success: true, log: results });
             }
             else {
-                results.push(`[Layer 3 Headless] Execution failed (code ${String(code)}):\n${stderr.trim() || stdout.trim()}`);
-                resolve({ success: false, error: `Blender CLI exited with code ${String(code)}`, log: results });
+                const detail = sanitizeToolText(stderr.trim() || stdout.trim(), 4000);
+                results.push(`[Layer 3 Headless] Execution failed (code ${String(code)}):\n${detail}`);
+                finish({ success: false, error: `Blender CLI exited with code ${String(code)}`, log: results });
             }
         });
     });
@@ -211,7 +273,7 @@ cam.rotation_euler = (math.radians(50), 0, math.radians(45))
 if hasattr(cam.data, "lens"):
   cam.data.lens = ${focal}
 print('Headless camera framed at studio angle')`;
-                await runHeadlessCli(null, camCode, results);
+                recordOutcome(await runHeadlessCli(null, camCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'smartGeometry') {
                 const bevelWidth = boundedFiniteNumber(action.bevel_width, 0.015, 0.0001, 10.0);
@@ -236,7 +298,7 @@ for o in targets:
     sub.levels = 2
     sub.render_levels = 2
 print("Headless applied Studio Bevel and Subsurf")`;
-                await runHeadlessCli(null, geomCode, results);
+                recordOutcome(await runHeadlessCli(null, geomCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'smartMaterial') {
                 const matCode = `import bpy, time, json
@@ -274,7 +336,7 @@ for o in targets:
   else:
     o.data.materials[0] = mat
 print(f"Headless applied Smart PBR Material ({preset})")`;
-                await runHeadlessCli(null, matCode, results);
+                recordOutcome(await runHeadlessCli(null, matCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'cinematicAtmosphere') {
                 const sunElev = boundedFiniteNumber(action.sun_elevation, 12.0, -90.0, 90.0);
@@ -312,7 +374,7 @@ if ${fogPy}:
   fb.display_type = 'WIRE'
   fb.data.materials.append(fm)
 print("Headless applied Cinematic Atmosphere (Nishita Sky + Volumetric Fog)")`;
-                await runHeadlessCli(null, atmoCode, results);
+                recordOutcome(await runHeadlessCli(null, atmoCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'smartGeoNodes') {
                 const subdivs = Number.isFinite(Number(action.subdivisions)) ? Math.max(1, Math.min(6, Math.round(Number(action.subdivisions)))) : 3;
@@ -340,7 +402,7 @@ for o in targets:
       ng.links.new(gi.outputs["Geometry"], go.inputs["Geometry"])
   mod.node_group = ng
 print(f"Headless attached Geometry Nodes ({gen})")`;
-                await runHeadlessCli(null, gnCode, results);
+                recordOutcome(await runHeadlessCli(null, gnCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'setupStudioLighting') {
                 const keyEnergy = boundedFiniteNumber(action.key_energy, 800, 0, 1_000_000);
@@ -356,7 +418,7 @@ ko.location = (6, -6, 8)
 ko.rotation_euler = (math.radians(45), 0, math.radians(45))
 bpy.context.scene.collection.objects.link(ko)
 print('Headless studio lighting built')`;
-                await runHeadlessCli(null, lightCode, results);
+                recordOutcome(await runHeadlessCli(null, lightCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'exportAsset') {
                 const destDir = action.directory
@@ -381,7 +443,7 @@ if "obj" in fmts:
   else:
     bpy.ops.export_scene.obj(filepath=os.path.join(d, f"{prefix}.obj"))
 print("Headless exported formats to", d)`;
-                await runHeadlessCli(null, exportCode, results);
+                recordOutcome(await runHeadlessCli(null, exportCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'clearScene') {
                 const keepPy = action.keep_lights_camera !== false ? 'True' : 'False';
@@ -391,7 +453,7 @@ for o in list(bpy.context.scene.objects):
     continue
   bpy.data.objects.remove(o, do_unlink=True)
 print("Headless cleared scene meshes")`;
-                await runHeadlessCli(null, clearCode, results);
+                recordOutcome(await runHeadlessCli(null, clearCode, results, false, context, action.timeoutMs));
             }
             else if (action.type === 'executePython') {
                 let pyCode = action.code || '';
@@ -408,7 +470,7 @@ print("Headless cleared scene meshes")`;
                 }
                 results.push('[Layer 3 Fallback] Live bridge not active. Executing via standalone Blender background CLI...');
                 try {
-                    recordOutcome(await runHeadlessCli(safeScriptPath, pyCode, results));
+                    recordOutcome(await runHeadlessCli(safeScriptPath, pyCode, results, false, context, action.timeoutMs));
                 }
                 catch (cliErr) {
                     anyFailed = true;
@@ -425,10 +487,11 @@ os.makedirs(os.path.dirname(target), exist_ok=True)
 bpy.ops.render.opengl(write_still=True, filepath=target)
 print("Captured headless viewport to", target)`;
                 try {
-                    await runHeadlessCli(null, captureCode, results);
+                    recordOutcome(await runHeadlessCli(null, captureCode, results, false, context, action.timeoutMs));
                 }
                 catch (cliErr) {
-                    results.push(`[Layer 3 Capture Error] ${getErrorMessage(cliErr)}`);
+                    anyFailed = true;
+                    results.push(`[Layer 3 Capture Error] ${sanitizeToolError(cliErr)}`);
                 }
             }
             else if (action.type === 'renderFrame' || action.type === 'renderAnimation') {
@@ -488,10 +551,11 @@ if params["engine"]:
 bpy.ops.render.render(write_still=True)
 print("Rendered still frame to", target)`;
                 try {
-                    await runHeadlessCli(null, renderCode, results);
+                    recordOutcome(await runHeadlessCli(null, renderCode, results, false, context, action.timeoutMs));
                 }
                 catch (cliErr) {
-                    results.push(`[Layer 3 Render Error] ${getErrorMessage(cliErr)}`);
+                    anyFailed = true;
+                    results.push(`[Layer 3 Render Error] ${sanitizeToolError(cliErr)}`);
                 }
             }
             else if (action.type === 'runHeadless') {
@@ -503,7 +567,7 @@ print("Rendered still frame to", target)`;
                     pyCode = fs.readFileSync(safeScriptPath, 'utf8');
                 }
                 try {
-                    recordOutcome(await runHeadlessCli(safeScriptPath, pyCode, results));
+                    recordOutcome(await runHeadlessCli(safeScriptPath, pyCode, results, false, context, action.timeoutMs));
                 }
                 catch (cliErr) {
                     anyFailed = true;
@@ -511,6 +575,6 @@ print("Rendered still frame to", target)`;
                 }
             }
         }
-        return { success: true, log: results };
+        return { success: !anyFailed, log: results };
     }
 };
