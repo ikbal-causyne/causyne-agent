@@ -3,7 +3,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
+import {
+  getErrorMessage,
+  resolveToolWorkspaceRoots,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 const MAX_ASSET_BYTES = 100 * 1024 * 1024;
 
@@ -60,6 +66,9 @@ export async function streamAssetResponseToFile(
   try {
     handle = await fs.open(temporary, 'wx', 0o600);
     while (true) {
+      if (sandbox?.signal?.aborted) {
+        throw new Error('Asset download aborted');
+      }
       const { done, value } = await reader.read();
       if (done) break;
       if (!value || value.byteLength === 0) continue;
@@ -103,7 +112,7 @@ export async function streamAssetResponseToFile(
 async function fetchCuratedAssetWithSafeRedirects(url: string, parentSignal?: AbortSignal): Promise<Response> {
   const timeoutSignal = AbortSignal.timeout(30_000);
   const signal = parentSignal ? AbortSignal.any([timeoutSignal, parentSignal]) : timeoutSignal;
-  let current = new URL(url);
+  let current = await assertPublicWebUrl(url);
   for (let redirects = 0; redirects <= 5; redirects++) {
     const response = await fetch(current, {
       headers: { 'User-Agent': 'Causyne-Agent-Sovereign/1.3.1' },
