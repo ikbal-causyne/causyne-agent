@@ -101,6 +101,7 @@ export function groupForPackage(packageName: string): string | null {
 function manifestFor(groups: readonly string[]): Record<string, unknown> {
   const dependencies: Array<readonly [string, string]> = [];
   for (const group of groups) {
+    if (!isKnownGroup(group)) continue;
     for (const entry of GROUP_PACKAGES[group] || []) dependencies.push(entry);
   }
   return {

@@ -79,6 +79,8 @@ export function groupForPackage(packageName) {
 function manifestFor(groups) {
     const dependencies = [];
     for (const group of groups) {
+        if (!isKnownGroup(group))
+            continue;
         for (const entry of GROUP_PACKAGES[group] || [])
             dependencies.push(entry);
     }
