@@ -268,7 +268,8 @@ export class InputLayer extends Layer {
       case 'end':   this.editor.moveEnd(); return 'handled';
       case 'char':  this.editor.insert(event.text); return 'handled';
       case 'paste': {
-        const clean = String(event.text || '').replace(/[\r\n]+/g, '').trim();
+        // eslint-disable-next-line no-control-regex
+        const clean = String(event.text || '').replace(/[\x00-\x1f\x7f]+/g, '').trim().slice(0, MAX_DIALOG_PASTE_CHARS);
         if (clean) this.editor.insert(clean);
         return 'handled';
       }
@@ -283,9 +284,11 @@ export class InputLayer extends Layer {
         case 'u': this.editor.killToStart(); return 'handled';
         case 'w': this.editor.killWordLeft(); return 'handled';
         case 'v': {
-          const text = readClipboardSync();
+          let text = '';
+          try { text = readClipboardSync() || ''; } catch { text = ''; }
           if (text) {
-            const clean = String(text).replace(/[\r\n]+/g, '').trim();
+            // eslint-disable-next-line no-control-regex
+            const clean = String(text).replace(/[\x00-\x1f\x7f]+/g, '').trim().slice(0, MAX_DIALOG_PASTE_CHARS);
             if (clean) this.editor.insert(clean);
           }
           return 'handled';
