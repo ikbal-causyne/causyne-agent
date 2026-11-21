@@ -496,8 +496,13 @@ export function getProcessEntitlementGate(): EntitlementGate {
 }
 
 export async function runLicenseCommand(action = 'status', plan = ''): Promise<void> {
+  const normalizedAction = typeof action === 'string' ? action.trim().toLowerCase() : 'status';
+  const normalizedPlan = typeof plan === 'string' ? plan.trim() : '';
+  if (/[\r\n\0]/.test(normalizedPlan)) {
+    throw new EntitlementAccessError('INVALID_PLAN', 'Unknown Causyne plan.');
+  }
   const client = new EntitlementClient();
-  if (action === 'plans') {
+  if (normalizedAction === 'plans') {
     console.log('Causyne Go plans: monthly, annual, two_month_pass, two_year_pass');
     console.log('Paid access does not include paid model inference.');
     console.log('One-time passes are non-recurring; pricing is shown at merchant checkout.');
