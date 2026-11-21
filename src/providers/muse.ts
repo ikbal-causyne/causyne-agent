@@ -73,7 +73,8 @@ export class MuseProvider extends OpenAICompatibleProvider {
   }
 
   override get canTranscribe(): boolean {
-    return Boolean(this.apiKey) && process.env.CAUSYNE_MUSE_ASR === '1';
+    const key = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
+    return Boolean(key) && process.env.CAUSYNE_MUSE_ASR === '1';
   }
 
   override async transcribeAudio(
@@ -81,7 +82,13 @@ export class MuseProvider extends OpenAICompatibleProvider {
     mimeType = 'audio/wav',
     options: Record<string, any> = {}
   ): Promise<string | null> {
-    if (!base64 || !this.apiKey) return null;
+    const key = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
+    if (typeof base64 !== 'string' || !base64.trim() || !key) return null;
+    const maxAudioBytes = 25 * 1024 * 1024;
+    const audioBuf = Buffer.from(base64, 'base64');
+    if (audioBuf.byteLength === 0 || audioBuf.byteLength > maxAudioBytes) {
+      throw new Error(`Muse Voice Transcribe audio clip exceeds maximum size (${maxAudioBytes} bytes).`);
+    }
 
     const extension = String(mimeType).includes('mp3') ? 'mp3'
       : String(mimeType).includes('mp4') || String(mimeType).includes('m4a') ? 'm4a'
@@ -91,22 +98,25 @@ export class MuseProvider extends OpenAICompatibleProvider {
 
     const form = new FormData();
     form.append('model', MUSE_TRANSCRIBE_MODEL);
-    form.append('file', new Blob([Buffer.from(base64, 'base64')], { type: mimeType }), `clip.${extension}`);
+    form.append('file', new Blob([audioBuf], { type: mimeType }), `clip.${extension}`);
 
+    const opts = options && typeof options === 'object' ? options : {};
     const data: Record<string, any> = await safeProviderFetchJson({
       url: this.transcribeUrl,
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+      headers: { Authorization: `Bearer ${key}` },
       body: form,
-      signal: options['signal'],
-      timeoutMs: options['timeoutMs'],
+      signal: opts['signal'],
+      timeoutMs: opts['timeoutMs'],
       providerLabel: 'Muse Voice Transcribe',
-      secrets: [this.apiKey],
-      hasApiKey: true
+      secrets: [key],
+      hasApiKey: true,
+      allowInsecureHttp: this.allowInsecureHttp
     });
-    const text = data['text']
-      || data['transcript']
-      || (Array.isArray(data['turns']) ? data['turns'].map((t: any) => t.text).filter(Boolean).join(' ') : '');
+    const safeData = data && typeof data === 'object' ? data : {};
+    const text = safeData['text']
+      || safeData['transcript']
+      || (Array.isArray(safeData['turns']) ? safeData['turns'].map((t: any) => (t && typeof t === 'object' && typeof t.text === 'string' ? t.text : '')).filter(Boolean).join(' ') : '');
     return String(text || '').trim() || null;
   }
 }
