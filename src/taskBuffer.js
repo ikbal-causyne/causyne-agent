@@ -37,8 +37,19 @@ export class TaskBuffer {
             if (err?.code !== 'ENOENT')
                 throw err;
         }
-        const entry = JSON.stringify({ ts: Date.now(), ...stepData }) + '\n';
-        fs.appendFileSync(file, entry, { mode: 0o600 });
+        const payload = stepData && typeof stepData === 'object' ? stepData : { value: stepData };
+        let serialized;
+        try {
+            serialized = JSON.stringify({ ts: Date.now(), ...payload });
+        }
+        catch {
+            serialized = JSON.stringify({ ts: Date.now(), error: 'unserializable_step_data' });
+        }
+        const MAX_STEP_JSON_BYTES = 512 * 1024;
+        if (serialized.length > MAX_STEP_JSON_BYTES) {
+            serialized = JSON.stringify({ ts: Date.now(), truncated: true, preview: serialized.slice(0, 4096) });
+        }
+        fs.appendFileSync(file, serialized + '\n', { mode: 0o600 });
     }
     async getBuffer(taskId) {
         const file = this.getBufferPath(taskId);
