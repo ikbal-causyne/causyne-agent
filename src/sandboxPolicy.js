@@ -18,6 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { isWithinPhysicalPath, physicalPath } from './agent/workspaceBoundary.js';
 const MAX_SUBSTITUTION_DEPTH = 16;
+const MAX_SUBSTITUTIONS = 64;
 const SAFE_ENV_TEMPLATE_EXACT = new Set([
     '.env.example',
     '.env.sample',
@@ -391,11 +392,18 @@ export function parseMaskAndExtractSubstitutions(input, depth = 0) {
         masked += ch;
         i++;
     }
-    if (depth < MAX_SUBSTITUTION_DEPTH && substitutions.length > 0) {
+    if (substitutions.length > MAX_SUBSTITUTIONS) {
+        substitutions.length = MAX_SUBSTITUTIONS;
+    }
+    if (depth < MAX_SUBSTITUTION_DEPTH && substitutions.length > 0 && substitutions.length < MAX_SUBSTITUTIONS) {
         const nested = [];
         for (const sub of substitutions) {
+            if (substitutions.length + nested.length >= MAX_SUBSTITUTIONS)
+                break;
             const parsed = parseMaskAndExtractSubstitutions(sub, depth + 1);
             for (const deeper of parsed.substitutions) {
+                if (substitutions.length + nested.length >= MAX_SUBSTITUTIONS)
+                    break;
                 nested.push(deeper);
             }
         }
