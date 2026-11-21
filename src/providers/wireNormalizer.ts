@@ -16,7 +16,7 @@ import {
   resolveToolCallEnvelopeArguments,
   stripToolCallMarkup
 } from '../implementationPlan.js';
-import type { ChatResponseToolCall } from './base.d.js';
+import type { ChatResponseToolCall } from './base.js';
 
 export interface NormalizedChoiceResult {
   content: string;
