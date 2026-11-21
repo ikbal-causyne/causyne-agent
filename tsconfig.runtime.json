@@ -336,7 +336,8 @@
     "src/sessionStore.ts",
     "src/taskBuffer.ts",
     "src/memory.ts",
-    "src/memoryManager.ts"
+    "src/memoryManager.ts",
+    "src/embodimentSession.ts"
   ],
   "exclude": [
     "node_modules",
