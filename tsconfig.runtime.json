@@ -304,7 +304,8 @@
     "src/licensing/policy.ts",
     "src/licensing/entitlements.ts",
     "src/provisioning/capabilityConsent.ts",
-    "src/provisioning/capabilityTools.ts"
+    "src/provisioning/capabilityTools.ts",
+    "src/provisioning/capabilityProvisioner.ts"
   ],
   "exclude": [
     "node_modules",
