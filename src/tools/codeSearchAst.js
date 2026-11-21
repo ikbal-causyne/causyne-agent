@@ -1,8 +1,9 @@
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as acorn from 'acorn';
 import * as walk from 'acorn-walk';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceInput, getErrorMessage, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const MAX_AST_FILE_BYTES = 2 * 1024 * 1024;
 export const codeSearchAst = {
     schema: {
         name: 'code_search_ast',
@@ -18,15 +19,12 @@ export const codeSearchAst = {
             required: ['targetFile']
         }
     },
-    async execute(args = {}, _context) {
-        const targetFile = args?.targetFile;
-        if (typeof targetFile !== 'string' || !fs.existsSync(targetFile)) {
-            return `Error: File not found at ${String(targetFile ?? '')}`;
-        }
+    async execute(args = {}, context) {
         try {
-            const code = fs.readFileSync(targetFile, 'utf8');
-            const ext = path.extname(targetFile).toLowerCase();
-            let output = `File: ${targetFile}\nStructure Summary:\n\n`;
+            const { resolved } = await assertSafeWorkspaceInput(args?.targetFile, context, { maxBytes: MAX_AST_FILE_BYTES });
+            const code = await fs.readFile(resolved, 'utf8');
+            const ext = path.extname(resolved).toLowerCase();
+            let output = `File: ${sanitizeToolText(resolved, 260)}\nStructure Summary:\n\n`;
             if (ext === '.js' || ext === '.ts' || ext === '.jsx' || ext === '.tsx') {
                 try {
                     const ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'module', locations: true });

@@ -1,8 +1,16 @@
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import * as acorn from 'acorn';
 import * as walk from 'acorn-walk';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceInput,
+  getErrorMessage,
+  sanitizeToolError,
+  sanitizeToolText,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const MAX_AST_FILE_BYTES = 2 * 1024 * 1024;
 
 export interface CodeSearchAstArgs {
   targetFile?: string | undefined;
@@ -24,16 +32,12 @@ export const codeSearchAst = {
     }
   },
 
-  async execute(args: CodeSearchAstArgs = {}, _context?: ToolWorkspaceContext): Promise<string | { success: boolean; output?: string | undefined; error?: string | undefined }> {
-    const targetFile = args?.targetFile;
-    if (typeof targetFile !== 'string' || !fs.existsSync(targetFile)) {
-      return `Error: File not found at ${String(targetFile ?? '')}`;
-    }
-
+  async execute(args: CodeSearchAstArgs = {}, context?: ToolWorkspaceContext): Promise<string | { success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
-      const code = fs.readFileSync(targetFile, 'utf8');
-      const ext = path.extname(targetFile).toLowerCase();
-      let output = `File: ${targetFile}\nStructure Summary:\n\n`;
+      const { resolved } = await assertSafeWorkspaceInput(args?.targetFile, context, { maxBytes: MAX_AST_FILE_BYTES });
+      const code = await fs.readFile(resolved, 'utf8');
+      const ext = path.extname(resolved).toLowerCase();
+      let output = `File: ${sanitizeToolText(resolved, 260)}\nStructure Summary:\n\n`;
 
       if (ext === '.js' || ext === '.ts' || ext === '.jsx' || ext === '.tsx') {
         try {
