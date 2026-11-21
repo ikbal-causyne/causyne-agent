@@ -5,6 +5,8 @@ import crypto from 'node:crypto';
 import * as gitBackend from './gitSnapshot.js';
 import { unifiedDiff, looksBinary } from './textDiff.js';
 import { causyneHome } from './utils/paths.js';
+import { isProtectedPhysicalPath, isWithinPhysicalPath, physicalPath } from './agent/workspaceBoundary.js';
+import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
 import { getActiveSessionId, restoreSessionFromSnapshot, sessionTranscriptFile } from './sessionStore.js';
 
@@ -533,6 +535,9 @@ export async function beginTask(
 }
 
 function assertSafeTarget(absolutePath: string): void {
+  if (typeof absolutePath !== 'string' || !absolutePath || absolutePath.includes('\0')) {
+    throw new Error('refusing an invalid checkpoint target path');
+  }
   if (!path.isAbsolute(absolutePath)) {
     throw new Error(`refusing a non-absolute path: ${absolutePath}`);
   }
@@ -540,17 +545,46 @@ function assertSafeTarget(absolutePath: string): void {
     throw new Error(`refusing an unnormalised path: ${absolutePath}`);
   }
 
-  let stats: fs.Stats;
   try {
-    stats = fs.lstatSync(absolutePath);
-  } catch {
-    return;
+    const stats = fs.lstatSync(absolutePath);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`refusing to write through a symlink: ${absolutePath}`);
+    }
+    if (stats.isFile() && stats.nlink > 1) {
+      throw new Error(`refusing to write through a hardlink (${stats.nlink} links): ${absolutePath}`);
+    }
+  } catch (err: unknown) {
+    const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+    if (code !== 'ENOENT') throw err;
   }
-  if (stats.isSymbolicLink()) {
-    throw new Error(`refusing to write through a symlink: ${absolutePath}`);
+
+  // Walk existing ancestors to refuse symlinked parent directories (allowing only
+  // canonical macOS OS-level /var and /tmp symlinks into /private).
+  let ancestor = path.dirname(absolutePath);
+  for (let depth = 0; depth < 128; depth++) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    try {
+      const aStat = fs.lstatSync(ancestor);
+      if (aStat.isSymbolicLink()) {
+        const isDarwinOsLink = process.platform === 'darwin' && (ancestor === '/var' || ancestor === '/tmp');
+        if (!isDarwinOsLink) {
+          throw new Error(`refusing to write through a symlink ancestor: ${ancestor}`);
+        }
+      }
+    } catch (err: unknown) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+      if (code !== 'ENOENT') throw err;
+    }
+    ancestor = parent;
   }
-  if (stats.isFile() && stats.nlink > 1) {
-    throw new Error(`refusing to write through a hardlink (${stats.nlink} links): ${absolutePath}`);
+
+  const realTarget = physicalPath(absolutePath);
+  if (!realTarget) {
+    throw new Error(`refusing to write through a symlink or unresolvable path: ${absolutePath}`);
+  }
+  if (isProtectedPhysicalPath(absolutePath) || isProtectedPhysicalPath(realTarget)) {
+    throw new Error(`refusing to write into a protected system path: ${absolutePath}`);
   }
 }
 
