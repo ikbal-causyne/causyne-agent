@@ -381,6 +381,21 @@ export function restoreTree(worktree, fromTree) {
 export function pruneShadow(worktree) {
     try {
         const gitDir = initShadow(worktree);
+        const cutoff = Date.now() - 60 * 60 * 1000;
+        try {
+            for (const name of fs.readdirSync(gitDir)) {
+                if (!name.startsWith('preview-') || !name.endsWith('.index'))
+                    continue;
+                const full = path.join(gitDir, name);
+                const stat = fs.lstatSync(full);
+                if (!stat.isSymbolicLink() && stat.isFile() && stat.mtimeMs < cutoff) {
+                    fs.unlinkSync(full);
+                }
+            }
+        }
+        catch {
+            // ignore stale preview index cleanup error
+        }
         runGit(['--git-dir', gitDir, 'gc', '--prune=7.days', '--quiet']);
     }
     catch {
