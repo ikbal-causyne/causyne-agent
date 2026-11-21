@@ -1,7 +1,47 @@
 import os from 'node:os';
 import fs from 'node:fs';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, resolveScopedPath, sanitizeToolError } from './toolPathSafety.js';
 const MCP_URL = 'http://127.0.0.1:19789/mcp';
+const PALMIER_TIMEOUT_MS = 15_000;
+const MAX_PALMIER_RESPONSE_BYTES = 2 * 1024 * 1024;
+function validateNumericOrAuto(value, label, min, max) {
+    if (value === undefined || value === null || value === '')
+        return 'auto';
+    const str = String(value).trim();
+    if (!str || str.toLowerCase() === 'auto')
+        return 'auto';
+    const num = Number(str);
+    if (!Number.isFinite(num) || num < min || num > max) {
+        throw new Error(`Invalid ${label}: must be "auto" or a number between ${min} and ${max}.`);
+    }
+    return str;
+}
+async function readBoundedText(response, maxBytes) {
+    if (!response.body)
+        return '';
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            if (value) {
+                total += value.byteLength;
+                if (total > maxBytes) {
+                    await reader.cancel().catch(() => { });
+                    throw new Error(`Palmier MCP response exceeded ${maxBytes} bytes.`);
+                }
+                chunks.push(value);
+            }
+        }
+    }
+    finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
 export const palmierAutomator = {
     schema: {
         name: 'palmier_act',
@@ -33,7 +73,7 @@ export const palmierAutomator = {
             required: ['action']
         }
     },
-    async execute(args = {}, _context) {
+    async execute(args = {}, context) {
         if (os.platform() !== 'darwin') {
             return { success: false, error: 'Palmier Pro is a macOS native application. Not supported on this OS.' };
         }
@@ -73,13 +113,24 @@ export const palmierAutomator = {
                 };
             }
             if (action === 'importAndAssemble') {
-                if (!args?.mediaPath || !fs.existsSync(args.mediaPath)) {
-                    return { success: false, error: `Media path not found: ${String(args?.mediaPath ?? '')}` };
+                if (typeof args?.mediaPath !== 'string' || !args.mediaPath.trim()) {
+                    return { success: false, error: 'mediaPath is required for importAndAssemble.' };
+                }
+                const resolvedMediaPath = resolveScopedPath(args.mediaPath, context);
+                let mediaStat;
+                try {
+                    mediaStat = fs.lstatSync(resolvedMediaPath);
+                }
+                catch {
+                    return { success: false, error: `Media path not found: ${resolvedMediaPath}` };
+                }
+                if (mediaStat.isSymbolicLink() || (!mediaStat.isDirectory() && !mediaStat.isFile())) {
+                    return { success: false, error: 'Media path must be a regular file or directory within the authorized workspace.' };
                 }
                 const res = await sendMcpRequest('tools/call', {
                     name: 'import_and_assemble',
                     arguments: {
-                        mediaPath: args.mediaPath,
+                        mediaPath: resolvedMediaPath,
                         fps: args.fps || 'auto',
                         resolution_x: args.resolution_x || 'auto',
                         resolution_y: args.resolution_y || 'auto'
