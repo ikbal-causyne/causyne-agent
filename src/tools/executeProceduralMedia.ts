@@ -3,8 +3,17 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import util from 'node:util';
-import os from 'node:os';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import {
+  getErrorMessage,
+  assertSafeWorkspaceOutput,
+  resolveScopedPath,
+  sanitizeToolError,
+  sanitizeToolText,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const MAX_PROCEDURAL_CODE_CHARS = 2 * 1024 * 1024;
 
 const execFilePromise = util.promisify(execFile);
 
@@ -43,13 +52,10 @@ export const executeProceduralMedia = {
       if (typeof code !== 'string' || typeof language !== 'string' || typeof args?.outputFileName !== 'string') {
         return { success: false, error: 'code, language, and outputFileName are required.' };
       }
-      let outputFilePath = args.outputFileName.replace(/^~\//, os.homedir() + '/');
-      outputFilePath = path.resolve(outputFilePath);
-
-      if (sandbox && sandbox.isPathAllowed && !sandbox.isPathAllowed(outputFilePath)) {
-        return { success: false, error: `Path outside allowed workspace: ${outputFilePath}` };
+      if (code.length > MAX_PROCEDURAL_CODE_CHARS) {
+        return { success: false, error: `Procedural script exceeds maximum size of ${MAX_PROCEDURAL_CODE_CHARS} characters.` };
       }
-
+      const outputFilePath = await assertSafeWorkspaceOutput(args.outputFileName, sandbox);
       const workspaceDir = path.dirname(outputFilePath);
       if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
 
