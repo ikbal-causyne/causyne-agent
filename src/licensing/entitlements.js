@@ -342,8 +342,20 @@ export class EntitlementClient {
             throw new EntitlementAccessError('INVALID_PLAN', 'Unknown Causyne plan.');
         }
         const result = await this.call('/v1/checkout', { plan });
-        const url = new URL(result.url);
-        if (url.protocol !== 'https:' || !/(^|\.)lemonsqueezy\.com$/i.test(url.hostname)) {
+        if (typeof result?.url !== 'string' || !result.url.trim()) {
+            throw new EntitlementAccessError('BAD_CHECKOUT_URL', 'Invalid checkout destination returned by server.');
+        }
+        let url;
+        try {
+            url = new URL(result.url);
+        }
+        catch {
+            throw new EntitlementAccessError('BAD_CHECKOUT_URL', 'Invalid checkout destination returned by server.');
+        }
+        const host = url.hostname.toLowerCase();
+        const allowedHost = host === LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX
+            || host.endsWith(`.${LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX}`);
+        if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowedHost) {
             throw new EntitlementAccessError('BAD_CHECKOUT_URL', 'Invalid checkout destination returned by server.');
         }
         return result;
