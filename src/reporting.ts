@@ -8,6 +8,7 @@ import { loadConfig } from './config.js';
 import { listSpills, getOutputDir } from './outputStore.js';
 import { listGroups, undoLast, undoTask, undoStep, getStoreStats } from './checkpoints.js';
 import { panel } from './tui/block.js';
+import { safeDisplay } from './tui/text.js';
 // @ts-expect-error Legacy tui/theme.js has no TypeScript declarations yet.
 import { terminalWidth, readableWidth } from './tui/theme.js';
 import { isAcpProvider } from './providers/acp.js';
@@ -160,8 +161,8 @@ export function buildContextText(): string {
   const lines: string[] = [];
 
   lines.push('Context accounting');
-  lines.push(`  Provider / model : ${report.provider} / ${report.model}`);
-  lines.push(`  Tier             : ${report.tier}`);
+  lines.push(`  Provider / model : ${safeDisplay(report.provider)} / ${safeDisplay(report.model)}`);
+  lines.push(`  Tier             : ${safeDisplay(report.tier)}`);
   lines.push(`  Window pool      : ${formatNumber(report.charPool)} chars (~${formatNumber(report.approxTokenPool)} tokens)`);
   lines.push('');
   lines.push('Tool schemas in context');
@@ -173,7 +174,7 @@ export function buildContextText(): string {
   lines.push(`  ${'all'.padEnd(16)}: ${String(report.allTools).padStart(3)} tools  ${String(formatNumber(report.allToolTokens)).padStart(7)} tok  (only unlocked packs are ever sent)`);
   lines.push('');
   lines.push('Spilled tool output');
-  lines.push(`  Directory        : ${report.spill.dir}`);
+  lines.push(`  Directory        : ${safeDisplay(report.spill.dir)}`);
   lines.push(`  Saved outputs    : ${report.spill.files} file(s), ${formatBytes(report.spill.bytes)}`);
   lines.push('  These hold the full text of results too large for the window, so the');
   lines.push('  agent can read them back instead of re-running the tool. Kept 7 days.');
@@ -204,7 +205,7 @@ export async function buildUsageText(): Promise<string> {
     : '(BYOK — billed by your provider, not by Causyne)';
 
   lines.push(`Token usage ${billingNote}`);
-  lines.push(`  Provider / model : ${config.provider || 'default'} / ${config.model || 'default'}`);
+  lines.push(`  Provider / model : ${safeDisplay(config.provider || 'default')} / ${safeDisplay(config.model || 'default')}`);
   lines.push(`  This task        : ${formatNumber(usage.taskTokens)} tokens   $${Number(usage.taskCostUsd || 0).toFixed(4)}`);
   lines.push(`  Today            : ${formatNumber(usage.dailyTokens)} tokens   $${Number(usage.costUsd || 0).toFixed(4)}`);
   lines.push(`  Lifetime         : ${formatNumber(usage.lifetimeTokens)} tokens   $${Number(usage.lifetimeCostUsd || 0).toFixed(4)}`);
@@ -237,7 +238,7 @@ export function buildCheckpointsText(limit = 15): string {
   const lines: string[] = [];
 
   lines.push('Checkpoints');
-  lines.push(`  Store: ${stats.dir}  (${stats.entries} entries, ${formatBytes(stats.bytes)})`);
+  lines.push(`  Store: ${safeDisplay(stats.dir)}  (${stats.entries} entries, ${formatBytes(stats.bytes)})`);
   lines.push('');
 
   if (groups.length === 0) {
@@ -248,19 +249,19 @@ export function buildCheckpointsText(limit = 15): string {
 
   for (const group of groups) {
     const label = group.taskId.startsWith('undo_') ? '  (undo restore point)' : '';
-    lines.push(`  ${group.taskId}  ${formatAge(group.ts)}${label}`);
-    if (group.prompt) lines.push(`    task     : ${group.prompt}`);
+    lines.push(`  ${safeDisplay(group.taskId)}  ${formatAge(group.ts)}${label}`);
+    if (group.prompt) lines.push(`    task     : ${safeDisplay(group.prompt)}`);
     lines.push(`    files    : ${group.fileEntries.length} change(s) checkpointed`);
     lines.push(`    history  : ${group.hasHistory ? 'snapshotted (undo rewinds the conversation too)' : 'not captured'}`);
 
     for (const tree of group.trees) {
       lines.push(tree.skipped
-        ? `    tree     : ${tree.root} — SKIPPED (${tree.skipped})`
-        : `    tree     : ${tree.root} — ${tree.fileCount ?? 0} files, ${formatBytes(tree.totalBytes ?? 0)}`);
+        ? `    tree     : ${safeDisplay(tree.root)} — SKIPPED (${safeDisplay(tree.skipped)})`
+        : `    tree     : ${safeDisplay(tree.root)} — ${tree.fileCount ?? 0} files, ${formatBytes(tree.totalBytes ?? 0)}`);
     }
     for (const entry of group.fileEntries.slice(0, 6)) {
       const verb = entry.before === null ? 'created' : 'modified';
-      lines.push(`      ${String(entry.tool).padEnd(10)} ${verb.padEnd(9)} ${entry.path}`);
+      lines.push(`      ${safeDisplay(entry.tool).padEnd(10)} ${verb.padEnd(9)} ${safeDisplay(entry.path)}`);
     }
     if (group.fileEntries.length > 6) {
       lines.push(`      ... and ${group.fileEntries.length - 6} more`);
@@ -293,14 +294,14 @@ function runUndo(taskId: string | undefined, options: UndoCommandOptions = {}): 
 
 export function buildUndoText(taskId?: string, options: UndoCommandOptions = {}): UndoRenderResult {
   const result = runUndo(taskId, options);
-  if (!result.ok) return { ok: false, text: `[UNDO] ${result.error}` };
+  if (!result.ok) return { ok: false, text: `[UNDO] ${safeDisplay(result.error)}` };
   return renderUndo(result);
 }
 
 /** Render a completed undo result as the plain text both terminals expect. */
 function renderUndo(result: any): UndoRenderResult {
   const lines: string[] = [];
-  lines.push(`${result.dryRun ? 'Undo preview (nothing written)' : 'Undo'}${result.taskId ? `  —  task ${result.taskId}` : ''}`);
+  lines.push(`${result.dryRun ? 'Undo preview (nothing written)' : 'Undo'}${result.taskId ? `  —  task ${safeDisplay(result.taskId)}` : ''}`);
   lines.push('');
 
   if (result.results.length === 0) {
@@ -319,7 +320,7 @@ function renderUndo(result: any): UndoRenderResult {
   let failures = 0;
   for (const item of result.results) {
     if (String(item.action).startsWith('FAILED')) failures++;
-    lines.push(`  ${item.action}  ${item.path}`);
+    lines.push(`  ${safeDisplay(item.action)}  ${safeDisplay(item.path)}`);
   }
 
   if (!result.dryRun) {
@@ -334,9 +335,9 @@ function renderUndo(result: any): UndoRenderResult {
 
   for (const item of result.drift || []) {
     lines.push('');
-    lines.push(`  ${item.files.length} file(s) under ${item.root} also changed during this task`);
+    lines.push(`  ${item.files.length} file(s) under ${safeDisplay(item.root)} also changed during this task`);
     lines.push('  but were not announced by a tool (typically a terminal command):');
-    for (const file of item.files.slice(0, 8)) lines.push(`    ${file}`);
+    for (const file of item.files.slice(0, 8)) lines.push(`    ${safeDisplay(file)}`);
     if (item.files.length > 8) lines.push(`    ... and ${item.files.length - 8} more`);
     lines.push('  Add --full to roll those back too (this also reverts edits you made');
     lines.push('  by hand while the task ran, so review the list first).');
@@ -344,7 +345,7 @@ function renderUndo(result: any): UndoRenderResult {
 
   for (const tree of result.skippedTrees || []) {
     lines.push('');
-    lines.push(`  Note: the workspace tree at ${tree.root} was not snapshotted (${tree.reason}),`);
+    lines.push(`  Note: the workspace tree at ${safeDisplay(tree.root)} was not snapshotted (${safeDisplay(tree.reason)}),`);
     lines.push('  so changes made there by terminal commands are not covered by this undo.');
   }
 
@@ -391,15 +392,18 @@ export function buildStatusText({ loop = null }: { loop?: any } = {}): string {
   lines.push('  Runtime          : local desktop');
 
   if (loop?.memoryManager?.sessionId) {
-    lines.push(`  Session          : ${loop.memoryManager.sessionId}`);
+    lines.push(`  Session          : ${safeDisplay(loop.memoryManager.sessionId)}`);
   }
-  lines.push(`  Provider / model : ${provider} / ${model}`);
-  lines.push(`  Autonomy mode    : ${autonomyMode}`);
-  lines.push(`  Tier             : ${tier}`);
+  lines.push(`  Provider / model : ${safeDisplay(provider)} / ${safeDisplay(model)}`);
+  lines.push(`  Autonomy mode    : ${safeDisplay(autonomyMode)}`);
+  lines.push(`  Tier             : ${safeDisplay(tier)}`);
 
   if (loop && loop.sandbox) {
     const sandbox = loop.sandbox;
-    lines.push(`  Workspace scope  : ${sandbox.grantAllAccess ? 'ALL ACCESS' : (sandbox.workspacePaths || []).join(', ')}`);
+    const scopeText = sandbox.grantAllAccess
+      ? 'ALL ACCESS'
+      : (Array.isArray(sandbox.workspacePaths) ? sandbox.workspacePaths.map((p: unknown) => safeDisplay(p)).join(', ') : '');
+    lines.push(`  Workspace scope  : ${scopeText}`);
   }
 
   if (!liveConfig.apiKey && !config.apiKey && provider !== 'ollama' && !isAcpProvider(provider) && !isAntigravityProvider(provider)) {
