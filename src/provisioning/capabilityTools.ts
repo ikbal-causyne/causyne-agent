@@ -10,14 +10,14 @@
 
 import { isGroupDeclined } from './capabilityConsent.js';
 
-export const TOOLS_BY_GROUP: Record<string, readonly string[]> = {
-  browser: ['browser_act'],
-  vision: ['screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector'],
-  ocr: [],
-  system: ['process_list'],
-  desktop: ['clipboard'],
-  archive: ['archive']
-};
+export const TOOLS_BY_GROUP: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  browser: Object.freeze(['browser_act']),
+  vision: Object.freeze(['screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector']),
+  ocr: Object.freeze([]),
+  system: Object.freeze(['process_list']),
+  desktop: Object.freeze(['clipboard']),
+  archive: Object.freeze(['archive'])
+});
 
 /** Catalogue names the user has explicitly declined the capability for. */
 export function declinedToolNames(): Set<string> {
