@@ -110,8 +110,11 @@ export function resolveWorktree(dir) {
 }
 /** Where this worktree's shadow repository lives. */
 export function shadowDirFor(worktree) {
-    const hash = crypto.createHash('sha256').update(path.resolve(worktree)).digest('hex').slice(0, 16);
-    return path.join(causyneHome(), 'snapshot', path.basename(worktree), hash);
+    const resolved = path.resolve(worktree);
+    const hash = crypto.createHash('sha256').update(resolved).digest('hex').slice(0, 16);
+    const rawName = path.basename(resolved).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safeName = rawName && rawName !== '.' && rawName !== '..' ? rawName.slice(0, 64) : 'repo';
+    return path.join(causyneHome(), 'snapshot', safeName, hash);
 }
 /**
  * Create (or reuse) the shadow repository for a worktree.
