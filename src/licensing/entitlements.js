@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from '../utils/paths.js';
-import { LICENSE_API_BASE, LICENSE_ENFORCEMENT_ENABLED, LICENSE_PLAN_KEYS } from './policy.js';
+import { LICENSE_API_BASE, LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX, LICENSE_ENFORCEMENT_ENABLED, LICENSE_PLAN_KEYS, MAX_ENTITLEMENT_RESPONSE_BYTES, isValidLicensePlan } from './policy.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { safeDisplay } from '../tui/text.js';
 const TOKEN_FILE = 'installation-identity.json';
 const USER_AGENT = 'Causyne-Agent/entitlements-v1';
 const AUTH_TIMEOUT_MS = 10000;
@@ -240,7 +242,28 @@ export class EntitlementClient {
                 ...(body !== undefined ? { body: raw } : {}),
                 signal: controller.signal
             });
-            const parsed = await response.json().catch(() => ({}));
+            const declaredLength = Number(response.headers?.get?.('content-length') || '0');
+            if (Number.isFinite(declaredLength) && declaredLength > MAX_ENTITLEMENT_RESPONSE_BYTES) {
+                throw new EntitlementAccessError('SERVICE_ERROR', 'Entitlement service response exceeded size limit.');
+            }
+            let parsed = {};
+            if (typeof response.text === 'function') {
+                const rawText = await response.text().catch(() => '');
+                if (Buffer.byteLength(rawText, 'utf8') > MAX_ENTITLEMENT_RESPONSE_BYTES) {
+                    throw new EntitlementAccessError('SERVICE_ERROR', 'Entitlement service response exceeded size limit.');
+                }
+                if (rawText.trim()) {
+                    try {
+                        parsed = JSON.parse(rawText);
+                    }
+                    catch {
+                        parsed = {};
+                    }
+                }
+            }
+            else {
+                parsed = await response.json().catch(() => ({}));
+            }
             if (!response.ok) {
                 throw new EntitlementAccessError(typeof parsed?.error === 'string' && parsed.error ? parsed.error : 'SERVICE_ERROR', typeof parsed?.message === 'string' ? parsed.message : `Entitlement service returned HTTP ${response.status}.`);
             }
