@@ -132,6 +132,7 @@
     "src/tools/osSandbox.ts",
     "src/tools/sysRun.ts",
     "src/sandboxPolicy.ts",
+    "src/sandbox.ts",
     "src/tools/desktopOpen.ts",
     "src/tui/banner.ts",
     "src/tui/setup.ts",
