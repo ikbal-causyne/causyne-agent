@@ -104,14 +104,28 @@ function safeObject(value: unknown): Record<string, any> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : {};
 }
 
+const MAX_STATE_BYTES = 1024 * 1024;
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function readState(): PluginState {
   try {
     const sf = stateFile();
-    if (!fs.existsSync(sf)) return { version: 1, plugins: {} };
+    const stat = fs.lstatSync(sf);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_STATE_BYTES) {
+      return { version: 1, plugins: Object.create(null) };
+    }
     const parsed = JSON.parse(fs.readFileSync(sf, 'utf8')) as Record<string, unknown>;
-    return { version: 1, plugins: safeObject(parsed?.plugins) };
+    const rawPlugins = safeObject(parsed?.plugins);
+    const clean: Record<string, PluginTrustRecord> = Object.create(null);
+    for (const [key, val] of Object.entries(rawPlugins)) {
+      if (!NAME.test(key) || FORBIDDEN_KEYS.has(key)) continue;
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        clean[key] = val as PluginTrustRecord;
+      }
+    }
+    return { version: 1, plugins: clean };
   } catch {
-    return { version: 1, plugins: {} };
+    return { version: 1, plugins: Object.create(null) };
   }
 }
 
