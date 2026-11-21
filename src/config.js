@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { canonicalModelId } from './modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
@@ -167,12 +168,14 @@ function checkBinarySync(binaryName) {
     }
     const envPath = process.env.PATH || '';
     const delimiter = process.platform === 'win32' ? ';' : ':';
-    const home = process.env.HOME || '';
+    const home = os.homedir();
     const fallbackDirs = [
-        path.join(home, '.local', 'bin'),
-        path.join(home, '.antigravity', 'antigravity', 'bin'),
-        path.join(home, '.gemini', 'antigravity-ide', 'bin'),
-        path.join(home, '.opencode', 'bin'),
+        ...(home && path.isAbsolute(home) ? [
+            path.join(home, '.local', 'bin'),
+            path.join(home, '.antigravity', 'antigravity', 'bin'),
+            path.join(home, '.gemini', 'antigravity-ide', 'bin'),
+            path.join(home, '.opencode', 'bin')
+        ] : []),
         '/Applications/Antigravity.app/Contents/Resources/app/bin',
         '/Applications/Antigravity IDE.app/Contents/Resources/app/bin'
     ];
