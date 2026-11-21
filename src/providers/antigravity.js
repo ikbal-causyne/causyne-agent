@@ -46,6 +46,8 @@ export const ANTIGRAVITY_MODEL_IDS = {
 export const ANTIGRAVITY_LABEL_BY_ID = Object.fromEntries(Object.entries(ANTIGRAVITY_MODEL_IDS).map(([label, id]) => [id, label]));
 export const ANTIGRAVITY_MODELS = Object.keys(ANTIGRAVITY_MODEL_IDS);
 export function synthesizeAgySlug(input) {
+    if (typeof input !== 'string' || /[\r\n\0]/.test(input))
+        return '';
     const trimmed = input.trim();
     if (!trimmed)
         return '';
@@ -140,8 +142,8 @@ export function parseAgyModelsOutput(stdout, options = {}) {
 }
 export function isAntigravityOnboarded() {
     try {
-        const home = process.env.HOME || process.env.USERPROFILE || '';
-        if (!home)
+        const home = process.env.HOME || process.env.USERPROFILE || os.homedir();
+        if (!home || !path.isAbsolute(home))
             return false;
         const onboardingFile = path.join(home, '.gemini', 'antigravity-cli', 'cache', 'onboarding.json');
         if (fs.existsSync(onboardingFile)) {
@@ -160,8 +162,11 @@ export function isAntigravityOnboarded() {
 }
 function hydrateModelsFromDiskCache() {
     try {
+        const fallbackHome = process.env.HOME || process.env.USERPROFILE || os.homedir();
         const causyneDir = process.env.CAUSYNE_HOME
-            || path.join(process.env.HOME || process.env.USERPROFILE || '', '.causyne');
+            || (fallbackHome && path.isAbsolute(fallbackHome) ? path.join(fallbackHome, '.causyne') : '');
+        if (!causyneDir)
+            return;
         const cacheFile = path.join(causyneDir, 'models_cache.json');
         if (!fs.existsSync(cacheFile))
             return;
