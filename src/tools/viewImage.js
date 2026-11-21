@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { resolveUserPath } from '../utils/paths.js';
 import { loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
@@ -18,19 +18,58 @@ export const viewImage = {
     },
     execute: async (args, sandbox) => {
         try {
-            if (!args || !args.path) {
+            if (!args || typeof args !== 'object' || typeof args.path !== 'string' || !args.path.trim()) {
                 return { success: false, error: 'Missing required argument: path' };
             }
-            const targetPath = resolveUserPath(args.path);
+            const rawPath = args.path.trim();
+            const isHome = rawPath === '~' || rawPath.startsWith('~/') || rawPath.startsWith('~\\');
+            const baseRoot = sandbox?.parentLoop?.workspaceRoot?.trim?.()
+                || sandbox?.workspaceRoot?.trim?.()
+                || (Array.isArray(sandbox?.workspacePaths)
+                    ? sandbox.workspacePaths.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim()
+                    : undefined);
+            const targetPath = isHome
+                ? resolveUserPath(rawPath)
+                : path.isAbsolute(rawPath)
+                    ? path.resolve(rawPath)
+                    : path.resolve(baseRoot ? resolveUserPath(baseRoot) : process.cwd(), rawPath);
             if (!existsSync(targetPath)) {
                 return { success: false, error: `Image not found at ${targetPath}` };
             }
+            if (sandbox && sandbox.grantAllAccess !== true) {
+                const policy = sandbox?.parentLoop?.sandbox ?? sandbox;
+                if (typeof policy?.isPathAllowed === 'function' && !policy.isPathAllowed(targetPath)) {
+                    return { success: false, error: `Image path resolves outside allowed workspace: ${targetPath}` };
+                }
+                const configuredRoots = Array.isArray(sandbox.workspacePaths)
+                    ? sandbox.workspacePaths.filter((p) => typeof p === 'string' && p.trim().length > 0)
+                    : [sandbox?.parentLoop?.workspaceRoot, sandbox?.workspaceRoot].filter((p) => typeof p === 'string' && p.trim().length > 0);
+                if (configuredRoots.length > 0) {
+                    const realTarget = realpathSync(targetPath);
+                    const allowed = configuredRoots.some((root) => {
+                        try {
+                            const realRoot = realpathSync(resolveUserPath(root));
+                            const rel = path.relative(realRoot, realTarget);
+                            return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+                        }
+                        catch {
+                            return false;
+                        }
+                    });
+                    if (!allowed) {
+                        return { success: false, error: `Image path resolves outside allowed workspace: ${targetPath}` };
+                    }
+                }
+            }
             const stat = statSync(targetPath);
+            if (!stat.isFile()) {
+                return { success: false, error: `Image path is not a regular file: ${targetPath}` };
+            }
             if (stat.size > 25 * 1024 * 1024) {
                 return { success: false, error: 'Image too large. Maximum raw size is 25MB.' };
             }
             // OCR Fallback for Text-Only LLMs if explicitly requested or sandbox is strictly non-vision
-            const forceOcr = Boolean(args.extractTextOnly || (sandbox && sandbox.llmSupportsVision === false));
+            const forceOcr = args.extractTextOnly === true || Boolean(sandbox && sandbox.llmSupportsVision === false);
             if (forceOcr) {
                 try {
                     const Tesseract = await loadCapabilityPackage('tesseract.js');
