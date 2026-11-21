@@ -325,7 +325,7 @@ export class Sandbox {
         return withCredentialEscalation({ allowed: true, risk: 'safe' });
     }
     isPathAllowed(targetPath) {
-        if (typeof targetPath !== 'string' || targetPath.length === 0)
+        if (typeof targetPath !== 'string' || targetPath.trim().length === 0 || targetPath.includes('\0'))
             return false;
         const expand = (value) => {
             if (value === '~')

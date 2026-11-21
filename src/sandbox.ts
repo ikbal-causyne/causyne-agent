@@ -371,7 +371,7 @@ export class Sandbox {
   }
 
   isPathAllowed(targetPath: unknown): boolean {
-    if (typeof targetPath !== 'string' || targetPath.length === 0) return false;
+    if (typeof targetPath !== 'string' || targetPath.trim().length === 0 || targetPath.includes('\0')) return false;
     const expand = (value: string): string => {
       if (value === '~') return os.homedir();
       if (value.startsWith('~/') || value.startsWith('~\\')) {
