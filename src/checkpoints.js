@@ -284,12 +284,21 @@ function snapshotFile(absolutePath) {
         mode: stats.mode & 0o777
     };
 }
-export function captureBeforeMutation(toolName, args, meta = {}) {
+export function captureBeforeMutation(toolName, args, meta) {
     if (!isCheckpointingEnabled())
         return [];
-    const fields = typeof toolName === 'string' ? MUTATING_TOOL_PATHS[toolName] : undefined;
-    if (!fields || !args)
+    if (typeof toolName !== 'string' || !args || typeof args !== 'object')
         return [];
+    const canonicalTool = toolName.replace(/\./g, '_');
+    const fields = Object.hasOwn(MUTATING_TOOL_PATHS, canonicalTool)
+        ? MUTATING_TOOL_PATHS[canonicalTool]
+        : undefined;
+    if (!fields)
+        return [];
+    const safeMeta = meta && typeof meta === 'object' ? meta : {};
+    const taskId = typeof safeMeta.taskId === 'string' && safeMeta.taskId && !safeMeta.taskId.includes('\0')
+        ? safeMeta.taskId
+        : 'unknown';
     const ids = [];
     try {
         ensureStore();
@@ -302,8 +311,8 @@ export function captureBeforeMutation(toolName, args, meta = {}) {
                 id: newId(),
                 ts: Date.now(),
                 type: 'file',
-                taskId: meta.taskId || 'unknown',
-                step: meta.step == null ? null : meta.step,
+                taskId,
+                step: safeMeta.step == null ? null : safeMeta.step,
                 tool: toolName,
                 path: absolutePath,
                 before

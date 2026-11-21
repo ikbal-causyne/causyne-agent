@@ -340,12 +340,20 @@ function snapshotFile(absolutePath: string): SnapshotRecord | null {
 export function captureBeforeMutation(
   toolName: unknown,
   args: Record<string, unknown> | null | undefined,
-  meta: { taskId?: string | undefined; step?: number | null | undefined } = {}
+  meta?: { taskId?: string | undefined; step?: number | null | undefined } | null
 ): string[] {
   if (!isCheckpointingEnabled()) return [];
-  const fields = typeof toolName === 'string' ? MUTATING_TOOL_PATHS[toolName] : undefined;
-  if (!fields || !args) return [];
+  if (typeof toolName !== 'string' || !args || typeof args !== 'object') return [];
+  const canonicalTool = toolName.replace(/\./g, '_');
+  const fields = Object.hasOwn(MUTATING_TOOL_PATHS, canonicalTool)
+    ? MUTATING_TOOL_PATHS[canonicalTool]
+    : undefined;
+  if (!fields) return [];
 
+  const safeMeta = meta && typeof meta === 'object' ? meta : {};
+  const taskId = typeof safeMeta.taskId === 'string' && safeMeta.taskId && !safeMeta.taskId.includes('\0')
+    ? safeMeta.taskId
+    : 'unknown';
   const ids: string[] = [];
   try {
     ensureStore();
@@ -358,9 +366,9 @@ export function captureBeforeMutation(
         id: newId(),
         ts: Date.now(),
         type: 'file',
-        taskId: meta.taskId || 'unknown',
-        step: meta.step == null ? null : meta.step,
-        tool: toolName as string,
+        taskId,
+        step: safeMeta.step == null ? null : safeMeta.step,
+        tool: toolName,
         path: absolutePath,
         before
       };
