@@ -48,6 +48,8 @@ export interface SelectListOptions {
   showFilter?: boolean | undefined;
 }
 
+const MAX_QUERY_LENGTH = 512;
+
 const cleanSelectText = (value: unknown): string => (
   value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim()
 );
@@ -295,7 +297,7 @@ export class SelectList<T extends SelectListItem = SelectListItem> {
       case 'paste': {
         const clean = cleanSelectText(key.text);
         if (clean) {
-          this.query += clean;
+          this.query = (this.query + clean).slice(0, MAX_QUERY_LENGTH);
           this.refilter();
         }
         return 'handled';
@@ -328,7 +330,7 @@ export class SelectList<T extends SelectListItem = SelectListItem> {
     if (typed) {
       const safe = safeDisplay(typed).replace(/[\r\n\t]+/g, ' ');
       if (safe) {
-        this.query += safe;
+        this.query = (this.query + safe).slice(0, MAX_QUERY_LENGTH);
         this.refilter();
       }
       return 'handled';

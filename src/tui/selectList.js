@@ -16,6 +16,7 @@
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { truncate, visibleWidth, safeDisplay } from './text.js';
 import { readClipboardSync } from './clipboardSync.js';
+const MAX_QUERY_LENGTH = 512;
 const cleanSelectText = (value) => (value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim());
 /**
  * Score `query` against `text` as a fuzzy subsequence.
@@ -262,7 +263,7 @@ export class SelectList {
             case 'paste': {
                 const clean = cleanSelectText(key.text);
                 if (clean) {
-                    this.query += clean;
+                    this.query = (this.query + clean).slice(0, MAX_QUERY_LENGTH);
                     this.refilter();
                 }
                 return 'handled';
@@ -303,7 +304,7 @@ export class SelectList {
         if (typed) {
             const safe = safeDisplay(typed).replace(/[\r\n\t]+/g, ' ');
             if (safe) {
-                this.query += safe;
+                this.query = (this.query + safe).slice(0, MAX_QUERY_LENGTH);
                 this.refilter();
             }
             return 'handled';
