@@ -84,7 +84,7 @@ export function addFact(factStr, options = {}) {
 export function clearMemory() {
     try {
         const filePath = initMemory();
-        fs.writeFileSync(filePath, JSON.stringify({ facts: [], entries: [] }, null, 2));
+        writeMemoryAtomic(filePath, { facts: [], entries: [] });
     }
     catch (e) {
         console.error('Failed to clear memory:', e instanceof Error ? e.message : String(e));
