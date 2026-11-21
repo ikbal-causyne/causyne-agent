@@ -186,7 +186,7 @@ export async function runInteractivePty(options: InteractivePtyOptions = {}): Pr
   const isolatedHome = realpathSync(env.CAUSYNE_HOME);
   const relativeHome = path.relative(tempRoot, isolatedHome);
   if (!relativeHome || relativeHome === '..' || relativeHome.startsWith('..' + path.sep)
-      || path.isAbsolute(relativeHome)) {
+      || path.isAbsolute(relativeHome) || !statSync(isolatedHome).isDirectory()) {
     throw new Error('Verification CAUSYNE_HOME must be an isolated temporary directory');
   }
   const cwd = realpathSync(workspace);
