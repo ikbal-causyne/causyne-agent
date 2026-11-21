@@ -37,6 +37,12 @@ import { listGroups } from './checkpoints.js';
 import * as pluginManagerMod from './plugins/pluginManager.js';
 const listPlugins = pluginManagerMod.listPlugins;
 import { getOpenRouterStatus, startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter, setOpenRouterDataCollection, buildAuthorizationUrl, generatePkceCodes } from './auth/openrouterAuth.js';
+import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
+import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
+import { isCredentialPath } from './sandbox.js';
+import { atomicWriteSecretFileSync } from './configVault.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
+import { safeDisplay } from './tui/text.js';
 export const SCOPES = ['local'];
 function ok(output, extra = {}) {
     return { ok: true, output, ...extra };
@@ -2344,20 +2350,57 @@ export const COMMANDS = [
                 return fail('Session has no messages to export.');
             }
             const ws = ctx.loop?.workspaceRoot || process.cwd();
-            const defaultFilename = `causyne-session-${activeId}.md`;
+            const safeId = String(activeId).replace(/[^a-zA-Z0-9._-]/g, '_');
+            const defaultFilename = `causyne-session-${safeId}.md`;
             const filename = argv.join(' ').trim() || defaultFilename;
+            if (filename.includes('\0')) {
+                return fail('Invalid export filename.');
+            }
             const targetPath = path.resolve(ws, filename);
-            const header = `# Causyne Agent Conversation Export\n\n- **Session ID**: \`${session.id}\`\n- **Title**: ${session.title}\n- **Date**: ${new Date(session.createdAt).toISOString()}\n- **Workspace**: \`${session.workspace}\`\n- **Total Messages**: ${session.messages.length}\n\n---\n\n`;
+            if (!isPhysicalPathAllowed(targetPath, [ws], false)) {
+                return fail(`Refusing to export outside the active workspace: ${safeDisplay(targetPath)}`);
+            }
+            if (isCredentialPath(targetPath)) {
+                return fail(`Refusing to overwrite credential or sensitive file: ${safeDisplay(targetPath)}`);
+            }
+            try {
+                const existing = fs.lstatSync(targetPath);
+                if (existing.isSymbolicLink() || !existing.isFile()) {
+                    return fail(`Refusing to export to symlink or non-regular file: ${safeDisplay(targetPath)}`);
+                }
+            }
+            catch (statErr) {
+                const code = typeof statErr === 'object' && statErr !== null && 'code' in statErr ? String(statErr.code) : '';
+                if (code !== 'ENOENT') {
+                    return fail(`Could not inspect export target: ${errMsg(statErr)}`);
+                }
+            }
+            const createdIso = Number.isFinite(session.createdAt)
+                ? new Date(session.createdAt).toISOString()
+                : new Date().toISOString();
+            const header = `# Causyne Agent Conversation Export\n\n- **Session ID**: \`${safeDisplay(session.id)}\`\n- **Title**: ${safeDisplay(session.title)}\n- **Date**: ${createdIso}\n- **Workspace**: \`${safeDisplay(session.workspace)}\`\n- **Total Messages**: ${session.messages.length}\n\n---\n\n`;
             const body = session.messages
-                .filter((m) => m.role !== 'system')
+                .filter((m) => m && m.role !== 'system')
                 .map((m) => {
                 const roleLabel = m.role === 'user' ? '### User' : '### Causyne Agent';
-                return `${roleLabel}\n\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}\n`;
+                let rawContent;
+                if (typeof m.content === 'string') {
+                    rawContent = m.content;
+                }
+                else {
+                    try {
+                        rawContent = JSON.stringify(m.content, null, 2) ?? '';
+                    }
+                    catch {
+                        rawContent = String(m.content);
+                    }
+                }
+                return `${roleLabel}\n\n${redactProviderSecrets(rawContent)}\n`;
             })
                 .join('\n---\n\n');
             try {
-                fs.writeFileSync(targetPath, header + body, { encoding: 'utf8', mode: 0o644 });
-                return ok(`Exported conversation to: ${targetPath}`);
+                atomicWriteSecretFileSync(targetPath, redactProviderSecrets(header + body));
+                return ok(`Exported conversation to: ${safeDisplay(targetPath)}`);
             }
             catch (err) {
                 return fail(`Could not export conversation: ${errMsg(err)}`);
