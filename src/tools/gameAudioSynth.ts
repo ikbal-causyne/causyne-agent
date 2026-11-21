@@ -1,7 +1,16 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  getErrorMessage,
+  resolveScopedPath,
+  resolveToolWorkspaceRoots,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 function encodeWav(samples: Float32Array, sampleRate = 44100): Buffer {
   const numSamples = samples.length;
@@ -137,9 +146,11 @@ export const gameAudioSynth = {
         }
 
         const wavBuffer = encodeWav(samples, sampleRate);
-        const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `${sfxType}_${Date.now()}.wav`);
-        await fs.mkdir(path.dirname(finalPath), { recursive: true });
-        await fs.writeFile(finalPath, wavBuffer);
+        const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+        const safeSfxSlug = safeSlugIdentifier(sfxType, 'sfx', 48);
+        const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `${safeSfxSlug}_${Date.now()}.wav`);
+        const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+        await atomicWriteFileSafe(finalPath, wavBuffer);
 
         return {
           success: true,
@@ -179,9 +190,11 @@ export const gameAudioSynth = {
         }
 
         const wavBuffer = encodeWav(samples, sampleRate);
-        const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `bgm_${bgmGenre}_${Date.now()}.wav`);
-        await fs.mkdir(path.dirname(finalPath), { recursive: true });
-        await fs.writeFile(finalPath, wavBuffer);
+        const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+        const safeBgmSlug = safeSlugIdentifier(bgmGenre, 'bgm', 48);
+        const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `bgm_${safeBgmSlug}_${Date.now()}.wav`);
+        const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+        await atomicWriteFileSafe(finalPath, wavBuffer);
 
         return {
           success: true,
