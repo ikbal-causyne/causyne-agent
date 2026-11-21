@@ -335,7 +335,8 @@
     "src/slopDetector.ts",
     "src/sessionStore.ts",
     "src/taskBuffer.ts",
-    "src/memory.ts"
+    "src/memory.ts",
+    "src/memoryManager.ts"
   ],
   "exclude": [
     "node_modules",
