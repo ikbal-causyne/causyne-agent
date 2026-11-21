@@ -22,7 +22,12 @@ export function installCapabilityManifest(directory: string): void {
       maxBuffer: 2 * 1024 * 1024,
       timeout: 120_000,
       windowsHide: true,
-      env: sanitizeSubprocessEnv(process.env)
+      env: {
+        ...sanitizeSubprocessEnv(process.env),
+        npm_config_ignore_scripts: 'true',
+        npm_config_fund: 'false',
+        npm_config_audit: 'false'
+      }
     });
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
