@@ -379,7 +379,8 @@
     "src/tools/gameVfxEmitterGen.ts",
     "src/tools/gameDataForge.ts",
     "src/tools/gameCinematicSequencer.ts",
-    "src/tools/gameQuestArcBuilder.ts"
+    "src/tools/gameQuestArcBuilder.ts",
+    "src/tools/gameLoreForge.ts"
   ],
   "exclude": [
     "node_modules",
