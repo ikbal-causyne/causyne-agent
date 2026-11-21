@@ -838,8 +838,10 @@ export function undoTask(taskId: string, options: UndoOptions = {}): any {
   };
 }
 
-export function undoLast(options: UndoOptions = {}): any {
-  const ws = options.workspaceRoot ? path.resolve(options.workspaceRoot) : path.resolve(process.cwd());
+export function undoLast(options?: UndoOptions | null): any {
+  const safeOptions: UndoOptions = options && typeof options === 'object' ? options : {};
+  const hasExplicitWorkspace = typeof safeOptions.workspaceRoot === 'string' && safeOptions.workspaceRoot.trim().length > 0;
+  const ws = hasExplicitWorkspace ? path.resolve(safeOptions.workspaceRoot!) : path.resolve(process.cwd());
   const allCandidates = listGroups(200).filter((group) =>
     !group.taskId.startsWith('undo_') && isUndoable(group));
 
@@ -860,12 +862,14 @@ export function undoLast(options: UndoOptions = {}): any {
     return matchesTree || matchesFile;
   });
 
-  const candidates = workspaceCandidates.length > 0 ? workspaceCandidates : validCandidates;
+  const candidates = hasExplicitWorkspace
+    ? workspaceCandidates
+    : (workspaceCandidates.length > 0 ? workspaceCandidates : validCandidates);
 
   if (candidates.length === 0) {
     return { ok: false, error: 'nothing has been checkpointed yet — no task has run in this workspace' };
   }
-  return undoTask(candidates[0]!.taskId, options);
+  return undoTask(candidates[0]!.taskId, safeOptions);
 }
 
 export function undoStep(options: UndoOptions = {}): any {

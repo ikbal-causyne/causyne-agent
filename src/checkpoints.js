@@ -755,8 +755,10 @@ export function undoTask(taskId, options = {}) {
         skippedTrees: group.trees.filter(t => t.skipped).map(t => ({ root: t.root, reason: t.skipped }))
     };
 }
-export function undoLast(options = {}) {
-    const ws = options.workspaceRoot ? path.resolve(options.workspaceRoot) : path.resolve(process.cwd());
+export function undoLast(options) {
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    const hasExplicitWorkspace = typeof safeOptions.workspaceRoot === 'string' && safeOptions.workspaceRoot.trim().length > 0;
+    const ws = hasExplicitWorkspace ? path.resolve(safeOptions.workspaceRoot) : path.resolve(process.cwd());
     const allCandidates = listGroups(200).filter((group) => !group.taskId.startsWith('undo_') && isUndoable(group));
     const validCandidates = allCandidates.filter((group) => {
         const allPaths = [
@@ -773,11 +775,13 @@ export function undoLast(options = {}) {
         const matchesFile = group.fileEntries.some((e) => e.path && (e.path.startsWith(ws + path.sep) || e.path === ws));
         return matchesTree || matchesFile;
     });
-    const candidates = workspaceCandidates.length > 0 ? workspaceCandidates : validCandidates;
+    const candidates = hasExplicitWorkspace
+        ? workspaceCandidates
+        : (workspaceCandidates.length > 0 ? workspaceCandidates : validCandidates);
     if (candidates.length === 0) {
         return { ok: false, error: 'nothing has been checkpointed yet — no task has run in this workspace' };
     }
-    return undoTask(candidates[0].taskId, options);
+    return undoTask(candidates[0].taskId, safeOptions);
 }
 export function undoStep(options = {}) {
     const dryRun = options.dryRun !== false;
