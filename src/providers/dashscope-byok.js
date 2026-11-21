@@ -9,11 +9,24 @@ export class DashscopeByokProvider extends LLMProvider {
     allowInsecureHttp;
     constructor(config = {}) {
         super(config);
-        let url = config.baseUrl || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
-        if (url.endsWith('/v1'))
-            url += '/chat/completions';
-        else if (url.endsWith('/v1/'))
-            url += 'chat/completions';
+        let url = (typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '') || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
+        try {
+            const parsed = new URL(url);
+            if (parsed.pathname.endsWith('/v1')) {
+                parsed.pathname += '/chat/completions';
+                url = parsed.toString();
+            }
+            else if (parsed.pathname.endsWith('/v1/')) {
+                parsed.pathname += 'chat/completions';
+                url = parsed.toString();
+            }
+        }
+        catch {
+            if (url.endsWith('/v1'))
+                url += '/chat/completions';
+            else if (url.endsWith('/v1/'))
+                url += 'chat/completions';
+        }
         this.baseUrl = url;
         this.allowInsecureHttp = config.allowInsecureHttp === true;
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['dashscope-byok']) || '');
@@ -23,13 +36,16 @@ export class DashscopeByokProvider extends LLMProvider {
     }
     async chat(messages, options = {}) {
         const apiKey = requireApiKey(this.apiKey, 'Qwen DashScope');
-        const activeModel = this.model || DEFAULT_MODEL_BY_PROVIDER['dashscope-byok'] || 'qwen3.7-plus';
+        const activeModel = String(canonicalModelId(this.model || DEFAULT_MODEL_BY_PROVIDER['dashscope-byok'] || 'qwen3.7-plus') || 'qwen3.7-plus');
         const sanitizedMessages = this.prepareMessages(messages);
         const payload = {
             model: activeModel,
             messages: sanitizedMessages,
             temperature: resolveTemperature(options.temperature, 0.1)
         };
+        if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+            payload['max_tokens'] = Math.floor(options.maxTokens);
+        }
         if (options.jsonMode) {
             payload['response_format'] = { type: 'json_object' };
         }
@@ -55,7 +71,14 @@ export class DashscopeByokProvider extends LLMProvider {
             hasApiKey: true,
             allowInsecureHttp: this.allowInsecureHttp,
             onHttpError: ({ status }) => {
-                if (status === 401 && apiKey.startsWith('sk-ws-') && !endpoint.includes('ws-')) {
+                let hostHasWorkspace = false;
+                try {
+                    hostHasWorkspace = new URL(endpoint).hostname.includes('ws-');
+                }
+                catch {
+                    hostHasWorkspace = false;
+                }
+                if (status === 401 && apiKey.startsWith('sk-ws-') && !hostHasWorkspace) {
                     throw new Error('\n[QWEN WORKSPACE CONFIGURATION ERROR]\n\nYou are using a Workspace-bound API Key (starts with sk-ws-), but you have not configured your Workspace Base URL.\n\nAlibaba requires a specific URL for these keys.\n\nHOW TO FIX THIS:\n1. Open your computer terminal.\n2. Run command: causyne config\n3. When asked for Custom Base URL, paste your Workspace URL from Alibaba (e.g. https://{Your-Workspace-ID}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions).\n\nAlternatively, use a Standard API Key (starts with sk-) which does not require a custom URL.');
                 }
             }
