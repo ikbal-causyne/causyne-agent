@@ -78,7 +78,9 @@ function shrinkPath(path, fails, budget) {
     return current;
 }
 export function verifyActionSequences(options = {}) {
-    const safeOptions = options && typeof options === 'object' ? options : {};
+    if (!options || typeof options !== 'object')
+        throw new TypeError('options object is required');
+    const safeOptions = options;
     const { initial, transition, invariant, actions } = safeOptions;
     if (typeof initial !== 'function' || typeof transition !== 'function'
         || typeof invariant !== 'function') {

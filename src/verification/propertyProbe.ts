@@ -111,7 +111,8 @@ function shrinkPath<TAction>(
 export function verifyActionSequences<TState = any, TAction = any>(
   options: VerifyActionSequencesOptions<TState, TAction> = {}
 ): VerifyActionSequencesResult<TAction> {
-  const safeOptions = options && typeof options === 'object' ? options : {};
+  if (!options || typeof options !== 'object') throw new TypeError('options object is required');
+  const safeOptions = options;
   const { initial, transition, invariant, actions } = safeOptions;
   if (typeof initial !== 'function' || typeof transition !== 'function'
       || typeof invariant !== 'function') {
