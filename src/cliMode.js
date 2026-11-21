@@ -9,7 +9,8 @@ import { CodeStreamRenderer as ChatRenderer } from './tui/codeStreamRenderer.js'
 import { paint, bold, dim, GLYPHS, terminalWidth } from './tui/theme.js';
 import { wordmark } from './tui/banner.js';
 import { createStageSurface } from './tui/stageSurface.js';
-import { wrapBlock } from './tui/text.js';
+import { wrapBlock, safeDisplay } from './tui/text.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
 import { getPackageVersion } from './version.js';
 import { resolveCharPool } from './contextManager.js';
 import { PRIMARY_ACTIONS, homeStatusLine, moreLayer, configureInPrompt, mcpPicker, PROVIDERS } from './tui/home.js';
@@ -200,7 +201,7 @@ export async function runTask(task, options = {}) {
         await runHeadlessTask(task, options);
         return;
     }
-    console.log(`\x1b[1m\x1b[36m[TASK]\x1b[0m Executing...\nTask: ${task}`);
+    console.log(`${bold(paint('accent', '[TASK]'))} Executing...\nTask: ${safeDisplay(String(task ?? ''))}`);
     const conn = new LocalCLIConnection();
     const taskId = `cli_task_${Date.now()}`;
     const loopOptions = {};
@@ -220,10 +221,10 @@ export async function runTask(task, options = {}) {
     await loop.run();
     const completed = loop._causyneTaskOutcome === 'completed';
     if (completed) {
-        console.log('\n\x1b[32m[DONE]\x1b[0m Task completed and verified.\n');
+        console.log(`\n${paint('success', '[DONE]')} Task completed and verified.\n`);
     }
     else {
-        console.error('\n\x1b[31m[INCOMPLETE]\x1b[0m No verified task completion was recorded.\n');
+        console.error(`\n${paint('danger', '[INCOMPLETE]')} No verified task completion was recorded.\n`);
     }
     process.exitCode = completed ? 0 : 1;
 }
