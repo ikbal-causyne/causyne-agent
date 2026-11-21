@@ -504,11 +504,13 @@ export function bracketedPaste(enabled) {
  * Anything comparing a bare letter must come through here.
  */
 export function isMouseMotion(sequence) {
-    const code = Number(/^\x1b\[<(\d+);/.exec(typeof sequence === 'string' ? sequence : '')?.[1]);
+    if (typeof sequence !== 'string' || sequence.length === 0 || sequence.length > 64)
+        return false;
+    const code = Number(/^\x1b\[<(\d{1,6});/.exec(sequence)?.[1]);
     return Number.isFinite(code) && (code & 32) !== 0;
 }
 export function isChar(event, letter) {
-    if (!event || event.ctrl || event.alt || event.meta)
+    if (!event || letter == null || event.ctrl || event.alt || event.meta)
         return false;
     const typed = typeof event.text === 'string' && event.text.length > 0
         ? event.text
