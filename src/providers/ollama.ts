@@ -16,7 +16,20 @@ export class OllamaProvider extends LLMProvider {
 
   constructor(config: ProviderConfig = {}) {
     super(config);
-    this.baseUrl = config.baseUrl || 'http://localhost:11434/api/chat';
+    const rawUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+    let resolvedUrl = rawUrl || 'http://localhost:11434/api/chat';
+    if (rawUrl) {
+      try {
+        const parsed = new URL(rawUrl);
+        if (parsed.pathname === '' || parsed.pathname === '/') {
+          parsed.pathname = '/api/chat';
+          resolvedUrl = parsed.toString();
+        }
+      } catch {
+        resolvedUrl = rawUrl;
+      }
+    }
+    this.baseUrl = resolvedUrl;
     this.allowInsecureHttp = config.allowInsecureHttp === true;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['ollama']) || '');
     this.visionModels = ['llava', 'vision', 'bakllava', 'moondream', 'minicpm-v', 'gemma3', 'qwen2.5vl', 'qwen3-vl'];
@@ -48,13 +61,18 @@ export class OllamaProvider extends LLMProvider {
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
     const sanitizedMessages = normalizeMessagesForOllama(this.prepareMessages(messages));
 
+    const ollamaOptions: Record<string, any> = {
+      temperature: resolveTemperature(options.temperature, 0.1)
+    };
+    if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+      ollamaOptions['num_predict'] = Math.floor(options.maxTokens);
+    }
     const payload: Record<string, any> = {
       model: this.model,
       messages: sanitizedMessages,
       stream: false,
-      options: {
-        temperature: resolveTemperature(options.temperature, 0.1)
-      }
+      options: ollamaOptions,
+      ...(options.jsonMode ? { format: 'json' } : {})
     };
 
     let freeFormPaths = new Map<string, string[][]>();
