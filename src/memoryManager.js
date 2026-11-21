@@ -80,7 +80,11 @@ export class MemoryManager {
         });
     }
     boundHistory(messages) {
+        if (!Array.isArray(messages))
+            return [];
         const persistable = messages.filter((m) => {
+            if (!m || typeof m !== 'object')
+                return false;
             if (m.role !== 'system')
                 return true;
             if (typeof m.content === 'string' && m.content.startsWith('[Continuum'))
