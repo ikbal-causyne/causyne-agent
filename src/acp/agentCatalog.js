@@ -445,14 +445,19 @@ export async function detectAllPeers(cwd = process.cwd()) {
  * Convert a preset to a runnable PeerProfile.
  */
 export function getPresetProfile(id) {
-    const preset = BUILTIN_PEER_PRESETS[id.toLowerCase()];
+    if (typeof id !== 'string')
+        return null;
+    const key = id.trim().toLowerCase();
+    if (!key || !Object.hasOwn(BUILTIN_PEER_PRESETS, key))
+        return null;
+    const preset = BUILTIN_PEER_PRESETS[key];
     if (!preset)
         return null;
     return {
         id: preset.id,
         label: preset.label,
         command: preset.command,
-        args: preset.args,
+        args: [...preset.args],
         cwd: null,
         policy: 'workspace',
         timeoutSeconds: preset.timeoutSeconds || 180,
