@@ -24,6 +24,10 @@ function normalizeServiceDescriptor(args) {
     if (typeof args.serviceName !== 'string' || !args.serviceName.trim()) {
         throw new Error('"serviceName" must be a non-empty string.');
     }
+    const normalizedServiceName = args.serviceName.trim();
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$/.test(normalizedServiceName)) {
+        throw new Error('"serviceName" must match ^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$.');
+    }
     assertOptionalString(args.serviceDescription, 'serviceDescription');
     assertOptionalString(args.endpoint, 'endpoint');
     assertOptionalString(args.authEnvVar, 'authEnvVar');
@@ -54,6 +58,10 @@ function normalizeServiceDescriptor(args) {
     if (args.tools !== undefined && !Array.isArray(args.tools)) {
         throw new Error('"tools" must be an array of tool descriptors.');
     }
+    if (Array.isArray(args.tools) && args.tools.length > 32) {
+        throw new Error('"tools" exceeds maximum of 32 descriptors.');
+    }
+    const seenToolNames = new Set();
     const tools = (args.tools || []).map((t, idx) => {
         if (!t || typeof t !== 'object' || Array.isArray(t)) {
             throw new Error(`Tool at index ${idx} must be an object.`);
@@ -61,6 +69,14 @@ function normalizeServiceDescriptor(args) {
         if (typeof t.name !== 'string' || !t.name.trim()) {
             throw new Error(`Tool at index ${idx} requires a non-empty name.`);
         }
+        const cleanToolName = t.name.trim();
+        if (!/^[a-z][a-z0-9_-]{0,63}$/.test(cleanToolName)) {
+            throw new Error(`Tool name "${cleanToolName}" must match ^[a-z][a-z0-9_-]{0,63}$.`);
+        }
+        if (seenToolNames.has(cleanToolName)) {
+            throw new Error(`Duplicate tool name "${cleanToolName}".`);
+        }
+        seenToolNames.add(cleanToolName);
         if (typeof t.description !== 'string' || !t.description.trim()) {
             throw new Error(`Tool "${t.name}" requires a non-empty description.`);
         }
@@ -77,6 +93,18 @@ function normalizeServiceDescriptor(args) {
                 throw new Error(`Tool "${t.name}" field "${field}" must be a string.`);
             }
         }
+        if (typeof t.httpPath === 'string') {
+            const hp = t.httpPath.trim();
+            const stripped = hp.replace(/^\/+/, '');
+            if (/[\x00-\x1f\x7f]/.test(hp) ||
+                /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(hp) ||
+                hp.startsWith('//') ||
+                hp.startsWith('///') ||
+                stripped.startsWith('//') ||
+                hp.replace(/\\/g, '/').split('/').some(seg => seg === '..')) {
+                throw new Error(`Tool "${cleanToolName}" has unsafe httpPath "${t.httpPath}".`);
+            }
+        }
         const rawParams = t.parameters ?? {};
         if (rawParams['type'] !== undefined && rawParams['type'] !== 'object') {
             throw new Error(`Tool "${t.name}" parameters must declare type "object".`);
@@ -84,6 +112,10 @@ function normalizeServiceDescriptor(args) {
         if (rawParams['properties'] !== undefined &&
             (rawParams['properties'] === null || typeof rawParams['properties'] !== 'object' || Array.isArray(rawParams['properties']))) {
             throw new Error(`Tool "${t.name}" parameters.properties must be an object.`);
+        }
+        if (rawParams['required'] !== undefined &&
+            (!Array.isArray(rawParams['required']) || rawParams['required'].some((item) => typeof item !== 'string'))) {
+            throw new Error(`Tool "${cleanToolName}" parameters.required must be an array of strings.`);
         }
         const { type: _discardType, ...restParams } = rawParams;
         const parameters = {
@@ -94,7 +126,7 @@ function normalizeServiceDescriptor(args) {
                 : {}
         };
         const tool = {
-            name: t.name.trim(),
+            name: cleanToolName,
             description: t.description.trim(),
             parameters
         };
@@ -111,13 +143,13 @@ function normalizeServiceDescriptor(args) {
     if (tools.length === 0) {
         tools.push({
             name: 'execute',
-            description: `Default execution method for ${args.serviceName}`,
+            description: `Default execution method for ${normalizedServiceName}`,
             parameters: { type: 'object', properties: {} }
         });
     }
     const desc = {
-        name: args.serviceName,
-        description: args.serviceDescription || `Custom integration for ${args.serviceName}`,
+        name: normalizedServiceName,
+        description: args.serviceDescription || `Custom integration for ${normalizedServiceName}`,
         serviceKind: args.serviceKind || 'custom',
         tools
     };
@@ -238,10 +270,10 @@ export const pluginsFactoryTool = {
     },
     async execute(args) {
         try {
-            if (!args || !args.action || !args.serviceName) {
+            if (!args || typeof args !== 'object' || Array.isArray(args) || typeof args.action !== 'string' || !args.action || !args.serviceName) {
                 return {
                     success: false,
-                    action: args?.action || 'unknown',
+                    action: typeof args?.action === 'string' ? args.action : 'unknown',
                     error: 'Missing required arguments: "action" and "serviceName" are required.'
                 };
             }
