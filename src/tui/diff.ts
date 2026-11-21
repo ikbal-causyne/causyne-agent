@@ -29,6 +29,7 @@ import fs from 'fs';
 import os from 'node:os';
 import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, safeDisplay, shortenHome } from './text.js';
+import { isCredentialPath } from '../sandbox.js';
 
 export interface DiffLine {
   kind: 'ctx' | 'add' | 'del';
@@ -230,6 +231,7 @@ function readForDiff(pathish: unknown): string | null {
   if (typeof pathish !== 'string' || !pathish.trim() || pathish.includes('\0')) return null;
   try {
     const target = pathish.replace(/^~(?=\/|\\|$)/, os.homedir());
+    if (isCredentialPath(target)) return null;
     const stat = fs.lstatSync(target);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null;
     return fs.readFileSync(target, 'utf8');

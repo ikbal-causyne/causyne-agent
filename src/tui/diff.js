@@ -28,6 +28,7 @@ import fs from 'fs';
 import os from 'node:os';
 import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, safeDisplay, shortenHome } from './text.js';
+import { isCredentialPath } from '../sandbox.js';
 // Per side, for the LCS table. 600x600 int cells is ~1.4 MB and a few ms.
 const MAX_SIDE_LINES = 600;
 // Rows that reach the terminal. Deliberately smaller than a screen so the
@@ -197,6 +198,8 @@ function readForDiff(pathish) {
         return null;
     try {
         const target = pathish.replace(/^~(?=\/|\\|$)/, os.homedir());
+        if (isCredentialPath(target))
+            return null;
         const stat = fs.lstatSync(target);
         if (!stat.isFile() || stat.size > MAX_FILE_BYTES)
             return null;
