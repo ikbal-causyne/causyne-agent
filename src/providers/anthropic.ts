@@ -229,7 +229,19 @@ export class AnthropicProvider extends LLMProvider {
         }
       } else {
         const { cacheAnchor: _c, thinking_blocks: _tb, reasoning_content: _rc, spillPath: _sp, ...clean } = msg;
-        anthropicMessages.push({ ...clean, content: clean.content ?? '' });
+        const nextContent = clean.content ?? '';
+        const prev = anthropicMessages[anthropicMessages.length - 1];
+        if (clean.role === 'user' && prev && prev['role'] === 'user') {
+          const prevBlocks = Array.isArray(prev['content'])
+            ? prev['content']
+            : (typeof prev['content'] === 'string' && prev['content'] ? [{ type: 'text', text: prev['content'] }] : []);
+          const nextBlocks = Array.isArray(nextContent)
+            ? nextContent
+            : (typeof nextContent === 'string' && nextContent ? [{ type: 'text', text: nextContent }] : []);
+          prev['content'] = [...prevBlocks, ...nextBlocks];
+        } else {
+          anthropicMessages.push({ ...clean, content: nextContent });
+        }
       }
     }
 
