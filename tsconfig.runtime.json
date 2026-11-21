@@ -376,7 +376,8 @@
     "src/tools/blenderAutomator.ts",
     "src/tools/gameWebRuntimeInspector.ts",
     "src/tools/gameCanvasAudit.ts",
-    "src/tools/gameVfxEmitterGen.ts"
+    "src/tools/gameVfxEmitterGen.ts",
+    "src/tools/gameDataForge.ts"
   ],
   "exclude": [
     "node_modules",
