@@ -406,7 +406,7 @@ export function disablePlugin(name: string): any {
   return { ok: true, name };
 }
 
-export function createPlugin(input: {
+export function createPlugin(input?: {
   name?: unknown;
   description?: unknown;
   toolName?: unknown;
@@ -414,18 +414,27 @@ export function createPlugin(input: {
   parameters?: any;
   code?: unknown;
   capabilities?: unknown;
-} = {}): any {
-  const { name, description, toolName, toolDescription, parameters, code, capabilities = [] } = input;
-  if (typeof name !== 'string' || !NAME.test(name)) {
+} | null): any {
+  const safeInput = input && typeof input === 'object' ? input : {};
+  const { name, description, toolName, toolDescription, parameters, code, capabilities = [] } = safeInput;
+  if (typeof name !== 'string' || !NAME.test(name) || FORBIDDEN_KEYS.has(name)) {
     return { ok: false, error: 'Plugin name must use lowercase letters, digits, and hyphens' };
   }
   if (typeof toolName !== 'string' || !TOOL_NAME.test(toolName)) {
     return { ok: false, error: 'Tool name must start with a lowercase letter and use letters, digits, _ or -' };
   }
-  if (typeof description !== 'string' || !description.trim()) return { ok: false, error: 'Plugin description is required' };
-  if (typeof toolDescription !== 'string' || !toolDescription.trim()) return { ok: false, error: 'Tool description is required' };
-  if (!parameters || parameters.type !== 'object') return { ok: false, error: 'Tool parameters must be an object JSON schema' };
-  if (typeof code !== 'string' || !code.trim()) return { ok: false, error: 'Plugin code is required' };
+  if (typeof description !== 'string' || !description.trim() || description.length > 2000) {
+    return { ok: false, error: 'Plugin description is required (max 2000 chars)' };
+  }
+  if (typeof toolDescription !== 'string' || !toolDescription.trim() || toolDescription.length > 1000) {
+    return { ok: false, error: 'Tool description is required (max 1000 chars)' };
+  }
+  if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters) || parameters.type !== 'object') {
+    return { ok: false, error: 'Tool parameters must be an object JSON schema' };
+  }
+  if (typeof code !== 'string' || !code.trim() || Buffer.byteLength(code, 'utf8') > MAX_ENTRY_BYTES) {
+    return { ok: false, error: 'Plugin code is required and must be at most 512 KB' };
+  }
 
   let safeCapabilities: string[];
   try {
