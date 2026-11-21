@@ -20,6 +20,9 @@ export interface DetectedProviderConfig {
 
 export type CausyneConfig = Record<string, any>;
 
+const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
+const FORBIDDEN_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function configDir(): string {
   return causyneHome();
 }
@@ -48,7 +51,19 @@ export function loadConfig(): CausyneConfig {
   const hadExistingFile = fs.existsSync(file);
   if (hadExistingFile) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as CausyneConfig;
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new Error('Refusing to load symlink or non-regular config.json');
+      }
+      if (stat.size > MAX_CONFIG_BYTES) {
+        throw new Error(`config.json exceeds maximum size (${MAX_CONFIG_BYTES} bytes)`);
+      }
+      const rawText = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+      const parsedRaw: unknown = JSON.parse(rawText);
+      if (!parsedRaw || typeof parsedRaw !== 'object' || Array.isArray(parsedRaw)) {
+        throw new Error('config.json must contain a JSON object');
+      }
+      const parsed = parsedRaw as CausyneConfig;
       let needsEncryptedResave = false;
       let hadDecryptFailure = false;
 
