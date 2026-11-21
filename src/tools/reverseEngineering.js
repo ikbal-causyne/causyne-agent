@@ -952,10 +952,17 @@ export const reverseEngineering = {
                     // Fall back gracefully to native parsing
                 }
                 const stats = await fsp.stat(resolvedFile);
-                const fd = await fsp.open(resolvedFile, 'r');
+                if (!stats.isFile()) {
+                    return { success: false, error: `Inspection target is not a regular file: ${resolvedFile}` };
+                }
                 const headerBuf = Buffer.alloc(Math.min(8192, stats.size));
-                await fd.read(headerBuf, 0, headerBuf.length, 0);
-                await fd.close();
+                const fd = await fsp.open(resolvedFile, 'r');
+                try {
+                    await fd.read(headerBuf, 0, headerBuf.length, 0);
+                }
+                finally {
+                    await fd.close();
+                }
                 let result = {
                     filePath: resolvedFile,
                     format: 'Unknown'
