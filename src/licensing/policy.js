@@ -5,5 +5,5 @@
 export const LICENSE_ENFORCEMENT_ENABLED = false;
 export const LICENSE_API_BASE = 'https://license.causyne.com';
 export const LICENSE_PLAN_KEYS = Object.freeze([
-  'monthly', 'annual', 'two_month_pass', 'two_year_pass'
+    'monthly', 'annual', 'two_month_pass', 'two_year_pass'
 ]);

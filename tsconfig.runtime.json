@@ -300,7 +300,8 @@
     "src/tools/toolDispatch.ts",
     "src/tui/workspaceSwitch.ts",
     "src/tui/workspaceIdentity.ts",
-    "src/tui/sessionPickerView.ts"
+    "src/tui/sessionPickerView.ts",
+    "src/licensing/policy.ts"
   ],
   "exclude": [
     "node_modules",
