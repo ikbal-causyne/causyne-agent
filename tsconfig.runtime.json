@@ -386,7 +386,8 @@
     "src/tools/gameTilemapGenerator.ts",
     "src/tools/gameDialogueTreeGen.ts",
     "src/tools/gameShaderForge.ts",
-    "src/tools/gameAnimationRig.ts"
+    "src/tools/gameAnimationRig.ts",
+    "src/tools/gameEntitySpawner.ts"
   ],
   "exclude": [
     "node_modules",
