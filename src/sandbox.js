@@ -365,6 +365,8 @@ export class Sandbox {
     classifyCommandRisk(command) {
         if (!command || typeof command !== 'string')
             return 'safe';
+        if (command.length > 200_000)
+            return 'extreme';
         const normalized = command.trim().toLowerCase();
         const FORBIDDEN_PATTERNS = [
             /:\(\)\s*\{\s*:\|:&\s*\};/,

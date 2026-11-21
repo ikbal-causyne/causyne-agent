@@ -405,6 +405,7 @@ export class Sandbox {
 
   classifyCommandRisk(command: unknown): RiskLevel {
     if (!command || typeof command !== 'string') return 'safe';
+    if (command.length > 200_000) return 'extreme';
     const normalized = command.trim().toLowerCase();
 
     const FORBIDDEN_PATTERNS: readonly RegExp[] = [
