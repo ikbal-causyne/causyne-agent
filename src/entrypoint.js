@@ -214,7 +214,9 @@ program
     .description('List recent undo checkpoints (files + conversation snapshots)')
     .option('-n, --limit <count>', 'How many task groups to show', '15')
     .action(async (options) => {
-    printCheckpoints(parseInt(options.limit, 10) || 15);
+    const parsed = parseInt(String(options.limit ?? '15'), 10);
+    const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(200, parsed) : 15;
+    printCheckpoints(limit);
 });
 program
     .command('undo [taskId]')
