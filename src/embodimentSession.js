@@ -102,9 +102,13 @@ export function recordActuation(taskId, app, verbs) {
 export function readSession(taskId) {
     try {
         const file = sessionFile(taskId);
-        if (!fs.existsSync(file))
+        const stat = fs.lstatSync(file);
+        if (!stat.isFile() || stat.size > 256 * 1024)
             return null;
-        return JSON.parse(fs.readFileSync(file, 'utf8'));
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed
+            : null;
     }
     catch {
         return null;

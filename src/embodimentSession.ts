@@ -111,8 +111,12 @@ export function recordActuation(taskId: unknown, app: string, verbs: readonly un
 export function readSession(taskId: unknown): EmbodimentSessionState | null {
   try {
     const file = sessionFile(taskId);
-    if (!fs.existsSync(file)) return null;
-    return JSON.parse(fs.readFileSync(file, 'utf8')) as EmbodimentSessionState;
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.size > 256 * 1024) return null;
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as EmbodimentSessionState
+      : null;
   } catch {
     return null;
   }
