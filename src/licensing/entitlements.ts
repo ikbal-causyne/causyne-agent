@@ -453,7 +453,7 @@ export class EntitlementGate {
   }
 
   pause(): void {
-    if (this.enabled) this.pausedRuns++;
+    if (this.enabled) this.pausedRuns = Math.min(this.activeRuns, this.pausedRuns + 1);
   }
 
   resume(): void {
