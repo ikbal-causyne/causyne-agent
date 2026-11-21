@@ -293,29 +293,34 @@ export const creativeApps = {
     },
     async execute(value, context = {}) {
         try {
-            if (!value || typeof value !== 'object')
+            if (!value || typeof value !== 'object' || Array.isArray(value))
                 throw new Error('Expected creative app arguments');
             const args = value;
+            const safeContext = context && typeof context === 'object' ? context : {};
+            const workspace = safeContext.parentLoop?.workspaceRoot?.trim()
+                || safeContext.workspaceRoot?.trim()
+                || safeContext.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim()
+                || process.cwd();
             if (args.action === 'status')
                 return { success: true, apps: await creativeAppStatus() };
             if (args.action === 'studio_edit')
-                return await runStudioEdit(args, process.cwd(), context.signal);
+                return await runStudioEdit(args, workspace, safeContext.signal);
             if (args.action === 'blender_batch')
-                return await runBlenderBatch(args, process.cwd(), context.signal);
+                return await runBlenderBatch(args, workspace, safeContext.signal);
             if (args.action === 'studio_pipeline')
-                return await runStudioPipeline(args, process.cwd(), context.signal);
+                return await runStudioPipeline(args, workspace, safeContext.signal);
             if (args.action === 'live_bridge')
-                return await runAdobeLiveBridge(args, process.cwd(), context.signal);
+                return await runAdobeLiveBridge(args, workspace, safeContext.signal);
             if (args.action === 'engine_bridge')
-                return await runGameEngineBridge(args, process.cwd(), context.signal);
+                return await runGameEngineBridge(args, workspace, safeContext.signal);
             if (args.action === 'verify_bridge')
-                return await verifyAllCreativeAndGameBridges(process.cwd());
+                return await verifyAllCreativeAndGameBridges(workspace);
             if (args.action === 'scaffold_uxp') {
                 return await scaffoldCausyneUxpPlugin(typeof args.outputDir === 'string' && args.outputDir.trim()
                     ? args.outputDir.trim()
                     : typeof args.output === 'string' && args.output.trim()
                         ? args.output.trim()
-                        : 'causyne-uxp-bridge', process.cwd(), { websocketPort: typeof args.websocketPort === 'number' ? args.websocketPort : undefined });
+                        : 'causyne-uxp-bridge', workspace, { websocketPort: typeof args.websocketPort === 'number' ? args.websocketPort : undefined });
             }
             throw new Error('Unknown creative app action');
         }
