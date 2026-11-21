@@ -575,6 +575,18 @@ export function wrapCommandWithOsSandbox(
   shellArgs: readonly string[],
   options: OsSandboxWrapOptions
 ): WrappedSpawnSpec {
+  if (typeof shell !== 'string' || shell.length === 0 || shell.includes('\0')) {
+    throw new TypeError('wrapCommandWithOsSandbox requires a valid shell executable');
+  }
+  if (!Array.isArray(shellArgs) || shellArgs.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
+    throw new TypeError('wrapCommandWithOsSandbox requires valid shell arguments');
+  }
+  if (!options || typeof options !== 'object') {
+    throw new TypeError('wrapCommandWithOsSandbox requires an options object');
+  }
+  if (options.binaryPathOverride !== undefined && (typeof options.binaryPathOverride !== 'string' || options.binaryPathOverride.includes('\0'))) {
+    throw new TypeError('Invalid OS sandbox binaryPathOverride');
+  }
   const mode = options.mode ?? 'off';
   if (mode === 'off') {
     return {

@@ -506,6 +506,18 @@ export function buildBubblewrapArgs(shell, shellArgs, options) {
  * Wraps a `(shell, shellArgs)` invocation in an OS kernel sandbox when enabled.
  */
 export function wrapCommandWithOsSandbox(shell, shellArgs, options) {
+    if (typeof shell !== 'string' || shell.length === 0 || shell.includes('\0')) {
+        throw new TypeError('wrapCommandWithOsSandbox requires a valid shell executable');
+    }
+    if (!Array.isArray(shellArgs) || shellArgs.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
+        throw new TypeError('wrapCommandWithOsSandbox requires valid shell arguments');
+    }
+    if (!options || typeof options !== 'object') {
+        throw new TypeError('wrapCommandWithOsSandbox requires an options object');
+    }
+    if (options.binaryPathOverride !== undefined && (typeof options.binaryPathOverride !== 'string' || options.binaryPathOverride.includes('\0'))) {
+        throw new TypeError('Invalid OS sandbox binaryPathOverride');
+    }
     const mode = options.mode ?? 'off';
     if (mode === 'off') {
         return {
