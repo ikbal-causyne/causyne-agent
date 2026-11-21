@@ -312,7 +312,8 @@
     "src/verification/interactivePty.ts",
     "src/tui/terminalInputFramer.ts",
     "src/tui/invocation.ts",
-    "src/tui/theme.ts"
+    "src/tui/theme.ts",
+    "src/tui/history.ts"
   ],
   "exclude": [
     "node_modules",
