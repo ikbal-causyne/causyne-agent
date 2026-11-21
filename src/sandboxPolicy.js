@@ -705,7 +705,7 @@ export function normalizeExecutableSegment(segment) {
             idx = scan;
             continue;
         }
-        if (base === 'nohup' || base === 'builtin') {
+        if (base === 'nohup' || base === 'builtin' || base === 'setsid') {
             idx++;
             if (tokens[idx] === '--')
                 idx++;
@@ -754,7 +754,7 @@ export function normalizeExecutableSegment(segment) {
             }
             continue;
         }
-        if (base === 'stdbuf') {
+        if (base === 'stdbuf' || base === 'ionice' || base === 'taskset') {
             idx++;
             while (idx < tokens.length && tokens[idx].startsWith('-')) {
                 const flag = tokens[idx];
@@ -762,7 +762,7 @@ export function normalizeExecutableSegment(segment) {
                     idx++;
                     break;
                 }
-                if (flag === '-i' || flag === '-o' || flag === '-e') {
+                if (flag === '-i' || flag === '-o' || flag === '-e' || flag === '-c' || flag === '-n' || flag === '-p') {
                     idx += 2;
                     continue;
                 }
@@ -1217,6 +1217,17 @@ export function isFetchAndExecPipeline(pipelines) {
  * substitutions) into normalized executable segments, pipelines, and write targets.
  */
 export function analyzeShellCommand(rawCommand) {
+    if (typeof rawCommand !== 'string') {
+        return {
+            maskedTopLevel: '',
+            allRawUnits: [],
+            allMaskedUnits: [],
+            normalizedSegments: [],
+            unwrappedRawSegments: [],
+            normalizedPipelines: [],
+            writeTargets: []
+        };
+    }
     const lower = rawCommand.trim().toLowerCase();
     const topParsed = parseMaskAndExtractSubstitutions(lower, 0);
     const allRawUnits = [rawCommand.trim()];
