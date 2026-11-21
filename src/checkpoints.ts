@@ -164,12 +164,41 @@ function objectPath(hash: string): string {
 function writeObject(buffer: Buffer): string {
   const hash = sha256(buffer);
   const target = objectPath(hash);
-  if (fs.existsSync(target)) return hash;
+  try {
+    const existing = fs.lstatSync(target);
+    if (existing.isSymbolicLink() || !existing.isFile()) {
+      throw new Error('refusing symlink or non-regular checkpoint object');
+    }
+    return hash;
+  } catch (err: unknown) {
+    const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+    if (code !== 'ENOENT') throw err;
+  }
 
-  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-  const temp = `${target}.tmp_${process.pid}_${Date.now()}`;
-  fs.writeFileSync(temp, buffer, { mode: 0o600 });
-  fs.renameSync(temp, target);
+  const shardDir = path.dirname(target);
+  if (!fs.existsSync(shardDir)) {
+    fs.mkdirSync(shardDir, { recursive: true, mode: 0o700 });
+  } else {
+    const shardStat = fs.lstatSync(shardDir);
+    if (shardStat.isSymbolicLink() || !shardStat.isDirectory()) {
+      throw new Error('refusing symlink or non-directory checkpoint shard');
+    }
+  }
+
+  const temp = `${target}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+  try {
+    const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+    try {
+      fs.writeSync(fd, buffer, 0, buffer.length);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temp, target);
+  } catch (err: unknown) {
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
+    throw err;
+  }
   return hash;
 }
 
