@@ -15,7 +15,7 @@ export class DeepSeekProvider extends LLMProvider {
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['deepseek']) || '');
         this.visionModels = ['-vl'];
         this.audioModels = [];
-        this.preserveReasoningContent = this.isReasonerModel();
+        this.preserveReasoningContent = true;
     }
     isReasonerModel() {
         const lowered = (this.model || '').trim().toLowerCase();
@@ -23,7 +23,6 @@ export class DeepSeekProvider extends LLMProvider {
     }
     async chat(messages, options = {}) {
         const apiKey = requireApiKey(this.apiKey, 'DeepSeek');
-        this.preserveReasoningContent = this.isReasonerModel();
         const sanitizedMessages = this.prepareMessages(messages);
         const payload = {
             model: this.model,

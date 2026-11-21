@@ -21,7 +21,7 @@ export class DeepSeekProvider extends LLMProvider {
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['deepseek']) || '');
     this.visionModels = ['-vl'];
     this.audioModels = [];
-    this.preserveReasoningContent = this.isReasonerModel();
+    this.preserveReasoningContent = true;
   }
 
   isReasonerModel(): boolean {
@@ -31,7 +31,6 @@ export class DeepSeekProvider extends LLMProvider {
 
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
     const apiKey = requireApiKey(this.apiKey, 'DeepSeek');
-    this.preserveReasoningContent = this.isReasonerModel();
     const sanitizedMessages = this.prepareMessages(messages);
 
     const payload: Record<string, any> = {
