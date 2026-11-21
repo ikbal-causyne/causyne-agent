@@ -719,7 +719,10 @@ async function runPluginTool(tool, args, context) {
         child.stderr.on('data', (chunk) => {
             stderr = (stderr + String(chunk)).slice(-16_000);
         });
-        child.on('error', (error) => finish({ success: false, error: error.message }));
+        child.on('error', (error) => finish({
+            success: false,
+            error: safeDisplay(redactProviderSecrets(error.message))
+        }));
         child.on('close', () => {
             const lines = stdout.split(/\r?\n/);
             let line;
@@ -730,7 +733,8 @@ async function runPluginTool(tool, args, context) {
                 }
             }
             if (!line) {
-                finish({ success: false, error: stderr.trim() || 'Plugin returned no structured result' });
+                const cleanErr = safeDisplay(redactProviderSecrets(stderr.trim()));
+                finish({ success: false, error: cleanErr || 'Plugin returned no structured result' });
                 return;
             }
             try {
