@@ -370,7 +370,8 @@
     "src/tools/printer.ts",
     "src/tools/subagentOrchestrator.ts",
     "src/tools/executeProceduralMedia.ts",
-    "src/tools/palmierAutomator.ts"
+    "src/tools/palmierAutomator.ts",
+    "src/tools/manageLocalAiDependencies.ts"
   ],
   "exclude": [
     "node_modules",
