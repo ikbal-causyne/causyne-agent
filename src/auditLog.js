@@ -99,6 +99,12 @@ export class AuditLog {
                 });
             }
             fs.appendFileSync(target, serialized + '\n', { encoding: 'utf8', mode: 0o600 });
+            if (process.platform !== 'win32') {
+                try {
+                    fs.chmodSync(target, 0o600);
+                }
+                catch { /* ignore */ }
+            }
         }
         catch (e) {
             console.error('Failed to write audit log:', e);
