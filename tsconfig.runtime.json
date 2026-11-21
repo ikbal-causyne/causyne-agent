@@ -331,7 +331,8 @@
     "src/capabilities.ts",
     "src/modelIds.ts",
     "src/modelCatalogue.ts",
-    "src/designPalettes.ts"
+    "src/designPalettes.ts",
+    "src/slopDetector.ts"
   ],
   "exclude": [
     "node_modules",
