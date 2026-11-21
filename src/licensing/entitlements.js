@@ -56,8 +56,26 @@ function requireIdentityFields(value) {
 }
 /** No hardware serials, MAC addresses, device fingerprint or email required. */
 export function loadInstallationIdentity(stateRoot = causyneHome()) {
-    fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-    const file = path.join(stateRoot, TOKEN_FILE);
+    if (typeof stateRoot !== 'string' || !stateRoot.trim() || stateRoot.includes('\0')) {
+        throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Invalid state directory for installation identity.');
+    }
+    const resolvedRoot = path.resolve(stateRoot);
+    if (!fs.existsSync(resolvedRoot)) {
+        fs.mkdirSync(resolvedRoot, { recursive: true, mode: 0o700 });
+    }
+    else {
+        const dirStat = fs.lstatSync(resolvedRoot);
+        if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+            throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Refusing symlink or non-directory state root.');
+        }
+    }
+    if (process.platform !== 'win32') {
+        try {
+            fs.chmodSync(resolvedRoot, 0o700);
+        }
+        catch { /* ignore */ }
+    }
+    const file = path.join(resolvedRoot, TOKEN_FILE);
     try {
         const value = requireIdentityFields(JSON.parse(fs.readFileSync(file, 'utf8')));
         return { ...value, file };
