@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 
 const DRIVER = String.raw`import base64, fcntl, json, os, pty, select, signal, struct, sys, termios, time
 cfg=json.loads(sys.argv[1])
@@ -225,7 +226,7 @@ export async function runInteractivePty(options: InteractivePtyOptions = {}): Pr
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
-        ...process.env,
+        ...sanitizeSubprocessEnv(process.env),
         ...env,
         TERM: 'xterm-256color',
         COLUMNS: String(columns),
