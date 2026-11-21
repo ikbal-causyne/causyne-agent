@@ -49,9 +49,28 @@ export function isJsonRpcResponse(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         return false;
     const record = value;
-    return record.jsonrpc === '2.0'
-        && (typeof record.id === 'string' || typeof record.id === 'number' || record.id === null)
-        && ('result' in record || 'error' in record);
+    if (record.jsonrpc !== '2.0')
+        return false;
+    const validId = typeof record.id === 'string'
+        || (typeof record.id === 'number' && Number.isFinite(record.id))
+        || record.id === null;
+    if (!validId)
+        return false;
+    const hasResult = 'result' in record;
+    const hasError = 'error' in record;
+    if (hasResult === hasError)
+        return false;
+    if (hasError) {
+        const err = record.error;
+        if (err === null || typeof err !== 'object' || Array.isArray(err))
+            return false;
+        const errObj = err;
+        if (typeof errObj.code !== 'number' || !Number.isFinite(errObj.code))
+            return false;
+        if (typeof errObj.message !== 'string')
+            return false;
+    }
+    return true;
 }
 export function isJsonRpcNotification(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
