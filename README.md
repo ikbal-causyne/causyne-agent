@@ -8,7 +8,7 @@ developed to turn intention into meaningful progress through capable,
 increasingly autonomous AI, with clear boundaries and human control.
 
 This repository is an early source-available development snapshot. Public
-documentation is intentionally concise while the project is evolving.
+documentation is intentionally concise while the project is evolving
 
 Learn more at [causyne.com](https://causyne.com/)
 
