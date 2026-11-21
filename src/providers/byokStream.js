@@ -11,6 +11,7 @@
  *   - Secret redaction, ANSI sanitization & `Retry-After` preservation
  *   - Graceful fallback when an upstream proxy returns non-streaming JSON
  */
+import { safeParseJsonObject } from './wireNormalizer.js';
 import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, ProviderHttpError, parseRetryAfterMs, readBoundedResponseText, redactProviderSecrets, safeProviderFetch } from './byokHttp.js';
 export function wantsStreaming(options) {
     if (!options || typeof options !== 'object')
@@ -515,7 +516,7 @@ export async function streamAnthropicMessages(options) {
                     acc.partialJson += delta.partial_json;
                 }
             }
-        });
+        }, options.signal);
     }
     finally {
         opened.cleanup();
@@ -524,14 +525,9 @@ export async function streamAnthropicMessages(options) {
         .sort((a, b) => a[0] - b[0])
         .map(([, acc]) => {
         if (acc.block.type === 'tool_use' && acc.partialJson.trim().length > 0) {
-            try {
-                const parsedInput = JSON.parse(acc.partialJson);
-                if (isRecord(parsedInput)) {
-                    acc.block.input = parsedInput;
-                }
-            }
-            catch {
-                // Keep existing input object if partial JSON could not be parsed
+            const recovered = safeParseJsonObject(acc.partialJson);
+            if (Object.keys(recovered).length > 0) {
+                acc.block.input = recovered;
             }
         }
         return acc.block;

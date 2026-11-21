@@ -12,6 +12,7 @@
  *   - Graceful fallback when an upstream proxy returns non-streaming JSON
  */
 
+import { safeParseJsonObject } from './wireNormalizer.js';
 import {
   MAX_PROVIDER_ERROR_BYTES,
   MAX_PROVIDER_JSON_BYTES,
@@ -607,7 +608,8 @@ export async function streamAnthropicMessages(
             acc.partialJson += delta.partial_json;
           }
         }
-      }
+      },
+      options.signal
     );
   } finally {
     opened.cleanup();
@@ -617,13 +619,9 @@ export async function streamAnthropicMessages(
     .sort((a, b) => a[0] - b[0])
     .map(([, acc]) => {
       if (acc.block.type === 'tool_use' && acc.partialJson.trim().length > 0) {
-        try {
-          const parsedInput: unknown = JSON.parse(acc.partialJson);
-          if (isRecord(parsedInput)) {
-            acc.block.input = parsedInput;
-          }
-        } catch {
-          // Keep existing input object if partial JSON could not be parsed
+        const recovered = safeParseJsonObject(acc.partialJson);
+        if (Object.keys(recovered).length > 0) {
+          acc.block.input = recovered;
         }
       }
       return acc.block;
