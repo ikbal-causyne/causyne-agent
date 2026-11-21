@@ -72,6 +72,8 @@ export const FEATURE_MAP = Object.freeze(Object.fromEntries(Object.entries(RAW_F
 export function selectFeatures(names) {
     if (!Array.isArray(names) || names.length === 0)
         throw new Error('At least one feature is required');
+    if (names.length > 64)
+        throw new RangeError('Too many features requested');
     const selected = [...new Set(names)];
     for (const name of selected) {
         if (typeof name !== 'string' || !Object.hasOwn(FEATURE_MAP, name)) {
