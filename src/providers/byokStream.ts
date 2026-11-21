@@ -153,32 +153,47 @@ async function consumeSseStream(
   let dataLines: string[] = [];
   let sawFirstLine = false;
 
+  let eventBytes = 0;
+
   const flushEvent = (): void => {
     if (dataLines.length === 0) {
       currentEvent = '';
+      eventBytes = 0;
       return;
     }
     const payload = dataLines.join('\n');
     const eventName = currentEvent || 'message';
     currentEvent = '';
     dataLines = [];
+    eventBytes = 0;
     onEvent({ event: eventName, data: payload });
   };
 
   const processLine = (rawLine: string): void => {
-    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    let stripped = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    if (!sawFirstLine) {
+      sawFirstLine = true;
+      if (stripped.charCodeAt(0) === 0xfeff) stripped = stripped.slice(1);
+    }
+    const line = stripped;
     if (line === '') {
       flushEvent();
       return;
     }
     if (line.startsWith(':')) return; // SSE comment / keep-alive
     if (line.startsWith('event:')) {
-      currentEvent = line.slice(6).trim();
+      const val = line.slice(6);
+      currentEvent = (val.startsWith(' ') ? val.slice(1) : val).trim();
       return;
     }
     if (line.startsWith('data:')) {
       const value = line.slice(5);
-      dataLines.push(value.startsWith(' ') ? value.slice(1) : value);
+      const entry = value.startsWith(' ') ? value.slice(1) : value;
+      eventBytes += Buffer.byteLength(entry, 'utf8') + 1;
+      if (eventBytes > MAX_SSE_BUFFER_BYTES) {
+        throw new Error(`${providerLabel} SSE event payload exceeded safety limit (${MAX_SSE_BUFFER_BYTES} bytes).`);
+      }
+      dataLines.push(entry);
     }
   };
 
