@@ -2078,31 +2078,50 @@ export const COMMANDS: SlashCommandDefinition[] = [
       }
       const scanTargets = targets.length > 0 ? targets : ['.'];
 
+      const MAX_SLOP_FILE_BYTES = 2 * 1024 * 1024;
+      const MAX_SLOP_FILES = 200;
       const files: Array<{ path: string; content: string }> = [];
       const collect = (target: string): string | null => {
-        const resolved = path.resolve(String(target).replace(/^~\//, os.homedir() + '/'));
+        if (typeof target !== 'string' || !target || target.includes('\0')) return 'invalid target path';
+        const expanded = target === '~'
+          ? os.homedir()
+          : (target.startsWith('~/') || target.startsWith('~\\') ? path.join(os.homedir(), target.slice(2)) : target);
+        const resolved = path.resolve(expanded);
         let stats: fs.Stats;
-        try { stats = fs.statSync(resolved); } catch { return `not found: ${target}`; }
+        try { stats = fs.lstatSync(resolved); } catch { return `not found: ${safeDisplay(target)}`; }
+        if (stats.isSymbolicLink()) return `refused symlink: ${safeDisplay(target)}`;
 
         if (stats.isDirectory()) {
           const stack: string[] = [resolved];
-          while (stack.length > 0 && files.length < 200) {
+          while (stack.length > 0 && files.length < MAX_SLOP_FILES) {
             const dir = stack.pop()!;
-            let entries;
-            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { continue; }
+            let entries: fs.Dirent[];
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
             for (const entry of entries) {
+              if (files.length >= MAX_SLOP_FILES) break;
+              if (entry.isSymbolicLink()) continue;
               if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
               const full = path.join(dir, entry.name);
-              if (entry.isDirectory()) stack.push(full);
-              else if (entry.isFile()) {
-                try { files.push({ path: full, content: fs.readFileSync(full, 'utf8') }); } catch (e) {}
+              if (entry.isDirectory()) {
+                stack.push(full);
+              } else if (entry.isFile()) {
+                try {
+                  const fStat = fs.lstatSync(full);
+                  if (!fStat.isSymbolicLink() && fStat.isFile() && fStat.size <= MAX_SLOP_FILE_BYTES) {
+                    files.push({ path: full, content: fs.readFileSync(full, 'utf8') });
+                  }
+                } catch { /* ignore unreadable file */ }
               }
             }
           }
           return null;
         }
-        try { files.push({ path: resolved, content: fs.readFileSync(resolved, 'utf8') }); } catch (e) {
-          return `could not read: ${target}`;
+        if (!stats.isFile() || stats.size > MAX_SLOP_FILE_BYTES) {
+          return `skipped non-regular or oversized file: ${safeDisplay(target)}`;
+        }
+        if (files.length >= MAX_SLOP_FILES) return null;
+        try { files.push({ path: resolved, content: fs.readFileSync(resolved, 'utf8') }); } catch {
+          return `could not read: ${safeDisplay(target)}`;
         }
         return null;
       };

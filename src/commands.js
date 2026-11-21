@@ -1914,48 +1914,70 @@ export const COMMANDS = [
                 return ok('Design movements to commit to:\n\n' + formatMovementBrief(DESIGN_MOVEMENTS));
             }
             const scanTargets = targets.length > 0 ? targets : ['.'];
+            const MAX_SLOP_FILE_BYTES = 2 * 1024 * 1024;
+            const MAX_SLOP_FILES = 200;
             const files = [];
             const collect = (target) => {
-                const resolved = path.resolve(String(target).replace(/^~\//, os.homedir() + '/'));
+                if (typeof target !== 'string' || !target || target.includes('\0'))
+                    return 'invalid target path';
+                const expanded = target === '~'
+                    ? os.homedir()
+                    : (target.startsWith('~/') || target.startsWith('~\\') ? path.join(os.homedir(), target.slice(2)) : target);
+                const resolved = path.resolve(expanded);
                 let stats;
                 try {
-                    stats = fs.statSync(resolved);
+                    stats = fs.lstatSync(resolved);
                 }
                 catch {
-                    return `not found: ${target}`;
+                    return `not found: ${safeDisplay(target)}`;
                 }
+                if (stats.isSymbolicLink())
+                    return `refused symlink: ${safeDisplay(target)}`;
                 if (stats.isDirectory()) {
                     const stack = [resolved];
-                    while (stack.length > 0 && files.length < 200) {
+                    while (stack.length > 0 && files.length < MAX_SLOP_FILES) {
                         const dir = stack.pop();
                         let entries;
                         try {
                             entries = fs.readdirSync(dir, { withFileTypes: true });
                         }
-                        catch (e) {
+                        catch {
                             continue;
                         }
                         for (const entry of entries) {
+                            if (files.length >= MAX_SLOP_FILES)
+                                break;
+                            if (entry.isSymbolicLink())
+                                continue;
                             if (entry.name === 'node_modules' || entry.name.startsWith('.'))
                                 continue;
                             const full = path.join(dir, entry.name);
-                            if (entry.isDirectory())
+                            if (entry.isDirectory()) {
                                 stack.push(full);
+                            }
                             else if (entry.isFile()) {
                                 try {
-                                    files.push({ path: full, content: fs.readFileSync(full, 'utf8') });
+                                    const fStat = fs.lstatSync(full);
+                                    if (!fStat.isSymbolicLink() && fStat.isFile() && fStat.size <= MAX_SLOP_FILE_BYTES) {
+                                        files.push({ path: full, content: fs.readFileSync(full, 'utf8') });
+                                    }
                                 }
-                                catch (e) { }
+                                catch { /* ignore unreadable file */ }
                             }
                         }
                     }
                     return null;
                 }
+                if (!stats.isFile() || stats.size > MAX_SLOP_FILE_BYTES) {
+                    return `skipped non-regular or oversized file: ${safeDisplay(target)}`;
+                }
+                if (files.length >= MAX_SLOP_FILES)
+                    return null;
                 try {
                     files.push({ path: resolved, content: fs.readFileSync(resolved, 'utf8') });
                 }
-                catch (e) {
-                    return `could not read: ${target}`;
+                catch {
+                    return `could not read: ${safeDisplay(target)}`;
                 }
                 return null;
             };
