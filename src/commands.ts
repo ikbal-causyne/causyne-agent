@@ -582,7 +582,11 @@ export const COMMANDS: SlashCommandDefinition[] = [
     usage: '/checkpoints [count]',
     description: 'List recent undo checkpoints',
     dialogTitle: 'Checkpoints',
-    run: (argv) => ok(buildCheckpointsText(parseInt(argv[0] || '', 10) || 15))
+    run: (argv) => {
+      const parsed = parseInt(argv[0] || '', 10);
+      const count = Number.isFinite(parsed) ? Math.max(1, Math.min(200, parsed)) : 15;
+      return ok(buildCheckpointsText(count));
+    }
   },
 
   {
