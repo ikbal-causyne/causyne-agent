@@ -311,11 +311,12 @@ export class SelectList<T extends SelectListItem = SelectListItem> {
       if (key.name === 'n') { this.move(1, rows); return 'handled'; }
       if (key.name === 'u') { this.query = ''; this.refilter(); return 'handled'; }
       if (key.name === 'v') {
-        const text = readClipboardSync();
+        let text = '';
+        try { text = readClipboardSync() || ''; } catch { text = ''; }
         if (text) {
           const clean = cleanSelectText(text);
           if (clean) {
-            this.query += clean;
+            this.query = (this.query + clean).slice(0, MAX_QUERY_LENGTH);
             this.refilter();
           }
         }
