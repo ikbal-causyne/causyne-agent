@@ -38,9 +38,12 @@ export function isJsonRpcRequest(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         return false;
     const record = value;
+    const validId = typeof record.id === 'string'
+        || (typeof record.id === 'number' && Number.isFinite(record.id));
     return record.jsonrpc === '2.0'
-        && (typeof record.id === 'string' || typeof record.id === 'number')
-        && typeof record.method === 'string';
+        && validId
+        && typeof record.method === 'string'
+        && record.method.trim().length > 0;
 }
 export function isJsonRpcResponse(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))

@@ -511,9 +511,12 @@ export type WriteTextFileResponse = Record<string, never>;
 export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
+  const validId = typeof record.id === 'string'
+    || (typeof record.id === 'number' && Number.isFinite(record.id));
   return record.jsonrpc === '2.0'
-    && (typeof record.id === 'string' || typeof record.id === 'number')
-    && typeof record.method === 'string';
+    && validId
+    && typeof record.method === 'string'
+    && record.method.trim().length > 0;
 }
 
 export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
