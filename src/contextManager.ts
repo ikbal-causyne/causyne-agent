@@ -320,14 +320,17 @@ export function buildWindow(
 }
 
 export function compactInPlace(messages: ContextMessage[], splitIndex: number, summaryText: string): number {
+  if (!Array.isArray(messages) || messages.length <= 1) return 0;
+  if (typeof splitIndex !== 'number' || !Number.isFinite(splitIndex)) return 0;
   const start = 1;
-  const end = splitIndex;
+  const end = Math.min(Math.floor(splitIndex), messages.length - 1);
   if (end < start) return 0;
 
   const removed = end - start + 1;
+  const safeSummary = typeof summaryText === 'string' ? summaryText : String(summaryText ?? '');
   const summary: ContextMessage = {
     role: 'user',
-    content: `[COMPACTED CONTEXT SUMMARY — ${removed} earlier messages were condensed to protect the context window]\n${summaryText}`
+    content: `[COMPACTED CONTEXT SUMMARY — ${removed} earlier messages were condensed to protect the context window]\n${safeSummary}`
   };
 
   messages.splice(start, removed, summary);
