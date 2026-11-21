@@ -126,10 +126,14 @@ export function describeSession(taskId: unknown): string {
   const state = readSession(taskId);
   if (!state || (!state.app && !state.lastActions)) return '';
 
+  const safeApp = cleanSessionText(state.app, 120);
+  const safeActions = Array.isArray(state.lastActions)
+    ? state.lastActions.map(v => cleanSessionText(v, 120)).filter(Boolean).slice(0, 12)
+    : [];
   const parts: string[] = [];
-  parts.push(`You were driving ${state.app ? `"${state.app}"` : 'the frontmost application'} before this session resumed.`);
-  if (Array.isArray(state.lastActions) && state.lastActions.length > 0) {
-    parts.push(`Your last actions were: ${state.lastActions.join(', ')}.`);
+  parts.push(`You were driving ${safeApp ? `"${safeApp}"` : 'the frontmost application'} before this session resumed.`);
+  if (safeActions.length > 0) {
+    parts.push(`Your last actions were: ${safeActions.join(', ')}.`);
     parts.push('You do NOT know whether they landed — the screen may have changed while you were gone.');
   }
   parts.push('Call ax_snapshot before acting again, and compare what you see to what you expected.');
