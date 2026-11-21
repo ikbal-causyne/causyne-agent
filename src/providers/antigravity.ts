@@ -289,16 +289,21 @@ export function resolveAgyBinary(): string {
   ];
 
   const binNames = ['agy', 'antigravity'];
-  for (const dir of searchDirs) {
-    if (!dir) continue;
+  const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+  for (const rawDir of searchDirs) {
+    const dir = rawDir.trim();
+    if (!dir || !path.isAbsolute(dir)) continue;
     for (const name of binNames) {
-      const full = path.join(dir, name);
-      try {
-        if (fs.existsSync(full) && fs.statSync(full).isFile()) {
-          return full;
+      for (const ext of extensions) {
+        const full = path.join(dir, `${name}${ext}`);
+        try {
+          if (fs.statSync(full).isFile()) {
+            if (process.platform !== 'win32') fs.accessSync(full, fs.constants.X_OK);
+            return full;
+          }
+        } catch {
+          // ignore inaccessible or non-executable path
         }
-      } catch {
-        // ignore inaccessible path
       }
     }
   }
