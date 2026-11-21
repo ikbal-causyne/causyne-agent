@@ -149,16 +149,19 @@ export const manageLocalDependencies = {
               : `Unknown MCP server "${String(target ?? '')}". Configured servers: ${known.join(', ')}.`
           };
         }
-        grantServer(target);
+        const grantRes = grantServer(target);
+        if (!grantRes.ok) {
+          return { success: false, error: sanitizeToolText(grantRes.error || `Could not enable MCP server "${target}".`, 400) };
+        }
         try {
           const client = await connectServer(target);
           return {
             success: true,
-            output: `MCP server "${target}" is enabled and exposed ${client.tools.length} tools: ` +
-              client.tools.map((t) => t.name).join(', ')
+            output: `MCP server "${sanitizeToolText(target, 80)}" is enabled and exposed ${client.tools.length} tools: ` +
+              client.tools.map((t) => sanitizeToolText(t.name, 80)).join(', ')
           };
         } catch (e: unknown) {
-          return { success: false, error: `Enabled "${target}" but could not connect: ${getErrorMessage(e)}` };
+          return { success: false, error: `Enabled "${sanitizeToolText(target, 80)}" but could not connect: ${sanitizeToolError(e)}` };
         }
       }
 
@@ -168,11 +171,13 @@ export const manageLocalDependencies = {
         if (!group || !isKnownGroup(group)) {
           return { success: false, error: `Unknown capability group. Choose one of: ${GROUP_NAMES.join(', ')}.` };
         }
-        grantGroup(group);
+        if (!grantGroup(group)) {
+          return { success: false, error: `Could not grant capability group "${sanitizeToolText(group, 64)}".` };
+        }
         try {
           await provisionCapabilities([group]);
         } catch (e: unknown) {
-          return { success: false, error: `Could not prepare the "${group}" capability: ${getErrorMessage(e)}` };
+          return { success: false, error: `Could not prepare the "${sanitizeToolText(group, 64)}" capability: ${sanitizeToolError(e)}` };
         }
         return isGroupInstalled(group)
           ? { success: true, output: `Capability "${group}" is ready — the agent can now ${GROUP_DESCRIPTIONS[group]}.` }
@@ -255,10 +260,14 @@ export const manageLocalDependencies = {
               ...(sandbox?.signal ? { signal: sandbox.signal } : {})
             }
           );
-          return { success: true, output: `Installed approved Python dependencies: ${packages.join(', ')}`, logs: stdout };
+          return {
+            success: true,
+            output: `Installed approved Python dependencies: ${packages.join(', ')}`,
+            logs: sanitizeToolText(stdout, 4000)
+          };
         } catch (pipErr: unknown) {
           const errObj = pipErr as { message?: string; stderr?: string };
-          const errStr = errObj?.message || errObj?.stderr || getErrorMessage(pipErr);
+          const errStr = sanitizeToolText(errObj?.message || errObj?.stderr || sanitizeToolError(pipErr), 1200);
           if (errStr.includes('Microsoft Visual C++ 14.0 or greater is required')) {
             return { success: false, error: '[AUTO-REMEDIATION REQUIRED] Missing C++ Build Tools. Ask user for permission to install MSVC Build Tools.' };
           }
@@ -269,9 +278,9 @@ export const manageLocalDependencies = {
         }
       }
 
-      return { success: false, error: `Unknown action: ${String(action ?? '')}` };
+      return { success: false, error: `Unknown action: ${sanitizeToolText(action ?? '', 80)}` };
     } catch (err: unknown) {
-      return { success: false, error: getErrorMessage(err) };
+      return { success: false, error: sanitizeToolError(err) };
     }
   }
 };
