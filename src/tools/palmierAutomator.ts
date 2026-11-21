@@ -118,7 +118,7 @@ export const palmierAutomator = {
         if (data?.error) throw new Error(data.error.message || JSON.stringify(data.error));
         return data?.result && typeof data.result === 'object' ? data.result : {};
       } catch (err: unknown) {
-        throw new Error(`MCP Connection Error (Is Palmier Pro running?): ${getErrorMessage(err)}`);
+        throw new Error(`MCP Connection Error (Is Palmier Pro running?): ${sanitizeToolError(err)}`);
       }
     };
 
@@ -147,13 +147,16 @@ export const palmierAutomator = {
         if (mediaStat.isSymbolicLink() || (!mediaStat.isDirectory() && !mediaStat.isFile())) {
           return { success: false, error: 'Media path must be a regular file or directory within the authorized workspace.' };
         }
+        const fps = validateNumericOrAuto(args.fps, 'fps', 1, 1000);
+        const resolutionX = validateNumericOrAuto(args.resolution_x, 'resolution_x', 16, 16384);
+        const resolutionY = validateNumericOrAuto(args.resolution_y, 'resolution_y', 16, 16384);
         const res = await sendMcpRequest('tools/call', {
           name: 'import_and_assemble',
           arguments: {
             mediaPath: resolvedMediaPath,
-            fps: args.fps || 'auto',
-            resolution_x: args.resolution_x || 'auto',
-            resolution_y: args.resolution_y || 'auto'
+            fps,
+            resolution_x: resolutionX,
+            resolution_y: resolutionY
           }
         });
 
@@ -162,7 +165,7 @@ export const palmierAutomator = {
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (err: unknown) {
-      return { success: false, error: getErrorMessage(err) };
+      return { success: false, error: sanitizeToolError(err) };
     }
   }
 };
