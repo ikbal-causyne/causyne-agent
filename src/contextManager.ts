@@ -177,9 +177,13 @@ function contentLength(content: unknown): number {
   return safeSerializeContent(content).length;
 }
 
-export function measureMessages(messages: readonly ContextMessage[]): number {
+export function measureMessages(messages: readonly ContextMessage[] | null | undefined): number {
+  if (!Array.isArray(messages)) return 0;
   let total = 0;
-  for (const msg of messages) total += contentLength(msg.content);
+  for (const msg of messages) {
+    if (!msg) continue;
+    total += contentLength(msg.content);
+  }
   return total;
 }
 

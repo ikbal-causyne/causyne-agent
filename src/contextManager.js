@@ -130,9 +130,14 @@ function contentLength(content) {
     return safeSerializeContent(content).length;
 }
 export function measureMessages(messages) {
+    if (!Array.isArray(messages))
+        return 0;
     let total = 0;
-    for (const msg of messages)
+    for (const msg of messages) {
+        if (!msg)
+            continue;
         total += contentLength(msg.content);
+    }
     return total;
 }
 const DECAY_MARKER = '[decayed]';
