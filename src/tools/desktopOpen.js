@@ -52,18 +52,37 @@ export function resolveOpenTarget(rawTarget, workspaceRoot = process.cwd()) {
     }
     return target;
 }
+const BLOCKED_WINDOWS_APPS = new Set([
+    'cmd', 'cmd.exe', 'powershell', 'powershell.exe', 'pwsh', 'pwsh.exe',
+    'wscript', 'wscript.exe', 'cscript', 'cscript.exe', 'mshta', 'mshta.exe',
+    'rundll32', 'rundll32.exe', 'regsvr32', 'regsvr32.exe', 'bash', 'bash.exe', 'sh', 'sh.exe'
+]);
 export async function openWithNativeOS(target, app) {
+    if (hasControlChars(target) || target.startsWith('-')) {
+        throw new Error(`Refusing unsafe desktop.open target: "${target}"`);
+    }
+    const cleanApp = typeof app === 'string' && app.trim() ? app.trim() : undefined;
+    if (cleanApp) {
+        if (hasControlChars(cleanApp) || cleanApp.startsWith('-')) {
+            throw new Error(`Refusing unsafe desktop.open application name: "${cleanApp}"`);
+        }
+        if (os.platform() === 'win32') {
+            if (cleanApp.includes('/') || cleanApp.includes('\\') || BLOCKED_WINDOWS_APPS.has(cleanApp.toLowerCase())) {
+                throw new Error(`Refusing unsafe Windows application launch target: "${cleanApp}"`);
+            }
+        }
+    }
     return new Promise((resolve, reject) => {
         let command;
         let cliArgs;
         const platform = os.platform();
         if (platform === 'darwin') {
             command = '/usr/bin/open';
-            cliArgs = app ? ['-a', app, target] : [target];
+            cliArgs = cleanApp ? ['-a', cleanApp, target] : [target];
         }
         else if (platform === 'win32') {
-            if (app) {
-                command = app;
+            if (cleanApp) {
+                command = cleanApp;
                 cliArgs = [target];
             }
             else {
