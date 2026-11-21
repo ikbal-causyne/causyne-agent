@@ -1,5 +1,5 @@
 import { createPlugin, createSkillPlugin, disablePlugin, enablePlugin, listPlugins } from '../plugins/pluginManager.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText, stripDangerousKeysDeep } from './toolPathSafety.js';
 export const pluginManagerTool = {
     schema: {
         name: 'plugin.manager',
@@ -28,47 +28,61 @@ export const pluginManagerTool = {
         }
     },
     async execute(args = {}) {
-        if (args.action === 'list')
-            return { success: true, plugins: listPlugins() };
-        if (args.action === 'enable') {
-            const result = enablePlugin(typeof args.name === 'string' ? args.name : '');
-            return result.ok ? { success: true, ...result } : { success: false, error: result.error };
-        }
-        if (args.action === 'disable') {
-            const result = disablePlugin(typeof args.name === 'string' ? args.name : '');
-            return result.ok ? { success: true, ...result } : { success: false, error: result.error };
-        }
-        if (args.action === 'create-skill-plugin') {
-            const result = createSkillPlugin({
-                name: args.name ?? '',
-                description: args.description ?? '',
-                skillId: args.skillId ?? '',
-                skillName: args.skillName ?? '',
-                skillDescription: args.skillDescription ?? '',
-                skillContent: args.skillContent ?? '',
-                licenseText: args.licenseText ?? ''
-            });
-            return result.ok ? { success: true, ...result } : { success: false, error: result.error };
-        }
-        if (args.action === 'create') {
-            let parameters;
-            try {
-                parameters = JSON.parse(args.parametersSchema || '{}');
+        try {
+            const safeArgs = args && typeof args === 'object' ? args : {};
+            if (safeArgs.action === 'list')
+                return { success: true, plugins: listPlugins() };
+            if (safeArgs.action === 'enable') {
+                const result = enablePlugin(typeof safeArgs.name === 'string' ? safeArgs.name : '');
+                return result.ok ? { success: true, ...result } : { success: false, error: result.error };
             }
-            catch (error) {
-                return { success: false, error: `parametersSchema is invalid JSON: ${getErrorMessage(error)}` };
+            if (safeArgs.action === 'disable') {
+                const result = disablePlugin(typeof safeArgs.name === 'string' ? safeArgs.name : '');
+                return result.ok ? { success: true, ...result } : { success: false, error: result.error };
             }
-            const result = createPlugin({
-                name: args.name ?? '',
-                description: args.description ?? '',
-                toolName: args.toolName ?? '',
-                toolDescription: args.toolDescription ?? '',
-                parameters,
-                code: args.javascriptCode ?? '',
-                capabilities: Array.isArray(args.capabilities) ? args.capabilities : []
-            });
-            return result.ok ? { success: true, ...result } : { success: false, error: result.error };
+            if (safeArgs.action === 'create-skill-plugin') {
+                const result = createSkillPlugin({
+                    name: safeArgs.name ?? '',
+                    description: safeArgs.description ?? '',
+                    skillId: safeArgs.skillId ?? '',
+                    skillName: safeArgs.skillName ?? '',
+                    skillDescription: safeArgs.skillDescription ?? '',
+                    skillContent: safeArgs.skillContent ?? '',
+                    licenseText: safeArgs.licenseText ?? ''
+                });
+                return result.ok ? { success: true, ...result } : { success: false, error: result.error };
+            }
+            if (safeArgs.action === 'create') {
+                const rawSchema = safeArgs.parametersSchema ?? '{}';
+                if (typeof rawSchema !== 'string' || rawSchema.length > 65536) {
+                    return { success: false, error: 'parametersSchema must be a bounded JSON string.' };
+                }
+                let parameters;
+                try {
+                    const parsed = JSON.parse(rawSchema);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        return { success: false, error: 'parametersSchema must parse to a JSON object.' };
+                    }
+                    parameters = stripDangerousKeysDeep(parsed);
+                }
+                catch (error) {
+                    return { success: false, error: `parametersSchema is invalid JSON: ${sanitizeToolError(error)}` };
+                }
+                const result = createPlugin({
+                    name: safeArgs.name ?? '',
+                    description: safeArgs.description ?? '',
+                    toolName: safeArgs.toolName ?? '',
+                    toolDescription: safeArgs.toolDescription ?? '',
+                    parameters,
+                    code: safeArgs.javascriptCode ?? '',
+                    capabilities: Array.isArray(safeArgs.capabilities) ? safeArgs.capabilities : []
+                });
+                return result.ok ? { success: true, ...result } : { success: false, error: result.error };
+            }
+            return { success: false, error: `Unknown plugin action: ${sanitizeToolText(safeArgs.action ?? '', 64)}` };
         }
-        return { success: false, error: `Unknown plugin action: ${String(args.action ?? '')}` };
+        catch (error) {
+            return { success: false, error: sanitizeToolError(error) };
+        }
     }
 };
