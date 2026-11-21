@@ -344,7 +344,7 @@ export function listPlugins(): PluginListing[] {
   for (const directory of pluginDirectories()) {
     try {
       const plugin = readPlugin(directory);
-      const trust = safeObject(state.plugins[plugin.manifest.name]);
+      const trust = Object.hasOwn(state.plugins, plugin.manifest.name) ? safeObject(state.plugins[plugin.manifest.name]) : {};
       const modified = Boolean(trust.enabled && trust.digest !== plugin.digest);
       rows.push({
         name: plugin.manifest.name,
@@ -558,7 +558,7 @@ function enabledTools(): EnabledPluginTool[] {
   for (const directory of pluginDirectories()) {
     try {
       const plugin = readPlugin(directory);
-      const trust = safeObject(state.plugins[plugin.manifest.name]);
+      const trust = Object.hasOwn(state.plugins, plugin.manifest.name) ? safeObject(state.plugins[plugin.manifest.name]) : {};
       if (!trust.enabled || trust.digest !== plugin.digest) continue;
       for (const tool of plugin.tools) tools.push({ ...tool, plugin: plugin.manifest.name, pluginDirectory: directory });
     } catch {
@@ -592,7 +592,7 @@ export function getPluginSkills(): PluginSkill[] {
   for (const directory of pluginDirectories()) {
     try {
       const plugin = readPlugin(directory);
-      const trust = safeObject(state.plugins[plugin.manifest.name]);
+      const trust = Object.hasOwn(state.plugins, plugin.manifest.name) ? safeObject(state.plugins[plugin.manifest.name]) : {};
       if (!trust.enabled || trust.digest !== plugin.digest) continue;
       skills.push(...plugin.skills);
     } catch {
