@@ -83,17 +83,18 @@ export class OpenRouterProvider extends LLMProvider {
         if (this.freeOnly) {
             this.assertFreeModel(this.model);
         }
-        const apiKey = this.apiKey || process.env.OPENROUTER_API_KEY;
+        const apiKey = String(this.apiKey || process.env.OPENROUTER_API_KEY || '').trim();
         if (!apiKey) {
             throw new Error('OpenRouter API key is required. Run /openrouter connect or /setup to connect your OpenRouter account.');
         }
         const preparedMessages = this.prepareMessages(messages);
-        const shouldStream = typeof options.onChunk === 'function';
+        const shouldStream = wantsStreaming(options);
         const payload = {
             model: this.model,
             messages: preparedMessages,
             temperature: resolveTemperature(options.temperature, 0.1),
             stream: shouldStream,
+            ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
             provider: {
                 data_collection: this.dataCollection
             }
