@@ -223,6 +223,24 @@ const commandCache = new Map();
 export function clearSysRunCache() {
     commandCache.clear();
 }
+function resolveSysCwd(rawCwd, context) {
+    const expand = (p) => {
+        const trimmed = p.trim();
+        if (trimmed === '~')
+            return os.homedir();
+        if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+            return path.join(os.homedir(), trimmed.slice(2));
+        }
+        return trimmed;
+    };
+    const fallbackBase = context?.parentLoop?.workspaceRoot?.trim()
+        ? path.resolve(expand(context.parentLoop.workspaceRoot))
+        : process.cwd();
+    if (!rawCwd || !rawCwd.trim())
+        return fallbackBase;
+    const expanded = expand(rawCwd);
+    return path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(fallbackBase, expanded);
+}
 export const sysRun = {
     schema: {
         name: 'sysRun',
@@ -239,7 +257,7 @@ export const sysRun = {
     },
     async execute(args, context = {}) {
         const rawCommand = (args?.command || '').trim();
-        const cwd = args?.cwd ? args.cwd.replace(/^~\//, os.homedir() + '/') : process.cwd();
+        const cwd = resolveSysCwd(args?.cwd, context);
         let timeoutMs = 60000;
         const rawTimeout = args?.timeout;
         if (typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout > 0) {
@@ -518,7 +536,7 @@ export const sysRunBg = {
     },
     async execute(args, context = {}) {
         try {
-            const cwd = args.cwd ? args.cwd.replace(/^~\//, os.homedir() + '/') : process.cwd();
+            const cwd = resolveSysCwd(args?.cwd, context);
             const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
             const shellArgs = os.platform() === 'win32' ? ['/c', args.command] : ['-c', args.command];
             const resolvedMode = resolveOsSandboxMode(process.env, context.parentLoop?.config?.osSandbox);
