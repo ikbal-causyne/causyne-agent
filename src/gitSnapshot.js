@@ -26,6 +26,17 @@ function isValidGitSha(sha) {
  * parses it and a path containing a space, a quote or `$(...)` is just a path.
  * Never change this to exec() or add `shell: true`.
  */
+function hardenedGitEnv(baseEnv) {
+    const env = { ...(baseEnv ?? process.env), GIT_TERMINAL_PROMPT: '0' };
+    delete env.CAUSYNE_VAULT_KEY;
+    delete env.CAUSYNE_DEV_SECRET;
+    delete env.GIT_EXTERNAL_DIFF;
+    delete env.GIT_PAGER;
+    delete env.GIT_EDITOR;
+    delete env.GIT_SSH_COMMAND;
+    delete env.GIT_ASKPASS;
+    return env;
+}
 function runGit(args, options = {}) {
     if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) {
         throw new Error('git arguments must be an array of strings');
@@ -36,7 +47,8 @@ function runGit(args, options = {}) {
         maxBuffer: 32 * 1024 * 1024,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'ignore'],
-        ...options
+        ...options,
+        env: hardenedGitEnv(options.env)
     });
 }
 const execFileAsync = promisify(execFile);
@@ -49,7 +61,8 @@ async function runGitAsync(args, options = {}) {
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: 32 * 1024 * 1024,
         windowsHide: true,
-        ...options
+        ...options,
+        env: hardenedGitEnv(options.env)
     });
     return String(stdout ?? '');
 }

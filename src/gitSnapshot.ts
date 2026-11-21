@@ -41,6 +41,18 @@ function isValidGitSha(sha: unknown): sha is string {
  * parses it and a path containing a space, a quote or `$(...)` is just a path.
  * Never change this to exec() or add `shell: true`.
  */
+function hardenedGitEnv(baseEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...(baseEnv ?? process.env), GIT_TERMINAL_PROMPT: '0' };
+  delete env.CAUSYNE_VAULT_KEY;
+  delete env.CAUSYNE_DEV_SECRET;
+  delete env.GIT_EXTERNAL_DIFF;
+  delete env.GIT_PAGER;
+  delete env.GIT_EDITOR;
+  delete env.GIT_SSH_COMMAND;
+  delete env.GIT_ASKPASS;
+  return env;
+}
+
 function runGit(args: string[], options: Partial<ExecFileSyncOptionsWithStringEncoding> = {}): string {
   if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) {
     throw new Error('git arguments must be an array of strings');
@@ -51,7 +63,8 @@ function runGit(args: string[], options: Partial<ExecFileSyncOptionsWithStringEn
     maxBuffer: 32 * 1024 * 1024,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'ignore'],
-    ...options
+    ...options,
+    env: hardenedGitEnv(options.env)
   });
 }
 
@@ -66,7 +79,8 @@ async function runGitAsync(args: string[], options: Partial<ExecFileOptionsWithS
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: 32 * 1024 * 1024,
     windowsHide: true,
-    ...options
+    ...options,
+    env: hardenedGitEnv(options.env)
   });
   return String(stdout ?? '');
 }
