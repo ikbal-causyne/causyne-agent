@@ -466,13 +466,13 @@ export const nativeEngineTool = {
                 }
             })
                 .map(file => relativeArtifact(workspace, fs.realpathSync(file)));
-            let opened = false;
-            if (request.open && artifacts.length > 0) {
-                opened = await reveal(path.resolve(workspace, artifacts[0]));
-            }
             const parsed = parseOutput(request.action, run.stdout);
             const diagnostics = clean(run.stderr);
             const success = run.exitCode === 0;
+            let opened = false;
+            if (success && request.open && artifacts.length > 0) {
+                opened = await reveal(path.resolve(workspace, artifacts[0]));
+            }
             return {
                 success,
                 engine: adapter.id,
