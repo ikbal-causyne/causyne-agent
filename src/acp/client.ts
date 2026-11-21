@@ -78,6 +78,8 @@ const MAX_STDERR_CHARS = 4000;
 const MAX_UPDATE_CHARS = 200_000;
 const MAX_HOST_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_JSONRPC_BUFFER_BYTES = 16 * 1024 * 1024;
+const MAX_TRACKED_SESSIONS = 128;
+const MAX_OPEN_TOOL_CALLS = 512;
 
 export class AcpClient {
   private readonly options: AcpClientOptions;
@@ -165,6 +167,10 @@ export class AcpClient {
       usesConfigOption: extracted.usesConfigOption || Boolean(existing?.usesConfigOption),
       configOptionId: extracted.configOptionId ?? existing?.configOptionId
     };
+    if (!this.sessionModels.has(sessionId) && this.sessionModels.size >= MAX_TRACKED_SESSIONS) {
+      const oldest = this.sessionModels.keys().next().value;
+      if (oldest !== undefined) this.sessionModels.delete(oldest);
+    }
     this.sessionModels.set(sessionId, merged);
     this.latestSessionModels = merged;
   }
@@ -387,7 +393,13 @@ export class AcpClient {
     if (status === 'completed' || status === 'failed' || status === 'cancelled') {
       this.openToolCalls.delete(key);
     } else if (record.sessionUpdate === 'tool_call' || status === 'pending' || status === 'in_progress') {
-      if (!this.openToolCalls.has(key)) this.openToolCalls.set(key, Date.now());
+      if (!this.openToolCalls.has(key)) {
+        if (this.openToolCalls.size >= MAX_OPEN_TOOL_CALLS) {
+          const oldest = this.openToolCalls.keys().next().value;
+          if (oldest !== undefined) this.openToolCalls.delete(oldest);
+        }
+        this.openToolCalls.set(key, Date.now());
+      }
     }
   }
 
