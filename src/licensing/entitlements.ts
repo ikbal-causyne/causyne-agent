@@ -411,12 +411,17 @@ export class EntitlementGate {
     this.pending = (async () => {
       const requestId = crypto.randomUUID();
       const result = await this.client.lease(requestId, this.sessionId);
-      const expiration = Date.parse(result?.expiresAt || '');
-      if (!Number.isFinite(expiration) || expiration <= Date.now()) {
+      if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        throw new EntitlementAccessError('INVALID_LEASE', 'Licensing service returned an invalid lease payload.');
+      }
+      const now = Date.now();
+      const rawExpiration = typeof result.expiresAt === 'string' ? Date.parse(result.expiresAt) : NaN;
+      if (!Number.isFinite(rawExpiration) || rawExpiration <= now) {
         throw new EntitlementAccessError('INVALID_LEASE', 'Licensing service returned an expired or invalid lease.');
       }
-      this.leaseUntil = expiration;
-      this.leasePlan = result.plan ?? null;
+      const maxLeaseHorizon = now + 24 * 60 * 60 * 1000;
+      this.leaseUntil = Math.min(rawExpiration, maxLeaseHorizon);
+      this.leasePlan = typeof result.plan === 'string' ? result.plan : null;
       this.blockedError = null;
       return result;
     })().finally(() => {
