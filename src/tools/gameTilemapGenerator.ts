@@ -1,6 +1,13 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  escapeGodotString,
+  resolveToolWorkspaceRoots,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface GameTilemapArgs {
   action?: string | undefined;
@@ -35,26 +42,30 @@ export const gameTilemapGenerator = {
     }
   },
 
-  async execute(args: GameTilemapArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameTilemapArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, levelName = 'Level1', mapDimension = '2d', width = 32, height = 32, biome = 'whispering_village', outputPath } = args || {};
       const safeW = Number.isFinite(Number(width)) ? Math.max(4, Math.min(256, Math.floor(Number(width)))) : 32;
       const safeH = Number.isFinite(Number(height)) ? Math.max(4, Math.min(256, Math.floor(Number(height)))) : 32;
+      const safeLevel = escapeGodotString(levelName, 120);
+      const safeBiome = escapeGodotString(biome, 64);
+      const levelSlug = safeSlugIdentifier(levelName, 'Level1', 64);
+      const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
 
       if (action === 'generate_level' || action === 'save_tilemap_scene') {
         if (mapDimension === '2d') {
           const tscnContent = `[gd_scene format=3]
 
-[node name="${levelName}" type="Node2D"]
+[node name="${safeLevel}" type="Node2D"]
 
 [node name="TileMapLayer" type="TileMapLayer" parent="."]
 tile_set = null
-# Procedural 2D Grid (${safeW}x${safeH}) for ${biome}
+# Procedural 2D Grid (${safeW}x${safeH}) for ${safeBiome}
 `;
           if (outputPath || action === 'save_tilemap_scene') {
-            const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `${levelName}.tscn`);
-            await fs.mkdir(path.dirname(finalPath), { recursive: true });
-            await fs.writeFile(finalPath, tscnContent, 'utf8');
+            const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `${levelSlug}.tscn`);
+            const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+            await atomicWriteFileSafe(finalPath, tscnContent);
           }
 
           return {
@@ -72,7 +83,7 @@ tile_set = null
         } else {
           const tscn3d = `[gd_scene format=3]
 
-[node name="${levelName}" type="Node3D"]
+[node name="${safeLevel}" type="Node3D"]
 
 [node name="GridMap" type="GridMap" parent="."]
 cell_size = Vector3(2, 2, 2)
@@ -82,9 +93,9 @@ transform = Transform3D(0.866, -0.433, 0.25, 0, 0.5, 0.866, -0.5, -0.75, 0.433, 
 shadow_enabled = true
 `;
           if (outputPath || action === 'save_tilemap_scene') {
-            const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `${levelName}.tscn`);
-            await fs.mkdir(path.dirname(finalPath), { recursive: true });
-            await fs.writeFile(finalPath, tscn3d, 'utf8');
+            const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `${levelSlug}.tscn`);
+            const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+            await atomicWriteFileSafe(finalPath, tscn3d);
           }
 
           return {
@@ -103,7 +114,7 @@ shadow_enabled = true
       if (action === 'generate_highway_track') {
         const trackContent = `[gd_scene format=3]
 
-[node name="${levelName}" type="Node3D"]
+[node name="${safeLevel}" type="Node3D"]
 
 [node name="HighwayRoad" type="CSGBox3D" parent="."]
 use_collision = true
@@ -122,8 +133,8 @@ size = Vector3(0.8, 2, 200)
 [node name="NeonLights" type="Node3D" parent="."]
 `;
         if (outputPath) {
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, trackContent, 'utf8');
+          const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+          await atomicWriteFileSafe(finalPath, trackContent);
         }
 
         return {
@@ -141,7 +152,7 @@ size = Vector3(0.8, 2, 200)
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
