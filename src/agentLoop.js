@@ -1235,7 +1235,14 @@ export class AgentLoop {
             }
         }
         if (this.eventSink && this.eventSink.readyState === 1) {
-            this.eventSink.send(JSON.stringify({ taskId: this.taskId, ...messageObj }));
+            let serialized;
+            try {
+                serialized = JSON.stringify({ taskId: this.taskId, ...messageObj });
+            }
+            catch {
+                serialized = JSON.stringify({ taskId: this.taskId, type: String(messageObj?.type || 'notice') });
+            }
+            this.eventSink.send(serialized);
         }
     }
     // WHAT BELONGS HERE: things the user would want to know even though they did

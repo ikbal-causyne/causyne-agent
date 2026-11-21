@@ -1333,7 +1333,13 @@ export class AgentLoop {
       }
     }
     if (this.eventSink && this.eventSink.readyState === 1) {
-      this.eventSink.send(JSON.stringify({ taskId: this.taskId, ...messageObj }));
+      let serialized: string;
+      try {
+        serialized = JSON.stringify({ taskId: this.taskId, ...messageObj });
+      } catch {
+        serialized = JSON.stringify({ taskId: this.taskId, type: String(messageObj?.type || 'notice') });
+      }
+      this.eventSink.send(serialized);
     }
   }
 
