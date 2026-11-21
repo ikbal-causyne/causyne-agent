@@ -13,7 +13,21 @@ export class OpenAICompatibleProvider extends LLMProvider {
         super(config);
         this.audioModels = [];
         this.reasoningEffort = config.reasoningEffort || null;
-        this.baseUrl = config.baseUrl || 'https://api.openai.com/v1/chat/completions';
+        const rawUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+        let resolvedUrl = rawUrl || 'https://api.openai.com/v1/chat/completions';
+        if (rawUrl) {
+            try {
+                const parsed = new URL(rawUrl);
+                if (parsed.pathname === '/v1' || parsed.pathname === '/v1/') {
+                    parsed.pathname = '/v1/chat/completions';
+                    resolvedUrl = parsed.toString();
+                }
+            }
+            catch {
+                resolvedUrl = rawUrl;
+            }
+        }
+        this.baseUrl = resolvedUrl;
         this.allowInsecureHttp = config.allowInsecureHttp === true;
         this.providerLabel = 'OpenAI-Compatible';
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['openai']) || '');
