@@ -80,7 +80,7 @@ function detectNotoriousGradient(text: string): SlopFinding | null {
 }
 
 function detectPurpleBlueGradient(text: string): SlopFinding | null {
-  const gradients = text.match(/linear-gradient\s*\([^)]*\)/gi) || [];
+  const gradients = text.match(/linear-gradient\s*\([^)]{0,512}\)/gi) || [];
   for (const gradient of gradients) {
     const hexes = gradient.match(/#[0-9a-f]{3,8}\b/gi) || [];
     if (hexes.length < 2) continue;
