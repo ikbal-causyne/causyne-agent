@@ -79,6 +79,18 @@ function resolveFreeFormPaths(
 /**
  * Serialize arguments cleanly to a JSON string while decoding any adapted free-form paths.
  */
+function safeCloneObject(obj: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(obj);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(obj)) as Record<string, unknown>;
+    } catch {
+      return { ...obj };
+    }
+  }
+}
+
 export function serializeAndDecodeArguments(
   rawArgs: unknown,
   toolName: string,
@@ -86,13 +98,18 @@ export function serializeAndDecodeArguments(
 ): string {
   const paths = resolveFreeFormPaths(toolName, freeFormPaths);
   if (typeof rawArgs === 'string') {
+    if (rawArgs.trim().length === 0) return '{}';
     if (!paths || paths.length === 0) return rawArgs;
     const obj = safeParseJsonObject(rawArgs);
     if (Object.keys(obj).length === 0) return rawArgs;
-    const decoded = decodeFreeFormArguments(structuredClone(obj), paths);
-    return JSON.stringify(decoded);
+    const decoded = decodeFreeFormArguments(safeCloneObject(obj), paths);
+    try {
+      return JSON.stringify(decoded);
+    } catch {
+      return rawArgs;
+    }
   }
-  const obj = isPlainObject(rawArgs) ? structuredClone(rawArgs) : {};
+  const obj = isPlainObject(rawArgs) ? safeCloneObject(rawArgs) : {};
   const finalObj = paths && paths.length > 0 ? decodeFreeFormArguments(obj, paths) : obj;
   try {
     return JSON.stringify(finalObj);
