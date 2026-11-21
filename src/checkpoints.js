@@ -165,7 +165,19 @@ export function resolveToolPath(value) {
     return path.resolve(expanded);
 }
 function appendJournal(entry) {
-    fs.appendFileSync(journalFile(), JSON.stringify(entry) + '\n', { mode: 0o600 });
+    const jf = journalFile();
+    try {
+        const stat = fs.lstatSync(jf);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+            throw new Error('refusing symlink or non-regular checkpoint journal');
+        }
+    }
+    catch (err) {
+        const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+        if (code !== 'ENOENT')
+            throw err;
+    }
+    fs.appendFileSync(jf, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
 }
 export function readJournal() {
     const jf = journalFile();
@@ -185,9 +197,38 @@ export function readJournal() {
 }
 function rewriteJournal(entries) {
     const jf = journalFile();
-    const temp = `${jf}.tmp_${process.pid}`;
-    fs.writeFileSync(temp, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : ''), { mode: 0o600 });
-    fs.renameSync(temp, jf);
+    try {
+        const stat = fs.lstatSync(jf);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+            throw new Error('refusing symlink or non-regular checkpoint journal');
+        }
+    }
+    catch (err) {
+        const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+        if (code !== 'ENOENT')
+            throw err;
+    }
+    const temp = `${jf}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+    const payload = Buffer.from(entries.map(e => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : ''), 'utf8');
+    try {
+        const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+        try {
+            fs.writeSync(fd, payload, 0, payload.length);
+            fs.fsyncSync(fd);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(temp, jf);
+    }
+    catch (err) {
+        try {
+            if (fs.existsSync(temp))
+                fs.unlinkSync(temp);
+        }
+        catch { /* ignore */ }
+        throw err;
+    }
 }
 function newId() {
     return `ck_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
