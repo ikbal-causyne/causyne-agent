@@ -28,20 +28,33 @@ export const memoryWrite = {
         }
     },
     execute: async (args, dependencies) => {
-        if (!args || (!args.fact && !args.creativePattern)) {
+        if (!args || typeof args !== 'object' || Array.isArray(args)) {
             return { success: false, error: "Missing 'fact' or 'creativePattern' parameter." };
         }
-        if (!args.fact && args.creativePattern) {
-            const cp = args.creativePattern;
-            const project = cp.project || 'project';
-            const approach = cp.designApproach ? ` ${cp.designApproach}` : '';
-            const palette = cp.colorPalette ? ` with ${cp.colorPalette}` : '';
-            const fonts = cp.fonts ? ` (${cp.fonts})` : '';
-            args.fact = `Creative pattern for ${project}:${approach}${palette}${fonts}`.trim();
+        if (args.fact !== undefined && typeof args.fact !== 'string') {
+            return { success: false, error: "'fact' parameter must be a string." };
+        }
+        if (args.creativePattern !== undefined &&
+            (args.creativePattern === null || typeof args.creativePattern !== 'object' || Array.isArray(args.creativePattern))) {
+            return { success: false, error: "'creativePattern' parameter must be an object." };
+        }
+        const rawFact = typeof args.fact === 'string' ? args.fact.trim() : '';
+        const cp = args.creativePattern;
+        let fact = rawFact;
+        if (!fact && cp) {
+            const project = typeof cp.project === 'string' && cp.project.trim() ? cp.project.trim() : 'project';
+            const approach = typeof cp.designApproach === 'string' && cp.designApproach.trim() ? ` ${cp.designApproach.trim()}` : '';
+            const palette = typeof cp.colorPalette === 'string' && cp.colorPalette.trim() ? ` with ${cp.colorPalette.trim()}` : '';
+            const fonts = typeof cp.fonts === 'string' && cp.fonts.trim() ? ` (${cp.fonts.trim()})` : '';
+            if (approach || palette || fonts || (typeof cp.project === 'string' && cp.project.trim())) {
+                fact = `Creative pattern for ${project}:${approach}${palette}${fonts}`.trim();
+            }
+        }
+        if (!fact) {
+            return { success: false, error: "Missing non-empty 'fact' or 'creativePattern' parameter." };
         }
         try {
             const memory = getMemory();
-            const fact = String(args.fact).trim();
             const workspace = dependencies?.parentLoop?.workspaceRoot || dependencies?.workspaceRoot;
             const { memory: updated, alreadyKnown } = recordScopedFact(memory, fact, {
                 workspace,
@@ -51,13 +64,13 @@ export const memoryWrite = {
                 saveMemory(updated);
             }
             let creativeSaved = false;
-            if (args.creativePattern && args.creativePattern.designApproach) {
+            if (cp && typeof cp.designApproach === 'string' && cp.designApproach.trim()) {
                 try {
                     await cortexDb.saveCreativePattern({
-                        project: args.creativePattern.project || 'untitled project',
-                        designApproach: args.creativePattern.designApproach,
-                        colorPalette: args.creativePattern.colorPalette || 'unspecified',
-                        fonts: args.creativePattern.fonts || 'unspecified'
+                        project: typeof cp.project === 'string' && cp.project.trim() ? cp.project.trim() : 'untitled project',
+                        designApproach: cp.designApproach.trim(),
+                        colorPalette: typeof cp.colorPalette === 'string' && cp.colorPalette.trim() ? cp.colorPalette.trim() : 'unspecified',
+                        fonts: typeof cp.fonts === 'string' && cp.fonts.trim() ? cp.fonts.trim() : 'unspecified'
                     });
                     creativeSaved = true;
                 }
