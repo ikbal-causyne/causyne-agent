@@ -1,43 +1,31 @@
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
-
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { getErrorMessage } from './toolPathSafety.js';
 export const gameUiHudBuilder = {
-  schema: {
-    name: 'game.ui_hud_builder',
-    description: 'Constructs responsive UI/HUD scenes for Godot 4.x (`MainMenu.tscn`, `HUD.tscn` with player health/stamina bars, `InventoryGrid.tscn`, `DialogueBox.tscn`, `ShopMenu.tscn`, and `QuestLog.tscn`). Includes anchored layouts (`Control`) and signal bindings (`button_up`, `item_selected`).',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          enum: ['build_hud', 'build_main_menu', 'build_dialogue_box', 'build_inventory_grid', 'build_shop_menu', 'save_ui_scene'],
-          description: 'Action: build_hud (health/stamina overlay), build_main_menu (start/options/quit buttons), build_dialogue_box (NPC text panel), build_inventory_grid (item slots container), build_shop_menu (trade interface), or save_ui_scene (write .tscn to disk).'
-        },
-        uiName: {
-          type: 'string',
-          description: 'Name of the UI node (`PlayerHUD`, `MainMenu`, `DialogueUI`).'
-        },
-        gameTitle: {
-          type: 'string',
-          description: 'Title for MainMenu (`Chronicles of Aetheria`, `Cyberpunk Highway 3D`).'
-        },
-        hasStaminaBar: { type: 'boolean', description: 'Include stamina bar in HUD (default true).' },
-        inventorySlots: { type: 'number', description: 'Number of inventory grid slots (default 24).' },
-        outputPath: { type: 'string', description: 'Absolute or res:// path to save `.tscn` (`res://scenes/ui/HUD.tscn`).' }
-      },
-      required: ['action']
-    }
-  },
+    schema: {
+        name: 'game.ui_hud_builder',
+        description: 'Constructs responsive UI/HUD scenes for Godot 4.x (`MainMenu.tscn`, `HUD.tscn` with player health/stamina bars, `InventoryGrid.tscn`, `DialogueBox.tscn`, `ShopMenu.tscn`, and `QuestLog.tscn`). Includes anchored layouts (`Control`) and signal bindings (`button_up`, `item_selected`).',
+        parameters: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: ['build_hud', 'build_main_menu', 'build_dialogue_box', 'build_inventory_grid', 'build_shop_menu', 'save_ui_scene'], description: 'Action to perform.' },
+                uiName: { type: 'string', description: 'Name of the UI node.' },
+                gameTitle: { type: 'string', description: 'Title for MainMenu.' },
+                hasStaminaBar: { type: 'boolean', description: 'Include stamina bar in HUD (default true).' },
+                inventorySlots: { type: 'number', description: 'Number of inventory grid slots (default 24).' },
+                outputPath: { type: 'string', description: 'Absolute or res:// path to save `.tscn`.' }
+            },
+            required: ['action']
+        }
+    },
+    async execute(args = {}, _sandbox) {
+        try {
+            const { action, uiName = 'GameUI', gameTitle = 'Chronicles of Aetheria', hasStaminaBar = true, inventorySlots = 24, outputPath } = args || {};
+            const safeUiName = String(uiName ?? 'GameUI');
+            if (action === 'build_hud' || (action === 'save_ui_scene' && safeUiName.includes('HUD'))) {
+                const hudContent = `[gd_scene load_steps=2 format=3]
 
-  async execute(args) {
-    try {
-      const { action, uiName = 'GameUI', gameTitle = 'Chronicles of Aetheria', hasStaminaBar = true, inventorySlots = 24, outputPath } = args;
-
-      if (action === 'build_hud' || (action === 'save_ui_scene' && uiName.includes('HUD'))) {
-        const hudContent = `[gd_scene load_steps=2 format=3]
-
-[node name="${uiName}" type="CanvasLayer"]
+[node name="${safeUiName}" type="CanvasLayer"]
 
 [node name="Control" type="Control" parent="."]
 layout_mode = 3
@@ -89,28 +77,26 @@ layout_mode = 2
 size_flags_vertical = 8
 text = "Gold: 0"
 `;
-        if (outputPath || action === 'save_ui_scene') {
-          const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `${uiName}.tscn`);
-          await fs.mkdir(path.dirname(finalPath), { recursive: true });
-          await fs.writeFile(finalPath, hudContent, 'utf8');
-        }
+                if (outputPath || action === 'save_ui_scene') {
+                    const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `${safeUiName}.tscn`);
+                    await fs.mkdir(path.dirname(finalPath), { recursive: true });
+                    await fs.writeFile(finalPath, hudContent, 'utf8');
+                }
+                return {
+                    success: true,
+                    output: JSON.stringify({
+                        status: 'BUILT_HUD',
+                        ui_name: safeUiName,
+                        has_stamina: hasStaminaBar,
+                        output_file: outputPath || 'Returned in payload',
+                        snippet: hudContent.slice(0, 800)
+                    }, null, 2)
+                };
+            }
+            if (action === 'build_main_menu') {
+                const menuContent = `[gd_scene format=3]
 
-        return {
-          success: true,
-          output: JSON.stringify({
-            status: 'BUILT_HUD',
-            ui_name: uiName,
-            has_stamina: hasStaminaBar,
-            output_file: outputPath || 'Returned in payload',
-            snippet: hudContent.slice(0, 800)
-          }, null, 2)
-        };
-      }
-
-      if (action === 'build_main_menu') {
-        const menuContent = `[gd_scene format=3]
-
-[node name="${uiName}" type="Control"]
+[node name="${safeUiName}" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -160,27 +146,25 @@ text = "Options"
 layout_mode = 2
 text = "Quit"
 `;
-        if (outputPath) {
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, menuContent, 'utf8');
-        }
+                if (outputPath) {
+                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+                    await fs.writeFile(outputPath, menuContent, 'utf8');
+                }
+                return {
+                    success: true,
+                    output: JSON.stringify({
+                        status: 'BUILT_MAIN_MENU',
+                        ui_name: safeUiName,
+                        game_title: gameTitle,
+                        output_file: outputPath || 'Returned in payload',
+                        snippet: menuContent.slice(0, 800)
+                    }, null, 2)
+                };
+            }
+            if (action === 'build_dialogue_box') {
+                const boxContent = `[gd_scene format=3]
 
-        return {
-          success: true,
-          output: JSON.stringify({
-            status: 'BUILT_MAIN_MENU',
-            ui_name: uiName,
-            game_title: gameTitle,
-            output_file: outputPath || 'Returned in payload',
-            snippet: menuContent.slice(0, 800)
-          }, null, 2)
-        };
-      }
-
-      if (action === 'build_dialogue_box') {
-        const boxContent = `[gd_scene format=3]
-
-[node name="${uiName}" type="CanvasLayer"]
+[node name="${safeUiName}" type="CanvasLayer"]
 
 [node name="Panel" type="Panel" parent="."]
 anchors_preset = 12
@@ -219,26 +203,25 @@ text = "Dialogue text goes here..."
 [node name="ChoicesBox" type="HBoxContainer" parent="Panel/MarginContainer/VBoxContainer"]
 layout_mode = 2
 `;
-        if (outputPath) {
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, boxContent, 'utf8');
-        }
+                if (outputPath) {
+                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+                    await fs.writeFile(outputPath, boxContent, 'utf8');
+                }
+                return {
+                    success: true,
+                    output: JSON.stringify({
+                        status: 'BUILT_DIALOGUE_BOX',
+                        ui_name: safeUiName,
+                        output_file: outputPath || 'Returned in payload',
+                        snippet: boxContent.slice(0, 800)
+                    }, null, 2)
+                };
+            }
+            if (action === 'build_inventory_grid') {
+                const safeSlots = Number.isFinite(Number(inventorySlots)) ? Math.max(1, Math.min(256, Math.floor(Number(inventorySlots)))) : 24;
+                const gridContent = `[gd_scene format=3]
 
-        return {
-          success: true,
-          output: JSON.stringify({
-            status: 'BUILT_DIALOGUE_BOX',
-            ui_name: uiName,
-            output_file: outputPath || 'Returned in payload',
-            snippet: boxContent.slice(0, 800)
-          }, null, 2)
-        };
-      }
-
-      if (action === 'build_inventory_grid') {
-        const gridContent = `[gd_scene format=3]
-
-[node name="${uiName}" type="Control"]
+[node name="${safeUiName}" type="Control"]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -260,33 +243,28 @@ offset_bottom = 180.0
 grow_horizontal = 2
 grow_vertical = 2
 columns = 6
-# Inventory grid slots count: ${inventorySlots}
+# Inventory grid slots count: ${safeSlots}
 `;
-        if (outputPath) {
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, gridContent, 'utf8');
+                if (outputPath) {
+                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+                    await fs.writeFile(outputPath, gridContent, 'utf8');
+                }
+                return {
+                    success: true,
+                    output: JSON.stringify({
+                        status: 'BUILT_INVENTORY_GRID',
+                        slots: safeSlots,
+                        output_file: outputPath || 'Returned in payload'
+                    }, null, 2)
+                };
+            }
+            if (action === 'build_shop_menu') {
+                return { success: true, output: JSON.stringify({ status: 'BUILT_SHOP_MENU', ui_name: safeUiName }, null, 2) };
+            }
+            return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
-
-        return {
-          success: true,
-          output: JSON.stringify({
-            status: 'BUILT_INVENTORY_GRID',
-            slots: inventorySlots,
-            output_file: outputPath || 'Returned in payload'
-          }, null, 2)
-        };
-      }
-
-      if (action === 'build_shop_menu') {
-        return {
-          success: true,
-          output: JSON.stringify({ status: 'BUILT_SHOP_MENU', ui_name: uiName }, null, 2)
-        };
-      }
-
-      return { success: false, error: `Unknown action: ${action}` };
-    } catch (e) {
-      return { success: false, error: e.message };
+        catch (e) {
+            return { success: false, error: getErrorMessage(e) };
+        }
     }
-  }
 };
