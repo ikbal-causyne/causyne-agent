@@ -690,8 +690,21 @@ async function runPluginTool(tool, args, context) {
             clearTimeout(timer);
             resolve(value);
         };
+        const terminateChild = () => {
+            try {
+                child.kill('SIGTERM');
+            }
+            catch { /* ignore */ }
+            const killTimer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { /* ignore */ }
+            }, 1500);
+            killTimer.unref?.();
+        };
         const timer = setTimeout(() => {
-            child.kill('SIGTERM');
+            terminateChild();
             finish({ success: false, error: `Plugin timed out after ${runtimeTool.timeoutMs} ms` });
         }, runtimeTool.timeoutMs);
         if (timer.unref)
@@ -699,7 +712,7 @@ async function runPluginTool(tool, args, context) {
         child.stdout.on('data', (chunk) => {
             stdout += String(chunk);
             if (Buffer.byteLength(stdout, 'utf8') > MAX_RESULT_BYTES) {
-                child.kill('SIGTERM');
+                terminateChild();
                 finish({ success: false, error: 'Plugin result exceeded 1 MB' });
             }
         });
