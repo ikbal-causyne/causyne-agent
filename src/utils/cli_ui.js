@@ -79,11 +79,13 @@ export const UI = {
         console.log(themeDim(`  ${GLYPHS.hLine.repeat(Math.max(10, Math.min(60, terminalWidth() - 4)))}`));
     },
     printCard(title, bodyLines, highlight = false) {
-        const lines = Array.isArray(bodyLines) ? bodyLines : [String(bodyLines)];
-        const width = cardWidth(lines, title);
+        const safeTitle = safeDisplay(String(title ?? ''));
+        const rawLines = Array.isArray(bodyLines) ? bodyLines : [String(bodyLines ?? '')];
+        const lines = rawLines.map(line => safeDisplay(String(line ?? '')));
+        const width = cardWidth(lines, safeTitle);
         const inner = width - 2;
         const role = highlight ? 'accent' : 'rule';
-        const label = title ? ` ${title} ` : '';
+        const label = safeTitle ? ` ${safeTitle} ` : '';
         const trail = (BOX.h ?? '-').repeat(Math.max(0, inner - visibleWidth(label) - 1));
         console.log('');
         console.log(`  ${paint(role, (BOX.tl ?? '+') + (BOX.h ?? '-'))}${paint('accent', label)}${paint(role, trail + (BOX.tr ?? '+'))}`);
