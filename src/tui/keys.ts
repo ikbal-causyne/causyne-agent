@@ -1,0 +1,561 @@
+// Keypress decoding — raw stdin bytes to named key events.
+//
+// `inquirer` gave the chat one blocking line of input and nothing else: no
+// history, no completion, no way to type while the agent was working. Replacing
+// it means owning the keyboard, and owning the keyboard starts here.
+//
+// This module is deliberately pure: bytes in, events out, no I/O and no state
+// beyond the partial sequence still in flight. That is what makes it testable
+// by feeding it the exact bytes a terminal sends.
+//
+// Pure Node. No dependency, no shell.
+
+// Bracketed paste. Terminals wrap pasted text in these when we ask them to, and
+// that is the only reliable way to tell "the user pressed Enter" apart from
+// "the user pasted a block that happens to contain newlines".
+export const PASTE_START = '\x1b[200~';
+export const PASTE_END = '\x1b[201~';
+
+export interface WheelEventDetail {
+  direction: string;
+  x: number;
+  y: number;
+}
+
+export interface MouseEventDetail {
+  button: number;
+  pressed: boolean;
+  x: number;
+  y: number;
+  row?: number;
+  col?: number;
+}
+
+export interface KeyEvent {
+  name: string;
+  ctrl: boolean;
+  alt: boolean;
+  shift: boolean;
+  meta?: boolean;
+  sequence: string;
+  text: string;
+  wheel?: WheelEventDetail;
+  mouse?: MouseEventDetail;
+}
+
+// CSI parameter-1 modifier bitmask, minus one: 1=shift, 2=alt, 4=ctrl.
+const MOD_SHIFT = 1;
+const MOD_ALT = 2;
+const MOD_CTRL = 4;
+
+const CSI_FINAL_NAMES: Record<string, string> = {
+  A: 'up', B: 'down', C: 'right', D: 'left',
+  H: 'home', F: 'end', E: 'clear', Z: 'tab'
+};
+
+const CSI_TILDE_NAMES: Record<number, string> = {
+  1: 'home', 2: 'insert', 3: 'delete', 4: 'end',
+  5: 'pageup', 6: 'pagedown', 7: 'home', 8: 'end',
+  11: 'f1', 12: 'f2', 13: 'f3', 14: 'f4', 15: 'f5',
+  17: 'f6', 18: 'f7', 19: 'f8', 20: 'f9', 21: 'f10',
+  23: 'f11', 24: 'f12'
+};
+
+const SS3_NAMES: Record<string, string> = {
+  P: 'f1', Q: 'f2', R: 'f3', S: 'f4'
+};
+
+const KITTY_CONTROL_NAMES: Record<number, string> = {
+  9: 'tab',
+  10: 'enter',
+  13: 'enter',
+  27: 'escape',
+  127: 'backspace'
+};
+
+function makeKey(name: string, extra: Partial<KeyEvent> = {}): KeyEvent {
+  return {
+    name,
+    ctrl: false,
+    alt: false,
+    shift: false,
+    sequence: '',
+    text: '',
+    ...extra
+  };
+}
+
+function applyModifier(key: KeyEvent, modifier: number | undefined): KeyEvent {
+  const bits = typeof modifier === 'number' && Number.isFinite(modifier) ? modifier - 1 : 0;
+  if (bits & MOD_SHIFT) key.shift = true;
+  if (bits & MOD_ALT) key.alt = true;
+  if (bits & MOD_CTRL) key.ctrl = true;
+  return key;
+}
+
+/**
+ * How many bytes of a UTF-8 character start at `offset`, or 0 when the
+ * character is cut short by the end of the buffer.
+ *
+ * A multi-byte character can straddle two stdin chunks. Decoding the buffer
+ * eagerly would turn one emoji into two replacement characters, so the tail is
+ * held back until the rest arrives.
+ */
+function utf8Length(buffer: Buffer, offset: number): number {
+  const byte = buffer[offset];
+  if (byte === undefined) return 0;
+  if (byte < 0x80) return 1;
+  // Continuation bytes, overlong C0/C1, and > U+10FFFF lead bytes (>= F5)
+  // are never valid multi-byte starts; consume one byte rather than wedging input.
+  if (byte < 0xc2 || byte > 0xf4) return 1;
+  const needed = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : 2;
+  for (let i = 1; i < needed; i++) {
+    if (offset + i >= buffer.length) return 0;
+    const nextByte = buffer[offset + i];
+    if (nextByte === undefined || (nextByte & 0xc0) !== 0x80) return 1;
+  }
+  return needed;
+}
+
+/**
+ * Decoder for one input stream.
+ *
+ * Holds only the bytes of a sequence that has not finished arriving. Everything
+ * else is derived, so a decoder can be thrown away and remade at any time.
+ */
+export class KeyDecoder {
+  pending: Buffer;
+  inPaste: boolean;
+  pasteBuffer: string;
+  pasteChunks: Buffer[];
+  pasteByteLength: number;
+  pasteOverflow: boolean;
+
+  constructor() {
+    this.pending = Buffer.alloc(0);
+    this.inPaste = false;
+    this.pasteBuffer = '';
+    this.pasteChunks = [];
+    this.pasteByteLength = 0;
+    this.pasteOverflow = false;
+  }
+
+  /** Feed a chunk; get back every complete key event it contained. */
+  decode(chunk: Buffer | string): KeyEvent[] {
+    const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    this.pending = this.pending.length ? Buffer.concat([this.pending, incoming]) : incoming;
+
+    const events: KeyEvent[] = [];
+    let offset = 0;
+
+    while (offset < this.pending.length) {
+      const consumed = this.step(this.pending, offset, events);
+      // 0 means "the rest of this sequence has not arrived yet".
+      if (consumed === 0) break;
+      offset += consumed;
+    }
+
+    this.pending = this.pending.subarray(offset);
+    return events;
+  }
+
+  /** Clear an abandoned control sequence rather than swallowing later typing. */
+  drainIncomplete(): KeyEvent[] {
+    if (this.inPaste || this.pending.length === 0) return [];
+    const tail = this.pending.toString('utf8');
+    this.pending = Buffer.alloc(0);
+    if (tail === '[<') return [makeKey('char', { text: '[', sequence: '[' }),
+      makeKey('char', { text: '<', sequence: '<' })];
+    if (tail === '[') return [makeKey('char', { text: '[', sequence: '[' })];
+    return [makeKey('unknown', { sequence: '' })];
+  }
+
+  /** Decode one event at `offset`. Returns bytes consumed, or 0 if incomplete. */
+  step(buffer: Buffer, offset: number, events: KeyEvent[]): number {
+    // Inside a paste, everything is literal text until the closing marker. The
+    // terminal guarantees the marker cannot appear in pasted content.
+    if (this.inPaste) return this.stepPaste(buffer, offset, events);
+
+    const byte = buffer[offset];
+    if (byte === undefined) return 0;
+
+    if (byte === 0x1b) return this.stepEscape(buffer, offset, events);
+
+    // Orphaned SGR report: `ESC` may be lost before `[<b;x;yM`.
+    // Only buffer strings that are valid partial reports. Ordinary code such
+    // as `[<div>` must remain typable and must not hang the editor.
+    if (byte === 0x5b && buffer[offset + 1] === 0x3c) {
+      const text = buffer.toString('utf8', offset);
+      const match = /^\[<(\d{1,6});(\d{1,6});(\d{1,6})([Mm])/.exec(text);
+      if (match) {
+        this.emitMouse([Number(match[1]), Number(match[2]), Number(match[3])],
+          match[4] === 'M', match[0], events);
+        return match[0].length;
+      }
+      // Don't wait forever on malformed or nonmouse `[` + `<` input.
+      if (text.length <= 64 && /^\[<(?:\d{0,6}(?:;\d{0,6}){0,2})$/.test(text)) return 0;
+    }
+
+    if (byte === 0x0d || byte === 0x0a) {
+      events.push(makeKey('enter', { sequence: String.fromCharCode(byte) }));
+      return 1;
+    }
+    if (byte === 0x7f || byte === 0x08) {
+      events.push(makeKey('backspace', { sequence: String.fromCharCode(byte) }));
+      return 1;
+    }
+    if (byte === 0x09) {
+      events.push(makeKey('tab', { sequence: '\t' }));
+      return 1;
+    }
+
+    // C0 controls are Ctrl+letter, with the handful above already claimed.
+    if (byte < 0x20) {
+      events.push(makeKey(String.fromCharCode(byte + 96), {
+        ctrl: true,
+        sequence: String.fromCharCode(byte)
+      }));
+      return 1;
+    }
+
+    const length = utf8Length(buffer, offset);
+    if (length === 0) return 0;
+
+    const text = buffer.toString('utf8', offset, offset + length);
+    events.push(makeKey('char', { sequence: text, text }));
+    return length;
+  }
+
+  stepPaste(buffer: Buffer, offset: number, events: KeyEvent[]): number {
+    // Bracketed paste can split in the middle of a UTF-8 code point OR CSI
+    // terminator. Accumulate *bytes*, then decode once. Decoding each chunk
+    // independently corrupts emoji and CJK, and can change user code silently.
+    const marker = Buffer.from(PASTE_END, 'ascii');
+    const end = buffer.indexOf(marker, offset);
+    const maxBytes = 2 * 1024 * 1024;
+    const append = (chunk: Buffer): void => {
+      this.pasteByteLength += chunk.length;
+      if (this.pasteByteLength > maxBytes) { this.pasteOverflow = true; return; }
+      if (!this.pasteOverflow && chunk.length) this.pasteChunks.push(Buffer.from(chunk));
+    };
+
+    if (end >= 0) {
+      append(buffer.subarray(offset, end));
+      const pasted = this.pasteOverflow ? '' : Buffer.concat(this.pasteChunks).toString('utf8');
+      const oversized = this.pasteOverflow;
+      this.inPaste = false;
+      this.pasteBuffer = '';
+      this.pasteChunks = [];
+      this.pasteByteLength = 0;
+      this.pasteOverflow = false;
+      if (oversized) events.push(makeKey('paste-too-large', { sequence: '' }));
+      else events.push(makeKey('paste', { text: pasted, sequence: pasted }));
+      return end - offset + marker.length;
+    }
+
+    // Keep only a suffix that might start the paste terminator. All other
+    // bytes can be committed immediately without corrupting Unicode.
+    let retain = 0;
+    for (let count = Math.min(marker.length - 1, buffer.length - offset); count > 0; count--) {
+      if (buffer.subarray(buffer.length - count).equals(marker.subarray(0, count))) {
+        retain = count;
+        break;
+      }
+    }
+    const safeEnd = buffer.length - retain;
+    if (safeEnd === offset) return 0;
+    append(buffer.subarray(offset, safeEnd));
+    return safeEnd - offset;
+  }
+
+  stepEscape(buffer: Buffer, offset: number, events: KeyEvent[]): number {
+    const remaining = buffer.length - offset;
+
+    // A lone ESC at the end of a chunk is the Escape key. Terminals deliver
+    // escape sequences atomically in practice, so waiting for more would make
+    // Escape feel broken rather than making anything more correct.
+    if (remaining === 1) {
+      events.push(makeKey('escape', { sequence: '\x1b' }));
+      return 1;
+    }
+
+    const next = buffer[offset + 1];
+    if (next === undefined) return 0;
+
+    if (next === 0x5b) return this.stepCSI(buffer, offset, events); // ESC [
+    if (next === 0x4f) return this.stepSS3(buffer, offset, events); // ESC O
+
+    // ESC + key is Alt+key. ESC ESC is Escape pressed twice.
+    if (next === 0x1b) {
+      events.push(makeKey('escape', { sequence: '\x1b' }));
+      return 1;
+    }
+    if (next === 0x0d || next === 0x0a) {
+      events.push(makeKey('enter', { alt: true, sequence: '\x1b\r' }));
+      return 2;
+    }
+    if (next === 0x7f || next === 0x08) {
+      events.push(makeKey('backspace', { alt: true, sequence: '\x1b\x7f' }));
+      return 2;
+    }
+
+    // ESC + a control byte is Alt+Ctrl+letter.
+    //
+    // Without this the pair came out as a key literally NAMED \x15, which no
+    // binding can match — so every ctrl+alt chord worked only under the kitty
+    // keyboard protocol (`ESC [ 117 ; 7 u`) and silently did nothing in every
+    // ordinary terminal. That is how the half-page scroll bindings shipped
+    // firing on almost nobody.
+    //
+    // 0x00 is excluded: ctrl+space and ctrl+@ both send NUL and there is no way
+    // to tell them apart, so naming it would be a guess.
+    if (next > 0x00 && next < 0x20) {
+      events.push(makeKey(String.fromCharCode(next + 96), {
+        ctrl: true, alt: true, sequence: '\x1b' + String.fromCharCode(next)
+      }));
+      return 2;
+    }
+
+    const length = utf8Length(buffer, offset + 1);
+    if (length === 0) return 0;
+    const text = buffer.toString('utf8', offset + 1, offset + 1 + length);
+    events.push(makeKey(text.toLowerCase(), { alt: true, sequence: '\x1b' + text }));
+    return 1 + length;
+  }
+
+  stepCSI(buffer: Buffer, offset: number, events: KeyEvent[]): number {
+    // X10 mouse first, and from the RAW buffer.
+    //
+    // `ESC [ M Cb Cx Cy` carries three bytes that are offset by 32 and are
+    // routinely >127 — i.e. not valid UTF-8. Decoding the buffer as UTF-8 first
+    // would mangle them into replacement characters, and the generic CSI scan
+    // below would stop at the `M`, consume three bytes and leave the other three
+    // to be read as text the user never typed.
+    //
+    // We never ask for this encoding: mouseTracking() sends ?1006 alongside
+    // ?1000. But a terminal that does not understand ?1006 silently ignores it
+    // and answers in X10 anyway, and "silently ignores" is exactly the failure
+    // mode UX-01 exists because of.
+    if (buffer[offset + 2] === 0x4d && !this.inPaste) {
+      return this.stepX10Mouse(buffer, offset, events);
+    }
+
+    const text = buffer.toString('utf8', offset);
+
+    if (text.startsWith(PASTE_START)) {
+      this.inPaste = true;
+      this.pasteBuffer = '';
+      this.pasteChunks = [];
+      this.pasteByteLength = 0;
+      this.pasteOverflow = false;
+      return PASTE_START.length;
+    }
+
+    // A CSI sequence is ESC [ , parameters, then one final byte in @..~.
+    let index = 2;
+    while (index < text.length && !/[@-~]/.test(text[index] ?? '')) index++;
+    if (index >= text.length) {
+      // A malformed CSI stream must not buffer an unbounded quantity of user input.
+      if (buffer.length - offset > 128) {
+        events.push(makeKey('unknown', { sequence: '' }));
+        return buffer.length - offset;
+      }
+      return 0; // still arriving
+    }
+
+    const final = text[index] ?? '';
+    const params = text.slice(2, index);
+    const sequence = text.slice(0, index + 1);
+    const byteLength = Buffer.byteLength(sequence, 'utf8');
+    const numbers = params.split(/[;:]/).map((part) => parseInt(part, 10));
+
+    // SGR mouse: ESC [ < b ; x ; y M|m. `<` is 0x3C, outside the @..~ final
+    // range, so the scan above already found the right final byte.
+    if ((final === 'M' || final === 'm') && params.startsWith('<')) {
+      return this.emitMouse(params.slice(1).split(';').map((n) => parseInt(n, 10)),
+        final === 'M', sequence, events, byteLength);
+    }
+
+    if (final === '~') {
+      const code = numbers[0];
+      const name = code !== undefined && Object.hasOwn(CSI_TILDE_NAMES, code) ? CSI_TILDE_NAMES[code] : undefined;
+      if (name) {
+        events.push(applyModifier(makeKey(name, { sequence }), numbers[1]));
+        return byteLength;
+      }
+    } else if (final === 'u') {
+      // Kitty keyboard protocol: ESC [ codepoint ; modifiers u
+      const codepoint = numbers[0];
+      const controlName = codepoint !== undefined && Object.hasOwn(KITTY_CONTROL_NAMES, codepoint)
+        ? KITTY_CONTROL_NAMES[codepoint]
+        : undefined;
+      if (controlName) {
+        events.push(applyModifier(makeKey(controlName, { sequence }), numbers[1]));
+        return byteLength;
+      }
+      if (
+        codepoint !== undefined &&
+        Number.isFinite(codepoint) &&
+        codepoint >= 32 &&
+        codepoint <= 0x10ffff &&
+        (codepoint < 0xd800 || codepoint > 0xdfff)
+      ) {
+        const character = String.fromCodePoint(codepoint);
+        const key = applyModifier(
+          makeKey('char', { sequence, text: character }),
+          numbers[1]
+        );
+        // Ctrl+char is a command, not text — the caller must not insert it.
+        if (key.ctrl || key.alt) key.text = '';
+        if (key.name === 'char' && !key.text) key.name = character.toLowerCase();
+        events.push(key);
+        return byteLength;
+      }
+    } else if (Object.hasOwn(CSI_FINAL_NAMES, final)) {
+      const finalName = CSI_FINAL_NAMES[final] ?? 'unknown';
+      const key = applyModifier(
+        makeKey(finalName, { sequence }),
+        numbers.length > 1 ? numbers[1] : undefined
+      );
+      // ESC [ Z is Shift+Tab and carries no modifier parameter of its own.
+      if (final === 'Z') key.shift = true;
+      events.push(key);
+      return byteLength;
+    }
+
+    // Unknown but well-formed: consume it so it can never reach the buffer as
+    // literal text and corrupt the line the user is editing.
+    events.push(makeKey('unknown', { sequence }));
+    return byteLength;
+  }
+
+  stepX10Mouse(buffer: Buffer, offset: number, events: KeyEvent[]): number {
+    // ESC [ M plus exactly three bytes.
+    if (buffer.length - offset < 6) return 0;
+    const code = (buffer[offset + 3] ?? 32) - 32;
+    const column = (buffer[offset + 4] ?? 32) - 32;
+    const row = (buffer[offset + 5] ?? 32) - 32;
+    const sequence = buffer.toString('latin1', offset, offset + 6);
+    this.emitMouse([code, column, row], true, sequence, events);
+    return 6;
+  }
+
+  /**
+   * One mouse report, in either encoding.
+   *
+   * Bit 6 of the button code marks a wheel event; the low two bits then give
+   * the direction. Everything else is a click, which is emitted as an inert
+   * `mouse` event rather than dropped: consuming it is what stops the bytes
+   * reaching the line the user is editing, and naming it lets a caller act on
+   * it later without another decoder change.
+   */
+  emitMouse(numbers: readonly (number | undefined)[], pressed: boolean, sequence: string, events: KeyEvent[], byteLength: number = sequence.length): number {
+    const [code, column, row] = numbers;
+    if (code === undefined || column === undefined || row === undefined
+        || !Number.isFinite(code) || !Number.isFinite(column) || !Number.isFinite(row)) {
+      events.push(makeKey('unknown', { sequence }));
+      return byteLength;
+    }
+
+    // Modifier bits live in the button code for mouse reports, not in a CSI
+    // parameter, so applyModifier() does not apply here.
+    const modifiers = {
+      shift: (code & 4) !== 0,
+      alt: (code & 8) !== 0,
+      ctrl: (code & 16) !== 0
+    };
+    // Wire coordinates are 1-based.
+    const at = { x: Math.max(0, column - 1), y: Math.max(0, row - 1) };
+
+    if ((code & 64) !== 0) {
+      const directions = ['up', 'down', 'left', 'right'] as const;
+      const direction = directions[code & 3] ?? 'up';
+      // A wheel report arrives as a press; there is no release to pair it with.
+      if (pressed) {
+        events.push(makeKey('wheel', { sequence, ...modifiers, wheel: { direction, ...at } }));
+        return byteLength;
+      }
+    }
+
+    events.push(makeKey('mouse', {
+      sequence, ...modifiers,
+      mouse: { button: code & 3, pressed, ...at }
+    }));
+    return byteLength;
+  }
+
+  stepSS3(buffer: Buffer, offset: number, events: KeyEvent[]): number {
+    if (buffer.length - offset < 3) return 0;
+    const final = buffer.toString('utf8', offset + 2, offset + 3);
+    const name = (Object.hasOwn(CSI_FINAL_NAMES, final) ? CSI_FINAL_NAMES[final] : undefined)
+      || (Object.hasOwn(SS3_NAMES, final) ? SS3_NAMES[final] : undefined);
+    events.push(makeKey(name || 'unknown', { sequence: '\x1bO' + final }));
+    return 3;
+  }
+}
+
+/**
+ * Turn mouse reporting on/off.
+ *
+ * ?1000 is button press/release reporting, which is what carries the wheel.
+ * ?1006 asks for SGR encoding so the coordinates are decimal parameters rather
+ * than three offset bytes that break past column 223.
+ *
+ * DELIBERATELY NOT ?1002 (button-drag) or ?1003 (any motion). opencode enables
+ * both and needs OPENCODE_DISABLE_MOUSE as an escape hatch because of it. Causyne
+ * offers no in-app selection or hover, so it has no reason to ask for drag
+ * reports, and not asking is the difference between a terminal that can still
+ * mostly be dragged over and one that cannot be at all.
+ *
+ * Be precise about what this does NOT buy: ?1000 still reports the click
+ * itself, and several terminals respond to any mouse reporting by putting their
+ * own selection behind a modifier (Option in iTerm2 and Terminal.app, Shift in
+ * most X11 terminals). This narrows the damage; it does not remove it. That is
+ * what CAUSYNE_MOUSE=0 is for, and why it is documented rather than buried.
+ *
+ * There is no mode that reports the wheel alone. UX-02.
+ */
+export function mouseTracking(enabled: boolean): string {
+  // Select SGR encoding before enabling reporting. Disable reporting before
+  // tearing down its encoding so no event can arrive as legacy X10 bytes.
+  return enabled ? '\x1b[?1006h\x1b[?1000h' : '\x1b[?1000l\x1b[?1006l';
+}
+
+/** Turn bracketed paste on/off. Paired with the editor's lifecycle. */
+export function bracketedPaste(enabled: boolean): string {
+  return enabled ? '\x1b[?2004h' : '\x1b[?2004l';
+}
+
+/**
+ * True when `event` is the plain printable character `letter`.
+ *
+ * THE BUG THIS EXISTS TO PREVENT — and it shipped:
+ *
+ * A printable key does NOT decode to its own name. `y` produces
+ * `{ name: 'char', text: 'y' }`, because the decoder reserves `name` for keys
+ * that have no character (escape, up, enter) and puts the character in `text`.
+ * Only MODIFIED letters get their letter as a name: ctrl+c is
+ * `{ name: 'c', ctrl: true }`, alt+b is `{ name: 'b', alt: true }`.
+ *
+ * That asymmetry is easy to get wrong from the outside, and the approval
+ * dialog got it wrong: it tested `event.name === 'y'`, which is true for
+ * ctrl+y and false for y. So the y/n keys on the one modal that gates every
+ * dangerous action in the product did nothing at all, silently — every
+ * keypress fell through to the layer's `default:` branch and was swallowed.
+ * Escape still worked, because escape genuinely is named 'escape', which made
+ * the dialog look responsive while being impossible to approve.
+ *
+ * Anything comparing a bare letter must come through here.
+ */
+export function isMouseMotion(sequence: unknown): boolean {
+  const code = Number(/^\x1b\[<(\d+);/.exec(typeof sequence === 'string' ? sequence : '')?.[1]);
+  return Number.isFinite(code) && (code & 32) !== 0;
+}
+
+export function isChar(event: Partial<KeyEvent> | null | undefined, letter: unknown): boolean {
+  if (!event || event.ctrl || event.alt || event.meta) return false;
+  const typed = typeof event.text === 'string' && event.text.length > 0
+    ? event.text
+    : (typeof event.name === 'string' && event.name.length === 1 ? event.name : '');
+  return typed.toLowerCase() === String(letter).toLowerCase();
+}

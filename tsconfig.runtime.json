@@ -315,7 +315,8 @@
     "src/tui/theme.ts",
     "src/tui/history.ts",
     "src/tui/transcript.ts",
-    "src/tui/diff.ts"
+    "src/tui/diff.ts",
+    "src/tui/keys.ts"
   ],
   "exclude": [
     "node_modules",
