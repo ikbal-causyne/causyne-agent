@@ -104,10 +104,10 @@ export function resolveScopedPath(
   }
   const scope = resolveToolWorkspaceRoots(context);
   const baseDir = scope.primaryRoot || options.defaultBase || process.cwd();
-  const expanded = resolveUserPath(rawPath.trim());
-  const resolved = path.isAbsolute(expanded)
-    ? path.resolve(expanded)
-    : path.resolve(baseDir, expanded);
+  const trimmed = rawPath.trim();
+  const resolved = (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\'))
+    ? resolveUserPath(trimmed)
+    : (path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(baseDir, trimmed));
 
   if (!scope.grantAllAccess && scope.roots.length > 0) {
     if (typeof scope.policy?.isPathAllowed === 'function' && !scope.policy.isPathAllowed(resolved)) {
