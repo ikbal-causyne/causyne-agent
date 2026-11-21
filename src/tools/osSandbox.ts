@@ -25,6 +25,8 @@ export interface OsSandboxCapabilities {
   backend: OsSandboxBackend;
   platform: NodeJS.Platform;
   available: boolean;
+  supportsFilesystemIsolation: boolean;
+  supportsNetworkIsolation: boolean;
   binaryPath: string | null;
   reason: string;
 }
@@ -233,6 +235,8 @@ export function probeOsSandbox(options?: {
         backend: 'none',
         platform,
         available: false,
+        supportsFilesystemIsolation: false,
+        supportsNetworkIsolation: false,
         binaryPath: null,
         reason: 'macOS sandbox-exec binary not found.'
       };
@@ -248,6 +252,8 @@ export function probeOsSandbox(options?: {
           backend: 'seatbelt',
           platform,
           available: true,
+          supportsFilesystemIsolation: true,
+          supportsNetworkIsolation: true,
           binaryPath: SEATBELT_BIN,
           reason: 'macOS Seatbelt (sandbox-exec) active and verified.'
         };
@@ -256,6 +262,8 @@ export function probeOsSandbox(options?: {
           backend: 'none',
           platform,
           available: false,
+          supportsFilesystemIsolation: false,
+          supportsNetworkIsolation: false,
           binaryPath: SEATBELT_BIN,
           reason: 'macOS Seatbelt cannot apply in this environment (likely nested sandbox).'
         };
@@ -268,6 +276,8 @@ export function probeOsSandbox(options?: {
         backend: 'none',
         platform,
         available: false,
+        supportsFilesystemIsolation: false,
+        supportsNetworkIsolation: false,
         binaryPath: null,
         reason: 'Linux bubblewrap (bwrap) is not installed.'
       };
@@ -283,6 +293,8 @@ export function probeOsSandbox(options?: {
           backend: 'bubblewrap',
           platform,
           available: true,
+          supportsFilesystemIsolation: true,
+          supportsNetworkIsolation: true,
           binaryPath: bwrapPath,
           reason: 'Linux bubblewrap (bwrap) namespaces active and verified.'
         };
@@ -291,6 +303,8 @@ export function probeOsSandbox(options?: {
           backend: 'none',
           platform,
           available: false,
+          supportsFilesystemIsolation: false,
+          supportsNetworkIsolation: false,
           binaryPath: bwrapPath,
           reason: 'Linux bubblewrap (bwrap) unavailable (user namespaces disabled in container).'
         };
@@ -301,6 +315,8 @@ export function probeOsSandbox(options?: {
       backend: 'none',
       platform,
       available: false,
+      supportsFilesystemIsolation: false,
+      supportsNetworkIsolation: false,
       binaryPath: null,
       reason: `Kernel subprocess sandboxing is not implemented for platform "${platform}"; application sandbox and env isolation remain active.`
     };
