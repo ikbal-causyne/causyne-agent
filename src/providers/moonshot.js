@@ -6,9 +6,12 @@ import { normalizeOpenAIChatChoiceResponse } from './wireNormalizer.js';
 import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 export class MoonshotProvider extends LLMProvider {
+    allowInsecureHttp;
     constructor(config = {}) {
         super(config);
-        this.baseUrl = 'https://api.moonshot.ai/v1/chat/completions';
+        const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+        this.baseUrl = customUrl || 'https://api.moonshot.ai/v1/chat/completions';
+        this.allowInsecureHttp = config.allowInsecureHttp === true;
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['moonshot']) || '');
         this.visionModels = ['kimi-k3', 'kimi-k2.5', 'vision'];
         this.audioModels = [];
@@ -16,11 +19,17 @@ export class MoonshotProvider extends LLMProvider {
     async chat(messages, options = {}) {
         const apiKey = requireApiKey(this.apiKey, 'Moonshot AI (Kimi)');
         const sanitizedMessages = this.prepareMessages(messages);
+        const isThinkingModel = (this.model || '').trim().toLowerCase().includes('-thinking');
         const payload = {
             model: this.model,
-            messages: sanitizedMessages,
-            temperature: resolveTemperature(options.temperature, 0.1)
+            messages: sanitizedMessages
         };
+        if (!isThinkingModel) {
+            payload['temperature'] = resolveTemperature(options.temperature, 0.1);
+        }
+        if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+            payload['max_tokens'] = Math.floor(options.maxTokens);
+        }
         if (options.jsonMode) {
             payload['response_format'] = { type: 'json_object' };
         }
@@ -43,7 +52,8 @@ export class MoonshotProvider extends LLMProvider {
             timeoutMs: options.timeoutMs,
             providerLabel: 'Moonshot AI',
             secrets: [apiKey],
-            hasApiKey: true
+            hasApiKey: true,
+            allowInsecureHttp: this.allowInsecureHttp
         };
         const data = wantsStreaming(options)
             ? await streamOpenAICompatibleChat({
