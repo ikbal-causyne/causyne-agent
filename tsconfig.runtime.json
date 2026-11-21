@@ -344,7 +344,8 @@
     "src/benchmarks/planCache.ts",
     "src/verification/featureMap.ts",
     "src/verification/skillCatalog.ts",
-    "src/verification/boundedExplorer.ts"
+    "src/verification/boundedExplorer.ts",
+    "src/verification/propertyProbe.ts"
   ],
   "exclude": [
     "node_modules",
