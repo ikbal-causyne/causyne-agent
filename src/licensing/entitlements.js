@@ -181,10 +181,21 @@ export class EntitlementClient {
     stateRoot;
     fetchFn;
     identity;
-    constructor({ apiBase = LICENSE_API_BASE, stateRoot = causyneHome(), fetchFn = globalThis.fetch } = {}) {
+    constructor(options) {
+        const safeOpts = options && typeof options === 'object' ? options : {};
+        const apiBase = safeOpts.apiBase ?? LICENSE_API_BASE;
+        const stateRoot = safeOpts.stateRoot ?? causyneHome();
+        const fetchFn = safeOpts.fetchFn ?? globalThis.fetch;
         const url = new URL(apiBase);
-        if (url.protocol !== 'https:' && url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
+        if (url.username || url.password) {
+            throw new Error('Entitlement service URL must not embed credentials.');
+        }
+        const isLoopback = url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]' || url.hostname === '::1';
+        if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopback)) {
             throw new Error('Entitlement service requires HTTPS.');
+        }
+        if (typeof fetchFn !== 'function') {
+            throw new Error('Entitlement client requires a valid fetch implementation.');
         }
         this.apiBase = url.origin;
         this.stateRoot = stateRoot;
