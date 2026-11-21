@@ -19,10 +19,25 @@ export function geminiUsageToOpenAIShape(usageMetadata) {
     };
 }
 export class GeminiProvider extends LLMProvider {
+    allowInsecureHttp;
     constructor(config = {}) {
         super(config);
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['gemini']) || '');
-        this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
+        this.allowInsecureHttp = config.allowInsecureHttp === true;
+        const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+        if (customUrl) {
+            try {
+                const parsed = new URL(customUrl);
+                parsed.searchParams.delete('key');
+                this.baseUrl = parsed.toString();
+            }
+            catch {
+                this.baseUrl = customUrl;
+            }
+        }
+        else {
+            this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
+        }
         this.visionModels = ['gemini-'];
         this.imagePayloadFormat = 'gemini';
         this.audioModels = ['gemini-'];
@@ -167,7 +182,8 @@ export class GeminiProvider extends LLMProvider {
             timeoutMs: options.timeoutMs,
             providerLabel: 'Gemini',
             secrets: [apiKey],
-            hasApiKey: true
+            hasApiKey: true,
+            allowInsecureHttp: this.allowInsecureHttp
         };
         const data = wantsStreaming(options)
             ? await streamGeminiGenerateContent({
