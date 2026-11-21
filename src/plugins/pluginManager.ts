@@ -691,6 +691,9 @@ async function runPluginTool(tool: EnabledPluginTool, args: unknown, context: an
     entry: fs.realpathSync(tool.entry),
     pluginDirectory: fs.realpathSync(tool.pluginDirectory)
   };
+  if (runtimeTool.entry === runtimeTool.pluginDirectory || !isWithinPhysicalPath(runtimeTool.entry, runtimeTool.pluginDirectory)) {
+    return { success: false, error: 'Refusing plugin entry outside its canonical plugin directory' };
+  }
   const childArgs = [
     ...permissionArgs(runtimeTool, workspacePermissionRoots),
     RUNNER_FILE,
