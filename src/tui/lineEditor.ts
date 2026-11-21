@@ -347,10 +347,15 @@ export class LineEditor {
   // memory for. Killed text goes to a ring so Ctrl+Y can put it back.
   // -------------------------------------------------------------------------
 
+  _writeClipboardSafe(value: string): void {
+    if (!value) return;
+    try { writeClipboardSync(value); } catch { /* clipboard unavailable */ }
+  }
+
   _killSelection(): void {
     this.killRing = this.getSelectedText();
     this.deleteSelection();
-    if (this.killRing) writeClipboardSync(this.killRing);
+    this._writeClipboardSafe(this.killRing);
   }
 
   killToEnd(): void {
@@ -361,7 +366,7 @@ export class LineEditor {
     const line = this.lines[this.line] ?? [];
     this.killRing = line.slice(this.col).join('');
     this.lines[this.line] = line.slice(0, this.col);
-    if (this.killRing) writeClipboardSync(this.killRing);
+    this._writeClipboardSafe(this.killRing);
   }
 
   killToStart(): void {
@@ -373,7 +378,7 @@ export class LineEditor {
     this.killRing = line.slice(0, this.col).join('');
     this.lines[this.line] = line.slice(this.col);
     this.col = 0;
-    if (this.killRing) writeClipboardSync(this.killRing);
+    this._writeClipboardSafe(this.killRing);
   }
 
   killWordLeft(): void {
@@ -385,7 +390,7 @@ export class LineEditor {
       if (this.line > 0) {
         this.killRing = '\n';
         this.backspace();
-        writeClipboardSync(this.killRing);
+        this._writeClipboardSafe(this.killRing);
       }
       return;
     }
@@ -394,7 +399,7 @@ export class LineEditor {
     const line = this.lines[this.line] ?? [];
     this.killRing = line.slice(this.col, start).join('');
     line.splice(this.col, start - this.col);
-    if (this.killRing) writeClipboardSync(this.killRing);
+    this._writeClipboardSafe(this.killRing);
   }
 
   yank(): void {
