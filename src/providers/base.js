@@ -194,7 +194,7 @@ export class LLMProvider {
             return msg;
         const audioBlocks = this.supportsAudio ? msg.content.filter(isAudioBlock) : [];
         const textParts = msg.content
-            .filter((block) => block.type === 'text')
+            .filter((block) => block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string')
             .map((block) => block.text);
         const text = textParts.join('\n') ||
             '[Image content removed — not supported by this model]';

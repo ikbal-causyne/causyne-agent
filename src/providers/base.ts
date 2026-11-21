@@ -291,7 +291,7 @@ export class LLMProvider {
     const audioBlocks = this.supportsAudio ? msg.content.filter(isAudioBlock) : [];
 
     const textParts = msg.content
-      .filter((block: any) => block.type === 'text')
+      .filter((block: any) => block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string')
       .map((block: any) => block.text);
 
     const text = textParts.join('\n') ||
