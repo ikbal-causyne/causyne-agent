@@ -68,6 +68,7 @@ import path from 'path';
 import { analyzeFiles, formatFindings, isScannableFile } from './slopDetector.js';
 import { suggestMovements, formatMovementBrief } from './designPalettes.js';
 import { createProvider } from './providers/factory.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
 import { isNativeMutation } from './providers/antigravity.js';
 import { resolveMentionedContext } from './promptMentions.js';
 import { isLaunchOnlyPrompt, launchScopeError, isNoExecutionPrompt, isReadOnlyOrExplanatoryPrompt, readOnlyScopeError } from './launchIntent.js';
@@ -1266,7 +1267,9 @@ export class AgentLoop {
     debugLog(message) {
         if (process.env.CAUSYNE_DEBUG !== '1')
             return;
-        process.stderr.write(`[causyne] ${message}\n`);
+        // eslint-disable-next-line no-control-regex
+        const clean = redactProviderSecrets(String(message ?? '')).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 4096);
+        process.stderr.write(`[causyne] ${clean}\n`);
     }
     handleApprovalResponse(toolCallId, approved) {
         if (this.pendingApprovals.has(toolCallId)) {
