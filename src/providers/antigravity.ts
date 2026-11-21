@@ -200,8 +200,8 @@ export function resolveAgyModelId(model?: string | null): string {
   const trimmed = model.trim();
   if (!trimmed) return '';
 
-  if (ANTIGRAVITY_MODEL_IDS[trimmed]) {
-    return ANTIGRAVITY_MODEL_IDS[trimmed];
+  if (Object.hasOwn(ANTIGRAVITY_MODEL_IDS, trimmed)) {
+    return ANTIGRAVITY_MODEL_IDS[trimmed]!;
   }
 
   const lower = trimmed.toLowerCase();
@@ -251,7 +251,7 @@ export function isAntigravityProvider(provider?: string | null): boolean {
 export function isAntigravityModel(input?: string | null): boolean {
   if (typeof input !== 'string' || !input.trim()) return false;
   const trimmed = input.trim();
-  if (ANTIGRAVITY_MODEL_IDS[trimmed]) return true;
+  if (Object.hasOwn(ANTIGRAVITY_MODEL_IDS, trimmed)) return true;
   const lower = trimmed.toLowerCase();
   for (const [key, slug] of Object.entries(ANTIGRAVITY_MODEL_IDS)) {
     if (key.toLowerCase() === lower || slug.toLowerCase() === lower) return true;
