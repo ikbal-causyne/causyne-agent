@@ -226,11 +226,12 @@ export class AnthropicProvider extends LLMProvider {
       max_tokens: options.maxTokens || 16000
     };
 
-    if (!this.rejectsSamplingParameters()) {
+    const thinking = this.buildThinking();
+    const thinkingActive = Boolean(thinking && thinking['type'] !== 'disabled');
+    if (!this.rejectsSamplingParameters() && !thinkingActive) {
       payload['temperature'] = resolveTemperature(options.temperature, 0.1);
     }
 
-    const thinking = this.buildThinking();
     if (thinking) {
       if (thinking['type'] === 'enabled' && typeof thinking['budget_tokens'] === 'number' && payload['max_tokens'] > 1024) {
         thinking['budget_tokens'] = Math.max(1024, Math.min(thinking['budget_tokens'], payload['max_tokens'] - 1));
