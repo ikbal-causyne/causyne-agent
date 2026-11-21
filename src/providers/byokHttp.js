@@ -134,11 +134,11 @@ export function parseRetryAfterMs(headerValue) {
     const trimmed = headerValue.trim();
     if (!trimmed)
         return undefined;
-    if (/^\d+$/.test(trimmed)) {
+    if (/^\d+(?:\.\d+)?$/.test(trimmed)) {
         const seconds = Number(trimmed);
         if (!Number.isFinite(seconds) || seconds < 0)
             return undefined;
-        return Math.min(seconds * 1000, 300_000);
+        return Math.min(Math.ceil(seconds * 1000), 300_000);
     }
     const parsedDate = Date.parse(trimmed);
     if (Number.isFinite(parsedDate)) {
