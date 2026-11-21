@@ -212,15 +212,19 @@ export function getOrCreateVaultKey(
  * Encrypts a plaintext secret using AES-256-GCM with a NIST-standard 12-byte IV.
  */
 export function encryptVaultSecret(text: string, keyFilePath: string): string {
-  if (!text) return text;
+  if (typeof text !== 'string' || !text) return text;
   if (isEncryptedVaultSecret(text)) return text;
   const key = getOrCreateVaultKey(keyFilePath);
-  const iv = crypto.randomBytes(VAULT_GCM_IV_BYTES);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  const authTag = cipher.getAuthTag().toString('hex');
-  return `${VAULT_ENC_PREFIX}${iv.toString('hex')}:${authTag}:${encrypted}`;
+  try {
+    const iv = crypto.randomBytes(VAULT_GCM_IV_BYTES);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag().toString('hex');
+    return `${VAULT_ENC_PREFIX}${iv.toString('hex')}:${authTag}:${encrypted}`;
+  } finally {
+    key.fill(0);
+  }
 }
 
 /**
