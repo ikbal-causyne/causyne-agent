@@ -6,17 +6,11 @@
 // (so it degrades) and through text.safeDisplay (so untrusted tool output
 // cannot move the cursor or repaint the screen).
 //
-// Pure JS over ./theme.js and ./text.js. No dependency, no shell.
-
+// Pure TypeScript over ./theme.js and ./text.js. No dependency, no shell.
 import readline from 'readline';
 import { compactSuccessfulToolResult } from './toolActivityPolicy.js';
-import {
-  paint, bold, dim, badge, GLYPHS, terminalWidth, HAS_COLOR, fileLink,
-  safeLink, HAS_HYPERLINKS
-} from './theme.js';
-import {
-  visibleWidth, truncate, wrap, wrapBlock, padEnd, safeDisplay, shortenHome
-} from './text.js';
+import { paint, bold, dim, badge, GLYPHS, terminalWidth, HAS_COLOR, fileLink, safeLink, HAS_HYPERLINKS } from './theme.js';
+import { visibleWidth, truncate, wrap, wrapBlock, padEnd, safeDisplay, shortenHome } from './text.js';
 import { sessionBanner } from './banner.js';
 import { describeTool } from './toolDisplay.js';
 import { approvalDiff } from './diff.js';
@@ -30,1509 +24,1207 @@ import { cleanToolOutputPreview, normalizeHistoricalToolResult, normalizeHistori
 import { formatMarkdownMath } from './markdownMath.js';
 import { renderThinkingFrame } from './thinkingBox.js';
 import { measureMessages, resolveCharPool } from '../contextManager.js';
-
 // Bound the preview AFTER wrapping, not by source newlines: one 400 KB line of
 // minified output would otherwise become thousands of rows and lock the
 // terminal. (The failure openclaw's tool-execution component documents.)
 const PREVIEW_LINES = 12;
-
 // Cut the SOURCE before sanitising it, not after.
-//
-// safeDisplay() runs sanitize() plus four redaction passes over whatever it is
-// given. Handing it a 900 KB tool result meant regex-scanning 900 KB to print
-// twelve lines. openclaw's tool-execution component bounds the source first for
-// exactly this reason; 256 columns per previewed line is far more than any
-// terminal shows and still bounds the work at a few KB.
 const PREVIEW_SOURCE_BUDGET = PREVIEW_LINES * 256;
-
-// How much of a model's chain of thought to show inline.
-//
-// Reasoning models emit thousands of tokens of it. Printed in full it buries
-// the answer it was reasoning towards, which is the opposite of useful — and on
-// the Stage it would push the reply off the viewport entirely. The frame keeps
-// the whole thing, so nothing is lost; this is only what is shown at rest.
-const REASONING_LINES = 12;
-
 // Column where the timing/status gutter starts, so tool rows line up.
 const STATUS_GUTTER = 10;
-
 function formatDuration(ms) {
-  if (!Number.isFinite(ms) || ms <= 0) return '0ms';
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const totalSeconds = Math.round(ms / 1000);
-  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+    if (!Number.isFinite(ms) || ms <= 0)
+        return '0ms';
+    if (ms < 1000)
+        return `${Math.round(ms)}ms`;
+    if (ms < 60000)
+        return `${(ms / 1000).toFixed(1)}s`;
+    const totalSeconds = Math.round(ms / 1000);
+    return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
-
-/**
- * Minimal markdown for a terminal.
- *
- * Agent replies are markdown; printing them raw means the user reads literal
- * `**bold**` and ``` fences. This is deliberately small — headings, emphasis,
- * inline code, fenced blocks and list bullets. Anything fancier belongs in a
- * pager, not a chat transcript.
- */
 function clampMarkdownIndent(raw, markerCols, targetWidth) {
-  const maxLead = Math.max(0, Math.min(Math.floor(targetWidth / 3), targetWidth - markerCols - 8));
-  const rawCols = visibleWidth(String(raw || '').replace(/\t/g, '  '));
-  return ' '.repeat(Math.min(rawCols, maxLead));
+    const maxLead = Math.max(0, Math.min(Math.floor(targetWidth / 3), targetWidth - markerCols - 8));
+    const rawCols = visibleWidth(String(raw || '').replace(/\t/g, '  '));
+    return ' '.repeat(Math.min(rawCols, maxLead));
 }
-
 function renderMarkdown(text, width) {
-  const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(12, Math.floor(width)) : 80;
-  const lines = [];
-  let inFence = false;
-
-  for (const rawLine of String(text).split('\n')) {
-    const line = rawLine.replace(/\s+$/, '');
-
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
-      const language = line.replace(/^\s*```/, '').trim();
-      const maxLabel = Math.max(0, safeWidth - 8);
-      const safeLang = language.length > maxLabel ? language.slice(0, maxLabel) : language;
-      const trail = Math.max(0, safeWidth - 3 - (safeLang ? safeLang.length + 2 : 1));
-      lines.push(dim(`${GLYPHS.hLine.repeat(3)}${safeLang ? ' ' + safeLang + ' ' : ' '}${GLYPHS.hLine.repeat(trail)}`));
-      continue;
+    const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(12, Math.floor(width)) : 80;
+    const lines = [];
+    let inFence = false;
+    for (const rawLine of String(text).split('\n')) {
+        const line = rawLine.replace(/\s+$/, '');
+        if (/^\s*```/.test(line)) {
+            inFence = !inFence;
+            const language = line.replace(/^\s*```/, '').trim();
+            const maxLabel = Math.max(0, safeWidth - 8);
+            const safeLang = language.length > maxLabel ? language.slice(0, maxLabel) : language;
+            const trail = Math.max(0, safeWidth - 3 - (safeLang ? safeLang.length + 2 : 1));
+            lines.push(dim(`${GLYPHS.hLine.repeat(3)}${safeLang ? ' ' + safeLang + ' ' : ' '}${GLYPHS.hLine.repeat(trail)}`));
+            continue;
+        }
+        if (inFence) {
+            for (const codeRow of wrapBlock('  ' + line, Math.max(8, safeWidth), { hang: 0 })) {
+                lines.push(paint('accent', codeRow));
+            }
+            continue;
+        }
+        const heading = line.match(/^(#{1,6})\s+(.*)$/);
+        if (heading && heading[2] !== undefined) {
+            lines.push('');
+            for (const headingRow of wrap(heading[2], Math.max(8, safeWidth))) {
+                lines.push(bold(paint('ink', headingRow)));
+            }
+            continue;
+        }
+        if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+            lines.push(dim(GLYPHS.hLine.repeat(Math.max(4, Math.min(safeWidth, 40)))));
+            continue;
+        }
+        const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
+        if (bullet && bullet[2] !== undefined) {
+            const indent = clampMarkdownIndent(bullet[1], 4, safeWidth) + '  ';
+            const wrapped = wrap(inline(bullet[2]), Math.max(8, safeWidth - indent.length - 2));
+            wrapped.forEach((part, index) => {
+                lines.push(index === 0 ? `${indent}${paint('muted', GLYPHS.bullet)} ${part}` : `${indent}  ${part}`);
+            });
+            continue;
+        }
+        const numbered = line.match(/^(\s*)(\d+\.)\s+(.*)$/);
+        if (numbered && numbered[2] !== undefined && numbered[3] !== undefined) {
+            const markerCols = visibleWidth(numbered[2]) + 1;
+            const lead = clampMarkdownIndent(numbered[1], markerCols, safeWidth);
+            const prefix = `${lead}${bold(numbered[2])} `;
+            const indentCols = visibleWidth(lead) + markerCols;
+            const indent = ' '.repeat(indentCols);
+            const wrapped = wrap(inline(numbered[3]), Math.max(8, safeWidth - indentCols));
+            wrapped.forEach((part, index) => {
+                lines.push(index === 0 ? `${prefix}${part}` : `${indent}${part}`);
+            });
+            continue;
+        }
+        const quote = line.match(/^(\s*)>\s?(.*)$/);
+        if (quote && quote[2] !== undefined) {
+            const lead = clampMarkdownIndent(quote[1], 2, safeWidth);
+            const indent = lead + paint('muted', '│ ');
+            const wrapped = wrap(inline(quote[2]), Math.max(8, safeWidth - visibleWidth(lead) - 2));
+            wrapped.forEach((part) => {
+                lines.push(`${indent}${part}`);
+            });
+            continue;
+        }
+        if (/^\s*\|?(\s*:?-+:?\s*\|)+\s*$/.test(line)) {
+            lines.push(dim('  ' + GLYPHS.hLine.repeat(Math.max(4, Math.min(safeWidth - 4, 48)))));
+            continue;
+        }
+        const tableRow = line.match(/^\s*\|(.+)\|\s*$/);
+        if (tableRow && tableRow[1] !== undefined) {
+            const cells = tableRow[1].split('|').map(c => c.trim());
+            for (const tableLine of wrapBlock('  ' + cells.join(' │ '), Math.max(8, safeWidth), { hang: 0 })) {
+                lines.push(inline(tableLine));
+            }
+            continue;
+        }
+        const trimmed = line.trim();
+        if (trimmed === '') {
+            lines.push('');
+            continue;
+        }
+        if (trimmed === '[' || trimmed === ']')
+            continue;
+        for (const part of wrap(inline(line), safeWidth))
+            lines.push(part);
     }
     if (inFence) {
-      for (const codeRow of wrapBlock('  ' + line, Math.max(8, safeWidth), { hang: 0 })) {
-        lines.push(paint('accent', codeRow));
-      }
-      continue;
+        lines.push(dim(`${GLYPHS.hLine.repeat(3)} unclosed code block ${GLYPHS.hLine.repeat(Math.max(0, safeWidth - 24))}`));
     }
-
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      lines.push('');
-      for (const headingRow of wrap(heading[2], Math.max(8, safeWidth))) {
-        lines.push(bold(paint('ink', headingRow)));
-      }
-      continue;
-    }
-
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
-      lines.push(dim(GLYPHS.hLine.repeat(Math.max(4, Math.min(safeWidth, 40)))));
-      continue;
-    }
-
-    const bullet = line.match(/^(\s*)[-*+]\s+(.*)$/);
-    if (bullet) {
-      const indent = clampMarkdownIndent(bullet[1], 4, safeWidth) + '  ';
-      const wrapped = wrap(inline(bullet[2]), Math.max(8, safeWidth - indent.length - 2));
-      wrapped.forEach((part, index) => {
-        lines.push(index === 0 ? `${indent}${paint('muted', GLYPHS.bullet)} ${part}` : `${indent}  ${part}`);
-      });
-      continue;
-    }
-
-    const numbered = line.match(/^(\s*)(\d+\.)\s+(.*)$/);
-    if (numbered) {
-      const markerCols = visibleWidth(numbered[2]) + 1;
-      const lead = clampMarkdownIndent(numbered[1], markerCols, safeWidth);
-      const prefix = `${lead}${bold(numbered[2])} `;
-      const indentCols = visibleWidth(lead) + markerCols;
-      const indent = ' '.repeat(indentCols);
-      const wrapped = wrap(inline(numbered[3]), Math.max(8, safeWidth - indentCols));
-      wrapped.forEach((part, index) => {
-        lines.push(index === 0 ? `${prefix}${part}` : `${indent}${part}`);
-      });
-      continue;
-    }
-
-    const quote = line.match(/^(\s*)>\s?(.*)$/);
-    if (quote) {
-      const lead = clampMarkdownIndent(quote[1], 2, safeWidth);
-      const indent = lead + paint('muted', '│ ');
-      const wrapped = wrap(inline(quote[2]), Math.max(8, safeWidth - visibleWidth(lead) - 2));
-      wrapped.forEach((part) => {
-        lines.push(`${indent}${part}`);
-      });
-      continue;
-    }
-
-    if (/^\s*\|?(\s*:?-+:?\s*\|)+\s*$/.test(line)) {
-      lines.push(dim('  ' + GLYPHS.hLine.repeat(Math.max(4, Math.min(safeWidth - 4, 48)))));
-      continue;
-    }
-
-    const tableRow = line.match(/^\s*\|(.+)\|\s*$/);
-    if (tableRow) {
-      const cells = tableRow[1].split('|').map(c => c.trim());
-      for (const tableLine of wrapBlock('  ' + cells.join(' │ '), Math.max(8, safeWidth), { hang: 0 })) {
-        lines.push(inline(tableLine));
-      }
-      continue;
-    }
-
-    const trimmed = line.trim();
-    if (trimmed === '') { lines.push(''); continue; }
-    if (trimmed === '[' || trimmed === ']') continue;
-    for (const part of wrap(inline(line), safeWidth)) lines.push(part);
-  }
-
-  // A fence that never closed.
-  //
-  // `inFence` simply toggles, so an unbalanced ``` used to swallow every
-  // remaining line into code styling and end without a closing rule — the block
-  // read as still open, forever, with nothing saying so. The model does emit
-  // these: a reply cut short by a token limit ends mid-fence, and reasoning
-  // text quotes fences it never closes.
-  //
-  // This is also the invariant a streaming renderer would need, and it is the
-  // one opencode's split-footer mode solves by holding an unstable markdown
-  // block back until it closes (scrollback.surface.ts:278-307). It cannot hold
-  // anything back here, because a frame is re-rendered rather than committed —
-  // so it says what happened instead.
-  if (inFence) {
-    lines.push(dim(`${GLYPHS.hLine.repeat(3)} unclosed code block ${GLYPHS.hLine.repeat(Math.max(0, width - 24))}`));
-  }
-  return lines;
+    return lines;
 }
-
 // A bare URL, allowing one level of balanced parentheses so a link to
 // `.../URL_(disambiguation)` is not cut at the first `)`.
 const BARE_URL = /https?:\/\/[^\s<>()\[\]"'`]+(?:\([^\s<>()"'`]*\)[^\s<>()\[\]"'`]*)*/g;
 const MD_LINK = /\[([^\]\n]{1,80})\]\(((?:https?|file):\/\/[^\s)]+(?:\([^\s)]*\)[^\s)]*)*)\)/g;
-
-// The longest label a link may show. Anything longer would reach wrap()'s
-// hard-split branch, which cuts a long unbroken token by column — and cutting
-// through an OSC 8 sequence leaves the link open across the break.
 const MAX_LINK_LABEL = 48;
-
 /** Trailing sentence punctuation belongs to the sentence, not to the URL. */
 function trimUrlPunctuation(url) {
-  let depth = 0;
-  for (let index = 0; index < url.length; index++) {
-    const character = url[index];
-    if (character === '(') depth++;
-    else if (character === ')') {
-      if (depth === 0) return trimUrlPunctuation(url.slice(0, index));
-      depth--;
+    let depth = 0;
+    for (let index = 0; index < url.length; index++) {
+        const character = url[index];
+        if (character === '(')
+            depth++;
+        else if (character === ')') {
+            if (depth === 0)
+                return trimUrlPunctuation(url.slice(0, index));
+            depth--;
+        }
     }
-  }
-  return url.replace(/[?!.,:;*_~]+$/u, '');
+    return url.replace(/[?!.,:;*_~]+$/u, '');
 }
-
 /** `https://docs.example.com/a/very/long/path?x=1` → `docs.example.com/a/…`. */
 function compactUrlLabel(url) {
-  let label = url.replace(/^(?:https?|file):\/\//, '').replace(/\/$/, '');
-  if (label.length > MAX_LINK_LABEL) label = label.slice(0, MAX_LINK_LABEL - 1) + GLYPHS.ellipsis;
-  return label;
+    let label = url.replace(/^(?:https?|file):\/\//, '').replace(/\/$/, '');
+    if (label.length > MAX_LINK_LABEL)
+        label = label.slice(0, MAX_LINK_LABEL - 1) + GLYPHS.ellipsis;
+    return label;
 }
-
-/**
- * Inline emphasis, code spans and links.
- *
- * Links are stashed as \u0000N\u0000 placeholders before the emphasis passes run
- * and substituted back afterwards, so an escape sequence can never be matched
- * by the code-span or bold regex. The placeholder is safe because this function
- * only ever sees text that has been through text.safeDisplay(), and sanitize()
- * strips \x00 — so a model cannot forge one.
- *
- * Every URL goes through theme.safeLink(), which re-serialises it from a parsed
- * URL object and refuses anything that is not plain http/https.
- */
 function inline(text) {
-  const stashed = [];
-  const stash = (rendered) => `\u0000${stashed.push(rendered) - 1}\u0000`;
-
-  let out = String(text);
-
-  if (HAS_HYPERLINKS) {
-    out = out.replace(MD_LINK, (whole, label, url) => {
-      const target = trimUrlPunctuation(url);
-      const shown = label.length > MAX_LINK_LABEL
-        ? label.slice(0, MAX_LINK_LABEL - 1) + GLYPHS.ellipsis
-        : label;
-      const rendered = safeLink(paint('accent', shown), target);
-      return rendered === paint('accent', shown) ? whole : stash(rendered);
-    });
-    out = out.replace(BARE_URL, (whole) => {
-      const target = trimUrlPunctuation(whole);
-      const tail = whole.slice(target.length);
-      const rendered = safeLink(paint('accent', compactUrlLabel(target)), target);
-      // safeLink returns its input untouched when the URL does not clear the
-      // bar; in that case leave the original text exactly as written.
-      return rendered.includes('\x1b]8') ? stash(rendered) + tail : whole;
-    });
-  } else {
-    // No OSC 8 here, so a markdown link must still show where it points.
-    out = out.replace(MD_LINK, (whole, label, url) => {
-      if (url.startsWith('file:')) return label;
-      return `${label} (${url})`;
-    });
-  }
-
-  out = out.replace(/`([^`]+)`/g, (_m, code) => stash(HAS_COLOR ? paint('accent', code) : code));
-  out = formatMarkdownMath(out);
-  out = HAS_COLOR
-    ? out.replace(/\*\*\*([^*]+)\*\*\*/g, (_m, strong) => bold(paint('accent', strong)))
-    : out.replace(/\*\*\*([^*]+)\*\*\*/g, '$1');
-  out = HAS_COLOR
-    ? out.replace(/\*\*([^*]+)\*\*/g, (_m, strong) => bold(strong))
-    : out.replace(/\*\*([^*]+)\*\*/g, '$1');
-  out = HAS_COLOR
-    ? out.replace(/(?<=^|[\s(])\*([^*\s](?:[^*]*[^*\s])?)\*(?=[\s).,!?]|$)/g, (_m, italic) => `\x1b[3m${italic}\x1b[23m`)
-    : out.replace(/(?<=^|[\s(])\*([^*\s](?:[^*]*[^*\s])?)\*(?=[\s).,!?]|$)/g, '$1');
-  out = HAS_COLOR
-    ? out.replace(/(?<=^|[\s(])_([^\s_](?:[^_]*[^\s_])?)_(?=[\s).,!?]|$)/g, (_m, italic) => `\x1b[3m${italic}\x1b[23m`)
-    : out.replace(/(?<=^|[\s(])_([^\s_](?:[^_]*[^\s_])?)_(?=[\s).,!?]|$)/g, '$1');
-  out = out.replace(/~~([^~]+)~~/g, HAS_COLOR ? '\x1b[9m$1\x1b[29m' : '$1');
-
-  if (stashed.length > 0) {
-    out = out.replace(/\u0000(\d+)\u0000/g, (m, index) => stashed[Number(index)] || '');
-  }
-  return out;
+    const stashed = [];
+    const stash = (rendered) => `\u0000${stashed.push(rendered) - 1}\u0000`;
+    let out = String(text);
+    if (HAS_HYPERLINKS) {
+        out = out.replace(MD_LINK, (whole, label, url) => {
+            const target = trimUrlPunctuation(url);
+            const shown = label.length > MAX_LINK_LABEL
+                ? label.slice(0, MAX_LINK_LABEL - 1) + GLYPHS.ellipsis
+                : label;
+            const rendered = safeLink(paint('accent', shown), target);
+            return rendered === paint('accent', shown) ? whole : stash(rendered);
+        });
+        out = out.replace(BARE_URL, (whole) => {
+            const target = trimUrlPunctuation(whole);
+            const tail = whole.slice(target.length);
+            const rendered = safeLink(paint('accent', compactUrlLabel(target)), target);
+            return rendered.includes('\x1b]8') ? stash(rendered) + tail : whole;
+        });
+    }
+    else {
+        out = out.replace(MD_LINK, (_whole, label, url) => {
+            if (url.startsWith('file:'))
+                return label;
+            return `${label} (${url})`;
+        });
+    }
+    out = out.replace(/`([^`]+)`/g, (_m, code) => stash(HAS_COLOR ? paint('accent', code) : code));
+    out = formatMarkdownMath(out);
+    out = HAS_COLOR
+        ? out.replace(/\*\*\*([^*]+)\*\*\*/g, (_m, strong) => bold(paint('accent', strong)))
+        : out.replace(/\*\*\*([^*]+)\*\*\*/g, '$1');
+    out = HAS_COLOR
+        ? out.replace(/\*\*([^*]+)\*\*/g, (_m, strong) => bold(strong))
+        : out.replace(/\*\*([^*]+)\*\*/g, '$1');
+    out = HAS_COLOR
+        ? out.replace(/(?<=^|[\s(])\*([^*\s](?:[^*]*[^*\s])?)\*(?=[\s).,!?]|$)/g, (_m, italic) => `\x1b[3m${italic}\x1b[23m`)
+        : out.replace(/(?<=^|[\s(])\*([^*\s](?:[^*]*[^*\s])?)\*(?=[\s).,!?]|$)/g, '$1');
+    out = HAS_COLOR
+        ? out.replace(/(?<=^|[\s(])_([^\s_](?:[^_]*[^\s_])?)_(?=[\s).,!?]|$)/g, (_m, italic) => `\x1b[3m${italic}\x1b[23m`)
+        : out.replace(/(?<=^|[\s(])_([^\s_](?:[^_]*[^\s_])?)_(?=[\s).,!?]|$)/g, '$1');
+    out = out.replace(/~~([^~]+)~~/g, HAS_COLOR ? '\x1b[9m$1\x1b[29m' : '$1');
+    if (stashed.length > 0) {
+        out = out.replace(/\u0000(\d+)\u0000/g, (_m, index) => stashed[Number(index)] || '');
+    }
+    return out;
 }
-
 export class ChatRenderer {
-  constructor(options = {}) {
-    this.out = options.out || process.stdout;
-    this.isTTY = Boolean(this.out.isTTY);
-    this.stepCount = 0;
-    this.stepStartedAt = null;
-    this.spinnerTimer = null;
-    this.spinnerIndex = 0;
-    this.currentStatus = '';
-    this.pendingApprovals = new Map();
-    this.latestPlan = [];
-    this.status = new StatusLine();
-    this.turnStartedAt = null;
-
-    // Full-screen mode owns both of these. The shell hands the renderer the
-    // width of the transcript viewport (which is not the terminal width — a
-    // border and a gutter come off it), and takes the status message for its
-    // footer so no spinner is ever animated into the transcript itself.
-    this.widthOf = typeof options.width === 'function' ? options.width : null;
-    this.quietStatus = Boolean(options.quietStatus);
-    this.onStatusChange = options.onStatusChange || null;
-
-    // Stage mode. When a Transcript is attached the renderer stops being a
-    // formatter into stdout and becomes a producer of re-renderable frames:
-    // rows go into the model, and the Stage decides which of them are on
-    // screen. Null keeps every byte on the path it has always taken.
-    this.transcript = options.transcript || null;
-    // Set only while a frame is being produced. write() collects into it
-    // instead of reaching the terminal.
-    this.rowSink = null;
-    // Set only while a frame is being RE-produced at a width that is not the
-    // terminal's — a reflow after a resize, or a measurement in a test.
-    this.forcedWidth = 0;
-  }
-
-  write(line = '') {
-    // Producing a frame: the rows belong to the model, not to the terminal.
-    if (this.rowSink) { this.rowSink.push(line); return; }
-
-    // Stage mode: a direct write is a caller that formatted its own rows —
-    // /report, /mcp, the home status card. It cannot be allowed to reach stdout,
-    // because the band occupies the bottom of the screen and a bare write lands
-    // in the middle of it. Wrapped as a frame, it scrolls with everything else.
-    //
-    // The text is captured, not re-derived, so this is a pure producer: these
-    // callers have already committed to a width and cannot be asked for another.
-    if (this.transcript) {
-      const text = String(line);
-      this.transcript.append({ kind: 'notice', produce: () => text.split('\n') });
-      return;
+    out;
+    isTTY;
+    stepCount;
+    stepStartedAt;
+    spinnerTimer;
+    spinnerIndex;
+    currentStatus;
+    pendingApprovals;
+    latestPlan;
+    status;
+    turnStartedAt;
+    widthOf;
+    quietStatus;
+    onStatusChange;
+    transcript;
+    rowSink;
+    forcedWidth;
+    onBeforeWrite;
+    onAfterWrite;
+    onPlanChange;
+    dialogWillAsk;
+    _activeAssistant;
+    _activeReasoning;
+    lastOutput;
+    constructor(options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        this.out = opts.out || process.stdout;
+        this.isTTY = Boolean(this.out.isTTY);
+        this.stepCount = 0;
+        this.stepStartedAt = null;
+        this.spinnerTimer = null;
+        this.spinnerIndex = 0;
+        this.currentStatus = '';
+        this.pendingApprovals = new Map();
+        this.latestPlan = [];
+        this.status = new StatusLine();
+        this.turnStartedAt = null;
+        this.widthOf = typeof opts.width === 'function' ? opts.width : null;
+        this.quietStatus = Boolean(opts.quietStatus);
+        this.onStatusChange = opts.onStatusChange || null;
+        this.transcript = opts.transcript || null;
+        this.rowSink = null;
+        this.forcedWidth = 0;
     }
-
-    // The prompt occupies the bottom rows of the terminal. It has to lift them
-    // out of the way before the transcript prints and put them back after, or
-    // the two writers interleave and leave debris on screen. Nothing is
-    // attached in non-interactive mode, where both hooks stay undefined.
-    if (this.onBeforeWrite) this.onBeforeWrite();
-    this.out.write(line + '\n');
-    if (this.onAfterWrite) this.onAfterWrite();
-  }
-
-  /**
-   * Record one transcript frame, or print it — whichever mode we are in.
-   *
-   * `produce` must be a PURE function of width. Every value that depends on
-   * wall-clock time or on renderer state (the step number, an elapsed
-   * duration, the model name at the time) has to be resolved by the caller
-   * before the closure is built, because the closure is called again on every
-   * resize. That is why the handlers below mutate first and render second: it
-   * is not style, it is the contract the Transcript rests on.
-   *
-   * In scrollback mode this is `produce()` and nothing else, so the byte
-   * stream is identical to what it has always been.
-   */
-  frame(kind, produce, meta = null) {
-    if (kind !== 'assistant') this._activeAssistant = false;
-    if (kind !== 'reasoning') this._activeReasoning = false;
-    if (!this.transcript) { produce(); return; }
-    this.transcript.append({
-      kind,
-      meta,
-      produce: (width) => this.capture(width, produce)
-    });
-  }
-
-  updateTailFrame(kind, produce, meta = null) {
-    if (!this.transcript) { produce(); return; }
-    this.transcript.replaceTail({
-      kind,
-      meta,
-      produce: (width) => this.capture(width, produce)
-    });
-  }
-
-  /**
-   * Run a producer with write() redirected and the width pinned.
-   */
-  capture(width, produce) {
-    const sink = [];
-    const previousSink = this.rowSink;
-    const previousWidth = this.forcedWidth;
-    this.rowSink = sink;
-    this.forcedWidth = width;
-    try {
-      produce();
-    } finally {
-      this.rowSink = previousSink;
-      this.forcedWidth = previousWidth;
-    }
-    const maxAvailable = this.transcript?.surface?.composeAvailableWidth
-      ? this.transcript.surface.composeAvailableWidth()
-      : width;
-    const availableWidth = Math.min(width, maxAvailable);
-    return sessionRows(sink, availableWidth).rows;
-  }
-
-  /**
-   * Columns available on the stream this renderer actually writes to.
-   *
-   * This used to fall straight through to terminalWidth(), which reads the
-   * global process.stdout.columns. That is right in production — `out` IS
-   * stdout — but it means the renderer cannot be measured against anything
-   * else, and every row it produces is sized from the wrong width the moment it
-   * is pointed at another stream. ChatPrompt.width() already reasons this way
-   * for exactly the same reason; the two now agree.
-   */
-  width() {
-    // A reflow asks "what would this frame look like at 96 columns" about rows
-    // that were produced when the terminal was 200 wide. The pinned width has
-    // to win over every other source, or a resize re-renders at the old width
-    // and the viewport silently misreports its own height.
-    if (this.forcedWidth) return Math.max(40, this.forcedWidth);
-    if (this.widthOf) return this.widthOf();
-    const columns = this.out && this.out.columns;
-    return Number.isFinite(columns) && columns > 0 ? Math.max(40, columns) : terminalWidth();
-  }
-
-  /** Prose follows the current conversation column with a small text inset. */
-  measure() {
-    return this.transcript ? sessionComposerWidth(this.width()) : chatProseWidth(this.width());
-  }
-
-  // -------------------------------------------------------------------------
-  // Session framing
-  // -------------------------------------------------------------------------
-
-  /**
-   * The context the CLI never showed. Which model is about to spend the user's
-   * money, in which autonomy mode, over which paths.
-   */
-  /** Write the opening composition and report its companion composer width. */
-  sessionHeader(info = {}) {
-    // The status line shows the same facts during the turn, where the header
-    // has already scrolled away. Mutation first: the closure below runs again
-    // on every reflow and must not re-apply it.
-    this.status.setSession(info);
-
-    this.frame('session', () => this.renderSessionHeader(info));
-    return composerWidth(this.width());
-  }
-
-  renderSessionHeader(info = {}) {
-    const width = this.width();
-
-    // ONE block: the wordmark with the session facts set beside it, then one
-    // hint row. This used to be the art, a blank, a bordered panel of four
-    // label/value rows, a command count, a blank and a separate key-hint row —
-    // nineteen rows of chrome before the user could type. Both references open
-    // in eight or fewer, with the identity and the facts as a single object.
-    const rows = ['', ...sessionBanner(info, width, { height: this.out?.rows }), ''];
-
-    const hints = [
-      `${info.commandCount || 0} commands`, '/help', 'enter send',
-      'alt+enter newline', 'ctrl+p palette', 'esc interrupt', 'exit to leave'
-    ];
-    const separator = `  ${GLYPHS.dot}  `;
-    const kept = hints.slice();
-    while (kept.length > 1 && visibleWidth(kept.join(separator)) > width - 1) kept.pop();
-    rows.push(dim(kept.join(separator)), '');
-    for (const row of openingRows(rows, width, Number(this.out?.rows))) this.write(row);
-  }
-
-  /**
-   * Closing line for one turn: who answered, on what, in how long.
-   *
-   * The reference closes each exchange with `▪ Build · MiMo V2.5 Free · 5.8s`
-   * (screenshot 15.02.21) — a filled marker, the agent, the model, the elapsed
-   * time. It is the seam that says "this exchange is finished", which a list of
-   * four dim hints never did.
-   */
-  turnFooter(durationMs) {
-    // Resolved now, not inside the closure: by the time a resize re-renders
-    // this frame the step counter has been reset and the model may have been
-    // switched, and a turn footer that reports the CURRENT state instead of
-    // the state it closed is a lie that only appears after a resize.
-    const model = this.status.model;
-    const steps = this.stepCount;
-
-    this.frame('turn', () => {
-      const parts = [];
-      if (model) parts.push(paint('ink', safeDisplay(model)));
-      parts.push(`${steps} step${steps === 1 ? '' : 's'}`);
-      if (durationMs > 0) parts.push(formatDuration(durationMs));
-
-      const separator = dim(`  ${GLYPHS.dot}  `);
-      this.write();
-      this.write(`${paint('accent', GLYPHS.step)} ${dim(parts.join(separator))}`);
-      this.write(dim(`  /usage for cost  ${GLYPHS.dot}  /undo to roll back`));
-      this.write();
-    }, { steps, durationMs });
-  }
-
-  resetTurn() {
-    this.stepCount = 0;
-    this.stepStartedAt = null;
-    this.turnStartedAt = Date.now();
-    this._activeAssistant = false;
-    this._activeReasoning = false;
-    this.status.reset();
-  }
-
-  // -------------------------------------------------------------------------
-  // Spinner — only where it can be erased again
-  // -------------------------------------------------------------------------
-
-  startSpinner(message) {
-    this.stopSpinner();
-    this.currentStatus = safeDisplay(message);
-
-    // In full-screen mode the status belongs to the footer, which repaints on
-    // the shell's own frame clock. Animating here too would write a spinner
-    // into the scrollback of a transcript that is already being repainted.
-    if (this.quietStatus) {
-      if (this.onStatusChange) this.onStatusChange(this.currentStatus);
-      return;
-    }
-
-    // A spinner needs cursor control. Piped into a file or a CI log there is no
-    // cursor, and the animation becomes thousands of junk lines — so print the
-    // status once instead.
-    if (!this.isTTY) {
-      this.write(paint('muted', this.status.renderStatic(this.currentStatus, this.width())));
-      return;
-    }
-
-    // Elapsed is measured from the START OF THE TURN, not from this spinner.
-    // A forty-step run restarts the spinner on every frame, so a per-spinner
-    // clock would reset to 0.0s each time and never show the real wait.
-    const since = this.turnStartedAt || Date.now();
-
-    this.spinnerTimer = setInterval(() => {
-      readline.cursorTo(this.out, 0);
-      const frame = GLYPHS.spinner[this.spinnerIndex % GLYPHS.spinner.length];
-      this.out.write(this.status.render({
-        message: this.currentStatus,
-        elapsedMs: Date.now() - since,
-        steps: this.stepCount,
-        width: this.width() - 1,
-        spinnerFrame: frame,
-        tick: this.spinnerIndex
-      }));
-      readline.clearLine(this.out, 1);
-      this.spinnerIndex++;
-    }, 125);
-  }
-
-  stopSpinner() {
-    if (this.quietStatus) {
-      this.currentStatus = '';
-      if (this.onStatusChange) this.onStatusChange('');
-      return;
-    }
-    if (!this.spinnerTimer) return;
-    clearInterval(this.spinnerTimer);
-    this.spinnerTimer = null;
-    if (this.isTTY) {
-      readline.clearLine(this.out, 0);
-      readline.cursorTo(this.out, 0);
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Frames
-  // -------------------------------------------------------------------------
-
-  renderUserMessage(content) {
-    const text = typeof content === 'string'
-      ? content
-      : (Array.isArray(content)
-          ? content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
-          : String(content || ''));
-    if (!text.trim()) return;
-
-    this.frame('user', () => {
-      const measured = this.width();
-      const maxCaptureWidth = Math.max(8, Math.min(
-        measured,
-        this.transcript?.surface?.composeAvailableWidth?.() ?? measured
-      ) - 4);
-      const preferred = this.transcript
-        ? (this.transcript.surface?.composeWidth?.() ?? sessionComposerWidth(measured))
-        : composerWidth(this.measure());
-      const blockWidth = this.transcript
-        ? Math.max(8, Math.min(preferred, maxCaptureWidth))
-        : Math.max(8, preferred);
-      const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - 1);
-      const rows = barBlock(
-        wrapBlock(safeDisplay(text), innerWidth, { hang: 0 }),
-        { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
-      );
-      this.write();
-      for (const row of rows) {
-        this.write(row);
-      }
-      this.write();
-    }, { messageText: text });
-  }
-
-  renderAssistantMessage(content) {
-    const text = typeof content === 'string'
-      ? content
-      : (Array.isArray(content)
-          ? content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
-          : String(content || ''));
-    if (!text.trim()) return;
-
-    this.onAgentMessage({ content: text });
-  }
-
-  renderSessionDivider(info = {}) {
-    this.transcript?.surface?.setSessionInfo?.(info);
-    this.frame('session', () => {
-      const width = Math.max(12, this.measure());
-      const rawTitle = safeDisplay((info && info.title) || 'Session');
-      const count = (info && info.messagesCount) ?? 0;
-      const rawCount = count > 0 ? ` (${count} message${count === 1 ? '' : 's'})` : '';
-      const countText = visibleWidth(rawCount) <= Math.max(0, width - 10) ? rawCount : '';
-      const title = truncate(rawTitle, Math.max(4, width - visibleWidth(countText) - 6), GLYPHS.ellipsis);
-      const badgeText = `${title}${countText}`;
-      const remaining = Math.max(2, width - visibleWidth(badgeText) - 2);
-      const leftRule = Math.max(1, Math.floor(remaining / 2));
-      const rightRule = Math.max(1, remaining - leftRule);
-      this.write();
-      this.write(`${paint('rule', GLYPHS.hLine.repeat(leftRule))} ${bold(paint('accent', title))}${dim(countText)} ${paint('rule', GLYPHS.hLine.repeat(rightRule))}`);
-      this.write();
-    });
-  }
-
-  clearTranscript() {
-    this._activeAssistant = false;
-    this._activeReasoning = false;
-    this.lastOutput = null;
-    if (this.transcript && typeof this.transcript.clear === 'function') {
-      this.transcript.clear();
-    }
-  }
-
-  /**
-   * Render conversation history frames from a selected or resumed session.
-   * Mirrors OpenCode's session conversation loader so prior turns are visible in viewport.
-   */
-  renderSessionHistory(messages = [], sessionInfo = null) {
-    const safeMessages = Array.isArray(messages) ? messages : [];
-    const renderContent = () => {
-      this.transcript?.surface?.leaveHome?.(true);
-      this.clearTranscript();
-      this.latestPlan = [];
-      this.onPlanChange?.([]);
-      this.resetTurn();
-
-      const info = sessionInfo ? { ...sessionInfo } : {};
-      if (info.messagesCount === undefined || info.messagesCount === null) {
-        info.messagesCount = safeMessages.filter(m => m && m.role !== 'system').length;
-      }
-      const measuredChars = measureMessages(safeMessages);
-      // Loading an empty session must clear usage from the previous chat.
-      this.status.contextChars = measuredChars;
-      info.contextChars = measuredChars;
-
-      if (info.title || info.id) {
-        this.renderSessionDivider(info);
-      }
-
-      // Index tool results by tool_call_id to pair them with assistant tool_calls
-      const toolResultsById = new Map();
-      for (const m of safeMessages) {
-        if (m && m.role === 'tool' && m.tool_call_id) {
-          toolResultsById.set(m.tool_call_id, m);
+    write(line = '') {
+        if (this.rowSink) {
+            this.rowSink.push(line);
+            return;
         }
-      }
-
-      const renderedToolMessages = new Set();
-
-      for (let i = 0; i < safeMessages.length; i++) {
-        const msg = safeMessages[i];
-        if (!msg) continue;
-      const role = String(msg.role || '').toLowerCase();
-
-      if (role === 'user') {
-        this.resetTurn();
-        this.renderUserMessage(msg.content);
-      } else if (role === 'assistant') {
-        // 1. Restore reasoning content as an auto-minimized thinking box
-        const reasoning = typeof msg.reasoning_content === 'string'
-          ? msg.reasoning_content.trim()
-          : (Array.isArray(msg.thinking_blocks)
-              ? msg.thinking_blocks.map(b => (typeof b === 'string' ? b : b?.thinking || b?.text || '')).filter(Boolean).join('\n').trim()
-              : '');
-        if (reasoning) {
-          const meta = {
-            reasoning: true,
-            done: true,
-            streaming: false,
-            collapsed: true,
-            durationText: '',
-            content: reasoning,
-            scrollStart: 0
-          };
-          this.frame('reasoning', () => this.renderReasoning(meta.content, {
-            streaming: false,
-            durationText: '',
-            collapsed: Boolean(meta.collapsed),
-            startLine: 0
-          }), meta);
+        if (this.transcript) {
+            const text = String(line);
+            this.transcript.append({ kind: 'notice', produce: () => text.split('\n') });
+            return;
         }
-
-        // 2. Restore external / native ACP tool executions
-        if (Array.isArray(msg.external_actions) && msg.external_actions.length > 0) {
-          for (const ext of msg.external_actions) {
-            const { toolName, args, result } = normalizeHistoricalExternalAction(ext);
-            this.onStepStart({ tool: toolName, args });
-            this.onStepComplete({ tool: toolName, result, elapsed: '' });
-          }
+        if (this.onBeforeWrite)
+            this.onBeforeWrite();
+        this.out.write(line + '\n');
+        if (this.onAfterWrite)
+            this.onAfterWrite();
+    }
+    frame(kind, produce, meta = null) {
+        if (kind !== 'assistant')
+            this._activeAssistant = false;
+        if (kind !== 'reasoning')
+            this._activeReasoning = false;
+        if (!this.transcript) {
+            produce();
+            return;
         }
-
-        // 3. If assistant invoked tool calls, render each tool step and pair with its result
-        if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-          for (const call of msg.tool_calls) {
-            if (!call || typeof call !== 'object') continue;
-            const toolName = call.function?.name || call.name || 'tool';
-            let args = {};
-            try {
-              args = typeof call.function?.arguments === 'string'
-                ? JSON.parse(call.function.arguments)
-                : (call.function?.arguments || {});
-            } catch {
-              args = {};
-            }
-
-            // Restore active implementation plan if update_plan was called
-            if (toolName === 'update_plan' && args && Array.isArray(args.plan)) {
-              this.onAgentPlan({
-                plan: args.plan.filter(Boolean).map(item => ({
-                  ...item,
-                  text: item.text || item.step || item.content || ''
-                }))
-              });
-            }
-
-            // Look up corresponding tool result before emitting step start so
-            // internal synthesis checkpoints (which never emit steps live) can be skipped.
-            const toolMsg = call.id ? toolResultsById.get(call.id) : null;
-            if (toolMsg) {
-              renderedToolMessages.add(toolMsg);
-              const normalized = normalizeHistoricalToolResult(toolName, toolMsg);
-              if (normalized.skipStep) {
-                continue;
-              }
-              if (toolName === 'update_plan' && Array.isArray(normalized.plan)) {
-                this.onAgentPlan({
-                  plan: normalized.plan.filter(Boolean).map(item => ({
-                    ...item,
-                    text: item.text || item.step || item.content || ''
-                  }))
-                });
-              }
-              this.onStepStart({ tool: toolName, args });
-              this.onStepComplete({ tool: toolName, result: normalized.result, elapsed: '' });
-            } else {
-              this.onStepStart({ tool: toolName, args });
-            }
-          }
+        this.transcript.append({
+            kind,
+            meta,
+            produce: (width) => this.capture(width, produce)
+        });
+    }
+    updateTailFrame(kind, produce, meta = null) {
+        if (!this.transcript) {
+            produce();
+            return;
         }
-
-        // 4. If assistant has textual content, render it
-        const text = typeof msg.content === 'string'
-          ? msg.content
-          : (Array.isArray(msg.content)
-              ? msg.content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
-              : (msg.content == null ? '' : String(msg.content)));
-        // The agent loop stores a protocol placeholder when a peer emits no
-        // final reply. Restoring it as a Causyne message falsely implies an
-        // answer was given. Older histories have the literal but no marker.
-        const syntheticNoFinal = msg.causyne_synthetic_no_final === true
-          || (text.trim() === 'No final response was provided.'
-              && (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0));
-        if (syntheticNoFinal) {
-          const isLatestTurn = !safeMessages.slice(i + 1).some(next =>
-            next && (next.role === 'assistant' || next.role === 'user'));
-          if (isLatestTurn) {
-            this.frame('notice', () => {
-              this.write(`${paint('warn', GLYPHS.warnMark)} ${dim('Provider returned no final answer; task completion is unverified.')}`);
-            }, { syntheticNoFinal: true });
-          }
-        } else if (text.trim()) {
-          this.renderAssistantMessage(text);
+        this.transcript.replaceTail({
+            kind,
+            meta,
+            produce: (width) => this.capture(width, produce)
+        });
+    }
+    capture(width, produce) {
+        const sink = [];
+        const previousSink = this.rowSink;
+        const previousWidth = this.forcedWidth;
+        this.rowSink = sink;
+        this.forcedWidth = width;
+        try {
+            produce();
         }
-      } else if (role === 'tool') {
-        // Standalone or un-paired tool message (e.g. from compacted session turns)
-        if (!renderedToolMessages.has(msg)) {
-          renderedToolMessages.add(msg);
-          const toolName = msg.name || 'tool';
-          const normalized = normalizeHistoricalToolResult(toolName, msg, { unpaired: true });
-          if (normalized.skipStep) {
-            continue;
-          }
-
-          this.onStepStart({ tool: toolName, args: {} });
-          this.onStepComplete({ tool: toolName, result: normalized.result, elapsed: '' });
+        finally {
+            this.rowSink = previousSink;
+            this.forcedWidth = previousWidth;
         }
-      } else if (role === 'system') {
-        const text = typeof msg.content === 'string' ? msg.content : '';
-        if (text.startsWith('[Continuum Context')) {
-          this.frame('notice', () => {
-            const firstLine = text.split('\n')[0] || '[Continuum Context]';
-            this.write(`${paint('accent', GLYPHS.bullet)} ${dim(firstLine)}`);
-          });
-        }
-      }
+        const maxAvailable = this.transcript?.surface?.composeAvailableWidth
+            ? this.transcript.surface.composeAvailableWidth()
+            : width;
+        const availableWidth = Math.min(width, maxAvailable);
+        return sessionRows(sink, availableWidth).rows;
     }
-
-    const finalMeasured = measureMessages(safeMessages);
-    if (finalMeasured > 0) {
-      this.status.contextChars = finalMeasured;
+    width() {
+        if (this.forcedWidth)
+            return Math.max(40, this.forcedWidth);
+        if (this.widthOf)
+            return this.widthOf();
+        const columns = this.out && this.out.columns;
+        return Number.isFinite(columns) && columns > 0 ? Math.max(40, columns) : terminalWidth();
     }
-    if (!this.status.contextLimit) {
-      this.status.contextLimit = resolveCharPool(this.status.tier, undefined, {
-        provider: sessionInfo?.provider || this.status.provider,
-        model: sessionInfo?.model || this.status.model
-      });
+    measure() {
+        return this.transcript ? sessionComposerWidth(this.width()) : chatProseWidth(this.width());
     }
-    if (sessionInfo) {
-      this.status.setSession({
-        ...sessionInfo,
-        contextChars: this.status.contextChars || finalMeasured,
-        contextLimit: sessionInfo.contextLimit || this.status.contextLimit
-      });
+    sessionHeader(info = {}) {
+        this.status.setSession(info);
+        this.frame('session', () => this.renderSessionHeader(info));
+        return composerWidth(this.width());
     }
-
-      if (this.transcript?.surface?.viewport) {
-        this.transcript.surface.viewport.manual = false;
-        this.transcript.surface.viewport.unseen = 0;
-        this.transcript.surface.viewport.toBottom();
-      }
-    };
-
-    if (this.transcript && typeof this.transcript.batch === 'function') {
-      this.transcript.batch(renderContent);
-    } else {
-      renderContent();
-    }
-  }
-
-  onAgentMessage(msg) {
-    const content = safeDisplay(msg.content || '');
-    const isStreaming = Boolean(msg.streaming);
-
-    const tailIsAssistant = !this.transcript
-      || this.transcript.frames?.at(-1)?.meta?.assistant === true;
-    if (this._activeAssistant && !tailIsAssistant) {
-      this._activeAssistant = false;
-    }
-
-    if (isStreaming) {
-      if (!this._activeAssistant) {
-        this._activeAssistant = true;
-        this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(msg.content || '') });
-      } else {
-        this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(msg.content || '') });
-      }
-      return;
-    }
-
-    if (this._activeAssistant) {
-      this._activeAssistant = false;
-      this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(msg.content || '') });
-    } else {
-      this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(msg.content || '') });
-    }
-  }
-
-  formatAssistantMessage(content, { streaming = false } = {}) {
-    const width = this.measure();
-    // The frame already ends with a blank separator. A leading blank row on the
-    // first assistant response leaves a visible void in compact chat view.
-    this.write(`${paint('agent', GLYPHS.arrow)} ${bold(paint('agent', 'Causyne'))}${streaming ? ' ' + dim('…') : ''}`);
-    // Reserve the transcript's three-column inset and final safety cell.
-    for (const line of renderMarkdown(content, Math.max(8, width - 4))) {
-      this.write(line ? '  ' + line : '');
-    }
-    this.write();
-  }
-
-  /**
-   * The chain of thought the user paid for.
-   *
-   * This frame was emitted by the loop (agentLoop.js:1113) and handled by
-   * NOBODY — not here, not in the Android app. openai-compatible.js was fixed
-   * to stop discarding `reasoning_content` because "the reasoning the user paid
-   * for never reached them", and then it was discarded one layer further down.
-   *
-   * It is rendered subordinate to the answer on purpose: a dim rule and a cap.
-   * Reasoning that shouts as loudly as the reply trains the user to read
-   * neither, and the reply is the part they asked for.
-   */
-  /**
-   * The chain of thought the user requested: streamed live directly into the
-   * chat transcript, with real-time updates and clear elapsed time.
-   */
-  onAgentReasoning(msg) {
-    const content = safeDisplay(msg.content || '');
-    const isStreaming = Boolean(msg.streaming);
-    const elapsedMs = Number(msg.elapsedMs) || 0;
-    const durationText = elapsedMs > 0 ? formatDuration(elapsedMs) : '';
-    const activity = typeof msg.activity === 'string' ? msg.activity : '';
-    const title = typeof msg.title === 'string' ? msg.title : '';
-    const completedTitle = typeof msg.completedTitle === 'string' ? msg.completedTitle : '';
-
-    const tailFrame = this.transcript?.frames?.at(-1);
-    const tailIsReasoning = !this.transcript
-      || tailFrame?.meta?.reasoning === true;
-    if (this._activeReasoning && !tailIsReasoning) {
-      this._activeReasoning = false;
-    }
-
-    if (isStreaming) {
-      if (!this._activeReasoning) {
-        this._activeReasoning = true;
-        const meta = {
-          reasoning: true,
-          collapsed: false,
-          streaming: true,
-          durationText,
-          content,
-          activity,
-          title,
-          completedTitle,
-          scrollStart: 0
-        };
-        this.frame('reasoning', () => this.renderReasoning(meta.content, {
-          streaming: Boolean(meta.streaming),
-          durationText: meta.durationText,
-          collapsed: Boolean(meta.collapsed),
-          startLine: Number(meta.scrollStart) || 0,
-          activity: meta.activity,
-          title: meta.title,
-          completedTitle: meta.completedTitle
-        }), meta);
-      } else {
-        const meta = tailFrame?.meta || { reasoning: true };
-        meta.streaming = true;
-        meta.durationText = durationText;
-        meta.content = content;
-        if (activity) meta.activity = activity;
-        if (title) meta.title = title;
-        if (completedTitle) meta.completedTitle = completedTitle;
-        if (meta.collapsed === undefined) meta.collapsed = false;
-        if (meta.scrollStart === undefined) meta.scrollStart = 0;
-        this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
-          streaming: Boolean(meta.streaming),
-          durationText: meta.durationText,
-          collapsed: Boolean(meta.collapsed),
-          startLine: Number(meta.scrollStart) || 0,
-          activity: meta.activity,
-          title: meta.title,
-          completedTitle: meta.completedTitle
-        }), meta);
-      }
-      return;
-    }
-
-    if (this._activeReasoning) {
-      this._activeReasoning = false;
-      const meta = tailFrame?.meta || { reasoning: true };
-      meta.streaming = false;
-      meta.done = true;
-      meta.durationText = durationText;
-      meta.content = content;
-      if (activity) meta.activity = activity;
-      if (title) meta.title = title;
-      if (completedTitle) meta.completedTitle = completedTitle;
-      if (meta.collapsed === undefined) meta.collapsed = Boolean(msg.collapsed);
-      if (meta.scrollStart === undefined) meta.scrollStart = 0;
-      this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
-        streaming: Boolean(meta.streaming),
-        durationText: meta.durationText,
-        collapsed: Boolean(meta.collapsed),
-        startLine: Number(meta.scrollStart) || 0,
-        activity: meta.activity,
-        title: meta.title,
-        completedTitle: meta.completedTitle
-      }), meta);
-    } else if (content.trim()) {
-      const meta = {
-        reasoning: true,
-        done: true,
-        streaming: false,
-        durationText,
-        content,
-        activity,
-        title,
-        completedTitle,
-        collapsed: Boolean(msg.collapsed),
-        scrollStart: 0
-      };
-      this.frame('reasoning', () => this.renderReasoning(meta.content, {
-        streaming: Boolean(meta.streaming),
-        durationText: meta.durationText,
-        collapsed: Boolean(meta.collapsed),
-        startLine: Number(meta.scrollStart) || 0,
-        activity: meta.activity,
-        title: meta.title,
-        completedTitle: meta.completedTitle
-      }), meta);
-    }
-  }
-
-  renderReasoning(content, { streaming = false, durationText = '', collapsed = false, startLine = 0, activity = '', title = '', completedTitle = '' } = {}) {
-    const width = this.measure();
-    const rows = renderThinkingFrame(content, {
-      width,
-      streaming,
-      durationText,
-      collapsed,
-      startLine: Number(startLine) || 0,
-      activity,
-      title,
-      completedTitle
-    });
-
-    if (rows.length === 0) return;
-
-    this.write();
-    for (const row of rows) {
-      this.write(row);
-    }
-    this.write();
-  }
-
-  scrollThinkingPanel(key, surface) {
-    return false;
-  }
-
-  onAgentActivity(msg) {
-    if (!msg || typeof msg !== 'object') return;
-    const text = String(msg.activity || msg.message || '').trim();
-    if (!text) return;
-    this.frame('notice', () => {
-      const prefix = `${GLYPHS.arrow || '▸'} `;
-      for (const [index, row] of activityRows(text, this.width(), prefix).entries()) {
-        if (index === 0) {
-          const body = row.startsWith(prefix) ? row.slice(prefix.length) : row;
-          this.write(`${paint('accent', GLYPHS.arrow || '▸')} ${dim(body)}`);
-        } else {
-          this.write(dim(row));
-        }
-      }
-    }, { activity: true });
-  }
-
-  onAgentPlan(msg) {
-    if (!msg || !Array.isArray(msg.plan) || msg.plan.length === 0) return;
-    const plan = msg.plan.slice();
-    this.latestPlan = plan;
-    const placement = this.onPlanChange?.(plan);
-    if (placement === 'sidebar') return;
-    this.frame('plan', () => this.renderPlan(plan), { items: plan.length });
-  }
-
-  onDecisionRequest(msg) {
-    if (this.dialogWillAsk) return;
-    const request = (msg && msg.request) || {};
-    this.frame('approval', () => {
-      this.write();
-      this.write(`${paint('accent', GLYPHS.arrow)} ${bold(safeDisplay(request.header || 'decision required'))}`);
-      for (const row of wrapBlock(safeDisplay(request.question || ''), Math.max(20, this.width() - 4), { hang: 0 })) this.write(`  ${row}`);
-      this.write();
-    }, { kind: request.kind || 'other' });
-  }
-
-  onDecisionResult(msg) {
-    const request = (msg && msg.request) || {};
-    const answer = msg && msg.answer;
-    this.frame('approval', () => {
-      if (!answer) {
-        this.write(`  ${paint('muted', 'decision dismissed')}  ${safeDisplay(request.header || '')}`);
-        return;
-      }
-      this.write(`  ${paint('success', GLYPHS.check)} ${bold(safeDisplay(answer.label || ''))}${answer.custom ? dim('  custom choice') : ''}`);
-    }, { kind: request.kind || 'other', answered: Boolean(answer) });
-  }
-
-  renderPlan(plan) {
-    if (!Array.isArray(plan) || plan.length === 0) return;
-    const width = this.width();
-    this.write();
-    this.write(paint('muted', 'plan'));
-    for (const item of plan) {
-      if (!item || typeof item !== 'object') continue;
-      const done = item.status === 'completed';
-      const active = item.status === 'in_progress';
-      const mark = done ? paint('success', GLYPHS.check)
-        : active ? paint('accent', GLYPHS.arrow)
-        : paint('muted', GLYPHS.dot);
-      const text = item.text || item.step || item.content || '';
-      const label = done ? dim(safeDisplay(text)) : paint('ink', safeDisplay(text));
-      this.write(`  ${mark} ${truncate(label, Math.max(8, width - 5), GLYPHS.ellipsis)}`);
-    }
-    this.write();
-  }
-
-  onStepStart(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    this.stepStartedAt = Date.now();
-    this.stepCount++;
-
-    const toolLabel = safeDisplay(safeMsg.tool || 'tool') || 'tool';
-    const { verb, detail } = describeTool(safeMsg.tool, safeMsg.args);
-    const step = this.stepCount;
-
-    this.frame('step', () => {
-      const width = this.width();
-      const index = paint('muted', String(step).padStart(2, '0'));
-      const displayVerb = verb || toolLabel;
-      const name = paint('accent', padEnd(displayVerb, STATUS_GUTTER));
-
-      const used = 2 + 2 + 1 + Math.max(visibleWidth(displayVerb), STATUS_GUTTER) + 1;
-      const detailText = detail ? paint('ink', truncate(detail, Math.max(10, width - used - 12), GLYPHS.ellipsis)) : '';
-
-      this.write(`${paint('muted', GLYPHS.arrow)} ${index} ${name} ${detailText}`);
-    }, { step, tool: safeMsg.tool, verb: verb || toolLabel, detail });
-  }
-
-  onStepComplete(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    const elapsed = typeof safeMsg.elapsed === 'string'
-      ? safeMsg.elapsed
-      : (this.stepStartedAt ? formatDuration(Date.now() - this.stepStartedAt) : '');
-    const result = safeMsg.result || {};
-
-    // Kept so Ctrl+O can show the whole thing, and set here rather than inside
-    // the closure — a reflow must not re-point "the last output" at a tool
-    // result the user finished with ten turns ago.
-    this.captureLastOutput(result);
-
-    const tail = this.transcript?.frames?.at(-1);
-    if (compactSuccessfulToolResult(this.stepCount, result, tail, msg?.tool)) {
-      const { step, verb, detail, tool } = tail.meta;
-      const completedElapsed = elapsed;
-      this.updateTailFrame('step', () => {
+    renderSessionHeader(info = {}) {
         const width = this.width();
-        const index = paint('muted', String(step).padStart(2, '0'));
-        const name = paint('accent', padEnd(verb || tool, STATUS_GUTTER));
-        const used = 2 + 2 + 1 + Math.max(visibleWidth(verb || tool), STATUS_GUTTER) + 1;
-        const tailText = completedElapsed ? ` ${dim(completedElapsed)}` : '';
-        const detailWidth = Math.max(5, width - used - visibleWidth(tailText) - 10);
-        const detailText = detail ? paint('ink', truncate(detail, detailWidth, GLYPHS.ellipsis)) : '';
-        this.write(`${paint('success', GLYPHS.check)} ${index} ${name} ${detailText}${tailText}`);
-      }, { ...tail.meta, success: true, elapsed: completedElapsed });
-      return;
+        const rows = ['', ...sessionBanner(info, width, { height: this.out?.rows }), ''];
+        const hints = [
+            `${info.commandCount || 0} commands`, '/help', 'enter send',
+            'alt+enter newline', 'ctrl+p palette', 'esc interrupt', 'exit to leave'
+        ];
+        const separator = `  ${GLYPHS.dot}  `;
+        const kept = hints.slice();
+        while (kept.length > 1 && visibleWidth(kept.join(separator)) > width - 1)
+            kept.pop();
+        rows.push(dim(kept.join(separator)), '');
+        for (const row of openingRows(rows, width, Number(this.out?.rows)))
+            this.write(row);
     }
-
-    this.frame('result', () => {
-      if (result.success) {
-        const elapsedText = elapsed ? ` ${dim(elapsed)}` : '';
-        this.write(`     ${paint('success', GLYPHS.check)}${elapsedText}`);
-        this.renderOutputPreview(result, msg?.tool || '');
-        return;
-      }
-      const detail = `${safeDisplay(result.error || 'failed')}${elapsed ? ` · ${elapsed}` : ''}`;
-      for (const row of wrappedChatRows(detail, this.width(), `     ${paint('danger', GLYPHS.cross)} `, 'danger')) this.write(row);
-    }, { success: Boolean(result.success) });
-  }
-
-  /**
-   * A bounded look at what the tool actually returned.
-   *
-   * The old renderer printed only a tick, so the user never saw any tool output
-   * at all — they were approving and trusting blind.
-   */
-  /**
-   * Print the last tool output in full — bound to Ctrl+O.
-   *
-   * The preview is deliberately twelve lines, which is right until it is not.
-   * Before this the cut was permanent and the only recovery was re-running the
-   * tool, which costs tokens to see something already fetched.
-   */
-  expandLastOutput() {
-    if (!this.lastOutput || !this.lastOutput.text) {
-      this.frame('notice', () => this.write(dim('  nothing to expand')));
-      return false;
+    turnFooter(durationMs = 0) {
+        const model = this.status.model;
+        const steps = this.stepCount;
+        this.frame('turn', () => {
+            const parts = [];
+            if (model)
+                parts.push(paint('ink', safeDisplay(model)));
+            parts.push(`${steps} step${steps === 1 ? '' : 's'}`);
+            if (durationMs > 0)
+                parts.push(formatDuration(durationMs));
+            const separator = dim(`  ${GLYPHS.dot}  `);
+            this.write();
+            this.write(`${paint('accent', GLYPHS.step)} ${dim(parts.join(separator))}`);
+            this.write(dim(`  /usage for cost  ${GLYPHS.dot}  /undo to roll back`));
+            this.write();
+        }, { steps, durationMs });
     }
-    // Bound to the output as it is NOW. Ctrl+O twice, ten turns apart, must
-    // leave two frames showing two different outputs, not one shown twice.
-    const output = this.lastOutput;
-    this.frame('result', () => {
-      const width = Math.max(8, this.width() - 7);
-      this.write('');
-      for (const line of String(output.text).split('\n')) {
-        for (const part of wrap(safeDisplay(line), width)) {
-          this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(part)}`);
+    resetTurn() {
+        this.stepCount = 0;
+        this.stepStartedAt = null;
+        this.turnStartedAt = Date.now();
+        this._activeAssistant = false;
+        this._activeReasoning = false;
+        this.status.reset();
+    }
+    startSpinner(message) {
+        this.stopSpinner();
+        this.currentStatus = safeDisplay(String(message ?? ''));
+        if (this.quietStatus) {
+            if (this.onStatusChange)
+                this.onStatusChange(this.currentStatus);
+            return;
         }
-      }
-      if (output.spillPath) {
-        this.write(this.clipHint(output.spillPath));
-      }
-      this.write('');
-    }, { expanded: true });
-    return true;
-  }
-
-  /**
-   * Remember the payload Ctrl+O expands. Separate from rendering it, because
-   * rendering runs again on every reflow and this must not.
-   */
-  captureLastOutput(result) {
-    if (!result || typeof result !== 'object') return;
-    const payload = typeof result.output === 'string' ? result.output
-      : typeof result.log === 'string' ? result.log
-      : '';
-    if (!payload) return;
-    this.lastOutput = { text: payload, spillPath: result.spillPath || null };
-  }
-
-  renderOutputPreview(result, toolName = '') {
-    if (!result || typeof result !== 'object') return;
-    const rawPayload = typeof result.output === 'string' ? result.output
-      : typeof result.log === 'string' ? result.log
-      : '';
-    const payload = cleanToolOutputPreview(rawPayload, toolName);
-    if (!payload) return;
-
-    const source = payload.length > PREVIEW_SOURCE_BUDGET
-      ? payload.slice(0, PREVIEW_SOURCE_BUDGET)
-      : payload;
-    if (!source.trim()) return;
-
-    const width = Math.max(8, this.width() - 7);
-    const cleaned = safeDisplay(source).replace(/\n{3,}/g, '\n\n').trim();
-
-    // Wrap first, THEN cut — bounding by source newlines lets a single long
-    // line through as thousands of wrapped rows. Filter out transient curl progress noise.
-    const wrapped = [];
-    for (const rawLine of cleaned.split('\n')) {
-      const line = rawLine.replace(/\r/g, '').trimEnd();
-      if (/^\s*(?:% Total\b|Dload\s+Upload\b|\d+\s+\d+\s+\d+\s+.*--:--:--)/i.test(line)) continue;
-      for (const part of wrap(line, width)) {
-        wrapped.push(part);
-        if (wrapped.length > PREVIEW_LINES + 1) break;
-      }
-      if (wrapped.length > PREVIEW_LINES + 1) break;
-    }
-
-    // A long tool-heavy run needs a concise preview. Full output remains
-    // available through the existing Ctrl+O expansion path and spill files.
-    const previewLimit = this.stepCount >= 12 ? 5 : PREVIEW_LINES;
-    for (const line of wrapped.slice(0, previewLimit)) {
-      this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(line)}`);
-    }
-    const clipped = wrapped.length > previewLimit || source.length < payload.length;
-    if (clipped) this.write(this.clipHint(result.spillPath));
-  }
-
-  /**
-   * The "there is more than this" footer, fitted to the terminal.
-   *
-   * It was a fixed string. At 40 columns it came back six columns too wide and
-   * wrapped — which in scrollback is merely ugly, and inside the Stage's band is
-   * the exact failure the width clamp exists to prevent. Found by sweeping the
-   * clamp at stage geometry, not by anyone looking at a narrow terminal.
-   *
-   * A path is shortened BEFORE it is made into a link, never after: truncate()
-   * is escape-aware, but cutting a finished OSC 8 sequence in half leaves the
-   * hyperlink open across the break.
-   */
-  clipHint(spillPath) {
-    const corner = paint('rule', GLYPHS.corner);
-    // Five spaces of gutter, the corner, and the space after it.
-    const room = Math.max(12, this.width() - 8);
-
-    if (spillPath) {
-      const label = truncate(shortenHome(spillPath), Math.max(8, room - 13), GLYPHS.ellipsis);
-      return `     ${corner} ${dim(`full output: ${fileLink(label, spillPath)}`)}`;
-    }
-
-    // Say the shorter true thing rather than the longer half-cut one.
-    const full = `${GLYPHS.ellipsis} output truncated — ctrl+o to expand`;
-    const short = `${GLYPHS.ellipsis} truncated — ctrl+o`;
-    const hint = visibleWidth(full) <= room ? full
-      : visibleWidth(short) <= room ? short
-      : truncate(full, room, GLYPHS.ellipsis);
-    return `     ${corner} ${dim(hint)}`;
-  }
-
-  /**
-   * A restore point was taken before a tool changed a file.
-   *
-   * Emitted between the step row and its result, and indented to the result
-   * gutter so it reads as part of that step rather than as a new event. Quiet
-   * on purpose: it happens on every mutating call, and an aside that shouts as
-   * loudly as the work trains the user to read neither.
-   */
-  onCheckpoint(msg) {
-    if (!msg || typeof msg !== 'object') return;
-    const where = typeof msg.path === 'string' ? safeDisplay(shortenHome(msg.path)) : '';
-    const count = Number(msg.count) || 1;
-    this.frame('checkpoint', () => {
-      const label = where
-        ? `restore point ${GLYPHS.dot} ${where}`
-        : `restore point ${GLYPHS.dot} ${count} file${count === 1 ? '' : 's'}`;
-      this.write(`     ${paint('muted', GLYPHS.dot)} ${dim(truncate(label, Math.max(10, this.width() - 8), GLYPHS.ellipsis))}`);
-    }, { tool: msg.tool, path: msg.path || null, step: msg.step ?? null, taskId: msg.taskId || null });
-  }
-
-  onStepError(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    // Wrapped and hanging-indented, not written as one long string.
-    //
-    // Loop-level failures now carry a real explanation across several lines —
-    // what could not be reached, why, and what to check. Emitting that as a
-    // single write put the continuation lines at column 0, under a marker
-    // indented five columns, so the whole block read as unrelated fragments.
-    const label = safeDisplay(`${safeMsg.tool || ''}`.trim());
-    const rawError = safeMsg.error || (safeMsg.result && (safeMsg.result.error || safeMsg.result.message)) || '';
-    const detail = safeDisplay(`${rawError}`.trim());
-    const head = label && detail ? `${label}  ${detail}` : (detail || label || 'failed');
-
-    this.frame('error', () => {
-      const rows = wrapBlock(head, Math.max(20, this.width() - 7), { hang: 0 });
-      this.write(`     ${paint('danger', GLYPHS.cross)} ${paint('danger', rows[0] || '')}`);
-      for (const row of rows.slice(1)) this.write(`       ${dim(row)}`);
-    }, { tool: safeMsg.tool });
-  }
-
-  /**
-   * Keep the approval detail so the prompt can name what is being approved.
-   * L6 in the local-path audit: a bare "Proceed?" is not human-in-the-loop.
-   */
-  onApprovalRequest(msg) {
-    if (!msg || typeof msg !== 'object') return;
-    if (msg.toolCallId) this.pendingApprovals.set(msg.toolCallId, msg);
-
-    // When an interactive dialog will ask the question, DO NOT also print the
-    // whole request into the transcript. It shipped doing both: the same risk
-    // badge, command and diff appeared once in the scrollback and again inside
-    // the modal, so the user read the same alarming block twice and the panel
-    // looked like a duplicate of a thing that had already happened.
-    //
-    // The transcript still gets a record — see renderApprovalDecision(), which
-    // writes ONE line after the user answers. That is the audit trail; the
-    // panel is the question. Printing the question twice is not an audit trail.
-    if (this.dialogWillAsk) return;
-
-    // The diff is resolved ONCE, here, and closed over.
-    //
-    // approvalDiff() reads the file from disk. If it ran from inside the
-    // producer, a resize would re-read the file — and by then the write has
-    // been approved and applied, so the transcript would show the user a diff
-    // of the change against itself. A record of what someone consented to may
-    // not be re-derived from the world after they consented.
-    const diff = approvalDiff(msg.tool, msg.args, { width: this.width() });
-
-    this.frame('approval', () => this.renderApprovalRequest(msg, diff), {
-      tool: msg.tool,
-      risk: String(msg.risk || 'unknown').toUpperCase()
-    });
-  }
-
-  renderApprovalRequest(msg, diff = undefined) {
-    if (!msg || typeof msg !== 'object') return;
-    // Colour carries the tier; the word never reaches the user. See the note
-    // in dialogs.js ApprovalLayer — 'DANGEROUS' printed at somebody installing a
-    // package teaches them to stop reading these.
-    const risk = String(msg.risk || 'unknown').toUpperCase();
-    const role = risk === 'EXTREME' ? 'danger' : risk === 'DANGEROUS' ? 'warn' : 'accent';
-    const { verb, detail } = describeTool(msg.tool, msg.args);
-
-    this.write();
-    this.write(`${paint(role, GLYPHS.warnMark)} ${paint('ink', 'permission required')}  ${bold(safeDisplay(msg.tool || ''))}${verb ? dim(`  ${verb}`) : ''}`);
-    if (detail) {
-      this.write(`  ${paint('ink', truncate(detail, Math.max(8, this.width() - 4), GLYPHS.ellipsis))}`);
-    }
-
-    // What the user is actually consenting to. Without this the approval gate
-    // asks a human to authorise a file mutation they have never seen — which is
-    // consent in form only. null for every tool that does not change a file.
-    //
-    // Resolved by the caller so it is computed once, at the moment consent was
-    // asked for; a direct caller that passes nothing still gets the live read.
-    if (diff === undefined) diff = approvalDiff(msg.tool, msg.args, { width: this.width() });
-    if (diff) {
-      const stat = [
-        diff.added ? paint('success', `+${diff.added}`) : '',
-        diff.removed ? paint('danger', `-${diff.removed}`) : ''
-      ].filter(Boolean).join(' ');
-      const note = diff.note ? dim(`  ${GLYPHS.dot}  ${diff.note}`) : '';
-      // The detail row above already names the file; repeating it here just
-      // prints the same path twice. Only fall back to the diff's own path when
-      // the tool had no readable detail to show.
-      const where = detail ? '' : `${dim(diff.path)}  `;
-      this.write(`  ${where}${stat}${note}`);
-      this.write();
-      for (const row of diff.rows) this.write(row);
-      if (diff.clipped) {
-        this.write(`     ${paint('rule', GLYPHS.corner)} ${dim(`${GLYPHS.ellipsis} diff truncated`)}`);
-      }
-      this.write();
-    }
-  }
-
-  /**
-   * One line recording what the user actually decided.
-   *
-   * Written AFTER the answer, so the scrollback reads as history rather than
-   * as a second copy of the prompt. Only used when a dialog asked the
-   * question; the non-interactive path still prints the full block, because
-   * there the scrollback IS the only place the request was ever shown.
-   */
-  renderApprovalDecision(msg, approved, scope = 'once') {
-    // A standing grant must be VISIBLE in the transcript. Someone who lifts the
-    // gate for a whole session should be able to scroll back and see that they
-    // did, and `/approvals` tells them how to take it back.
-    const verdict = !approved
-      ? paint('danger', 'rejected')
-      : scope === 'always'
-        ? paint('warn', 'allowed always')
-        : paint('success', 'allowed once');
-    const { verb } = describeTool(msg.tool, msg.args);
-    this.frame('approval', () => {
-      this.write(`  ${verdict} ${bold(safeDisplay(msg.tool || ''))}${verb ? dim(`  ${verb}`) : ''}`);
-    }, { tool: msg.tool, approved: Boolean(approved), scope });
-  }
-
-  onError(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    const message = safeDisplay(safeMsg.message || '');
-    this.frame('error', () => {
-      this.write();
-      for (const row of wrappedChatRows(message, this.width(), `${badge('danger', 'ERROR')} `, 'danger')) this.write(row);
-      this.write();
-    });
-  }
-
-  onBudgetWarning(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    const message = safeDisplay(safeMsg.message || '');
-    this.frame('notice', () => {
-      for (const row of wrappedChatRows(message, this.width(), `${badge('warn', 'BUDGET')} `, 'warn')) this.write(row);
-    }, { tone: 'warn' });
-  }
-
-  onStatus(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    this.startSpinner(safeMsg.message || '');
-  }
-
-  /**
-   * A skill was invoked — say so in one line, do not print the skill.
-   *
-   * The reported behaviour: invoking a skill dumped the whole SKILL.md into the
-   * terminal, frontmatter and all, and that was the ENTIRE effect. None of the
-   * references do that — a skill is a working method the model follows, not a
-   * document it reads back at you. The body now goes into the request; what the
-   * user sees here is a marker that it was picked up, in the same shape as a
-   * step row.
-   */
-  skillInvoked(id, instruction) {
-    this.frame('skill', () => {
-      const width = this.width();
-      const head = `${paint('accent', GLYPHS.step)} ${bold(paint('ink', 'skill'))}`
-        + `${dim(`  ${GLYPHS.dot}  `)}${paint('agent', safeDisplay(id))}`;
-      this.write();
-      this.write(truncate(head, Math.max(8, width - 1), GLYPHS.ellipsis));
-      if (instruction) {
-        for (const line of wrapBlock(safeDisplay(instruction), Math.max(8, width - 4), { hang: 0 })) {
-          this.write(dim(`  ${line}`));
+        if (!this.isTTY) {
+            this.write(paint('muted', this.status.renderStatic(this.currentStatus, this.width())));
+            return;
         }
-      }
-    }, { skill: String(id || '') });
-  }
-
-  /**
-   * A one-line aside from the loop: tier, packs, compaction, a cache hit.
-   *
-   * These were bare console.log calls in agentLoop.js — a second writer to a
-   * terminal whose bottom rows the prompt repaints in place, which is why they
-   * left debris. Routed here they pass through write(), so the live region is
-   * lifted out of the way first and put back after, and they inherit the theme
-   * instead of carrying a hardcoded \x1b[1m\x1b[36m that ignored NO_COLOR.
-   *
-   * Deliberately quiet: a dim marker and one wrapped line. An aside that shouts
-   * as loudly as the agent's answer trains the user to stop reading both.
-   */
-  onNotice(msg) {
-    const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    const tone = ['accent', 'success', 'warn', 'muted'].includes(safeMsg.tone) ? safeMsg.tone : 'muted';
-    const message = safeDisplay(safeMsg.message || '');
-    this.frame('notice', () => {
-      const width = this.measure();
-      const marker = paint(tone === 'muted' ? 'rule' : tone, GLYPHS.vLine);
-      for (const line of wrapBlock(message, Math.max(8, width - 2), { hang: 0 })) {
-        this.write(`${marker} ${dim(line)}`);
-      }
-    }, { tone });
-  }
-
-  /**
-   * Route one frame. Returns true when handled.
-   *
-   * Unknown frame types are ignored rather than printed raw — the loop emits
-   * several the terminal has no business showing (usage_update, task_complete).
-   */
-  handle(msg) {
-    if (!msg || typeof msg.type !== 'string') return false;
-    if (msg.type !== 'status') this.stopSpinner();
-
-    switch (msg.type) {
-      case 'status':           this.onStatus(msg); return true;
-      case 'agent_activity':   this.onAgentActivity(msg); return true;
-      case 'agent_message':    this.onAgentMessage(msg); return true;
-      case 'agent_reasoning':  this.onAgentReasoning(msg); return true;
-      case 'agent_plan':       this.onAgentPlan(msg); return true;
-      case 'step_start':       this.onStepStart(msg); return true;
-      case 'step_complete':    this.onStepComplete(msg); return true;
-      case 'step_error':       this.onStepError(msg); return true;
-      case 'checkpoint':       this.onCheckpoint(msg); return true;
-      case 'approval_request': this.onApprovalRequest(msg); return true;
-      case 'decision_request': this.onDecisionRequest(msg); return true;
-      case 'decision_result':  this.onDecisionResult(msg); return true;
-      case 'error':            this.onError(msg); return true;
-      case 'budget_warning':   this.onBudgetWarning(msg); return true;
-      case 'notice':           this.onNotice(msg); return true;
-      // Not printed — it feeds the live status line, which is where a running
-      // token and cost total belongs. Printing it would interleave a counter
-      // into the transcript on every single model response.
-      case 'usage_update':     this.status.onUsage(msg); return true;
-      default:                 return false;
+        const since = this.turnStartedAt || Date.now();
+        this.spinnerTimer = setInterval(() => {
+            readline.cursorTo(this.out, 0);
+            const frame = GLYPHS.spinner[this.spinnerIndex % GLYPHS.spinner.length] ?? '*';
+            this.out.write(this.status.render({
+                message: this.currentStatus,
+                elapsedMs: Date.now() - since,
+                steps: this.stepCount,
+                width: this.width() - 1,
+                spinnerFrame: frame,
+                tick: this.spinnerIndex
+            }));
+            readline.clearLine(this.out, 1);
+            this.spinnerIndex++;
+        }, 125);
     }
-  }
+    stopSpinner() {
+        if (this.quietStatus) {
+            this.currentStatus = '';
+            if (this.onStatusChange)
+                this.onStatusChange('');
+            return;
+        }
+        if (!this.spinnerTimer)
+            return;
+        clearInterval(this.spinnerTimer);
+        this.spinnerTimer = null;
+        if (this.isTTY) {
+            readline.clearLine(this.out, 0);
+            readline.cursorTo(this.out, 0);
+        }
+    }
+    renderUserMessage(content) {
+        const text = typeof content === 'string'
+            ? content
+            : (Array.isArray(content)
+                ? content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+                : String(content || ''));
+        if (!text.trim())
+            return;
+        this.frame('user', () => {
+            const measured = this.width();
+            const maxCaptureWidth = Math.max(8, Math.min(measured, this.transcript?.surface?.composeAvailableWidth?.() ?? measured) - 4);
+            const preferred = this.transcript
+                ? (this.transcript.surface?.composeWidth?.() ?? sessionComposerWidth(measured))
+                : composerWidth(this.measure());
+            const blockWidth = this.transcript
+                ? Math.max(8, Math.min(preferred, maxCaptureWidth))
+                : Math.max(8, preferred);
+            const innerWidth = Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - 1);
+            const rows = barBlock(wrapBlock(safeDisplay(text), innerWidth, { hang: 0 }), { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' });
+            this.write();
+            for (const row of rows) {
+                this.write(row);
+            }
+            this.write();
+        }, { messageText: text });
+    }
+    renderAssistantMessage(content) {
+        const text = typeof content === 'string'
+            ? content
+            : (Array.isArray(content)
+                ? content.map(p => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+                : String(content || ''));
+        if (!text.trim())
+            return;
+        this.onAgentMessage({ content: text });
+    }
+    renderSessionDivider(info = {}) {
+        this.transcript?.surface?.setSessionInfo?.(info);
+        this.frame('session', () => {
+            const width = Math.max(12, this.measure());
+            const rawTitle = safeDisplay((info && info.title) || 'Session');
+            const count = (info && info.messagesCount) ?? 0;
+            const rawCount = count > 0 ? ` (${count} message${count === 1 ? '' : 's'})` : '';
+            const countText = visibleWidth(rawCount) <= Math.max(0, width - 10) ? rawCount : '';
+            const title = truncate(rawTitle, Math.max(4, width - visibleWidth(countText) - 6), GLYPHS.ellipsis);
+            const badgeText = `${title}${countText}`;
+            const remaining = Math.max(2, width - visibleWidth(badgeText) - 2);
+            const leftRule = Math.max(1, Math.floor(remaining / 2));
+            const rightRule = Math.max(1, remaining - leftRule);
+            this.write();
+            this.write(`${paint('rule', GLYPHS.hLine.repeat(leftRule))} ${bold(paint('accent', title))}${dim(countText)} ${paint('rule', GLYPHS.hLine.repeat(rightRule))}`);
+            this.write();
+        });
+    }
+    clearTranscript() {
+        this._activeAssistant = false;
+        this._activeReasoning = false;
+        this.lastOutput = null;
+        if (this.transcript && typeof this.transcript.clear === 'function') {
+            this.transcript.clear();
+        }
+    }
+    renderSessionHistory(messages = [], sessionInfo = null) {
+        const safeMessages = Array.isArray(messages) ? messages : [];
+        const renderContent = () => {
+            this.transcript?.surface?.leaveHome?.(true);
+            this.clearTranscript();
+            this.latestPlan = [];
+            this.onPlanChange?.([]);
+            this.resetTurn();
+            const info = sessionInfo ? { ...sessionInfo } : {};
+            if (info.messagesCount === undefined || info.messagesCount === null) {
+                info.messagesCount = safeMessages.filter(m => m && m.role !== 'system').length;
+            }
+            const measuredChars = measureMessages(safeMessages);
+            this.status.contextChars = measuredChars;
+            info.contextChars = measuredChars;
+            if (info.title || info.id) {
+                this.renderSessionDivider(info);
+            }
+            const toolResultsById = new Map();
+            for (const m of safeMessages) {
+                if (m && m.role === 'tool' && m.tool_call_id) {
+                    toolResultsById.set(m.tool_call_id, m);
+                }
+            }
+            const renderedToolMessages = new Set();
+            for (let i = 0; i < safeMessages.length; i++) {
+                const msg = safeMessages[i];
+                if (!msg)
+                    continue;
+                const role = String(msg.role || '').toLowerCase();
+                if (role === 'user') {
+                    this.resetTurn();
+                    this.renderUserMessage(msg.content);
+                }
+                else if (role === 'assistant') {
+                    const reasoning = typeof msg.reasoning_content === 'string'
+                        ? msg.reasoning_content.trim()
+                        : (Array.isArray(msg.thinking_blocks)
+                            ? msg.thinking_blocks.map((b) => (typeof b === 'string' ? b : b?.thinking || b?.text || '')).filter(Boolean).join('\n').trim()
+                            : '');
+                    if (reasoning) {
+                        const meta = {
+                            reasoning: true,
+                            done: true,
+                            streaming: false,
+                            collapsed: true,
+                            durationText: '',
+                            content: reasoning,
+                            scrollStart: 0
+                        };
+                        this.frame('reasoning', () => this.renderReasoning(meta.content, {
+                            streaming: false,
+                            durationText: '',
+                            collapsed: Boolean(meta.collapsed),
+                            startLine: 0
+                        }), meta);
+                    }
+                    if (Array.isArray(msg.external_actions) && msg.external_actions.length > 0) {
+                        for (const ext of msg.external_actions) {
+                            const { toolName, args, result } = normalizeHistoricalExternalAction(ext);
+                            this.onStepStart({ tool: toolName, args });
+                            this.onStepComplete({ tool: toolName, result, elapsed: '' });
+                        }
+                    }
+                    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+                        for (const call of msg.tool_calls) {
+                            if (!call || typeof call !== 'object')
+                                continue;
+                            const toolName = call.function?.name || call.name || 'tool';
+                            let args = {};
+                            try {
+                                args = typeof call.function?.arguments === 'string'
+                                    ? JSON.parse(call.function.arguments)
+                                    : (call.function?.arguments || {});
+                            }
+                            catch {
+                                args = {};
+                            }
+                            if (toolName === 'update_plan' && args && Array.isArray(args.plan)) {
+                                this.onAgentPlan({
+                                    plan: args.plan.filter(Boolean).map((item) => ({
+                                        ...item,
+                                        text: item.text || item.step || item.content || ''
+                                    }))
+                                });
+                            }
+                            const toolMsg = call.id ? toolResultsById.get(call.id) : null;
+                            if (toolMsg) {
+                                renderedToolMessages.add(toolMsg);
+                                const normalized = normalizeHistoricalToolResult(toolName, toolMsg);
+                                if (normalized.skipStep) {
+                                    continue;
+                                }
+                                if (toolName === 'update_plan' && Array.isArray(normalized.plan)) {
+                                    this.onAgentPlan({
+                                        plan: normalized.plan.filter(Boolean).map((item) => ({
+                                            ...item,
+                                            text: item.text || item.step || item.content || ''
+                                        }))
+                                    });
+                                }
+                                this.onStepStart({ tool: toolName, args });
+                                this.onStepComplete({ tool: toolName, result: normalized.result, elapsed: '' });
+                            }
+                            else {
+                                this.onStepStart({ tool: toolName, args });
+                            }
+                        }
+                    }
+                    const text = typeof msg.content === 'string'
+                        ? msg.content
+                        : (Array.isArray(msg.content)
+                            ? msg.content.map((p) => (typeof p === 'string' ? p : (p && p.text) || '')).filter(Boolean).join('\n')
+                            : (msg.content == null ? '' : String(msg.content)));
+                    const syntheticNoFinal = msg.causyne_synthetic_no_final === true
+                        || (text.trim() === 'No final response was provided.'
+                            && (!Array.isArray(msg.tool_calls) || msg.tool_calls.length === 0));
+                    if (syntheticNoFinal) {
+                        const isLatestTurn = !safeMessages.slice(i + 1).some(next => next && (next.role === 'assistant' || next.role === 'user'));
+                        if (isLatestTurn) {
+                            this.frame('notice', () => {
+                                this.write(`${paint('warn', GLYPHS.warnMark)} ${dim('Provider returned no final answer; task completion is unverified.')}`);
+                            }, { syntheticNoFinal: true });
+                        }
+                    }
+                    else if (text.trim()) {
+                        this.renderAssistantMessage(text);
+                    }
+                }
+                else if (role === 'tool') {
+                    if (!renderedToolMessages.has(msg)) {
+                        renderedToolMessages.add(msg);
+                        const toolName = msg.name || 'tool';
+                        const normalized = normalizeHistoricalToolResult(toolName, msg, { unpaired: true });
+                        if (normalized.skipStep) {
+                            continue;
+                        }
+                        this.onStepStart({ tool: toolName, args: {} });
+                        this.onStepComplete({ tool: toolName, result: normalized.result, elapsed: '' });
+                    }
+                }
+                else if (role === 'system') {
+                    const text = typeof msg.content === 'string' ? msg.content : '';
+                    if (text.startsWith('[Continuum Context')) {
+                        this.frame('notice', () => {
+                            const firstLine = text.split('\n')[0] || '[Continuum Context]';
+                            this.write(`${paint('accent', GLYPHS.bullet)} ${dim(firstLine)}`);
+                        });
+                    }
+                }
+            }
+            const finalMeasured = measureMessages(safeMessages);
+            if (finalMeasured > 0) {
+                this.status.contextChars = finalMeasured;
+            }
+            if (!this.status.contextLimit) {
+                this.status.contextLimit = resolveCharPool(this.status.tier, undefined, {
+                    provider: sessionInfo?.provider || this.status.provider,
+                    model: sessionInfo?.model || this.status.model
+                });
+            }
+            if (sessionInfo) {
+                this.status.setSession({
+                    ...sessionInfo,
+                    contextChars: this.status.contextChars || finalMeasured,
+                    contextLimit: sessionInfo.contextLimit || this.status.contextLimit
+                });
+            }
+            if (this.transcript?.surface?.viewport) {
+                this.transcript.surface.viewport.manual = false;
+                this.transcript.surface.viewport.unseen = 0;
+                this.transcript.surface.viewport.toBottom();
+            }
+        };
+        if (this.transcript && typeof this.transcript.batch === 'function') {
+            this.transcript.batch(renderContent);
+        }
+        else {
+            renderContent();
+        }
+    }
+    onAgentMessage(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const content = safeDisplay(safeMsg.content || '');
+        const isStreaming = Boolean(safeMsg.streaming);
+        const tailIsAssistant = !this.transcript
+            || this.transcript.frames?.at(-1)?.meta?.assistant === true;
+        if (this._activeAssistant && !tailIsAssistant) {
+            this._activeAssistant = false;
+        }
+        if (isStreaming) {
+            if (!this._activeAssistant) {
+                this._activeAssistant = true;
+                this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(safeMsg.content || '') });
+            }
+            else {
+                this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(safeMsg.content || '') });
+            }
+            return;
+        }
+        if (this._activeAssistant) {
+            this._activeAssistant = false;
+            this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(safeMsg.content || '') });
+        }
+        else {
+            this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(safeMsg.content || '') });
+        }
+    }
+    formatAssistantMessage(content, { streaming = false } = {}) {
+        const width = this.measure();
+        this.write(`${paint('agent', GLYPHS.arrow)} ${bold(paint('agent', 'Causyne'))}${streaming ? ' ' + dim('…') : ''}`);
+        for (const line of renderMarkdown(content, Math.max(8, width - 4))) {
+            this.write(line ? '  ' + line : '');
+        }
+        this.write();
+    }
+    onAgentReasoning(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const content = safeDisplay(safeMsg.content || '');
+        const isStreaming = Boolean(safeMsg.streaming);
+        const elapsedMs = Number(safeMsg.elapsedMs) || 0;
+        const durationText = elapsedMs > 0 ? formatDuration(elapsedMs) : '';
+        const activity = typeof safeMsg.activity === 'string' ? safeMsg.activity : '';
+        const title = typeof safeMsg.title === 'string' ? safeMsg.title : '';
+        const completedTitle = typeof safeMsg.completedTitle === 'string' ? safeMsg.completedTitle : '';
+        const tailFrame = this.transcript?.frames?.at(-1);
+        const tailIsReasoning = !this.transcript
+            || tailFrame?.meta?.reasoning === true;
+        if (this._activeReasoning && !tailIsReasoning) {
+            this._activeReasoning = false;
+        }
+        if (isStreaming) {
+            if (!this._activeReasoning) {
+                this._activeReasoning = true;
+                const meta = {
+                    reasoning: true,
+                    collapsed: false,
+                    streaming: true,
+                    durationText,
+                    content,
+                    activity,
+                    title,
+                    completedTitle,
+                    scrollStart: 0
+                };
+                this.frame('reasoning', () => this.renderReasoning(meta.content, {
+                    streaming: Boolean(meta.streaming),
+                    durationText: meta.durationText,
+                    collapsed: Boolean(meta.collapsed),
+                    startLine: Number(meta.scrollStart) || 0,
+                    activity: meta.activity,
+                    title: meta.title,
+                    completedTitle: meta.completedTitle
+                }), meta);
+            }
+            else {
+                const meta = tailFrame?.meta || { reasoning: true };
+                meta.streaming = true;
+                meta.durationText = durationText;
+                meta.content = content;
+                if (activity)
+                    meta.activity = activity;
+                if (title)
+                    meta.title = title;
+                if (completedTitle)
+                    meta.completedTitle = completedTitle;
+                if (meta.collapsed === undefined)
+                    meta.collapsed = false;
+                if (meta.scrollStart === undefined)
+                    meta.scrollStart = 0;
+                this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
+                    streaming: Boolean(meta.streaming),
+                    durationText: meta.durationText,
+                    collapsed: Boolean(meta.collapsed),
+                    startLine: Number(meta.scrollStart) || 0,
+                    activity: meta.activity,
+                    title: meta.title,
+                    completedTitle: meta.completedTitle
+                }), meta);
+            }
+            return;
+        }
+        if (this._activeReasoning) {
+            this._activeReasoning = false;
+            const meta = tailFrame?.meta || { reasoning: true };
+            meta.streaming = false;
+            meta.done = true;
+            meta.durationText = durationText;
+            meta.content = content;
+            if (activity)
+                meta.activity = activity;
+            if (title)
+                meta.title = title;
+            if (completedTitle)
+                meta.completedTitle = completedTitle;
+            if (meta.collapsed === undefined)
+                meta.collapsed = Boolean(safeMsg.collapsed);
+            if (meta.scrollStart === undefined)
+                meta.scrollStart = 0;
+            this.updateTailFrame('reasoning', () => this.renderReasoning(meta.content, {
+                streaming: Boolean(meta.streaming),
+                durationText: meta.durationText,
+                collapsed: Boolean(meta.collapsed),
+                startLine: Number(meta.scrollStart) || 0,
+                activity: meta.activity,
+                title: meta.title,
+                completedTitle: meta.completedTitle
+            }), meta);
+        }
+        else if (content.trim()) {
+            const meta = {
+                reasoning: true,
+                done: true,
+                streaming: false,
+                durationText,
+                content,
+                activity,
+                title,
+                completedTitle,
+                collapsed: Boolean(safeMsg.collapsed),
+                scrollStart: 0
+            };
+            this.frame('reasoning', () => this.renderReasoning(meta.content, {
+                streaming: Boolean(meta.streaming),
+                durationText: meta.durationText,
+                collapsed: Boolean(meta.collapsed),
+                startLine: Number(meta.scrollStart) || 0,
+                activity: meta.activity,
+                title: meta.title,
+                completedTitle: meta.completedTitle
+            }), meta);
+        }
+    }
+    renderReasoning(content, { streaming = false, durationText = '', collapsed = false, startLine = 0, activity = '', title = '', completedTitle = '' } = {}) {
+        const width = this.measure();
+        const rows = renderThinkingFrame(content, {
+            width,
+            streaming,
+            durationText,
+            collapsed,
+            startLine: Number(startLine) || 0,
+            activity,
+            title,
+            completedTitle
+        });
+        if (rows.length === 0)
+            return;
+        this.write();
+        for (const row of rows) {
+            this.write(row);
+        }
+        this.write();
+    }
+    scrollThinkingPanel(_key, _surface) {
+        return false;
+    }
+    onAgentActivity(msg) {
+        if (!msg || typeof msg !== 'object')
+            return;
+        const text = String(msg.activity || msg.message || '').trim();
+        if (!text)
+            return;
+        this.frame('notice', () => {
+            const prefix = `${GLYPHS.arrow || '▸'} `;
+            for (const [index, row] of activityRows(text, this.width(), prefix).entries()) {
+                if (index === 0) {
+                    const body = row.startsWith(prefix) ? row.slice(prefix.length) : row;
+                    this.write(`${paint('accent', GLYPHS.arrow || '▸')} ${dim(body)}`);
+                }
+                else {
+                    this.write(dim(row));
+                }
+            }
+        }, { activity: true });
+    }
+    onAgentPlan(msg) {
+        if (!msg || !Array.isArray(msg.plan) || msg.plan.length === 0)
+            return;
+        const plan = msg.plan.slice();
+        this.latestPlan = plan;
+        const placement = this.onPlanChange?.(plan);
+        if (placement === 'sidebar')
+            return;
+        this.frame('plan', () => this.renderPlan(plan), { items: plan.length });
+    }
+    onDecisionRequest(msg) {
+        if (this.dialogWillAsk)
+            return;
+        const request = (msg && msg.request) || {};
+        this.frame('approval', () => {
+            this.write();
+            this.write(`${paint('accent', GLYPHS.arrow)} ${bold(safeDisplay(request.header || 'decision required'))}`);
+            for (const row of wrapBlock(safeDisplay(request.question || ''), Math.max(20, this.width() - 4), { hang: 0 }))
+                this.write(`  ${row}`);
+            this.write();
+        }, { kind: request.kind || 'other' });
+    }
+    onDecisionResult(msg) {
+        const request = (msg && msg.request) || {};
+        const answer = msg && msg.answer;
+        this.frame('approval', () => {
+            if (!answer) {
+                this.write(`  ${paint('muted', 'decision dismissed')}  ${safeDisplay(request.header || '')}`);
+                return;
+            }
+            this.write(`  ${paint('success', GLYPHS.check)} ${bold(safeDisplay(answer.label || ''))}${answer.custom ? dim('  custom choice') : ''}`);
+        }, { kind: request.kind || 'other', answered: Boolean(answer) });
+    }
+    renderPlan(plan) {
+        if (!Array.isArray(plan) || plan.length === 0)
+            return;
+        const width = this.width();
+        this.write();
+        this.write(paint('muted', 'plan'));
+        for (const item of plan) {
+            if (!item || typeof item !== 'object')
+                continue;
+            const done = item.status === 'completed';
+            const active = item.status === 'in_progress';
+            const mark = done ? paint('success', GLYPHS.check)
+                : active ? paint('accent', GLYPHS.arrow)
+                    : paint('muted', GLYPHS.dot);
+            const text = item.text || item.step || item.content || '';
+            const label = done ? dim(safeDisplay(text)) : paint('ink', safeDisplay(text));
+            this.write(`  ${mark} ${truncate(label, Math.max(8, width - 5), GLYPHS.ellipsis)}`);
+        }
+        this.write();
+    }
+    onStepStart(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        this.stepStartedAt = Date.now();
+        this.stepCount++;
+        const toolLabel = safeDisplay(safeMsg.tool || 'tool') || 'tool';
+        const { verb, detail } = describeTool(safeMsg.tool, safeMsg.args);
+        const step = this.stepCount;
+        this.frame('step', () => {
+            const width = this.width();
+            const index = paint('muted', String(step).padStart(2, '0'));
+            const displayVerb = verb || toolLabel;
+            const name = paint('accent', padEnd(displayVerb, STATUS_GUTTER));
+            const used = 2 + 2 + 1 + Math.max(visibleWidth(displayVerb), STATUS_GUTTER) + 1;
+            const detailText = detail ? paint('ink', truncate(detail, Math.max(10, width - used - 12), GLYPHS.ellipsis)) : '';
+            this.write(`${paint('muted', GLYPHS.arrow)} ${index} ${name} ${detailText}`);
+        }, { step, tool: safeMsg.tool, verb: verb || toolLabel, detail });
+    }
+    onStepComplete(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const elapsed = typeof safeMsg.elapsed === 'string'
+            ? safeMsg.elapsed
+            : (this.stepStartedAt ? formatDuration(Date.now() - this.stepStartedAt) : '');
+        const result = safeMsg.result || {};
+        this.captureLastOutput(result);
+        const tail = this.transcript?.frames?.at(-1);
+        if (compactSuccessfulToolResult(this.stepCount, result, tail, safeMsg.tool) && tail?.meta) {
+            const { step, verb, detail, tool } = tail.meta;
+            const completedElapsed = elapsed;
+            this.updateTailFrame('step', () => {
+                const width = this.width();
+                const index = paint('muted', String(step).padStart(2, '0'));
+                const name = paint('accent', padEnd(verb || tool, STATUS_GUTTER));
+                const used = 2 + 2 + 1 + Math.max(visibleWidth(verb || tool), STATUS_GUTTER) + 1;
+                const tailText = completedElapsed ? ` ${dim(completedElapsed)}` : '';
+                const detailWidth = Math.max(5, width - used - visibleWidth(tailText) - 10);
+                const detailText = detail ? paint('ink', truncate(detail, detailWidth, GLYPHS.ellipsis)) : '';
+                this.write(`${paint('success', GLYPHS.check)} ${index} ${name} ${detailText}${tailText}`);
+            }, { ...tail.meta, success: true, elapsed: completedElapsed });
+            return;
+        }
+        this.frame('result', () => {
+            if (result.success) {
+                const elapsedText = elapsed ? ` ${dim(elapsed)}` : '';
+                this.write(`     ${paint('success', GLYPHS.check)}${elapsedText}`);
+                this.renderOutputPreview(result, safeMsg.tool || '');
+                return;
+            }
+            const detail = `${safeDisplay(result.error || 'failed')}${elapsed ? ` · ${elapsed}` : ''}`;
+            for (const row of wrappedChatRows(detail, this.width(), `     ${paint('danger', GLYPHS.cross)} `, 'danger'))
+                this.write(row);
+        }, { success: Boolean(result.success) });
+    }
+    expandLastOutput() {
+        if (!this.lastOutput || !this.lastOutput.text) {
+            this.frame('notice', () => this.write(dim('  nothing to expand')));
+            return false;
+        }
+        const output = this.lastOutput;
+        this.frame('result', () => {
+            const width = Math.max(8, this.width() - 7);
+            this.write('');
+            for (const line of String(output.text).split('\n')) {
+                for (const part of wrap(safeDisplay(line), width)) {
+                    this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(part)}`);
+                }
+            }
+            if (output.spillPath) {
+                this.write(this.clipHint(output.spillPath));
+            }
+            this.write('');
+        }, { expanded: true });
+        return true;
+    }
+    captureLastOutput(result) {
+        if (!result || typeof result !== 'object')
+            return;
+        const payload = typeof result.output === 'string' ? result.output
+            : typeof result.log === 'string' ? result.log
+                : '';
+        if (!payload)
+            return;
+        this.lastOutput = { text: payload, spillPath: result.spillPath || null };
+    }
+    renderOutputPreview(result, toolName = '') {
+        if (!result || typeof result !== 'object')
+            return;
+        const rawPayload = typeof result.output === 'string' ? result.output
+            : typeof result.log === 'string' ? result.log
+                : '';
+        const payload = cleanToolOutputPreview(rawPayload, toolName);
+        if (!payload)
+            return;
+        const source = payload.length > PREVIEW_SOURCE_BUDGET
+            ? payload.slice(0, PREVIEW_SOURCE_BUDGET)
+            : payload;
+        if (!source.trim())
+            return;
+        const width = Math.max(8, this.width() - 7);
+        const cleaned = safeDisplay(source).replace(/\n{3,}/g, '\n\n').trim();
+        const wrapped = [];
+        for (const rawLine of cleaned.split('\n')) {
+            const line = rawLine.replace(/\r/g, '').trimEnd();
+            if (/^\s*(?:% Total\b|Dload\s+Upload\b|\d+\s+\d+\s+\d+\s+.*--:--:--)/i.test(line))
+                continue;
+            for (const part of wrap(line, width)) {
+                wrapped.push(part);
+                if (wrapped.length > PREVIEW_LINES + 1)
+                    break;
+            }
+            if (wrapped.length > PREVIEW_LINES + 1)
+                break;
+        }
+        const previewLimit = this.stepCount >= 12 ? 5 : PREVIEW_LINES;
+        for (const line of wrapped.slice(0, previewLimit)) {
+            this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(line)}`);
+        }
+        const clipped = wrapped.length > previewLimit || source.length < payload.length;
+        if (clipped)
+            this.write(this.clipHint(result.spillPath));
+    }
+    clipHint(spillPath) {
+        const corner = paint('rule', GLYPHS.corner);
+        const room = Math.max(12, this.width() - 8);
+        if (spillPath) {
+            const label = truncate(shortenHome(spillPath), Math.max(8, room - 13), GLYPHS.ellipsis);
+            return `     ${corner} ${dim(`full output: ${fileLink(label, spillPath)}`)}`;
+        }
+        const full = `${GLYPHS.ellipsis} output truncated — ctrl+o to expand`;
+        const short = `${GLYPHS.ellipsis} truncated — ctrl+o`;
+        const hint = visibleWidth(full) <= room ? full
+            : visibleWidth(short) <= room ? short
+                : truncate(full, room, GLYPHS.ellipsis);
+        return `     ${corner} ${dim(hint)}`;
+    }
+    onCheckpoint(msg) {
+        if (!msg || typeof msg !== 'object')
+            return;
+        const where = typeof msg.path === 'string' ? safeDisplay(shortenHome(msg.path)) : '';
+        const count = Number(msg.count) || 1;
+        this.frame('checkpoint', () => {
+            const label = where
+                ? `restore point ${GLYPHS.dot} ${where}`
+                : `restore point ${GLYPHS.dot} ${count} file${count === 1 ? '' : 's'}`;
+            this.write(`     ${paint('muted', GLYPHS.dot)} ${dim(truncate(label, Math.max(10, this.width() - 8), GLYPHS.ellipsis))}`);
+        }, { tool: msg.tool, path: msg.path || null, step: msg.step ?? null, taskId: msg.taskId || null });
+    }
+    onStepError(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const label = safeDisplay(`${safeMsg.tool || ''}`.trim());
+        const rawError = safeMsg.error || (safeMsg.result && (safeMsg.result.error || safeMsg.result.message)) || '';
+        const detail = safeDisplay(`${rawError}`.trim());
+        const head = label && detail ? `${label}  ${detail}` : (detail || label || 'failed');
+        this.frame('error', () => {
+            const rows = wrapBlock(head, Math.max(20, this.width() - 7), { hang: 0 });
+            this.write(`     ${paint('danger', GLYPHS.cross)} ${paint('danger', rows[0] || '')}`);
+            for (const row of rows.slice(1))
+                this.write(`       ${dim(row)}`);
+        }, { tool: safeMsg.tool });
+    }
+    onApprovalRequest(msg) {
+        if (!msg || typeof msg !== 'object')
+            return;
+        if (msg.toolCallId)
+            this.pendingApprovals.set(msg.toolCallId, msg);
+        if (this.dialogWillAsk)
+            return;
+        const diff = approvalDiff(msg.tool, msg.args, { width: this.width() });
+        this.frame('approval', () => this.renderApprovalRequest(msg, diff), {
+            tool: msg.tool,
+            risk: String(msg.risk || 'unknown').toUpperCase()
+        });
+    }
+    renderApprovalRequest(msg, diff = undefined) {
+        if (!msg || typeof msg !== 'object')
+            return;
+        const risk = String(msg.risk || 'unknown').toUpperCase();
+        const role = risk === 'EXTREME' ? 'danger' : risk === 'DANGEROUS' ? 'warn' : 'accent';
+        const { verb, detail } = describeTool(msg.tool, msg.args);
+        this.write();
+        this.write(`${paint(role, GLYPHS.warnMark)} ${paint('ink', 'permission required')}  ${bold(safeDisplay(msg.tool || ''))}${verb ? dim(`  ${verb}`) : ''}`);
+        if (detail) {
+            this.write(`  ${paint('ink', truncate(detail, Math.max(8, this.width() - 4), GLYPHS.ellipsis))}`);
+        }
+        const resolvedDiff = diff === undefined ? approvalDiff(msg.tool, msg.args, { width: this.width() }) : diff;
+        if (resolvedDiff) {
+            const stat = [
+                resolvedDiff.added ? paint('success', `+${resolvedDiff.added}`) : '',
+                resolvedDiff.removed ? paint('danger', `-${resolvedDiff.removed}`) : ''
+            ].filter(Boolean).join(' ');
+            const note = resolvedDiff.note ? dim(`  ${GLYPHS.dot}  ${resolvedDiff.note}`) : '';
+            const where = detail ? '' : `${dim(resolvedDiff.path)}  `;
+            this.write(`  ${where}${stat}${note}`);
+            this.write();
+            for (const row of resolvedDiff.rows)
+                this.write(row);
+            if (resolvedDiff.clipped) {
+                this.write(`     ${paint('rule', GLYPHS.corner)} ${dim(`${GLYPHS.ellipsis} diff truncated`)}`);
+            }
+            this.write();
+        }
+    }
+    renderApprovalDecision(msg, approved, scope = 'once') {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const verdict = !approved
+            ? paint('danger', 'rejected')
+            : scope === 'always'
+                ? paint('warn', 'allowed always')
+                : paint('success', 'allowed once');
+        const { verb } = describeTool(safeMsg.tool, safeMsg.args);
+        this.frame('approval', () => {
+            this.write(`  ${verdict} ${bold(safeDisplay(safeMsg.tool || ''))}${verb ? dim(`  ${verb}`) : ''}`);
+        }, { tool: safeMsg.tool, approved: Boolean(approved), scope });
+    }
+    onError(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const message = safeDisplay(safeMsg.message || '');
+        this.frame('error', () => {
+            this.write();
+            for (const row of wrappedChatRows(message, this.width(), `${badge('danger', 'ERROR')} `, 'danger'))
+                this.write(row);
+            this.write();
+        });
+    }
+    onBudgetWarning(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const message = safeDisplay(safeMsg.message || '');
+        this.frame('notice', () => {
+            for (const row of wrappedChatRows(message, this.width(), `${badge('warn', 'BUDGET')} `, 'warn'))
+                this.write(row);
+        }, { tone: 'warn' });
+    }
+    onStatus(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        this.startSpinner(safeMsg.message || '');
+    }
+    skillInvoked(id, instruction) {
+        this.frame('skill', () => {
+            const width = this.width();
+            const head = `${paint('accent', GLYPHS.step)} ${bold(paint('ink', 'skill'))}`
+                + `${dim(`  ${GLYPHS.dot}  `)}${paint('agent', safeDisplay(String(id ?? '')))}`;
+            this.write();
+            this.write(truncate(head, Math.max(8, width - 1), GLYPHS.ellipsis));
+            if (instruction) {
+                for (const line of wrapBlock(safeDisplay(String(instruction)), Math.max(8, width - 4), { hang: 0 })) {
+                    this.write(dim(`  ${line}`));
+                }
+            }
+        }, { skill: String(id || '') });
+    }
+    onNotice(msg) {
+        const safeMsg = msg && typeof msg === 'object' ? msg : {};
+        const tone = ['accent', 'success', 'warn', 'muted'].includes(safeMsg.tone) ? String(safeMsg.tone) : 'muted';
+        const message = safeDisplay(safeMsg.message || '');
+        this.frame('notice', () => {
+            const width = this.measure();
+            const marker = paint(tone === 'muted' ? 'rule' : tone, GLYPHS.vLine);
+            for (const line of wrapBlock(message, Math.max(8, width - 2), { hang: 0 })) {
+                this.write(`${marker} ${dim(line)}`);
+            }
+        }, { tone });
+    }
+    handle(msg) {
+        if (!msg || typeof msg.type !== 'string')
+            return false;
+        if (msg.type !== 'status')
+            this.stopSpinner();
+        switch (msg.type) {
+            case 'status':
+                this.onStatus(msg);
+                return true;
+            case 'agent_activity':
+                this.onAgentActivity(msg);
+                return true;
+            case 'agent_message':
+                this.onAgentMessage(msg);
+                return true;
+            case 'agent_reasoning':
+                this.onAgentReasoning(msg);
+                return true;
+            case 'agent_plan':
+                this.onAgentPlan(msg);
+                return true;
+            case 'step_start':
+                this.onStepStart(msg);
+                return true;
+            case 'step_complete':
+                this.onStepComplete(msg);
+                return true;
+            case 'step_error':
+                this.onStepError(msg);
+                return true;
+            case 'checkpoint':
+                this.onCheckpoint(msg);
+                return true;
+            case 'approval_request':
+                this.onApprovalRequest(msg);
+                return true;
+            case 'decision_request':
+                this.onDecisionRequest(msg);
+                return true;
+            case 'decision_result':
+                this.onDecisionResult(msg);
+                return true;
+            case 'error':
+                this.onError(msg);
+                return true;
+            case 'budget_warning':
+                this.onBudgetWarning(msg);
+                return true;
+            case 'notice':
+                this.onNotice(msg);
+                return true;
+            case 'usage_update':
+                this.status.onUsage(msg);
+                return true;
+            default: return false;
+        }
+    }
 }

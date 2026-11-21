@@ -322,7 +322,8 @@
     "src/tui/completion.ts",
     "src/tui/dialogs.ts",
     "src/tui/home.ts",
-    "src/tui/stageSurface.ts"
+    "src/tui/stageSurface.ts",
+    "src/tui/chatRenderer.ts"
   ],
   "exclude": [
     "node_modules",
