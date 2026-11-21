@@ -230,7 +230,7 @@ export function dim(text: unknown): string {
  * reads as a surface if it extends past the last character.
  */
 export function openFill(role: string): string {
-  if (!HAS_COLOR) return '';
+  if (!HAS_COLOR || typeof role !== 'string' || !Object.hasOwn(PALETTE, role)) return '';
   const rgb = PALETTE[role];
   if (!rgb) return '';
   if (COLOR_DEPTH >= 16777216) return `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;

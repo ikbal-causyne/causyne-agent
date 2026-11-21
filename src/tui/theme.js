@@ -197,7 +197,7 @@ export function dim(text) {
  * reads as a surface if it extends past the last character.
  */
 export function openFill(role) {
-    if (!HAS_COLOR)
+    if (!HAS_COLOR || typeof role !== 'string' || !Object.hasOwn(PALETTE, role))
         return '';
     const rgb = PALETTE[role];
     if (!rgb)
