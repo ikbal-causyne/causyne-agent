@@ -1,297 +1,189 @@
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider, mimeTypeForAudioFormat } from './base.js';
-import {
-  scanAndAdaptToolsForProvider,
-  decodeFreeFormArguments,
-  adaptSchemaForGemini,
-  isEmptyObjectSchema,
-  normalizeToolName
-} from '../tools/toolScanner.js';
-import {
-  safeParseJsonObject,
-  sanitizeProviderToolId,
-  serializeAndDecodeArguments
-} from './wireNormalizer.js';
-import {
-  requireApiKey,
-  resolveTemperature,
-  safeProviderFetchJson
-} from './byokHttp.js';
+import { scanAndAdaptToolsForProvider, adaptSchemaForGemini, isEmptyObjectSchema, normalizeToolName } from '../tools/toolScanner.js';
+import { safeParseJsonObject, sanitizeProviderToolId, serializeAndDecodeArguments } from './wireNormalizer.js';
+import { requireApiKey, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamGeminiGenerateContent, wantsStreaming } from './byokStream.js';
-
 export { adaptSchemaForGemini, isEmptyObjectSchema };
-
-// Gemini's FunctionDeclaration schema is an OpenAPI subset, and it is strict in
-// two ways that matter here:
-//   1. `additionalProperties` is not part of the subset.
-//   2. An OBJECT that declares no properties is rejected.
-// Crucially, one bad declaration fails the *entire* request — so a single
-// free-form object anywhere in the 69-tool catalogue takes every tool down with
-// it. `web_fetch.headers` is exactly that shape and web_fetch is a CORE tool,
-// which meant Gemini could not complete step one of any task at all.
-//
-// Rather than delete those parameters and lose the capability, free-form maps
-// travel as JSON strings and are decoded again on the way back, so the tool
-// still receives a real object. The paths that were rewritten are recorded per
-// tool so the decode knows exactly where to look. Handled universally via toolScanner.
-
-function applyAtPath(node, path, transform) {
-  if (node === null || typeof node !== 'object') return;
-
-  const [head, ...rest] = path;
-
-  if (head === '[]') {
-    if (!Array.isArray(node)) return;
-    for (const entry of node) applyAtPath(entry, rest, transform);
-    return;
-  }
-
-  if (rest.length === 0) {
-    if (head in node) node[head] = transform(node[head]);
-    return;
-  }
-
-  applyAtPath(node[head], rest, transform);
-}
-
-/**
- * Translate Gemini's `usageMetadata` into the OpenAI-shaped object that
- * `LLMProvider.normalizeUsage()` consumes, so every provider ends up on one
- * normalisation path instead of Gemini hand-rolling its own.
- *
- * TWO BUGS THIS FIXES, both in the cost the user is shown:
- *
- * 1. `cachedContentTokenCount` was dropped entirely. Gemini caches implicitly
- *    on a stable prefix, so the cache WAS working and `calculateCost()` IS
- *    cache-aware — it was simply fed a zero, and every cached token was
- *    displayed at the full input rate instead of 0.5x. Overstating the bill is
- *    how a user concludes Causyne is expensive and goes direct instead.
- *
- * 2. `thoughtsTokenCount` was dropped, and thinking tokens ARE billed as
- *    output ("Response pricing is the sum of output tokens and thinking
- *    tokens"). That understated the bill — the worse direction, because the
- *    real invoice then exceeds what Causyne promised.
- *
- * WHY `totalTokenCount` IS THE ANCHOR: whether `thoughtsTokenCount` is already
- * folded into `candidatesTokenCount` DIFFERS BY BACKEND — it is on the Gemini
- * API and is not on Vertex AI, and reports exist of the Gemini API behaving
- * both ways across model versions. Deriving completion as `total - prompt` is
- * correct under either convention; adding thoughts to candidates is correct
- * under only one and double-counts under the other. The sum is used only when
- * the total is missing or incoherent, where overstating is the safer error.
- *
- * @param   {object} usageMetadata  Gemini's usage block, possibly undefined.
- * @returns {object}                OpenAI-shaped usage for normalizeUsage().
- */
 export function geminiUsageToOpenAIShape(usageMetadata) {
-  const prompt = usageMetadata?.promptTokenCount || 0;
-  const candidates = usageMetadata?.candidatesTokenCount || 0;
-  const thoughts = usageMetadata?.thoughtsTokenCount || 0;
-  const total = usageMetadata?.totalTokenCount || 0;
-
-  const completion = total > prompt ? total - prompt : candidates + thoughts;
-
-  return {
-    prompt_tokens: prompt,
-    completion_tokens: completion,
-    // normalizeUsage() clamps this to prompt_tokens, which also protects
-    // against a backend that reports the cached count OUTSIDE the prompt total.
-    prompt_tokens_details: { cached_tokens: usageMetadata?.cachedContentTokenCount || 0 }
-  };
-}
-
-export class GeminiProvider extends LLMProvider {
-  constructor(config) {
-    super(config);
-    this.model = canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['gemini']);
-    // Never embed the API key in the URL query string (CWE-598); send it via x-goog-api-key header.
-    this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
-    // Every Gemini model from 1.5 onward accepts image input.
-    this.visionModels = ['gemini-'];
-    this.imagePayloadFormat = 'gemini';
-    // Gemini takes audio the same way it takes images — inlineData with a real
-    // MIME type — across the whole gemini- family, and accepts m4a/aac natively,
-    
-    // smaller than WAV, so it clears the transport ceiling far more often.
-    this.audioModels = ['gemini-'];
-    this.audioPayloadFormat = 'gemini';
-  }
-
-  async chat(messages, options = {}) {
-    messages = this.prepareMessages(messages);
-    // Map OpenAI messages to Gemini contents.
-    // System blocks ACCUMULATE. Assigning instead of appending meant that with
-    // the agent's three-block system stack only the last block survived: the
-    // core SYSTEM_PROMPT, the capability-pack catalogue and every playbook were
-    // silently discarded on every single Gemini request.
-    const systemParts = [];
-    const contents = [];
-
-    for (const msg of messages) {
-      if (msg.role === 'system') {
-        const text = typeof msg.content === 'string'
-          ? msg.content
-          : JSON.stringify(msg.content);
-        if (text) systemParts.push({ text });
-        continue;
-      }
-
-      const role = msg.role === 'assistant' ? 'model' : 'user';
-
-      if (msg.tool_calls) {
-        // The assistant's own words travel with its calls. Dropping the text
-        // meant the model's stated reasoning never re-entered the history.
-        const parts = [];
-        if (msg.content) parts.push({ text: String(msg.content) });
-        for (const tc of msg.tool_calls) {
-          parts.push({
-            functionCall: {
-              name: normalizeToolName(tc.function?.name || ''),
-              args: safeParseJsonObject(tc.function?.arguments)
-            }
-          });
-        }
-        contents.push({ role, parts });
-      } else if (msg.role === 'tool') {
-        // Batch consecutive tool responses into a single 'user' message for parallel calls.
-        const responsePart = {
-          functionResponse: {
-            name: normalizeToolName(msg.name || ''),
-            response: { result: msg.content ?? '' }
-          }
-        };
-        const lastEntry = contents[contents.length - 1];
-        if (lastEntry && lastEntry.role === 'user' && Array.isArray(lastEntry.parts) && lastEntry.parts[0]?.functionResponse) {
-          lastEntry.parts.push(responsePart);
-        } else {
-          contents.push({
-            role: 'user',
-            parts: [responsePart]
-          });
-        }
-      } else {
-        if (Array.isArray(msg.content)) {
-          const mappedParts = msg.content.map(part => {
-            if (part.type === 'text') return { text: part.text };
-            if (part.type === 'image_url') {
-              const b64 = part.image_url.url.split('base64,')[1];
-              const mime = part.image_url.url.split(';')[0].replace('data:', '');
-              return { inlineData: { mimeType: mime, data: b64 } };
-            }
-            // Anthropic-shaped image block. Without this branch it fell through
-            // to the empty-text default and the image vanished silently.
-            if (part.type === 'image' && part.source?.type === 'base64') {
-              return { inlineData: { mimeType: part.source.media_type, data: part.source.data } };
-            }
-            // Audio normalised by prepareMessages already arrives as inlineData;
-            // this branch covers an input_audio block replayed from history that
-            // predates the normaliser. The MIME type is derived from the clip's
-            // real container instead of the old hardcoded audio/mp4, which
-            
-            if (part.type === 'input_audio') {
-              return {
-                inlineData: {
-                  mimeType: mimeTypeForAudioFormat(part.input_audio?.format),
-                  data: part.input_audio?.data
-                }
-              };
-            }
-            if (part.inlineData) return part;
-            return { text: '' };
-          });
-          contents.push({ role, parts: mappedParts });
-        } else {
-          contents.push({ role, parts: [{ text: msg.content ?? '' }] });
-        }
-      }
-    }
-
-    const apiKey = requireApiKey(this.apiKey, 'Gemini');
-    const payload = {
-      contents,
-      generationConfig: {
-        temperature: resolveTemperature(options.temperature, 0.1),
-      }
-    };
-
-    if (systemParts.length > 0) {
-      payload.systemInstruction = { parts: systemParts };
-    }
-
-    // Map tools using the universal toolScanner
-    let freeFormPaths = new Map();
-
-    if (options.tools && options.tools.length > 0) {
-      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'gemini');
-      payload.tools = [{
-        functionDeclarations: scanReport.adaptedTools
-      }];
-      freeFormPaths = scanReport.freeFormPaths;
-    }
-
-    const requestOpts = {
-      url: this.baseUrl,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey
-      },
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-      providerLabel: 'Gemini',
-      secrets: [apiKey],
-      hasApiKey: true
-    };
-
-    const data = wantsStreaming(options)
-      ? await streamGeminiGenerateContent({
-          ...requestOpts,
-          payload,
-          onChunk: options.onChunk,
-          onReasoningChunk: options.onReasoningChunk
-        })
-      : await safeProviderFetchJson({
-          ...requestOpts,
-          body: JSON.stringify(payload)
-        });
-
-    const firstCandidate = data.candidates?.[0];
-    if (!firstCandidate) {
-      throw new Error('No candidate returned from Gemini');
-    }
-
-    let content = '';
-    let reasoningContent = typeof data.reasoningContent === 'string' ? data.reasoningContent : '';
-    let toolCalls = [];
-    const candidateParts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
-
-    for (const part of candidateParts) {
-      if (part.text) {
-        if (part.thought === true) {
-          reasoningContent += part.text;
-        } else {
-          content += part.text;
-        }
-      } else if (part.functionCall) {
-        const callName = normalizeToolName(part.functionCall.name || '');
-        const serializedArgs = serializeAndDecodeArguments(part.functionCall.args || {}, callName, freeFormPaths);
-        toolCalls.push({
-          id: sanitizeProviderToolId(part.functionCall.id, 'call_gemini', toolCalls.length),
-          type: 'function',
-          function: {
-            name: callName,
-            arguments: serializedArgs
-          }
-        });
-      }
-    }
-
+    const prompt = usageMetadata?.['promptTokenCount'] || 0;
+    const candidates = usageMetadata?.['candidatesTokenCount'] || 0;
+    const thoughts = usageMetadata?.['thoughtsTokenCount'] || 0;
+    const total = usageMetadata?.['totalTokenCount'] || 0;
+    const completion = total > prompt ? total - prompt : candidates + thoughts;
     return {
-      content: content.trim(),
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      ...(reasoningContent.trim() ? { reasoningContent: reasoningContent.trim() } : {}),
-      usage: this.normalizeUsage(geminiUsageToOpenAIShape(data.usageMetadata))
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        prompt_tokens_details: { cached_tokens: usageMetadata?.['cachedContentTokenCount'] || 0 }
     };
-  }
+}
+export class GeminiProvider extends LLMProvider {
+    constructor(config = {}) {
+        super(config);
+        this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['gemini']) || '');
+        this.baseUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
+        this.visionModels = ['gemini-'];
+        this.imagePayloadFormat = 'gemini';
+        this.audioModels = ['gemini-'];
+        this.audioPayloadFormat = 'gemini';
+    }
+    async chat(messages, options = {}) {
+        messages = this.prepareMessages(messages);
+        const systemParts = [];
+        const contents = [];
+        for (const msg of messages) {
+            if (msg.role === 'system') {
+                const text = typeof msg.content === 'string'
+                    ? msg.content
+                    : JSON.stringify(msg.content);
+                if (text)
+                    systemParts.push({ text });
+                continue;
+            }
+            const role = msg.role === 'assistant' ? 'model' : 'user';
+            if (msg.tool_calls) {
+                const parts = [];
+                if (msg.content)
+                    parts.push({ text: String(msg.content) });
+                for (const tc of msg.tool_calls) {
+                    parts.push({
+                        functionCall: {
+                            name: normalizeToolName(tc.function?.name || ''),
+                            args: safeParseJsonObject(tc.function?.arguments)
+                        }
+                    });
+                }
+                contents.push({ role, parts });
+            }
+            else if (msg.role === 'tool') {
+                const responsePart = {
+                    functionResponse: {
+                        name: normalizeToolName(msg.name || ''),
+                        response: { result: msg.content ?? '' }
+                    }
+                };
+                const lastEntry = contents[contents.length - 1];
+                if (lastEntry && lastEntry.role === 'user' && Array.isArray(lastEntry.parts) && lastEntry.parts[0]?.['functionResponse']) {
+                    lastEntry.parts.push(responsePart);
+                }
+                else {
+                    contents.push({
+                        role: 'user',
+                        parts: [responsePart]
+                    });
+                }
+            }
+            else {
+                if (Array.isArray(msg.content)) {
+                    const mappedParts = msg.content.map((part) => {
+                        if (part.type === 'text')
+                            return { text: part.text };
+                        if (part.type === 'image_url') {
+                            const b64 = part.image_url.url.split('base64,')[1];
+                            const mime = part.image_url.url.split(';')[0].replace('data:', '');
+                            return { inlineData: { mimeType: mime, data: b64 } };
+                        }
+                        if (part.type === 'image' && part.source?.type === 'base64') {
+                            return { inlineData: { mimeType: part.source.media_type, data: part.source.data } };
+                        }
+                        if (part.type === 'input_audio') {
+                            return {
+                                inlineData: {
+                                    mimeType: mimeTypeForAudioFormat(part.input_audio?.format),
+                                    data: part.input_audio?.data
+                                }
+                            };
+                        }
+                        if (part.inlineData)
+                            return part;
+                        return { text: '' };
+                    });
+                    contents.push({ role, parts: mappedParts });
+                }
+                else {
+                    contents.push({ role, parts: [{ text: msg.content ?? '' }] });
+                }
+            }
+        }
+        const apiKey = requireApiKey(this.apiKey, 'Gemini');
+        const payload = {
+            contents,
+            generationConfig: {
+                temperature: resolveTemperature(options.temperature, 0.1)
+            }
+        };
+        if (systemParts.length > 0) {
+            payload['systemInstruction'] = { parts: systemParts };
+        }
+        let freeFormPaths = new Map();
+        if (options.tools && options.tools.length > 0) {
+            const scanReport = scanAndAdaptToolsForProvider(options.tools, 'gemini');
+            payload['tools'] = [{
+                    functionDeclarations: scanReport.adaptedTools
+                }];
+            freeFormPaths = scanReport.freeFormPaths;
+        }
+        const endpoint = this.baseUrl || `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`;
+        const requestOpts = {
+            url: endpoint,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            },
+            signal: options.signal,
+            timeoutMs: options.timeoutMs,
+            providerLabel: 'Gemini',
+            secrets: [apiKey],
+            hasApiKey: true
+        };
+        const data = wantsStreaming(options)
+            ? await streamGeminiGenerateContent({
+                ...requestOpts,
+                payload,
+                onChunk: options.onChunk,
+                onReasoningChunk: options.onReasoningChunk
+            })
+            : await safeProviderFetchJson({
+                ...requestOpts,
+                body: JSON.stringify(payload)
+            });
+        const firstCandidate = data['candidates']?.[0];
+        if (!firstCandidate) {
+            throw new Error('No candidate returned from Gemini');
+        }
+        let content = '';
+        let reasoningContent = typeof data['reasoningContent'] === 'string' ? data['reasoningContent'] : '';
+        const toolCalls = [];
+        const candidateParts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
+        for (const part of candidateParts) {
+            if (part.text) {
+                if (part.thought === true) {
+                    reasoningContent += part.text;
+                }
+                else {
+                    content += part.text;
+                }
+            }
+            else if (part.functionCall) {
+                const callName = normalizeToolName(part.functionCall.name || '');
+                const serializedArgs = serializeAndDecodeArguments(part.functionCall.args || {}, callName, freeFormPaths);
+                toolCalls.push({
+                    id: sanitizeProviderToolId(part.functionCall.id, 'call_gemini', toolCalls.length),
+                    type: 'function',
+                    function: {
+                        name: callName,
+                        arguments: serializedArgs
+                    }
+                });
+            }
+        }
+        return {
+            content: content.trim(),
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            ...(reasoningContent.trim() ? { reasoningContent: reasoningContent.trim() } : {}),
+            usage: this.normalizeUsage(geminiUsageToOpenAIShape(data['usageMetadata']))
+        };
+    }
 }
