@@ -402,6 +402,9 @@ export class AcpServer {
   }
 
   private addSession(id: string, cwd: string, title: string, modeId: string): AcpSession {
+    if (!this.sessions.has(id) && this.sessions.size >= MAX_SESSIONS) {
+      throw this.paramsError(`Maximum concurrent sessions (${MAX_SESSIONS}) exceeded`);
+    }
     const session: AcpSession = {
       id,
       memorySessionId: id,
