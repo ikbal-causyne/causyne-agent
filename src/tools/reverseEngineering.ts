@@ -280,14 +280,15 @@ function parseAsarHeader(buffer: Buffer): { headerSize: number; header: AsarDire
   }
 }
 
-function listAsarFiles(dir: AsarDirectory, prefix = ''): { path: string; size: number }[] {
+function listAsarFiles(dir: AsarDirectory, prefix = '', depth = 0): { path: string; size: number }[] {
   const list: { path: string; size: number }[] = [];
-  if (!dir || !dir.files) return list;
+  if (depth > 64 || !dir || typeof dir !== 'object' || !dir.files || typeof dir.files !== 'object') return list;
 
   for (const [name, entry] of Object.entries(dir.files)) {
+    if (!entry || typeof entry !== 'object') continue;
     const fullPath = prefix ? `${prefix}/${name}` : name;
     if ('files' in entry && entry.files) {
-      list.push(...listAsarFiles(entry, fullPath));
+      list.push(...listAsarFiles(entry, fullPath, depth + 1));
     } else if ('size' in entry && typeof entry.size === 'number') {
       list.push({ path: fullPath, size: entry.size });
     }
@@ -1249,10 +1250,16 @@ export const reverseEngineering = {
           // Fall back gracefully
         }
 
-        const fileBuf = await fsp.readFile(resolvedFile);
-        const asar = parseAsarHeader(fileBuf);
+        const unpackStat = await fsp.stat(resolvedFile);
+        const MAX_ASAR_READ_BYTES = 256 * 1024 * 1024;
+        let fileBuf: Buffer | null = null;
+        let asar: { headerSize: number; header: AsarDirectory } | null = null;
+        if (unpackStat.isFile() && unpackStat.size <= MAX_ASAR_READ_BYTES) {
+          fileBuf = await fsp.readFile(resolvedFile);
+          asar = parseAsarHeader(fileBuf);
+        }
 
-        if (asar) {
+        if (asar && fileBuf) {
           const files = listAsarFiles(asar.header);
           if (listOnly) {
             return {
@@ -1270,19 +1277,31 @@ export const reverseEngineering = {
           const baseOffset = asar.headerSize;
           let extractedCount = 0;
 
-          const extractEntry = async (entry: AsarDirectory | AsarFileEntry, currPath: string) => {
+          const extractEntry = async (entry: AsarDirectory | AsarFileEntry, currPath: string, depth = 0) => {
+            if (depth > 64) {
+              throw new Error('Refusing overly deep ASAR archive hierarchy (> 64 levels)');
+            }
+            if (!entry || typeof entry !== 'object') return;
             const resolvedCurr = path.resolve(currPath);
             const rel = path.relative(destRoot, resolvedCurr);
             if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
               throw new Error(`Refusing ASAR path traversal outside destination: ${currPath}`);
             }
-            if ('files' in entry && entry.files) {
+            try {
+              const existing = await fsp.lstat(resolvedCurr);
+              if (existing.isSymbolicLink()) {
+                throw new Error(`Refusing to extract ASAR entry over symbolic link: ${resolvedCurr}`);
+              }
+            } catch (lstatErr: unknown) {
+              if ((lstatErr as NodeJS.ErrnoException)?.code !== 'ENOENT') throw lstatErr;
+            }
+            if ('files' in entry && entry.files && typeof entry.files === 'object') {
               await fsp.mkdir(resolvedCurr, { recursive: true });
               for (const [name, child] of Object.entries(entry.files)) {
                 if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
                   throw new Error(`Refusing unsafe ASAR entry name: ${name}`);
                 }
-                await extractEntry(child, path.join(resolvedCurr, name));
+                await extractEntry(child, path.join(resolvedCurr, name), depth + 1);
               }
             } else if ('size' in entry && typeof entry.offset !== 'undefined') {
               const offsetVal = Number.parseInt(String(entry.offset), 10);
@@ -1299,7 +1318,7 @@ export const reverseEngineering = {
             }
           };
 
-          await extractEntry(asar.header, destRoot);
+          await extractEntry(asar.header, destRoot, 0);
           return {
             success: true,
             action: 'unpack',
