@@ -676,8 +676,18 @@ export class AcpServer {
           toolCall,
           options
         }).then((response) => {
-          const selected = response?.outcome.outcome === 'selected' ? response.outcome.optionId : '';
-          if (selected === 'allow_always') session.approvalScope.grantAlways(tool);
+          if (session.cancelled || !this.sessions.has(session.id)) {
+            session.loop?.handleApprovalResponse(toolCallId, false);
+            return;
+          }
+          const outcome = response && typeof response.outcome === 'object' && response.outcome !== null
+            ? response.outcome
+            : null;
+          const selected = outcome && outcome.outcome === 'selected' && typeof outcome.optionId === 'string'
+            ? outcome.optionId
+            : '';
+          const canonicalTool = tool.replace(/\./g, '_');
+          if (selected === 'allow_always') session.approvalScope.grantAlways(canonicalTool);
           const approved = selected === 'allow_once' || selected === 'allow_always';
           session.loop?.handleApprovalResponse(toolCallId, approved);
         }).catch(() => {
