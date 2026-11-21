@@ -101,6 +101,8 @@ function redirectionTargets(maskedCommand) {
 }
 function redirectsIntoSensitiveTarget(maskedCommand) {
     for (const target of redirectionTargets(maskedCommand)) {
+        if (isSensitiveWriteTarget(target))
+            return true;
         const normalizedTarget = target.replace(/^~/, '/home/user');
         for (const pattern of SENSITIVE_WRITE_TARGETS) {
             if (pattern.test(normalizedTarget))
@@ -458,7 +460,7 @@ export class Sandbox {
                 return 'extreme';
         }
         const DANGEROUS_PREFIXES = [
-            'rm ', 'sudo ', 'su ', 'chmod ', 'chown ',
+            'rm ', 'sudo ', 'su ', 'doas ', 'pkexec ', 'chmod ', 'chown ',
             'apt ', 'apt-get ', 'brew ', 'yum ', 'dnf ',
             'git reset', 'git push --force', 'git push -f', 'git rebase',
             'kill ', 'pkill ', 'killall ',
