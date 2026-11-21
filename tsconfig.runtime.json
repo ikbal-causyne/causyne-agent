@@ -375,7 +375,8 @@
     "src/tools/godotAutomator.ts",
     "src/tools/blenderAutomator.ts",
     "src/tools/gameWebRuntimeInspector.ts",
-    "src/tools/gameCanvasAudit.ts"
+    "src/tools/gameCanvasAudit.ts",
+    "src/tools/gameVfxEmitterGen.ts"
   ],
   "exclude": [
     "node_modules",
