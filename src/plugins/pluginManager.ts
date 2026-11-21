@@ -795,6 +795,7 @@ export function resolvePluginTool(name: string): {
   schema: { name: string; description: string; parameters: Record<string, unknown> };
   execute: (args: unknown, context?: any) => Promise<any>;
 } | null {
+  if (typeof name !== 'string' || !name || name.length > 160 || /[\r\n\0]/.test(name)) return null;
   const tool = enabledTools().find((candidate) => candidate.name === name);
   if (!tool) return null;
   return {

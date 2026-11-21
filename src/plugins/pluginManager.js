@@ -749,6 +749,8 @@ async function runPluginTool(tool, args, context) {
     });
 }
 export function resolvePluginTool(name) {
+    if (typeof name !== 'string' || !name || name.length > 160 || /[\r\n\0]/.test(name))
+        return null;
     const tool = enabledTools().find((candidate) => candidate.name === name);
     if (!tool)
         return null;
