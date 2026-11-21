@@ -432,6 +432,16 @@ export const openSourceToolProvisioner = {
                     instruction: `Ask user for consent via request_decision or run 'open_source_tool_provisioner' with confirm: true after obtaining agreement.`
                 };
             }
+            // Refuse fabricated installation success for non-pip binary/git tools whose installer is not automated here.
+            if (selectedTool.installMethod !== 'pip' || !selectedTool.pipPackages || selectedTool.pipPackages.length === 0) {
+                return {
+                    success: false,
+                    installed: false,
+                    toolId: selectedTool.id,
+                    repoUrl: selectedTool.url,
+                    error: `Automated installation for ${selectedTool.installMethod} tool "${selectedTool.id}" is not implemented; install manually from ${selectedTool.url}.`
+                };
+            }
             // User has explicitly confirmed! Proceed with sovereign isolated setup.
             const aiToolsDir = path.join(workspaceDir, '.ai_tools');
             const venvDir = path.join(aiToolsDir, 'venv');
