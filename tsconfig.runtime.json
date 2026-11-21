@@ -70,6 +70,7 @@
     "src/session/cachePressure.ts",
     "src/auth/openrouterAuth.ts",
     "src/providers/base.ts",
+    "src/providers/openai-compatible.ts",
     "src/providers/openrouter.ts",
     "src/providers/byokHttp.ts",
     "src/providers/byokStream.ts",
