@@ -6,7 +6,7 @@ import {
   failSubagentJournal,
   startSubagentJournal
 } from '../subagentJournal.js';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText, type ToolWorkspaceContext } from './toolPathSafety.js';
 
 interface SubagentRecord {
   subagentId: string;
@@ -42,6 +42,8 @@ const activeSubagents = new Map<string, SubagentRecord>();
 const MAX_CONCURRENT_SUBAGENTS = 4;
 
 const SUBAGENT_TOOL_NAME = 'agent.subagent_orchestrate';
+const NORMALIZED_SUBAGENT_TOOL_NAME = 'agent_subagent_orchestrate';
+const MAX_RETAINED_SUBAGENTS = 32;
 const DEFAULT_TOOL_SCOPE = ['fs_read', 'fs_find', 'fs_search', 'fs_list', 'code_search_ast'];
 
 function childTransport(parentLoop: any, subagentId: string, name: string) {
@@ -70,7 +72,7 @@ async function executeSubagent(record: SubagentRecord, parentLoop: any) {
   child.maxSteps = Math.min(child.maxSteps || 25, record.maxSteps);
   child.maxCircuitBreaker = child.maxSteps;
   child.messages = [];
-  child.toolScope = new Set(record.toolScope.filter((n) => n !== SUBAGENT_TOOL_NAME));
+  child.toolScope = new Set(record.toolScope.filter((n) => n !== SUBAGENT_TOOL_NAME && n !== NORMALIZED_SUBAGENT_TOOL_NAME));
   child.currentTaskPrompt = record.prompt;
   child.subagentDepth = record.depth;
 
