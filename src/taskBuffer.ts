@@ -84,8 +84,11 @@ export class TaskBuffer {
 
   async clearBuffer(taskId: string): Promise<void> {
     const file = this.getBufferPath(taskId);
-    if (fs.existsSync(file)) {
-      fs.unlinkSync(file);
+    try {
+      const stat = fs.lstatSync(file);
+      if (stat.isFile()) fs.unlinkSync(file);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
     }
   }
 }
