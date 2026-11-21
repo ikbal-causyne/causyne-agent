@@ -497,6 +497,14 @@ export async function streamAnthropicMessages(
   });
 
   if (opened.mode === 'json') {
+    if (opened.data.type === 'error' || isRecord(opened.data.error)) {
+      const errObj = isRecord(opened.data.error) ? opened.data.error : opened.data;
+      const msg = redactProviderSecrets(
+        typeof errObj.message === 'string' ? errObj.message : JSON.stringify(errObj),
+        options.secrets
+      );
+      throw new Error(`${options.providerLabel} stream error: ${msg}`);
+    }
     const blocks = Array.isArray(opened.data.content) ? opened.data.content : [];
     for (const block of blocks) {
       if (!isRecord(block)) continue;
