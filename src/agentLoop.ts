@@ -1385,8 +1385,15 @@ export class AgentLoop {
       .filter((item: unknown): item is Record<string, any> => Boolean(item) && typeof item === 'object')
       .map((item: Record<string, any>) => ({ ...item }));
     const prevText = this._implementationPlan.map((item: any) => item.step).join('\n');
-    const prevKey = JSON.stringify(this._implementationPlan.map((item: any) => ({ id: item.id, step: item.step, status: item.status })));
-    const nextKey = JSON.stringify(nextPlan.map((item: any) => ({ id: item.id, step: item.step, status: item.status })));
+    const planKey = (entries: any[]): string => {
+      try {
+        return JSON.stringify(entries.map((item: any) => ({ id: item?.id, step: item?.step, status: item?.status })));
+      } catch {
+        return String(entries.length);
+      }
+    };
+    const prevKey = planKey(this._implementationPlan);
+    const nextKey = planKey(nextPlan);
     this._implementationPlan = nextPlan;
     if (options.seeded !== undefined) {
       this._implementationPlanSeeded = Boolean(options.seeded);
