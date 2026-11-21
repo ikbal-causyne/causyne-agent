@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
 import {
   formatMemoryContext,
   normalizeMemoryData,
@@ -12,6 +13,12 @@ import {
 } from './memory/scopedFacts.js';
 
 export type MemoryStoreData = PersistentMemoryData;
+
+function logMemoryError(action: string, error: unknown): void {
+  if (process.env.CAUSYNE_DEBUG !== '1') return;
+  const msg = redactProviderSecrets(error instanceof Error ? error.message : String(error)).replace(/[\r\n]+/g, ' ').slice(0, 512);
+  process.stderr.write(`[causyne] Failed to ${action} memory.json: ${msg}\n`);
+}
 
 function memoryFilePath(): string {
   return path.join(causyneHome(), 'memory.json');
@@ -64,7 +71,7 @@ export function getMemory(): MemoryStoreData {
     const data = fs.readFileSync(filePath, 'utf-8');
     return normalizeMemoryData(JSON.parse(data));
   } catch (e: unknown) {
-    console.error('Failed to read memory.json:', e instanceof Error ? e.message : String(e));
+    logMemoryError('read', e);
     return normalizeMemoryData({ facts: [] });
   }
 }
@@ -74,7 +81,7 @@ export function saveMemory(data: MemoryStoreData): void {
     const filePath = initMemory();
     writeMemoryAtomic(filePath, data);
   } catch (e: unknown) {
-    console.error('Failed to write memory.json:', e instanceof Error ? e.message : String(e));
+    logMemoryError('write', e);
   }
 }
 
@@ -93,7 +100,7 @@ export function clearMemory(): void {
     const filePath = initMemory();
     writeMemoryAtomic(filePath, { facts: [], entries: [] });
   } catch (e: unknown) {
-    console.error('Failed to clear memory:', e instanceof Error ? e.message : String(e));
+    logMemoryError('clear', e);
   }
 }
 
