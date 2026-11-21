@@ -67,8 +67,17 @@ export const gitExec = {
             required: ['command']
         }
     },
-    async execute(args = {}, _context) {
-        const cwd = String(args?.cwd || process.cwd()).replace(/^~\//, os.homedir() + '/');
+    async execute(args = {}, context) {
+        const scope = resolveToolWorkspaceRoots(context);
+        let cwd;
+        try {
+            cwd = args?.cwd !== undefined
+                ? resolveScopedPath(args.cwd, context)
+                : (scope.primaryRoot || process.cwd());
+        }
+        catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+        }
         let argv;
         try {
             argv = parseGitArguments(args?.command);
@@ -96,9 +105,11 @@ export const gitExec = {
         if (subcommand === 'rebase' && argv.some((arg) => arg === '-i' || arg === '--interactive')) {
             return { success: false, error: 'Interactive Git rebase is not supported. Use precise non-interactive commands.' };
         }
-        const forcingPush = subcommand === 'push' && argv.slice(1).some((arg) => arg === '-f' || arg === '--force' || arg.startsWith('--force-with-lease'));
-        const forcingBranch = subcommand === 'branch' && argv.includes('-D');
-        if ((forcingPush || forcingBranch) && currentToolAutonomyMode() === undefined) {
+        const forcingPush = subcommand === 'push' && argv.slice(1).some((arg) => arg === '-f' || arg === '--force' || arg.startsWith('--force-with-lease') || arg.startsWith('+'));
+        const forcingBranch = subcommand === 'branch' && (argv.includes('-D') || (argv.includes('--delete') && (argv.includes('--force') || argv.includes('-f'))));
+        const hardReset = subcommand === 'reset' && argv.includes('--hard');
+        const forceClean = subcommand === 'clean' && argv.slice(1).some((arg) => arg === '-f' || arg === '--force' || /^-[a-zA-Z]*f/.test(arg));
+        if ((forcingPush || forcingBranch || hardReset || forceClean) && currentToolAutonomyMode() === undefined) {
             return { success: false, error: 'Destructive Git action requires the agent session approval and sandbox policy.' };
         }
         return new Promise((resolve) => {
