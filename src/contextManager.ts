@@ -522,19 +522,26 @@ export function microcompactText(text: string): string {
 export function applyProgressiveCompaction(
   messages: ContextMessage[],
   maxCharPool: number,
-  options: ProgressiveCompactionOptions = {}
+  options?: ProgressiveCompactionOptions | null
 ): {
   totalReclaimed: number;
   stagesFired: string[];
   finalChars: number;
   finalRatio: number;
 } {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { totalReclaimed: 0, stagesFired: [], finalChars: 0, finalRatio: 0 };
+  }
+  const safeOpts: ProgressiveCompactionOptions = options && typeof options === 'object' ? options : {};
+  const safePool = typeof maxCharPool === 'number' && Number.isFinite(maxCharPool) && maxCharPool > 0
+    ? maxCharPool
+    : 0;
   let totalReclaimed = 0;
   const stagesFired: string[] = [];
 
-  if (options.enableEphemeralDecay) {
-    const ephemeralKeepRecent = options.ephemeralKeepRecent ?? 3;
-    const ephemeralMinChars = options.ephemeralMinChars ?? 1200;
+  if (safeOpts.enableEphemeralDecay) {
+    const ephemeralKeepRecent = safeOpts.ephemeralKeepRecent ?? 3;
+    const ephemeralMinChars = safeOpts.ephemeralMinChars ?? 1200;
     const ephemeralReclaimed = decayToolResults(messages, {
       keepRecent: ephemeralKeepRecent,
       minChars: ephemeralMinChars
@@ -545,37 +552,37 @@ export function applyProgressiveCompaction(
     }
   }
 
-  const snipRes = snipOversizedToolOutputs(messages, options.snipOptions);
+  const snipRes = snipOversizedToolOutputs(messages, safeOpts.snipOptions);
   if (snipRes.snippedCount > 0) {
     totalReclaimed += snipRes.reclaimedChars;
     stagesFired.push(`snip:${snipRes.snippedCount}_tools`);
   }
 
   let currentChars = measureMessages(messages);
-  const ratio = maxCharPool > 0 ? currentChars / maxCharPool : 0;
+  const ratio = safePool > 0 ? currentChars / safePool : 0;
 
   if (ratio >= STAGE1_BUDGET_THRESHOLD) {
     stagesFired.push(`budget_reduction:${(ratio * 100).toFixed(0)}%`);
     for (const msg of messages) {
-      if (msg.role === 'tool' && typeof msg.content === 'string') {
+      if (msg && msg.role === 'tool' && typeof msg.content === 'string') {
         const origLen = msg.content.length;
         msg.content = microcompactText(msg.content);
-        totalReclaimed += (origLen - msg.content.length);
+        totalReclaimed += Math.max(0, origLen - msg.content.length);
       }
     }
     const decayReclaimed = decayToolResults(messages, {
-      keepRecent: options.budgetKeepRecent ?? 4,
+      keepRecent: safeOpts.budgetKeepRecent ?? 4,
       minChars: 300
     });
     totalReclaimed += decayReclaimed;
   }
 
   currentChars = measureMessages(messages);
-  const updatedRatio = maxCharPool > 0 ? currentChars / maxCharPool : 0;
+  const updatedRatio = safePool > 0 ? currentChars / safePool : 0;
   if (updatedRatio >= STAGE4_COLLAPSE_THRESHOLD) {
     stagesFired.push(`context_collapse:${(updatedRatio * 100).toFixed(0)}%`);
     const collapseReclaimed = decayToolResults(messages, {
-      keepRecent: options.collapseKeepRecent ?? 2,
+      keepRecent: safeOpts.collapseKeepRecent ?? 2,
       minChars: 200,
       keepMediaRecent: 0
     });
@@ -587,6 +594,6 @@ export function applyProgressiveCompaction(
     totalReclaimed,
     stagesFired,
     finalChars,
-    finalRatio: maxCharPool > 0 ? finalChars / maxCharPool : 0
+    finalRatio: safePool > 0 ? finalChars / safePool : 0
   };
 }
