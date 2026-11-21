@@ -8,7 +8,14 @@ const EXPORT_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const FORBIDDEN_EXPORTS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function writeResult(payload: unknown): void {
-  process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(payload)}\n`);
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(payload) ?? '{"success":false,"error":"Plugin returned undefined"}';
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    serialized = JSON.stringify({ success: false, error: `Plugin result could not be serialized: ${msg}` });
+  }
+  process.stdout.write(`${RESULT_PREFIX}${serialized}\n`);
 }
 
 async function readInput(): Promise<Record<string, unknown>> {
