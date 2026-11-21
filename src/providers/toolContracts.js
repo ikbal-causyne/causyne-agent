@@ -3,20 +3,28 @@ import { normalizeToolName, normalizeUniversalSchema } from '../tools/toolScanne
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
 /** Preserve constraints and nested schemas while compiling union/combinator edge cases safely. */
 export function normalizeToolContracts(tools) {
-    return tools.map(raw => {
+    if (!Array.isArray(tools))
+        return [];
+    const byName = new Map();
+    for (const raw of tools) {
         const tool = object(raw);
         const fn = object(tool.function);
-        const rawName = String(tool.name || fn.name || '');
+        const rawName = typeof tool.name === 'string' ? tool.name : (typeof fn.name === 'string' ? fn.name : '');
+        const name = rawName.trim() ? normalizeToolName(rawName.trim()) : '';
+        if (!name)
+            continue;
+        const rawDesc = typeof tool.description === 'string' ? tool.description : (typeof fn.description === 'string' ? fn.description : '');
         const rawParams = object(tool.parameters || tool.input_schema || fn.parameters);
         const cleanParams = Object.keys(rawParams).length > 0
             ? object(normalizeUniversalSchema(rawParams, [], [], 'strict_json'))
             : rawParams;
-        return {
-            name: rawName ? normalizeToolName(rawName) : '',
-            description: String(tool.description || fn.description || ''),
+        byName.set(name, {
+            name,
+            description: rawDesc,
             parameters: cleanParams
-        };
-    }).filter(tool => tool.name).sort((a, b) => a.name.localeCompare(b.name));
+        });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 export function contractFingerprint(value) {
     const stable = (item) => Array.isArray(item) ? item.map(stable)
