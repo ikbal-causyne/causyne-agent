@@ -330,7 +330,8 @@
     "src/devMode.ts",
     "src/capabilities.ts",
     "src/modelIds.ts",
-    "src/modelCatalogue.ts"
+    "src/modelCatalogue.ts",
+    "src/designPalettes.ts"
   ],
   "exclude": [
     "node_modules",
