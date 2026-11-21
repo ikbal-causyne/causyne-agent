@@ -146,7 +146,7 @@ export class OpenRouterProvider extends LLMProvider {
                 .split(';')[0]?.trim().toLowerCase() ?? '';
             const isJsonReply = contentType === 'application/json' || contentType.endsWith('+json');
             if (shouldStream && response.body && !isJsonReply) {
-                return await this.handleStreamingResponse(response, options, freeFormPaths);
+                return await this.handleStreamingResponse(response, options, freeFormPaths, apiKey);
             }
             else {
                 const res = await this.handleJsonResponse(response, freeFormPaths, apiKey);
@@ -229,16 +229,18 @@ export class OpenRouterProvider extends LLMProvider {
     /**
      * Process a streaming SSE response from OpenRouter.
      */
-    async handleStreamingResponse(response, options, freeFormPaths) {
+    async handleStreamingResponse(response, options, freeFormPaths, apiKey) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let content = '';
         let reasoningContent = '';
         let buffer = '';
+        let totalBytes = 0;
         const toolCallsMap = new Map();
         let rawUsage = null;
         const processLine = (line) => {
-            const trimmed = line.trim();
+            const stripped = line.charCodeAt(0) === 0xfeff ? line.slice(1) : line;
+            const trimmed = stripped.trim();
             if (!trimmed || trimmed.startsWith(':'))
                 return; // Skip comments/keepalive
             if (trimmed === 'data: [DONE]' || trimmed === 'data:[DONE]')
@@ -251,6 +253,14 @@ export class OpenRouterProvider extends LLMProvider {
                 }
                 catch {
                     return;
+                }
+                if (!parsed || typeof parsed !== 'object')
+                    return;
+                if (parsed.error && typeof parsed.error === 'object') {
+                    const rawErr = typeof parsed.error.message === 'string' ? parsed.error.message : JSON.stringify(parsed.error);
+                    const cleanErr = redactProviderSecrets(rawErr, [apiKey]);
+                    const code = typeof parsed.error.code === 'number' ? parsed.error.code : 502;
+                    this.handleHttpErrors(code, cleanErr);
                 }
                 if (parsed.usage) {
                     rawUsage = parsed.usage;
@@ -306,6 +316,13 @@ export class OpenRouterProvider extends LLMProvider {
                 const { done, value } = await reader.read();
                 if (done)
                     break;
+                if (!value)
+                    continue;
+                totalBytes += value.byteLength;
+                if (totalBytes > MAX_PROVIDER_JSON_BYTES) {
+                    await reader.cancel().catch(() => { });
+                    throw new Error(`OpenRouter stream exceeded maximum allowed size (${MAX_PROVIDER_JSON_BYTES} bytes).`);
+                }
                 buffer += decoder.decode(value, { stream: true });
                 if (Buffer.byteLength(buffer, 'utf8') > MAX_SSE_BUFFER_BYTES) {
                     await reader.cancel().catch(() => { });
