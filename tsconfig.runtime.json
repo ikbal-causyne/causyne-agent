@@ -353,7 +353,8 @@
     "src/tools/clipboard.ts",
     "src/tools/processList.ts",
     "src/tools/checkSystemSpecs.ts",
-    "src/tools/dynamicLoader.ts"
+    "src/tools/dynamicLoader.ts",
+    "src/tools/fsDelete.ts"
   ],
   "exclude": [
     "node_modules",
