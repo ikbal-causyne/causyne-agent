@@ -1904,6 +1904,10 @@ export class AgentLoop {
                         }
                     }
                     else if (att.type === 'document') {
+                        if (typeof att.name !== 'string' || typeof att.base64 !== 'string' || !att.base64.trim()) {
+                            this.notice('skipped malformed document attachment', 'warn');
+                            continue;
+                        }
                         const fs = await import('fs');
                         const path = await import('path');
                         // Ensure unique name to prevent overwriting
