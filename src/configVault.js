@@ -123,6 +123,10 @@ export function getOrCreateVaultKey(keyFilePath, keychainOptions) {
         }
         // If a file key already exists, migrate it cleanly into the OS Keychain
         if (fs.existsSync(resolved)) {
+            const stat = fs.lstatSync(resolved);
+            if (stat.isSymbolicLink() || !stat.isFile()) {
+                throw new Error('Refusing to read symlink or non-regular vault key file.');
+            }
             const existingFileKey = fs.readFileSync(resolved);
             if (existingFileKey.length === VAULT_KEY_BYTES) {
                 const stored = saveVaultKeyToKeychain(vaultDir, existingFileKey, keychainOptions);
@@ -143,6 +147,10 @@ export function getOrCreateVaultKey(keyFilePath, keychainOptions) {
         // Non-strict (`on`/`auto`) degrades cleanly to atomic 0600 file storage below
     }
     if (fs.existsSync(resolved)) {
+        const stat = fs.lstatSync(resolved);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+            throw new Error('Refusing to read symlink or non-regular vault key file.');
+        }
         if (process.platform !== 'win32') {
             try {
                 fs.chmodSync(resolved, 0o600);
@@ -174,6 +182,18 @@ export function getOrCreateVaultKey(keyFilePath, keychainOptions) {
     catch (err) {
         const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
         if (code === 'EEXIST') {
+            const stat = fs.lstatSync(resolved);
+            if (stat.isSymbolicLink() || !stat.isFile()) {
+                throw new Error('Refusing to read symlink or non-regular vault key file.');
+            }
+            if (process.platform !== 'win32') {
+                try {
+                    fs.chmodSync(resolved, 0o600);
+                }
+                catch {
+                    // Ignore chmod errors
+                }
+            }
             const raced = fs.readFileSync(resolved);
             if (raced.length === VAULT_KEY_BYTES)
                 return raced;
