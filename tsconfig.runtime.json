@@ -373,7 +373,8 @@
     "src/tools/palmierAutomator.ts",
     "src/tools/manageLocalAiDependencies.ts",
     "src/tools/godotAutomator.ts",
-    "src/tools/blenderAutomator.ts"
+    "src/tools/blenderAutomator.ts",
+    "src/tools/gameWebRuntimeInspector.ts"
   ],
   "exclude": [
     "node_modules",
