@@ -23,7 +23,12 @@ const MAX_SINGLE_MESSAGE_CHARS = 40000;
 function contentLength(content: unknown): number {
   if (typeof content === 'string') return content.length;
   if (content == null) return 0;
-  return JSON.stringify(content).length;
+  try {
+    const serialized = JSON.stringify(content);
+    return typeof serialized === 'string' ? serialized.length : 0;
+  } catch {
+    return String(content).length;
+  }
 }
 
 export class MemoryManager {
