@@ -160,10 +160,21 @@ export function resolveCharPool(
   return CHAR_POOLS.default ?? 120000;
 }
 
+function safeSerializeContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (content == null) return '';
+  try {
+    const serialized = JSON.stringify(content);
+    return typeof serialized === 'string' ? serialized : String(content);
+  } catch {
+    return String(content);
+  }
+}
+
 function contentLength(content: unknown): number {
   if (typeof content === 'string') return content.length;
   if (content == null) return 0;
-  return JSON.stringify(content).length;
+  return safeSerializeContent(content).length;
 }
 
 export function measureMessages(messages: readonly ContextMessage[]): number {

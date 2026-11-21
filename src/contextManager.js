@@ -109,12 +109,25 @@ export function resolveCharPool(tier, override, context = {}) {
         return CHAR_POOLS.premium ?? 180000;
     return CHAR_POOLS.default ?? 120000;
 }
+function safeSerializeContent(content) {
+    if (typeof content === 'string')
+        return content;
+    if (content == null)
+        return '';
+    try {
+        const serialized = JSON.stringify(content);
+        return typeof serialized === 'string' ? serialized : String(content);
+    }
+    catch {
+        return String(content);
+    }
+}
 function contentLength(content) {
     if (typeof content === 'string')
         return content.length;
     if (content == null)
         return 0;
-    return JSON.stringify(content).length;
+    return safeSerializeContent(content).length;
 }
 export function measureMessages(messages) {
     let total = 0;
