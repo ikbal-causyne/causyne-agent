@@ -153,6 +153,12 @@ export function validateProviderEndpointUrl(
   if (parsed.username || parsed.password) {
     throw new Error(`${label} endpoint URL must not embed credentials.`);
   }
+  for (const param of parsed.searchParams.keys()) {
+    const lowered = param.toLowerCase();
+    if (lowered === 'key' || lowered === 'api_key' || lowered === 'apikey' || lowered === 'access_token') {
+      throw new Error(`${label} endpoint URL must not embed API keys in query parameters.`);
+    }
+  }
 
   if (
     parsed.protocol === 'http:'
