@@ -53,7 +53,14 @@ export class TaskBuffer {
     }
     async getBuffer(taskId) {
         const file = this.getBufferPath(taskId);
-        if (!fs.existsSync(file))
+        let stat;
+        try {
+            stat = fs.lstatSync(file);
+        }
+        catch {
+            return [];
+        }
+        if (!stat.isFile())
             return [];
         const content = fs.readFileSync(file, 'utf8');
         return content.split('\n')
