@@ -96,7 +96,7 @@ export function exploreStateMachine<TState = any, TAction = any>(
       statesExplored: nodesVisited,
       transitionsExplored: transitions,
       exploredDepth: node.trace.length,
-      trace: node.trace,
+      trace: node.trace.slice(),
       state: node.state,
       reason: typeof result === 'string' ? result : 'Invariant returned false'
     };
