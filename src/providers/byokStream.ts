@@ -199,14 +199,18 @@ async function consumeSseStream(
 
   try {
     while (true) {
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => {});
+        throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+      }
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
 
       totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
+      if (totalBytes > safeMaxBytes) {
         await reader.cancel().catch(() => {});
-        throw new Error(`${providerLabel} stream exceeded maximum allowed size (${maxBytes} bytes).`);
+        throw new Error(`${providerLabel} stream exceeded maximum allowed size (${safeMaxBytes} bytes).`);
       }
 
       buffer += decoder.decode(value, { stream: true });
