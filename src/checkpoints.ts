@@ -496,7 +496,7 @@ const PROJECT_MARKERS = [
 ];
 
 function isSnapshotableRoot(dir: unknown): boolean {
-  if (typeof dir !== 'string' || !dir) return false;
+  if (typeof dir !== 'string' || !dir.trim() || dir.includes('\0')) return false;
   let resolved: string;
   try {
     resolved = path.resolve(dir);
@@ -510,8 +510,9 @@ function isSnapshotableRoot(dir: unknown): boolean {
   if (resolved === parsed.root) return false;
   if (home && path.resolve(home) === resolved) return false;
 
-  const forbidden = ['/Users', '/home', '/Users/Shared', '/var', '/tmp', '/etc', '/opt', '/usr'];
+  const forbidden = ['/Users', '/home', '/Users/Shared', '/var', '/tmp', '/private/tmp', '/etc', '/opt', '/usr'];
   if (forbidden.includes(resolved)) return false;
+  if (isBlockedWorkspaceRoot(resolved)) return false;
 
   return true;
 }
