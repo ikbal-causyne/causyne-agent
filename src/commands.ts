@@ -1538,7 +1538,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
         } else if (targetProvider !== config.provider) {
           delete testConfig.model;
         }
-        if (config.providerKeys && config.providerKeys[targetProvider]) {
+        if (config.providerKeys && Object.hasOwn(config.providerKeys, targetProvider) && config.providerKeys[targetProvider]) {
           testConfig.apiKey = config.providerKeys[targetProvider];
         }
 
@@ -1564,7 +1564,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
         } catch (err) {
           return fail(
             `✕ API Call Test Failed for "${targetProvider}" / "${targetModel || config.model || 'default'}":\n\n`
-            + `  Error: ${errMsg(err)}\n\n`
+            + `  Error: ${safeDisplay(redactProviderSecrets(errMsg(err)))}\n\n`
             + `Checks:\n`
             + `  - Verify the API key in /setup.\n`
             + `  - Check if the model is active with "/model list ${targetProvider}".\n`
@@ -1574,16 +1574,22 @@ export const COMMANDS: SlashCommandDefinition[] = [
       }
 
       const rawRequested = argv.join(' ').trim().replace(/^\/model\s+/i, '');
+      if (!rawRequested || /[\r\n\0]/.test(rawRequested)) {
+        return fail('Invalid provider or model identifier.');
+      }
 
       // Helper to cleanly activate a provider + model, persist config, update live loop & prompt
       const activateModel = (nextProvider: string, nextModel: string, feedbackMessage?: string): CommandResult => {
+        if (/[\r\n\0]/.test(nextProvider) || /[\r\n\0]/.test(nextModel)) {
+          return fail('Invalid provider or model identifier.');
+        }
         const isProviderChange = nextProvider !== config.provider;
         if (isProviderChange) {
           if (nextProvider === 'antigravity' || nextProvider === 'pi' || nextProvider.startsWith('acp/')) {
             config.apiKey = '';
             delete config.baseUrl;
           } else {
-            config.apiKey = (config.providerKeys && config.providerKeys[nextProvider]) || '';
+            config.apiKey = (config.providerKeys && Object.hasOwn(config.providerKeys, nextProvider) && config.providerKeys[nextProvider]) || '';
             delete config.baseUrl;
           }
         }
