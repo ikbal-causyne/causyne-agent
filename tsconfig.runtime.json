@@ -345,7 +345,8 @@
     "src/verification/featureMap.ts",
     "src/verification/skillCatalog.ts",
     "src/verification/boundedExplorer.ts",
-    "src/verification/propertyProbe.ts"
+    "src/verification/propertyProbe.ts",
+    "src/verification/statechart.ts"
   ],
   "exclude": [
     "node_modules",
