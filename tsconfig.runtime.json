@@ -363,7 +363,8 @@
     "src/tools/gitExec.ts",
     "src/tools/codeSearchAst.ts",
     "src/tools/pdfReader.ts",
-    "src/tools/persistentShell.ts"
+    "src/tools/persistentShell.ts",
+    "src/tools/axSnapshot.ts"
   ],
   "exclude": [
     "node_modules",
