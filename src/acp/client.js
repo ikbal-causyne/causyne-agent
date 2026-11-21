@@ -14,6 +14,7 @@ function createAbortError(message = 'ACP operation aborted by user') {
 const MAX_STDERR_CHARS = 4000;
 const MAX_UPDATE_CHARS = 200_000;
 const MAX_HOST_FILE_BYTES = 4 * 1024 * 1024;
+const MAX_JSONRPC_BUFFER_BYTES = 16 * 1024 * 1024;
 export class AcpClient {
     options;
     child = null;
@@ -110,6 +111,11 @@ export class AcpClient {
             if (this.closed)
                 return;
             this.buffer += chunk;
+            if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
+                this.buffer = '';
+                this.failAll(new Error('agent output frame exceeded maximum size'));
+                return;
+            }
             this.notifyPendingActivity();
             void this.drain();
         });
