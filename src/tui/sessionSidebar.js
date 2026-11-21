@@ -1,6 +1,5 @@
 import { padEnd, safeDisplay, stripAnsi, truncate } from './text.js';
 // The terminal theme is still a standalone JavaScript module in the TS migration.
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { bold, dim, fill, paint } from './theme.js';
 export const SIDEBAR_WIDTH = 42;
 export const COMPACT_SIDEBAR_WIDTH = 28;

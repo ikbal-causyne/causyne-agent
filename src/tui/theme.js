@@ -11,42 +11,45 @@
 // resolves to here.
 //
 // Pure Node: no dependency, no shell. Readable by construction.
-
 import os from 'os';
 import { getEngineFrames, getEngineFrame } from './engineSpinner.js';
-
 // ---------------------------------------------------------------------------
 // Capability detection
 // ---------------------------------------------------------------------------
-
 function detectColorSupport() {
-  // https://no-color.org — an explicit user opt-out beats every heuristic.
-  if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== '') return 0;
-  if (process.env.CAUSYNE_NO_COLOR === '1') return 0;
-
-  const forced = process.env.FORCE_COLOR;
-  if (forced === '0') return 0;
-  if (forced === '1') return 16;
-  if (forced === '2') return 256;
-  if (forced === '3') return 16777216;
-
-  // Not a terminal: piped to a file, a pager or a CI log. Escapes there are
-  // noise at best and corrupt parsing at worst.
-  if (!process.stdout.isTTY) return 0;
-  if (process.env.TERM === 'dumb') return 0;
-
-  const colorterm = String(process.env.COLORTERM || '').toLowerCase();
-  if (colorterm === 'truecolor' || colorterm === '24bit') return 16777216;
-
-  const term = String(process.env.TERM || '');
-  if (/-256(color)?$/i.test(term)) return 256;
-  if (/^(screen|xterm|vt100|vt220|rxvt|color|ansi|cygwin|linux)/i.test(term)) return 16;
-
-  // Windows Terminal and modern conhost handle truecolor; older ones do not.
-  if (os.platform() === 'win32') return 256;
-  return 16;
+    // https://no-color.org — an explicit user opt-out beats every heuristic.
+    if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== '')
+        return 0;
+    if (process.env.CAUSYNE_NO_COLOR === '1')
+        return 0;
+    const forced = process.env.FORCE_COLOR;
+    if (forced === '0')
+        return 0;
+    if (forced === '1')
+        return 16;
+    if (forced === '2')
+        return 256;
+    if (forced === '3')
+        return 16777216;
+    // Not a terminal: piped to a file, a pager or a CI log. Escapes there are
+    // noise at best and corrupt parsing at worst.
+    if (!process.stdout.isTTY)
+        return 0;
+    if (process.env.TERM === 'dumb')
+        return 0;
+    const colorterm = String(process.env.COLORTERM || '').toLowerCase();
+    if (colorterm === 'truecolor' || colorterm === '24bit')
+        return 16777216;
+    const term = String(process.env.TERM || '');
+    if (/-256(color)?$/i.test(term))
+        return 256;
+    if (/^(screen|xterm|vt100|vt220|rxvt|color|ansi|cygwin|linux)/i.test(term))
+        return 16;
+    // Windows Terminal and modern conhost handle truecolor; older ones do not.
+    if (os.platform() === 'win32')
+        return 256;
+    return 16;
 }
-
 /**
  * Is the terminal background light?
  *
@@ -56,137 +59,125 @@ function detectColorSupport() {
  * writing to stdout during startup.
  */
 function detectLightBackground() {
-  const explicit = String(process.env.CAUSYNE_THEME || '').toLowerCase();
-  if (explicit === 'light') return true;
-  if (explicit === 'dark') return false;
-
-  const colorfgbg = process.env.COLORFGBG;
-  if (colorfgbg && colorfgbg.length <= 64) {
-    const parts = colorfgbg.split(';');
-    const background = parseInt(parts[parts.length - 1], 10);
-    if (Number.isFinite(background)) {
-      // 7 and 15 are the light greys/white of the base 16; 232-255 is the
-      // greyscale ramp, where the upper half reads as a light background.
-      if (background <= 15) return background === 7 || background === 15;
-      if (background >= 232) return background >= 244;
+    const explicit = String(process.env.CAUSYNE_THEME || '').toLowerCase();
+    if (explicit === 'light')
+        return true;
+    if (explicit === 'dark')
+        return false;
+    const colorfgbg = process.env.COLORFGBG;
+    if (colorfgbg && colorfgbg.length <= 64) {
+        const parts = colorfgbg.split(';');
+        const lastPart = parts[parts.length - 1];
+        const background = lastPart !== undefined ? parseInt(lastPart, 10) : Number.NaN;
+        if (Number.isFinite(background)) {
+            // 7 and 15 are the light greys/white of the base 16; 232-255 is the
+            // greyscale ramp, where the upper half reads as a light background.
+            if (background <= 15)
+                return background === 7 || background === 15;
+            if (background >= 232)
+                return background >= 244;
+        }
     }
-  }
-  return false; // dark is the safer default: most developer terminals are dark
+    return false; // dark is the safer default: most developer terminals are dark
 }
-
 export const COLOR_DEPTH = detectColorSupport();
 export const IS_LIGHT = detectLightBackground();
 export const HAS_COLOR = COLOR_DEPTH > 0;
-
 // Unicode box drawing is not safe everywhere — Windows code pages and some CI
 // runners mangle it. One flag decides, so every renderer stays consistent.
 export const HAS_UNICODE = HAS_COLOR
-  && process.env.CAUSYNE_ASCII !== '1'
-  && (os.platform() !== 'win32' || Boolean(process.env.WT_SESSION));
-
+    && process.env.CAUSYNE_ASCII !== '1'
+    && (os.platform() !== 'win32' || Boolean(process.env.WT_SESSION));
 // ---------------------------------------------------------------------------
 // Palette
 // ---------------------------------------------------------------------------
-
 // Roles, not colours. A caller asking for `danger` should never care whether
 // that is truecolor crimson or plain ANSI red.
 const DARK_PALETTE = {
-  // Causyne brand palette from the canonical site/logo reference:
-  // signal #b6e06f, text #e9edf2, muted #8d96a4, line #272c35,
-  // panel #161920 and background #0f1115.
-  accent:  [182, 224, 111],
-  agent:   [182, 224, 111],
-  user:    [154, 199,  86],
-  success: [182, 224, 111],
-  warn:    [230, 190,  90],
-  danger:  [235, 110, 110],
-  muted:   [141, 150, 164],
-  ink:     [233, 237, 242],
-  rule:    [ 39,  44,  53],
-  // The scroll rail uses a deliberately darker brand green than the accent.
-  //
-  // The rail is orientation, not information you act on — it says where you are
-  // while you read something else, so it must be legible without competing with
-  // the transcript for attention. Dark enough to recede, while remaining part
-  // of the same graphite-and-signal-green visual system as the rest of the CLI.
-  scroll:  [ 99, 125,  63],
-  // Background roles. opencode fills its input surface with theme
-  // backgroundElement and marks it with a left border in the agent's colour
-  // (component/prompt/index.tsx: border={["left"]} + backgroundColor). These are
-  // that fill: one step off the terminal's own background, never a block of
-  // colour that fights the text sitting on it.
-  surface:  [ 22,  25,  32],
-  surfaceHi:[ 27,  31,  39]
+    // Causyne brand palette from the canonical site/logo reference:
+    // signal #b6e06f, text #e9edf2, muted #8d96a4, line #272c35,
+    // panel #161920 and background #0f1115.
+    accent: [182, 224, 111],
+    agent: [182, 224, 111],
+    user: [154, 199, 86],
+    success: [182, 224, 111],
+    warn: [230, 190, 90],
+    danger: [235, 110, 110],
+    muted: [141, 150, 164],
+    ink: [233, 237, 242],
+    rule: [39, 44, 53],
+    // The scroll rail uses a deliberately darker brand green than the accent.
+    //
+    // The rail is orientation, not information you act on — it says where you are
+    // while you read something else, so it must be legible without competing with
+    // the transcript for attention. Dark enough to recede, while remaining part
+    // of the same graphite-and-signal-green visual system as the rest of the CLI.
+    scroll: [99, 125, 63],
+    // Background roles. opencode fills its input surface with theme
+    // backgroundElement and marks it with a left border in the agent's colour
+    // (component/prompt/index.tsx: border={["left"]} + backgroundColor). These are
+    // that fill: one step off the terminal's own background, never a block of
+    // colour that fights the text sitting on it.
+    surface: [22, 25, 32],
+    surfaceHi: [27, 31, 39]
 };
-
 const LIGHT_PALETTE = {
-  accent:  [ 91, 130,  29],
-  agent:   [ 91, 130,  29],
-  user:    [ 74, 112,  26],
-  success: [ 74, 112,  26],
-  warn:    [155, 110,   0],
-  danger:  [185,  40,  40],
-  muted:   [105, 112, 123],
-  ink:     [ 58,  63,  71],
-  rule:    [198, 203, 211],
-  scroll:  [ 91, 130,  29],
-  surface:  [242, 244, 247],
-  surfaceHi:[232, 235, 240]
+    accent: [91, 130, 29],
+    agent: [91, 130, 29],
+    user: [74, 112, 26],
+    success: [74, 112, 26],
+    warn: [155, 110, 0],
+    danger: [185, 40, 40],
+    muted: [105, 112, 123],
+    ink: [58, 63, 71],
+    rule: [198, 203, 211],
+    scroll: [91, 130, 29],
+    surface: [242, 244, 247],
+    surfaceHi: [232, 235, 240]
 };
-
 // Fallback for 16-colour terminals: the closest base ANSI code per role.
 const BASIC_CODES = {
-  accent: 92, agent: 92, user: 32, success: 92,
-  warn: 33, danger: 31, muted: 90, ink: 39, rule: 90,
-  scroll: 32,
-  surface: 39, surfaceHi: 39
+    accent: 92, agent: 92, user: 32, success: 92,
+    warn: 33, danger: 31, muted: 90, ink: 39, rule: 90,
+    scroll: 32,
+    surface: 39, surfaceHi: 39
 };
-
-// Background codes for the 16-colour fallback. A base-16 terminal has no shade
-// between "black" and "bright black", so a surface fill there would be a slab of
-// solid grey behind the text — worse than no fill. It gets none, and the left
-// bar alone carries the block. See fill().
-const BASIC_BG_CODES = { surface: 0, surfaceHi: 100 };
-
 const PALETTE = IS_LIGHT ? LIGHT_PALETTE : DARK_PALETTE;
-
 function rgbTo256(r, g, b) {
-  // Greyscale ramp first — it is far more accurate for the muted/rule roles
-  // than the 6×6×6 cube, which has coarse steps near grey.
-  if (Math.abs(r - g) < 12 && Math.abs(g - b) < 12) {
-    const level = Math.round(((r + g + b) / 3 - 8) / 247 * 24);
-    return 232 + Math.max(0, Math.min(23, level));
-  }
-  const scale = (value) => Math.round(value / 255 * 5);
-  return 16 + 36 * scale(r) + 6 * scale(g) + scale(b);
+    // Greyscale ramp first — it is far more accurate for the muted/rule roles
+    // than the 6×6×6 cube, which has coarse steps near grey.
+    if (Math.abs(r - g) < 12 && Math.abs(g - b) < 12) {
+        const level = Math.round(((r + g + b) / 3 - 8) / 247 * 24);
+        return 232 + Math.max(0, Math.min(23, level));
+    }
+    const scale = (value) => Math.round(value / 255 * 5);
+    return 16 + 36 * scale(r) + 6 * scale(g) + scale(b);
 }
-
 /** Open the escape sequence for a role, or '' when colour is off. */
 function open(role) {
-  if (!HAS_COLOR) return '';
-  const rgb = PALETTE[role];
-  if (!rgb) return '';
-  if (COLOR_DEPTH >= 16777216) return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
-  if (COLOR_DEPTH >= 256) return `\x1b[38;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m`;
-  return `\x1b[${BASIC_CODES[role] || 39}m`;
+    if (!HAS_COLOR)
+        return '';
+    const rgb = PALETTE[role];
+    if (!rgb)
+        return '';
+    if (COLOR_DEPTH >= 16777216)
+        return `\x1b[38;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+    if (COLOR_DEPTH >= 256)
+        return `\x1b[38;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m`;
+    return `\x1b[${BASIC_CODES[role] || 39}m`;
 }
-
 const RESET = '\x1b[0m';
-
 /** Paint `text` in a semantic role. A no-op when colour is unavailable. */
 export function paint(role, text) {
-  const prefix = open(role);
-  return prefix ? `${prefix}${text}${RESET}` : String(text);
+    const prefix = open(role);
+    return prefix ? `${prefix}${String(text)}${RESET}` : String(text);
 }
-
 export function bold(text) {
-  return HAS_COLOR ? `\x1b[1m${text}${RESET}` : String(text);
+    return HAS_COLOR ? `\x1b[1m${String(text)}${RESET}` : String(text);
 }
-
 export function dim(text) {
-  return HAS_COLOR ? `\x1b[2m${text}${RESET}` : String(text);
+    return HAS_COLOR ? `\x1b[2m${String(text)}${RESET}` : String(text);
 }
-
 /**
  * Paint a BACKGROUND in a semantic role.
  *
@@ -205,85 +196,86 @@ export function dim(text) {
  * reads as a surface if it extends past the last character.
  */
 export function openFill(role) {
-  if (!HAS_COLOR) return '';
-  const rgb = PALETTE[role];
-  if (!rgb) return '';
-  if (COLOR_DEPTH >= 16777216) return `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
-  if (COLOR_DEPTH >= 256) return `\x1b[48;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m`;
-  return '';
+    if (!HAS_COLOR)
+        return '';
+    const rgb = PALETTE[role];
+    if (!rgb)
+        return '';
+    if (COLOR_DEPTH >= 16777216)
+        return `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m`;
+    if (COLOR_DEPTH >= 256)
+        return `\x1b[48;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m`;
+    return '';
 }
-
 export function fill(role, text) {
-  const open = openFill(role);
-  if (!open) return String(text);
-
-  // Re-open the background after every reset inside the text.
-  //
-  // THIS is why the box did not look like a box. paint() and dim() each close
-  // with \x1b[0m, and \x1b[0m resets EVERY attribute — including the background
-  // this function just set. So the fill survived only as far as the first
-  // styled word: on a 99-column row the model line was filled for 6 columns and
-  // bare for the other 93, and the "surface" read as a stray highlight.
-  //
-  // Re-establishing the background immediately after each reset costs a few
-  // bytes per row and makes the fill continuous whatever the caller styled.
-  const body = String(text).split(RESET).join(RESET + open);
-  return `${open}${body}${RESET}`;
+    const openSeq = openFill(role);
+    if (!openSeq)
+        return String(text);
+    // Re-open the background after every reset inside the text.
+    //
+    // THIS is why the box did not look like a box. paint() and dim() each close
+    // with \x1b[0m, and \x1b[0m resets EVERY attribute — including the background
+    // this function just set. So the fill survived only as far as the first
+    // styled word: on a 99-column row the model line was filled for 6 columns and
+    // bare for the other 93, and the "surface" read as a stray highlight.
+    //
+    // Re-establishing the background immediately after each reset costs a few
+    // bytes per row and makes the fill continuous whatever the caller styled.
+    const body = String(text).split(RESET).join(RESET + openSeq);
+    return `${openSeq}${body}${RESET}`;
 }
-
 /** A filled badge — used for risk banners, where a fill reads faster than text. */
 export function badge(role, text) {
-  const value = text == null ? '' : String(text);
-  const rgb = typeof role === 'string' && Object.prototype.hasOwnProperty.call(PALETTE, role)
-    ? PALETTE[role]
-    : null;
-  if (!HAS_COLOR || !rgb) return `[${value}]`;
-  const label = ` ${value} `;
-  if (COLOR_DEPTH >= 16777216) {
-    return `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m\x1b[38;2;16;16;20m\x1b[1m${label}${RESET}`;
-  }
-  if (COLOR_DEPTH >= 256) {
-    return `\x1b[48;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m\x1b[30m\x1b[1m${label}${RESET}`;
-  }
-  const basicCode = Object.prototype.hasOwnProperty.call(BASIC_CODES, role) ? BASIC_CODES[role] : 39;
-  return `\x1b[${basicCode + 10}m\x1b[30m${label}${RESET}`;
+    const value = text == null ? '' : String(text);
+    const rgb = typeof role === 'string' && Object.prototype.hasOwnProperty.call(PALETTE, role)
+        ? PALETTE[role]
+        : null;
+    if (!HAS_COLOR || !rgb)
+        return `[${value}]`;
+    const label = ` ${value} `;
+    if (COLOR_DEPTH >= 16777216) {
+        return `\x1b[48;2;${rgb[0]};${rgb[1]};${rgb[2]}m\x1b[38;2;16;16;20m\x1b[1m${label}${RESET}`;
+    }
+    if (COLOR_DEPTH >= 256) {
+        return `\x1b[48;5;${rgbTo256(rgb[0], rgb[1], rgb[2])}m\x1b[30m\x1b[1m${label}${RESET}`;
+    }
+    const basicCode = Object.prototype.hasOwnProperty.call(BASIC_CODES, role) ? (BASIC_CODES[role] ?? 39) : 39;
+    return `\x1b[${basicCode + 10}m\x1b[30m${label}${RESET}`;
 }
-
 /** Glyph set, degrading to ASCII where Unicode is unsafe. */
 export const GLYPHS = HAS_UNICODE
-  ? {
-      arrow: '▸', check: '✓', cross: '✕', dot: '·', bullet: '•',
-      spinner: getEngineFrames({ unicode: true }),
-      hLine: '─', vLine: '│', corner: '└', tee: '├', ellipsis: '…',
-      // The left accent bar of a block. Uses box-drawing heavy vertical ('┃')
-      // so it joins seamlessly from row to row without font line-height leading gaps.
-      bar: '┃', step: '▪',
-      // Clean icon glyphs for skills and status indicators (no color emoticons).
-      skill: '✦', sparkle: '✦', diamond: '◆',
-      // The permission marker. opencode shows a warning triangle and NO risk
-      // word — the level is internal plumbing, and printing 'DANGEROUS' at
-      // someone just makes them numb to it. Colour still carries the tier.
-      warnMark: '△',
-      // A CONTINUOUS thick rule, for the one place that needs the eye to read a
-      // single unbroken edge: the input box. `▌` is a half BLOCK — it does not
-      // fill the cell's full height in most terminal fonts, so a column of them
-      // comes out as ragged stubs with gaps nobody chose. `┃` is box-drawing
-      // heavy vertical, which is drawn to join between rows.
-      barHeavy: '┃',
-      // Rounded panel corners, for the session header.
-      topLeft: '╭', topRight: '╮', bottomLeft: '╰', bottomRight: '╯'
+    ? {
+        arrow: '▸', check: '✓', cross: '✕', dot: '·', bullet: '•',
+        spinner: getEngineFrames({ unicode: true }),
+        hLine: '─', vLine: '│', corner: '└', tee: '├', ellipsis: '…',
+        // The left accent bar of a block. Uses box-drawing heavy vertical ('┃')
+        // so it joins seamlessly from row to row without font line-height leading gaps.
+        bar: '┃', step: '▪',
+        // Clean icon glyphs for skills and status indicators (no color emoticons).
+        skill: '✦', sparkle: '✦', diamond: '◆',
+        // The permission marker. opencode shows a warning triangle and NO risk
+        // word — the level is internal plumbing, and printing 'DANGEROUS' at
+        // someone just makes them numb to it. Colour still carries the tier.
+        warnMark: '△',
+        // A CONTINUOUS thick rule, for the one place that needs the eye to read a
+        // single unbroken edge: the input box. `▌` is a half BLOCK — it does not
+        // fill the cell's full height in most terminal fonts, so a column of them
+        // comes out as ragged stubs with gaps nobody chose. `┃` is box-drawing
+        // heavy vertical, which is drawn to join between rows.
+        barHeavy: '┃',
+        // Rounded panel corners, for the session header.
+        topLeft: '╭', topRight: '╮', bottomLeft: '╰', bottomRight: '╯'
     }
-  : {
-      arrow: '>', check: 'v', cross: 'x', dot: '.', bullet: '*',
-      spinner: getEngineFrames({ unicode: false }),
-      hLine: '-', vLine: '|', corner: '`', tee: '+', ellipsis: '...',
-      bar: '|', step: '*',
-      skill: '*', sparkle: '*', diamond: '*',
-      warnMark: '!',
-      barHeavy: '|',
-      topLeft: '+', topRight: '+', bottomLeft: '+', bottomRight: '+'
+    : {
+        arrow: '>', check: 'v', cross: 'x', dot: '.', bullet: '*',
+        spinner: getEngineFrames({ unicode: false }),
+        hLine: '-', vLine: '|', corner: '`', tee: '+', ellipsis: '...',
+        bar: '|', step: '*',
+        skill: '*', sparkle: '*', diamond: '*',
+        warnMark: '!',
+        barHeavy: '|',
+        topLeft: '+', topRight: '+', bottomLeft: '+', bottomRight: '+'
     };
-
 /**
  * Does the terminal turn OSC 8 sequences into clickable links?
  *
@@ -293,21 +285,19 @@ export const GLYPHS = HAS_UNICODE
  * guessing "no" is only that a path is not clickable.
  */
 function detectHyperlinkSupport() {
-  if (!HAS_COLOR) return false;                      // piped, or colour opted out
-  if (process.env.CAUSYNE_NO_LINKS === '1') return false;
-  if (process.env.TERM_PROGRAM === 'Apple_Terminal') return false; // no OSC 8 support
-
-  return Boolean(
-    process.env.WT_SESSION ||                        // Windows Terminal
-    process.env.KITTY_WINDOW_ID ||
-    process.env.VTE_VERSION ||                       // GNOME Terminal, Tilix
-    process.env.WEZTERM_PANE ||
-    ['iTerm.app', 'WezTerm', 'ghostty', 'vscode', 'Hyper'].includes(process.env.TERM_PROGRAM)
-  );
+    if (!HAS_COLOR)
+        return false; // piped, or colour opted out
+    if (process.env.CAUSYNE_NO_LINKS === '1')
+        return false;
+    if (process.env.TERM_PROGRAM === 'Apple_Terminal')
+        return false; // no OSC 8 support
+    return Boolean(process.env.WT_SESSION || // Windows Terminal
+        process.env.KITTY_WINDOW_ID ||
+        process.env.VTE_VERSION || // GNOME Terminal, Tilix
+        process.env.WEZTERM_PANE ||
+        ['iTerm.app', 'WezTerm', 'ghostty', 'vscode', 'Hyper'].includes(String(process.env.TERM_PROGRAM || '')));
 }
-
 export const HAS_HYPERLINKS = detectHyperlinkSupport();
-
 /**
  * Wrap `text` as a clickable link to `url`.
  *
@@ -320,10 +310,10 @@ export const HAS_HYPERLINKS = detectHyperlinkSupport();
  * rebuilds the URL from a parsed object instead of trusting the string.
  */
 export function link(text, url) {
-  if (!HAS_HYPERLINKS) return String(text);
-  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+    if (!HAS_HYPERLINKS)
+        return String(text);
+    return `\x1b]8;;${String(url)}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
 }
-
 /**
  * A link for a URL that came from a model reply or from tool output.
  *
@@ -339,41 +329,43 @@ export function link(text, url) {
  * Returns the plain text unchanged whenever the URL does not clear the bar.
  */
 export function safeLink(text, url) {
-  if (!HAS_HYPERLINKS) return String(text);
-
-  const raw = String(url || '');
-  // 2048 is the practical URL ceiling; beyond it this is a payload, not a link.
-  if (raw.length === 0 || raw.length > 2048) return String(text);
-  // Any control byte disqualifies the string before it is even parsed.
-  // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x1f\x7f]/.test(raw)) return String(text);
-
-  let parsed;
-  try {
-    parsed = new URL(raw);
-  } catch (e) {
-    return String(text);
-  }
-  if (parsed.protocol === 'file:') {
+    if (!HAS_HYPERLINKS)
+        return String(text);
+    const raw = String(url || '');
+    // 2048 is the practical URL ceiling; beyond it this is a payload, not a link.
+    if (raw.length === 0 || raw.length > 2048)
+        return String(text);
+    // Any control byte disqualifies the string before it is even parsed.
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(raw))
+        return String(text);
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    }
+    catch {
+        return String(text);
+    }
+    if (parsed.protocol === 'file:') {
+        const safeUrl = encodeURI(parsed.href).replace(/[\x00-\x1f\x7f]/g, '');
+        return `\x1b]8;;${safeUrl}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+        return String(text);
+    if (!parsed.hostname)
+        return String(text);
+    // Built from the PARSED url, not from the input.
     const safeUrl = encodeURI(parsed.href).replace(/[\x00-\x1f\x7f]/g, '');
-    return `\x1b]8;;${safeUrl}\x1b\\${text}\x1b]8;;\x1b\\`;
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return String(text);
-  if (!parsed.hostname) return String(text);
-
-  // Built from the PARSED url, not from the input.
-  const safeUrl = encodeURI(parsed.href).replace(/[\x00-\x1f\x7f]/g, '');
-  return `\x1b]8;;${safeUrl}\x1b\\${text}\x1b]8;;\x1b\\`;
+    return `\x1b]8;;${safeUrl}\x1b\\${String(text)}\x1b]8;;\x1b\\`;
 }
-
 /** A file path as a clickable file:// link, absolute as OSC 8 requires. */
 export function fileLink(text, absolutePath) {
-  const pathText = typeof absolutePath === 'string' ? absolutePath : '';
-  // eslint-disable-next-line no-control-regex
-  if (!HAS_HYPERLINKS || !pathText || /[\x00-\x1f\x7f]/.test(pathText)) return String(text);
-  return link(text, 'file://' + encodeURI(pathText));
+    const pathText = typeof absolutePath === 'string' ? absolutePath : '';
+    // eslint-disable-next-line no-control-regex
+    if (!HAS_HYPERLINKS || !pathText || /[\x00-\x1f\x7f]/.test(pathText))
+        return String(text);
+    return link(text, 'file://' + encodeURI(pathText));
 }
-
 /**
  * The terminal's ACTUAL width. Chrome fills it.
  *
@@ -384,12 +376,11 @@ export function fileLink(text, absolutePath) {
  * the box is that it is the surface they are typing into.
  */
 export function terminalWidth() {
-  const raw = Number.isFinite(process.stdout.columns) && process.stdout.columns > 0
-    ? Math.floor(process.stdout.columns)
-    : 80;
-  return Math.max(40, raw);
+    const raw = Number.isFinite(process.stdout.columns) && process.stdout.columns > 0
+        ? Math.floor(process.stdout.columns)
+        : 80;
+    return Math.max(40, raw);
 }
-
 /**
  * The widest a line of PROSE may be, given the space available.
  *
@@ -404,10 +395,8 @@ export function terminalWidth() {
  * responds to the terminal instead of pinning at one value.
  */
 export const READABLE_MAX = 100;
-
 export function readableWidth(available = terminalWidth()) {
-  const width = Number.isFinite(available) ? Math.floor(available) : terminalWidth();
-  return Math.max(40, Math.min(width, READABLE_MAX));
+    const width = Number.isFinite(available) ? Math.floor(available) : terminalWidth();
+    return Math.max(40, Math.min(width, READABLE_MAX));
 }
-
 export { getEngineFrames, getEngineFrame };

@@ -2,7 +2,6 @@
 // Authorship: Strict TypeScript (Causyne Agent).
 // @ts-expect-error untyped local TUI dialogs
 import { TextLayer } from '../../tui/dialogs.js';
-// @ts-expect-error untyped local TUI theme
 import { GLYPHS } from '../../tui/theme.js';
 import { safeDisplay } from '../../tui/text.js';
 import { ContinuumPickerLayer } from './continuumPickerView.js';

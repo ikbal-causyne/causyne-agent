@@ -5,7 +5,6 @@
 
 // @ts-expect-error untyped local TUI dialogs
 import { SelectLayer, InputLayer } from './dialogs.js';
-// @ts-expect-error untyped local TUI theme
 import { paint, bold, dim, GLYPHS } from './theme.js';
 // @ts-expect-error untyped local TUI selectList
 import { fuzzyFilter } from './selectList.js';

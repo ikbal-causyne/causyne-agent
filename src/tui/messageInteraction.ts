@@ -14,7 +14,6 @@ import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { safeDisplay, stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
 import { Layer } from './overlay.js';
 import { type MessageBounds } from './messageActionPlacement.js';
-// @ts-expect-error Legacy theme has no declaration yet.
 import { paint, bold, dim, fill } from './theme.js';
 
 export interface MessageMarker {

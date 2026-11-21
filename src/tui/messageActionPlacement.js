@@ -1,6 +1,5 @@
 import { padEnd, truncate, visibleWidth } from './text.js';
 import { sliceFromColumn } from './turnRail.js';
-// @ts-expect-error theme has no TypeScript declarations yet
 import { HAS_COLOR } from './theme.js';
 function dimBackdropRow(row) {
     if (!row || !row.trim())

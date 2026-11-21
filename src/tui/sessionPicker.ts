@@ -9,7 +9,6 @@ import {
   workspaceDisplayName,
   formatWorkspaceSectionTitle
 } from './workspaceIdentity.js';
-// @ts-expect-error untyped local TUI theme
 import { GLYPHS } from './theme.js';
 import { safeDisplay } from './text.js';
 import { measureMessages } from '../contextManager.js';

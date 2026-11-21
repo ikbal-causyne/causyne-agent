@@ -311,7 +311,8 @@
     "src/verification/ptyProbe.ts",
     "src/verification/interactivePty.ts",
     "src/tui/terminalInputFramer.ts",
-    "src/tui/invocation.ts"
+    "src/tui/invocation.ts",
+    "src/tui/theme.ts"
   ],
   "exclude": [
     "node_modules",

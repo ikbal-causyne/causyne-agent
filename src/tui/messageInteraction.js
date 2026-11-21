@@ -8,7 +8,6 @@ import { sidebarVisible, sessionMainWidth } from './sessionSidebar.js';
 import { safeDisplay, stripAnsi, truncate, padEnd, visibleWidth } from './text.js';
 import { Layer } from './overlay.js';
 import {} from './messageActionPlacement.js';
-// @ts-expect-error Legacy theme has no declaration yet.
 import { paint, bold, dim, fill } from './theme.js';
 /** Multi-action message menu overlay supporting Copy, Fork, and Revert. */
 export class MessageActionsLayer extends Layer {

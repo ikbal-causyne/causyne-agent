@@ -5,7 +5,6 @@
  */
 // @ts-expect-error The existing dialog component is implemented in JavaScript.
 import { SelectLayer } from '../../tui/dialogs.js';
-// @ts-expect-error The existing theme is implemented in JavaScript.
 import { bold, dim, paint, GLYPHS } from '../../tui/theme.js';
 import { safeDisplay, truncate, visibleWidth } from '../../tui/text.js';
 const MAX_PANEL_HEIGHT = 34;

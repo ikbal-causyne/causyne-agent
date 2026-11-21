@@ -13,7 +13,6 @@
 // the conversation legible underneath.
 //
 // Pure Node over ./screen.js, ./theme.js and ./text.js. No dependency, no shell.
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, bold, dim, fill, GLYPHS, HAS_COLOR, HAS_UNICODE } from './theme.js';
 import { safeDisplay, truncate, visibleWidth } from './text.js';
 function cleanSingleLine(value) {

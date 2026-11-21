@@ -18,7 +18,6 @@
 //     visibleWidth(renderRunningLight(s)) === visibleWidth(s)
 //
 // Pure TypeScript under strict mode.
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, bold, dim, HAS_COLOR, COLOR_DEPTH, IS_LIGHT } from './theme.js';
 import { stripAnsi } from './text.js';
 const DARK_TRUECOLOR_STOPS = [

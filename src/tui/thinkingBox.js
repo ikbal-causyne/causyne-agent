@@ -5,7 +5,6 @@
 // collapse/expand folding.
 //
 // Pure TypeScript under strict mode.
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, dim, GLYPHS, HAS_UNICODE } from './theme.js';
 import { padEnd, safeDisplay, truncate, visibleWidth, wrapBlock } from './text.js';
 import { renderRunningLight } from './runningLight.js';

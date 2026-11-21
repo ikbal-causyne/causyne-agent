@@ -21,7 +21,6 @@
 // It degrades in two steps rather than one: without truecolor/256 there is no
 // fill and the bar alone carries the block; without colour at all the bar is an
 // ASCII `|`. A transcript piped to a file stays clean either way.
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, fill, dim, GLYPHS, HAS_COLOR } from './theme.js';
 import { visibleWidth, padEnd, truncate, wrap } from './text.js';
 // Columns between the bar and the text. opencode uses paddingLeft={2} inside its

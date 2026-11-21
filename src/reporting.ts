@@ -9,7 +9,6 @@ import { listSpills, getOutputDir } from './outputStore.js';
 import { listGroups, undoLast, undoTask, undoStep, getStoreStats } from './checkpoints.js';
 import { panel } from './tui/block.js';
 import { safeDisplay } from './tui/text.js';
-// @ts-expect-error Legacy tui/theme.js has no TypeScript declarations yet.
 import { terminalWidth, readableWidth } from './tui/theme.js';
 import { isAcpProvider } from './providers/acp.js';
 import { isAntigravityProvider } from './providers/antigravity.js';

@@ -1,7 +1,6 @@
 import { panel } from './block.js';
 import { safeDisplay, truncate, padEnd } from './text.js';
 // The terminal theme is still a standalone JavaScript module in the TS migration.
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { COLOR_DEPTH, IS_LIGHT, paint } from './theme.js';
 import { diffLines, MAX_SIDE_LINES } from './diff.js';
 import fs from 'node:fs';

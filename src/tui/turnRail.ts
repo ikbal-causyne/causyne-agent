@@ -1,5 +1,4 @@
 import { truncate, visibleWidth, wrapBlock, stripAnsi, padEnd, safeDisplay } from './text.js';
-// @ts-expect-error untyped local TUI theme
 import { paint, bold, dim, GLYPHS } from './theme.js';
 
 export interface SessionTurn {

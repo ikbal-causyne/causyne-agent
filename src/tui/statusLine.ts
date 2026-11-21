@@ -18,7 +18,6 @@
 //
 // Pure TypeScript over ./theme.js and ./text.js. No dependency, no shell.
 
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, visibleWidth, safeDisplay, shortenHome } from './text.js';
 import { contextMeter } from './block.js';

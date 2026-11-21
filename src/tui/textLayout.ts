@@ -1,6 +1,5 @@
 import { safeDisplay, truncate, visibleWidth, wrap } from './text.js';
 // The terminal palette remains a JavaScript module during the TypeScript migration.
-// @ts-expect-error theme.js does not have a declaration yet.
 import { paint } from './theme.js';
 
 export type MessageTone = 'danger' | 'warn' | 'muted' | 'accent';

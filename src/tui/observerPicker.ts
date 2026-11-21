@@ -4,7 +4,6 @@
 
 // @ts-expect-error untyped local TUI dialogs
 import { SelectLayer, InputLayer, TextLayer } from './dialogs.js';
-// @ts-expect-error untyped local TUI theme
 import { paint, bold, dim, GLYPHS } from './theme.js';
 import { safeDisplay } from './text.js';
 import {

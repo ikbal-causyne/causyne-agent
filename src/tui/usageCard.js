@@ -2,7 +2,6 @@
  * Usage Card Banner: Docked status and token usage card rendered directly above the chatbox.
  * Displays real-time session usage, all-time lifetime usage, daily spend, and context capacity.
  */
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, fill, bold, dim, GLYPHS, HAS_COLOR } from './theme.js';
 import { visibleWidth, padEnd, safeDisplay, truncate } from './text.js';
 import { FRAME } from './overlay.js';

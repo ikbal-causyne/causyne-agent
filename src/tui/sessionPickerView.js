@@ -5,7 +5,6 @@
  */
 // @ts-expect-error The existing dialog component is authored in JavaScript.
 import { SelectLayer } from './dialogs.js';
-// @ts-expect-error The theme is authored in JavaScript.
 import { bold, dim, paint, GLYPHS } from './theme.js';
 import { safeDisplay, truncate, visibleWidth } from './text.js';
 import { sameWorkspace, workspaceDisplayName, shortenWorkspacePath, formatWorkspaceSectionTitle } from './workspaceIdentity.js';

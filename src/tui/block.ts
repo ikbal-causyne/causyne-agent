@@ -22,7 +22,6 @@
 // fill and the bar alone carries the block; without colour at all the bar is an
 // ASCII `|`. A transcript piped to a file stays clean either way.
 
-// @ts-expect-error theme.js has no TypeScript declaration yet.
 import { paint, fill, dim, GLYPHS, HAS_COLOR } from './theme.js';
 import { visibleWidth, padEnd, truncate, wrap } from './text.js';
 
