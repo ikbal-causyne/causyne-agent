@@ -359,9 +359,11 @@ export function detectTrigger(text: unknown, cursor: number): CompletionTrigger 
   const slash = detectInlineSlashTrigger(input, pos);
   if (slash) return slash;
 
+  const scanWindow = before.length > 2048 ? before.slice(-2048) : before;
+
   // 1. Quoted @ file mention: @"pixel2d games/ or @'pixel2d games/
   // Supports spaces in directory or file names
-  const quotedMention = before.match(/(?:^|\s)@(["'])([^"']*)$/);
+  const quotedMention = scanWindow.match(/(?:^|\s)@(["'])([^"']*)$/);
   if (quotedMention && quotedMention[1] !== undefined && quotedMention[2] !== undefined) {
     const quote = quotedMention[1];
     const query = quotedMention[2];
@@ -374,7 +376,7 @@ export function detectTrigger(text: unknown, cursor: number): CompletionTrigger 
   }
 
   // 2. Unquoted @ file mention: @alpha or @src/
-  const mention = before.match(/(?:^|\s)@([^\s@"']*)$/);
+  const mention = scanWindow.match(/(?:^|\s)@([^\s@"']*)$/);
   if (mention && mention[1] !== undefined) {
     return {
       kind: 'file',
