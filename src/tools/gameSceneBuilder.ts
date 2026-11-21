@@ -1,7 +1,19 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceInput,
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  escapeGodotString,
+  getErrorMessage,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const MAX_SCENE_BYTES = 5 * 1024 * 1024;
+const MAX_SCENE_CHILDREN = 256;
 
 export interface SceneChildNodeInput {
   name?: string | undefined;
@@ -71,10 +83,10 @@ export const gameSceneBuilder = {
     }
   },
 
-  async execute(args: GameSceneBuilderArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameSceneBuilderArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, scenePath, rootNodeType = 'Node2D', rootNodeName = 'Root', scriptResPath, childNodes = [], signalConfig } = args || {};
-      const safeChildren = Array.isArray(childNodes) ? childNodes : [];
+      const safeChildren = Array.isArray(childNodes) ? childNodes.slice(0, MAX_SCENE_CHILDREN) : [];
 
       if (action === 'create_scene_tree') {
         let loadSteps = 1;
@@ -83,35 +95,43 @@ export const gameSceneBuilder = {
 
         if (scriptResPath) {
           loadSteps = 2;
-          extResources = `[ext_resource type="Script" path="${scriptResPath}" id="1_script"]\n\n`;
+          extResources = `[ext_resource type="Script" path="${escapeGodotString(scriptResPath, 260)}" id="1_script"]\n\n`;
           scriptAttr = 'script = ExtResource("1_script")\n';
         }
 
         let childBlocks = '';
         for (const child of safeChildren) {
           if (!child || typeof child !== 'object') continue;
-          const parentAttr = child.parent ? ` parent="${child.parent}"` : ' parent="."';
+          const parentAttr = child.parent ? ` parent="${escapeGodotString(child.parent, 128)}"` : ' parent="."';
           let props = '';
           if (child.properties && typeof child.properties === 'object') {
             for (const [k, v] of Object.entries(child.properties)) {
-              props += `${k} = ${typeof v === 'string' ? `"${v}"` : String(v)}\n`;
+              const safeKey = safeSlugIdentifier(k, '', 64);
+              if (!safeKey) continue;
+              const safeVal = typeof v === 'string'
+                ? `"${escapeGodotString(v, 512)}"`
+                : (typeof v === 'number' || typeof v === 'boolean' ? String(v) : `"${escapeGodotString(JSON.stringify(v), 512)}"`);
+              props += `${safeKey} = ${safeVal}\n`;
             }
           }
-          childBlocks += `\n[node name="${child.name ?? 'Node'}" type="${child.type || 'Node'}"${parentAttr}]\n${props}`;
+          childBlocks += `\n[node name="${escapeGodotString(child.name ?? 'Node', 128)}" type="${escapeGodotString(child.type || 'Node', 64)}"${parentAttr}]\n${props}`;
         }
 
-        const content = `[gd_scene load_steps=${loadSteps} format=3]\n\n${extResources}[node name="${rootNodeName}" type="${rootNodeType}"]\n${scriptAttr}${childBlocks}`;
+        const safeRootName = escapeGodotString(rootNodeName, 128);
+        const safeRootType = escapeGodotString(rootNodeType, 64);
+        const content = `[gd_scene load_steps=${loadSteps} format=3]\n\n${extResources}[node name="${safeRootName}" type="${safeRootType}"]\n${scriptAttr}${childBlocks}`;
 
+        let writtenPath = scenePath;
         if (scenePath) {
-          await fs.mkdir(path.dirname(scenePath), { recursive: true });
-          await fs.writeFile(scenePath, content, 'utf8');
+          writtenPath = await assertSafeWorkspaceOutput(scenePath, sandbox);
+          await atomicWriteFileSafe(writtenPath, content);
         }
 
         return {
           success: true,
           output: JSON.stringify({
             status: 'CREATED_SCENE_TREE',
-            scene_path: scenePath,
+            scene_path: writtenPath,
             root_node: rootNodeName,
             root_type: rootNodeType,
             child_count: safeChildren.length,
