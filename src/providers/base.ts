@@ -141,23 +141,28 @@ export class LLMProvider {
   maxAudioSeconds: number | null;
   maxAudioBytes: number | null;
   audioOverride: boolean | null;
+  preserveThinkingBlocks: boolean;
+  preserveReasoningContent: boolean;
 
-  constructor(config: ProviderConfig = {}) {
-    this.apiKey = config.apiKey;
-    this.model = canonicalModelId(config.model ?? '') || '';
-    this.baseUrl = config.baseUrl;
+  constructor(config?: ProviderConfig | null) {
+    const cfg: ProviderConfig = config && typeof config === 'object' ? config : {};
+    this.apiKey = cfg.apiKey;
+    this.model = String(canonicalModelId(cfg.model ?? '') || '');
+    this.baseUrl = cfg.baseUrl;
     this.visionModels = [];
     this.imagePayloadFormat = 'openai';
-    this.visionOverride = typeof config.supportsVision === 'boolean'
-      ? config.supportsVision
+    this.visionOverride = typeof cfg.supportsVision === 'boolean'
+      ? cfg.supportsVision
       : null;
     this.audioModels = [];
     this.audioPayloadFormat = 'openai';
     this.maxAudioSeconds = null;
     this.maxAudioBytes = null;
-    this.audioOverride = typeof config.supportsAudio === 'boolean'
-      ? config.supportsAudio
+    this.audioOverride = typeof cfg.supportsAudio === 'boolean'
+      ? cfg.supportsAudio
       : null;
+    this.preserveThinkingBlocks = false;
+    this.preserveReasoningContent = false;
   }
 
   get supportsVision(): boolean {

@@ -58,22 +58,27 @@ export class LLMProvider {
     maxAudioSeconds;
     maxAudioBytes;
     audioOverride;
-    constructor(config = {}) {
-        this.apiKey = config.apiKey;
-        this.model = canonicalModelId(config.model ?? '') || '';
-        this.baseUrl = config.baseUrl;
+    preserveThinkingBlocks;
+    preserveReasoningContent;
+    constructor(config) {
+        const cfg = config && typeof config === 'object' ? config : {};
+        this.apiKey = cfg.apiKey;
+        this.model = String(canonicalModelId(cfg.model ?? '') || '');
+        this.baseUrl = cfg.baseUrl;
         this.visionModels = [];
         this.imagePayloadFormat = 'openai';
-        this.visionOverride = typeof config.supportsVision === 'boolean'
-            ? config.supportsVision
+        this.visionOverride = typeof cfg.supportsVision === 'boolean'
+            ? cfg.supportsVision
             : null;
         this.audioModels = [];
         this.audioPayloadFormat = 'openai';
         this.maxAudioSeconds = null;
         this.maxAudioBytes = null;
-        this.audioOverride = typeof config.supportsAudio === 'boolean'
-            ? config.supportsAudio
+        this.audioOverride = typeof cfg.supportsAudio === 'boolean'
+            ? cfg.supportsAudio
             : null;
+        this.preserveThinkingBlocks = false;
+        this.preserveReasoningContent = false;
     }
     get supportsVision() {
         if (this.visionOverride !== null)
