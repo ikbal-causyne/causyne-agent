@@ -125,7 +125,8 @@ export class GeminiProvider extends LLMProvider {
                     contents.push({ role, parts: mappedParts });
                 }
                 else {
-                    contents.push({ role, parts: [{ text: msg.content ?? '' }] });
+                    const scalar = typeof msg.content === 'string' ? msg.content : (msg.content == null ? '' : JSON.stringify(msg.content));
+                    contents.push({ role, parts: [{ text: scalar }] });
                 }
             }
         }
