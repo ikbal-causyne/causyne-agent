@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { realpathSync, statSync } from 'node:fs';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
@@ -72,6 +73,8 @@ export async function runCliProbe(options = {}) {
     }
     const started = Date.now();
     return new Promise(resolve => {
+        const stdoutDecoder = new StringDecoder('utf8');
+        const stderrDecoder = new StringDecoder('utf8');
         let stdout = '';
         let stderr = '';
         let usedBytes = 0;
@@ -89,6 +92,8 @@ export async function runCliProbe(options = {}) {
             settled = true;
             if (timer)
                 clearTimeout(timer);
+            stdout += stdoutDecoder.end();
+            stderr += stderrDecoder.end();
             const success = !timedOut && !spawnError && exitCode === expectedExitCode
                 && !truncated && (contains === null || (stdout + stderr).includes(contains));
             resolve({
@@ -106,12 +111,12 @@ export async function runCliProbe(options = {}) {
             if (data.length > available)
                 truncated = true;
             if (available) {
-                const safe = data.subarray(0, available).toString('utf8');
+                const slice = data.subarray(0, available);
                 if (field === 'stdout')
-                    stdout += safe;
+                    stdout += stdoutDecoder.write(slice);
                 else
-                    stderr += safe;
-                usedBytes += Math.min(available, data.length);
+                    stderr += stderrDecoder.write(slice);
+                usedBytes += slice.length;
             }
         };
         try {
