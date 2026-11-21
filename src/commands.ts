@@ -2825,25 +2825,31 @@ export function isCommandInput(input: unknown): boolean {
  * Never throws: a command that fails reports it as output, because both surfaces
  * render the result into a conversation rather than a stack trace.
  */
-export async function runCommand(name: string, argv: string[] = [], ctx: CommandContext = {}): Promise<CommandResult> {
-  const surface = ctx.surface || 'terminal';
+export async function runCommand(
+  name: string,
+  argv?: string[] | null,
+  ctx?: CommandContext | null
+): Promise<CommandResult> {
+  const safeCtx: CommandContext = ctx && typeof ctx === 'object' ? ctx : {};
+  const safeArgv: string[] = Array.isArray(argv) ? argv.map(a => String(a ?? '')) : [];
+  const surface = safeCtx.surface || 'terminal';
   const command = resolveCommand(name);
 
   if (!command) {
-    return fail(`Unknown command "/${name}". Try /help.`);
+    return fail(`Unknown command "/${safeDisplay(name)}". Try /help.`);
   }
   if (surface !== 'terminal') {
     return fail(`"/${command.name}" is not available on this surface.`);
   }
 
   try {
-    const result = await command.run(argv, { ...ctx, surface });
+    const result = await command.run(safeArgv, { ...safeCtx, surface });
     if (command.dialogTitle && result && !result.effect) {
       return { ...result, effect: 'dialog', title: command.dialogTitle };
     }
     return result;
   } catch (e) {
-    return fail(`/${command.name} failed: ${errMsg(e)}`);
+    return fail(`/${command.name} failed: ${safeDisplay(redactProviderSecrets(errMsg(e)))}`);
   }
 }
 
