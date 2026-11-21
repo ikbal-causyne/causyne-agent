@@ -305,7 +305,8 @@
     "src/licensing/entitlements.ts",
     "src/provisioning/capabilityConsent.ts",
     "src/provisioning/capabilityTools.ts",
-    "src/provisioning/capabilityProvisioner.ts"
+    "src/provisioning/capabilityProvisioner.ts",
+    "src/plugins/pluginRunner.ts"
   ],
   "exclude": [
     "node_modules",
