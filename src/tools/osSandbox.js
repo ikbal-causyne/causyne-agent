@@ -121,12 +121,15 @@ function workspaceOverlapsPath(workspacePaths, targetPath) {
  * Defaults to `'off'` unless explicitly enabled so standard workflows never break unexpectedly.
  */
 export function resolveOsSandboxMode(env = process.env, configMode) {
-    const raw = (typeof env.CAUSYNE_OS_SANDBOX === 'string' && env.CAUSYNE_OS_SANDBOX.trim())
-        ? env.CAUSYNE_OS_SANDBOX.trim()
+    const safeEnv = env && typeof env === 'object' ? env : {};
+    const envSandbox = Object.hasOwn(safeEnv, 'CAUSYNE_OS_SANDBOX') ? safeEnv.CAUSYNE_OS_SANDBOX : undefined;
+    const raw = (typeof envSandbox === 'string' && envSandbox.trim())
+        ? envSandbox.trim()
         : (typeof configMode === 'string' ? configMode.trim() : '');
     const lower = raw.toLowerCase();
-    const networkEnv = typeof env.CAUSYNE_OS_SANDBOX_NETWORK === 'string'
-        ? env.CAUSYNE_OS_SANDBOX_NETWORK.trim().toLowerCase()
+    const envNetwork = Object.hasOwn(safeEnv, 'CAUSYNE_OS_SANDBOX_NETWORK') ? safeEnv.CAUSYNE_OS_SANDBOX_NETWORK : undefined;
+    const networkEnv = typeof envNetwork === 'string'
+        ? envNetwork.trim().toLowerCase()
         : '';
     const allowNetwork = !(networkEnv === '0' || networkEnv === 'false' || networkEnv === 'off' || networkEnv === 'deny');
     if (!lower || lower === 'off' || lower === '0' || lower === 'false' || lower === 'disabled') {
