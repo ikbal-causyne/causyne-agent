@@ -37,7 +37,9 @@ export interface SpillListing {
   modified: number;
 }
 
-const OUTPUT_DIR = path.join(causyneHome(), 'outputs');
+function resolveOutputDir(): string {
+  return path.join(causyneHome(), 'outputs');
+}
 
 // Matches the audit log's retention thinking: long enough that a spill is still
 // there when the model comes back for it later in a long task, short enough
@@ -59,12 +61,17 @@ export function isSpillEnabled(): boolean {
   return process.env.CAUSYNE_OUTPUT_SPILL !== '0';
 }
 
-function ensureOutputDir(): void {
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    // Owner-only: tool output routinely contains file contents and command
-    // output from the user's machine.
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true, mode: 0o700 });
+function ensureOutputDir(): string {
+  const dir = resolveOutputDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } else {
+    const stat = fs.lstatSync(dir);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error('Refusing to use symlink or non-directory as output store');
+    }
   }
+  return dir;
 }
 
 function safeFragment(value: unknown, fallback: string): string {
@@ -110,13 +117,13 @@ export function spillToolOutput(text: unknown, meta: SpillMeta = {}): SpillRecor
   if (typeof text !== 'string' || text.length === 0) return null;
 
   try {
-    ensureOutputDir();
+    const dir = ensureOutputDir();
 
     const taskId = safeFragment(meta.taskId, 'task');
     const step = safeFragment(meta.step, '0');
     const tool = safeFragment(meta.tool, 'tool');
     const stamp = Date.now().toString(36);
-    const file = path.join(OUTPUT_DIR, `${FILE_PREFIX}${taskId}_${step}_${tool}_${stamp}.txt`);
+    const file = path.join(dir, `${FILE_PREFIX}${taskId}_${step}_${tool}_${stamp}.txt`);
 
     fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o600 });
 
@@ -203,13 +210,14 @@ export function buildDecayPointer(spill: { path?: string | undefined } | null | 
  */
 export function pruneOutputStore(): number {
   try {
-    if (!fs.existsSync(OUTPUT_DIR)) return 0;
+    const dir = resolveOutputDir();
+    if (!fs.existsSync(dir)) return 0;
     const cutoff = Date.now() - RETENTION_MS;
     let removed = 0;
 
-    for (const name of fs.readdirSync(OUTPUT_DIR)) {
+    for (const name of fs.readdirSync(dir)) {
       if (!name.startsWith(FILE_PREFIX)) continue;
-      const file = path.join(OUTPUT_DIR, name);
+      const file = path.join(dir, name);
       try {
         if (fs.statSync(file).mtimeMs < cutoff) {
           fs.unlinkSync(file);
@@ -229,17 +237,18 @@ export function pruneOutputStore(): number {
 
 /** Absolute path of the store, for the `causyne-agent context` surface. */
 export function getOutputDir(): string {
-  return OUTPUT_DIR;
+  return resolveOutputDir();
 }
 
 /** Current store contents, newest first — used by the CLI reporting surface. */
 export function listSpills(limit = 20): SpillListing[] {
   try {
-    if (!fs.existsSync(OUTPUT_DIR)) return [];
+    const dir = resolveOutputDir();
+    if (!fs.existsSync(dir)) return [];
     const results: SpillListing[] = [];
-    for (const name of fs.readdirSync(OUTPUT_DIR)) {
+    for (const name of fs.readdirSync(dir)) {
       if (!name.startsWith(FILE_PREFIX)) continue;
-      const file = path.join(OUTPUT_DIR, name);
+      const file = path.join(dir, name);
       try {
         const stats = fs.statSync(file);
         results.push({ path: file, bytes: stats.size, modified: stats.mtimeMs });
