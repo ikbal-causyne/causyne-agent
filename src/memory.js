@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
@@ -18,6 +19,36 @@ function initMemory() {
         }
     }
     return filePath;
+}
+function writeMemoryAtomic(filePath, payload) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    try {
+        if (fs.lstatSync(filePath).isSymbolicLink())
+            return;
+    }
+    catch {
+        // target may not exist yet
+    }
+    const serialized = JSON.stringify(payload, null, 2);
+    const temporary = `${filePath}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+    try {
+        const fd = fs.openSync(temporary, 'wx', 0o600);
+        try {
+            fs.writeFileSync(fd, serialized, 'utf8');
+            fs.fsyncSync(fd);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(temporary, filePath);
+    }
+    catch (err) {
+        try {
+            fs.unlinkSync(temporary);
+        }
+        catch { /* ignore cleanup error */ }
+        throw err;
+    }
 }
 export function getMemory() {
     try {
