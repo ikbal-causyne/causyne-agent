@@ -509,7 +509,13 @@ export async function runLicenseCommand(action = 'status', plan = '') {
         if (data.paidUntil)
             console.log(`Paid through: ${safeDisplay(data.paidUntil)}`);
         else {
-            console.log(`Free allowance remaining: ${Math.floor(data.remainingSeconds / 60)} of ${Math.floor(data.dailySeconds / 60)} minutes`);
+            const remSec = typeof data.remainingSeconds === 'number' && Number.isFinite(data.remainingSeconds) && data.remainingSeconds > 0
+                ? data.remainingSeconds
+                : 0;
+            const daySec = typeof data.dailySeconds === 'number' && Number.isFinite(data.dailySeconds) && data.dailySeconds > 0
+                ? data.dailySeconds
+                : 0;
+            console.log(`Free allowance remaining: ${Math.floor(remSec / 60)} of ${Math.floor(daySec / 60)} minutes`);
             console.log(`UTC reset: ${safeDisplay(data.resetsAt ?? 'unknown')}`);
         }
         console.log('Model-provider inference has separate limits and costs.');
