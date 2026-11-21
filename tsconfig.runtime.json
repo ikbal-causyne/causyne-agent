@@ -340,7 +340,8 @@
     "src/embodimentSession.ts",
     "src/utils/cli_ui.ts",
     "src/cliMode.ts",
-    "src/entrypoint.ts"
+    "src/entrypoint.ts",
+    "src/benchmarks/planCache.ts"
   ],
   "exclude": [
     "node_modules",
