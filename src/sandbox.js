@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { isIP } from 'node:net';
@@ -267,8 +268,21 @@ export class Sandbox {
             return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Executes an enabled local plugin' });
         }
         if (canonicalToolName === 'fs_delete') {
-            if (typeof safeArgs.path === 'string' && !safeArgs.path.includes('.')) {
-                return withCredentialEscalation({ allowed: true, risk: 'extreme' });
+            if (typeof safeArgs.path === 'string' && safeArgs.path.trim()) {
+                const baseDir = this.workspacePaths[0] || process.cwd();
+                const candidate = path.isAbsolute(safeArgs.path)
+                    ? safeArgs.path
+                    : path.resolve(baseDir, safeArgs.path);
+                try {
+                    if (fs.lstatSync(candidate).isDirectory()) {
+                        return withCredentialEscalation({ allowed: true, risk: 'extreme' });
+                    }
+                }
+                catch {
+                    if (!path.basename(safeArgs.path).includes('.')) {
+                        return withCredentialEscalation({ allowed: true, risk: 'extreme' });
+                    }
+                }
             }
             return withCredentialEscalation({ allowed: true, risk: 'dangerous' });
         }
