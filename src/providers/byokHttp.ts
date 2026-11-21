@@ -135,6 +135,9 @@ export function validateProviderEndpointUrl(
   if (!trimmed) {
     throw new Error(`${label} endpoint URL is required.`);
   }
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) {
+    throw new Error(`${label} endpoint URL contains invalid control characters.`);
+  }
 
   let parsed: URL;
   try {
