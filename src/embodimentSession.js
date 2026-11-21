@@ -84,16 +84,16 @@ export function recordActuation(taskId, app, verbs) {
     if (!isSessionTrackingEnabled())
         return;
     try {
-        ensureSessionDir();
         const previous = readSession(taskId) || {};
+        const cleanApp = cleanSessionText(app, 120);
         const state = {
             ...previous,
-            app: app || previous.app || '',
-            lastActions: Array.isArray(verbs) ? verbs.map(v => String(v)).slice(0, 12) : [],
+            app: cleanApp || previous.app || '',
+            lastActions: Array.isArray(verbs) ? verbs.map(v => cleanSessionText(v, 120)).filter(Boolean).slice(0, 12) : [],
             lastTreeDigest: null,
             actedAt: new Date().toISOString()
         };
-        fs.writeFileSync(sessionFile(taskId), JSON.stringify(state, null, 2), { mode: 0o600 });
+        writeSessionAtomic(sessionFile(taskId), state);
     }
     catch {
         // Fail open.
