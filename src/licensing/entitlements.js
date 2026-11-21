@@ -236,6 +236,7 @@ export class EntitlementClient {
             const response = await this.fetchFn(`${this.apiBase}${pathname}`, {
                 method,
                 headers,
+                redirect: 'error',
                 ...(body !== undefined ? { body: raw } : {}),
                 signal: controller.signal
             });
