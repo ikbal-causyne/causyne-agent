@@ -323,12 +323,20 @@ export class AcpClient {
     };
     signal?.addEventListener('abort', onAbort, { once: true });
     try {
+      const rawPromptTimeout = this.options.promptTimeoutMs;
+      const promptTimeoutMs = typeof rawPromptTimeout === 'number' && Number.isFinite(rawPromptTimeout) && rawPromptTimeout > 0
+        ? Math.max(10, Math.min(3_600_000, Math.round(rawPromptTimeout)))
+        : 15 * 60 * 1000;
+      const rawInactivityTimeout = this.options.inactivityTimeoutMs;
+      const inactivityTimeoutMs = typeof rawInactivityTimeout === 'number' && Number.isFinite(rawInactivityTimeout) && rawInactivityTimeout > 0
+        ? Math.max(10, Math.min(3_600_000, Math.round(rawInactivityTimeout)))
+        : 120_000;
       const response = await this.request<PromptResponse>(ACP_METHODS.PROMPT, {
         sessionId,
         prompt: blocks
-      }, this.options.promptTimeoutMs ?? 15 * 60 * 1000, signal, {
+      }, promptTimeoutMs, signal, {
         sessionId,
-        inactivityTimeoutMs: this.options.inactivityTimeoutMs ?? 120_000
+        inactivityTimeoutMs
       });
       return {
         stopReason: response?.stopReason ?? 'end_turn',
