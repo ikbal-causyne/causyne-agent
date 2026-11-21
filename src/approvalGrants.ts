@@ -56,7 +56,8 @@ export function grantAlways(toolName: unknown): void {
 
 /** True when this tool may run without asking again. */
 export function isAlwaysAllowed(toolName: unknown): boolean {
-  return standingApprovals.has(normalizeToolName(toolName));
+  const name = normalizeToolName(toolName);
+  return name.length > 0 && standingApprovals.has(name);
 }
 
 /** Every standing approval, for `/approvals` and for the audit trail. */
@@ -73,7 +74,8 @@ export function revokeAllAlways(): number {
 
 /** Revoke one standing approval. */
 export function revokeAlways(toolName: unknown): boolean {
-  return standingApprovals.delete(normalizeToolName(toolName));
+  const name = normalizeToolName(toolName);
+  return name.length > 0 && standingApprovals.delete(name);
 }
 
 /** A fresh, empty standing-approval scope that is not shared with anything. */
@@ -87,7 +89,8 @@ export function createApprovalScope(): ApprovalScope {
       }
     },
     isAlwaysAllowed(toolName) {
-      return approvals.has(normalizeToolName(toolName));
+      const name = normalizeToolName(toolName);
+      return name.length > 0 && approvals.has(name);
     },
     listAlwaysAllowed() {
       return [...approvals].sort();
@@ -98,7 +101,8 @@ export function createApprovalScope(): ApprovalScope {
       return count;
     },
     revokeAlways(toolName) {
-      return approvals.delete(normalizeToolName(toolName));
+      const name = normalizeToolName(toolName);
+      return name.length > 0 && approvals.delete(name);
     }
   };
 }
