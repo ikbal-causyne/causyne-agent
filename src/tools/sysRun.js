@@ -59,7 +59,7 @@ export function getEnhancedEnv(baseEnv) {
             path.join(os.homedir(), 'Library', 'Android', 'sdk'), // macOS
             path.join(os.homedir(), 'Android', 'Sdk'), // Linux
             '/usr/lib/android-sdk', // Linux package
-            path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk') // Windows
+            ...(process.env.LOCALAPPDATA ? [path.join(process.env.LOCALAPPDATA, 'Android', 'Sdk')] : []) // Windows
         ];
         for (const dir of candidateDirs) {
             if (dir && fs.existsSync(dir)) {
