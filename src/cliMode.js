@@ -48,6 +48,8 @@ export class LocalCLIConnection {
     set stepCount(value) { this.renderer.stepCount = value; }
     stopSpinner() { this.renderer.stopSpinner(); }
     send(data) {
+        if (typeof data !== 'string' || !data)
+            return;
         let msg;
         try {
             msg = JSON.parse(data);
@@ -55,15 +57,19 @@ export class LocalCLIConnection {
         catch {
             return; // not a frame we produced
         }
+        if (!msg || typeof msg !== 'object')
+            return;
         try {
             this.renderer.handle(msg);
-            if (msg && msg.type === 'usage_update' && typeof this.onUsageUpdate === 'function') {
+            if (msg.type === 'usage_update' && typeof this.onUsageUpdate === 'function') {
                 this.onUsageUpdate(msg);
             }
         }
         catch (e) {
-            const errMsg = e instanceof Error ? e.message : String(e);
-            process.stderr.write(`[tui] render failed for "${msg?.type}": ${errMsg}\n`);
+            const rawErr = e instanceof Error ? e.message : String(e);
+            const safeErr = safeDisplay(redactProviderSecrets(rawErr)).replace(/[\r\n]+/g, ' ').slice(0, 512);
+            const safeType = safeDisplay(String(msg.type ?? 'unknown')).replace(/[\r\n]+/g, ' ').slice(0, 64);
+            process.stderr.write(`[tui] render failed for "${safeType}": ${safeErr}\n`);
         }
     }
 }
