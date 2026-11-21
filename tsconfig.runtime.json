@@ -327,7 +327,8 @@
     "src/tui/prompt.ts",
     "src/tui/ask.ts",
     "src/version.ts",
-    "src/devMode.ts"
+    "src/devMode.ts",
+    "src/capabilities.ts"
   ],
   "exclude": [
     "node_modules",
