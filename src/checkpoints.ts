@@ -374,20 +374,51 @@ interface StatCacheRecord {
 
 function loadStatCache(): Record<string, StatCacheRecord> {
   try {
-    return JSON.parse(fs.readFileSync(statCacheFile(), 'utf8')) as Record<string, StatCacheRecord>;
+    const cf = statCacheFile();
+    const stat = fs.lstatSync(cf);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 16 * 1024 * 1024) return {};
+    const parsed = JSON.parse(fs.readFileSync(cf, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const clean: Record<string, StatCacheRecord> = Object.create(null);
+    for (const [key, rec] of Object.entries(parsed as Record<string, unknown>)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      if (
+        rec && typeof rec === 'object' && !Array.isArray(rec)
+        && typeof (rec as Record<string, unknown>).mtimeMs === 'number'
+        && typeof (rec as Record<string, unknown>).size === 'number'
+        && isValidSha256((rec as Record<string, unknown>).hash)
+      ) {
+        clean[key] = rec as StatCacheRecord;
+      }
+    }
+    return clean;
   } catch {
     return {};
   }
 }
 
 function saveStatCache(cache: Record<string, StatCacheRecord>): void {
+  const cf = statCacheFile();
+  const temp = `${cf}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
   try {
-    const cf = statCacheFile();
-    const temp = `${cf}.tmp_${process.pid}`;
-    fs.writeFileSync(temp, JSON.stringify(cache), { mode: 0o600 });
+    try {
+      const existing = fs.lstatSync(cf);
+      if (existing.isSymbolicLink() || !existing.isFile()) return;
+    } catch (err: unknown) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+      if (code !== 'ENOENT') return;
+    }
+    const payload = Buffer.from(JSON.stringify(cache), 'utf8');
+    const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+    try {
+      fs.writeSync(fd, payload, 0, payload.length);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(temp, cf);
   } catch {
-    // best-effort cache save
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
   }
 }
 

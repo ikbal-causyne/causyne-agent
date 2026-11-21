@@ -310,21 +310,61 @@ export function captureBeforeMutation(toolName, args, meta = {}) {
 }
 function loadStatCache() {
     try {
-        return JSON.parse(fs.readFileSync(statCacheFile(), 'utf8'));
+        const cf = statCacheFile();
+        const stat = fs.lstatSync(cf);
+        if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 16 * 1024 * 1024)
+            return {};
+        const parsed = JSON.parse(fs.readFileSync(cf, 'utf8'));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+            return {};
+        const clean = Object.create(null);
+        for (const [key, rec] of Object.entries(parsed)) {
+            if (key === '__proto__' || key === 'constructor' || key === 'prototype')
+                continue;
+            if (rec && typeof rec === 'object' && !Array.isArray(rec)
+                && typeof rec.mtimeMs === 'number'
+                && typeof rec.size === 'number'
+                && isValidSha256(rec.hash)) {
+                clean[key] = rec;
+            }
+        }
+        return clean;
     }
     catch {
         return {};
     }
 }
 function saveStatCache(cache) {
+    const cf = statCacheFile();
+    const temp = `${cf}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
     try {
-        const cf = statCacheFile();
-        const temp = `${cf}.tmp_${process.pid}`;
-        fs.writeFileSync(temp, JSON.stringify(cache), { mode: 0o600 });
+        try {
+            const existing = fs.lstatSync(cf);
+            if (existing.isSymbolicLink() || !existing.isFile())
+                return;
+        }
+        catch (err) {
+            const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+            if (code !== 'ENOENT')
+                return;
+        }
+        const payload = Buffer.from(JSON.stringify(cache), 'utf8');
+        const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+        try {
+            fs.writeSync(fd, payload, 0, payload.length);
+            fs.fsyncSync(fd);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
         fs.renameSync(temp, cf);
     }
     catch {
-        // best-effort cache save
+        try {
+            if (fs.existsSync(temp))
+                fs.unlinkSync(temp);
+        }
+        catch { /* ignore */ }
     }
 }
 function snapshotTree(root) {
