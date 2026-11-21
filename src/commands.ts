@@ -534,8 +534,17 @@ export const COMMANDS: SlashCommandDefinition[] = [
       }
     },
     run: (argv, ctx = {}) => {
+      const allowedFlags = new Set(['--apply', '--step', '--full']);
       const flags = new Set(argv.filter(a => a.startsWith('--')));
+      for (const flag of flags) {
+        if (!allowedFlags.has(flag)) {
+          return fail(`Unknown /undo flag "${safeDisplay(flag)}". Allowed flags: --apply, --step, --full.`);
+        }
+      }
       const taskId = argv.find(a => !a.startsWith('--'));
+      if (taskId && /[\r\n\0]/.test(taskId)) {
+        return fail('Invalid checkpoint task ID.');
+      }
 
       // PREVIEW by default. Typing /undo used to restore files immediately —
       // no preview, no confirmation, and none of the running-task guard the
