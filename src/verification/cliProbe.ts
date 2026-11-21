@@ -4,6 +4,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { realpathSync, statSync } from 'node:fs';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 
 export interface CliProbeOptions {
   workspace?: string;
@@ -127,7 +128,7 @@ export async function runCliProbe(options: CliProbeOptions = {}): Promise<CliPro
         status: success ? 'observed-pass' : 'observed-fail',
         success, command: { program: program!, args, workspace: cwd },
         exitCode, signal, timedOut, truncated, stdout, stderr,
-        error: spawnError, durationMs: Math.max(0, Date.now() - started),
+        error: spawnError ? redactProviderSecrets(spawnError).slice(0, 512) : null, durationMs: Math.max(0, Date.now() - started),
         surface: 'cli-pipe',
         limitation: 'A pipe subprocess does not verify terminal rendering, mouse events, or desktop UI behavior'
       });
