@@ -60,8 +60,15 @@ export interface ReportRenderOptions {
 }
 
 function tokensOf(value: unknown): number {
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  return Math.round((text ?? '').length / APPROX_CHARS_PER_TOKEN);
+  if (typeof value === 'string') return Math.round(value.length / APPROX_CHARS_PER_TOKEN);
+  if (value == null) return 0;
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? '';
+  } catch {
+    text = String(value);
+  }
+  return Math.round(text.length / APPROX_CHARS_PER_TOKEN);
 }
 
 function formatBytes(bytes: number): string {

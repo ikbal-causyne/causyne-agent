@@ -15,8 +15,18 @@ import { isAntigravityProvider } from './providers/antigravity.js';
 // harness never disagree about what a token costs.
 const APPROX_CHARS_PER_TOKEN = 4;
 function tokensOf(value) {
-    const text = typeof value === 'string' ? value : JSON.stringify(value);
-    return Math.round((text ?? '').length / APPROX_CHARS_PER_TOKEN);
+    if (typeof value === 'string')
+        return Math.round(value.length / APPROX_CHARS_PER_TOKEN);
+    if (value == null)
+        return 0;
+    let text;
+    try {
+        text = JSON.stringify(value) ?? '';
+    }
+    catch {
+        text = String(value);
+    }
+    return Math.round(text.length / APPROX_CHARS_PER_TOKEN);
 }
 function formatBytes(bytes) {
     if (bytes < 1024)
