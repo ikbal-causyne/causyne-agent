@@ -96,6 +96,7 @@ export class PromptHistory {
         return true;
     }
     persist() {
+        let temporary = null;
         try {
             fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
             try {
@@ -107,7 +108,7 @@ export class PromptHistory {
             }
             const body = this.entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
             // Write then rename: a crash mid-write must not truncate the history.
-            const temporary = `${this.file}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+            temporary = `${this.file}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`;
             const fd = fs.openSync(temporary, 'wx', 0o600);
             try {
                 fs.writeFileSync(fd, body, 'utf8');
@@ -117,8 +118,15 @@ export class PromptHistory {
                 fs.closeSync(fd);
             }
             fs.renameSync(temporary, this.file);
+            temporary = null;
         }
         catch {
+            if (temporary) {
+                try {
+                    fs.unlinkSync(temporary);
+                }
+                catch { /* ignore cleanup errors */ }
+            }
             // History is a convenience. Failing to save it must never break the chat.
         }
     }
