@@ -282,10 +282,16 @@ export class AcpServer {
     this.write({ jsonrpc: '2.0', id: null, error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Invalid request' } });
   }
 
+  private isPlainParams(value: unknown): boolean {
+    return value === undefined || (value !== null && typeof value === 'object' && !Array.isArray(value));
+  }
+
   private async handleNotification(notification: JsonRpcNotification): Promise<void> {
+    if (!this.isPlainParams(notification.params)) return;
     if (notification.method === ACP_METHODS.CANCEL) {
       const params = notification.params as CancelNotification | undefined;
-      const session = params && typeof params.sessionId === 'string' ? this.sessions.get(params.sessionId) : undefined;
+      const sid = params && typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+      const session = sid ? this.sessions.get(sid) : undefined;
       if (session) {
         session.cancelled = true;
         this.rejectPendingForSession(session.id, 'session cancelled');
