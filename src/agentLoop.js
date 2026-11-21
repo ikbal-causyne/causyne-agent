@@ -1064,6 +1064,9 @@ export class AgentLoop {
     }
     /** Apply host policy to an ACP operation without disabling the peer itself. */
     resolvePeerFilePath(file) {
+        if (typeof file !== 'string' || !file.trim() || file.includes('\0')) {
+            throw new Error('ACP path was not authorized');
+        }
         const target = path.resolve(this.workspaceRoot, file);
         let ancestor = target;
         while (true) {
