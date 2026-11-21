@@ -1,5 +1,7 @@
 // Local desktop home: chat, configuration and workspace reports.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, dim, bold, badge, GLYPHS } from './theme.js';
 import { safeDisplay } from './text.js';
@@ -175,7 +177,7 @@ const RAW_PROVIDERS: Array<{ id: string; label: string; hint: string; category: 
   { id: 'openai-compatible', label: 'OpenAI-compatible endpoint', hint: 'custom base URL', category: 'BYOK (Custom)' },
   { id: 'openrouter', label: 'OpenRouter (Free Models)', hint: 'free inference router · openrouter/free', category: 'Free Cloud Models' },
   { id: 'ollama', label: 'Ollama', hint: 'local / offline', category: 'BYOK (Local Server)' },
-  { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: resolveAgyBinary() ? 'local AGY · Gemini & Claude (ready)' : 'local AGY · (not installed)', category: 'ACP (Peer Agent)' },
+  { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: (() => { const bin = resolveAgyBinary(); return bin && (path.isAbsolute(bin) ? fs.existsSync(bin) : isBinaryOnPath(bin)); })() ? 'local AGY · Gemini & Claude (ready)' : 'local AGY · (not installed)', category: 'ACP (Peer Agent)' },
   PI_SETUP_PROVIDER,
   { id: 'acp/opencode', label: 'OpenCode', hint: isBinaryOnPath('opencode') ? 'ACP · free models (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
   { id: 'acp/claude', label: 'Claude Code', hint: isBinaryOnPath('claude') ? 'ACP · Anthropic subscription (ready)' : 'ACP · (not installed)', category: 'ACP (Peer Agent)' },
