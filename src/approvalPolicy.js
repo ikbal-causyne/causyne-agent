@@ -25,12 +25,16 @@ const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|command|env)\s+)*(?:rm|un
 const DELETE_API_CALL = /\b(?:os\.(?:remove|unlink)|shutil\.rmtree|fs\.(?:rm|unlink)(?:Sync)?|\.unlink|\.rmdir)\s*\(/i;
 const NESTED_SHELL_DELETE = /\b(?:bash|sh|zsh|dash)\s+-c\s+['"]\s*(?:rm|unlink|rmdir)\b|\b(?:powershell|pwsh)\s+(?:-Command|-c)\s+['"]?\s*Remove-Item\b/i;
 /** A deletion is a whole filesystem entry, not removal of lines in an edit. */
+function canonicalPolicyTool(tool) {
+    return typeof tool === 'string' ? tool.trim().replace(/\./g, '_') : '';
+}
 export function isWholeFileDeletion(tool, args) {
-    if (tool === 'fs_delete')
+    const canonical = canonicalPolicyTool(tool);
+    if (canonical === 'fs_delete')
         return true;
-    const command = tool === 'gitOp'
+    const command = canonical === 'gitOp'
         ? `git ${String(args.command ?? args.action ?? '')}`
-        : SHELL_TOOLS.has(tool)
+        : SHELL_TOOLS.has(canonical)
             ? String(args.command ?? args.input ?? args.cmd ?? '')
             : '';
     if (/^\s*git\s+rm\s+--cached\b[^;&|\n`$()]*$/i.test(command))
@@ -40,7 +44,7 @@ export function isWholeFileDeletion(tool, args) {
 }
 /** Routine browser verification inside the isolated agent browser (preview, snapshot, click, fill, screenshot, etc.) does not require HITL in Mode B or C unless uploading or downloading files. */
 export function isRoutineBrowserVerification(tool, args) {
-    if (tool !== 'browser_act')
+    if (canonicalPolicyTool(tool) !== 'browser_act')
         return false;
     const actions = Array.isArray(args?.actions) ? args.actions : [];
     if (actions.length === 0) {
@@ -56,11 +60,12 @@ export function isRoutineBrowserVerification(tool, args) {
 }
 /** Prompt policy only. Sandbox denial, workspace checks, and observer veto run separately. */
 export function requiresToolApproval(input) {
+    const canonical = canonicalPolicyTool(input.tool);
     if (input.mode === 'C') {
-        if (!isWholeFileDeletion(input.tool, input.args))
+        if (!isWholeFileDeletion(canonical, input.args))
             return false;
         // A general shell or git grant must not authorize future deletions.
-        return input.tool !== 'fs_delete' || !input.standingApproval;
+        return canonical !== 'fs_delete' || !input.standingApproval;
     }
     if (input.standingApproval)
         return false;
