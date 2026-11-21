@@ -1,0 +1,460 @@
+import type { ParameterSchema } from './toolSelfRepair.js';
+import { scanAndAdaptToolsForProvider, scanAllProvidersCompatibility } from './toolScanner.js';
+import { creativeApps } from './creativeApps.js';
+import { computerUse } from './computerUse.js';
+import { uiForge } from './uiForge.js';
+import { documentForgeTool } from './documentForge.js';
+import { nativeEngineTool } from './nativeEngine.js';
+import { peerAgentTool } from './peerAgent.js';
+import { openSourceToolProvisioner } from './openSourceToolProvisioner.js';
+import { reverseEngineering } from './reverseEngineering.js';
+import { sysRun, sysRunBg } from './sysRun.js';
+import { fsRead } from './fsRead.js';
+import { fsWrite } from './fsWrite.js';
+import { fsEdit } from './fsEdit.js';
+import { fsSearch } from './fsSearch.js';
+import { fsFind } from './fsFind.js';
+import { fsList } from './fsList.js';
+import { fsMove } from './fsMove.js';
+import { fsDelete } from './fsDelete.js';
+import { gitExec } from './gitExec.js';
+import { processList } from './processList.js';
+import { procTerm } from './procTerm.js';
+import { webFetch } from './webFetch.js';
+import { desktopOpen } from './desktopOpen.js';
+import { multiEdit } from './multiEdit.js';
+import { codebaseSearch } from './codebaseSearch.js';
+import { browserAct } from './browserAutomator.js';
+import { blenderAct } from './blenderAutomator.js';
+import { resolveAutomator } from './resolveAutomator.js';
+import { palmierAutomator } from './palmierAutomator.js';
+import { viewImage } from './viewImage.js';
+import { webSearch } from './webSearch.js';
+import { updatePlan } from './updatePlan.js';
+import { requestDecision } from './requestDecision.js';
+import { clipboard } from './clipboard.js';
+import { screenshot } from './screenshot.js';
+import { axSnapshot } from './axSnapshot.js';
+import { desktopAct } from './desktopAct.js';
+import { archive } from './archive.js';
+import { checkSystemSpecs } from './checkSystemSpecs.js';
+import { executeProceduralMedia } from './executeProceduralMedia.js';
+import { manageLocalAiDependencies } from './manageLocalAiDependencies.js';
+import { generateMediaViaApi } from './generateMediaViaApi.js';
+import { memoryWrite } from './memoryWrite.js';
+import { memoryRecall } from './memoryRecall.js';
+import { printerPrint, printerList, printerStatus } from './printer.js';
+import { toolForgeTool } from './toolForge.js';
+import { pluginManagerTool } from './pluginManager.js';
+import { pluginsFactoryTool } from './pluginsFactory.js';
+import { astryxOracle } from './astryxOracle.js';
+import { pdfRead } from './pdfReader.js';
+import { codeVerifySyntax, codeListSymbols } from './codeTools.js';
+import { codeSearcher } from './codeSearcher.js';
+import { codeSearchAst } from './codeSearchAst.js';
+import { persistentShell } from './persistentShell.js';
+import { subagentOrchestrator } from './subagentOrchestrator.js';
+import { deferredMcpSearch } from './deferredMcpSearch.js';
+import { visionInspector } from './visionInspector.js';
+import { godotAutomator } from './godotAutomator.js';
+import { gameBuilder } from './gameBuilder.js';
+import { gameAssetFetcher } from './gameAssetFetcher.js';
+import { gameLoreForge } from './gameLoreForge.js';
+import { gameDialogueTreeGen } from './gameDialogueTreeGen.js';
+import { gameQuestArcBuilder } from './gameQuestArcBuilder.js';
+import { gameAnimationRig } from './gameAnimationRig.js';
+import { gameAiBehaviorTree } from './gameAiBehaviorTree.js';
+import { gameCinematicSequencer } from './gameCinematicSequencer.js';
+import { gameAssetHarvester } from './gameAssetHarvester.js';
+import { gameAudioSynth } from './gameAudioSynth.js';
+import { gameVfxEmitterGen } from './gameVfxEmitterGen.js';
+import { gameShaderForge } from './gameShaderForge.js';
+import { gameSceneBuilder } from './gameSceneBuilder.js';
+import { gameEntitySpawner } from './gameEntitySpawner.js';
+import { gameTilemapGenerator } from './gameTilemapGenerator.js';
+import { gameUiHudBuilder } from './gameUiHudBuilder.js';
+import { gameEconomyBalancer } from './gameEconomyBalancer.js';
+import { gameDataForge } from './gameDataForge.js';
+import { gameWebRuntimeInspector } from './gameWebRuntimeInspector.js';
+import { gameCanvasAudit } from './gameCanvasAudit.js';
+import readNativeSkill from './readNativeSkill.js';
+import { createSkill } from './createSkill.js';
+import { resolveActiveTools } from '../toolPacks.js';
+import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
+import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
+import { canonicalizeToolName } from './toolSelfRepair.js';
+
+// Phase 6 AGI Upgrade: Schema Validation Hook
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  parameters?: ParameterSchema;
+}
+
+export interface ToolModule {
+  schema: ToolDefinition;
+  execute: (...args: any[]) => any;
+}
+
+export interface DynamicToolsOptions {
+  grantAllTools?: boolean | undefined;
+  allowedTools?: readonly string[] | undefined;
+  deniedTools?: readonly string[] | undefined;
+  unlockedPacks?: readonly string[] | undefined;
+  unlockedTools?: readonly string[] | undefined;
+  unlockOrder?: readonly string[] | undefined;
+  residentOnly?: boolean | undefined;
+}
+
+function validateSchema(schema: unknown): schema is ToolDefinition {
+  if (!schema || typeof schema !== 'object' || !(schema as { name?: unknown }).name || !(schema as { description?: unknown }).description) {
+    console.error(`[REGISTRY WARNING] Tool schema missing required name or description:`, schema);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The one place a tool name is canonicalised. Schemas are authored with dots
+ * (`fs.read`) because that reads well; every provider's function-name grammar
+ * only allows [a-zA-Z0-9_-], so the wire name is always the underscored form.
+ *
+ * Every lookup — the agent loop, the sandbox, the pack resolver — must go
+ * through this, or the two namespaces drift apart again.
+ */
+// MCP is imported lazily-safe: this module is on the hot path of every LLM
+// call, and mcpRegistry only touches config until a server is actually granted.
+export function normalizeToolName(name: unknown): string {
+  return String(name || '').replace(/\./g, '_');
+}
+
+// SINGLE SOURCE OF TRUTH.
+//
+// TOOL_DEFINITIONS (what the model is told exists) and toolRegistry (what can
+// actually run) are both derived from this one list, so a tool can never be
+// advertised without being executable. The previous design kept a separate
+// hand-written registry map, and four tools had silently drifted out of it:
+// fs_find (a CORE tool, in context on every task), proc_term, palmier_act and
+// code_search_ast. Every model on every provider got "Tool does not exist".
+const TOOL_MODULES: readonly any[] = [
+  sysRun, sysRunBg, fsRead, fsWrite,
+  fsEdit, fsFind, fsSearch, fsList, fsMove,
+  fsDelete, gitExec, processList, procTerm,
+  webFetch, desktopOpen, multiEdit,
+  codebaseSearch, browserAct, viewImage, webSearch,
+  updatePlan, requestDecision, clipboard, screenshot, axSnapshot, desktopAct, archive,
+  checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
+  generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool, pluginsFactoryTool,
+  astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
+  codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
+  godotAutomator, gameBuilder, gameAssetFetcher,
+  gameLoreForge, gameDialogueTreeGen, gameQuestArcBuilder,
+  gameAnimationRig, gameAiBehaviorTree, gameCinematicSequencer,
+  gameAssetHarvester, gameAudioSynth, gameVfxEmitterGen,
+  gameShaderForge, gameSceneBuilder, gameEntitySpawner,
+  gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
+  gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
+  computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
+  openSourceToolProvisioner, reverseEngineering
+];
+
+// Base static definitions (backwards compatible). Order is preserved from the
+// list above because every provider's prompt cache binds on the tool array, and
+// reshuffling it invalidates the cached prefix mid-task.
+export const TOOL_DEFINITIONS: ToolDefinition[] = [];
+export const toolRegistry: Record<string, ToolModule> = Object.create(null) as Record<string, ToolModule>;
+
+for (const module of TOOL_MODULES) {
+  if (!module || !validateSchema(module.schema)) continue;
+
+  const name = normalizeToolName(module.schema.name);
+  if (typeof module.execute !== 'function') {
+    console.error(`[REGISTRY WARNING] Tool "${name}" has no execute() and cannot run — skipping.`);
+    continue;
+  }
+
+  TOOL_DEFINITIONS.push({ ...module.schema, name });
+  toolRegistry[name] = module;
+}
+
+// Names that older releases (and any chat history persisted under them) used for
+// a tool whose canonical schema name is different, plus universal aliases for
+// models that hallucinate common tool names from other environments.
+const TOOL_ALIASES: Record<string, string> = Object.assign(Object.create(null) as Record<string, string>, {
+  TodoWrite: 'update_plan',
+  manage_local_ai_dependencies: 'manage_local_dependencies',
+  procTerm: 'proc_term',
+  gitExec: 'gitOp',
+  tool_deferred_mcp_search: 'tool_search',
+
+  // Sovereign Reverse Engineering aliases
+  re_inspect_binary: 'reverse_engineering',
+  re_decompile: 'reverse_engineering',
+  re_unpack_bundle: 'reverse_engineering',
+  re_deobfuscate_script: 'reverse_engineering',
+  re_trace_runtime: 'reverse_engineering',
+
+  // Core filesystem aliases
+  read_file: 'fs_read',
+  readFile: 'fs_read',
+  view_file: 'fs_read',
+  cat: 'fs_read',
+  write_file: 'fs_write',
+  writeFile: 'fs_write',
+  write_to_file: 'fs_write',
+  create_file: 'fs_write',
+  edit_file: 'fs_edit',
+  editFile: 'fs_edit',
+  replace_file_content: 'fs_edit',
+  modify_file: 'fs_edit',
+  delete_file: 'fs_delete',
+  deleteFile: 'fs_delete',
+  remove_file: 'fs_delete',
+  rm: 'fs_delete',
+  list_dir: 'fs_list',
+  listDir: 'fs_list',
+  list_files: 'fs_list',
+  listFiles: 'fs_list',
+  list_directory: 'fs_list',
+  ls: 'fs_list',
+  find_files: 'fs_find',
+  findFiles: 'fs_find',
+  find_file: 'fs_find',
+  glob: 'fs_find',
+  search_files: 'fs_search',
+  grep: 'fs_search',
+  grep_search: 'fs_search',
+  move_file: 'fs_move',
+  moveFile: 'fs_move',
+  rename_file: 'fs_move',
+  mv: 'fs_move',
+  patch: 'MultiEdit',
+  multi_edit: 'MultiEdit',
+  multiedit: 'MultiEdit',
+  diff_edit: 'MultiEdit',
+
+  // Execution & shell aliases
+  sys_run: 'sysRun',
+  sysrun: 'sysRun',
+  run_command: 'sysRun',
+  runCommand: 'sysRun',
+  bash: 'sysRun',
+  sh: 'sysRun',
+  terminal: 'sysRun',
+  exec_command: 'sysRun',
+  execute_command: 'sysRun',
+  shell: 'sysRun',
+  sys_run_bg: 'sysRunBg',
+  sysrunbg: 'sysRunBg',
+  sysRun_bg: 'sysRunBg',
+  run_bg: 'sysRunBg',
+  run_background: 'sysRunBg',
+  background_run: 'sysRunBg',
+  git_op: 'gitOp',
+  gitop: 'gitOp',
+  git: 'gitOp',
+  persistent_shell: 'terminal_persistent_shell',
+  terminal_shell: 'terminal_persistent_shell',
+
+  // Web & search aliases
+  search_web: 'web_search',
+  searchWeb: 'web_search',
+  google_search: 'web_search',
+  search_internet: 'web_search',
+  fetch_url: 'web_fetch',
+  fetchUrl: 'web_fetch',
+  read_url: 'web_fetch',
+  read_url_content: 'web_fetch',
+  http_get: 'web_fetch',
+
+  // Specialized engines & capabilities
+  nativeEngine: 'native_engine',
+  'native-engine': 'native_engine',
+  creativeApps: 'creative_apps',
+  'creative-apps': 'creative_apps',
+  astryxOracle: 'astryx_oracle',
+  pdfRead: 'pdf_read',
+  codeVerifySyntax: 'code_verify_syntax',
+  codeListSymbols: 'code_list_symbols',
+  codeSearchAst: 'code_search_ast',
+  codeSearcher: 'code_search_ripgrep',
+  blenderAutomator: 'blender_act',
+  resolveAutomator: 'resolve_act',
+  palmierAutomator: 'palmier_act',
+  godotAutomator: 'godot_act',
+  visionInspector: 'vision_inspect_ui',
+  vision_inspector: 'vision_inspect_ui',
+  vision_inspect: 'vision_inspect_ui',
+  computerUse: 'computer_use',
+  uiForge: 'ui_forge',
+  documentForge: 'document_forge',
+  documentForgeTool: 'document_forge',
+  peerAgent: 'peer_agent_delegate',
+  peer_agent: 'peer_agent_delegate',
+  openSourceToolProvisioner: 'open_source_tool_provisioner',
+  open_source_tool: 'open_source_tool_provisioner',
+  subagent: 'agent_subagent_orchestrate',
+  subagent_orchestrator: 'agent_subagent_orchestrate',
+  spawn_subagent: 'agent_subagent_orchestrate',
+  agent_orchestrator: 'agent_subagent_orchestrate',
+  printer_status: 'printer_get_status',
+  printer_list: 'printer_list_printers',
+  create_skill: 'skill_create',
+  read_skill: 'fs_read_skill',
+  readNativeSkill: 'fs_read_skill',
+  take_screenshot: 'screenshot',
+  capture_screenshot: 'screenshot',
+  open_file: 'desktop_open',
+  open_desktop: 'desktop_open'
+});
+
+function stripDelimiters(str: unknown): string {
+  return String(str || '').toLowerCase().replace(/[-_.]/g, '');
+}
+
+// Precompute delimiter-free lookup table for fuzzy casing/naming matches
+const DELIMITER_FREE_INDEX: Record<string, string> = Object.create(null) as Record<string, string>;
+for (const key of Object.keys(toolRegistry)) {
+  DELIMITER_FREE_INDEX[stripDelimiters(key)] = key;
+}
+for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
+  if (toolRegistry[target]) {
+    DELIMITER_FREE_INDEX[stripDelimiters(alias)] = target;
+  }
+}
+
+/** The canonical catalogue name for anything the model might call it. */
+export function canonicalToolName(name: unknown): string {
+  const normalized = normalizeToolName(name);
+  if (Object.hasOwn(toolRegistry, normalized) && toolRegistry[normalized]) return normalized;
+  if (Object.hasOwn(TOOL_ALIASES, normalized) && TOOL_ALIASES[normalized]) return TOOL_ALIASES[normalized]!;
+  const fromSelfRepair = canonicalizeToolName(String(name ?? ''));
+  if (Object.hasOwn(toolRegistry, fromSelfRepair) && toolRegistry[fromSelfRepair]) return fromSelfRepair;
+  const stripped = stripDelimiters(name);
+  const fuzzy = Object.hasOwn(DELIMITER_FREE_INDEX, stripped) ? DELIMITER_FREE_INDEX[stripped] : undefined;
+  if (fuzzy && Object.hasOwn(toolRegistry, fuzzy) && toolRegistry[fuzzy]) return fuzzy;
+  return normalized;
+}
+
+/** Resolve a name the model produced to a runnable tool, following aliases. */
+export function resolveTool(name: unknown): any {
+  const canonical = canonicalToolName(name);
+  const native = Object.hasOwn(toolRegistry, canonical) ? (toolRegistry[canonical] || null) : null;
+  if (native) return native;
+  // MCP tools are namespaced `mcp__server__tool`, so they can never shadow a
+  // native name — the native lookup always wins above.
+  const rawName = String(name ?? '');
+  if (isMcpToolName(rawName)) return resolveMcpTool(rawName);
+  if (canonical.startsWith('plugin__')) return resolvePluginTool(canonical);
+  return null;
+}
+
+// Phase 6 AGI Upgrade & V5 Cortex: Dynamic Tool Culling and Hot-Reloading Engine
+//
+// options.unlockedPacks / options.unlockedTools drive Sovereign Progressive
+// Disclosure (see src/toolPacks.js). No tool is ever removed from the catalogue
+// — deferred schemas simply stay out of the context window until the agent
+// pre-warms or searches for them. options.grantAllTools restores the legacy
+// behaviour of loading all 69 schemas up front.
+function dedupeDefinitions(definitions: readonly ToolDefinition[]): ToolDefinition[] {
+  const seenNames = new Set<string>();
+  return definitions.filter((definition) => {
+    const name = normalizeToolName(definition?.name);
+    if (!name || seenNames.has(name)) return false;
+    seenNames.add(name);
+    return true;
+  });
+}
+
+export async function getSearchableToolDefinitions(): Promise<ToolDefinition[]> {
+  const plugins = getPluginToolDefinitions();
+  let mcp: ToolDefinition[] = [];
+  try {
+    mcp = await discoverTools() as unknown as ToolDefinition[];
+  } catch { /* a broken third-party server must not hide native tools */ }
+  return dedupeDefinitions([...TOOL_DEFINITIONS, ...(plugins as unknown as ToolDefinition[]), ...mcp]);
+}
+
+/**
+ * Scan every registered native, plugin, and MCP tool against one provider or
+ * the entire provider matrix (`toolsScan`) and report auto-adapted compatibility.
+ */
+export async function scanToolRegistry(provider: string | undefined = 'all', options: Record<string, unknown> = {}): Promise<any> {
+  const tools = await getSearchableToolDefinitions();
+  if (!provider || provider.toLowerCase() === 'all') {
+    return scanAllProvidersCompatibility(tools as any);
+  }
+  return scanAndAdaptToolsForProvider(tools as any, provider, options);
+}
+
+export async function getDynamicTools(autonomyMode: string | undefined = 'C', supportsVision: boolean | undefined = true, options: DynamicToolsOptions | undefined = {}): Promise<ToolDefinition[]> {
+  const safeOptions = options && typeof options === 'object' ? options : {};
+  // Plugin discovery reads validated JSON manifests only. Extension JavaScript
+  // is never imported into the host process during startup or tool assembly;
+  // it runs later in a permission-restricted child process after enablement.
+  const plugins = getPluginToolDefinitions();
+  // Tools from user-configured MCP servers, appended last so the native
+  // schema order — which the provider prompt caches depend on — never shifts.
+  let mcp: ToolDefinition[] = [];
+  try {
+    mcp = await discoverTools() as unknown as ToolDefinition[];
+  } catch { /* a broken third-party server must not take the catalogue down */ }
+  let tools: ToolDefinition[] = [...TOOL_DEFINITIONS, ...(plugins as unknown as ToolDefinition[]), ...mcp];
+
+  // Built-ins win name collisions, followed by the first explicitly loaded
+  // extension. This prevents an MCP server or local extension from shadowing a
+  // native safety-sensitive tool while keeping tool ordering deterministic for
+  // provider prompt caches.
+  tools = dedupeDefinitions(tools);
+
+  // Deny/allow policy is applied before the model sees the catalogue. Runtime
+  // validation still runs later; this early filter avoids wasting a model turn
+  // on a tool the harness already knows it will reject.
+  const allowedTools = Array.isArray(safeOptions.allowedTools) ? safeOptions.allowedTools : ['*'];
+  if (!allowedTools.includes('*')) {
+    const allowed = new Set(allowedTools.map(normalizeToolName));
+    tools = tools.filter((definition) => allowed.has(normalizeToolName(definition.name)));
+  }
+  if (Array.isArray(safeOptions.deniedTools) && safeOptions.deniedTools.length > 0) {
+    const denied = new Set(safeOptions.deniedTools.map(normalizeToolName));
+    tools = tools.filter((definition) => !denied.has(normalizeToolName(definition.name)));
+  }
+
+  if (!safeOptions.grantAllTools) {
+    tools = resolveActiveTools(tools as any, safeOptions.unlockedPacks as any, safeOptions.unlockedTools as any, safeOptions.unlockOrder as any, {
+      residentOnly: safeOptions.residentOnly === true
+    }) as unknown as ToolDefinition[];
+  }
+
+  // Vision Toggle Culling
+  if (!supportsVision) {
+    // Phase 6 Fix: Do not hide view_image. Allow it to serve as a Text-Only OCR Fallback for blind LLMs.
+    tools = tools.filter(t => t.name !== 'screenshot' && t.name !== 'vision_inspect_ui');
+  }
+
+  // Capability Culling (finding D-6).
+  //
+  // A tool the user has explicitly DECLINED can never run, so showing its
+  // schema only invites the model to spend a step discovering that. A tool that
+  // is merely un-granted stays visible: calling it is how the model learns to
+  // ask for the capability, which is the intended flow.
+  try {
+    const { declinedToolNames } = await import('../provisioning/capabilityTools.js');
+    const declined = declinedToolNames();
+    if (declined.size > 0) tools = tools.filter(t => !declined.has(t.name));
+  } catch { /* provisioning unavailable: show everything rather than hide capability */ }
+
+  // Autonomy Mode Culling (Save tokens and prevent hallucinations on Mode A).
+  // Names here are canonical catalogue names — the legacy dotted/camelCase
+  // variants that used to pad these sets never matched a schema name and so
+  // culled nothing.
+  if (autonomyMode === 'A') {
+    const dangerousTools = new Set(['proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'manage_local_dependencies']);
+    tools = tools.filter(t => !dangerousTools.has(t.name));
+  } else if (autonomyMode === 'B') {
+    const dangerousTools = new Set(['proc_term', 'manage_local_dependencies']);
+    tools = tools.filter(t => !dangerousTools.has(t.name));
+  }
+
+  return tools;
+}

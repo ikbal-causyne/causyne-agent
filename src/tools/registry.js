@@ -82,16 +82,13 @@ import { resolveActiveTools } from '../toolPacks.js';
 import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
 import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
 import { canonicalizeToolName } from './toolSelfRepair.js';
-
-// Phase 6 AGI Upgrade: Schema Validation Hook
 function validateSchema(schema) {
-  if (!schema || !schema.name || !schema.description) {
-    console.error(`[REGISTRY WARNING] Tool schema missing required name or description:`, schema);
-    return false;
-  }
-  return true;
+    if (!schema || typeof schema !== 'object' || !schema.name || !schema.description) {
+        console.error(`[REGISTRY WARNING] Tool schema missing required name or description:`, schema);
+        return false;
+    }
+    return true;
 }
-
 /**
  * The one place a tool name is canonicalised. Schemas are authored with dots
  * (`fs.read`) because that reads well; every provider's function-name grammar
@@ -103,9 +100,8 @@ function validateSchema(schema) {
 // MCP is imported lazily-safe: this module is on the hot path of every LLM
 // call, and mcpRegistry only touches config until a server is actually granted.
 export function normalizeToolName(name) {
-  return String(name || '').replace(/\./g, '_');
+    return String(name || '').replace(/\./g, '_');
 }
-
 // SINGLE SOURCE OF TRUTH.
 //
 // TOOL_DEFINITIONS (what the model is told exists) and toolRegistry (what can
@@ -115,216 +111,211 @@ export function normalizeToolName(name) {
 // fs_find (a CORE tool, in context on every task), proc_term, palmier_act and
 // code_search_ast. Every model on every provider got "Tool does not exist".
 const TOOL_MODULES = [
-  sysRun, sysRunBg, fsRead, fsWrite,
-  fsEdit, fsFind, fsSearch, fsList, fsMove,
-  fsDelete, gitExec, processList, procTerm,
-  webFetch, desktopOpen, multiEdit,
-  codebaseSearch, browserAct, viewImage, webSearch,
-  updatePlan, requestDecision, clipboard, screenshot, axSnapshot, desktopAct, archive,
-  checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
-  generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool, pluginsFactoryTool,
-  astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
-  codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
-  godotAutomator, gameBuilder, gameAssetFetcher,
-  gameLoreForge, gameDialogueTreeGen, gameQuestArcBuilder,
-  gameAnimationRig, gameAiBehaviorTree, gameCinematicSequencer,
-  gameAssetHarvester, gameAudioSynth, gameVfxEmitterGen,
-  gameShaderForge, gameSceneBuilder, gameEntitySpawner,
-  gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
-  gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
-  computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
-  openSourceToolProvisioner, reverseEngineering
+    sysRun, sysRunBg, fsRead, fsWrite,
+    fsEdit, fsFind, fsSearch, fsList, fsMove,
+    fsDelete, gitExec, processList, procTerm,
+    webFetch, desktopOpen, multiEdit,
+    codebaseSearch, browserAct, viewImage, webSearch,
+    updatePlan, requestDecision, clipboard, screenshot, axSnapshot, desktopAct, archive,
+    checkSystemSpecs, executeProceduralMedia, manageLocalAiDependencies,
+    generateMediaViaApi, memoryWrite, memoryRecall, printerPrint, printerList, printerStatus, toolForgeTool, pluginManagerTool, pluginsFactoryTool,
+    astryxOracle, pdfRead, codeVerifySyntax, codeListSymbols, blenderAct, resolveAutomator, palmierAutomator,
+    codeSearchAst, codeSearcher, persistentShell, subagentOrchestrator, deferredMcpSearch, visionInspector,
+    godotAutomator, gameBuilder, gameAssetFetcher,
+    gameLoreForge, gameDialogueTreeGen, gameQuestArcBuilder,
+    gameAnimationRig, gameAiBehaviorTree, gameCinematicSequencer,
+    gameAssetHarvester, gameAudioSynth, gameVfxEmitterGen,
+    gameShaderForge, gameSceneBuilder, gameEntitySpawner,
+    gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
+    gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
+    computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
+    openSourceToolProvisioner, reverseEngineering
 ];
-
 // Base static definitions (backwards compatible). Order is preserved from the
 // list above because every provider's prompt cache binds on the tool array, and
 // reshuffling it invalidates the cached prefix mid-task.
 export const TOOL_DEFINITIONS = [];
-export const toolRegistry = {};
-
+export const toolRegistry = Object.create(null);
 for (const module of TOOL_MODULES) {
-  if (!module || !validateSchema(module.schema)) continue;
-
-  const name = normalizeToolName(module.schema.name);
-  if (typeof module.execute !== 'function') {
-    console.error(`[REGISTRY WARNING] Tool "${name}" has no execute() and cannot run — skipping.`);
-    continue;
-  }
-
-  TOOL_DEFINITIONS.push({ ...module.schema, name });
-  toolRegistry[name] = module;
+    if (!module || !validateSchema(module.schema))
+        continue;
+    const name = normalizeToolName(module.schema.name);
+    if (typeof module.execute !== 'function') {
+        console.error(`[REGISTRY WARNING] Tool "${name}" has no execute() and cannot run — skipping.`);
+        continue;
+    }
+    TOOL_DEFINITIONS.push({ ...module.schema, name });
+    toolRegistry[name] = module;
 }
-
 // Names that older releases (and any chat history persisted under them) used for
 // a tool whose canonical schema name is different, plus universal aliases for
 // models that hallucinate common tool names from other environments.
-const TOOL_ALIASES = {
-  TodoWrite: 'update_plan',
-  manage_local_ai_dependencies: 'manage_local_dependencies',
-  procTerm: 'proc_term',
-  gitExec: 'gitOp',
-  tool_deferred_mcp_search: 'tool_search',
-
-  // Sovereign Reverse Engineering aliases
-  re_inspect_binary: 'reverse_engineering',
-  re_decompile: 'reverse_engineering',
-  re_unpack_bundle: 'reverse_engineering',
-  re_deobfuscate_script: 'reverse_engineering',
-  re_trace_runtime: 'reverse_engineering',
-
-  // Core filesystem aliases
-  read_file: 'fs_read',
-  readFile: 'fs_read',
-  view_file: 'fs_read',
-  cat: 'fs_read',
-  write_file: 'fs_write',
-  writeFile: 'fs_write',
-  write_to_file: 'fs_write',
-  create_file: 'fs_write',
-  edit_file: 'fs_edit',
-  editFile: 'fs_edit',
-  replace_file_content: 'fs_edit',
-  modify_file: 'fs_edit',
-  delete_file: 'fs_delete',
-  deleteFile: 'fs_delete',
-  remove_file: 'fs_delete',
-  rm: 'fs_delete',
-  list_dir: 'fs_list',
-  listDir: 'fs_list',
-  list_files: 'fs_list',
-  listFiles: 'fs_list',
-  list_directory: 'fs_list',
-  ls: 'fs_list',
-  find_files: 'fs_find',
-  findFiles: 'fs_find',
-  find_file: 'fs_find',
-  glob: 'fs_find',
-  search_files: 'fs_search',
-  grep: 'fs_search',
-  grep_search: 'fs_search',
-  move_file: 'fs_move',
-  moveFile: 'fs_move',
-  rename_file: 'fs_move',
-  mv: 'fs_move',
-  patch: 'MultiEdit',
-  multi_edit: 'MultiEdit',
-  multiedit: 'MultiEdit',
-  diff_edit: 'MultiEdit',
-
-  // Execution & shell aliases
-  sys_run: 'sysRun',
-  sysrun: 'sysRun',
-  run_command: 'sysRun',
-  runCommand: 'sysRun',
-  bash: 'sysRun',
-  sh: 'sysRun',
-  terminal: 'sysRun',
-  exec_command: 'sysRun',
-  execute_command: 'sysRun',
-  shell: 'sysRun',
-  sys_run_bg: 'sysRunBg',
-  sysrunbg: 'sysRunBg',
-  sysRun_bg: 'sysRunBg',
-  run_bg: 'sysRunBg',
-  run_background: 'sysRunBg',
-  background_run: 'sysRunBg',
-  git_op: 'gitOp',
-  gitop: 'gitOp',
-  git: 'gitOp',
-  persistent_shell: 'terminal_persistent_shell',
-  terminal_shell: 'terminal_persistent_shell',
-
-  // Web & search aliases
-  search_web: 'web_search',
-  searchWeb: 'web_search',
-  google_search: 'web_search',
-  search_internet: 'web_search',
-  fetch_url: 'web_fetch',
-  fetchUrl: 'web_fetch',
-  read_url: 'web_fetch',
-  read_url_content: 'web_fetch',
-  http_get: 'web_fetch',
-
-  // Specialized engines & capabilities
-  nativeEngine: 'native_engine',
-  'native-engine': 'native_engine',
-  creativeApps: 'creative_apps',
-  'creative-apps': 'creative_apps',
-  astryxOracle: 'astryx_oracle',
-  pdfRead: 'pdf_read',
-  codeVerifySyntax: 'code_verify_syntax',
-  codeListSymbols: 'code_list_symbols',
-  codeSearchAst: 'code_search_ast',
-  codeSearcher: 'code_search_ripgrep',
-  blenderAutomator: 'blender_act',
-  resolveAutomator: 'resolve_act',
-  palmierAutomator: 'palmier_act',
-  godotAutomator: 'godot_act',
-  visionInspector: 'vision_inspect_ui',
-  vision_inspector: 'vision_inspect_ui',
-  vision_inspect: 'vision_inspect_ui',
-  computerUse: 'computer_use',
-  uiForge: 'ui_forge',
-  documentForge: 'document_forge',
-  documentForgeTool: 'document_forge',
-  peerAgent: 'peer_agent_delegate',
-  peer_agent: 'peer_agent_delegate',
-  openSourceToolProvisioner: 'open_source_tool_provisioner',
-  open_source_tool: 'open_source_tool_provisioner',
-  subagent: 'agent_subagent_orchestrate',
-  subagent_orchestrator: 'agent_subagent_orchestrate',
-  spawn_subagent: 'agent_subagent_orchestrate',
-  agent_orchestrator: 'agent_subagent_orchestrate',
-  printer_status: 'printer_get_status',
-  printer_list: 'printer_list_printers',
-  create_skill: 'skill_create',
-  read_skill: 'fs_read_skill',
-  readNativeSkill: 'fs_read_skill',
-  take_screenshot: 'screenshot',
-  capture_screenshot: 'screenshot',
-  open_file: 'desktop_open',
-  open_desktop: 'desktop_open'
-};
-
+const TOOL_ALIASES = Object.assign(Object.create(null), {
+    TodoWrite: 'update_plan',
+    manage_local_ai_dependencies: 'manage_local_dependencies',
+    procTerm: 'proc_term',
+    gitExec: 'gitOp',
+    tool_deferred_mcp_search: 'tool_search',
+    // Sovereign Reverse Engineering aliases
+    re_inspect_binary: 'reverse_engineering',
+    re_decompile: 'reverse_engineering',
+    re_unpack_bundle: 'reverse_engineering',
+    re_deobfuscate_script: 'reverse_engineering',
+    re_trace_runtime: 'reverse_engineering',
+    // Core filesystem aliases
+    read_file: 'fs_read',
+    readFile: 'fs_read',
+    view_file: 'fs_read',
+    cat: 'fs_read',
+    write_file: 'fs_write',
+    writeFile: 'fs_write',
+    write_to_file: 'fs_write',
+    create_file: 'fs_write',
+    edit_file: 'fs_edit',
+    editFile: 'fs_edit',
+    replace_file_content: 'fs_edit',
+    modify_file: 'fs_edit',
+    delete_file: 'fs_delete',
+    deleteFile: 'fs_delete',
+    remove_file: 'fs_delete',
+    rm: 'fs_delete',
+    list_dir: 'fs_list',
+    listDir: 'fs_list',
+    list_files: 'fs_list',
+    listFiles: 'fs_list',
+    list_directory: 'fs_list',
+    ls: 'fs_list',
+    find_files: 'fs_find',
+    findFiles: 'fs_find',
+    find_file: 'fs_find',
+    glob: 'fs_find',
+    search_files: 'fs_search',
+    grep: 'fs_search',
+    grep_search: 'fs_search',
+    move_file: 'fs_move',
+    moveFile: 'fs_move',
+    rename_file: 'fs_move',
+    mv: 'fs_move',
+    patch: 'MultiEdit',
+    multi_edit: 'MultiEdit',
+    multiedit: 'MultiEdit',
+    diff_edit: 'MultiEdit',
+    // Execution & shell aliases
+    sys_run: 'sysRun',
+    sysrun: 'sysRun',
+    run_command: 'sysRun',
+    runCommand: 'sysRun',
+    bash: 'sysRun',
+    sh: 'sysRun',
+    terminal: 'sysRun',
+    exec_command: 'sysRun',
+    execute_command: 'sysRun',
+    shell: 'sysRun',
+    sys_run_bg: 'sysRunBg',
+    sysrunbg: 'sysRunBg',
+    sysRun_bg: 'sysRunBg',
+    run_bg: 'sysRunBg',
+    run_background: 'sysRunBg',
+    background_run: 'sysRunBg',
+    git_op: 'gitOp',
+    gitop: 'gitOp',
+    git: 'gitOp',
+    persistent_shell: 'terminal_persistent_shell',
+    terminal_shell: 'terminal_persistent_shell',
+    // Web & search aliases
+    search_web: 'web_search',
+    searchWeb: 'web_search',
+    google_search: 'web_search',
+    search_internet: 'web_search',
+    fetch_url: 'web_fetch',
+    fetchUrl: 'web_fetch',
+    read_url: 'web_fetch',
+    read_url_content: 'web_fetch',
+    http_get: 'web_fetch',
+    // Specialized engines & capabilities
+    nativeEngine: 'native_engine',
+    'native-engine': 'native_engine',
+    creativeApps: 'creative_apps',
+    'creative-apps': 'creative_apps',
+    astryxOracle: 'astryx_oracle',
+    pdfRead: 'pdf_read',
+    codeVerifySyntax: 'code_verify_syntax',
+    codeListSymbols: 'code_list_symbols',
+    codeSearchAst: 'code_search_ast',
+    codeSearcher: 'code_search_ripgrep',
+    blenderAutomator: 'blender_act',
+    resolveAutomator: 'resolve_act',
+    palmierAutomator: 'palmier_act',
+    godotAutomator: 'godot_act',
+    visionInspector: 'vision_inspect_ui',
+    vision_inspector: 'vision_inspect_ui',
+    vision_inspect: 'vision_inspect_ui',
+    computerUse: 'computer_use',
+    uiForge: 'ui_forge',
+    documentForge: 'document_forge',
+    documentForgeTool: 'document_forge',
+    peerAgent: 'peer_agent_delegate',
+    peer_agent: 'peer_agent_delegate',
+    openSourceToolProvisioner: 'open_source_tool_provisioner',
+    open_source_tool: 'open_source_tool_provisioner',
+    subagent: 'agent_subagent_orchestrate',
+    subagent_orchestrator: 'agent_subagent_orchestrate',
+    spawn_subagent: 'agent_subagent_orchestrate',
+    agent_orchestrator: 'agent_subagent_orchestrate',
+    printer_status: 'printer_get_status',
+    printer_list: 'printer_list_printers',
+    create_skill: 'skill_create',
+    read_skill: 'fs_read_skill',
+    readNativeSkill: 'fs_read_skill',
+    take_screenshot: 'screenshot',
+    capture_screenshot: 'screenshot',
+    open_file: 'desktop_open',
+    open_desktop: 'desktop_open'
+});
 function stripDelimiters(str) {
-  return String(str || '').toLowerCase().replace(/[-_.]/g, '');
+    return String(str || '').toLowerCase().replace(/[-_.]/g, '');
 }
-
 // Precompute delimiter-free lookup table for fuzzy casing/naming matches
-const DELIMITER_FREE_INDEX = {};
+const DELIMITER_FREE_INDEX = Object.create(null);
 for (const key of Object.keys(toolRegistry)) {
-  DELIMITER_FREE_INDEX[stripDelimiters(key)] = key;
+    DELIMITER_FREE_INDEX[stripDelimiters(key)] = key;
 }
 for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
-  if (toolRegistry[target]) {
-    DELIMITER_FREE_INDEX[stripDelimiters(alias)] = target;
-  }
+    if (toolRegistry[target]) {
+        DELIMITER_FREE_INDEX[stripDelimiters(alias)] = target;
+    }
 }
-
 /** The canonical catalogue name for anything the model might call it. */
 export function canonicalToolName(name) {
-  const normalized = normalizeToolName(name);
-  if (toolRegistry[normalized]) return normalized;
-  if (TOOL_ALIASES[normalized]) return TOOL_ALIASES[normalized];
-  const fromSelfRepair = canonicalizeToolName(name);
-  if (toolRegistry[fromSelfRepair]) return fromSelfRepair;
-  const fuzzy = DELIMITER_FREE_INDEX[stripDelimiters(name)];
-  if (fuzzy && toolRegistry[fuzzy]) return fuzzy;
-  return normalized;
+    const normalized = normalizeToolName(name);
+    if (Object.hasOwn(toolRegistry, normalized) && toolRegistry[normalized])
+        return normalized;
+    if (Object.hasOwn(TOOL_ALIASES, normalized) && TOOL_ALIASES[normalized])
+        return TOOL_ALIASES[normalized];
+    const fromSelfRepair = canonicalizeToolName(String(name ?? ''));
+    if (Object.hasOwn(toolRegistry, fromSelfRepair) && toolRegistry[fromSelfRepair])
+        return fromSelfRepair;
+    const stripped = stripDelimiters(name);
+    const fuzzy = Object.hasOwn(DELIMITER_FREE_INDEX, stripped) ? DELIMITER_FREE_INDEX[stripped] : undefined;
+    if (fuzzy && Object.hasOwn(toolRegistry, fuzzy) && toolRegistry[fuzzy])
+        return fuzzy;
+    return normalized;
 }
-
 /** Resolve a name the model produced to a runnable tool, following aliases. */
 export function resolveTool(name) {
-  const canonical = canonicalToolName(name);
-  const native = toolRegistry[canonical] || null;
-  if (native) return native;
-  // MCP tools are namespaced `mcp__server__tool`, so they can never shadow a
-  // native name — the native lookup always wins above.
-  if (isMcpToolName(name)) return resolveMcpTool(name);
-  if (canonical.startsWith('plugin__')) return resolvePluginTool(canonical);
-  return null;
+    const canonical = canonicalToolName(name);
+    const native = Object.hasOwn(toolRegistry, canonical) ? (toolRegistry[canonical] || null) : null;
+    if (native)
+        return native;
+    // MCP tools are namespaced `mcp__server__tool`, so they can never shadow a
+    // native name — the native lookup always wins above.
+    const rawName = String(name ?? '');
+    if (isMcpToolName(rawName))
+        return resolveMcpTool(rawName);
+    if (canonical.startsWith('plugin__'))
+        return resolvePluginTool(canonical);
+    return null;
 }
-
 // Phase 6 AGI Upgrade & V5 Cortex: Dynamic Tool Culling and Hot-Reloading Engine
 //
 // options.unlockedPacks / options.unlockedTools drive Sovereign Progressive
@@ -333,103 +324,100 @@ export function resolveTool(name) {
 // pre-warms or searches for them. options.grantAllTools restores the legacy
 // behaviour of loading all 69 schemas up front.
 function dedupeDefinitions(definitions) {
-  const seenNames = new Set();
-  return definitions.filter((definition) => {
-    const name = normalizeToolName(definition?.name);
-    if (!name || seenNames.has(name)) return false;
-    seenNames.add(name);
-    return true;
-  });
+    const seenNames = new Set();
+    return definitions.filter((definition) => {
+        const name = normalizeToolName(definition?.name);
+        if (!name || seenNames.has(name))
+            return false;
+        seenNames.add(name);
+        return true;
+    });
 }
-
 export async function getSearchableToolDefinitions() {
-  const plugins = getPluginToolDefinitions();
-  let mcp = [];
-  try {
-    mcp = await discoverTools();
-  } catch (e) { /* a broken third-party server must not hide native tools */ }
-  return dedupeDefinitions([...TOOL_DEFINITIONS, ...plugins, ...mcp]);
+    const plugins = getPluginToolDefinitions();
+    let mcp = [];
+    try {
+        mcp = await discoverTools();
+    }
+    catch { /* a broken third-party server must not hide native tools */ }
+    return dedupeDefinitions([...TOOL_DEFINITIONS, ...plugins, ...mcp]);
 }
-
 /**
  * Scan every registered native, plugin, and MCP tool against one provider or
  * the entire provider matrix (`toolsScan`) and report auto-adapted compatibility.
  */
 export async function scanToolRegistry(provider = 'all', options = {}) {
-  const tools = await getSearchableToolDefinitions();
-  if (!provider || provider.toLowerCase() === 'all') {
-    return scanAllProvidersCompatibility(tools);
-  }
-  return scanAndAdaptToolsForProvider(tools, provider, options);
+    const tools = await getSearchableToolDefinitions();
+    if (!provider || provider.toLowerCase() === 'all') {
+        return scanAllProvidersCompatibility(tools);
+    }
+    return scanAndAdaptToolsForProvider(tools, provider, options);
 }
-
 export async function getDynamicTools(autonomyMode = 'C', supportsVision = true, options = {}) {
-  // Plugin discovery reads validated JSON manifests only. Extension JavaScript
-  // is never imported into the host process during startup or tool assembly;
-  // it runs later in a permission-restricted child process after enablement.
-  const plugins = getPluginToolDefinitions();
-  // Tools from user-configured MCP servers, appended last so the native
-  // schema order — which the provider prompt caches depend on — never shifts.
-  let mcp = [];
-  try {
-    mcp = await discoverTools();
-  } catch (e) { /* a broken third-party server must not take the catalogue down */ }
-  let tools = [...TOOL_DEFINITIONS, ...plugins, ...mcp];
-
-  // Built-ins win name collisions, followed by the first explicitly loaded
-  // extension. This prevents an MCP server or local extension from shadowing a
-  // native safety-sensitive tool while keeping tool ordering deterministic for
-  // provider prompt caches.
-  tools = dedupeDefinitions(tools);
-
-  // Deny/allow policy is applied before the model sees the catalogue. Runtime
-  // validation still runs later; this early filter avoids wasting a model turn
-  // on a tool the harness already knows it will reject.
-  const allowedTools = Array.isArray(options.allowedTools) ? options.allowedTools : ['*'];
-  if (!allowedTools.includes('*')) {
-    const allowed = new Set(allowedTools.map(normalizeToolName));
-    tools = tools.filter((definition) => allowed.has(normalizeToolName(definition.name)));
-  }
-  if (Array.isArray(options.deniedTools) && options.deniedTools.length > 0) {
-    const denied = new Set(options.deniedTools.map(normalizeToolName));
-    tools = tools.filter((definition) => !denied.has(normalizeToolName(definition.name)));
-  }
-
-  if (!options.grantAllTools) {
-    tools = resolveActiveTools(tools, options.unlockedPacks, options.unlockedTools, options.unlockOrder, {
-      residentOnly: options.residentOnly === true
-    });
-  }
-
-  // Vision Toggle Culling
-  if (!supportsVision) {
-    // Phase 6 Fix: Do not hide view_image. Allow it to serve as a Text-Only OCR Fallback for blind LLMs.
-    tools = tools.filter(t => t.name !== 'screenshot' && t.name !== 'vision_inspect_ui');
-  }
-
-  // Capability Culling (finding D-6).
-  //
-  // A tool the user has explicitly DECLINED can never run, so showing its
-  // schema only invites the model to spend a step discovering that. A tool that
-  // is merely un-granted stays visible: calling it is how the model learns to
-  // ask for the capability, which is the intended flow.
-  try {
-    const { declinedToolNames } = await import('../provisioning/capabilityTools.js');
-    const declined = declinedToolNames();
-    if (declined.size > 0) tools = tools.filter(t => !declined.has(t.name));
-  } catch (e) { /* provisioning unavailable: show everything rather than hide capability */ }
-
-  // Autonomy Mode Culling (Save tokens and prevent hallucinations on Mode A).
-  // Names here are canonical catalogue names — the legacy dotted/camelCase
-  // variants that used to pad these sets never matched a schema name and so
-  // culled nothing.
-  if (autonomyMode === 'A') {
-    const dangerousTools = new Set(['proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'manage_local_dependencies']);
-    tools = tools.filter(t => !dangerousTools.has(t.name));
-  } else if (autonomyMode === 'B') {
-    const dangerousTools = new Set(['proc_term', 'manage_local_dependencies']);
-    tools = tools.filter(t => !dangerousTools.has(t.name));
-  }
-
-  return tools;
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    // Plugin discovery reads validated JSON manifests only. Extension JavaScript
+    // is never imported into the host process during startup or tool assembly;
+    // it runs later in a permission-restricted child process after enablement.
+    const plugins = getPluginToolDefinitions();
+    // Tools from user-configured MCP servers, appended last so the native
+    // schema order — which the provider prompt caches depend on — never shifts.
+    let mcp = [];
+    try {
+        mcp = await discoverTools();
+    }
+    catch { /* a broken third-party server must not take the catalogue down */ }
+    let tools = [...TOOL_DEFINITIONS, ...plugins, ...mcp];
+    // Built-ins win name collisions, followed by the first explicitly loaded
+    // extension. This prevents an MCP server or local extension from shadowing a
+    // native safety-sensitive tool while keeping tool ordering deterministic for
+    // provider prompt caches.
+    tools = dedupeDefinitions(tools);
+    // Deny/allow policy is applied before the model sees the catalogue. Runtime
+    // validation still runs later; this early filter avoids wasting a model turn
+    // on a tool the harness already knows it will reject.
+    const allowedTools = Array.isArray(safeOptions.allowedTools) ? safeOptions.allowedTools : ['*'];
+    if (!allowedTools.includes('*')) {
+        const allowed = new Set(allowedTools.map(normalizeToolName));
+        tools = tools.filter((definition) => allowed.has(normalizeToolName(definition.name)));
+    }
+    if (Array.isArray(safeOptions.deniedTools) && safeOptions.deniedTools.length > 0) {
+        const denied = new Set(safeOptions.deniedTools.map(normalizeToolName));
+        tools = tools.filter((definition) => !denied.has(normalizeToolName(definition.name)));
+    }
+    if (!safeOptions.grantAllTools) {
+        tools = resolveActiveTools(tools, safeOptions.unlockedPacks, safeOptions.unlockedTools, safeOptions.unlockOrder, {
+            residentOnly: safeOptions.residentOnly === true
+        });
+    }
+    // Vision Toggle Culling
+    if (!supportsVision) {
+        // Phase 6 Fix: Do not hide view_image. Allow it to serve as a Text-Only OCR Fallback for blind LLMs.
+        tools = tools.filter(t => t.name !== 'screenshot' && t.name !== 'vision_inspect_ui');
+    }
+    // Capability Culling (finding D-6).
+    //
+    // A tool the user has explicitly DECLINED can never run, so showing its
+    // schema only invites the model to spend a step discovering that. A tool that
+    // is merely un-granted stays visible: calling it is how the model learns to
+    // ask for the capability, which is the intended flow.
+    try {
+        const { declinedToolNames } = await import('../provisioning/capabilityTools.js');
+        const declined = declinedToolNames();
+        if (declined.size > 0)
+            tools = tools.filter(t => !declined.has(t.name));
+    }
+    catch { /* provisioning unavailable: show everything rather than hide capability */ }
+    // Autonomy Mode Culling (Save tokens and prevent hallucinations on Mode A).
+    // Names here are canonical catalogue names — the legacy dotted/camelCase
+    // variants that used to pad these sets never matched a schema name and so
+    // culled nothing.
+    if (autonomyMode === 'A') {
+        const dangerousTools = new Set(['proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'manage_local_dependencies']);
+        tools = tools.filter(t => !dangerousTools.has(t.name));
+    }
+    else if (autonomyMode === 'B') {
+        const dangerousTools = new Set(['proc_term', 'manage_local_dependencies']);
+        tools = tools.filter(t => !dangerousTools.has(t.name));
+    }
+    return tools;
 }
