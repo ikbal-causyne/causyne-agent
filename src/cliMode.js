@@ -566,20 +566,21 @@ export async function execCommand(command) {
         const { Sandbox } = await import('./sandbox.js');
         const sandbox = new Sandbox();
         const validation = sandbox.validate('sysRun', { command });
+        const safeCommand = safeDisplay(String(command ?? ''));
         if (!validation.allowed) {
-            console.error(`\x1b[31m[BLOCKED]\x1b[0m ${validation.reason}`);
+            console.error(`${paint('danger', '[BLOCKED]')} ${safeDisplay(String(validation.reason ?? ''))}`);
             exitCode = 1;
             return;
         }
         if (validation.risk === 'extreme' || validation.risk === 'dangerous') {
-            const approved = await askConfirm(`${paint('warn', GLYPHS.warnMark)} Run: ${command}\n  Allow once?`);
+            const approved = await askConfirm(`${paint('warn', GLYPHS.warnMark)} Run: ${safeCommand}\n  Allow once?`);
             if (!approved) {
                 console.log('Cancelled.');
                 exitCode = 1;
                 return;
             }
         }
-        console.log(`Running: ${command}`);
+        console.log(`Running: ${safeCommand}`);
         const { sysRun } = await import('./tools/sysRun.js');
         const result = await sysRun.execute({ command });
         if (result.success) {
