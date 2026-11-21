@@ -188,7 +188,15 @@ export function normalizeOpenAIChatChoiceResponse(data, options = {}) {
         const choice = isPlainObject(payload['choices'][0]) ? payload['choices'][0] : null;
         const message = choice && isPlainObject(choice['message']) ? choice['message'] : null;
         if (message) {
-            content = typeof message['content'] === 'string' ? message['content'] : '';
+            if (typeof message['content'] === 'string') {
+                content = message['content'];
+            }
+            else if (Array.isArray(message['content'])) {
+                content = message['content']
+                    .map((part) => (isPlainObject(part) && typeof part['text'] === 'string' ? part['text'] : ''))
+                    .filter(Boolean)
+                    .join('');
+            }
             rawToolCalls = message['tool_calls'];
             const rc = message['reasoning_content'] ?? message['reasoning'];
             reasoningContent = typeof rc === 'string' ? rc : '';
