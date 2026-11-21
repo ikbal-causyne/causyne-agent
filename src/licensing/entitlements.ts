@@ -338,6 +338,12 @@ export class EntitlementClient {
   }
 
   lease(requestId: string, sessionId: string): Promise<any> {
+    if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 128 || /[\r\n\0]/.test(requestId)) {
+      throw new EntitlementAccessError('INVALID_REQUEST', 'Invalid lease request ID.');
+    }
+    if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 128 || /[\r\n\0]/.test(sessionId)) {
+      throw new EntitlementAccessError('INVALID_REQUEST', 'Invalid lease session ID.');
+    }
     return this.call('/v1/leases', { requestId, sessionId });
   }
 
