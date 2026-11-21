@@ -298,6 +298,13 @@ export function isSensitiveWriteTarget(rawTarget: string): boolean {
   } else if (target.startsWith('$HOME/') || target.startsWith('${HOME}/')) {
     const slash = target.indexOf('/');
     target = `/home/user${target.slice(slash)}`;
+  } else if (
+    target.startsWith('$ZDOTDIR/') ||
+    target.startsWith('${ZDOTDIR}/') ||
+    /^%(?:userprofile|home|appdata)%\//i.test(target)
+  ) {
+    const slash = target.indexOf('/');
+    target = `/home/user${target.slice(slash)}`;
   }
 
   const lower = target.toLowerCase();

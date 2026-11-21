@@ -275,6 +275,12 @@ export function isSensitiveWriteTarget(rawTarget) {
         const slash = target.indexOf('/');
         target = `/home/user${target.slice(slash)}`;
     }
+    else if (target.startsWith('$ZDOTDIR/') ||
+        target.startsWith('${ZDOTDIR}/') ||
+        /^%(?:userprofile|home|appdata)%\//i.test(target)) {
+        const slash = target.indexOf('/');
+        target = `/home/user${target.slice(slash)}`;
+    }
     const lower = target.toLowerCase();
     const parts = lower.split('/').filter(Boolean);
     if (parts.length === 0)
