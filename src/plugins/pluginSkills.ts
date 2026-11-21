@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isWithinPhysicalPath, physicalPath } from '../agent/workspaceBoundary.js';
 
 const MAX_SKILLS_PER_PLUGIN = 32;
 const MAX_SKILL_BYTES = 32 * 1024;
@@ -24,10 +25,18 @@ export interface PluginSkill {
 }
 
 function resolveInside(root: string, relativePath: string): string {
+  if (typeof relativePath !== 'string' || !relativePath || relativePath.includes('\0')) {
+    throw new Error('Invalid plugin skill path');
+  }
   const resolvedRoot = path.resolve(root);
   const resolved = path.resolve(root, relativePath);
   if (resolved === resolvedRoot || !resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new Error(`Skill path escapes plugin root: ${relativePath}`);
+  }
+  const realRoot = physicalPath(resolvedRoot);
+  const realTarget = physicalPath(resolved);
+  if (!realRoot || !realTarget || realTarget === realRoot || !isWithinPhysicalPath(realTarget, realRoot)) {
+    throw new Error(`Skill path escapes plugin root physically: ${relativePath}`);
   }
   return resolved;
 }
