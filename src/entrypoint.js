@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { program } from 'commander';
 import { runTask, chatMode, execCommand, interactiveConfig } from './cliMode.js';
 import { runHeadlessTask, composeHeadlessPrompt, readBoundedStdin, parseOutputFormat, parsePermissionMode, parseMaxTurns } from './headlessCli.js';
@@ -30,6 +31,16 @@ function applyRequestedWorkingDirectory(argv) {
     if (!requested || requested.includes('\0'))
         throw new Error('The --cwd option requires a valid directory.');
     const resolved = resolveUserPath(requested);
+    let stat;
+    try {
+        stat = fs.statSync(resolved);
+    }
+    catch {
+        throw new Error(`The --cwd directory does not exist: ${requested}`);
+    }
+    if (!stat.isDirectory()) {
+        throw new Error(`The --cwd target is not a directory: ${requested}`);
+    }
     process.chdir(resolved);
 }
 applyRequestedWorkingDirectory(process.argv);

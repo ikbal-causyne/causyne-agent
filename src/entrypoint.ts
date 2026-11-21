@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { program } from 'commander';
 import { runTask, chatMode, execCommand, interactiveConfig } from './cliMode.js';
 import {
@@ -33,6 +34,15 @@ function applyRequestedWorkingDirectory(argv: readonly unknown[]): void {
   if (requested === null) return;
   if (!requested || requested.includes('\0')) throw new Error('The --cwd option requires a valid directory.');
   const resolved = resolveUserPath(requested);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(resolved);
+  } catch {
+    throw new Error(`The --cwd directory does not exist: ${requested}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`The --cwd target is not a directory: ${requested}`);
+  }
   process.chdir(resolved);
 }
 
