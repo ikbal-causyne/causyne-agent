@@ -53,6 +53,13 @@ function fail(output) {
 function errMsg(err) {
     return err instanceof Error ? err.message : String(err);
 }
+async function resetStandingApprovals(context) {
+    const { revokeAllAlways } = await import('./approvalGrants.js');
+    revokeAllAlways();
+    if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
+        context.loop.resetApprovalScope();
+    }
+}
 // ---------------------------------------------------------------------------
 // The table
 // ---------------------------------------------------------------------------
@@ -663,6 +670,7 @@ export const COMMANDS = [
             const memory = context.loop && context.loop.memoryManager;
             const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
             const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
+            await resetStandingApprovals(context);
             if (context.loop) {
                 context.loop.messages = [];
                 context.loop.taskId = `cli_chat_${Date.now()}`;
@@ -725,6 +733,7 @@ export const COMMANDS = [
             }
             if (verb === 'new') {
                 const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
+                await resetStandingApprovals(context);
                 if (context.loop) {
                     context.loop.messages = [];
                     context.loop.taskId = `cli_chat_${Date.now()}`;
@@ -743,6 +752,7 @@ export const COMMANDS = [
                 const next = memory ? memory.useSession(args[1]) : store.switchSession(args[1]);
                 if (!next)
                     return fail(`No session "${args[1]}".`);
+                await resetStandingApprovals(context);
                 const historyMessages = memory ? memory.loadHistory() : next.messages.filter((m) => m.role !== 'system');
                 if (context.loop) {
                     context.loop.messages = historyMessages;
@@ -941,6 +951,7 @@ export const COMMANDS = [
                 });
                 if (!adoptRes.ok)
                     return fail(adoptRes.error || `Failed to adopt session "${targetId}".`);
+                await resetStandingApprovals(context);
                 if (context.loop?.memoryManager) {
                     context.loop.memoryManager.useSession(adoptRes.sessionId);
                     if (typeof context.loop.memoryManager.loadHistory === 'function') {
