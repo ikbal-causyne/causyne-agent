@@ -872,8 +872,9 @@ export class AgentLoop {
   }
 
   recordInspectedWebFile(candidate: unknown): void {
-    if (typeof candidate !== 'string' || !candidate.trim()) return;
-    const matches = candidate.match(/[\w./-]+\.(?:html?|css|jsx|tsx|vue|svelte)\b/gi) || [candidate];
+    if (typeof candidate !== 'string' || !candidate.trim() || candidate.includes('\0')) return;
+    const scanText = candidate.length > 32768 ? candidate.slice(0, 32768) : candidate;
+    const matches = scanText.match(/[\w./-]+\.(?:html?|css|jsx|tsx|vue|svelte)\b/gi) || [scanText];
     for (const rawMatch of matches) {
       if (!isScannableFile(rawMatch)) continue;
       const expanded = rawMatch.startsWith('~/')
