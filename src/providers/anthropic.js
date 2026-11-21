@@ -160,10 +160,19 @@ export class AnthropicProvider extends LLMProvider {
                 systemBlocks.push(block);
             }
             else if (msg.role === 'tool') {
+                let toolContent = msg.content ?? '';
+                if (typeof toolContent !== 'string' && !Array.isArray(toolContent)) {
+                    try {
+                        toolContent = JSON.stringify(toolContent);
+                    }
+                    catch {
+                        toolContent = String(toolContent);
+                    }
+                }
                 const toolResultBlock = {
                     type: 'tool_result',
                     tool_use_id: sanitizeProviderToolId(msg.tool_call_id, 'toolu', 0),
-                    content: msg.content ?? ''
+                    content: toolContent
                 };
                 const lastMsg = anthropicMessages[anthropicMessages.length - 1];
                 if (lastMsg && lastMsg['role'] === 'user' && Array.isArray(lastMsg['content']) && lastMsg['content'][0]?.type === 'tool_result') {
