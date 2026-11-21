@@ -1070,9 +1070,16 @@ export function undoLast(options?: UndoOptions | null): any {
   return undoTask(candidates[0]!.taskId, safeOptions);
 }
 
-export function undoStep(options: UndoOptions = {}): any {
-  const dryRun = options.dryRun !== false;
-  const entries = readJournal().filter(e => e.type === 'file' && e.tool !== 'undo' && Boolean(e.path));
+export function undoStep(options?: UndoOptions | null): any {
+  const safeOptions: UndoOptions = options && typeof options === 'object' ? options : {};
+  const dryRun = safeOptions.dryRun !== false;
+  const hasExplicitWorkspace = typeof safeOptions.workspaceRoot === 'string' && safeOptions.workspaceRoot.trim().length > 0;
+  const ws = hasExplicitWorkspace ? path.resolve(safeOptions.workspaceRoot!) : null;
+  const entries = readJournal().filter(e => {
+    if (e.type !== 'file' || e.tool === 'undo' || !e.path) return false;
+    if (ws && e.path !== ws && !e.path.startsWith(ws + path.sep)) return false;
+    return true;
+  });
   if (entries.length === 0) return { ok: false, error: 'no file mutation has been checkpointed yet' };
 
   const entry = entries[entries.length - 1]!;
