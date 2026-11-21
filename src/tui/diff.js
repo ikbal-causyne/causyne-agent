@@ -25,6 +25,7 @@
 //
 // Pure Node over ./theme.js and ./text.js. No dependency, no shell.
 import fs from 'fs';
+import os from 'node:os';
 import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, safeDisplay, shortenHome } from './text.js';
 // Per side, for the LCS table. 600x600 int cells is ~1.4 MB and a few ms.
@@ -195,7 +196,7 @@ function readForDiff(pathish) {
     if (!pathish)
         return null;
     try {
-        const target = String(pathish).replace(/^~(?=\/|\\|$)/, process.env.HOME || '~');
+        const target = String(pathish).replace(/^~(?=\/|\\|$)/, os.homedir());
         const stat = fs.statSync(target);
         if (!stat.isFile() || stat.size > MAX_FILE_BYTES)
             return null;

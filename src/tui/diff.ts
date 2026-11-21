@@ -26,6 +26,7 @@
 // Pure Node over ./theme.js and ./text.js. No dependency, no shell.
 
 import fs from 'fs';
+import os from 'node:os';
 import { paint, dim, GLYPHS } from './theme.js';
 import { truncate, safeDisplay, shortenHome } from './text.js';
 
@@ -228,7 +229,7 @@ export function renderDiff(before: unknown, after: unknown, options: RenderDiffO
 function readForDiff(pathish: unknown): string | null {
   if (!pathish) return null;
   try {
-    const target = String(pathish).replace(/^~(?=\/|\\|$)/, process.env.HOME || '~');
+    const target = String(pathish).replace(/^~(?=\/|\\|$)/, os.homedir());
     const stat = fs.statSync(target);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null;
     return fs.readFileSync(target, 'utf8');
