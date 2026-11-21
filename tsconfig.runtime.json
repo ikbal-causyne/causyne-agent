@@ -355,7 +355,8 @@
     "src/tools/checkSystemSpecs.ts",
     "src/tools/dynamicLoader.ts",
     "src/tools/fsDelete.ts",
-    "src/tools/fsMove.ts"
+    "src/tools/fsMove.ts",
+    "src/tools/toolForge.ts"
   ],
   "exclude": [
     "node_modules",
