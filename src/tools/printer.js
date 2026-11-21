@@ -71,27 +71,29 @@ export const printerPrint = {
             }
             else if (platform === 'win32') {
                 const ext = path.extname(resolvedPath).toLowerCase();
-                const count = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
                 const psScript = ['.txt', '.log', '.csv', '.json', '.md'].includes(ext)
-                    ? `1..${count} | ForEach-Object { if ($env:CAUSYNE_PRINTER_NAME) { Get-Content -LiteralPath $env:CAUSYNE_PRINT_FILE | Out-Printer -Name $env:CAUSYNE_PRINTER_NAME } else { Get-Content -LiteralPath $env:CAUSYNE_PRINT_FILE | Out-Printer } }`
-                    : `1..${count} | ForEach-Object { Start-Process -FilePath $env:CAUSYNE_PRINT_FILE -Verb Print -WindowStyle Hidden -PassThru | Out-Null }`;
+                    ? `1..${safeCopies} | ForEach-Object { if ($env:CAUSYNE_PRINTER_NAME) { Get-Content -LiteralPath $env:CAUSYNE_PRINT_FILE | Out-Printer -Name $env:CAUSYNE_PRINTER_NAME } else { Get-Content -LiteralPath $env:CAUSYNE_PRINT_FILE | Out-Printer } }`
+                    : `1..${safeCopies} | ForEach-Object { Start-Process -FilePath $env:CAUSYNE_PRINT_FILE -Verb Print -WindowStyle Hidden -PassThru | Out-Null }`;
                 const { stdout, stderr } = await execFileAsync('powershell.exe', [
                     '-NoProfile',
                     '-NonInteractive',
                     '-Command',
                     psScript
                 ], {
+                    timeout: 30_000,
+                    maxBuffer: 1024 * 1024,
+                    windowsHide: true,
                     env: {
-                        ...process.env,
+                        ...env,
                         CAUSYNE_PRINT_FILE: resolvedPath,
-                        CAUSYNE_PRINTER_NAME: printerName || ''
+                        CAUSYNE_PRINTER_NAME: safePrinter || ''
                     }
                 });
                 return {
                     success: true,
-                    message: `Document dispatched to Windows Spooler (${printerName || 'Default Printer'}) via headless zero-touch execution.`,
-                    stdout: (stdout || '').trim(),
-                    stderr: (stderr || '').trim()
+                    message: `Document dispatched to Windows Spooler (${safePrinter || 'Default Printer'}) via headless zero-touch execution.`,
+                    stdout: sanitizeToolText((stdout || '').trim(), 2000),
+                    stderr: sanitizeToolText((stderr || '').trim(), 2000)
                 };
             }
             else {
