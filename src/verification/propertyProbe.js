@@ -59,6 +59,8 @@ function runPath(initial, transition, invariant, path) {
     return { failed: false, reason: null, step: path.length };
 }
 function shrinkPath(path, fails, budget) {
+    if (!Array.isArray(path) || path.length === 0 || !budget || budget.left <= 0)
+        return [];
     let current = path.slice();
     let chunk = Math.ceil(current.length / 2);
     while (chunk > 0 && budget.left > 0) {
