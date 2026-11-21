@@ -43,7 +43,7 @@ export const processList = {
             return { success: true, output: JSON.stringify(formatted, null, 2) };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
