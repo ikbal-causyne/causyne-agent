@@ -208,6 +208,12 @@ export function decayToolResults(messages, options) {
     return reclaimed;
 }
 export function buildWindow(messages, maxCharPool) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        return { window: [], splitIndex: -1 };
+    }
+    const safeBudget = typeof maxCharPool === 'number' && Number.isFinite(maxCharPool) && maxCharPool > 0
+        ? maxCharPool
+        : (CHAR_POOLS.default ?? 120000);
     const window = [];
     let characterCount = 0;
     let splitIndex = -1;
@@ -216,7 +222,7 @@ export function buildWindow(messages, maxCharPool) {
         if (!msg)
             continue;
         const length = contentLength(msg.content);
-        if (characterCount + length > maxCharPool) {
+        if (characterCount + length > safeBudget) {
             splitIndex = i;
             break;
         }
@@ -225,21 +231,26 @@ export function buildWindow(messages, maxCharPool) {
     }
     if (window.length === 0 && messages.length > 0) {
         const last = messages[messages.length - 1];
-        const text = typeof last.content === 'string' ? last.content : JSON.stringify(last.content ?? '');
-        window.push({
-            ...last,
-            content: text.length > maxCharPool
-                ? text.slice(0, Math.max(0, maxCharPool - 80)) + '\n[truncated: this single message exceeded the whole context budget]'
-                : text
-        });
-        splitIndex = messages.length - 1;
+        if (last) {
+            const text = safeSerializeContent(last.content ?? '');
+            window.push({
+                ...last,
+                content: text.length > safeBudget
+                    ? text.slice(0, Math.max(0, safeBudget - 80)) + '\n[truncated: this single message exceeded the whole context budget]'
+                    : text
+            });
+            splitIndex = messages.length - 1;
+        }
     }
     while (window.length > 1 && window[0]?.role === 'tool') {
         window.shift();
     }
-    const last = window[window.length - 1];
+    const lastIdx = window.length - 1;
+    const last = lastIdx >= 0 ? window[lastIdx] : undefined;
     if (last && last.role === 'assistant' && last.tool_calls && last.tool_calls.length > 0) {
-        delete last.tool_calls;
+        const cloned = { ...last };
+        delete cloned.tool_calls;
+        window[lastIdx] = cloned;
     }
     return { window, splitIndex };
 }
