@@ -77,7 +77,7 @@ export class AnthropicProvider extends LLMProvider {
         this.imagePayloadFormat = 'anthropic';
         this.enableToolSearch = config.enableToolSearch !== false;
         this.enableCaching = config.enablePromptCaching !== false;
-        this.cacheTtl = config.promptCacheTtl || '1h';
+        this.cacheTtl = config.promptCacheTtl === '5m' ? '5m' : '1h';
         this.reasoningEffort = config.reasoningEffort || null;
         this.showReasoning = config.showReasoning === true;
         this.reasoningBudgetTokens = typeof config.reasoningBudgetTokens === 'number' ? config.reasoningBudgetTokens : null;
