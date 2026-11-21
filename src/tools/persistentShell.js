@@ -83,7 +83,7 @@ export const persistentShell = {
                 sessions.set(sessionId, session);
             }
             const activeSession = session;
-            return await new Promise((resolve) => {
+            const runCommand = () => new Promise((resolve) => {
                 const markerToken = `__CAUSYNE_PTY_DONE_${Date.now()}_${crypto.randomBytes(8).toString('hex')}__`;
                 let outputBuffer = '';
                 let errorBuffer = '';
@@ -148,8 +148,8 @@ export const persistentShell = {
                         output: JSON.stringify({
                             sessionId,
                             status: 'Executed cleanly in stateful session',
-                            stdout: cleanOutput || (errorBuffer ? '' : '[No output]'),
-                            stderr: errorBuffer.trim() || undefined
+                            stdout: sanitizeToolText(cleanOutput || (errorBuffer ? '' : '[No output]'), 65536),
+                            stderr: errorBuffer.trim() ? sanitizeToolText(errorBuffer.trim(), 16384) : undefined
                         }, null, 2)
                     });
                 };
@@ -159,9 +159,19 @@ export const persistentShell = {
                 const markerCmd = `echo "${markerToken}"`;
                 activeSession.process.stdin.write(`${command}\n${markerCmd}\n`);
             });
+            const previous = activeSession.queue;
+            let release;
+            activeSession.queue = new Promise((r) => { release = r; });
+            await previous;
+            try {
+                return await runCommand();
+            }
+            finally {
+                release();
+            }
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
