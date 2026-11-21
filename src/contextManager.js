@@ -415,9 +415,44 @@ export function snipOversizedToolOutputs(messages, options) {
     return { snippedCount, reclaimedChars };
 }
 export function microcompactText(text) {
-    if (typeof text !== 'string')
+    if (typeof text !== 'string' || text.length === 0)
         return text;
-    return text.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n');
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        let end = line.length;
+        while (end > 0) {
+            const code = line.charCodeAt(end - 1);
+            if (code === 32 || code === 9)
+                end--;
+            else
+                break;
+        }
+        if (end < line.length)
+            lines[i] = line.slice(0, end);
+    }
+    const trimmed = lines.join('\n');
+    let result = '';
+    let consecutiveNewlines = 0;
+    let chunkStart = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+        if (trimmed.charCodeAt(i) === 10) {
+            consecutiveNewlines++;
+            if (consecutiveNewlines > 2) {
+                if (i > chunkStart)
+                    result += trimmed.slice(chunkStart, i);
+                chunkStart = i + 1;
+            }
+        }
+        else {
+            consecutiveNewlines = 0;
+        }
+    }
+    if (chunkStart === 0)
+        return trimmed;
+    if (chunkStart < trimmed.length)
+        result += trimmed.slice(chunkStart);
+    return result;
 }
 export function applyProgressiveCompaction(messages, maxCharPool, options = {}) {
     let totalReclaimed = 0;
