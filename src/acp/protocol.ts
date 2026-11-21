@@ -530,7 +530,10 @@ export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
 export function isJsonRpcNotification(value: unknown): value is JsonRpcNotification {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return record.jsonrpc === '2.0' && typeof record.method === 'string' && !('id' in record);
+  return record.jsonrpc === '2.0'
+    && typeof record.method === 'string'
+    && record.method.trim().length > 0
+    && !('id' in record);
 }
 
 /**

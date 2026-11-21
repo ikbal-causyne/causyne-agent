@@ -57,7 +57,10 @@ export function isJsonRpcNotification(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         return false;
     const record = value;
-    return record.jsonrpc === '2.0' && typeof record.method === 'string' && !('id' in record);
+    return record.jsonrpc === '2.0'
+        && typeof record.method === 'string'
+        && record.method.trim().length > 0
+        && !('id' in record);
 }
 /**
  * Extract live available models and active model ID from any ACP session/new,
