@@ -11,6 +11,7 @@
 //
 // Pure Node. No dependency, no shell.
 
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { redactSecrets } from './text.js';
@@ -109,8 +110,14 @@ export class PromptHistory {
       }
       const body = this.entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
       // Write then rename: a crash mid-write must not truncate the history.
-      const temporary = `${this.file}.${process.pid}.tmp`;
-      fs.writeFileSync(temporary, body, { mode: 0o600 });
+      const temporary = `${this.file}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+      const fd = fs.openSync(temporary, 'wx', 0o600);
+      try {
+        fs.writeFileSync(fd, body, 'utf8');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       fs.renameSync(temporary, this.file);
     } catch {
       // History is a convenience. Failing to save it must never break the chat.
