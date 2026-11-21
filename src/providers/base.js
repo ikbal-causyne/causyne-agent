@@ -164,9 +164,11 @@ export class LLMProvider {
                 if (block && block.type === 'image_url' && typeof block.image_url?.url === 'string') {
                     const commaIdx = block.image_url.url.indexOf('base64,');
                     if (commaIdx !== -1 && block.image_url.url.startsWith('data:')) {
-                        const mediaType = block.image_url.url.slice(5, commaIdx).split(';')[0] || 'image/png';
+                        const rawMedia = (block.image_url.url.slice(5, commaIdx).split(';')[0] || 'image/png').trim().toLowerCase();
+                        const mediaType = rawMedia === 'image/jpg' ? 'image/jpeg' : rawMedia;
                         const data = block.image_url.url.slice(commaIdx + 7);
-                        return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
+                        if (data)
+                            return { type: 'image', source: { type: 'base64', media_type: mediaType, data } };
                     }
                 }
                 return block;
@@ -176,10 +178,11 @@ export class LLMProvider {
         if (this.imagePayloadFormat !== 'openai')
             return msg;
         const content = msg.content.map((block) => {
-            if (block && block.type === 'image' && block.source?.type === 'base64') {
+            if (block && block.type === 'image' && block.source?.type === 'base64' && typeof block.source.data === 'string' && block.source.data) {
+                const mime = typeof block.source.media_type === 'string' && block.source.media_type ? block.source.media_type : 'image/png';
                 return {
                     type: 'image_url',
-                    image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` }
+                    image_url: { url: `data:${mime};base64,${block.source.data}` }
                 };
             }
             return block;
