@@ -609,13 +609,19 @@ async function searchClassesInApk(apkPath, query) {
         for (const dexEntry of dexEntries.slice(0, 5)) {
             try {
                 const localHdr = Buffer.alloc(30);
-                await fd.read(localHdr, 0, 30, dexEntry.localHeaderOffset);
+                const { bytesRead } = await fd.read(localHdr, 0, 30, dexEntry.localHeaderOffset);
+                if (bytesRead !== 30 || localHdr.readUInt32LE(0) !== 0x04034b50)
+                    continue;
                 const fnLen = localHdr.readUInt16LE(26);
                 const extraLen = localHdr.readUInt16LE(28);
                 const dataOffset = dexEntry.localHeaderOffset + 30 + fnLen + extraLen;
+                if (dexEntry.compSize > MAX_ZIP_SLICE_BYTES || dataOffset + dexEntry.compSize > stat.size)
+                    continue;
                 const compData = Buffer.alloc(dexEntry.compSize);
                 await fd.read(compData, 0, dexEntry.compSize, dataOffset);
-                const dexBuf = dexEntry.method === 8 ? zlib.inflateRawSync(compData) : compData;
+                const dexBuf = dexEntry.method === 8
+                    ? zlib.inflateRawSync(compData, { maxOutputLength: MAX_ZIP_SLICE_BYTES })
+                    : compData;
                 if (dexBuf.length >= 112 && dexBuf.toString('utf8', 0, 4) === 'dex\n') {
                     const stringIdsOff = dexBuf.readUInt32LE(60);
                     const typeIdsOff = dexBuf.readUInt32LE(68);
