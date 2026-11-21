@@ -19,6 +19,7 @@ export class AcpClient {
     options;
     child = null;
     buffer = '';
+    draining = false;
     stderrTail = '';
     pending = new Map();
     openToolCalls = new Map();
@@ -364,13 +365,21 @@ export class AcpClient {
         }
     }
     async drain() {
-        let index = this.buffer.indexOf('\n');
-        while (index >= 0) {
-            const line = this.buffer.slice(0, index).trim();
-            this.buffer = this.buffer.slice(index + 1);
-            if (line)
-                await this.handleLine(line);
-            index = this.buffer.indexOf('\n');
+        if (this.draining)
+            return;
+        this.draining = true;
+        try {
+            let index = this.buffer.indexOf('\n');
+            while (index >= 0 && !this.closed) {
+                const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
+                this.buffer = this.buffer.slice(index + 1);
+                if (line)
+                    await this.handleLine(line);
+                index = this.buffer.indexOf('\n');
+            }
+        }
+        finally {
+            this.draining = false;
         }
     }
     async handleLine(line) {

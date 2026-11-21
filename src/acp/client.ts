@@ -82,6 +82,7 @@ export class AcpClient {
   private readonly options: AcpClientOptions;
   private child: ChildProcessWithoutNullStreams | null = null;
   private buffer = '';
+  private draining = false;
   private stderrTail = '';
   private readonly pending = new Map<string | number, PendingRequest>();
   private readonly openToolCalls = new Map<string, number>();
@@ -427,12 +428,18 @@ export class AcpClient {
   }
 
   private async drain(): Promise<void> {
-    let index = this.buffer.indexOf('\n');
-    while (index >= 0) {
-      const line = this.buffer.slice(0, index).trim();
-      this.buffer = this.buffer.slice(index + 1);
-      if (line) await this.handleLine(line);
-      index = this.buffer.indexOf('\n');
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      let index = this.buffer.indexOf('\n');
+      while (index >= 0 && !this.closed) {
+        const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
+        this.buffer = this.buffer.slice(index + 1);
+        if (line) await this.handleLine(line);
+        index = this.buffer.indexOf('\n');
+      }
+    } finally {
+      this.draining = false;
     }
   }
 
