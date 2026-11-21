@@ -158,7 +158,9 @@ export async function runInteractivePty(options = {}) {
         }))
     };
     return new Promise(resolve => {
+        const maxNodeStdout = outputLimit + 16384;
         let stdout = '';
+        let nodeStdoutTruncated = false;
         let stderr = '';
         let spawnError = null;
         const child = spawn('python3', ['-c', DRIVER, JSON.stringify(cfg)], {
@@ -175,7 +177,21 @@ export async function runInteractivePty(options = {}) {
                 CAUSYNE_VERIFY_PROBE: '1'
             }
         });
-        child.stdout.on('data', (data) => { stdout += data.toString('utf8'); });
+        child.stdout.on('data', (data) => {
+            const remaining = maxNodeStdout - stdout.length;
+            if (remaining <= 0) {
+                nodeStdoutTruncated = true;
+                return;
+            }
+            const text = data.toString('utf8');
+            if (text.length > remaining) {
+                stdout += text.slice(0, remaining);
+                nodeStdoutTruncated = true;
+            }
+            else {
+                stdout += text;
+            }
+        });
         child.stderr.on('data', (data) => { stderr += data.toString('utf8'); });
         child.on('error', (e) => { spawnError = e; });
         child.on('close', () => {
@@ -205,7 +221,8 @@ export async function runInteractivePty(options = {}) {
                 cleanedStderr = stderr.slice(0, markerIdx) + afterLine;
             }
             const observations = Array.isArray(detail?.steps) ? detail.steps : [];
-            const success = Boolean(detail && !detail.timeout && !detail.truncated
+            const truncated = Boolean(detail?.truncated || nodeStdoutTruncated);
+            const success = Boolean(detail && !detail.timeout && !truncated
                 && detail.completed && detail.exit === 0
                 && observations.length === steps.length
                 && observations.every(item => item.matched));
@@ -215,7 +232,7 @@ export async function runInteractivePty(options = {}) {
                 surface: detail ? 'posix-pty' : 'unverified',
                 exitCode: detail?.exit ?? null,
                 timedOut: detail?.timeout ?? null,
-                truncated: detail?.truncated ?? null,
+                truncated: detail ? truncated : (nodeStdoutTruncated ? true : null),
                 completed: detail?.completed ?? false,
                 observations,
                 stdout,
