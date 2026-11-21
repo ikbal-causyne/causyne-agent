@@ -1,0 +1,37 @@
+import type { LLMProvider, ProviderConfig } from './base.js';
+import { OpenAIProvider } from './openai.js';
+import { AnthropicProvider } from './anthropic.js';
+import { GeminiProvider } from './gemini.js';
+import { OllamaProvider } from './ollama.js';
+import { OpenAICompatibleProvider } from './openai-compatible.js';
+import { DeepSeekProvider } from './deepseek.js';
+import { QwenByokProvider } from './qwen-byok.js';
+import { DashscopeByokProvider } from './dashscope-byok.js';
+import { XAIProvider } from './xai.js';
+import { MoonshotProvider } from './moonshot.js';
+import { MuseProvider } from './muse.js';
+import { AcpProvider, isAcpProvider } from './acp.js';
+import { PiProvider, isPiProvider } from './pi.js';
+import { AntigravityProvider, isAntigravityProvider } from './antigravity.js';
+import { OpenRouterProvider } from './openrouter.js';
+
+export function createProvider(config: ProviderConfig): LLMProvider {
+  const p = config.provider?.toLowerCase();
+  if (p === 'openai') return new OpenAIProvider(config);
+  if (p === 'anthropic') return new AnthropicProvider(config);
+  if (p === 'gemini') return new GeminiProvider(config);
+  if (p === 'ollama') return new OllamaProvider(config);
+  if (p === 'deepseek') return new DeepSeekProvider(config);
+  if (p === 'dashscope-byok' || p === 'dashscope') return new DashscopeByokProvider(config);
+  if (p === 'qwen') return new QwenByokProvider(config);
+  if (p === 'openai-compatible') return new OpenAICompatibleProvider(config);
+  if (p === 'xai' || p === 'grok') return new XAIProvider(config);
+  if (p === 'moonshot' || p === 'kimi') return new MoonshotProvider(config);
+  if (p === 'muse' || p === 'meta') return new MuseProvider(config);
+  if (p === 'openrouter' || p === 'openrouter-free') return new OpenRouterProvider(config);
+  if (isAcpProvider(p)) return new AcpProvider(config);
+  if (isPiProvider(p)) return new PiProvider(config);
+  if (isAntigravityProvider(p)) return new AntigravityProvider(config);
+
+  throw new Error('API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.');
+}
