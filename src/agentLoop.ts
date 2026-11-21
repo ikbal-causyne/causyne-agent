@@ -1283,6 +1283,15 @@ export class AgentLoop {
     if (tool === 'fs_read') {
       // ACP expects the actual requested text, not the host tool's paging
       // warning appended to a silently shortened file.
+      const lstat = fsSync.lstatSync(target);
+      if (lstat.isSymbolicLink() && !this.sandbox.grantAllAccess) {
+        const realTarget = physicalPath(target);
+        const stillAllowed = realTarget !== null && this.sandbox.workspacePaths.some((root: string) => {
+          const realRoot = physicalPath(root);
+          return realRoot !== null && isWithinPhysicalPath(realTarget, realRoot);
+        });
+        if (!stillAllowed) throw new Error('ACP symlink target was not authorized by the selected workspace');
+      }
       const stat = fsSync.statSync(target);
       if (!stat.isFile()) throw new Error('ACP read_text_file requires a regular file');
       if (stat.size > 4 * 1024 * 1024) throw new Error('ACP text file exceeds the 4 MiB client transfer limit');
