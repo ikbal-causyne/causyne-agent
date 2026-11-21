@@ -123,6 +123,9 @@ export function shadowDirFor(worktree) {
  * Returns the --git-dir path. Safe to call repeatedly.
  */
 export function initShadow(worktree) {
+    if (typeof worktree !== 'string' || !worktree.trim() || worktree.includes('\0') || isBlockedWorkspaceRoot(worktree)) {
+        throw new Error('Refusing shadow git snapshot on invalid or blocked workspace root');
+    }
     const gitDir = shadowDirFor(worktree);
     const alreadyInitialised = fs.existsSync(path.join(gitDir, 'HEAD'));
     if (fs.existsSync(gitDir)) {
