@@ -6,6 +6,7 @@ import type { AgentLoopEvent } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
 import type { ApprovalScope } from '../approvalGrants.js';
 import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 import {
   ACP_ERROR_CODES,
   ACP_METHODS,

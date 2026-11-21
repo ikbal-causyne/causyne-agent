@@ -4,6 +4,7 @@ import path from 'node:path';
 import { AgentLoop } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
 import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, isJsonRpcNotification, isJsonRpcRequest, isJsonRpcResponse } from './protocol.js';
 const MODE_TO_AUTONOMY = {
     autonomous: 'C',
