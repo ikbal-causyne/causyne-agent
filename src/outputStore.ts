@@ -53,6 +53,7 @@ const FILE_PREFIX = 'tool_';
 // stays on disk behind the path.
 const PREVIEW_LINES = 40;
 const PREVIEW_CHARS = 4000;
+const MAX_SPILL_BYTES = 64 * 1024 * 1024;
 
 /**
  * The spill can be switched off entirely. Set CAUSYNE_OUTPUT_SPILL=0 to fall
@@ -126,13 +127,19 @@ export function spillToolOutput(text: unknown, meta: SpillMeta = {}): SpillRecor
     const stamp = `${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
     const file = path.join(dir, `${FILE_PREFIX}${taskId}_${step}_${tool}_${stamp}.txt`);
 
-    fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    let payload = text;
+    if (Buffer.byteLength(payload, 'utf8') > MAX_SPILL_BYTES) {
+      payload = Buffer.from(payload, 'utf8').subarray(0, MAX_SPILL_BYTES).toString('utf8')
+        + '\n[... truncated at 64 MiB spill ceiling ...]';
+    }
+
+    fs.writeFileSync(file, payload, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
 
     return {
       path: file,
-      bytes: Buffer.byteLength(text, 'utf8'),
-      lines: countLines(text),
-      preview: headPreview(text)
+      bytes: Buffer.byteLength(payload, 'utf8'),
+      lines: countLines(payload),
+      preview: headPreview(payload)
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
