@@ -45,6 +45,7 @@ function normalizeNewlines(text: unknown): string {
 // A "word" for word-wise movement. Deliberately generous: an identifier, a
 // path segment and a flag should each move as one unit.
 const WORD_CHARACTER = /[\p{L}\p{N}_-]/u;
+const MAX_BUFFER_CHARS = 2 * 1024 * 1024;
 
 function isInsideRange(lineIdx: number, colIdx: number, { start, end }: EditorRange): boolean {
   if (lineIdx < start.line || lineIdx > end.line) return false;
@@ -77,7 +78,9 @@ export class LineEditor {
   // -------------------------------------------------------------------------
 
   setText(text: unknown): void {
-    this.lines = normalizeNewlines(text).split('\n').map(toCodePoints);
+    const normalized = normalizeNewlines(text);
+    const bounded = normalized.length > MAX_BUFFER_CHARS ? normalized.slice(0, MAX_BUFFER_CHARS) : normalized;
+    this.lines = bounded.split('\n').map(toCodePoints);
     if (this.lines.length === 0) this.lines = [[]];
     this.line = this.lines.length - 1;
     this.col = this.lines[this.line]?.length ?? 0;
@@ -172,7 +175,11 @@ export class LineEditor {
   /** Insert text at the cursor. Embedded newlines split the line, as a paste does. */
   insert(text: unknown): void {
     if (this.hasSelection) this.deleteSelection();
-    const normalized = normalizeNewlines(text);
+    const currentLength = this.getText().length;
+    const remaining = Math.max(0, MAX_BUFFER_CHARS - currentLength);
+    if (remaining === 0) return;
+    const rawNormalized = normalizeNewlines(text);
+    const normalized = rawNormalized.length > remaining ? rawNormalized.slice(0, remaining) : rawNormalized;
     const parts = normalized.split('\n');
     const current = this.lines[this.line] ?? [];
     const before = current.slice(0, this.col);
