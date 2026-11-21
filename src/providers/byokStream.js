@@ -67,8 +67,9 @@ async function openHardenedStream(options) {
                 return { mode: 'json', data: isRecord(parsed) ? parsed : {} };
             }
             const rawText = await readBoundedResponseText(response, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, { truncate: false, label: options.providerLabel });
+            const cleanText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
             try {
-                const parsed = JSON.parse(rawText);
+                const parsed = JSON.parse(cleanText);
                 return { mode: 'json', data: isRecord(parsed) ? parsed : {} };
             }
             catch {

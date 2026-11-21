@@ -112,8 +112,9 @@ async function openHardenedStream(
         options.maxBytes ?? MAX_PROVIDER_JSON_BYTES,
         { truncate: false, label: options.providerLabel }
       );
+      const cleanText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
       try {
-        const parsed: unknown = JSON.parse(rawText);
+        const parsed: unknown = JSON.parse(cleanText);
         return { mode: 'json', data: isRecord(parsed) ? parsed : {} };
       } catch {
         const preview = redactProviderSecrets(rawText.slice(0, 240), options.secrets);
