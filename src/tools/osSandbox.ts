@@ -16,6 +16,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
 
 export type OsSandboxMode = 'off' | 'workspace-write' | 'read-only';
 export type OsSandboxBackend = 'seatbelt' | 'bubblewrap' | 'none';
@@ -238,7 +239,9 @@ export function probeOsSandbox(options?: {
     } else {
       const check = spawnSync(SEATBELT_BIN, ['-p', '(version 1)(allow default)', '/usr/bin/true'], {
         stdio: 'ignore',
-        timeout: 3000
+        timeout: 3000,
+        windowsHide: true,
+        env: sanitizeSubprocessEnv(process.env)
       });
       if (check.status === 0) {
         result = {
@@ -271,7 +274,9 @@ export function probeOsSandbox(options?: {
     } else {
       const check = spawnSync(bwrapPath, ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '/bin/true'], {
         stdio: 'ignore',
-        timeout: 3000
+        timeout: 3000,
+        windowsHide: true,
+        env: sanitizeSubprocessEnv(process.env)
       });
       if (check.status === 0) {
         result = {
