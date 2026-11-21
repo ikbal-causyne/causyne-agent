@@ -181,7 +181,14 @@ function appendJournal(entry) {
 }
 export function readJournal() {
     const jf = journalFile();
-    if (!fs.existsSync(jf))
+    let stat;
+    try {
+        stat = fs.lstatSync(jf);
+    }
+    catch {
+        return [];
+    }
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0 || stat.size > MAX_OBJECT_BYTES)
         return [];
     const raw = fs.readFileSync(jf, 'utf8');
     const entries = [];
@@ -189,9 +196,16 @@ export function readJournal() {
         if (!line.trim())
             continue;
         try {
-            entries.push(JSON.parse(line));
+            const parsed = JSON.parse(line);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                && typeof parsed.type === 'string'
+                && typeof parsed.taskId === 'string') {
+                entries.push(parsed);
+            }
         }
-        catch { /* skip a torn line */ }
+        catch {
+            /* skip a torn line */
+        }
     }
     return entries;
 }

@@ -241,12 +241,29 @@ function appendJournal(entry: CheckpointJournalEntry): void {
 
 export function readJournal(): CheckpointJournalEntry[] {
   const jf = journalFile();
-  if (!fs.existsSync(jf)) return [];
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(jf);
+  } catch {
+    return [];
+  }
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0 || stat.size > MAX_OBJECT_BYTES) return [];
   const raw = fs.readFileSync(jf, 'utf8');
   const entries: CheckpointJournalEntry[] = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    try { entries.push(JSON.parse(line) as CheckpointJournalEntry); } catch { /* skip a torn line */ }
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (
+        parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        && typeof (parsed as Record<string, unknown>).type === 'string'
+        && typeof (parsed as Record<string, unknown>).taskId === 'string'
+      ) {
+        entries.push(parsed as CheckpointJournalEntry);
+      }
+    } catch {
+      /* skip a torn line */
+    }
   }
   return entries;
 }
