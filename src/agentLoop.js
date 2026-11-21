@@ -9,6 +9,7 @@ import { normalizeAgentFailure } from './agent/providerFailure.js';
 import { classifyAgentError, getRetryHintForError } from './agent/errorClassifier.js';
 import { isActionableTaskPrompt, isGenericHandoffResponse, isDesktopWallpaperChangePrompt, isExecutionOrLaunchTaskPrompt, isCodeAuthoringTaskPrompt, extractSkillIdFromPrompt, isDirectGameTask, isProviderPlanOrQuotaRefusal, isMidTaskProgressText } from './agent/promptIntent.js';
 import { validateAndNormalizeToolArgs } from './agent/toolArgValidator.js';
+import { physicalPath, isWithinPhysicalPath } from './agent/workspaceBoundary.js';
 import { resolveTaskTokenCeiling, peerCallTokenCeiling, isAntigravityPeer, isTerminalBudgetFailure, desktopDeadline, remainingDesktopTime, DEFAULT_AGY_TASK_TOKENS } from './budget/budgetPolicy.js';
 import { PEER_COLLABORATION_POLICY } from './providers/collaborationPolicy.js';
 import { createHash, randomUUID } from 'crypto';
@@ -1923,7 +1924,17 @@ export class AgentLoop {
                         }
                         const baseName = path.basename(att.name).replace(/[^a-zA-Z0-9.\-_]/g, '_').replace(/^\.+/, '');
                         const safeName = (!baseName || baseName === '.' || baseName === '..') ? 'attachment.bin' : baseName.slice(0, 128);
-                        const writePath = path.join(this.workspaceRoot, safeName);
+                        const realWorkspaceRoot = physicalPath(this.workspaceRoot);
+                        if (!realWorkspaceRoot) {
+                            this.notice('skipped document attachment: workspace root could not be resolved', 'warn');
+                            continue;
+                        }
+                        const writePath = path.join(realWorkspaceRoot, safeName);
+                        const resolvedWritePath = physicalPath(writePath);
+                        if (!resolvedWritePath || !isWithinPhysicalPath(resolvedWritePath, realWorkspaceRoot)) {
+                            this.notice('skipped document attachment outside workspace boundary', 'warn');
+                            continue;
+                        }
                         fs.writeFileSync(writePath, decodedBytes);
                         contentArray[0].text += `\n\n[SYSTEM NOTIFICATION: The user attached a document named '${safeName}'. It has been saved to your workspace at ./${safeName}. Please use your file reading tools to examine its contents.]`;
                         this.notice(`saved attached document to ${writePath}`);
