@@ -88,6 +88,7 @@ export function isKnownGroup(group: unknown): group is string {
 
 /** Which group owns a package, or null when the package is not ours. */
 export function groupForPackage(packageName: string): string | null {
+  if (!isValidNpmPackageName(packageName)) return null;
   for (const [group, packages] of Object.entries(GROUP_PACKAGES)) {
     if (packages.some(([name]) => name === packageName)) return group;
   }
