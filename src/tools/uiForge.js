@@ -8,6 +8,60 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { generateHtmlComponent, generatePreviewHtml, generateReactComponent } from '../uiEngine/uiForge.js';
 import { resolveUserPath } from '../utils/paths.js';
+function canonicalUiPath(target) {
+    const resolved = path.resolve(target);
+    try {
+        return fs.realpathSync(resolved);
+    }
+    catch {
+        let current = resolved;
+        const missing = [];
+        for (let i = 0; i < 64; i++) {
+            const parent = path.dirname(current);
+            if (parent === current)
+                break;
+            missing.unshift(path.basename(current));
+            current = parent;
+            try {
+                return path.join(fs.realpathSync(current), ...missing);
+            }
+            catch {
+                continue;
+            }
+        }
+        return resolved;
+    }
+}
+function assertUiWriteScope(target, context) {
+    if (fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink()) {
+        throw new Error(`Refusing to overwrite symbolic link: ${target}`);
+    }
+    if (!context || context.grantAllAccess === true)
+        return;
+    const configured = Array.isArray(context.workspacePaths)
+        ? context.workspacePaths.filter((p) => typeof p === 'string' && p.trim().length > 0).map(p => p.trim())
+        : [];
+    const roots = configured.length > 0
+        ? configured
+        : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+            .filter((p) => typeof p === 'string' && p.trim().length > 0)
+            .map(p => p.trim());
+    if (roots.length === 0)
+        return;
+    const physical = canonicalUiPath(target);
+    for (const root of roots) {
+        try {
+            const realRoot = fs.realpathSync(resolveUserPath(root));
+            const rel = path.relative(realRoot, physical);
+            if (rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)))
+                return;
+        }
+        catch {
+            continue;
+        }
+    }
+    throw new Error(`UI output path resolves outside the selected workspace: ${target}`);
+}
 export const uiForge = {
     schema: {
         name: 'ui_forge',
@@ -70,8 +124,8 @@ export const uiForge = {
             required: ['spec']
         }
     },
-    async execute(args = {}) {
-        if (!args.spec || !args.spec.type) {
+    async execute(args = {}, context) {
+        if (!args || typeof args !== 'object' || Array.isArray(args) || !args.spec || typeof args.spec !== 'object' || Array.isArray(args.spec) || !args.spec.type) {
             return { success: false, error: 'UI Forge specification with a valid component "type" is required.' };
         }
         const framework = args.framework || 'html-css';
@@ -92,16 +146,27 @@ export const uiForge = {
             previewHtml = generatePreviewHtml(htmlComp.html, htmlComp.css, spec.theme || 'dark');
         }
         let writtenFiles = [];
-        if (args.outputPath) {
+        if (typeof args.outputPath === 'string' && args.outputPath.trim()) {
             try {
-                const resolved = resolveUserPath(args.outputPath);
+                const trimmedOut = args.outputPath.trim();
+                const isHome = trimmedOut === '~' || trimmedOut.startsWith('~/') || trimmedOut.startsWith('~\\');
+                const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+                    || context?.workspaceRoot?.trim()
+                    || context?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim();
+                const resolved = isHome
+                    ? resolveUserPath(trimmedOut)
+                    : path.isAbsolute(trimmedOut)
+                        ? path.resolve(trimmedOut)
+                        : path.resolve(baseRoot ? resolveUserPath(baseRoot) : process.cwd(), trimmedOut);
                 const dir = path.dirname(resolved);
+                const ext = path.extname(resolved);
+                const previewFile = path.join(dir, `${path.basename(resolved, ext)}.preview.html`);
+                assertUiWriteScope(resolved, context);
+                assertUiWriteScope(previewFile, context);
                 if (!fs.existsSync(dir))
                     fs.mkdirSync(dir, { recursive: true });
                 fs.writeFileSync(resolved, code, 'utf8');
                 writtenFiles.push(resolved);
-                const ext = path.extname(resolved);
-                const previewFile = path.join(dir, `${path.basename(resolved, ext)}.preview.html`);
                 fs.writeFileSync(previewFile, previewHtml, 'utf8');
                 writtenFiles.push(previewFile);
             }
