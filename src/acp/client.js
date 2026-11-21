@@ -165,13 +165,19 @@ export class AcpClient {
         this.recordSessionModels(result.sessionId, result);
         return result.sessionId;
     }
-    async authenticate(methodId, params = {}) {
+    async authenticate(methodId, params = {}, signal) {
+        if (typeof methodId !== 'string' || !methodId.trim()) {
+            throw new Error('authenticate requires a non-empty methodId');
+        }
         return await this.request(ACP_METHODS.AUTHENTICATE, {
-            methodId,
+            methodId: methodId.trim(),
             params
-        }, 30_000);
+        }, 30_000, signal);
     }
     async setSessionModel(sessionId, modelId, signal) {
+        if (typeof sessionId !== 'string' || !sessionId.trim() || typeof modelId !== 'string' || !modelId.trim()) {
+            throw new Error('setSessionModel requires non-empty sessionId and modelId');
+        }
         const state = this.sessionModels.get(sessionId) ?? this.latestSessionModels;
         try {
             const res = await this.request(ACP_METHODS.SET_MODEL, {
