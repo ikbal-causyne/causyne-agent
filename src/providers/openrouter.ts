@@ -230,7 +230,7 @@ export class OpenRouterProvider extends LLMProvider {
       }
     }
 
-    throw new Error(`OpenRouter API Error (${status}): ${errorText}`);
+    throw new ProviderHttpError(`OpenRouter API Error (${status}): ${errorText}`, { status, retryAfterMs });
   }
 
   /**

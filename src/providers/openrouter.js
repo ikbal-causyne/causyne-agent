@@ -184,7 +184,7 @@ export class OpenRouterProvider extends LLMProvider {
                 throw new OpenRouterRateLimitError('OpenRouter Free usage limit reached for this free model. Please wait a moment or select another free model with /model.', retryAfterMs);
             }
         }
-        throw new Error(`OpenRouter API Error (${status}): ${errorText}`);
+        throw new ProviderHttpError(`OpenRouter API Error (${status}): ${errorText}`, { status, retryAfterMs });
     }
     /**
      * Process a non-streaming JSON response from OpenRouter.
