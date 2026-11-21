@@ -226,7 +226,8 @@ export function redactProviderSecrets(
   // Linear-time token masks (no nested quantifiers / zero ReDoS risk).
   text = text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer [REDACTED]');
   text = text.replace(/([?&](?:api_?)?key=)[^&\s"']+/gi, '$1[REDACTED]');
-  text = text.replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,})\b/g, '[REDACTED]');
+  text = text.replace(/\b(x-(?:goog-)?api-key\s*[:=]\s*)[A-Za-z0-9._~+/=-]{6,}/gi, '$1[REDACTED]');
+  text = text.replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{12,}|gsk_[A-Za-z0-9_-]{12,}|ya29\.[A-Za-z0-9._-]{16,})\b/g, '[REDACTED]');
 
   if (text.length > MAX_PROVIDER_ERROR_CHARS) {
     return `${text.slice(0, MAX_PROVIDER_ERROR_CHARS)}…`;
