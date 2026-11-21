@@ -138,9 +138,9 @@ function detectDefaultTypography(text) {
 function detectCookieCutterStructure(text) {
     if (!/<html|<body|<section|<main/i.test(text))
         return null;
-    const hasCenteredHero = /class\s*=\s*["'][^"']*\bhero\b/i.test(text) &&
+    const hasCenteredHero = /class\s*=\s*["'][^"']{0,512}\bhero\b/i.test(text) &&
         /text-align\s*:\s*center|\btext-center\b/i.test(text);
-    const featureCards = (text.match(/class\s*=\s*["'][^"']*\b(feature|card)\b/gi) || []).length;
+    const featureCards = (text.match(/class\s*=\s*["'][^"']{0,512}\b(feature|card)\b/gi) || []).length;
     const hasCtaPair = /get started/i.test(text) && /learn more/i.test(text);
     const signals = [hasCenteredHero, featureCards >= 3, hasCtaPair].filter(Boolean).length;
     if (signals < 2)
