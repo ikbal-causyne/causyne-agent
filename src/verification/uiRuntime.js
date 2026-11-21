@@ -15,6 +15,10 @@ export async function verifyCausyneTui(options = {}) {
     const workspace = resolveVerifyWorkspace(safeOptions.workspace);
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-ui-verify-'));
     try {
+        fs.chmodSync(home, 0o700);
+    }
+    catch { /* ignore chmod on unsupported fs */ }
+    try {
         const result = await runInteractivePty({
             workspace, script: 'tests/fixtures/liveTuiTarget.mjs',
             timeoutMs: safeOptions.timeoutMs ?? 15000,
@@ -46,6 +50,10 @@ export async function verifyCausyneChatMode(options = {}) {
     const safeOptions = options && typeof options === 'object' ? options : {};
     const workspace = resolveVerifyWorkspace(safeOptions.workspace);
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-chat-verify-'));
+    try {
+        fs.chmodSync(home, 0o700);
+    }
+    catch { /* ignore chmod on unsupported fs */ }
     try {
         const result = await runInteractivePty({
             workspace, script: 'tests/fixtures/liveChatModeTarget.mjs',
