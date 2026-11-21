@@ -326,10 +326,19 @@ export async function ensureCapability(group: string): Promise<CapabilityVerdict
  * which is the bug that silently disabled the entire V5 Cortex once already.
  */
 export async function requireCapabilityModule(packageName: string): Promise<any> {
+  if (!isValidNpmPackageName(packageName)) {
+    throw new Error(`Refusing invalid capability package name: ${safeDisplay(String(packageName))}`);
+  }
   const dir = capabilityDir();
-  const modulePath = path.join(dir, 'node_modules', packageName);
+  const nodeModulesDir = path.join(dir, 'node_modules');
+  const modulePath = path.join(nodeModulesDir, packageName);
   if (!fs.existsSync(modulePath)) {
     throw new Error(`Capability module ${packageName} is not provisioned.`);
+  }
+  const realRoot = physicalPath(dir);
+  const realModulePath = physicalPath(modulePath);
+  if (!realRoot || !realModulePath || !isWithinPhysicalPath(realModulePath, realRoot)) {
+    throw new Error(`Refusing capability module outside sovereign directory: ${packageName}`);
   }
 
   const capabilityRequire = createRequire(path.join(dir, 'package.json'));
