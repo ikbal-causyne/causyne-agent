@@ -159,7 +159,7 @@ export async function runCliProbe(options: CliProbeOptions = {}): Promise<CliPro
       });
       timer = setTimeout(() => {
         timedOut = true;
-        child?.kill('SIGKILL');
+        try { child?.kill('SIGKILL'); } catch { /* process already exited */ }
       }, timeoutMs);
       timer.unref?.();
     } catch (error: unknown) {
