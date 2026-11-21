@@ -328,7 +328,8 @@
     "src/tui/ask.ts",
     "src/version.ts",
     "src/devMode.ts",
-    "src/capabilities.ts"
+    "src/capabilities.ts",
+    "src/modelIds.ts"
   ],
   "exclude": [
     "node_modules",
