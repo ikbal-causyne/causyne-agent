@@ -14,6 +14,7 @@
 // ZERO-MALWARE: pure fs/path/os. No shell, no child process, no dependency, no
 // dynamic eval — rules ZM-04/ZM-05 hold by construction.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
@@ -122,10 +123,10 @@ export function spillToolOutput(text: unknown, meta: SpillMeta = {}): SpillRecor
     const taskId = safeFragment(meta.taskId, 'task');
     const step = safeFragment(meta.step, '0');
     const tool = safeFragment(meta.tool, 'tool');
-    const stamp = Date.now().toString(36);
+    const stamp = `${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
     const file = path.join(dir, `${FILE_PREFIX}${taskId}_${step}_${tool}_${stamp}.txt`);
 
-    fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o600 });
+    fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
 
     return {
       path: file,
