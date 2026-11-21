@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
-import fsSync from 'node:fs';
-import os from 'node:os';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, assertSafeWorkspaceInput, boundedInteger, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const MAX_PDF_FILE_BYTES = 10 * 1024 * 1024;
 function decodePdfLiteral(raw) {
     return raw.replace(/\\([nrt()\\]|[0-7]{1,3})/g, (_match, token) => {
         if (token === 'n')
@@ -74,16 +73,13 @@ export const pdfRead = {
             required: ['path']
         }
     },
-    async execute(args = {}, _context) {
+    async execute(args = {}, context) {
         try {
-            if (typeof args?.path !== 'string' || !args.path.trim()) {
-                return { success: false, error: 'PDF path is required' };
+            const { resolved } = await assertSafeWorkspaceInput(args?.path, context, { maxBytes: MAX_PDF_FILE_BYTES });
+            const buffer = await fs.readFile(resolved);
+            if (buffer.length < 5 || buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+                return { success: false, error: 'Target file is not a valid PDF document (missing %PDF- header).' };
             }
-            const target = args.path.replace(/^~\//, os.homedir() + '/');
-            if (!fsSync.existsSync(target)) {
-                return { success: false, error: `PDF file does not exist at path: ${target}` };
-            }
-            const buffer = await fs.readFile(target);
             let extractedText = extractTextFromPdfBuffer(buffer);
             extractedText = extractedText.replace(/\s{3,}/g, '\n\n').trim();
             if (!extractedText || extractedText.length < 20) {
