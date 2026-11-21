@@ -982,8 +982,10 @@ export const COMMANDS = [
                 const detail = await scanner.fetchSession(targetId);
                 if (!detail)
                     return fail(`No peer session found with ID "${targetId}".`);
-                const transcriptText = detail.messages.map((m) => `[${m.role.toUpperCase()}] ${m.content}`).join('\n\n');
-                return ok(`=== ${detail.title} (${detail.sourceLabel}) ===\nWorkspace: ${detail.workspacePath}\n\n${transcriptText}`);
+                const transcriptText = (Array.isArray(detail.messages) ? detail.messages : [])
+                    .map((m) => `[${safeDisplay(String(m?.role || 'unknown').toUpperCase())}] ${safeDisplay(typeof m?.content === 'string' ? m.content : JSON.stringify(m?.content ?? ''))}`)
+                    .join('\n\n');
+                return ok(`=== ${safeDisplay(detail.title)} (${safeDisplay(detail.sourceLabel)}) ===\nWorkspace: ${safeDisplay(detail.workspacePath)}\n\n${transcriptText}`);
             }
             if (verb === 'adopt' && targetId) {
                 const adoptRes = await adoptContinuumSession(targetId, {
@@ -1007,9 +1009,10 @@ export const COMMANDS = [
                 return ok('No peer agent sessions discovered across Antigravity, OpenCode, Codex, or Claude Code.');
             }
             const lines = sessions.map((s) => {
-                const when = new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ');
-                const ws = s.workspacePath ? path.basename(s.workspacePath) : '(default)';
-                return `  [${s.sourceLabel.padEnd(12)}] ${s.id.padEnd(38)} ${when}  ${String(s.messageCount).padStart(3)} msgs  ${ws}\n      ${s.title}`;
+                const ts = typeof s.updatedAt === 'number' && Number.isFinite(s.updatedAt) ? s.updatedAt : Date.now();
+                const when = new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
+                const ws = s.workspacePath ? safeDisplay(path.basename(s.workspacePath)) : '(default)';
+                return `  [${safeDisplay(s.sourceLabel).padEnd(12)}] ${safeDisplay(s.id).padEnd(38)} ${when}  ${String(s.messageCount ?? 0).padStart(3)} msgs  ${ws}\n      ${safeDisplay(s.title)}`;
             });
             return ok(`Discovered ${sessions.length} cross-agent sessions:\n`
                 + lines.join('\n')
