@@ -1,218 +1,150 @@
 // THE model catalogue. One list, one truth.
-//
-// WHY THIS EXISTS: on 2026-09-09 an audit found the supported-model list
-// duplicated by hand in FIVE places, drifting independently:
-//
-//   1. alibaba-cloud/ui-config.js        /api/agent-models — overrides the app entirely
-//   2. AgentViewModel.kt getModelsForProvider()  — the app's offline fallback
-//   3. src/tui/home.js PROVIDERS         — the terminal home screen's defaults
-//   4. src/config.js loadConfig()        — the first-run default
-//   5. src/providers/anthropic.js        — the capability lists that decide behaviour
-//
-// ui-config.js already carried the comment "Three lists, one truth" — it was
-// four, and the count was the smallest of the problems. The drift had shipped:
-
-// does not publish (it uses dashes), which matched NONE of anthropic.js's
-// capability lists and so silently disabled adaptive thinking and deferred
-// tool loading and sent `temperature` to models that reject it. The terminal
-// suggested `gpt-4o` and `gemini-2.5-pro` — models two generations old. And
-// `gpt-6-astra`, `claude-opus-5` and `claude-fable-5-1` could not be selected
-
-//
-// This module is now the source. 3 and 4 import it. 1 and 2 cannot (they are a
-// separately deployed Express service and a Kotlin file), so
-// tests/modelCatalogue.test.js READS them and fails the build when they drift.
-// That is the part that stops this recurring: fixing the lists fixes today,
-// pinning them by test fixes every tomorrow.
-//
-// WHEN A PROVIDER SHIPS A NEW MODEL: add it here, run `npm test`, and the test
-// will name every other file that must be updated to match.
-
 /**
  * Models published by a peer CLI's own `models` command. Only ids verified
  * against the installed binary live here; a peer with no published list is
  * absent and uses its own default rather than an invented id.
  */
 export const PEER_MODEL_CATALOGUE = {
-  opencode: [
-    'opencode/beam-free',
-    'opencode/big-pickle',
-    'opencode/deepseek-v4.1-flash-free',
-    'opencode/flint-40b-free',
-    'opencode/glm-5.3-flash-free',
-    'opencode/mimo-v2.6-flash-free',
-    'opencode/nemotron-3-ultra-free',
-    'opencode/nemotron-3.5-lightning-free',
-    'opencode/nemotron-3.5-super-vl-free'
-  ],
-  claude: ['sonnet', 'opus', 'haiku']
+    opencode: [
+        'opencode/beam-free',
+        'opencode/big-pickle',
+        'opencode/deepseek-v4.1-flash-free',
+        'opencode/flint-40b-free',
+        'opencode/glm-5.3-flash-free',
+        'opencode/mimo-v2.6-flash-free',
+        'opencode/nemotron-3-ultra-free',
+        'opencode/nemotron-3.5-lightning-free',
+        'opencode/nemotron-3.5-super-vl-free'
+    ],
+    claude: ['sonnet', 'opus', 'haiku']
 };
-
 /**
  * Selectable models per provider, newest first.
  *
  * The label keys are a stable configuration format, not display sugar.
  */
 export const MODEL_CATALOGUE = {
-  'DeepSeek': ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro', 'deepseek-v4-flash'],
-  'Qwen': [
-    'qwen2.5-coder-32b-instruct',
-    'qwen2.5-72b-instruct',
-    'qwen-max',
-    'qwen-plus',
-    'qwen-turbo',
-    'qwen3.7-max',
-    'qwen3.7-plus',
-    'qwen3.6-flash'
-  ],
-  // Anthropic ids use DASHES and carry no date suffix. A dotted id here is a
-  // bug, not a variant — see src/modelIds.js.
-  'Anthropic': [
-    'claude-3-7-sonnet',
-    'claude-3-5-sonnet',
-    'claude-3-5-haiku',
-    'claude-3-opus',
-    'claude-fable-5-1',
-    'claude-opus-5',
-    'claude-opus-4-8',
-    'claude-sonnet-5',
-    'claude-haiku-4-5'
-  ],
-  'OpenAI': [
-    'gpt-4o',
-    'gpt-4o-mini',
-    'o3-mini',
-    'o1',
-    'gpt-6-astra',
-    'gpt-5.6-sol',
-    'gpt-5.6-terra',
-    'gpt-5.6-luna',
-    'gpt-5.4-mini'
-  ],
-  'Gemini': [
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash',
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.1-pro',
-    'gemini-3.1-flash-lite'
-  ],
-  // Standard first. The -contributor variants are cheaper because Meta trains
-  // on the user's prompts and completions, so they must be a choice made
-  // deliberately, never the one at the top of the list.
-  'Meta (Muse)': [
-    'muse-spark-1.3',
-    'muse-spark-1.2',
-    'muse-spark-1.1',
-    'muse-spark-1.3-contributor',
-    'muse-spark-1.2-contributor'
-  ],
-  'Ollama (Local)': ['llama3.3', 'qwen2.5-coder', 'deepseek-r1', 'llama3', 'mistral', 'gemma2', 'custom'],
-  'Alibaba (DashScope)': [
-    'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder-32b-instruct',
-    'qwen3.7-max', 'qwen3.7-plus', 'kimi-k2.7-code', 'kimi-k2.6',
-    'kimi-k2.5', 'kimi-k2-thinking', 'Moonshot-Kimi-K2-Instruct',
-    'deepseek-v4-flash', 'deepseek-v4-pro'
-  ],
-  'Moonshot (Kimi)': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
-  'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest'],
-  'Google Antigravity': [
-    'Gemini 3.8 Flash (Low)',
-    'Gemini 3.8 Flash (Medium)',
-    'Gemini 3.8 Flash (High)',
-    'Gemini 4 Argon (Low)',
-    'Gemini 4 Argon (Medium)',
-    'Gemini 4 Argon (High)',
-    'Claude Sonnet 5.5 (Low)',
-    'Claude Sonnet 5.5 (Medium)',
-    'Claude Sonnet 5.5 (High)',
-    'Claude Opus 5.5 (Low)',
-    'Claude Opus 5.5 (Medium)',
-    'Claude Opus 5.5 (High)',
-    'GPT-OSS 120B (Medium)'
-  ],
-  'Pi (Local Peer)': ['default'],
-  'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'],
-  'OpenCode (ACP)': PEER_MODEL_CATALOGUE.opencode,
-  'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude,
-  'OpenRouter (Free)': ['openrouter/free']
+    'DeepSeek': ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-pro', 'deepseek-v4-flash'],
+    'Qwen': [
+        'qwen2.5-coder-32b-instruct',
+        'qwen2.5-72b-instruct',
+        'qwen-max',
+        'qwen-plus',
+        'qwen-turbo',
+        'qwen3.7-max',
+        'qwen3.7-plus',
+        'qwen3.6-flash'
+    ],
+    'Anthropic': [
+        'claude-3-7-sonnet',
+        'claude-3-5-sonnet',
+        'claude-3-5-haiku',
+        'claude-3-opus',
+        'claude-fable-5-1',
+        'claude-opus-5',
+        'claude-opus-4-8',
+        'claude-sonnet-5',
+        'claude-haiku-4-5'
+    ],
+    'OpenAI': [
+        'gpt-4o',
+        'gpt-4o-mini',
+        'o3-mini',
+        'o1',
+        'gpt-6-astra',
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.4-mini'
+    ],
+    'Gemini': [
+        'gemini-2.5-pro',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-3.1-pro',
+        'gemini-3.1-flash-lite'
+    ],
+    'Meta (Muse)': [
+        'muse-spark-1.3',
+        'muse-spark-1.2',
+        'muse-spark-1.1',
+        'muse-spark-1.3-contributor',
+        'muse-spark-1.2-contributor'
+    ],
+    'Ollama (Local)': ['llama3.3', 'qwen2.5-coder', 'deepseek-r1', 'llama3', 'mistral', 'gemma2', 'custom'],
+    'Alibaba (DashScope)': [
+        'qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen2.5-coder-32b-instruct',
+        'qwen3.7-max', 'qwen3.7-plus', 'kimi-k2.7-code', 'kimi-k2.6',
+        'kimi-k2.5', 'kimi-k2-thinking', 'Moonshot-Kimi-K2-Instruct',
+        'deepseek-v4-flash', 'deepseek-v4-pro'
+    ],
+    'Moonshot (Kimi)': ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'],
+    'xAI (Grok)': ['grok-3', 'grok-3-mini', 'grok-2-1212', 'grok-4.5', 'grok-latest'],
+    'Google Antigravity': [
+        'Gemini 3.8 Flash (Low)',
+        'Gemini 3.8 Flash (Medium)',
+        'Gemini 3.8 Flash (High)',
+        'Gemini 4 Argon (Low)',
+        'Gemini 4 Argon (Medium)',
+        'Gemini 4 Argon (High)',
+        'Claude Sonnet 5.5 (Low)',
+        'Claude Sonnet 5.5 (Medium)',
+        'Claude Sonnet 5.5 (High)',
+        'Claude Opus 5.5 (Low)',
+        'Claude Opus 5.5 (Medium)',
+        'Claude Opus 5.5 (High)',
+        'GPT-OSS 120B (Medium)'
+    ],
+    'Pi (Local Peer)': ['default'],
+    'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'],
+    'OpenCode (ACP)': PEER_MODEL_CATALOGUE.opencode ?? [],
+    'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude ?? [],
+    'OpenRouter (Free)': ['openrouter/free']
 };
-
 /** Provider labels in picker order. */
 export const PROVIDER_LABELS = Object.keys(MODEL_CATALOGUE);
-
-
 export const DEFAULT_MODEL_BY_PROVIDER = {
-  deepseek: 'deepseek-chat',
-  qwen: 'qwen2.5-coder-32b-instruct',
-  'dashscope-byok': 'qwen-plus',
-  dashscope: 'qwen-plus',
-  muse: 'muse-spark-1.3',
-  anthropic: 'claude-3-7-sonnet',
-  openai: 'gpt-4o',
-  gemini: 'gemini-2.5-pro',
-  moonshot: 'kimi-k3',
-  xai: 'grok-3',
-  ollama: 'llama3.3',
-  acp: 'opencode',
-  'acp/opencode': 'opencode/beam-free',
-  'acp/claude': 'sonnet',
-  'acp/codex': 'codex',
-  'acp/gemini': 'gemini',
-  'acp/cursor': 'cursor',
-  'acp/qwen': 'qwen',
-  'acp/copilot': 'copilot',
-  'acp/kimi': 'kimi',
-  'acp/goose': 'goose',
-  'acp/hermes': 'hermes',
-  antigravity: 'Gemini 3.8 Flash (Low)',
-  openrouter: 'openrouter/free',
-  pi: 'default',
-  'openai-compatible': ''
+    deepseek: 'deepseek-chat',
+    qwen: 'qwen2.5-coder-32b-instruct',
+    'dashscope-byok': 'qwen-plus',
+    dashscope: 'qwen-plus',
+    muse: 'muse-spark-1.3',
+    anthropic: 'claude-3-7-sonnet',
+    openai: 'gpt-4o',
+    gemini: 'gemini-2.5-pro',
+    moonshot: 'kimi-k3',
+    xai: 'grok-3',
+    ollama: 'llama3.3',
+    acp: 'opencode',
+    'acp/opencode': 'opencode/beam-free',
+    'acp/claude': 'sonnet',
+    'acp/codex': 'codex',
+    'acp/gemini': 'gemini',
+    'acp/cursor': 'cursor',
+    'acp/qwen': 'qwen',
+    'acp/copilot': 'copilot',
+    'acp/kimi': 'kimi',
+    'acp/goose': 'goose',
+    'acp/hermes': 'hermes',
+    antigravity: 'Gemini 3.8 Flash (Low)',
+    openrouter: 'openrouter/free',
+    pi: 'default',
+    'openai-compatible': ''
 };
-
-/**
- * Every id this catalogue can produce, flattened. Used by the drift test and
- * by anything that needs to ask "is this a model we claim to support?".
- *
- * @returns {string[]} unique ids, order not significant
- */
-/**
- * The cheapest model of each provider that is still competent at UTILITY work —
- * classification, keyword extraction, log filtering, condensation, triage.
- *
- * SAME PROVIDER, ALWAYS. The research spec proposes routing light work to
- * "DeepSeek V4 Flash or GPT-4o mini" regardless of what the user configured.
- * That cannot work here: Causyne is BYOK and the user holds exactly ONE key.
- * Routing across providers would call an endpoint there is no credential for,
- * so a route may only ever move WITHIN the configured provider.
- *
- * MUSE IS DELIBERATELY ABSENT. Its cheap tier is the `-contributor` variant,
- * which is cheaper precisely because Meta trains on the user's prompts and
- * completions. That is a privacy decision, not a price decision, and it must
- * stay something the user opts into by hand — never something a cost optimiser
- * does to them silently. A muse user simply gets no utility routing.
- *
- * Absent providers (moonshot, xai, ollama, openai-compatible) have no published
- * second tier we can rely on, so they route to nothing and pay full rate. A
- * guess here would show up on someone's invoice.
- *
- * @type {Record<string, string>}
- */
 export const UTILITY_MODEL_BY_PROVIDER = {
-  deepseek: 'deepseek-v4-flash',      // $0.14/$0.28 against pro's $0.435/$0.87
-  qwen: 'qwen3.6-flash',              // $0.19/$1.13 against plus's $0.32/$1.28
-  dashscope: 'qwen3.6-flash',
-  'dashscope-byok': 'qwen3.6-flash',
-  anthropic: 'claude-haiku-4-5',      // $1/$5 against opus's $5/$25
-  openai: 'gpt-5.4-mini',             // $0.75/$4.50 against sol's $5/$30
-  gemini: 'gemini-3.1-flash-lite',    // $0.25/$1.50 against flash's $1.50/$9
-  openrouter: 'openrouter/free'
+    deepseek: 'deepseek-v4-flash',
+    qwen: 'qwen3.6-flash',
+    dashscope: 'qwen3.6-flash',
+    'dashscope-byok': 'qwen3.6-flash',
+    anthropic: 'claude-haiku-4-5',
+    openai: 'gpt-5.4-mini',
+    gemini: 'gemini-3.1-flash-lite',
+    openrouter: 'openrouter/free'
 };
-
 export function allCatalogueModels() {
-  return [...new Set(Object.values(MODEL_CATALOGUE).flat())];
+    return [...new Set(Object.values(MODEL_CATALOGUE).flat())];
 }

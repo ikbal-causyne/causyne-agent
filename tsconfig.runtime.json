@@ -329,7 +329,8 @@
     "src/version.ts",
     "src/devMode.ts",
     "src/capabilities.ts",
-    "src/modelIds.ts"
+    "src/modelIds.ts",
+    "src/modelCatalogue.ts"
   ],
   "exclude": [
     "node_modules",
