@@ -375,6 +375,9 @@ export async function requireCapabilityModule(packageName) {
  * to the sovereign directory. Tools call this instead of a bare dynamic import.
  */
 export async function loadCapabilityPackage(packageName) {
+    if (!isValidNpmPackageName(packageName)) {
+        throw new Error(`Refusing to load invalid capability package name: ${safeDisplay(String(packageName))}`);
+    }
     try {
         const local = await import(packageName);
         return local.default || local;
