@@ -31,6 +31,7 @@ function sanitizeAuditValue(value, depth = 0, seen = new WeakSet()) {
     }
     return out;
 }
+const MAX_AUDIT_ENTRY_CHARS = 32_768;
 function resolveLogDir() {
     return path.join(causyneHome(), 'logs');
 }
@@ -85,7 +86,15 @@ export class AuditLog {
                 if (code !== 'ENOENT')
                     return;
             }
-            fs.appendFileSync(target, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+            let serialized = JSON.stringify(entry);
+            if (serialized.length > MAX_AUDIT_ENTRY_CHARS) {
+                serialized = JSON.stringify({
+                    ts: entry.ts,
+                    truncated: true,
+                    preview: serialized.slice(0, MAX_AUDIT_ENTRY_CHARS - 256)
+                });
+            }
+            fs.appendFileSync(target, serialized + '\n', { encoding: 'utf8', mode: 0o600 });
         }
         catch (e) {
             console.error('Failed to write audit log:', e);

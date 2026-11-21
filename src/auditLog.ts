@@ -31,6 +31,8 @@ function sanitizeAuditValue(value: unknown, depth = 0, seen = new WeakSet<object
   return out;
 }
 
+const MAX_AUDIT_ENTRY_CHARS = 32_768;
+
 function resolveLogDir(): string {
   return path.join(causyneHome(), 'logs');
 }
@@ -81,7 +83,15 @@ export class AuditLog {
         const code = typeof statErr === 'object' && statErr !== null && 'code' in statErr ? String(statErr.code) : '';
         if (code !== 'ENOENT') return;
       }
-      fs.appendFileSync(target, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
+      let serialized = JSON.stringify(entry);
+      if (serialized.length > MAX_AUDIT_ENTRY_CHARS) {
+        serialized = JSON.stringify({
+          ts: entry.ts,
+          truncated: true,
+          preview: serialized.slice(0, MAX_AUDIT_ENTRY_CHARS - 256)
+        });
+      }
+      fs.appendFileSync(target, serialized + '\n', { encoding: 'utf8', mode: 0o600 });
     } catch (e: unknown) {
       console.error('Failed to write audit log:', e);
     }
