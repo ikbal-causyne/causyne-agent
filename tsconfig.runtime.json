@@ -347,7 +347,8 @@
     "src/verification/boundedExplorer.ts",
     "src/verification/propertyProbe.ts",
     "src/verification/statechart.ts",
-    "src/verification/cliProbe.ts"
+    "src/verification/cliProbe.ts",
+    "src/verification/uiRuntime.ts"
   ],
   "exclude": [
     "node_modules",
