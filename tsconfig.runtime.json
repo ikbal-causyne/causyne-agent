@@ -366,7 +366,8 @@
     "src/tools/persistentShell.ts",
     "src/tools/axSnapshot.ts",
     "src/tools/desktopAct.ts",
-    "src/tools/codeTools.ts"
+    "src/tools/codeTools.ts",
+    "src/tools/printer.ts"
   ],
   "exclude": [
     "node_modules",
