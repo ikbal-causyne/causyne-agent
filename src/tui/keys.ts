@@ -141,8 +141,10 @@ export class KeyDecoder {
   }
 
   /** Feed a chunk; get back every complete key event it contained. */
-  decode(chunk: Buffer | string): KeyEvent[] {
+  decode(chunk: Buffer | string | null | undefined): KeyEvent[] {
+    if (chunk == null) return [];
     const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    if (incoming.length === 0) return [];
     this.pending = this.pending.length ? Buffer.concat([this.pending, incoming]) : incoming;
 
     const events: KeyEvent[] = [];
