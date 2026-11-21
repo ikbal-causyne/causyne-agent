@@ -9,7 +9,6 @@
  * If already covered, recommends reusing existing functionality to avoid duplicate code.
  */
 import { configuredServers } from '../mcp/mcpRegistry.js';
-// @ts-expect-error legacy JS plugin manager lacks typings
 import { listPlugins } from '../plugins/pluginManager.js';
 const NATIVE_TOOLS_CATALOG = [
     { name: 'fs_read', description: 'Read file contents from the workspace', aliases: ['read_file', 'cat', 'open_file'] },

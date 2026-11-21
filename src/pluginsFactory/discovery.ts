@@ -10,7 +10,6 @@
  */
 
 import { configuredServers } from '../mcp/mcpRegistry.js';
-// @ts-expect-error legacy JS plugin manager lacks typings
 import { listPlugins } from '../plugins/pluginManager.js';
 
 export interface ExistingCapabilityMatch {
