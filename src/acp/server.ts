@@ -196,6 +196,15 @@ export class AcpServer {
     if (!this.input || this.dataListener) return;
     this.dataListener = (chunk: Buffer | string) => {
       this.buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
+        this.buffer = '';
+        this.write({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Request frame exceeds maximum size' }
+        });
+        return;
+      }
       void this.drainBuffer();
     };
     this.endListener = () => { void this.stop(); };
