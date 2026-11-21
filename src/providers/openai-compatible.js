@@ -12,7 +12,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
     constructor(config = {}) {
         super(config);
         this.audioModels = [];
-        this.reasoningEffort = config.reasoningEffort || null;
+        const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+        this.reasoningEffort = rawEffort || null;
         const rawUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
         let resolvedUrl = rawUrl || 'https://api.openai.com/v1/chat/completions';
         if (rawUrl) {
@@ -32,13 +33,22 @@ export class OpenAICompatibleProvider extends LLMProvider {
         this.providerLabel = 'OpenAI-Compatible';
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['openai']) || '');
     }
+    rejectsSamplingParameters() {
+        return false;
+    }
+    usesMaxCompletionTokens() {
+        return false;
+    }
     async chat(messages, options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
         const preparedMessages = this.prepareMessages(messages);
         const payload = {
             model: this.model,
-            messages: preparedMessages,
-            temperature: resolveTemperature(options.temperature, 0.1)
+            messages: preparedMessages
         };
+        if (!this.rejectsSamplingParameters()) {
+            payload['temperature'] = resolveTemperature(opts.temperature, 0.1);
+        }
         if (this.reasoningEffort && this.reasoningEffort !== 'off') {
             payload['reasoning_effort'] = this.reasoningEffort;
         }
