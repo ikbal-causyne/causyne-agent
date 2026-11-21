@@ -301,15 +301,19 @@ export class LLMProvider {
   }
 
   stripInternalFields(messages: any[]): any[] {
-    return messages.map(msg => {
+    if (!Array.isArray(messages)) return [];
+    const fieldsToStrip: string[] = [...INTERNAL_MESSAGE_FIELDS, 'thoughtSignature'];
+    if (!this.preserveThinkingBlocks) fieldsToStrip.push('thinking_blocks');
+    if (!this.preserveReasoningContent) fieldsToStrip.push('reasoning_content');
+    return messages.filter((msg) => msg && typeof msg === 'object').map(msg => {
       let needsCopy = false;
-      for (const field of INTERNAL_MESSAGE_FIELDS) {
+      for (const field of fieldsToStrip) {
         if (field in msg) { needsCopy = true; break; }
       }
       if (!needsCopy) return msg;
 
       const clean = { ...msg };
-      for (const field of INTERNAL_MESSAGE_FIELDS) delete clean[field];
+      for (const field of fieldsToStrip) delete clean[field];
       return clean;
     });
   }
