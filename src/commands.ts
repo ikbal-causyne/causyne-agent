@@ -121,6 +121,24 @@ function fail(output: string): CommandResult {
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+function runGitCommand(args: string[], cwd: string): string {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  delete env.CAUSYNE_VAULT_KEY;
+  delete env.CAUSYNE_DEV_SECRET;
+  delete env.GIT_EXTERNAL_DIFF;
+  delete env.GIT_PAGER;
+  delete env.GIT_EDITOR;
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    timeout: 15_000,
+    maxBuffer: 2 * 1024 * 1024,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env
+  });
+}
+
 async function resetStandingApprovals(context: CommandContext): Promise<void> {
   const { revokeAllAlways } = await import('./approvalGrants.js');
   revokeAllAlways();
@@ -611,7 +629,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
         let isGit = fs.existsSync(path.join(ws, '.git'));
         if (!isGit) {
           try {
-            execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
+            runGitCommand(['rev-parse', '--is-inside-work-tree'], ws);
             isGit = true;
           } catch {
             isGit = false;
@@ -619,10 +637,10 @@ export const COMMANDS: SlashCommandDefinition[] = [
         }
 
         if (!isGit) {
-          return ok(`Workspace "${ws}" is not a git repository.`);
+          return ok(`Workspace "${safeDisplay(ws)}" is not a git repository.`);
         }
 
-        const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
+        const status = runGitCommand(['status', '--short'], ws).trim();
         if (!status) {
           return ok('Working tree is clean. No uncommitted changes in this workspace.');
         }
@@ -635,7 +653,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
         }
         const diffCmd = `git ${diffArgs.join(' ')}`;
 
-        const diffOutput = execFileSync('git', diffArgs, { cwd: ws, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
+        const diffOutput = runGitCommand(diffArgs, ws).trim();
         const header = `Git Status (${ws}):\n${status}\n\n${'─'.repeat(50)}\n${diffCmd}:\n`;
         return ok(diffOutput ? `${header}\n${diffOutput}` : `${header}\n(no file diff for ${diffCmd})`);
       } catch (err) {
@@ -2391,7 +2409,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
         promptText = `Please review ${target} for security vulnerabilities, logic correctness, performance, and best practices.`;
       } else {
         try {
-          const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
+          const status = runGitCommand(['status', '--short'], ws).trim();
           if (!status) {
             return ok('Working tree is clean. To review a specific file, run: /review <path>');
           }
@@ -2532,7 +2550,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
       const ws = ctx.loop?.workspaceRoot || process.cwd();
       let isGit = false;
       try {
-        execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
+        runGitCommand(['rev-parse', '--is-inside-work-tree'], ws);
         isGit = true;
       } catch {}
       lines.push(`  ✓ Workspace root    : ${ws}`);
