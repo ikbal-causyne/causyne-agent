@@ -360,7 +360,8 @@
     "src/tools/pluginManager.ts",
     "src/tools/astryxOracle.ts",
     "src/tools/procTerm.ts",
-    "src/tools/gitExec.ts"
+    "src/tools/gitExec.ts",
+    "src/tools/codeSearchAst.ts"
   ],
   "exclude": [
     "node_modules",
