@@ -27,8 +27,8 @@ function applyRequestedWorkingDirectory(argv) {
     const requested = requestedWorkingDirectory(argv);
     if (requested === null)
         return;
-    if (!requested)
-        throw new Error('The --cwd option requires a directory.');
+    if (!requested || requested.includes('\0'))
+        throw new Error('The --cwd option requires a valid directory.');
     const resolved = resolveUserPath(requested);
     process.chdir(resolved);
 }
