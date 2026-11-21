@@ -234,7 +234,19 @@ export class EntitlementClient {
     }
     const identity = this.identity ||= loadInstallationIdentity(this.stateRoot);
     const method = body === undefined ? 'GET' : 'POST';
-    const raw = body === undefined ? '' : JSON.stringify(body);
+    let raw = '';
+    if (body !== undefined) {
+      try {
+        const serialized = JSON.stringify(body);
+        if (typeof serialized !== 'string') {
+          throw new EntitlementAccessError('INVALID_REQUEST', 'Entitlement request payload is not JSON-serializable.');
+        }
+        raw = serialized;
+      } catch (err: unknown) {
+        if (err instanceof EntitlementAccessError) throw err;
+        throw new EntitlementAccessError('INVALID_REQUEST', 'Entitlement request payload is not JSON-serializable.');
+      }
+    }
     const headers: Record<string, string> = {
       'user-agent': USER_AGENT,
       'accept': 'application/json',
