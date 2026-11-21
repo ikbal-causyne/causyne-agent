@@ -268,6 +268,10 @@ export async function provisionCapabilities(groups?: string[] | null): Promise<P
  * unavailable, not that something crashed.
  */
 export async function ensureCapability(group: string): Promise<CapabilityVerdict> {
+  if (!isKnownGroup(group)) {
+    const safeName = typeof group === 'string' ? safeDisplay(group).slice(0, 64) : '';
+    return { ok: false, group: safeName, reason: `Unknown capability group "${safeName}".` };
+  }
   if (isGroupDeclined(group)) {
     return { ok: false, group, reason: `The "${group}" capability was explicitly disabled by the user.` };
   }
@@ -283,7 +287,7 @@ export async function ensureCapability(group: string): Promise<CapabilityVerdict
       try {
         await provisionCapabilities([group]);
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = safeDisplay(redactProviderSecrets(e instanceof Error ? e.message : String(e)));
         return { ok: false, group, reason: `The "${group}" capability could not be prepared: ${msg}` };
       }
       return isGroupInstalled(group)
@@ -305,7 +309,7 @@ export async function ensureCapability(group: string): Promise<CapabilityVerdict
   try {
     await provisionCapabilities([group]);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = safeDisplay(redactProviderSecrets(e instanceof Error ? e.message : String(e)));
     return { ok: false, group, reason: `The "${group}" capability could not be prepared: ${msg}` };
   }
   return isGroupInstalled(group)
