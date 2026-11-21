@@ -28,7 +28,7 @@ import { markHoveredMessage } from './messageInteraction.js';
 import { placeMessageActionPanel } from './messageActionPlacement.js';
 import { mouseTracking } from './keys.js';
 import { mouseHoverTracking } from './mouseHover.js';
-import { truncate, padEnd, visibleWidth, stripAnsi } from './text.js';
+import { truncate, padEnd, visibleWidth, stripAnsi, safeDisplay } from './text.js';
 import { composerWidth } from './layout.js';
 import { placeHome, placeDialog } from './homeView.js';
 import { sidebarVisible, sessionSidebarWidth, sessionMainWidth, sessionComposerWidth, sessionSidebarRows, joinSessionSidebar } from './sessionSidebar.js';
@@ -188,7 +188,7 @@ export function renderTurnTimelineCard(turns, maxCardWidth = 52, maxHeight = 16,
     const bottom = border + '╰' + '─'.repeat(width - 2) + '╯' + reset;
     const blank = border + '│' + bg + ' '.repeat(inner + 2) + border + '│' + reset;
     const line = (value, style = '') => {
-        const text = truncate(formatPreviewCardMarkdown(String(value || '')), inner, '…');
+        const text = truncate(formatPreviewCardMarkdown(safeDisplay(String(value || ''))), inner, '…');
         return border + '│' + bg + ' ' + style + padEnd(text, inner) + border + ' │' + reset;
     };
     const shortTime = (turn) => {
@@ -375,7 +375,7 @@ export class StageSurface {
         return true;
     }
     writeModeControl(sequence) {
-        if (!sequence)
+        if (!sequence || !this.out || typeof this.out.write !== 'function')
             return;
         runWithStageWrite(() => {
             this.out.write(sequence);
@@ -551,6 +551,8 @@ export class StageSurface {
     present(promptRows, caret = null) {
         if (!this.stage.reserved)
             return 0;
+        const safePromptRows = Array.isArray(promptRows) ? promptRows : [];
+        promptRows = safePromptRows;
         if (!this.messageActionOverlay) {
             this.lastPromptRows = promptRows;
             this.lastPromptCaret = caret;
