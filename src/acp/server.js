@@ -390,6 +390,9 @@ export class AcpServer {
         return { stopReason };
     }
     async runTurn(session, text) {
+        if (this.closed || !this.sessions.has(session.id)) {
+            return 'cancelled';
+        }
         session.updatedAt = Date.now();
         session.cancelled = false;
         session.busy = true;
@@ -435,9 +438,11 @@ export class AcpServer {
         finally {
             session.loop = null;
             session.busy = false;
-            const record = getSession(session.memorySessionId);
-            if (record)
-                session.title = record.title;
+            if (this.sessions.has(session.id)) {
+                const record = getSession(session.memorySessionId);
+                if (record)
+                    session.title = safeDisplay(record.title).replace(/\s+/g, ' ').trim() || session.title;
+            }
             if (session.cancelled)
                 stopReason = 'cancelled';
         }
