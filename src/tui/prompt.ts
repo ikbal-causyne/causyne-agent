@@ -335,7 +335,7 @@ export class ChatPrompt {
       try {
         this.handleKey({ name: 'paste', text: str, sequence: '' });
       } catch (error: unknown) {
-        this.notice = `paste failed: ${error instanceof Error ? error.message : String(error)}`;
+        this.notice = `paste failed: ${this.sanitizeSingleLine(error instanceof Error ? error.message : String(error))}`;
         this.scheduleDraw();
       }
       this.draw();
@@ -371,7 +371,7 @@ export class ChatPrompt {
       try {
         this.handleKey(key);
       } catch (e: unknown) {
-        this.notice = `input error: ${e instanceof Error ? e.message : String(e)}`;
+        this.notice = `input error: ${this.sanitizeSingleLine(e instanceof Error ? e.message : String(e))}`;
         this.scheduleDraw();
       }
     }
@@ -865,7 +865,7 @@ export class ChatPrompt {
       import('./observerPicker.js').then(({ runInteractiveObserverPicker }) => {
         void runInteractiveObserverPicker(this);
       }).catch((err: unknown) => {
-        this.notice = err instanceof Error ? err.message : String(err);
+        this.notice = this.sanitizeSingleLine(err instanceof Error ? err.message : String(err));
         this.scheduleDraw();
       });
       return;
@@ -944,7 +944,7 @@ export class ChatPrompt {
       if (this.layer) { this.closeLayer(); return; }
       if (this.editor.hasSelection) {
         const text = this.editor.getSelectedText();
-        writeClipboardSync(text);
+        try { writeClipboardSync(text); } catch { /* clipboard unavailable */ }
         this.editor.killRing = text;
         this.notice = `copied selection (${text.length} chars) to clipboard`;
         this.scheduleDraw();
