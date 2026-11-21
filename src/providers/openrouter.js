@@ -199,13 +199,20 @@ export class OpenRouterProvider extends LLMProvider {
                 truncate: false,
                 label: 'OpenRouter'
             });
+            const cleanText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
             try {
-                data = JSON.parse(rawText);
+                data = JSON.parse(cleanText);
             }
             catch {
                 const preview = redactProviderSecrets(rawText.slice(0, 240), [apiKey]);
                 throw new Error(`OpenRouter returned a non-JSON response (HTTP ${response.status}): ${preview}`);
             }
+        }
+        if (data && typeof data === 'object' && data.error && typeof data.error === 'object') {
+            const rawErr = typeof data.error.message === 'string' ? data.error.message : JSON.stringify(data.error);
+            const cleanErr = redactProviderSecrets(rawErr, [apiKey]);
+            const code = typeof data.error.code === 'number' ? data.error.code : 502;
+            this.handleHttpErrors(code, cleanErr);
         }
         const normalized = normalizeOpenAIChatChoiceResponse(data, {
             prefix: 'call_openrouter',
