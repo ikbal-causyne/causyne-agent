@@ -378,9 +378,10 @@ export class EntitlementGate {
     timer;
     pending;
     listeners;
-    constructor({ enabled = LICENSE_ENFORCEMENT_ENABLED, client = new EntitlementClient() } = {}) {
-        this.enabled = enabled;
-        this.client = client;
+    constructor(options) {
+        const safeOpts = options && typeof options === 'object' ? options : {};
+        this.enabled = typeof safeOpts.enabled === 'boolean' ? safeOpts.enabled : LICENSE_ENFORCEMENT_ENABLED;
+        this.client = safeOpts.client ?? new EntitlementClient();
         this.sessionId = crypto.randomUUID();
         this.activeRuns = 0;
         this.pausedRuns = 0;
