@@ -190,9 +190,13 @@ function regularFile(file: string, maxBytes: number): fs.Stats {
   return stat;
 }
 
+const MAX_PLUGIN_DEPTH = 16;
+
 function digestPluginDirectory(directory: string): string {
   const files: Array<{ absolute: string; relative: string; size: number }> = [];
-  const visit = (current: string): void => {
+  let totalBytes = 0;
+  const visit = (current: string, depth: number): void => {
+    if (depth > MAX_PLUGIN_DEPTH) throw new Error(`Plugin directory nesting exceeds ${MAX_PLUGIN_DEPTH}`);
     const entries = fs.readdirSync(current, { withFileTypes: true })
       .sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
@@ -200,17 +204,18 @@ function digestPluginDirectory(directory: string): string {
       const stat = fs.lstatSync(absolute);
       if (stat.isSymbolicLink()) throw new Error(`Plugin content must not be a symlink: ${entry.name}`);
       if (stat.isDirectory()) {
-        visit(absolute);
+        visit(absolute, depth + 1);
         continue;
       }
       if (!stat.isFile()) throw new Error(`Plugin content must be a regular file: ${entry.name}`);
+      if (stat.nlink > 1) throw new Error(`Plugin content must not be a hardlink: ${entry.name}`);
+      totalBytes += stat.size;
+      if (totalBytes > MAX_PLUGIN_BYTES) throw new Error('Plugin exceeds 2 MB');
       files.push({ absolute, relative: path.relative(directory, absolute), size: stat.size });
       if (files.length > MAX_PLUGIN_FILES) throw new Error(`Plugin exceeds ${MAX_PLUGIN_FILES} files`);
     }
   };
-  visit(directory);
-  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-  if (totalBytes > MAX_PLUGIN_BYTES) throw new Error('Plugin exceeds 2 MB');
+  visit(directory, 0);
 
   const digest = crypto.createHash('sha256');
   for (const file of files) {
