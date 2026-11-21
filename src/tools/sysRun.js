@@ -347,6 +347,14 @@ export const sysRun = {
             const MAX_LENGTH = 50000;
             let outputBuffer = '';
             let isDetached = false;
+            const detachChild = () => {
+                child.stdout?.removeAllListeners('data');
+                child.stderr?.removeAllListeners('data');
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+                child.stdin?.destroy();
+                child.unref();
+            };
             const checkServerDetach = () => {
                 if (isDetached)
                     return;
@@ -357,7 +365,7 @@ export const sysRun = {
                             clearTimeout(timeoutId);
                         if (serverGraceTimer)
                             clearTimeout(serverGraceTimer);
-                        child.unref();
+                        detachChild();
                         resolve({
                             success: true,
                             output: cleanSubprocessOutput(outputBuffer),
@@ -397,7 +405,7 @@ export const sysRun = {
                         isDetached = true;
                         if (timeoutId)
                             clearTimeout(timeoutId);
-                        child.unref();
+                        detachChild();
                         resolve({
                             success: true,
                             output: cleanSubprocessOutput(outputBuffer) || 'Server process started and running in background.',

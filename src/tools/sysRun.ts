@@ -431,6 +431,15 @@ export const sysRun = {
       let outputBuffer = '';
       let isDetached = false;
 
+      const detachChild = (): void => {
+        child.stdout?.removeAllListeners('data');
+        child.stderr?.removeAllListeners('data');
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        child.stdin?.destroy();
+        child.unref();
+      };
+
       const checkServerDetach = (): void => {
         if (isDetached) return;
         if (isPersistentServerCommand(rawCommand)) {
@@ -438,7 +447,7 @@ export const sysRun = {
             isDetached = true;
             if (timeoutId) clearTimeout(timeoutId);
             if (serverGraceTimer) clearTimeout(serverGraceTimer);
-            child.unref();
+            detachChild();
             resolve({
               success: true,
               output: cleanSubprocessOutput(outputBuffer),
@@ -481,7 +490,7 @@ export const sysRun = {
           if (!isDetached && child.exitCode === null) {
             isDetached = true;
             if (timeoutId) clearTimeout(timeoutId);
-            child.unref();
+            detachChild();
             resolve({
               success: true,
               output: cleanSubprocessOutput(outputBuffer) || 'Server process started and running in background.',
