@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 
 const DRIVER = String.raw`
 import base64, json, os, pty, select, signal, sys, time
@@ -97,6 +98,9 @@ function resolveCommand(workspace: string, program: unknown): string {
   const relative = path.relative(base, resolved);
   if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
     throw new Error('Executable must be inside workspace');
+  }
+  if (!statSync(resolved).isFile()) {
+    throw new Error('Executable must be a regular file');
   }
   return resolved;
 }
@@ -242,7 +246,7 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
         timedOut: detail ? timedOut : (hardTimedOut ? true : null),
         truncated: detail ? truncated : (nodeStdoutTruncated ? true : null),
         inputSent: detail?.inputSent ?? false,
-        reason: detail ? null : (spawnedError || 'PTY driver produced no valid exit evidence'),
+        reason: detail ? null : (spawnedError ? redactProviderSecrets(spawnedError).slice(0, 512) : 'PTY driver produced no valid exit evidence'),
         limitation: 'PTY verifies terminal input/output, not desktop pixels or host mouse settings'
       });
     });
