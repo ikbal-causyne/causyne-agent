@@ -183,8 +183,13 @@ def scriptapp(name):
         return _MockResolveApp()
     return None
 `;
+const MAX_RESOLVE_STDIO_CHARS = 2 * 1024 * 1024;
+const DEFAULT_RESOLVE_TIMEOUT_MS = 60_000;
 export async function runResolveBridge(args, options = {}) {
-    const simulate = Boolean(options.simulate || args.simulate || process.env.CAUSYNE_SIMULATE_RESOLVE === '1');
+    const simulate = options.simulate === true || args.simulate === true || process.env.CAUSYNE_SIMULATE_RESOLVE === '1';
+    const timeoutMs = typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+        ? Math.floor(options.timeoutMs)
+        : DEFAULT_RESOLVE_TIMEOUT_MS;
     let tempMockDir = null;
     try {
         const extraDirs = [];
@@ -197,36 +202,73 @@ export async function runResolveBridge(args, options = {}) {
         const payload = JSON.stringify(args);
         const pyBin = os.platform() === 'win32' ? platformCfg.pythonBin : 'python3';
         return await new Promise((resolvePromise) => {
-            const child = spawn(pyBin, ['-', payload], { env: platformCfg.env });
+            if (options.signal?.aborted) {
+                resolvePromise({ success: false, error: 'DaVinci Resolve operation aborted.' });
+                return;
+            }
+            const child = spawn(pyBin, ['-', payload], { env: platformCfg.env, windowsHide: true });
             let outputData = '';
             let errorData = '';
+            let settled = false;
+            const finish = (result) => {
+                if (settled)
+                    return;
+                settled = true;
+                clearTimeout(timer);
+                options.signal?.removeEventListener('abort', onAbort);
+                resolvePromise(result);
+            };
+            const onAbort = () => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { /* ignore */ }
+                finish({ success: false, error: 'DaVinci Resolve operation aborted.' });
+            };
+            options.signal?.addEventListener('abort', onAbort, { once: true });
+            const timer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { /* ignore */ }
+                finish({ success: false, error: `DaVinci Resolve bridge timed out after ${timeoutMs}ms.` });
+            }, timeoutMs);
             child.stdout.on('data', (data) => {
-                outputData += data.toString();
+                if (outputData.length < MAX_RESOLVE_STDIO_CHARS) {
+                    outputData += data.toString().slice(0, MAX_RESOLVE_STDIO_CHARS - outputData.length);
+                }
             });
             child.stderr.on('data', (data) => {
-                errorData += data.toString();
+                if (errorData.length < MAX_RESOLVE_STDIO_CHARS) {
+                    errorData += data.toString().slice(0, MAX_RESOLVE_STDIO_CHARS - errorData.length);
+                }
             });
             child.on('error', (err) => {
-                resolvePromise({
+                finish({
                     success: false,
                     error: `Failed to spawn Python interpreter (${pyBin}): ${err.message}`
                 });
             });
             child.on('close', (code) => {
                 if (outputData.trim()) {
-                    try {
-                        const lines = outputData.trim().split('\n');
-                        const jsonLine = lines.find(l => l.trim().startsWith('{') && l.trim().endsWith('}'));
-                        if (jsonLine) {
-                            resolvePromise(JSON.parse(jsonLine));
-                            return;
+                    const lines = outputData.trim().split('\n');
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        const candidate = lines[i]?.trim() || '';
+                        if (!candidate.startsWith('{') || !candidate.endsWith('}'))
+                            continue;
+                        try {
+                            const parsed = JSON.parse(candidate);
+                            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                                finish(parsed);
+                                return;
+                            }
+                        }
+                        catch {
+                            continue;
                         }
                     }
-                    catch {
-                        // Fall through to error return
-                    }
                 }
-                resolvePromise({
+                finish({
                     success: false,
                     error: errorData.trim() || outputData.trim() || `Python process exited with code ${String(code)}`
                 });
@@ -363,10 +405,39 @@ export const resolveAutomator = {
             required: ['action']
         }
     },
-    async execute(args) {
+    async execute(args, context) {
         if (!args || typeof args !== 'object' || Array.isArray(args)) {
             return { success: false, error: 'Expected DaVinci Resolve action arguments' };
         }
-        return await runResolveBridge(args);
+        const normalized = { ...args };
+        if (typeof normalized.customName === 'string') {
+            const cname = normalized.customName.trim();
+            if (/[/\\]/.test(cname) || cname === '..' || cname.includes('..') || /[\x00-\x1f\x7f]/.test(cname)) {
+                return { success: false, error: `Invalid customName "${normalized.customName}": must be a plain filename without path traversal.` };
+            }
+            normalized.customName = cname;
+        }
+        const workspaceRoot = context?.parentLoop?.workspaceRoot
+            || context?.workspaceRoot
+            || context?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)
+            || process.cwd();
+        const policy = context?.parentLoop?.sandbox ?? context;
+        for (const pathKey of ['targetDir', 'mediaPath', 'lutPath']) {
+            const rawVal = normalized[pathKey];
+            if (typeof rawVal === 'string' && rawVal.trim()) {
+                const trimmed = rawVal.trim();
+                const expanded = trimmed === '~'
+                    ? os.homedir()
+                    : (trimmed.startsWith('~/') || trimmed.startsWith('~\\'))
+                        ? path.join(os.homedir(), trimmed.slice(2))
+                        : trimmed;
+                const resolved = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(workspaceRoot, expanded);
+                if (context?.grantAllAccess !== true && typeof policy?.isPathAllowed === 'function' && !policy.isPathAllowed(resolved)) {
+                    return { success: false, error: `${pathKey} resolves outside allowed workspace: ${resolved}` };
+                }
+                normalized[pathKey] = resolved;
+            }
+        }
+        return await runResolveBridge(normalized, { signal: context?.signal });
     }
 };
