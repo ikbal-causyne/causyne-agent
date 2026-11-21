@@ -424,15 +424,16 @@ export const nativeEngineTool = {
         return { success: false, error: `Could not start ${adapter.label}: ${error instanceof Error ? error.message : String(error)}` };
       }
 
-      const artifacts = invocation.artifacts
-        .map(file => path.resolve(workspace, file))
-        .filter(file => {
-          try {
-            const actual = fs.realpathSync(file);
-            return inside(workspace, actual) && fs.statSync(actual).isFile();
-          } catch { return false; }
-        })
-        .map(file => relativeArtifact(workspace, fs.realpathSync(file)));
+      const artifacts = invocation.artifacts.flatMap(file => {
+        try {
+          const actual = fs.realpathSync(path.resolve(workspace, file));
+          return inside(workspace, actual) && fs.statSync(actual).isFile()
+            ? [relativeArtifact(workspace, actual)]
+            : [];
+        } catch {
+          return [];
+        }
+      });
       const parsed = parseOutput(request.action, run.stdout);
       const diagnostics = clean(run.stderr);
       const success = run.exitCode === 0;
