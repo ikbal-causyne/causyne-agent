@@ -832,21 +832,25 @@ export function isUndoable(group) {
     return group.fileEntries.length > 0 || group.trees.some((tree) => !tree.skipped);
 }
 export function listGroups(limit = 20) {
+    const safeLimit = typeof limit === 'number' && Number.isFinite(limit)
+        ? Math.max(1, Math.min(10_000, Math.floor(limit)))
+        : 20;
     const entries = readJournal();
     const byTask = new Map();
     for (const entry of entries) {
+        const entryTs = typeof entry.ts === 'number' && Number.isFinite(entry.ts) ? entry.ts : 0;
         if (!byTask.has(entry.taskId)) {
-            byTask.set(entry.taskId, { taskId: entry.taskId, ts: entry.ts, entries: [], prompt: null });
+            byTask.set(entry.taskId, { taskId: entry.taskId, ts: entryTs, entries: [], prompt: null });
         }
         const group = byTask.get(entry.taskId);
-        group.ts = Math.max(group.ts, entry.ts);
+        group.ts = Math.max(group.ts, entryTs);
         if (entry.type === 'task_start' && entry.prompt)
             group.prompt = entry.prompt;
         group.entries.push(entry);
     }
     return [...byTask.values()]
         .sort((a, b) => b.ts - a.ts)
-        .slice(0, limit)
+        .slice(0, safeLimit)
         .map(group => ({
         ...group,
         fileEntries: group.entries.filter(e => e.type === 'file'),
