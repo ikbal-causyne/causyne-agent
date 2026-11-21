@@ -410,11 +410,13 @@ function snapshotTree(root) {
                 continue;
             let stats;
             try {
-                stats = fs.statSync(full);
+                stats = fs.lstatSync(full);
             }
             catch {
                 continue;
             }
+            if (stats.isSymbolicLink() || !stats.isFile())
+                continue;
             if (stats.size > MAX_TREE_FILE_BYTES)
                 continue;
             fileCount++;
@@ -423,8 +425,8 @@ function snapshotTree(root) {
                 return { manifest: null, skipped: 'too_many_files' };
             if (totalBytes > MAX_TREE_BYTES)
                 return { manifest: null, skipped: 'workspace_too_large' };
-            const cached = cache[full];
-            if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size
+            const cached = Object.hasOwn(cache, full) ? cache[full] : undefined;
+            if (cached && isValidSha256(cached.hash) && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size
                 && fs.existsSync(objectPath(cached.hash))) {
                 files[full] = { kind: 'file', hash: cached.hash, size: stats.size, mode: stats.mode & 0o777 };
                 continue;
