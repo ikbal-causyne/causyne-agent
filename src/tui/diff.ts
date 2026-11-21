@@ -227,9 +227,9 @@ export function renderDiff(before: unknown, after: unknown, options: RenderDiffO
 
 /** Read a file for diffing, or null when that is not sensible. */
 function readForDiff(pathish: unknown): string | null {
-  if (!pathish) return null;
+  if (typeof pathish !== 'string' || !pathish.trim() || pathish.includes('\0')) return null;
   try {
-    const target = String(pathish).replace(/^~(?=\/|\\|$)/, os.homedir());
+    const target = pathish.replace(/^~(?=\/|\\|$)/, os.homedir());
     const stat = fs.statSync(target);
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null;
     return fs.readFileSync(target, 'utf8');
