@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { realpathSync } from 'node:fs';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 function inside(root, candidate) {
     const lexicalRoot = path.resolve(root);
     const base = realpathSync(root);
@@ -41,6 +42,8 @@ export async function runCliProbe(options = {}) {
         throw new TypeError('contains must be a bounded string');
     }
     const cwd = path.resolve(workspace);
+    if (isBlockedWorkspaceRoot(cwd))
+        throw new Error('Workspace cannot be a protected system root');
     if (program !== 'node' && !path.isAbsolute(program)
         && !program.includes('/') && !program.includes('\\')) {
         throw new Error('Executable must be an explicit workspace path or node');

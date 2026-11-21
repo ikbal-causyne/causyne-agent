@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { realpathSync } from 'node:fs';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 
 export interface CliProbeOptions {
   workspace?: string;
@@ -74,6 +75,7 @@ export async function runCliProbe(options: CliProbeOptions = {}): Promise<CliPro
     throw new TypeError('contains must be a bounded string');
   }
   const cwd = path.resolve(workspace);
+  if (isBlockedWorkspaceRoot(cwd)) throw new Error('Workspace cannot be a protected system root');
   if (program !== 'node' && !path.isAbsolute(program)
       && !program.includes('/') && !program.includes('\\')) {
     throw new Error('Executable must be an explicit workspace path or node');
