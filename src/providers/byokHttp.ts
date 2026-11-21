@@ -389,7 +389,15 @@ export async function safeProviderFetch(
     redirect: 'error',
     signal: controller.signal
   };
-  if (options.headers) fetchInit.headers = options.headers;
+  if (options.headers) {
+    for (const [headerName, headerVal] of Object.entries(options.headers)) {
+      if (/[\r\n\0]/.test(headerName) || (typeof headerVal === 'string' && /[\r\n\0]/.test(headerVal))) {
+        cleanup();
+        throw new Error(`${options.providerLabel} request header contains invalid control characters.`);
+      }
+    }
+    fetchInit.headers = options.headers;
+  }
   if (options.body !== undefined) fetchInit.body = options.body;
 
   try {
