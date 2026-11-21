@@ -32,6 +32,7 @@ function sanitizeAuditValue(value: unknown, depth = 0, seen = new WeakSet<object
 }
 
 const MAX_AUDIT_ENTRY_CHARS = 32_768;
+const MAX_AUDIT_READ_BYTES = 8 * 1024 * 1024;
 
 function resolveLogDir(): string {
   return path.join(causyneHome(), 'logs');
@@ -101,14 +102,32 @@ export class AuditLog {
   }
 
   getRecentLogs(limit = 100): AuditLogEntry[] {
-    if (!fs.existsSync(this.logFile)) return [];
+    const safeLimit = typeof limit === 'number' && Number.isFinite(limit)
+      ? Math.max(1, Math.min(10_000, Math.floor(limit)))
+      : 100;
+    const target = this.currentLogFile();
+    if (!fs.existsSync(target)) return [];
 
     try {
-      const content = fs.readFileSync(this.logFile, 'utf8');
+      const stat = fs.lstatSync(target);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) return [];
+      let content: string;
+      if (stat.size > MAX_AUDIT_READ_BYTES) {
+        const buf = Buffer.alloc(MAX_AUDIT_READ_BYTES);
+        const fd = fs.openSync(target, 'r');
+        try {
+          fs.readSync(fd, buf, 0, MAX_AUDIT_READ_BYTES, stat.size - MAX_AUDIT_READ_BYTES);
+        } finally {
+          fs.closeSync(fd);
+        }
+        content = buf.toString('utf8');
+      } else {
+        content = fs.readFileSync(target, 'utf8');
+      }
       const lines = content.split('\n').filter(l => l.trim().length > 0);
 
       const parsed: AuditLogEntry[] = [];
-      for (const line of lines.slice(-limit)) {
+      for (const line of lines.slice(-safeLimit)) {
         try {
           const item: unknown = JSON.parse(line);
           if (item && typeof item === 'object' && !Array.isArray(item)) {
