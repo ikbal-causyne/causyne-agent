@@ -385,7 +385,8 @@
     "src/tools/gameEconomyBalancer.ts",
     "src/tools/gameTilemapGenerator.ts",
     "src/tools/gameDialogueTreeGen.ts",
-    "src/tools/gameShaderForge.ts"
+    "src/tools/gameShaderForge.ts",
+    "src/tools/gameAnimationRig.ts"
   ],
   "exclude": [
     "node_modules",
