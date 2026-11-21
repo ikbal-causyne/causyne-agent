@@ -1,6 +1,6 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe, boundedFiniteNumber, boundedInteger, resolveToolWorkspaceRoots, safeSlugIdentifier, sanitizeToolError } from './toolPathSafety.js';
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/;
 export const gameVfxEmitterGen = {
     schema: {
         name: 'game.vfx_emitter_gen',
@@ -31,9 +31,13 @@ export const gameVfxEmitterGen = {
             required: ['action', 'effectType']
         }
     },
-    async execute(args = {}, _sandbox) {
+    async execute(args = {}, sandbox) {
         try {
             const { action, effectType = 'spell_sparkle', emitterDimension = '2d', amount = 64, lifetime = 1.2, colorHex = '#ff006e', outputPath } = args || {};
+            const safeEffect = safeSlugIdentifier(effectType, 'spell_sparkle', 48);
+            const safeAmount = boundedInteger(amount, 64, 1, 4096);
+            const safeLifetime = boundedFiniteNumber(lifetime, 1.2, 0.05, 60.0);
+            const safeColor = typeof colorHex === 'string' && HEX_COLOR_RE.test(colorHex.trim()) ? colorHex.trim() : '#ff006e';
             if (action === 'generate_emitter' || action === 'save_vfx_scene') {
                 const nodeClass = emitterDimension === '3d' ? 'GPUParticles3D' : 'GPUParticles2D';
                 const gravity = effectType === 'toxic_smoke' || effectType === 'healing_aura' ? 'Vector3(0, 98, 0)' : 'Vector3(0, -98, 0)';
@@ -48,21 +52,22 @@ initial_velocity_min = ${effectType === 'explosion_burst' ? '120.0' : '30.0'}
 initial_velocity_max = ${effectType === 'explosion_burst' ? '250.0' : '80.0'}
 scale_min = 2.0
 scale_max = 6.0
-color = Color("${colorHex}")
+color = Color("${safeColor}")
 `;
                 const sceneContent = `[gd_scene load_steps=2 format=3]
 
 ${materialResource}
-[node name="VFX_${effectType}" type="${nodeClass}"]
-amount = ${amount}
-lifetime = ${lifetime}
+[node name="VFX_${safeEffect}" type="${nodeClass}"]
+amount = ${safeAmount}
+lifetime = ${safeLifetime}
 explosiveness = ${explosiveness}
 process_material = SubResource("ParticleProcessMaterial_vfx")
 `;
                 if (outputPath || action === 'save_vfx_scene') {
-                    const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `vfx_${effectType}.tscn`);
-                    await fs.mkdir(path.dirname(finalPath), { recursive: true });
-                    await fs.writeFile(finalPath, sceneContent, 'utf8');
+                    const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+                    const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `vfx_${safeEffect}.tscn`);
+                    const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+                    await atomicWriteFileSafe(finalPath, sceneContent);
                 }
                 return {
                     success: true,
@@ -94,7 +99,7 @@ process_material = SubResource("ParticleProcessMaterial_vfx")
             return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
