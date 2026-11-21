@@ -102,7 +102,10 @@ export function shouldTreatAsAtomicPaste(raw, decoder) {
 /** Display a short, non-sensitive paste notification (not the pasted content). */
 export function pasteSummary(text) {
     const normalized = String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const lines = 1 + (normalized.match(/\n/g)?.length ?? 0);
+    let lines = 1;
+    for (let idx = normalized.indexOf('\n'); idx !== -1; idx = normalized.indexOf('\n', idx + 1)) {
+        lines += 1;
+    }
     const size = Buffer.byteLength(normalized, 'utf8');
     const sizeLabel = size >= 1024 ? `${Math.round(size / 1024)} KiB` : `${size} B`;
     return `pasted ${lines} ${lines === 1 ? 'line' : 'lines'} · ${sizeLabel}`;
