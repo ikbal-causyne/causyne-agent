@@ -1929,14 +1929,34 @@ export class AgentLoop {
                             this.notice('skipped document attachment: workspace root could not be resolved', 'warn');
                             continue;
                         }
-                        const writePath = path.join(realWorkspaceRoot, safeName);
-                        const resolvedWritePath = physicalPath(writePath);
-                        if (!resolvedWritePath || !isWithinPhysicalPath(resolvedWritePath, realWorkspaceRoot)) {
-                            this.notice('skipped document attachment outside workspace boundary', 'warn');
+                        const ext = path.extname(safeName);
+                        const stem = ext ? safeName.slice(0, -ext.length) : safeName;
+                        let finalName = safeName;
+                        let writePath = '';
+                        let saved = false;
+                        for (let attempt = 0; attempt < 100; attempt++) {
+                            finalName = attempt === 0 ? safeName : `${stem}-${attempt}${ext}`;
+                            const candidatePath = path.join(realWorkspaceRoot, finalName);
+                            const resolvedCandidate = physicalPath(candidatePath);
+                            if (!resolvedCandidate || !isWithinPhysicalPath(resolvedCandidate, realWorkspaceRoot))
+                                break;
+                            try {
+                                fs.writeFileSync(candidatePath, decodedBytes, { flag: 'wx', mode: 0o600 });
+                                writePath = candidatePath;
+                                saved = true;
+                                break;
+                            }
+                            catch (writeErr) {
+                                if (writeErr?.code === 'EEXIST')
+                                    continue;
+                                throw writeErr;
+                            }
+                        }
+                        if (!saved) {
+                            this.notice(`could not save attached document '${safeName}' safely without overwriting`, 'warn');
                             continue;
                         }
-                        fs.writeFileSync(writePath, decodedBytes);
-                        contentArray[0].text += `\n\n[SYSTEM NOTIFICATION: The user attached a document named '${safeName}'. It has been saved to your workspace at ./${safeName}. Please use your file reading tools to examine its contents.]`;
+                        contentArray[0].text += `\n\n[SYSTEM NOTIFICATION: The user attached a document named '${finalName}'. It has been saved to your workspace at ./${finalName}. Please use your file reading tools to examine its contents.]`;
                         this.notice(`saved attached document to ${writePath}`);
                     }
                 }
