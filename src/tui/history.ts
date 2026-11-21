@@ -101,7 +101,12 @@ export class PromptHistory {
 
   persist(): void {
     try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      try {
+        if (fs.lstatSync(this.file).isSymbolicLink()) return;
+      } catch {
+        // file may not exist yet
+      }
       const body = this.entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n';
       // Write then rename: a crash mid-write must not truncate the history.
       const temporary = `${this.file}.${process.pid}.tmp`;
