@@ -1,7 +1,7 @@
-import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe, resolveScopedPath, safeFilenameStrict, sanitizeToolError, stripDangerousKeysDeep } from './toolPathSafety.js';
+const MAX_DATA_FORGE_BYTES = 4 * 1024 * 1024;
 export const gameDataForge = {
     schema: {
         name: 'game.data_forge',
@@ -23,7 +23,7 @@ export const gameDataForge = {
             required: ['action']
         }
     },
-    async execute(args = {}, _sandbox) {
+    async execute(args = {}, sandbox) {
         try {
             const { action, itemCount = 40, gameGenre = 'medieval_rpg', projectDir, customJsonData, targetFilename = 'item_catalog.json' } = args || {};
             if (action === 'generate_item_catalog') {
@@ -56,10 +56,12 @@ export const gameDataForge = {
                     });
                     idx++;
                 }
-                if (projectDir && fsSync.existsSync(projectDir)) {
-                    const dataDir = path.join(projectDir, 'data');
-                    await fs.mkdir(dataDir, { recursive: true });
-                    await fs.writeFile(path.join(dataDir, 'item_catalog.json'), JSON.stringify({ items }, null, 2), 'utf8');
+                if (projectDir) {
+                    const scopedDir = resolveScopedPath(projectDir, sandbox);
+                    if (fsSync.existsSync(scopedDir)) {
+                        const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'item_catalog.json'), sandbox, { scopeRoot: scopedDir });
+                        await atomicWriteFileSafe(target, JSON.stringify({ items }, null, 2));
+                    }
                 }
                 return {
                     success: true,
@@ -77,10 +79,12 @@ export const gameDataForge = {
                     { recipe_id: 'craft_health_potion', output_item: 'health_potion_minor', required_materials: [{ item: 'red_herb', qty: 2 }, { item: 'empty_vial', qty: 1 }], gold_cost: 10 },
                     { recipe_id: 'craft_shadow_plate', output_item: 'armor_shadow_plate', required_materials: [{ item: 'abyssal_steel', qty: 4 }, { item: 'shadow_shard', qty: 10 }], gold_cost: 850 }
                 ];
-                if (projectDir && fsSync.existsSync(projectDir)) {
-                    const dataDir = path.join(projectDir, 'data');
-                    await fs.mkdir(dataDir, { recursive: true });
-                    await fs.writeFile(path.join(dataDir, 'crafting_recipes.json'), JSON.stringify({ recipes }, null, 2), 'utf8');
+                if (projectDir) {
+                    const scopedDir = resolveScopedPath(projectDir, sandbox);
+                    if (fsSync.existsSync(scopedDir)) {
+                        const target = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'crafting_recipes.json'), sandbox, { scopeRoot: scopedDir });
+                        await atomicWriteFileSafe(target, JSON.stringify({ recipes }, null, 2));
+                    }
                 }
                 return {
                     success: true,
@@ -88,13 +92,21 @@ export const gameDataForge = {
                 };
             }
             if (action === 'save_data_forge') {
-                if (!projectDir || !fsSync.existsSync(projectDir)) {
+                const scopedDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+                if (!scopedDir || !fsSync.existsSync(scopedDir)) {
                     return { success: false, error: 'projectDir is required to save data.' };
                 }
-                const dataDir = path.join(projectDir, 'data');
-                await fs.mkdir(dataDir, { recursive: true });
-                const filePath = path.join(dataDir, targetFilename);
-                await fs.writeFile(filePath, JSON.stringify(customJsonData || { status: 'empty' }, null, 2), 'utf8');
+                const safeName = safeFilenameStrict(targetFilename, 128);
+                if (!safeName || !safeName.toLowerCase().endsWith('.json')) {
+                    return { success: false, error: 'targetFilename must be a plain .json filename without directory components.' };
+                }
+                const cleanData = customJsonData ? stripDangerousKeysDeep(customJsonData) : { status: 'empty' };
+                const serialized = JSON.stringify(cleanData, null, 2);
+                if (Buffer.byteLength(serialized, 'utf8') > MAX_DATA_FORGE_BYTES) {
+                    return { success: false, error: `customJsonData exceeds maximum size of ${MAX_DATA_FORGE_BYTES} bytes.` };
+                }
+                const filePath = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', safeName), sandbox, { scopeRoot: scopedDir });
+                await atomicWriteFileSafe(filePath, serialized);
                 return {
                     success: true,
                     output: JSON.stringify({ status: 'SAVED_DATA_FORGE', file_path: filePath }, null, 2)
@@ -103,7 +115,7 @@ export const gameDataForge = {
             return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
