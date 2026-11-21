@@ -664,6 +664,13 @@ export async function streamGeminiGenerateContent(
   });
 
   if (opened.mode === 'json') {
+    if (isRecord(opened.data.error)) {
+      const msg = redactProviderSecrets(
+        typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error),
+        options.secrets
+      );
+      throw new Error(`${options.providerLabel} stream error: ${msg}`);
+    }
     const candidates = Array.isArray(opened.data.candidates) ? opened.data.candidates : [];
     const first = isRecord(candidates[0]) ? candidates[0] : null;
     const content = first && isRecord(first.content) ? first.content : null;
@@ -685,6 +692,8 @@ export async function streamGeminiGenerateContent(
   let reasoningContent = '';
   const functionCallParts: Array<Record<string, unknown>> = [];
   let usageMetadata: Record<string, unknown> | undefined;
+  let promptFeedback: Record<string, unknown> | undefined;
+  let finishReason: string | undefined;
   let sawCandidate = false;
 
   try {
@@ -714,11 +723,15 @@ export async function streamGeminiGenerateContent(
         if (isRecord(parsed.usageMetadata)) {
           usageMetadata = parsed.usageMetadata;
         }
+        if (isRecord(parsed.promptFeedback)) {
+          promptFeedback = parsed.promptFeedback;
+        }
 
         const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
         const first = isRecord(candidates[0]) ? candidates[0] : null;
         if (!first) return;
         sawCandidate = true;
+        if (typeof first.finishReason === 'string') finishReason = first.finishReason;
 
         const content = isRecord(first.content) ? first.content : null;
         const parts = content && Array.isArray(content.parts) ? content.parts : [];
@@ -733,10 +746,14 @@ export async function streamGeminiGenerateContent(
               options.onChunk?.(part.text);
             }
           } else if (isRecord(part.functionCall)) {
-            functionCallParts.push({ functionCall: part.functionCall });
+            const fcPart: Record<string, unknown> = { functionCall: part.functionCall };
+            const sig = typeof part.thoughtSignature === 'string' ? part.thoughtSignature : (typeof part.thought_signature === 'string' ? part.thought_signature : undefined);
+            if (sig) fcPart.thoughtSignature = sig;
+            functionCallParts.push(fcPart);
           }
         }
-      }
+      },
+      options.signal
     );
   } finally {
     opened.cleanup();
@@ -747,8 +764,9 @@ export async function streamGeminiGenerateContent(
   finalParts.push(...functionCallParts);
 
   return {
-    candidates: sawCandidate ? [{ content: { role: 'model', parts: finalParts } }] : [],
+    candidates: sawCandidate ? [{ content: { role: 'model', parts: finalParts }, ...(finishReason ? { finishReason } : {}) }] : [],
     ...(usageMetadata ? { usageMetadata } : {}),
+    ...(promptFeedback ? { promptFeedback } : {}),
     ...(reasoningContent ? { reasoningContent } : {})
   };
 }

@@ -564,6 +564,10 @@ export async function streamGeminiGenerateContent(options) {
         body: JSON.stringify(options.payload)
     });
     if (opened.mode === 'json') {
+        if (isRecord(opened.data.error)) {
+            const msg = redactProviderSecrets(typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error), options.secrets);
+            throw new Error(`${options.providerLabel} stream error: ${msg}`);
+        }
         const candidates = Array.isArray(opened.data.candidates) ? opened.data.candidates : [];
         const first = isRecord(candidates[0]) ? candidates[0] : null;
         const content = first && isRecord(first.content) ? first.content : null;
@@ -586,6 +590,8 @@ export async function streamGeminiGenerateContent(options) {
     let reasoningContent = '';
     const functionCallParts = [];
     let usageMetadata;
+    let promptFeedback;
+    let finishReason;
     let sawCandidate = false;
     try {
         await consumeSseStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, ({ data }) => {
@@ -608,11 +614,16 @@ export async function streamGeminiGenerateContent(options) {
             if (isRecord(parsed.usageMetadata)) {
                 usageMetadata = parsed.usageMetadata;
             }
+            if (isRecord(parsed.promptFeedback)) {
+                promptFeedback = parsed.promptFeedback;
+            }
             const candidates = Array.isArray(parsed.candidates) ? parsed.candidates : [];
             const first = isRecord(candidates[0]) ? candidates[0] : null;
             if (!first)
                 return;
             sawCandidate = true;
+            if (typeof first.finishReason === 'string')
+                finishReason = first.finishReason;
             const content = isRecord(first.content) ? first.content : null;
             const parts = content && Array.isArray(content.parts) ? content.parts : [];
             for (const part of parts) {
@@ -629,10 +640,14 @@ export async function streamGeminiGenerateContent(options) {
                     }
                 }
                 else if (isRecord(part.functionCall)) {
-                    functionCallParts.push({ functionCall: part.functionCall });
+                    const fcPart = { functionCall: part.functionCall };
+                    const sig = typeof part.thoughtSignature === 'string' ? part.thoughtSignature : (typeof part.thought_signature === 'string' ? part.thought_signature : undefined);
+                    if (sig)
+                        fcPart.thoughtSignature = sig;
+                    functionCallParts.push(fcPart);
                 }
             }
-        });
+        }, options.signal);
     }
     finally {
         opened.cleanup();
@@ -642,8 +657,9 @@ export async function streamGeminiGenerateContent(options) {
         finalParts.push({ text: textContent });
     finalParts.push(...functionCallParts);
     return {
-        candidates: sawCandidate ? [{ content: { role: 'model', parts: finalParts } }] : [],
+        candidates: sawCandidate ? [{ content: { role: 'model', parts: finalParts }, ...(finishReason ? { finishReason } : {}) }] : [],
         ...(usageMetadata ? { usageMetadata } : {}),
+        ...(promptFeedback ? { promptFeedback } : {}),
         ...(reasoningContent ? { reasoningContent } : {})
     };
 }
