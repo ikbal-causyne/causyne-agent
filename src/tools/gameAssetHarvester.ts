@@ -187,8 +187,9 @@ export const gameAssetHarvester = {
         const urlToFetch = assetUrl || catalog[0]!.url;
         await assertPublicWebUrl(urlToFetch);
         const rawName = path.basename(new URL(urlToFetch).pathname) || `asset_${Date.now()}.obj`;
-        // eslint-disable-next-line no-control-regex
-        const fileName = rawName.replace(/[<>:"\\/|?*\x00-\x1f]/g, '_');
+        const ext = path.extname(rawName).toLowerCase();
+        const safeExt = /^\.[a-z0-9]{1,8}$/.test(ext) ? ext : '.obj';
+        const fileName = safeFilenameStrict(rawName, 128) || `${safeSlugIdentifier(path.basename(rawName, ext), `asset_${Date.now()}`, 96)}${safeExt}`;
         const destFile = path.join(targetDir, fileName);
         const lowerName = fileName.toLowerCase();
         const fallbackType = lowerName.endsWith('.png') ? 'png' : lowerName.endsWith('.svg') ? 'svg' : 'obj';
@@ -254,7 +255,7 @@ export const gameAssetHarvester = {
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
