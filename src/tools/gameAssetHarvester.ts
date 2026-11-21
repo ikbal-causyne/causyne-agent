@@ -5,7 +5,15 @@ import { randomUUID } from 'node:crypto';
 import { webFetch } from './webFetch.js';
 import { ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  getErrorMessage,
+  resolveScopedPath,
+  resolveToolWorkspaceRoots,
+  safeFilenameStrict,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface HarvestItemStatus {
   success: boolean;
@@ -23,12 +31,13 @@ async function downloadOrGenerateFallback(
   url: string,
   targetPath: string,
   fallbackType = 'obj',
-  workspaceRoot = path.dirname(targetPath)
+  workspaceRoot = path.dirname(targetPath),
+  signal?: AbortSignal
 ): Promise<HarvestItemStatus> {
   await ensureSafeWorkspaceOutputPath(workspaceRoot, targetPath);
   const download = await webFetch.execute(
     { url, outputFile: path.relative(workspaceRoot, targetPath) },
-    { workspaceRoot }
+    { workspaceRoot, ...(signal ? { signal } : {}) }
   ) as { success?: boolean; error?: unknown };
   if (download.success) {
     const stat = await fs.stat(targetPath);
@@ -132,7 +141,7 @@ export const gameAssetHarvester = {
     }
   },
 
-  async execute(args: GameAssetHarvesterArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<Record<string, unknown>> {
+  async execute(args: GameAssetHarvesterArgs = {}, sandbox?: ToolWorkspaceContext): Promise<Record<string, unknown>> {
     try {
       const { action, query, category = 'all', packType = 'rpg_starter_pack', projectDir, assetUrl, targetSubdir = '3d/props' } = args || {};
 
@@ -162,10 +171,14 @@ export const gameAssetHarvester = {
       }
 
       if (action === 'download_asset') {
-        if (!projectDir || !fsSync.existsSync(projectDir)) {
+        const scope = resolveToolWorkspaceRoots(sandbox);
+        const scopedProjectDir = projectDir
+          ? (scope.roots.length > 0 && !scope.grantAllAccess ? resolveScopedPath(projectDir, sandbox) : path.resolve(projectDir))
+          : '';
+        if (!scopedProjectDir || !fsSync.existsSync(scopedProjectDir)) {
           return { success: false, error: `Valid projectDir is required for asset download. Found: ${String(projectDir ?? '')}` };
         }
-        const assetsRoot = path.resolve(projectDir, 'assets');
+        const assetsRoot = path.resolve(scopedProjectDir, 'assets');
         const targetDir = path.resolve(assetsRoot, targetSubdir);
         const relativeDir = path.relative(assetsRoot, targetDir);
         if (relativeDir === '..' || relativeDir.startsWith(`..${path.sep}`) || path.isAbsolute(relativeDir)) {
@@ -180,7 +193,7 @@ export const gameAssetHarvester = {
         const lowerName = fileName.toLowerCase();
         const fallbackType = lowerName.endsWith('.png') ? 'png' : lowerName.endsWith('.svg') ? 'svg' : 'obj';
 
-        const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fallbackType, projectDir);
+        const resDownload = await downloadOrGenerateFallback(urlToFetch, destFile, fallbackType, scopedProjectDir, sandbox?.signal);
         if (!resDownload.success) {
           return { success: false, error: resDownload.downloadError ?? 'Asset download failed', url: urlToFetch };
         }
@@ -198,11 +211,15 @@ export const gameAssetHarvester = {
       }
 
       if (action === 'harvest_starter_pack') {
-        if (!projectDir || !fsSync.existsSync(projectDir)) {
+        const scope = resolveToolWorkspaceRoots(sandbox);
+        const scopedProjectDir = projectDir
+          ? (scope.roots.length > 0 && !scope.grantAllAccess ? resolveScopedPath(projectDir, sandbox) : path.resolve(projectDir))
+          : '';
+        if (!scopedProjectDir || !fsSync.existsSync(scopedProjectDir)) {
           return { success: false, error: `Valid projectDir is required for starter pack harvest. Found: ${String(projectDir ?? '')}` };
         }
 
-        const assetsDir = path.join(projectDir, 'assets');
+        const assetsDir = path.join(scopedProjectDir, 'assets');
         const results: HarvestItemRecord[] = [];
 
         if (!['rpg_starter_pack', 'dungeon_pack', 'cyberpunk_racer_pack'].includes(packType)) {
@@ -212,15 +229,15 @@ export const gameAssetHarvester = {
           const charDir = path.join(assetsDir, '3d/characters');
           const weaponDir = path.join(assetsDir, '3d/weapons');
           const tileDir = path.join(assetsDir, '2d/tiles');
-          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/knight.obj', path.join(charDir, 'knight.obj'), 'obj', projectDir);
-          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/sword.obj', path.join(weaponDir, 'sword.obj'), 'obj', projectDir);
-          const r3 = await downloadOrGenerateFallback('https://kenney.nl/assets/2d/dungeon.svg', path.join(tileDir, 'dungeon_tiles.svg'), 'svg', projectDir);
+          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/knight.obj', path.join(charDir, 'knight.obj'), 'obj', scopedProjectDir, sandbox?.signal);
+          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/sword.obj', path.join(weaponDir, 'sword.obj'), 'obj', scopedProjectDir, sandbox?.signal);
+          const r3 = await downloadOrGenerateFallback('https://kenney.nl/assets/2d/dungeon.svg', path.join(tileDir, 'dungeon_tiles.svg'), 'svg', scopedProjectDir, sandbox?.signal);
           results.push({ item: 'knight.obj', status: r1 }, { item: 'sword.obj', status: r2 }, { item: 'dungeon_tiles.svg', status: r3 });
         } else {
           const carDir = path.join(assetsDir, '3d/vehicles');
           const trackDir = path.join(assetsDir, '3d/environment');
-          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/race_car.obj', path.join(carDir, 'cyberpunk_racer.obj'), 'obj', projectDir);
-          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/highway_barrier.obj', path.join(trackDir, 'barrier.obj'), 'obj', projectDir);
+          const r1 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/race_car.obj', path.join(carDir, 'cyberpunk_racer.obj'), 'obj', scopedProjectDir, sandbox?.signal);
+          const r2 = await downloadOrGenerateFallback('https://kenney.nl/assets/obj/highway_barrier.obj', path.join(trackDir, 'barrier.obj'), 'obj', scopedProjectDir, sandbox?.signal);
           results.push({ item: 'cyberpunk_racer.obj', status: r1 }, { item: 'barrier.obj', status: r2 });
         }
 
