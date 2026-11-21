@@ -215,9 +215,10 @@ export function configureInPrompt(prompt: { openLayer: (layer: unknown) => unkno
 
 /** The MCP server list, as something you can act on rather than read. */
 export async function mcpPicker(
-  prompt: { openLayer: (layer: unknown) => unknown },
+  prompt: { openLayer: (layer: unknown) => unknown } | null | undefined,
   onAction?: ((server: any) => void) | null
 ): Promise<{ empty: boolean }> {
+  if (!prompt || typeof prompt.openLayer !== 'function') return { empty: true };
   const { serverStatus } = await import('../mcp/mcpRegistry.js');
   const servers: any = await serverStatus();
   const rows: any[] = Array.isArray(servers) ? servers : (servers && servers.servers) || [];

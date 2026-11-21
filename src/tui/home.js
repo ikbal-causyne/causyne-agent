@@ -186,6 +186,8 @@ export function configureInPrompt(prompt, store) {
 }
 /** The MCP server list, as something you can act on rather than read. */
 export async function mcpPicker(prompt, onAction) {
+    if (!prompt || typeof prompt.openLayer !== 'function')
+        return { empty: true };
     const { serverStatus } = await import('../mcp/mcpRegistry.js');
     const servers = await serverStatus();
     const rows = Array.isArray(servers) ? servers : (servers && servers.servers) || [];
