@@ -184,6 +184,8 @@ const BARE_URL = /https?:\/\/[^\s<>()\[\]"'`]+(?:\([^\s<>()"'`]*\)[^\s<>()\[\]"'
 const MD_LINK = /\[([^\]\n]{1,80})\]\(((?:https?|file):\/\/[^\s)]+(?:\([^\s)]*\)[^\s)]*)*)\)/g;
 
 const MAX_LINK_LABEL = 48;
+const MAX_INLINE_FORMAT_CHARS = 16384;
+const MAX_EXPAND_LINES = 2000;
 
 /** Trailing sentence punctuation belongs to the sentence, not to the URL. */
 function trimUrlPunctuation(url: string): string {
@@ -211,6 +213,7 @@ function inline(text: unknown): string {
   const stash = (rendered: string): string => `\u0000${stashed.push(rendered) - 1}\u0000`;
 
   let out = String(text);
+  if (out.length > MAX_INLINE_FORMAT_CHARS) return out;
 
   if (HAS_HYPERLINKS) {
     out = out.replace(MD_LINK, (whole: string, label: string, url: string) => {
