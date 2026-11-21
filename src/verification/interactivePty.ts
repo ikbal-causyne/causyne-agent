@@ -156,7 +156,8 @@ export async function runInteractivePty(options: InteractivePtyOptions = {}): Pr
     columns = 126,
     env = {}
   } = safeOptions;
-  if (typeof workspace !== 'string' || typeof script !== 'string'
+  if (typeof workspace !== 'string' || workspace.includes('\0')
+      || typeof script !== 'string' || script.includes('\0')
       || !Array.isArray(steps) || steps.length < 1 || steps.length > 12) {
     throw new TypeError('workspace, script, and 1..12 interaction steps are required');
   }
@@ -177,7 +178,7 @@ export async function runInteractivePty(options: InteractivePtyOptions = {}): Pr
       || Object.keys(env).some(key => !['CAUSYNE_HOME'].includes(key))) {
     throw new TypeError('Only an isolated CAUSYNE_HOME environment override is permitted');
   }
-  if (typeof env.CAUSYNE_HOME !== 'string' || !path.isAbsolute(env.CAUSYNE_HOME)) {
+  if (typeof env.CAUSYNE_HOME !== 'string' || env.CAUSYNE_HOME.includes('\0') || !path.isAbsolute(env.CAUSYNE_HOME)) {
     throw new TypeError('An explicit isolated CAUSYNE_HOME path is required');
   }
   const tempRoot = realpathSync(os.tmpdir());
