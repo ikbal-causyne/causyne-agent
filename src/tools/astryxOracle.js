@@ -57,14 +57,17 @@ export const astryxOracle = {
                 return { success: false, error: 'Unknown command' };
         }
         try {
-            const { stdout } = await execFileAsync('npx', ['--no', '@astryxdesign/cli', ...cliArgs], {
+            const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+            const { stdout } = await execFileAsync(npxBin, ['--no', '@astryxdesign/cli', ...cliArgs], {
                 encoding: 'utf8',
                 timeout: 30000,
-                maxBuffer: 4 * 1024 * 1024
+                maxBuffer: 2 * 1024 * 1024,
+                env: sanitizeSubprocessEnv(process.env),
+                windowsHide: true
             });
             return {
                 success: true,
-                output: stdout.trim()
+                output: sanitizeToolText(stdout.trim(), 120_000)
             };
         }
         catch (error) {
@@ -72,8 +75,8 @@ export const astryxOracle = {
             return {
                 success: false,
                 error: execErr?.stderr
-                    ? execErr.stderr.toString()
-                    : `${getErrorMessage(error)}. Install @astryxdesign/cli explicitly before using this optional integration.`
+                    ? sanitizeToolText(execErr.stderr.toString(), 2000)
+                    : `${sanitizeToolError(error)}. Install @astryxdesign/cli explicitly before using this optional integration.`
             };
         }
     }
