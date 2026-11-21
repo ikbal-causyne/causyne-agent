@@ -413,14 +413,14 @@ export async function streamOpenAICompatibleChat(
             const tc = delta.tool_calls[pos];
             if (!isRecord(tc)) continue;
             let idx: number;
-            if (typeof tc.index === 'number' && Number.isInteger(tc.index)) {
+            if (typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0) {
               idx = tc.index;
             } else if (typeof tc.id === 'string' && tc.id) {
               const match = [...toolCallMap.entries()].find(([, item]) => item.id === tc.id);
               if (match) {
                 idx = match[0];
               } else if (toolCallMap.get(pos)?.id && toolCallMap.get(pos)?.id !== tc.id) {
-                idx = toolCallMap.size;
+                idx = Math.max(-1, ...toolCallMap.keys()) + 1;
               } else {
                 idx = pos;
               }

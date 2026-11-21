@@ -329,7 +329,7 @@ export async function streamOpenAICompatibleChat(options) {
                     if (!isRecord(tc))
                         continue;
                     let idx;
-                    if (typeof tc.index === 'number' && Number.isInteger(tc.index)) {
+                    if (typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0) {
                         idx = tc.index;
                     }
                     else if (typeof tc.id === 'string' && tc.id) {
@@ -338,7 +338,7 @@ export async function streamOpenAICompatibleChat(options) {
                             idx = match[0];
                         }
                         else if (toolCallMap.get(pos)?.id && toolCallMap.get(pos)?.id !== tc.id) {
-                            idx = toolCallMap.size;
+                            idx = Math.max(-1, ...toolCallMap.keys()) + 1;
                         }
                         else {
                             idx = pos;
