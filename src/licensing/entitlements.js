@@ -325,8 +325,12 @@ export class EntitlementClient {
         });
         return this.registerPromise;
     }
-    status() {
-        return this.call('/v1/status');
+    async status() {
+        const result = await this.call('/v1/status');
+        if (!result || typeof result !== 'object' || Array.isArray(result)) {
+            throw new EntitlementAccessError('SERVICE_ERROR', 'Entitlement service returned an invalid status payload.');
+        }
+        return result;
     }
     lease(requestId, sessionId) {
         if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 128 || /[\r\n\0]/.test(requestId)) {

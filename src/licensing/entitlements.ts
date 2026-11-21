@@ -332,8 +332,12 @@ export class EntitlementClient {
     return this.registerPromise;
   }
 
-  status(): Promise<any> {
-    return this.call('/v1/status');
+  async status(): Promise<any> {
+    const result = await this.call('/v1/status');
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      throw new EntitlementAccessError('SERVICE_ERROR', 'Entitlement service returned an invalid status payload.');
+    }
+    return result;
   }
 
   lease(requestId: string, sessionId: string): Promise<any> {
