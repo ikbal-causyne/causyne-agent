@@ -6,7 +6,6 @@
 // @ts-expect-error untyped local TUI dialogs
 import { SelectLayer, InputLayer } from './dialogs.js';
 import { paint, bold, dim, GLYPHS } from './theme.js';
-// @ts-expect-error untyped local TUI selectList
 import { fuzzyFilter } from './selectList.js';
 import { loadConfig, saveConfig } from '../config.js';
 import { startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter } from '../auth/openrouterAuth.js';

@@ -317,7 +317,8 @@
     "src/tui/transcript.ts",
     "src/tui/diff.ts",
     "src/tui/keys.ts",
-    "src/tui/lineEditor.ts"
+    "src/tui/lineEditor.ts",
+    "src/tui/selectList.ts"
   ],
   "exclude": [
     "node_modules",
