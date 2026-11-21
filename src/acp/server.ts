@@ -552,8 +552,12 @@ export class AcpServer {
       toolCall,
       options: permissionOptions
     }).then((response) => {
-      if (!response || response.outcome.outcome !== 'selected') return null;
-      const optionId = response.outcome.optionId;
+      if (session.cancelled || !this.sessions.has(session.id)) return null;
+      const outcome = response && typeof response.outcome === 'object' && response.outcome !== null
+        ? response.outcome
+        : null;
+      if (!outcome || outcome.outcome !== 'selected' || typeof outcome.optionId !== 'string') return null;
+      const optionId = outcome.optionId;
       const label = labels.get(optionId);
       if (!label) return null;
       return { optionId, label };
