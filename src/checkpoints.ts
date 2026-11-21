@@ -72,11 +72,21 @@ function debugLog(message: string): void {
   process.stderr.write(`[causyne] ${message}\n`);
 }
 
-const STORE_DIR = path.join(causyneHome(), 'checkpoints');
-const OBJECTS_DIR = path.join(STORE_DIR, 'objects');
-const JOURNAL_FILE = path.join(STORE_DIR, 'index.jsonl');
-const STAT_CACHE_FILE = path.join(STORE_DIR, 'stat-cache.json');
-const HISTORY_FILE = path.join(causyneHome(), 'memory', 'chat_history.json');
+function storeDir(): string {
+  return path.join(causyneHome(), 'checkpoints');
+}
+function objectsDir(): string {
+  return path.join(storeDir(), 'objects');
+}
+function journalFile(): string {
+  return path.join(storeDir(), 'index.jsonl');
+}
+function statCacheFile(): string {
+  return path.join(storeDir(), 'stat-cache.json');
+}
+function legacyHistoryFile(): string {
+  return path.join(causyneHome(), 'memory', 'chat_history.json');
+}
 
 function activeHistoryFile(): string {
   try {
@@ -88,7 +98,7 @@ function activeHistoryFile(): string {
   } catch {
     // fall through to the legacy file
   }
-  return HISTORY_FILE;
+  return legacyHistoryFile();
 }
 
 const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
@@ -120,8 +130,17 @@ export function isCheckpointingEnabled(): boolean {
 }
 
 function ensureStore(): void {
-  if (!fs.existsSync(OBJECTS_DIR)) {
-    fs.mkdirSync(OBJECTS_DIR, { recursive: true, mode: 0o700 });
+  const base = storeDir();
+  const objs = objectsDir();
+  for (const dir of [base, objs]) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } else {
+      const stat = fs.lstatSync(dir);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`refusing symlink or non-directory checkpoint store: ${dir}`);
+      }
+    }
   }
 }
 
@@ -139,7 +158,7 @@ function objectPath(hash: string): string {
   if (!isValidSha256(hash)) {
     throw new Error('refusing invalid checkpoint object hash');
   }
-  return path.join(OBJECTS_DIR, hash.slice(0, 2), hash);
+  return path.join(objectsDir(), hash.slice(0, 2), hash);
 }
 
 function writeObject(buffer: Buffer): string {
@@ -165,12 +184,13 @@ export function resolveToolPath(value: unknown): string | null {
 }
 
 function appendJournal(entry: CheckpointJournalEntry): void {
-  fs.appendFileSync(JOURNAL_FILE, JSON.stringify(entry) + '\n', { mode: 0o600 });
+  fs.appendFileSync(journalFile(), JSON.stringify(entry) + '\n', { mode: 0o600 });
 }
 
 export function readJournal(): CheckpointJournalEntry[] {
-  if (!fs.existsSync(JOURNAL_FILE)) return [];
-  const raw = fs.readFileSync(JOURNAL_FILE, 'utf8');
+  const jf = journalFile();
+  if (!fs.existsSync(jf)) return [];
+  const raw = fs.readFileSync(jf, 'utf8');
   const entries: CheckpointJournalEntry[] = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
@@ -180,9 +200,10 @@ export function readJournal(): CheckpointJournalEntry[] {
 }
 
 function rewriteJournal(entries: CheckpointJournalEntry[]): void {
-  const temp = `${JOURNAL_FILE}.tmp_${process.pid}`;
+  const jf = journalFile();
+  const temp = `${jf}.tmp_${process.pid}`;
   fs.writeFileSync(temp, entries.map(e => JSON.stringify(e)).join('\n') + (entries.length ? '\n' : ''), { mode: 0o600 });
-  fs.renameSync(temp, JOURNAL_FILE);
+  fs.renameSync(temp, jf);
 }
 
 function newId(): string {
@@ -263,7 +284,7 @@ interface StatCacheRecord {
 
 function loadStatCache(): Record<string, StatCacheRecord> {
   try {
-    return JSON.parse(fs.readFileSync(STAT_CACHE_FILE, 'utf8')) as Record<string, StatCacheRecord>;
+    return JSON.parse(fs.readFileSync(statCacheFile(), 'utf8')) as Record<string, StatCacheRecord>;
   } catch {
     return {};
   }
@@ -271,9 +292,10 @@ function loadStatCache(): Record<string, StatCacheRecord> {
 
 function saveStatCache(cache: Record<string, StatCacheRecord>): void {
   try {
-    const temp = `${STAT_CACHE_FILE}.tmp_${process.pid}`;
+    const cf = statCacheFile();
+    const temp = `${cf}.tmp_${process.pid}`;
     fs.writeFileSync(temp, JSON.stringify(cache), { mode: 0o600 });
-    fs.renameSync(temp, STAT_CACHE_FILE);
+    fs.renameSync(temp, cf);
   } catch {
     // best-effort cache save
   }
@@ -766,7 +788,7 @@ export function undoTask(taskId: string, options: UndoOptions = {}): any {
   const start = group.entries.find(e => e.type === 'task_start' && e.history);
 
   if (start && start.history && !dryRun && wantsHistory) {
-    const target = start.history.file || HISTORY_FILE;
+    const target = start.history.file || legacyHistoryFile();
     try {
       const root = causyneHome();
       const resolved = path.resolve(target);
@@ -914,12 +936,14 @@ function directorySize(dir: string): number {
 
 export function pruneStore(): { removedEntries: number; removedObjects: number } {
   try {
-    if (!fs.existsSync(JOURNAL_FILE)) return { removedEntries: 0, removedObjects: 0 };
+    const jf = journalFile();
+    const objs = objectsDir();
+    if (!fs.existsSync(jf)) return { removedEntries: 0, removedObjects: 0 };
 
     let entries = readJournal();
     const before = entries.length;
     const cutoff = Date.now() - RETENTION_MS;
-    const overSize = directorySize(OBJECTS_DIR) > MAX_STORE_BYTES;
+    const overSize = directorySize(objs) > MAX_STORE_BYTES;
 
     entries = entries.filter(e => e.ts >= cutoff);
     if (entries.length > MAX_JOURNAL_ENTRIES || overSize) {
@@ -947,9 +971,9 @@ export function pruneStore(): { removedEntries: number; removedObjects: number }
 
     let removedObjects = 0;
     let shards: string[];
-    try { shards = fs.readdirSync(OBJECTS_DIR); } catch { shards = []; }
+    try { shards = fs.readdirSync(objs); } catch { shards = []; }
     for (const shard of shards) {
-      const shardDir = path.join(OBJECTS_DIR, shard);
+      const shardDir = path.join(objs, shard);
       let objects: string[];
       try { objects = fs.readdirSync(shardDir); } catch { continue; }
       for (const name of objects) {
@@ -967,14 +991,15 @@ export function pruneStore(): { removedEntries: number; removedObjects: number }
 }
 
 export function getStoreDir(): string {
-  return STORE_DIR;
+  return storeDir();
 }
 
 export function getStoreStats(): { dir: string; entries: number; bytes: number } {
+  const objs = objectsDir();
   return {
-    dir: STORE_DIR,
+    dir: storeDir(),
     entries: readJournal().length,
-    bytes: fs.existsSync(OBJECTS_DIR) ? directorySize(OBJECTS_DIR) : 0
+    bytes: fs.existsSync(objs) ? directorySize(objs) : 0
   };
 }
 
