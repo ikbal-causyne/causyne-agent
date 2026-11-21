@@ -262,7 +262,10 @@ export async function readBoundedResponseText(
   maxBytes: number,
   options: { truncate?: boolean | undefined; label?: string | undefined } = {}
 ): Promise<string> {
-  const limit = Math.max(1, Math.floor(maxBytes));
+  if (!response) return '';
+  const limit = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 1
+    ? Math.floor(maxBytes)
+    : MAX_PROVIDER_JSON_BYTES;
   const declaredLen = getHeaderCaseInsensitive(response, 'content-length');
   if (!options.truncate && declaredLen && /^\d+$/.test(declaredLen.trim())) {
     const contentLength = Number(declaredLen.trim());
