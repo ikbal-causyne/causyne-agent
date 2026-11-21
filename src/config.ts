@@ -50,28 +50,33 @@ export function loadConfig(): CausyneConfig {
     try {
       const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as CausyneConfig;
       let needsEncryptedResave = false;
+      let hadDecryptFailure = false;
 
       if (typeof parsed.apiKey === 'string' && parsed.apiKey) {
         if (!isEncryptedVaultSecret(parsed.apiKey)) {
           needsEncryptedResave = true;
         } else {
-          parsed.apiKey = decryptString(parsed.apiKey);
+          const decrypted = decryptString(parsed.apiKey);
+          if (!decrypted) hadDecryptFailure = true;
+          parsed.apiKey = decrypted;
         }
       }
 
-      if (parsed.providerKeys && typeof parsed.providerKeys === 'object') {
+      if (parsed.providerKeys && typeof parsed.providerKeys === 'object' && !Array.isArray(parsed.providerKeys)) {
         for (const [provider, keyVal] of Object.entries(parsed.providerKeys)) {
           if (typeof keyVal === 'string' && keyVal) {
             if (!isEncryptedVaultSecret(keyVal)) {
               needsEncryptedResave = true;
             } else {
-              parsed.providerKeys[provider] = decryptString(keyVal);
+              const decrypted = decryptString(keyVal);
+              if (!decrypted) hadDecryptFailure = true;
+              parsed.providerKeys[provider] = decrypted;
             }
           }
         }
       }
 
-      if (needsEncryptedResave) {
+      if (needsEncryptedResave && !hadDecryptFailure) {
         saveConfig(parsed);
       }
 
