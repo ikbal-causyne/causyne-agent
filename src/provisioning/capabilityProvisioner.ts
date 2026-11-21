@@ -366,7 +366,16 @@ export async function requireCapabilityModule(packageName: string): Promise<any>
     }
   }
 
-  const mod: any = await import(pathToFileURL(entryPoint).href);
+  const realEntry = physicalPath(entryPoint);
+  if (!realEntry || !isWithinPhysicalPath(realEntry, realRoot)) {
+    throw new Error(`Refusing capability entry point outside sovereign directory: ${packageName}`);
+  }
+  const entryStat = fs.lstatSync(realEntry);
+  if (entryStat.isSymbolicLink() || !entryStat.isFile()) {
+    throw new Error(`Capability entry point must be a regular file: ${packageName}`);
+  }
+
+  const mod: any = await import(pathToFileURL(realEntry).href);
   return mod.default || mod;
 }
 
