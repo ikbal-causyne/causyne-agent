@@ -1330,12 +1330,43 @@ export const reverseEngineering = {
         }
 
         try {
+          const unzipOpts = {
+            timeout: 60_000,
+            maxBuffer: 10 * 1024 * 1024,
+            windowsHide: true,
+            ...(context.signal ? { signal: context.signal } : {})
+          };
           if (listOnly) {
-            const listRes = await execFileAsync('unzip', ['-l', resolvedFile]);
+            const listRes = await execFileAsync('unzip', ['-l', resolvedFile], unzipOpts);
             return { success: true, action: 'unpack', listOnly: true, contents: listRes.stdout.split('\n').slice(0, 50) };
           }
+          const relDest = path.relative(path.resolve(workspaceDir), path.resolve(dest));
+          if (relDest === '..' || relDest.startsWith(`..${path.sep}`) || path.isAbsolute(relDest)) {
+            return { success: false, error: `Refusing to unpack archive outside workspace: ${dest}` };
+          }
+          const precheck = await execFileAsync('unzip', ['-Z', '-s', resolvedFile], unzipOpts);
+          let totalUncompressed = 0;
+          for (const line of precheck.stdout.split('\n')) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('Archive:') || trimmed.startsWith('Zip file size:') || /^\d+\s+files?,/.test(trimmed)) continue;
+            if (/^l/.test(trimmed)) {
+              return { success: false, error: `Refusing symlink entry inside archive: ${trimmed}` };
+            }
+            const parts = trimmed.split(/\s+/);
+            const sizeVal = Number.parseInt(parts[3] || '0', 10);
+            if (Number.isFinite(sizeVal) && sizeVal > 0) {
+              totalUncompressed += sizeVal;
+              if (totalUncompressed > 256 * 1024 * 1024) {
+                return { success: false, error: 'Refusing archive exceeding 256 MB uncompressed safety limit.' };
+              }
+            }
+            const entryName = parts.slice(8).join(' ').replace(/\\/g, '/');
+            if (entryName && (entryName.startsWith('/') || /^[a-zA-Z]:/.test(entryName) || entryName.split('/').some(s => s === '..'))) {
+              return { success: false, error: `Refusing unsafe zip path traversal entry: ${entryName}` };
+            }
+          }
           await fsp.mkdir(dest, { recursive: true });
-          await execFileAsync('unzip', ['-q', '-o', resolvedFile, '-d', dest]);
+          await execFileAsync('unzip', ['-q', '-o', resolvedFile, '-d', dest], unzipOpts);
           return {
             success: true,
             action: 'unpack',
