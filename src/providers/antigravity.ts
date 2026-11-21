@@ -356,10 +356,11 @@ export function isReadOnlyNativeInspection(name: string, parameters: Record<stri
   }
 
   // Blender inspection expressions (printing objects, collections, render engine)
-  if (/\bblender\b.*--python-expr\b/is.test(command)) {
-    const exprMatch = /--python-expr\s+["']([\s\S]*?)["'](?:\s|$)/i.exec(command)
-      || /--python-expr\s+([\s\S]+)$/i.exec(command);
-    const expr = (exprMatch ? exprMatch[1] : null) || command;
+  const blenderMatch = /\bblender\b/i.exec(command);
+  const pyExprMatch = /--python-expr\b/i.exec(command);
+  if (blenderMatch && pyExprMatch && pyExprMatch.index > blenderMatch.index) {
+    const tail = command.slice(pyExprMatch.index + pyExprMatch[0].length).trim();
+    const expr = tail || command;
     return !/\b(?:save_as_mainfile|save_mainfile|write_still\s*=\s*True|write_text|write_bytes|os\.remove|os\.unlink)\b/i.test(expr);
   }
 
