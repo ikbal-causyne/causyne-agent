@@ -1791,12 +1791,12 @@ export const COMMANDS = [
             }
             const lines = ['MCP servers', ''];
             for (const server of servers) {
-                lines.push(`  ${server.name}  [${server.transport}]  ${server.granted ? 'granted' : 'NOT granted'}  ${server.status}`);
-                lines.push(`    ${server.target}`);
+                lines.push(`  ${safeDisplay(server.name)}  [${safeDisplay(server.transport)}]  ${server.granted ? 'granted' : 'NOT granted'}  ${safeDisplay(server.status)}`);
+                lines.push(`    ${safeDisplay(server.target)}`);
                 if (server.tools.length > 0)
-                    lines.push(`    tools: ${server.tools.join(', ')}`);
+                    lines.push(`    tools: ${server.tools.map((t) => safeDisplay(t)).join(', ')}`);
                 if (server.error)
-                    lines.push(`    error: ${server.error}`);
+                    lines.push(`    error: ${safeDisplay(redactProviderSecrets(String(server.error)))}`);
             }
             lines.push('');
             lines.push('  mcp grant <name> to enable, mcp test <name> to diagnose, mcp remove <name> to delete.');
