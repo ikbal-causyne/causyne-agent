@@ -11,10 +11,28 @@
  *
  * Authorship: Strict TypeScript (Causyne Agent).
  */
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { episodicStore } from '../memory/episodicStore.js';
 import { foldSourceFileOutline } from '../memory/symbolFolder.js';
+const MAX_OUTLINE_FILE_BYTES = 2 * 1024 * 1024;
+function safeOptionalInt(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : undefined;
+}
+function expandOutlineHome(raw) {
+    const trimmed = raw.trim();
+    if (trimmed === '~')
+        return os.homedir();
+    if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+        return path.join(os.homedir(), trimmed.slice(2));
+    }
+    return trimmed;
+}
+function isWithinOutlineRoot(root, candidate) {
+    const rel = path.relative(root, candidate);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
 export const memoryRecall = {
     schema: {
         name: 'memory_recall',
@@ -77,21 +95,26 @@ export const memoryRecall = {
         const args = (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
             ? rawArgs
             : {});
-        const rawFileCandidate = String(args.filePath ?? args.path ?? args.file_path ?? args.filepath ?? args.target ?? '').trim();
+        const rawCandidateValue = args.filePath ?? args.path ?? args.file_path ?? args.filepath ?? args.target;
+        const rawFileCandidate = typeof rawCandidateValue === 'string' ? rawCandidateValue.trim() : '';
         const inferredAction = args.action
             ?? (rawFileCandidate ? 'outline' : undefined)
             ?? (args.anchorId !== undefined ? 'timeline' : undefined)
             ?? (Array.isArray(args.ids) && args.ids.length > 0 ? 'get' : undefined)
             ?? 'search';
         const action = inferredAction;
-        const workspace = context.parentLoop?.workspaceRoot ?? context.workspaceRoot ?? process.cwd();
+        const workspace = context?.parentLoop?.workspaceRoot
+            ?? context?.workspaceRoot
+            ?? context?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)
+            ?? process.cwd();
+        const safeQuery = typeof args.query === 'string' ? args.query : undefined;
         try {
             if (action === 'search') {
                 const res = episodicStore.searchIndex({
-                    query: args.query,
+                    query: safeQuery,
                     workspace,
                     type: args.type,
-                    limit: args.limit,
+                    limit: safeOptionalInt(args.limit),
                     workspaceOnly: args.workspaceOnly
                 });
                 const formatted = res.results.length === 0
@@ -116,8 +139,8 @@ export const memoryRecall = {
                 const windowResult = episodicStore.getTimelineWindow({
                     anchorId: args.anchorId,
                     workspace,
-                    depthBefore: args.depthBefore,
-                    depthAfter: args.depthAfter
+                    depthBefore: safeOptionalInt(args.depthBefore),
+                    depthAfter: safeOptionalInt(args.depthAfter)
                 });
                 if (!windowResult.anchor) {
                     return {
@@ -173,13 +196,41 @@ export const memoryRecall = {
                 if (!rawFileCandidate) {
                     return { success: false, error: 'Missing required parameter "filePath" for action="outline".' };
                 }
-                const expanded = rawFileCandidate.startsWith('~/')
-                    ? path.join(os.homedir(), rawFileCandidate.slice(2))
-                    : rawFileCandidate;
+                const expanded = expandOutlineHome(rawFileCandidate);
                 const targetPath = path.isAbsolute(expanded)
-                    ? expanded
+                    ? path.resolve(expanded)
                     : path.resolve(workspace, expanded);
-                const outline = foldSourceFileOutline(targetPath, args.query);
+                const pathPolicy = context?.parentLoop?.sandbox ?? context;
+                if (context?.grantAllAccess !== true) {
+                    if (typeof pathPolicy?.isPathAllowed === 'function' && !pathPolicy.isPathAllowed(targetPath)) {
+                        return { success: false, error: `Path outside allowed workspace: ${targetPath}` };
+                    }
+                    const configuredRoots = Array.isArray(context?.workspacePaths)
+                        ? context.workspacePaths.filter((p) => typeof p === 'string' && p.trim().length > 0)
+                        : [context?.parentLoop?.workspaceRoot, context?.workspaceRoot].filter((p) => typeof p === 'string' && p.trim().length > 0);
+                    if (configuredRoots.length > 0) {
+                        const realTarget = fs.realpathSync(targetPath);
+                        const allowed = configuredRoots.some((root) => {
+                            try {
+                                return isWithinOutlineRoot(fs.realpathSync(path.resolve(expandOutlineHome(root))), realTarget);
+                            }
+                            catch {
+                                return false;
+                            }
+                        });
+                        if (!allowed) {
+                            return { success: false, error: `Path outside allowed workspace: ${targetPath}` };
+                        }
+                    }
+                }
+                const stat = fs.statSync(targetPath);
+                if (!stat.isFile()) {
+                    return { success: false, error: `Outline target is not a regular file: ${targetPath}` };
+                }
+                if (stat.size > MAX_OUTLINE_FILE_BYTES) {
+                    return { success: false, error: `File exceeds ${MAX_OUTLINE_FILE_BYTES / (1024 * 1024)} MB outline limit: ${targetPath}` };
+                }
+                const outline = foldSourceFileOutline(targetPath, safeQuery);
                 return {
                     success: true,
                     action: 'outline',
