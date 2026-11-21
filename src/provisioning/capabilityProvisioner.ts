@@ -193,13 +193,22 @@ export function groupStatus(group: string): GroupStatusResult {
  * the same correction finding D-4 forced on the cortex provisioner, where
  * `--no-save` had left a tree that could not be checked at all.
  */
-export async function provisionCapabilities(groups: string[] = []): Promise<ProvisionResult> {
-  const target = [...new Set([...grantedGroups(), ...groups])].filter(g => Boolean(GROUP_PACKAGES[g]));
+export async function provisionCapabilities(groups?: string[] | null): Promise<ProvisionResult> {
+  const requested = Array.isArray(groups) ? groups : [];
+  const target = [...new Set([...grantedGroups(), ...requested])].filter(isKnownGroup);
   if (target.length === 0) return { installed: [], skipped: true };
 
   const dir = capabilityDir();
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } else {
+    const dirStat = fs.lstatSync(dir);
+    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
+      throw new Error('Refusing symlink or non-directory capability root');
+    }
+  }
+  if (process.platform !== 'win32') {
+    try { fs.chmodSync(dir, 0o700); } catch { /* ignore */ }
   }
 
   const manifestPath = path.join(dir, 'package.json');
