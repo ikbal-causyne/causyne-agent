@@ -85,7 +85,8 @@ function isEquivalent(left: unknown, right: unknown): boolean {
 export function buildBoundedStatechart<TState = any, TAction = any>(
   options: BoundedStatechartOptions<TState, TAction> = {}
 ): BoundedStatechartResult {
-  const safeOptions = options && typeof options === 'object' ? options : {};
+  if (!options || typeof options !== 'object') throw new TypeError('options object is required');
+  const safeOptions = options;
   const { initial, actions, transition, invariant } = safeOptions;
   const stateKey = safeOptions.stateKey || JSON.stringify;
   const stateLabel = safeOptions.stateLabel || ((value: TState) => JSON.stringify(value));
