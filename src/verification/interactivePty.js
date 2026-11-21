@@ -192,7 +192,13 @@ export async function runInteractivePty(options = {}) {
                 stdout += text;
             }
         });
-        child.stderr.on('data', (data) => { stderr += data.toString('utf8'); });
+        const MAX_NODE_STDERR = 262144;
+        child.stderr.on('data', (data) => {
+            stderr += data.toString('utf8');
+            if (stderr.length > MAX_NODE_STDERR) {
+                stderr = stderr.slice(-MAX_NODE_STDERR);
+            }
+        });
         child.on('error', (e) => { spawnError = e; });
         child.on('close', () => {
             if (spawnError?.code === 'ENOENT') {
