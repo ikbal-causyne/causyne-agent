@@ -697,6 +697,9 @@ export class AcpServer {
         if (!params || typeof params.sessionId !== 'string' || !params.sessionId) {
             throw this.paramsError('session/load requires sessionId');
         }
+        if (Array.isArray(params.mcpServers) && params.mcpServers.length > 0) {
+            throw this.paramsError('MCP servers are not supported by this agent');
+        }
         const live = this.sessions.get(params.sessionId);
         if (live) {
             this.bindWorkspace(live.cwd);
