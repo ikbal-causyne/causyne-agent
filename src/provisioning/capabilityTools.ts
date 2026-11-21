@@ -32,7 +32,11 @@ export function groupForTool(toolName: unknown): string | null {
 export function declinedToolNames(): Set<string> {
   const declined = new Set<string>();
   for (const [group, tools] of Object.entries(TOOLS_BY_GROUP)) {
-    if (!isGroupDeclined(group)) continue;
+    try {
+      if (!isGroupDeclined(group)) continue;
+    } catch {
+      continue;
+    }
     for (const name of tools) declined.add(name);
   }
   return declined;
