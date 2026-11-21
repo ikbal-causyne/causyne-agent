@@ -96,21 +96,30 @@ export async function openWithNativeOS(target, app) {
             cliArgs = [target];
         }
         try {
+            let settled = false;
             const child = spawn(command, cliArgs, {
                 detached: true,
-                stdio: 'ignore'
+                stdio: 'ignore',
+                windowsHide: true
             });
             child.unref();
-            child.on('error', (err) => {
-                reject(err);
-            });
             // Brief tick to ensure the binary was dispatched without immediate spawn error
-            setTimeout(() => {
+            const timer = setTimeout(() => {
+                if (settled)
+                    return;
+                settled = true;
                 resolve({
                     success: true,
                     output: `Successfully dispatched native OS open event for: ${target}`
                 });
             }, 50);
+            child.on('error', (err) => {
+                if (settled)
+                    return;
+                settled = true;
+                clearTimeout(timer);
+                reject(err);
+            });
         }
         catch (e) {
             reject(e);
