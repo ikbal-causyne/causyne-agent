@@ -8,6 +8,9 @@ import { loadConfig, saveConfig } from '../config.js';
 import { isGroupGranted, isGroupDeclined } from './capabilityConsent.js';
 import { causyneHome } from '../utils/paths.js';
 import { currentToolAutonomyMode } from '../approvalPolicy.js';
+import { isWithinPhysicalPath, physicalPath } from '../agent/workspaceBoundary.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { safeDisplay } from '../tui/text.js';
 
 export interface CapabilityVerdict {
   ok: boolean;
@@ -141,7 +144,19 @@ export function revokeGroup(group: string): boolean {
 
 /** True when the package is already on disk in the sovereign directory. */
 export function isPackageInstalled(packageName: string): boolean {
-  return fs.existsSync(path.join(capabilityDir(), 'node_modules', packageName));
+  if (!isValidNpmPackageName(packageName)) return false;
+  const nodeModulesDir = path.join(capabilityDir(), 'node_modules');
+  const target = path.join(nodeModulesDir, packageName);
+  try {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) return false;
+    const realRoot = physicalPath(nodeModulesDir);
+    const realTarget = physicalPath(target);
+    if (!realRoot || !realTarget || realTarget === realRoot) return false;
+    return isWithinPhysicalPath(realTarget, realRoot);
+  } catch {
+    return false;
+  }
 }
 
 export function isGroupInstalled(group: string): boolean {
