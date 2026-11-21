@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from '../utils/paths.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 import { getPresetProfile, BUILTIN_PEER_PRESETS } from './agentCatalog.js';
 
 export type PeerPolicy = 'read-only' | 'ask' | 'workspace';
@@ -69,10 +70,14 @@ function parseProfile(raw: unknown): PeerProfile | null {
   if (args === null) return null;
   let cwd: string | null = null;
   if (typeof record.cwd === 'string' && record.cwd.trim()) {
+    if (/[\r\n\0]/.test(record.cwd)) return null;
     const resolved = path.resolve(record.cwd.trim());
+    if (isBlockedWorkspaceRoot(resolved)) return null;
     try {
-      if (!fs.statSync(resolved).isDirectory()) return null;
-      cwd = resolved;
+      const real = fs.realpathSync(resolved);
+      if (isBlockedWorkspaceRoot(real)) return null;
+      if (!fs.statSync(real).isDirectory()) return null;
+      cwd = real;
     } catch {
       return null;
     }

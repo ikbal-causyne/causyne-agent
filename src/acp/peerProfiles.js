@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from '../utils/paths.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 import { getPresetProfile, BUILTIN_PEER_PRESETS } from './agentCatalog.js';
 const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
@@ -57,11 +58,18 @@ function parseProfile(raw) {
         return null;
     let cwd = null;
     if (typeof record.cwd === 'string' && record.cwd.trim()) {
+        if (/[\r\n\0]/.test(record.cwd))
+            return null;
         const resolved = path.resolve(record.cwd.trim());
+        if (isBlockedWorkspaceRoot(resolved))
+            return null;
         try {
-            if (!fs.statSync(resolved).isDirectory())
+            const real = fs.realpathSync(resolved);
+            if (isBlockedWorkspaceRoot(real))
                 return null;
-            cwd = resolved;
+            if (!fs.statSync(real).isDirectory())
+                return null;
+            cwd = real;
         }
         catch {
             return null;
