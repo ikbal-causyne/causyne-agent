@@ -150,8 +150,14 @@ export const desktopOpen = {
         if (isUnsafeUriScheme(rawTarget)) {
             return { success: false, error: `Unsupported or unsafe URI scheme in target: "${rawTarget}". Only http://, https://, and local file paths are allowed.` };
         }
-        const workspaceRoot = context?.parentLoop?.workspaceRoot || process.cwd();
-        const resolvedTarget = resolveOpenTarget(args.target, workspaceRoot);
+        if (args.app !== undefined && typeof args.app !== 'string') {
+            return { success: false, error: 'Optional "app" parameter must be a string.' };
+        }
+        const workspaceRoot = context?.parentLoop?.workspaceRoot?.trim()
+            || context?.workspaceRoot?.trim()
+            || context?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim()
+            || process.cwd();
+        const resolvedTarget = resolveOpenTarget(rawTarget, workspaceRoot);
         try {
             const nativeResult = await openWithNativeOS(resolvedTarget, args.app);
             return { success: true, output: nativeResult.output };
