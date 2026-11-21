@@ -4,6 +4,7 @@ import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 
 const DRIVER = String.raw`import base64, fcntl, json, os, pty, select, signal, struct, sys, termios, time
 cfg=json.loads(sys.argv[1])
@@ -189,6 +190,9 @@ export async function runInteractivePty(options: InteractivePtyOptions = {}): Pr
     throw new Error('Verification CAUSYNE_HOME must be an isolated temporary directory');
   }
   const cwd = realpathSync(workspace);
+  if (isBlockedWorkspaceRoot(cwd)) {
+    throw new Error('Verification workspace cannot be a protected system root');
+  }
   const target = realpathSync(path.resolve(cwd, script));
   const relative = path.relative(cwd, target);
   if (!relative || relative === '..' || relative.startsWith('..' + path.sep)
