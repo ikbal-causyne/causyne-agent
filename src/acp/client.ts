@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
 import { isCredentialPath } from '../sandbox.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 import {
   ACP_ERROR_CODES,
   ACP_METHODS,
@@ -207,7 +208,8 @@ export class AcpClient {
     });
     child.on('error', (error) => this.failAll(new Error(`agent process failed: ${error.message}`)));
     child.on('exit', (code, exitSignal) => {
-      const detail = this.stderrTail.trim() || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
+      const cleanTail = redactProviderSecrets(this.stderrTail).trim();
+      const detail = cleanTail || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
       this.failAll(new Error(`agent process exited: ${detail}`));
     });
 
@@ -718,7 +720,7 @@ export class AcpClient {
       for (const pat of fatalPatterns) {
         if (pat.test(this.stderrTail)) {
           const match = this.stderrTail.split('\n').find(l => pat.test(l));
-          if (match) return match.trim();
+          if (match) return redactProviderSecrets(match).trim();
         }
       }
     }

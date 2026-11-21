@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
 import { isCredentialPath } from '../sandbox.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, extractAcpSessionModels, isJsonRpcRequest, isJsonRpcResponse } from './protocol.js';
 function createAbortError(message = 'ACP operation aborted by user') {
     const err = new Error(message);
@@ -136,7 +137,8 @@ export class AcpClient {
         });
         child.on('error', (error) => this.failAll(new Error(`agent process failed: ${error.message}`)));
         child.on('exit', (code, exitSignal) => {
-            const detail = this.stderrTail.trim() || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
+            const cleanTail = redactProviderSecrets(this.stderrTail).trim();
+            const detail = cleanTail || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
             this.failAll(new Error(`agent process exited: ${detail}`));
         });
         const hasFsRead = this.options.allowHostTools !== false && Boolean(this.options.fsReadHandler || this.options.cwd);
@@ -661,7 +663,7 @@ export class AcpClient {
                 if (pat.test(this.stderrTail)) {
                     const match = this.stderrTail.split('\n').find(l => pat.test(l));
                     if (match)
-                        return match.trim();
+                        return redactProviderSecrets(match).trim();
                 }
             }
         }
