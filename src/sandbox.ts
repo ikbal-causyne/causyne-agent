@@ -356,11 +356,22 @@ export class Sandbox {
   }
 
   isInternalUrl(urlString: unknown, { allowLoopback = false }: { allowLoopback?: boolean } = {}): boolean {
+    if (typeof urlString !== 'string' || !urlString.trim() || /[\r\n\0]/.test(urlString)) {
+      return true;
+    }
     try {
-      const url = new URL(String(urlString));
+      const url = new URL(urlString.trim());
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return true;
-      const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
-      const isLoopback = host === 'localhost' || host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(host) || host === '::1';
+      const rawHost = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+      const host = rawHost.split('%')[0] || '';
+      if (!host) return true;
+      const ipv6OnlyZerosAndOne = host.includes(':') && /^(?:0+:){0,7}0*1$/.test(host);
+      const ipv6AllZeros = host.includes(':') && /^(?:0*:)+0*$/.test(host);
+      const isLoopback = host === 'localhost'
+        || host.endsWith('.localhost')
+        || /^127\.\d+\.\d+\.\d+$/.test(host)
+        || host === '::1'
+        || ipv6OnlyZerosAndOne;
       if (allowLoopback && isLoopback) return false;
       if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
 
@@ -368,9 +379,9 @@ export class Sandbox {
       if (blockedRegex.test(host)) return true;
       if (host === 'metadata.google.internal') return true;
       if (isIP(host) === 6) {
-        const normalized = host.split('%')[0] || '';
-        if (normalized === '::' || normalized === '::1' || /^(fc|fd|fe8|fe9|fea|feb|fec|fed|fee|fef|ff|2001:db8:|64:ff9b:)/.test(normalized)) return true;
-        if (normalized.startsWith('::ffff:')) return true;
+        if (host === '::' || host === '::1' || ipv6AllZeros || ipv6OnlyZerosAndOne) return true;
+        if (/^(fc|fd|fe8|fe9|fea|feb|fec|fed|fee|fef|ff|2001:db8:|64:ff9b:|100::)/.test(host)) return true;
+        if (host.startsWith('::ffff:') || host.startsWith('0:0:0:0:0:ffff:')) return true;
       }
 
       return false;
