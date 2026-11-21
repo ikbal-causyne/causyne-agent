@@ -121,7 +121,7 @@ export const procTerm = {
 
       return { success: true, output: `Successfully dispatched native ${signal} signal to ${killedCount} processes.` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
