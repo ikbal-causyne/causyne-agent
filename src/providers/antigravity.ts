@@ -70,10 +70,13 @@ export function synthesizeAgySlug(input: string): string {
   return slug;
 }
 
+const FORBIDDEN_MODEL_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function registerAntigravityModel(slug: string, label?: string): void {
-  if (!slug || typeof slug !== 'string') return;
+  if (!slug || typeof slug !== 'string' || /[\r\n\0]/.test(slug)) return;
   const rawSlug = slug.trim();
-  const cleanLabel = (label && typeof label === 'string' && label.trim()) || rawSlug;
+  const cleanLabel = (label && typeof label === 'string' && !/[\r\n\0]/.test(label) && label.trim()) || rawSlug;
+  if (!rawSlug || FORBIDDEN_MODEL_KEYS.has(rawSlug) || FORBIDDEN_MODEL_KEYS.has(cleanLabel)) return;
   const cleanSlug = /[\s()]/.test(rawSlug)
     ? (ANTIGRAVITY_MODEL_IDS[rawSlug] || synthesizeAgySlug(rawSlug))
     : rawSlug;
@@ -199,7 +202,7 @@ function hydrateModelsFromDiskCache(): void {
 hydrateModelsFromDiskCache();
 
 export function resolveAgyModelId(model?: string | null): string {
-  if (typeof model !== 'string') return '';
+  if (typeof model !== 'string' || /[\r\n\0]/.test(model)) return '';
   const trimmed = model.trim();
   if (!trimmed) return '';
 
