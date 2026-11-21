@@ -974,10 +974,22 @@ export class ChatRenderer {
         this.frame('result', () => {
             const width = Math.max(8, this.width() - 7);
             this.write('');
+            let emitted = 0;
+            let truncatedExpanded = false;
             for (const line of String(output.text).split('\n')) {
                 for (const part of wrap(safeDisplay(line), width)) {
+                    if (emitted >= MAX_EXPAND_LINES) {
+                        truncatedExpanded = true;
+                        break;
+                    }
                     this.write(`     ${paint('rule', GLYPHS.vLine)} ${dim(part)}`);
+                    emitted++;
                 }
+                if (truncatedExpanded)
+                    break;
+            }
+            if (truncatedExpanded) {
+                this.write(`     ${paint('rule', GLYPHS.corner)} ${dim(`${GLYPHS.ellipsis} expanded view capped at ${MAX_EXPAND_LINES} lines`)}`);
             }
             if (output.spillPath) {
                 this.write(this.clipHint(output.spillPath));
