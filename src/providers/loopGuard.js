@@ -2,7 +2,7 @@
  * @file src/providers/loopGuard.ts
  * Causyne Agent — Sliding-Window Loop Guard & Context Overflow Detector
  *
- * Ported & elevated from Hermes Agent (gateway/bot_loop_guard.py & gateway/run_turn.py).
+ * Causyne native sliding-window turn protection and context-overflow classification.
  * Protects against conversational bounce-back, self-sustaining loops, and
  * accurately detects context overflow without false positives from auth tokens.
  *
