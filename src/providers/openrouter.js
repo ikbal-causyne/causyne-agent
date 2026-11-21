@@ -8,10 +8,11 @@
  */
 import { LLMProvider } from './base.js';
 import { canonicalModelId } from '../modelIds.js';
-import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
-import { extractTextToolCalls, normalizeOpenAIChatChoiceResponse, serializeAndDecodeArguments } from './wireNormalizer.js';
-import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, parseRetryAfterMs, readBoundedResponseText, redactProviderSecrets, resolveTemperature, safeProviderFetch } from './byokHttp.js';
-import { normalizeToolName } from '../tools/toolScanner.js';
+import { scanAndAdaptToolsForProvider, normalizeToolName } from '../tools/toolScanner.js';
+import { stripToolCallMarkup } from '../implementationPlan.js';
+import { extractTextToolCalls, normalizeOpenAIChatChoiceResponse, sanitizeProviderToolId, serializeAndDecodeArguments } from './wireNormalizer.js';
+import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, ProviderHttpError, parseRetryAfterMs, readBoundedResponseText, redactProviderSecrets, resolveTemperature, safeProviderFetch } from './byokHttp.js';
+import { wantsStreaming } from './byokStream.js';
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 export const OPENROUTER_CHAT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_DEFAULT_FREE_MODEL = 'openrouter/free';
