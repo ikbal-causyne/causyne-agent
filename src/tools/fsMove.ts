@@ -83,9 +83,9 @@ export const fsMove = {
         }
       }
 
-      return { success: true, output: `Atomically moved ${args.source} to ${args.destination}` };
+      return { success: true, output: `Atomically moved ${sanitizeToolText(path.basename(src), 120)} to ${sanitizeToolText(path.basename(dest), 120)}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
