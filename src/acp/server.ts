@@ -420,7 +420,7 @@ export class AcpServer {
     const session: AcpSession = {
       id,
       memorySessionId: id,
-      title,
+      title: safeDisplay(title).replace(/\s+/g, ' ').trim() || 'Untitled',
       cwd,
       modeId,
       loop: null,
