@@ -142,6 +142,7 @@ export function normalizeOpenAIToolCalls(rawCalls, freeFormPaths, prefix = 'call
     if (!Array.isArray(rawCalls))
         return [];
     const normalized = [];
+    const seenIds = new Set();
     for (let i = 0; i < rawCalls.length; i++) {
         const tc = rawCalls[i];
         if (!isPlainObject(tc))
@@ -151,9 +152,15 @@ export function normalizeOpenAIToolCalls(rawCalls, freeFormPaths, prefix = 'call
         if (!rawName)
             continue;
         const name = normalizeToolName(rawName);
+        if (!name)
+            continue;
         const rawArgs = fnObj ? fnObj['arguments'] : tc['arguments'];
+        let id = sanitizeProviderToolId(tc['id'], prefix, i);
+        if (seenIds.has(id))
+            id = `${id.slice(0, 56)}_${i}`;
+        seenIds.add(id);
         normalized.push({
-            id: sanitizeProviderToolId(tc['id'], prefix, i),
+            id,
             type: 'function',
             function: {
                 name,
