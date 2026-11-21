@@ -739,6 +739,15 @@ export class AcpServer {
         error.acpCode = ACP_ERROR_CODES.RESOURCE_NOT_FOUND;
         return error;
     }
+    rejectPendingForSession(sessionId, reason) {
+        for (const [id, pending] of this.pending) {
+            if (pending.sessionId !== sessionId)
+                continue;
+            clearTimeout(pending.timer);
+            this.pending.delete(id);
+            pending.reject(new Error(reason));
+        }
+    }
     sendClientRequest(session, method, params) {
         const id = `server-${this.nextClientRequestId++}`;
         return new Promise((resolve, reject) => {
@@ -746,7 +755,10 @@ export class AcpServer {
                 this.pending.delete(id);
                 reject(new Error(`${method} timed out`));
             }, this.permissionTimeoutMs);
+            if (typeof timer.unref === 'function')
+                timer.unref();
             this.pending.set(id, {
+                sessionId: session.id,
                 resolve: (value) => resolve(value),
                 reject,
                 timer

@@ -76,6 +76,7 @@ export interface AcpServerOptions {
 }
 
 interface PendingClientRequest {
+  sessionId: string;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
@@ -815,6 +816,15 @@ export class AcpServer {
     return error;
   }
 
+  private rejectPendingForSession(sessionId: string, reason: string): void {
+    for (const [id, pending] of this.pending) {
+      if (pending.sessionId !== sessionId) continue;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(new Error(reason));
+    }
+  }
+
   private sendClientRequest<T>(session: AcpSession, method: string, params: Record<string, unknown>): Promise<T> {
     const id = `server-${this.nextClientRequestId++}`;
     return new Promise<T>((resolve, reject) => {
@@ -822,7 +832,9 @@ export class AcpServer {
         this.pending.delete(id);
         reject(new Error(`${method} timed out`));
       }, this.permissionTimeoutMs);
+      if (typeof timer.unref === 'function') timer.unref();
       this.pending.set(id, {
+        sessionId: session.id,
         resolve: (value) => resolve(value as T),
         reject,
         timer
