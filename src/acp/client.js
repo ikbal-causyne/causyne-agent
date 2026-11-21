@@ -13,6 +13,7 @@ function createAbortError(message = 'ACP operation aborted by user') {
 }
 const MAX_STDERR_CHARS = 4000;
 const MAX_UPDATE_CHARS = 200_000;
+const MAX_HOST_FILE_BYTES = 4 * 1024 * 1024;
 export class AcpClient {
     options;
     child = null;
@@ -453,7 +454,27 @@ export class AcpClient {
                     if (isCredentialPath(resolved)) {
                         throw new Error('Reading credential files via ACP host bridge is prohibited');
                     }
-                    content = await fs.readFile(resolved, 'utf8');
+                    const stat = await fs.lstat(resolved);
+                    if (stat.isSymbolicLink() || !stat.isFile()) {
+                        throw new Error('Refusing to read symlink or non-regular file');
+                    }
+                    if (stat.size > MAX_HOST_FILE_BYTES) {
+                        throw new Error(`File exceeds maximum readable size (${MAX_HOST_FILE_BYTES} bytes)`);
+                    }
+                    const rawContent = await fs.readFile(resolved, 'utf8');
+                    if (typeof params?.line === 'number' || typeof params?.limit === 'number') {
+                        const lines = rawContent.split(/\r?\n/);
+                        const start = typeof params?.line === 'number' && Number.isFinite(params.line)
+                            ? Math.max(0, Math.floor(params.line) - 1)
+                            : 0;
+                        const count = typeof params?.limit === 'number' && Number.isFinite(params.limit) && params.limit > 0
+                            ? Math.floor(params.limit)
+                            : lines.length;
+                        content = lines.slice(start, start + count).join('\n');
+                    }
+                    else {
+                        content = rawContent;
+                    }
                 }
                 this.write({
                     jsonrpc: '2.0',
