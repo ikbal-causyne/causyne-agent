@@ -157,7 +157,6 @@ export const COMMANDS: SlashCommandDefinition[] = [
     description: 'Configure provider, endpoint, model and autonomy',
     run: async (_argv, ctx) => {
       if (!ctx.prompt) return ok('Run causyne setup in an interactive terminal.');
-      // @ts-expect-error Legacy tui/home.js has no TypeScript declarations yet.
       const { configureInPrompt } = await import('./tui/home.js');
       const result = await configureInPrompt(ctx.prompt, { loadConfig, saveConfig });
       return ok(result ? `Saved ${result.provider} / ${result.model}. Connection has not been tested.` : 'Cancelled. Nothing was changed.');
