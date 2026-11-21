@@ -214,7 +214,11 @@ function readPlugin(directory) {
     const manifestFile = path.join(directory, 'plugin.json');
     regularFile(manifestFile, MAX_MANIFEST_BYTES);
     const raw = fs.readFileSync(manifestFile, 'utf8');
-    const manifest = JSON.parse(raw);
+    const parsedManifest = JSON.parse(raw);
+    if (!parsedManifest || typeof parsedManifest !== 'object' || Array.isArray(parsedManifest)) {
+        throw new Error('Plugin manifest must be a JSON object');
+    }
+    const manifest = parsedManifest;
     const folderName = path.basename(directory);
     if (manifest.schemaVersion !== 1)
         throw new Error('schemaVersion must be 1');
