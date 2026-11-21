@@ -367,7 +367,8 @@
     "src/tools/axSnapshot.ts",
     "src/tools/desktopAct.ts",
     "src/tools/codeTools.ts",
-    "src/tools/printer.ts"
+    "src/tools/printer.ts",
+    "src/tools/subagentOrchestrator.ts"
   ],
   "exclude": [
     "node_modules",
