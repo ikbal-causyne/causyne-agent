@@ -113,6 +113,7 @@ const MODES: SessionModeState = {
 
 const MAX_PROMPT_CHARS = 200_000;
 const MAX_RAW_CHARS = 4000;
+const MAX_JSONRPC_BUFFER_BYTES = 8 * 1024 * 1024;
 
 function textFromPrompt(prompt: ContentBlock[]): string | null {
   const parts: string[] = [];
