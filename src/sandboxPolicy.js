@@ -1143,6 +1143,13 @@ export function isExtremeRemovalSegment(seg) {
             target.startsWith('~/') ||
             target.startsWith('~') ||
             target.startsWith('*') ||
+            target === '.' ||
+            target === './' ||
+            target.startsWith('./*') ||
+            target === '..' ||
+            target === '../' ||
+            target.startsWith('../*') ||
+            /^[a-z]:[\\/]?$/.test(target) ||
             target === '$home' ||
             target.startsWith('$home/') ||
             target === '${home}' ||
