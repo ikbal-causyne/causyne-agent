@@ -1,5 +1,27 @@
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveChromiumRuntime } from '../browser/browserRuntime.js';
+import { assertBrowserNavigableUrl } from '../browser/urlPolicy.js';
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { assertSafeWorkspaceInput, getErrorMessage, sanitizeToolError } from './toolPathSafety.js';
+async function resolveAuditTarget(rawUrl, sandbox) {
+    const trimmed = rawUrl.trim();
+    if (/^https?:\/\//i.test(trimmed)) {
+        const validated = await assertBrowserNavigableUrl(trimmed);
+        return { targetUrl: validated.href, localRoot: null };
+    }
+    const localCandidate = trimmed.startsWith('file://') ? fileURLToPath(new URL(trimmed)) : trimmed;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) && !trimmed.startsWith('file://') && !/^[a-zA-Z]:[\\/]/.test(trimmed)) {
+        throw new Error(`Unsupported URL scheme for game audit: ${trimmed.split(':')[0]}`);
+    }
+    const checked = await assertSafeWorkspaceInput(localCandidate, sandbox, { maxBytes: 16 * 1024 * 1024 });
+    const ext = path.extname(checked.resolved).toLowerCase();
+    if (ext !== '.html' && ext !== '.htm') {
+        throw new Error('Local game audit target must be an .html or .htm file inside the authorized workspace.');
+    }
+    return { targetUrl: pathToFileURL(checked.resolved).href, localRoot: path.dirname(checked.resolved) };
+}
 export const gameCanvasAudit = {
     schema: {
         name: 'game_canvas_audit',
@@ -15,23 +37,26 @@ export const gameCanvasAudit = {
             required: ['url']
         }
     },
-    execute: async (args = {}, _sandbox) => {
-        let url = args?.url;
-        if (typeof url !== 'string' || !url.trim())
+    execute: async (args = {}, sandbox) => {
+        const rawUrl = args?.url;
+        if (typeof rawUrl !== 'string' || !rawUrl.trim())
             return { success: false, error: 'URL is required' };
-        url = url.trim();
-        if (url.startsWith('/')) {
-            url = 'file://' + url;
-        }
         let browser = null;
         try {
+            const { targetUrl, localRoot } = await resolveAuditTarget(rawUrl, sandbox);
+            const url = targetUrl;
             const vision = await ensureCapability('vision');
             if (!vision.ok)
                 return { success: false, error: vision.reason, requiresConsent: vision.requiresConsent };
+            const runtime = resolveChromiumRuntime();
+            if (!runtime) {
+                return { success: false, error: 'Chromium browser runtime not found. Install Chrome/Chromium or set CAUSYNE_BROWSER_EXECUTABLE.' };
+            }
             const puppeteer = { default: await loadCapabilityPackage('puppeteer-core') };
             browser = await puppeteer.default.launch({
-                executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                executablePath: runtime.executablePath,
                 headless: 'new',
+                env: sanitizeSubprocessEnv(process.env),
                 args: ['--autoplay-policy=no-user-gesture-required']
             });
             const page = await browser.newPage();
