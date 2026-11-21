@@ -1,7 +1,19 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceInput,
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  isSafePlainKey,
+  resolveScopedPath,
+  sanitizeToolError,
+  stripDangerousKeysDeep,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const MAX_QUEST_DB_BYTES = 4 * 1024 * 1024;
+const MAX_QUEST_STAGES = 128;
 
 export interface GameQuestArcArgs {
   action?: string | undefined;
@@ -57,7 +69,7 @@ export const gameQuestArcBuilder = {
     }
   },
 
-  async execute(args: GameQuestArcArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameQuestArcArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const {
         action,
@@ -68,9 +80,14 @@ export const gameQuestArcBuilder = {
         rewards = { xp: 500, gold: 150, items: ['health_potion'] },
         projectDir
       } = args || {};
+      if (!isSafePlainKey(questId)) {
+        return { success: false, error: 'Invalid questId: disallowed prototype or empty key.' };
+      }
+      const cleanStages = Array.isArray(stages) ? stripDangerousKeysDeep(stages.slice(0, MAX_QUEST_STAGES)) : [];
+      const cleanRewards = rewards && typeof rewards === 'object' ? stripDangerousKeysDeep(rewards) : { xp: 500, gold: 150, items: ['health_potion'] };
 
       if (action === 'create_quest_arc') {
-        const defaultStages = Array.isArray(stages) && stages.length > 0 ? stages : [
+        const defaultStages = cleanStages.length > 0 ? cleanStages : [
           { stage_id: 'stage_1_elder_counsel', description: 'Speak with Elder Thaddeus in the village square regarding the dark omens.', objective_type: 'talk_npc', target_id: 'village_elder', target_count: 1 },
           { stage_id: 'stage_2_silver_key', description: 'Collect 5 Shadow Shards and trade them to Grom the Blacksmith for the Silver Key.', objective_type: 'collect_items', target_id: 'shadow_shard', target_count: 5 },
           { stage_id: 'stage_3_catacombs_breach', description: 'Pass the ancient wards and enter the Forgotten Catacombs.', objective_type: 'reach_location', target_id: 'level_2_catacombs_entrance', target_count: 1 },
@@ -85,43 +102,46 @@ export const gameQuestArcBuilder = {
           status: 'available',
           prerequisites: [] as string[],
           stages: defaultStages,
-          rewards
+          rewards: cleanRewards
         };
 
-        if (projectDir && fsSync.existsSync(projectDir)) {
-          const dataDir = path.join(projectDir, 'data');
-          await fs.mkdir(dataDir, { recursive: true });
-          const dbPath = path.join(dataDir, 'quest_database.json');
-          let currentDb: Record<string, unknown> = {};
-          if (fsSync.existsSync(dbPath)) {
-            try {
-              const parsed: unknown = JSON.parse(await fs.readFile(dbPath, 'utf8'));
-              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                currentDb = parsed as Record<string, unknown>;
-              }
-            } catch { /* ignore corrupt existing db */ }
+        if (projectDir) {
+          const scopedDir = resolveScopedPath(projectDir, sandbox);
+          if (fsSync.existsSync(scopedDir)) {
+            const dbPath = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'quest_database.json'), sandbox, { scopeRoot: scopedDir });
+            let currentDb: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+            if (fsSync.existsSync(dbPath)) {
+              try {
+                const checked = await assertSafeWorkspaceInput(dbPath, sandbox, { scopeRoot: scopedDir, maxBytes: MAX_QUEST_DB_BYTES });
+                const parsed: unknown = JSON.parse(await fs.readFile(checked.resolved, 'utf8'));
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                  currentDb = Object.assign(Object.create(null) as Record<string, unknown>, stripDangerousKeysDeep(parsed as Record<string, unknown>));
+                }
+              } catch { /* ignore corrupt existing db */ }
+            }
+            currentDb[questId] = questObject;
+            await atomicWriteFileSafe(dbPath, JSON.stringify(currentDb, null, 2));
           }
-          currentDb[questId] = questObject;
-          await fs.writeFile(dbPath, JSON.stringify(currentDb, null, 2), 'utf8');
         }
 
         return { success: true, output: JSON.stringify(questObject, null, 2) };
       }
 
       if (action === 'save_quest_db') {
-        if (!projectDir || !fsSync.existsSync(projectDir)) {
+        const scopedDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+        if (!scopedDir || !fsSync.existsSync(scopedDir)) {
           return { success: false, error: 'projectDir is required to save quest database.' };
         }
-        const dataDir = path.join(projectDir, 'data');
-        await fs.mkdir(dataDir, { recursive: true });
-        const dbPath = path.join(dataDir, 'quest_database.json');
-        await fs.writeFile(dbPath, JSON.stringify({ [questId]: { quest_id: questId, title: questTitle, stages, rewards } }, null, 2), 'utf8');
+        const dbPath = await assertSafeWorkspaceOutput(path.join(scopedDir, 'data', 'quest_database.json'), sandbox, { scopeRoot: scopedDir });
+        const payload: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+        payload[questId] = { quest_id: questId, title: questTitle, stages: cleanStages, rewards: cleanRewards };
+        await atomicWriteFileSafe(dbPath, JSON.stringify(payload, null, 2));
         return { success: true, output: JSON.stringify({ status: 'SAVED_QUEST_DB', path: dbPath }, null, 2) };
       }
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
