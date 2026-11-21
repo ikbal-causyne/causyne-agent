@@ -80,9 +80,44 @@ function readState() {
 function writeState(state) {
     ensureRoot();
     const sf = stateFile();
-    const temporary = `${sf}.tmp_${process.pid}`;
-    fs.writeFileSync(temporary, JSON.stringify(state, null, 2), { mode: 0o600 });
-    fs.renameSync(temporary, sf);
+    try {
+        const existing = fs.lstatSync(sf);
+        if (existing.isSymbolicLink() || !existing.isFile()) {
+            throw new Error('Refusing to overwrite symlink or non-regular plugin state file');
+        }
+    }
+    catch (err) {
+        const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+        if (code !== 'ENOENT')
+            throw err;
+    }
+    const temporary = `${sf}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+    const payload = Buffer.from(JSON.stringify(state, null, 2), 'utf8');
+    try {
+        const fd = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+        try {
+            fs.writeSync(fd, payload, 0, payload.length);
+            fs.fsyncSync(fd);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(temporary, sf);
+        if (process.platform !== 'win32') {
+            try {
+                fs.chmodSync(sf, 0o600);
+            }
+            catch { /* ignore */ }
+        }
+    }
+    catch (err) {
+        try {
+            if (fs.existsSync(temporary))
+                fs.unlinkSync(temporary);
+        }
+        catch { /* ignore */ }
+        throw err;
+    }
 }
 function resolveInside(root, relativePath) {
     const resolvedRoot = path.resolve(root);
