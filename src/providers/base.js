@@ -227,14 +227,18 @@ export class LLMProvider {
         });
     }
     normalizeUsage(rawUsage) {
-        const promptTokens = rawUsage?.prompt_tokens || 0;
-        const cachedPromptTokens = rawUsage?.prompt_tokens_details?.cached_tokens ??
+        const nonNeg = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+        const promptTokens = nonNeg(rawUsage?.prompt_tokens);
+        const completionTokens = nonNeg(rawUsage?.completion_tokens);
+        const rawCached = rawUsage?.prompt_tokens_details?.cached_tokens ??
             rawUsage?.prompt_cache_hit_tokens ??
+            rawUsage?.cache_read_input_tokens ??
             0;
+        const cachedPromptTokens = Math.min(nonNeg(rawCached), promptTokens);
         return {
             promptTokens,
-            completionTokens: rawUsage?.completion_tokens || 0,
-            cachedPromptTokens: Math.min(cachedPromptTokens, promptTokens)
+            completionTokens,
+            cachedPromptTokens
         };
     }
 }
