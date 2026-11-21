@@ -736,10 +736,12 @@ export class AcpClient {
 
   private inspectOpencodeLog(sessionId?: string, sinceEpochMs?: number): string | null {
     try {
-      const logPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'log', 'opencode.log');
+      const home = os.homedir();
+      if (!home) return null;
+      const logPath = path.join(home, '.local', 'share', 'opencode', 'log', 'opencode.log');
       if (!fsSync.existsSync(logPath)) return null;
-      const stat = fsSync.statSync(logPath);
-      if (stat.size === 0) return null;
+      const stat = fsSync.lstatSync(logPath);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) return null;
       const readBytes = Math.min(stat.size, 65536);
       const buffer = Buffer.alloc(readBytes);
       const fd = fsSync.openSync(logPath, 'r');
