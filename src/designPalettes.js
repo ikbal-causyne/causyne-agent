@@ -66,10 +66,11 @@ export function getMovement(id) {
  * Suggest movements the agent has NOT recently used.
  */
 export function suggestMovements(recentlyUsedIds = [], count = 3) {
-    const used = new Set(recentlyUsedIds);
+    const safeCount = typeof count === 'number' && Number.isFinite(count) ? Math.max(0, Math.min(DESIGN_MOVEMENTS.length, Math.floor(count))) : 3;
+    const used = new Set(Array.isArray(recentlyUsedIds) ? recentlyUsedIds : []);
     const unused = DESIGN_MOVEMENTS.filter(movement => !used.has(movement.id));
-    const pool = unused.length >= count ? unused : DESIGN_MOVEMENTS;
-    return pool.slice(0, count);
+    const pool = unused.length >= safeCount ? unused : DESIGN_MOVEMENTS;
+    return pool.slice(0, safeCount);
 }
 /** A compact briefing the agent can be handed when its output scores as slop. */
 export function formatMovementBrief(movements) {
