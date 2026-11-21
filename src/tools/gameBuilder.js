@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe, escapeHtmlText, escapeJsString, getErrorMessage, resolveScopedPath, resolveToolWorkspaceRoots, safeFilenameStrict, sanitizeToolError } from './toolPathSafety.js';
+const MAX_CUSTOM_HTML_CHARS = 2 * 1024 * 1024;
 function getWorkspaceTempDir() {
     const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
     if (!fsSync.existsSync(tmpDir)) {
@@ -18,7 +19,7 @@ function getSpaceDefense3dTemplate(title, _includeAudio = true) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>${title} — Causyne Sovereign Edge Game</title>
+    <title>${escapeHtmlText(title, 120)} — Causyne Sovereign Edge Game</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
         body { background: #000; overflow: hidden; font-family: 'Outfit', sans-serif; }
@@ -365,6 +366,7 @@ function getSpaceDefense3dTemplate(title, _includeAudio = true) {
                     continue;
                 }
 
+                let enemyDestroyed = false;
                 for (let j = lasers.length - 1; j >= 0; j--) {
                     if (en.position.distanceTo(lasers[j].position) < 1.8) {
                         audio.playSFX('explosion');
@@ -375,9 +377,11 @@ function getSpaceDefense3dTemplate(title, _includeAudio = true) {
                         lasers.splice(j, 1);
                         score += 100;
                         document.getElementById('score').innerText = \`SCORE: \${score}\`;
+                        enemyDestroyed = true;
                         break;
                     }
                 }
+                if (enemyDestroyed) continue;
 
                 if (en && en.position.z > 15) {
                     scene.remove(en);
@@ -427,7 +431,7 @@ function getArcadePlatformer2dTemplate(title, _includeAudio = true) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>${title} — Causyne 2D Arcade Engine</title>
+    <title>${escapeHtmlText(title, 120)} — Causyne 2D Arcade Engine</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
         body { background: #080a12; overflow: hidden; font-family: 'JetBrains Mono', monospace; display: flex; align-items: center; justify-content: center; height: 100vh; }
@@ -683,7 +687,7 @@ function getCyberpunkRacer3dTemplate(title, _includeAudio = true) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>${title} — Cyberpunk Racer 3D</title>
+    <title>${escapeHtmlText(title, 120)} — Cyberpunk Racer 3D</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
         body { background: #03050c; overflow: hidden; font-family: 'Outfit', sans-serif; }
@@ -767,7 +771,7 @@ function getTopdownRpg2dTemplate(title, _includeAudio = true) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${title} — Topdown RPG 2D</title>
+    <title>${escapeHtmlText(title, 120)} — Topdown RPG 2D</title>
     <style>
         body { margin: 0; background: #11141a; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; color: #fff; }
         canvas { background: #1b2233; border: 2px solid #3a86ff; box-shadow: 0 0 20px rgba(58,134,255,0.4); }
@@ -805,7 +809,7 @@ function getTopdownRpg2dTemplate(title, _includeAudio = true) {
             ctx.shadowColor = hero.color;
             ctx.shadowBlur = 15;
             ctx.font = 'bold 20px sans-serif';
-            ctx.fillText('${title}', 20, 35);
+            ctx.fillText(${escapeJsString(title, 120)}, 20, 35);
             requestAnimationFrame(loop);
         }
         loop();
