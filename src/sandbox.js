@@ -5,7 +5,7 @@ import { isIP } from 'node:net';
 import { loadConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { validateBrowserActSandbox } from './browser/causyneBrowser.js';
-import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
+import { isPhysicalPathAllowed, physicalPath } from './agent/workspaceBoundary.js';
 import { isBlockedWorkspaceRoot, isExtendedCredentialPath, isSensitiveWriteTarget, analyzeShellCommand, isExtremeRemovalSegment, isFetchAndExecPipeline } from './sandboxPolicy.js';
 const READ_ONLY_INVOCATIONS = {
     brew: /^brew\s+(--version|-v|list|info|search|config|outdated|deps|home|--prefix|--cellar)\b/,
@@ -191,9 +191,21 @@ export class Sandbox {
                 return { allowed: false, reason: `Path outside allowed workspace: ${p}`, risk: 'dangerous' };
             }
         }
+        const baseWorkspace = this.workspacePaths[0] || process.cwd();
         let credentialPathHit = null;
         for (const p of pathsToCheck) {
-            if (typeof p === 'string' && isCredentialPath(p)) {
+            if (typeof p !== 'string')
+                continue;
+            if (isCredentialPath(p)) {
+                credentialPathHit = p;
+                break;
+            }
+            const expanded = p === '~'
+                ? os.homedir()
+                : (p.startsWith('~/') || p.startsWith('~\\') ? path.join(os.homedir(), p.slice(2)) : p);
+            const resolvedCandidate = path.isAbsolute(expanded) ? expanded : path.resolve(baseWorkspace, expanded);
+            const real = physicalPath(resolvedCandidate);
+            if (real && isCredentialPath(real)) {
                 credentialPathHit = p;
                 break;
             }
