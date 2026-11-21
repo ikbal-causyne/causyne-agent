@@ -48,9 +48,23 @@ export function ensureVaultDir(dir) {
  * a unique sibling temporary file with mode `0o600` followed by atomic rename.
  */
 export function atomicWriteSecretFileSync(targetPath, content) {
+    if (typeof targetPath !== 'string' || !targetPath.trim() || targetPath.includes('\0')) {
+        throw new Error('Invalid secret target file path');
+    }
     const resolved = path.resolve(targetPath);
     const dir = path.dirname(resolved);
     ensureVaultDir(dir);
+    try {
+        const existing = fs.lstatSync(resolved);
+        if (existing.isSymbolicLink() || !existing.isFile()) {
+            throw new Error('Refusing to overwrite symlink or non-regular secret file');
+        }
+    }
+    catch (err) {
+        const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+        if (code !== 'ENOENT')
+            throw err;
+    }
     const suffix = `${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
     const tempPath = path.join(dir, `.${path.basename(resolved)}.${suffix}.tmp`);
     try {
