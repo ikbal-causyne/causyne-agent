@@ -138,12 +138,13 @@ export function diffLines(before: unknown, after: unknown): { ops: DiffLine[]; t
 }
 
 /** Added/removed counts, for the one-line summary. */
-export function diffStat(ops: readonly DiffLine[]): { added: number; removed: number } {
+export function diffStat(ops: readonly DiffLine[] | null | undefined): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
+  if (!Array.isArray(ops)) return { added, removed };
   for (const op of ops) {
-    if (op.kind === 'add') added++;
-    else if (op.kind === 'del') removed++;
+    if (op?.kind === 'add') added++;
+    else if (op?.kind === 'del') removed++;
   }
   return { added, removed };
 }
@@ -154,7 +155,8 @@ export function diffStat(ops: readonly DiffLine[]): { added: number; removed: nu
  * Without this, editing line 900 of a 1000-line file prints 1000 rows to show
  * one change — which is how a diff scrolls the approval question off screen.
  */
-function collapse(ops: readonly DiffLine[]): CollapsedOp[] {
+function collapse(ops: readonly DiffLine[] | null | undefined): CollapsedOp[] {
+  if (!Array.isArray(ops) || ops.length === 0) return [];
   const keep = new Array<boolean>(ops.length).fill(false);
   for (let index = 0; index < ops.length; index++) {
     if (ops[index]?.kind === 'ctx') continue;

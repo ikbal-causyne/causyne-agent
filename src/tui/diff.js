@@ -107,10 +107,12 @@ export function diffLines(before, after) {
 export function diffStat(ops) {
     let added = 0;
     let removed = 0;
+    if (!Array.isArray(ops))
+        return { added, removed };
     for (const op of ops) {
-        if (op.kind === 'add')
+        if (op?.kind === 'add')
             added++;
-        else if (op.kind === 'del')
+        else if (op?.kind === 'del')
             removed++;
     }
     return { added, removed };
@@ -122,6 +124,8 @@ export function diffStat(ops) {
  * one change — which is how a diff scrolls the approval question off screen.
  */
 function collapse(ops) {
+    if (!Array.isArray(ops) || ops.length === 0)
+        return [];
     const keep = new Array(ops.length).fill(false);
     for (let index = 0; index < ops.length; index++) {
         if (ops[index]?.kind === 'ctx')
