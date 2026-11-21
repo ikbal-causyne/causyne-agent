@@ -16,7 +16,7 @@ Learn more at [causyne.com](https://causyne.com/)
 
 This build is provided specifically for debugging, testing, and architectural evaluation. If you are exploring or debugging the harness, you can install it using the automated script or directly through npm.
 
-For macOS, Linux, or WSL:
+For macOS, Linux, or WSL: 
 
 ```sh
 curl -fsSL https://causyne.com/install.sh | bash
