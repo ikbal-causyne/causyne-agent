@@ -117,10 +117,13 @@ function dpapiBlobPath(vaultDir: string): string {
 /**
  * Loads the 32-byte vault key from the OS credential store, or returns `null` if absent/unavailable.
  */
+const SAFE_ACCOUNT_PATTERN = /^vault-key-[0-9a-f]{12}$/;
+
 export function loadVaultKeyFromKeychain(
   vaultDir: string,
   options: KeychainSpawnOptions = {}
 ): Buffer | null {
+  if (typeof vaultDir !== 'string' || !vaultDir.trim() || vaultDir.includes('\0')) return null;
   const platform = options.platform ?? process.platform;
   const runner = options.spawnSyncImpl ?? (spawnSync as unknown as NonNullable<KeychainSpawnOptions['spawnSyncImpl']>);
   const account = keychainAccountForVaultDir(vaultDir);
@@ -197,11 +200,13 @@ export function saveVaultKeyToKeychain(
   key: Buffer,
   options: KeychainSpawnOptions = {}
 ): boolean {
+  if (typeof vaultDir !== 'string' || !vaultDir.trim() || vaultDir.includes('\0')) return false;
   if (!Buffer.isBuffer(key) || key.length !== EXPECTED_KEY_BYTES) return false;
   const platform = options.platform ?? process.platform;
   const runner = options.spawnSyncImpl ?? (spawnSync as unknown as NonNullable<KeychainSpawnOptions['spawnSyncImpl']>);
   const account = keychainAccountForVaultDir(vaultDir);
   const hexKey = key.toString('hex');
+  if (!SAFE_ACCOUNT_PATTERN.test(account) || !isValidHexKey(hexKey)) return false;
 
   if (platform === 'darwin') {
     // Use interactive `-i` stdin mode so the hex key never appears in process argv (`ps`)

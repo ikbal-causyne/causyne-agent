@@ -94,7 +94,10 @@ function dpapiBlobPath(vaultDir) {
 /**
  * Loads the 32-byte vault key from the OS credential store, or returns `null` if absent/unavailable.
  */
+const SAFE_ACCOUNT_PATTERN = /^vault-key-[0-9a-f]{12}$/;
 export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
+    if (typeof vaultDir !== 'string' || !vaultDir.trim() || vaultDir.includes('\0'))
+        return null;
     const platform = options.platform ?? process.platform;
     const runner = options.spawnSyncImpl ?? spawnSync;
     const account = keychainAccountForVaultDir(vaultDir);
@@ -169,12 +172,16 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
  * secret material on command-line argv (always delivered via stdin).
  */
 export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
+    if (typeof vaultDir !== 'string' || !vaultDir.trim() || vaultDir.includes('\0'))
+        return false;
     if (!Buffer.isBuffer(key) || key.length !== EXPECTED_KEY_BYTES)
         return false;
     const platform = options.platform ?? process.platform;
     const runner = options.spawnSyncImpl ?? spawnSync;
     const account = keychainAccountForVaultDir(vaultDir);
     const hexKey = key.toString('hex');
+    if (!SAFE_ACCOUNT_PATTERN.test(account) || !isValidHexKey(hexKey))
+        return false;
     if (platform === 'darwin') {
         // Use interactive `-i` stdin mode so the hex key never appears in process argv (`ps`)
         const stdinCmd = `add-generic-password -U -s "${KEYCHAIN_SERVICE}" -a "${account}" -w "${hexKey}"\n`;
