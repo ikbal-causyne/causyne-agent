@@ -289,15 +289,21 @@ export function getOutputDir(): string {
 
 /** Current store contents, newest first — used by the CLI reporting surface. */
 export function listSpills(limit = 20): SpillListing[] {
+  const safeLimit = typeof limit === 'number' && Number.isFinite(limit)
+    ? Math.max(1, Math.min(10_000, Math.floor(limit)))
+    : 20;
   try {
     const dir = resolveOutputDir();
     if (!fs.existsSync(dir)) return [];
+    const dirStat = fs.lstatSync(dir);
+    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) return [];
     const results: SpillListing[] = [];
     for (const name of fs.readdirSync(dir)) {
       if (!name.startsWith(FILE_PREFIX)) continue;
       const file = path.join(dir, name);
       try {
-        const stats = fs.statSync(file);
+        const stats = fs.lstatSync(file);
+        if (stats.isSymbolicLink() || !stats.isFile()) continue;
         results.push({ path: file, bytes: stats.size, modified: stats.mtimeMs });
       } catch {
         // skip inaccessible entry
@@ -305,7 +311,7 @@ export function listSpills(limit = 20): SpillListing[] {
     }
     return results
       .sort((a, b) => b.modified - a.modified)
-      .slice(0, limit);
+      .slice(0, safeLimit);
   } catch {
     return [];
   }
