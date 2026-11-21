@@ -12,22 +12,26 @@ import {
 
 export type MemoryStoreData = PersistentMemoryData;
 
-const MEMORY_FILE_PATH = path.join(causyneHome(), 'memory.json');
+function memoryFilePath(): string {
+  return path.join(causyneHome(), 'memory.json');
+}
 
-function initMemory(): void {
-  const dir = path.dirname(MEMORY_FILE_PATH);
+function initMemory(): string {
+  const filePath = memoryFilePath();
+  const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  if (!fs.existsSync(MEMORY_FILE_PATH)) {
-    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify({ facts: [] }, null, 2));
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, JSON.stringify({ facts: [] }, null, 2));
   }
+  return filePath;
 }
 
 export function getMemory(): MemoryStoreData {
   try {
-    initMemory();
-    const data = fs.readFileSync(MEMORY_FILE_PATH, 'utf-8');
+    const filePath = initMemory();
+    const data = fs.readFileSync(filePath, 'utf-8');
     return normalizeMemoryData(JSON.parse(data));
   } catch (e: unknown) {
     console.error('Failed to read memory.json:', e instanceof Error ? e.message : String(e));
@@ -37,8 +41,8 @@ export function getMemory(): MemoryStoreData {
 
 export function saveMemory(data: MemoryStoreData): void {
   try {
-    initMemory();
-    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(data, null, 2));
+    const filePath = initMemory();
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
   } catch (e: unknown) {
     console.error('Failed to write memory.json:', e instanceof Error ? e.message : String(e));
   }
@@ -54,8 +58,8 @@ export function addFact(factStr: string, options: RecordFactOptions = {}): void 
 
 export function clearMemory(): void {
   try {
-    initMemory();
-    fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify({ facts: [], entries: [] }, null, 2));
+    const filePath = initMemory();
+    fs.writeFileSync(filePath, JSON.stringify({ facts: [], entries: [] }, null, 2));
   } catch (e: unknown) {
     console.error('Failed to clear memory:', e instanceof Error ? e.message : String(e));
   }

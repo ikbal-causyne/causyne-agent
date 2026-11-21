@@ -2,20 +2,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 import { formatMemoryContext, normalizeMemoryData, recordScopedFact } from './memory/scopedFacts.js';
-const MEMORY_FILE_PATH = path.join(causyneHome(), 'memory.json');
+function memoryFilePath() {
+    return path.join(causyneHome(), 'memory.json');
+}
 function initMemory() {
-    const dir = path.dirname(MEMORY_FILE_PATH);
+    const filePath = memoryFilePath();
+    const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
-    if (!fs.existsSync(MEMORY_FILE_PATH)) {
-        fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify({ facts: [] }, null, 2));
+    if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, JSON.stringify({ facts: [] }, null, 2));
     }
+    return filePath;
 }
 export function getMemory() {
     try {
-        initMemory();
-        const data = fs.readFileSync(MEMORY_FILE_PATH, 'utf-8');
+        const filePath = initMemory();
+        const data = fs.readFileSync(filePath, 'utf-8');
         return normalizeMemoryData(JSON.parse(data));
     }
     catch (e) {
@@ -25,8 +29,8 @@ export function getMemory() {
 }
 export function saveMemory(data) {
     try {
-        initMemory();
-        fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify(data, null, 2));
+        const filePath = initMemory();
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
     }
     catch (e) {
         console.error('Failed to write memory.json:', e instanceof Error ? e.message : String(e));
@@ -41,8 +45,8 @@ export function addFact(factStr, options = {}) {
 }
 export function clearMemory() {
     try {
-        initMemory();
-        fs.writeFileSync(MEMORY_FILE_PATH, JSON.stringify({ facts: [], entries: [] }, null, 2));
+        const filePath = initMemory();
+        fs.writeFileSync(filePath, JSON.stringify({ facts: [], entries: [] }, null, 2));
     }
     catch (e) {
         console.error('Failed to clear memory:', e instanceof Error ? e.message : String(e));
