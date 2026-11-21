@@ -137,7 +137,7 @@ export function loadVaultKeyFromKeychain(
       windowsHide: true,
       shell: false
     });
-    if (res.status !== 0 || typeof res.stdout !== 'string') return null;
+    if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string') return null;
     const hex = res.stdout.trim();
     return isValidHexKey(hex) ? Buffer.from(hex, 'hex') : null;
   }
@@ -220,7 +220,7 @@ export function saveVaultKeyToKeychain(
       windowsHide: true,
       shell: false
     });
-    return res.status === 0;
+    return Boolean(res && !res.error && res.status === 0);
   }
 
   if (platform === 'linux') {
@@ -237,7 +237,7 @@ export function saveVaultKeyToKeychain(
         shell: false
       }
     );
-    return res.status === 0;
+    return Boolean(res && !res.error && res.status === 0);
   }
 
   if (platform === 'win32') {

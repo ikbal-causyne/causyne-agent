@@ -110,7 +110,7 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
             windowsHide: true,
             shell: false
         });
-        if (res.status !== 0 || typeof res.stdout !== 'string')
+        if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string')
             return null;
         const hex = res.stdout.trim();
         return isValidHexKey(hex) ? Buffer.from(hex, 'hex') : null;
@@ -194,7 +194,7 @@ export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
             windowsHide: true,
             shell: false
         });
-        return res.status === 0;
+        return Boolean(res && !res.error && res.status === 0);
     }
     if (platform === 'linux') {
         const res = runner('secret-tool', ['store', '--label', 'Causyne Agent Vault Key', 'service', KEYCHAIN_SERVICE, 'account', account], {
@@ -206,7 +206,7 @@ export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
             windowsHide: true,
             shell: false
         });
-        return res.status === 0;
+        return Boolean(res && !res.error && res.status === 0);
     }
     if (platform === 'win32') {
         const script = [
