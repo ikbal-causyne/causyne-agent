@@ -38,7 +38,7 @@ export const procTerm = {
                 }
                 targetPids.push(numericPid);
             }
-            else if (args.name || args.port !== undefined) {
+            else if (safeArgs.name || safeArgs.port !== undefined) {
                 const capability = await ensureCapability('system');
                 if (!capability.ok) {
                     return {
@@ -49,23 +49,34 @@ export const procTerm = {
                 }
                 const si = await loadCapabilityPackage('systeminformation');
                 let results = [];
-                if (args.name) {
-                    const wanted = String(args.name).toLowerCase();
+                if (safeArgs.name !== undefined) {
+                    if (typeof safeArgs.name !== 'string' || safeArgs.name.trim().length < 2) {
+                        return { success: false, error: 'Process name filter must be at least 2 characters to prevent mass termination.' };
+                    }
+                    const wanted = safeArgs.name.trim().toLowerCase();
                     const data = await si.processes();
                     results = (data.list || []).filter((proc) => String(proc.name || '').toLowerCase().includes(wanted) ||
                         String(proc.command || '').toLowerCase().includes(wanted));
                 }
-                else if (args.port !== undefined) {
+                else if (safeArgs.port !== undefined) {
+                    const portNum = Number(safeArgs.port);
+                    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+                        return { success: false, error: 'port must be an integer between 1 and 65535.' };
+                    }
                     const connections = await si.networkConnections();
-                    const wanted = String(args.port);
+                    const wanted = String(portNum);
                     results = (connections || [])
                         .filter((conn) => String(conn.localPort) === wanted && conn.pid)
                         .map((conn) => ({ pid: Number(conn.pid) }));
                 }
-                if (results.length === 0) {
-                    return { success: false, error: `No matching processes found for ${args.name || 'port ' + String(args.port)}` };
+                targetPids = [...new Set(results.map((proc) => Number(proc.pid)))]
+                    .filter((pid) => Number.isInteger(pid) && pid > 1 && !protectedPids.has(pid));
+                if (targetPids.length === 0) {
+                    return { success: false, error: `No matching safe processes found for ${sanitizeToolText(safeArgs.name || 'port ' + String(safeArgs.port), 80)}` };
                 }
-                targetPids = [...new Set(results.map((proc) => Number(proc.pid)))].filter(Number.isInteger);
+                if (targetPids.length > MAX_SIGNAL_TARGETS) {
+                    return { success: false, error: `Filter matched ${targetPids.length} processes (max ${MAX_SIGNAL_TARGETS}); narrow your target or pass an explicit pid.` };
+                }
             }
             else {
                 return { success: false, error: 'Must provide pid, name, or port' };
