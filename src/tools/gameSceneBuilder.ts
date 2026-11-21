@@ -141,10 +141,11 @@ export const gameSceneBuilder = {
       }
 
       if (action === 'inspect_scene') {
-        if (!scenePath || !fsSync.existsSync(scenePath)) {
-          return { success: false, error: `Scene file not found: ${String(scenePath ?? '')}` };
+        if (!scenePath) {
+          return { success: false, error: 'Scene file path is required.' };
         }
-        const raw = await fs.readFile(scenePath, 'utf8');
+        const checked = await assertSafeWorkspaceInput(scenePath, sandbox, { maxBytes: MAX_SCENE_BYTES });
+        const raw = await fs.readFile(checked.resolved, 'utf8');
         const nodeMatches = [...raw.matchAll(/\[node name="([^"]+)" type="([^"]+)"(?: parent="([^"]+)")?\]/g)];
         const nodes = nodeMatches.map((m) => ({
           name: m[1] ?? '',
@@ -167,17 +168,20 @@ export const gameSceneBuilder = {
         if (!signalConfig || !signalConfig.signal_name) {
           return { success: false, error: 'signalConfig with signal_name, from_node, to_node, and method_name is required.' };
         }
-        const connHeader = `\n[connection signal="${signalConfig.signal_name}" from="${signalConfig.from_node ?? ''}" to="${signalConfig.to_node ?? ''}" method="${signalConfig.method_name ?? ''}"]\n`;
-
-        if (scenePath && fsSync.existsSync(scenePath)) {
-          await fs.appendFile(scenePath, connHeader, 'utf8');
+        if (!scenePath) {
+          return { success: false, error: 'scenePath is required for bind_signal.' };
         }
+        const checked = await assertSafeWorkspaceInput(scenePath, sandbox, { maxBytes: MAX_SCENE_BYTES });
+        const safePath = await assertSafeWorkspaceOutput(checked.resolved, sandbox);
+        const existing = await fs.readFile(safePath, 'utf8');
+        const connHeader = `\n[connection signal="${escapeGodotString(signalConfig.signal_name, 128)}" from="${escapeGodotString(signalConfig.from_node ?? '', 128)}" to="${escapeGodotString(signalConfig.to_node ?? '', 128)}" method="${escapeGodotString(signalConfig.method_name ?? '', 128)}"]\n`;
+        await atomicWriteFileSafe(safePath, existing + connHeader);
 
         return {
           success: true,
           output: JSON.stringify({
             status: 'BOUND_SIGNAL',
-            scene_path: scenePath,
+            scene_path: safePath,
             connection: signalConfig,
             snippet: connHeader.trim()
           }, null, 2)
@@ -186,7 +190,7 @@ export const gameSceneBuilder = {
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
