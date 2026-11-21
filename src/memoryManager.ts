@@ -12,7 +12,9 @@ import {
 } from './sessionStore.js';
 import { causyneHome } from './utils/paths.js';
 
-const MEMORY_DIR = path.join(causyneHome(), 'memory');
+function memoryDir(): string {
+  return path.join(causyneHome(), 'memory');
+}
 
 const MAX_PERSISTED_MESSAGES = 120;
 const MAX_PERSISTED_CHARS = 400000;
@@ -65,8 +67,9 @@ export class MemoryManager {
   }
 
   ensureMemoryDir(): void {
-    if (!fs.existsSync(MEMORY_DIR)) {
-      fs.mkdirSync(MEMORY_DIR, { recursive: true, mode: 0o700 });
+    const dir = memoryDir();
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
   }
 

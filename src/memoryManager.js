@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveSession, createSession, getSession, switchSession, saveSessionMessages, forkSession } from './sessionStore.js';
 import { causyneHome } from './utils/paths.js';
-const MEMORY_DIR = path.join(causyneHome(), 'memory');
+function memoryDir() {
+    return path.join(causyneHome(), 'memory');
+}
 const MAX_PERSISTED_MESSAGES = 120;
 const MAX_PERSISTED_CHARS = 400000;
 const MAX_SINGLE_MESSAGE_CHARS = 40000;
@@ -53,8 +55,9 @@ export class MemoryManager {
         return forked;
     }
     ensureMemoryDir() {
-        if (!fs.existsSync(MEMORY_DIR)) {
-            fs.mkdirSync(MEMORY_DIR, { recursive: true, mode: 0o700 });
+        const dir = memoryDir();
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
         }
     }
     loadHistory() {
