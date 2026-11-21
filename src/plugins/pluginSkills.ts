@@ -76,6 +76,12 @@ export function parsePluginSkills(
   pluginName: string,
   value: unknown
 ): PluginSkill[] {
+  if (typeof directory !== 'string' || !directory || directory.includes('\0')) {
+    throw new Error('Invalid plugin directory');
+  }
+  if (typeof pluginName !== 'string' || !SKILL_ID.test(pluginName)) {
+    throw new Error(`Invalid plugin name ${JSON.stringify(pluginName)}`);
+  }
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error('Plugin skills must be an array');
   if (value.length > MAX_SKILLS_PER_PLUGIN) {

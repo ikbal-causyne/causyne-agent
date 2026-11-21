@@ -51,6 +51,12 @@ function readSkillFile(file) {
  * whole-directory digest against the explicit enablement record.
  */
 export function parsePluginSkills(directory, pluginName, value) {
+    if (typeof directory !== 'string' || !directory || directory.includes('\0')) {
+        throw new Error('Invalid plugin directory');
+    }
+    if (typeof pluginName !== 'string' || !SKILL_ID.test(pluginName)) {
+        throw new Error(`Invalid plugin name ${JSON.stringify(pluginName)}`);
+    }
     if (value === undefined)
         return [];
     if (!Array.isArray(value))
