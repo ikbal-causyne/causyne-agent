@@ -1176,6 +1176,8 @@ export class AgentLoop {
             // ACP expects the actual requested text, not the host tool's paging
             // warning appended to a silently shortened file.
             const stat = fsSync.statSync(target);
+            if (!stat.isFile())
+                throw new Error('ACP read_text_file requires a regular file');
             if (stat.size > 4 * 1024 * 1024)
                 throw new Error('ACP text file exceeds the 4 MiB client transfer limit');
             const bytes = fsSync.readFileSync(target);
