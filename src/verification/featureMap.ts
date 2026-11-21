@@ -10,7 +10,7 @@ export interface FeatureDefinition {
 
 export type SelectedFeature = FeatureDefinition & { id: string };
 
-export const FEATURE_MAP: Readonly<Record<string, FeatureDefinition>> = Object.freeze({
+const RAW_FEATURE_MAP: Record<string, FeatureDefinition> = {
   'tui-usage': {
     surface: 'terminal',
     entry: '/usage and /status',
@@ -76,7 +76,16 @@ export const FEATURE_MAP: Readonly<Record<string, FeatureDefinition>> = Object.f
     automated: ['tests/boundedExplorer.test.ts', 'tests/cliProbe.test.ts'],
     liveRequired: 'For unbounded guarantees, run a real external model checker or proof assistant'
   }
-});
+};
+
+export const FEATURE_MAP: Readonly<Record<string, FeatureDefinition>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(RAW_FEATURE_MAP).map(([id, def]) => [
+      id,
+      Object.freeze({ ...def, automated: Object.freeze([...def.automated]) })
+    ])
+  )
+);
 
 export function selectFeatures(names: readonly unknown[]): SelectedFeature[] {
   if (!Array.isArray(names) || names.length === 0) throw new Error('At least one feature is required');

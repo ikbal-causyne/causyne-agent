@@ -1,4 +1,4 @@
-export const FEATURE_MAP = Object.freeze({
+const RAW_FEATURE_MAP = {
     'tui-usage': {
         surface: 'terminal',
         entry: '/usage and /status',
@@ -64,7 +64,11 @@ export const FEATURE_MAP = Object.freeze({
         automated: ['tests/boundedExplorer.test.ts', 'tests/cliProbe.test.ts'],
         liveRequired: 'For unbounded guarantees, run a real external model checker or proof assistant'
     }
-});
+};
+export const FEATURE_MAP = Object.freeze(Object.fromEntries(Object.entries(RAW_FEATURE_MAP).map(([id, def]) => [
+    id,
+    Object.freeze({ ...def, automated: Object.freeze([...def.automated]) })
+])));
 export function selectFeatures(names) {
     if (!Array.isArray(names) || names.length === 0)
         throw new Error('At least one feature is required');
