@@ -357,7 +357,8 @@
     "src/tools/fsDelete.ts",
     "src/tools/fsMove.ts",
     "src/tools/toolForge.ts",
-    "src/tools/pluginManager.ts"
+    "src/tools/pluginManager.ts",
+    "src/tools/astryxOracle.ts"
   ],
   "exclude": [
     "node_modules",
