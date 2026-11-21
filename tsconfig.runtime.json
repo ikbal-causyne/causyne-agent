@@ -356,7 +356,8 @@
     "src/tools/dynamicLoader.ts",
     "src/tools/fsDelete.ts",
     "src/tools/fsMove.ts",
-    "src/tools/toolForge.ts"
+    "src/tools/toolForge.ts",
+    "src/tools/pluginManager.ts"
   ],
   "exclude": [
     "node_modules",
