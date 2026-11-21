@@ -92,7 +92,7 @@ export function grantedGroups() {
     return GROUP_NAMES.filter(isGroupGranted);
 }
 export function grantGroup(group) {
-    if (!GROUP_PACKAGES[group])
+    if (!isKnownGroup(group))
         return false;
     const config = loadConfig();
     config.capabilityConsent = { ...(config.capabilityConsent || {}), [group]: true };
@@ -101,6 +101,8 @@ export function grantGroup(group) {
 }
 export { isGroupGranted, isGroupDeclined };
 export function revokeGroup(group) {
+    if (!isKnownGroup(group))
+        return false;
     const config = loadConfig();
     config.capabilityConsent = { ...(config.capabilityConsent || {}), [group]: false };
     saveConfig(config);

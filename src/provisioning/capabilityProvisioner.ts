@@ -117,7 +117,7 @@ export function grantedGroups(): string[] {
 }
 
 export function grantGroup(group: string): boolean {
-  if (!GROUP_PACKAGES[group]) return false;
+  if (!isKnownGroup(group)) return false;
   const config = loadConfig();
   config.capabilityConsent = { ...(config.capabilityConsent || {}), [group]: true };
   saveConfig(config);
@@ -127,6 +127,7 @@ export function grantGroup(group: string): boolean {
 export { isGroupGranted, isGroupDeclined };
 
 export function revokeGroup(group: string): boolean {
+  if (!isKnownGroup(group)) return false;
   const config = loadConfig();
   config.capabilityConsent = { ...(config.capabilityConsent || {}), [group]: false };
   saveConfig(config);
