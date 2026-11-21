@@ -468,7 +468,12 @@ export async function safeProviderFetchJson<T = Record<string, unknown>>(
 
     // Minimal unit-test mocks may supply `.json()` without `.body` or `.text()`.
     if (!response.body && typeof response.text !== 'function' && typeof response.json === 'function') {
-      return (await response.json()) as T;
+      try {
+        return (await response.json()) as T;
+      } catch (err: unknown) {
+        const safeErr = redactProviderSecrets(err instanceof Error ? err.message : String(err), options.secrets);
+        throw new Error(`${options.providerLabel} returned a non-JSON response (HTTP ${response.status}): ${safeErr}`);
+      }
     }
 
     const rawText = await readBoundedResponseText(

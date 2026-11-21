@@ -373,7 +373,13 @@ export async function safeProviderFetchJson(options) {
         }
         // Minimal unit-test mocks may supply `.json()` without `.body` or `.text()`.
         if (!response.body && typeof response.text !== 'function' && typeof response.json === 'function') {
-            return (await response.json());
+            try {
+                return (await response.json());
+            }
+            catch (err) {
+                const safeErr = redactProviderSecrets(err instanceof Error ? err.message : String(err), options.secrets);
+                throw new Error(`${options.providerLabel} returned a non-JSON response (HTTP ${response.status}): ${safeErr}`);
+            }
         }
         const rawText = await readBoundedResponseText(response, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, { truncate: false, label: options.providerLabel });
         const cleanText = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
