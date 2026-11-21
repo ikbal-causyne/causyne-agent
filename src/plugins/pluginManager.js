@@ -659,14 +659,26 @@ async function runPluginTool(tool, args, context) {
     const runToken = crypto.randomBytes(16).toString('hex');
     const resultMarker = `CAUSYNE_PLUGIN_RESULT:${runToken}:`;
     return new Promise((resolve) => {
+        const childEnv = {
+            PATH: process.env.PATH || process.env.Path || '',
+            LANG: process.env.LANG || 'C.UTF-8',
+            TMPDIR: process.env.TMPDIR || '',
+            CAUSYNE_PLUGIN_TOKEN: runToken
+        };
+        if (process.platform === 'win32') {
+            if (process.env.SystemRoot)
+                childEnv.SystemRoot = process.env.SystemRoot;
+            if (process.env.TEMP)
+                childEnv.TEMP = process.env.TEMP;
+            if (process.env.TMP)
+                childEnv.TMP = process.env.TMP;
+            if (process.env.PATHEXT)
+                childEnv.PATHEXT = process.env.PATHEXT;
+        }
         const child = spawn(process.execPath, childArgs, {
             stdio: ['pipe', 'pipe', 'pipe'],
-            env: {
-                PATH: process.env.PATH || '',
-                LANG: process.env.LANG || 'C.UTF-8',
-                TMPDIR: process.env.TMPDIR || '',
-                CAUSYNE_PLUGIN_TOKEN: runToken
-            }
+            windowsHide: true,
+            env: childEnv
         });
         let stdout = '';
         let stderr = '';
