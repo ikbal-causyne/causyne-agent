@@ -383,7 +383,8 @@
     "src/tools/gameLoreForge.ts",
     "src/tools/gameSceneBuilder.ts",
     "src/tools/gameEconomyBalancer.ts",
-    "src/tools/gameTilemapGenerator.ts"
+    "src/tools/gameTilemapGenerator.ts",
+    "src/tools/gameDialogueTreeGen.ts"
   ],
   "exclude": [
     "node_modules",
