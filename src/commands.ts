@@ -2467,9 +2467,13 @@ export const COMMANDS: SlashCommandDefinition[] = [
       const session = getSession(activeId);
       const currentTitle = session ? session.title : 'Untitled';
 
-      const newTitle = argv.join(' ').trim();
+      const rawTitle = argv.join(' ').trim();
+      if (!rawTitle) {
+        return ok(`Active session ID: ${safeDisplay(activeId)}\nCurrent title: "${safeDisplay(currentTitle)}"\n\nTo rename, run: /title <new name>`);
+      }
+      const newTitle = safeDisplay(rawTitle).replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
       if (!newTitle) {
-        return ok(`Active session ID: ${activeId}\nCurrent title: "${currentTitle}"\n\nTo rename, run: /title <new name>`);
+        return fail('Session title cannot be empty.');
       }
 
       const renamed = renameSession(activeId, newTitle);
