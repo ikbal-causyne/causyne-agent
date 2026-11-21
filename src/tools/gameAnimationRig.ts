@@ -1,6 +1,10 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  escapeGodotString,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface AnimationClipInput {
   anim_name?: string | undefined;
@@ -54,7 +58,7 @@ export const gameAnimationRig = {
     }
   },
 
-  async execute(args: GameAnimationRigArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameAnimationRigArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const {
         action, characterName = 'Character', animationList = [],
@@ -78,7 +82,7 @@ export const gameAnimationRig = {
 
         for (const anim of rawAnims) {
           if (!anim || typeof anim !== 'object') continue;
-          const animName = String(anim.anim_name || `anim_${stepCount}`);
+          const animName = escapeGodotString(anim.anim_name || `anim_${stepCount}`, 80);
           const frames = Array.isArray(anim.frames) ? anim.frames.slice(0, 256).map((f) => (Number.isFinite(Number(f)) ? Math.max(0, Math.floor(Number(f))) : 0)) : [0];
           const fps = Number.isFinite(Number(anim.fps)) && Number(anim.fps) > 0 ? Math.min(240, Number(anim.fps)) : 10;
           const duration = (frames.length / fps).toFixed(3);
@@ -117,10 +121,10 @@ ${animLibEntries.trim()}
         const safeV = Number.isFinite(Number(vFrames)) ? Math.max(1, Math.min(256, Math.floor(Number(vFrames)))) : 4;
         const sceneTree = `[gd_scene load_steps=${stepCount + 2} format=3]
 
-[ext_resource type="Texture2D" path="${spriteSheetPath}" id="1_tex"]
+[ext_resource type="Texture2D" path="${escapeGodotString(spriteSheetPath, 260)}" id="1_tex"]
 
 ${animSubresources}
-[node name="${characterName}" type="CharacterBody2D"]
+[node name="${escapeGodotString(characterName, 100)}" type="CharacterBody2D"]
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 texture = ExtResource("1_tex")
@@ -134,8 +138,8 @@ libraries = {
 `;
 
         if (outputPath) {
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
-          await fs.writeFile(outputPath, sceneTree, 'utf8');
+          const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+          await atomicWriteFileSafe(finalPath, sceneTree);
         }
 
         return {
@@ -168,7 +172,7 @@ libraries = {
             ]
           },
           gdscript_integration: `
-# Paste into ${characterName}.gd
+# Paste into ${escapeGodotString(characterName, 100)}.gd
 @onready var anim_tree: AnimationTree = $AnimationTree
 @onready var state_machine = anim_tree.get("parameters/playback")
 
@@ -183,10 +187,12 @@ func _physics_process(delta: float) -> void:
       }
 
       if (action === 'attach_weapon_bone') {
-        const attachmentSnippet = `[node name="BoneAttachment_${boneName}" type="BoneAttachment3D" parent="Skeleton3D"]
-bone_name = "${boneName}"
+        const safeBone = escapeGodotString(boneName, 80);
+        const safeProp = escapeGodotString(propScenePath, 260);
+        const attachmentSnippet = `[node name="BoneAttachment_${safeBone}" type="BoneAttachment3D" parent="Skeleton3D"]
+bone_name = "${safeBone}"
 
-[node name="EquippedWeapon" parent="Skeleton3D/BoneAttachment_${boneName}" instance=ExtResource("${propScenePath}")]
+[node name="EquippedWeapon" parent="Skeleton3D/BoneAttachment_${safeBone}" instance=ExtResource("${safeProp}")]
 position = Vector3(0, 0.1, 0)
 rotation_degrees = Vector3(90, 0, 0)
 `;
@@ -203,7 +209,7 @@ rotation_degrees = Vector3(90, 0, 0)
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
