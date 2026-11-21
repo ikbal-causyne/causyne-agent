@@ -140,8 +140,6 @@ export class Sandbox {
   grantAllAccess: boolean;
   allowedTools: string[];
   deniedTools: Set<string>;
-  parentLoop?: any;
-  signal?: AbortSignal | undefined;
 
   constructor(options?: SandboxOptions | null) {
     const safeOptions = options && typeof options === 'object' ? options : {};

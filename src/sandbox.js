@@ -117,8 +117,6 @@ export class Sandbox {
     grantAllAccess;
     allowedTools;
     deniedTools;
-    parentLoop;
-    signal;
     constructor(options) {
         const safeOptions = options && typeof options === 'object' ? options : {};
         const candidateRoot = typeof safeOptions.workspaceRoot === 'string' && safeOptions.workspaceRoot.trim()
