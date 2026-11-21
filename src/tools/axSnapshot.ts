@@ -77,9 +77,9 @@ function formatRows(raw: string, maxNodes: number): string | null {
   const lines: string[] = [];
   for (const row of rows) {
     const parts = row.split('|');
-    const role = parts[0] ?? '';
-    const title = parts[1] ?? '';
-    const value = parts.slice(2).join('|');
+    const role = sanitizeToolText(parts[0] ?? '', 80);
+    const title = sanitizeToolText(parts[1] ?? '', 240);
+    const value = sanitizeToolText(parts.slice(2).join('|'), 240);
     const label = [title, value].filter(Boolean).join(' = ');
     lines.push(label ? `${role}: ${label}` : role);
   }
@@ -168,7 +168,7 @@ export const axSnapshot = {
         error: 'Reading the accessibility tree is supported on macOS and Windows. On this platform, use screenshot({analyzeText:true}) for OCR bounding boxes instead.'
       };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };

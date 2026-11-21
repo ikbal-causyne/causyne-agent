@@ -70,9 +70,9 @@ function formatRows(raw, maxNodes) {
     const lines = [];
     for (const row of rows) {
         const parts = row.split('|');
-        const role = parts[0] ?? '';
-        const title = parts[1] ?? '';
-        const value = parts.slice(2).join('|');
+        const role = sanitizeToolText(parts[0] ?? '', 80);
+        const title = sanitizeToolText(parts[1] ?? '', 240);
+        const value = sanitizeToolText(parts.slice(2).join('|'), 240);
         const label = [title, value].filter(Boolean).join(' = ');
         lines.push(label ? `${role}: ${label}` : role);
     }
@@ -139,7 +139,7 @@ export const axSnapshot = {
             };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
