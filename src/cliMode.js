@@ -181,8 +181,11 @@ async function runHomeAction(action, { prompt, conn, finish, loop }) {
             if (!prompt)
                 return null;
             const { empty } = await mcpPicker(prompt, async (server) => {
+                const safeName = typeof server?.name === 'string' ? server.name.trim() : '';
+                if (!safeName || /[\s\x00-\x1f\x7f]/.test(safeName))
+                    return;
                 const verb = server.granted ? 'revoke' : 'grant';
-                const result = await handleInput(`/mcp ${verb} ${server.name}`, { surface: 'terminal' });
+                const result = await handleInput(`/mcp ${verb} ${safeName}`, { surface: 'terminal' });
                 if (result)
                     conn.renderer.write('\n' + wrapBlock(result.output, conn.renderer.width()).join('\n') + '\n');
                 reopen();
@@ -474,8 +477,11 @@ export async function chatMode({ home = false } = {}) {
             }
             if (commandResult.effect === 'pick-mcp' && prompt) {
                 const { empty } = await mcpPicker(prompt, (server) => {
+                    const safeName = typeof server?.name === 'string' ? server.name.trim() : '';
+                    if (!safeName || /[\s\x00-\x1f\x7f]/.test(safeName))
+                        return;
                     const verb = server.granted ? 'revoke' : 'grant';
-                    prompt.deliver(`/mcp ${verb} ${server.name}`);
+                    prompt.deliver(`/mcp ${verb} ${safeName}`);
                 });
                 if (empty)
                     prompt.showText('MCP servers', commandResult.output);
