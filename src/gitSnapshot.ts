@@ -300,18 +300,34 @@ export function restoreTree(worktree: string, fromTree: string): void {
   if (current) {
     let raw = '';
     try {
-      raw = runGit(['--git-dir', gitDir, 'diff', '--name-status', '-z', current, fromTree]);
+      raw = runGit(['--git-dir', gitDir, 'diff', '--no-renames', '--name-status', '-z', current, fromTree]);
     } catch {
       raw = '';
     }
-    const parts = raw.split('\0').filter(Boolean);
-    for (let i = 0; i + 1 < parts.length; i += 2) {
+    const parts = raw.split('\0');
+    const root = path.resolve(worktree);
+    let i = 0;
+    while (i < parts.length) {
       const status = parts[i] ?? '';
+      if (!status) { i++; continue; }
+      const code = status[0];
+      if (code === 'R' || code === 'C') {
+        // Rename/copy records carry 3 NUL-delimited fields: status, oldPath, newPath.
+        const oldRel = parts[i + 1] ?? '';
+        i += 3;
+        if (code === 'R' && oldRel) {
+          const absolute = path.resolve(worktree, oldRel);
+          if (absolute !== root && absolute.startsWith(root + path.sep)) {
+            toRemove.push(absolute);
+          }
+        }
+        continue;
+      }
       const rel = parts[i + 1] ?? '';
-      if (!status || !rel || status[0] !== 'D') continue;
+      i += 2;
+      if (code !== 'D' || !rel) continue;
 
       const absolute = path.resolve(worktree, rel);
-      const root = path.resolve(worktree);
       if (absolute !== root && !absolute.startsWith(root + path.sep)) continue;
       toRemove.push(absolute);
     }
