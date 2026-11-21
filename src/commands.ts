@@ -2050,13 +2050,22 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
       if (action === 'add') {
         if (!peerId) return fail('Usage: /peers add <id> <command> [args…]');
-        if (rest.length === 0) return fail(`Give "${peerId}" a command to run (e.g. opencode acp).`);
+        const normalizedPeerId = peerId.trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(normalizedPeerId)) {
+          return fail('Invalid peer id. Use 1-64 lowercase letters, digits, dots, hyphens, or underscores.');
+        }
+        if (rest.length === 0) return fail(`Give "${normalizedPeerId}" a command to run (e.g. opencode acp).`);
+        const cmd = rest[0] || '';
+        const peerArgs = rest.slice(1);
+        if (!cmd.trim() || /[\r\n\0]/.test(cmd) || peerArgs.some(a => /[\r\n\0]/.test(a))) {
+          return fail('Peer command and arguments must not contain control characters or NUL bytes.');
+        }
 
         const newProfile = {
-          id: peerId.trim().toLowerCase(),
-          label: peerId,
-          command: rest[0] || '',
-          args: rest.slice(1),
+          id: normalizedPeerId,
+          label: safeDisplay(peerId),
+          command: cmd,
+          args: peerArgs,
           cwd: null,
           policy: 'workspace' as const,
           timeoutSeconds: 180,
