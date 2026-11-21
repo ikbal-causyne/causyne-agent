@@ -1,6 +1,12 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import {
+  assertSafeWorkspaceOutput,
+  atomicWriteFileSafe,
+  resolveToolWorkspaceRoots,
+  safeSlugIdentifier,
+  sanitizeToolError,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface GameShaderArgs {
   action?: string | undefined;
@@ -35,7 +41,7 @@ export const gameShaderForge = {
     }
   },
 
-  async execute(args: GameShaderArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: GameShaderArgs = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { action, preset = 'hit_flash_2d', shaderType = 'canvas_item', customParameters, outputPath } = args || {};
       const params = customParameters && typeof customParameters === 'object' ? customParameters : {};
@@ -148,9 +154,11 @@ void fragment() {
         }
 
         if (outputPath || action === 'save_shader') {
-          const finalPath = outputPath || path.join(process.cwd(), '.tmp_causyne_3d', `shader_${preset}.gdshader`);
-          await fs.mkdir(path.dirname(finalPath), { recursive: true });
-          await fs.writeFile(finalPath, code, 'utf8');
+          const defaultRoot = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+          const presetSlug = safeSlugIdentifier(preset, 'shader', 48);
+          const rawPath = outputPath || path.join(defaultRoot, '.tmp_causyne_3d', `shader_${presetSlug}.gdshader`);
+          const finalPath = await assertSafeWorkspaceOutput(rawPath, sandbox);
+          await atomicWriteFileSafe(finalPath, code);
         }
 
         return {
@@ -167,7 +175,7 @@ void fragment() {
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
