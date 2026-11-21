@@ -60,14 +60,43 @@ export const gameWebRuntimeInspector = {
                 args: ['--autoplay-policy=no-user-gesture-required']
             });
             const page = await browser.newPage();
+            if (typeof page.setRequestInterception === 'function') {
+                await page.setRequestInterception(true);
+                page.on('request', async (req) => {
+                    try {
+                        const reqUrl = String(req.url() || '');
+                        if (reqUrl.startsWith('data:') || reqUrl.startsWith('blob:')) {
+                            await req.continue();
+                            return;
+                        }
+                        if (reqUrl.startsWith('file://')) {
+                            const reqPath = path.resolve(fileURLToPath(new URL(reqUrl)));
+                            if (localRoot && (reqPath === localRoot || reqPath.startsWith(localRoot + path.sep))) {
+                                await req.continue();
+                                return;
+                            }
+                            await req.abort();
+                            return;
+                        }
+                        await assertBrowserNavigableUrl(reqUrl);
+                        await req.continue();
+                    }
+                    catch {
+                        await req.abort().catch(() => { });
+                    }
+                });
+            }
+            if (sandbox?.signal?.aborted) {
+                return { success: false, error: 'Runtime inspection aborted' };
+            }
             const errors = [];
             page.on('pageerror', (err) => {
                 if (errors.length < 100)
-                    errors.push(String(err).slice(0, 512));
+                    errors.push(sanitizeToolText(err, 512));
             });
             page.on('console', (msg) => {
                 if (msg.type() === 'error' && errors.length < 100) {
-                    errors.push(String(msg.text()).slice(0, 512));
+                    errors.push(sanitizeToolText(msg.text(), 512));
                 }
             });
             await page.goto(url, { waitUntil: 'load', timeout: 15000 }).catch((e) => {
@@ -118,7 +147,7 @@ export const gameWebRuntimeInspector = {
             };
         }
         catch (e) {
-            return { success: false, error: 'Runtime Inspector crashed: ' + getErrorMessage(e) };
+            return { success: false, error: 'Runtime Inspector crashed: ' + sanitizeToolError(e) };
         }
         finally {
             if (browser) {
