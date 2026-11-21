@@ -27,6 +27,12 @@ import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
 import { runHeadlessTask, parsePermissionMode, parseMaxTurns } from './headlessCli.js';
 
+let cliTaskSequence = 0;
+function nextCliTaskId(prefix: string): string {
+  cliTaskSequence += 1;
+  return `${prefix}_${Date.now()}_${cliTaskSequence}`;
+}
+
 function logoLines(): string {
   return wordmark(terminalWidth()).join('\n') + '\n';
 }
@@ -238,7 +244,7 @@ export async function runTask(task: string, options: RunTaskOptions = {}): Promi
   console.log(`${bold(paint('accent', '[TASK]'))} Executing...\nTask: ${safeDisplay(String(task ?? ''))}`);
 
   const conn = new LocalCLIConnection();
-  const taskId = `cli_task_${Date.now()}`;
+  const taskId = nextCliTaskId('cli_task');
 
   const loopOptions: { provider?: string; model?: string } = {};
   if (options?.provider) loopOptions.provider = options.provider;
@@ -266,7 +272,7 @@ export async function runTask(task: string, options: RunTaskOptions = {}): Promi
 export async function chatMode(options?: { home?: boolean } | null): Promise<void> {
   const home = Boolean(options && typeof options === 'object' && options.home);
   const conn = new LocalCLIConnection();
-  const taskId = `cli_chat_${Date.now()}`;
+  const taskId = nextCliTaskId('cli_chat');
   let loop: any = new AgentLoop(conn, taskId, null);
 
   const config = loadConfig();
@@ -395,7 +401,7 @@ export async function chatMode(options?: { home?: boolean } | null): Promise<voi
         loop = switchChatWorkspace({
           workspaceRoot: nextRoot,
           createLoop: (workspaceRoot: string) => new AgentLoop(
-            conn, `cli_chat_${Date.now()}`, null, { workspaceRoot }
+            conn, nextCliTaskId('cli_chat'), null, { workspaceRoot }
           ),
           prompt, surface, renderer: conn.renderer, headerInfo,
           approvalHandler: makeApprovalHandler(conn, prompt),
@@ -538,7 +544,7 @@ export async function chatMode(options?: { home?: boolean } | null): Promise<voi
     loop.userPrompt = task;
     loop.currentTaskPrompt = task;
     loop.taskIntentPrompt = task;
-    loop.taskId = `cli_chat_${Date.now()}`;
+    loop.taskId = nextCliTaskId('cli_chat');
 
     if (prompt && typeof prompt.consumeAttachments === 'function') {
       const atts = prompt.consumeAttachments();
@@ -659,8 +665,8 @@ export async function interactiveConfig(options: { provider?: string; apikey?: s
   } catch { /* ignore */ }
 
   console.log('\n' + paint('success', '  ✔ Saved configuration successfully!') + '\n'
-    + `  Active Provider: ${bold(result.provider)}\n`
-    + `  Active Model:    ${bold(result.model)}\n`
+    + `  Active Provider: ${bold(safeDisplay(String(result.provider ?? '')))}\n`
+    + `  Active Model:    ${bold(safeDisplay(String(result.model ?? '')))}\n`
     + (creativeSummary ? `${creativeSummary}\n` : '')
     + `  Launch agent:    ${bold('causyne')} or ${bold('causyne chat')}\n`
     + `  Diagnostics:     ${bold('causyne doctor')}\n`);
