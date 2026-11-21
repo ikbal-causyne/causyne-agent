@@ -13,6 +13,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { AcpClient } from './client.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 import type { PeerProfile } from './peerProfiles.js';
 
 const execFileAsync = promisify(execFile);
@@ -344,6 +345,13 @@ export async function testPeerHandshake(
   error?: string;
 }> {
   const cwd = options.cwd || process.cwd();
+  const rawTimeout = options.timeoutMs;
+  const timeoutMs = typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout > 0
+    ? Math.max(1_000, Math.min(120_000, Math.round(rawTimeout)))
+    : 12_000;
+  const handshakeEnv: NodeJS.ProcessEnv = { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' };
+  delete handshakeEnv.CAUSYNE_VAULT_KEY;
+  delete handshakeEnv.CAUSYNE_DEV_SECRET;
   const clientOptions: {
     command: string;
     args?: string[];
@@ -353,15 +361,13 @@ export async function testPeerHandshake(
   } = {
     command: options.command,
     cwd,
-    env: { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' },
-    promptTimeoutMs: options.timeoutMs || 15000
+    env: handshakeEnv,
+    promptTimeoutMs: timeoutMs
   };
   if (options.args) {
     clientOptions.args = options.args;
   }
   const client = new AcpClient(clientOptions);
-
-  const timeoutMs = options.timeoutMs || 12000;
   let timer: NodeJS.Timeout | undefined;
   try {
     const init = await Promise.race([
@@ -393,7 +399,7 @@ export async function testPeerHandshake(
         ...(sessionModels.currentModelId ? { currentModelId: sessionModels.currentModelId } : {})
       };
     } catch (sessionErr: unknown) {
-      const msg = sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
+      const msg = redactProviderSecrets(sessionErr instanceof Error ? sessionErr.message : String(sessionErr));
       return {
         ready: false,
         ...(agentInfo ? { agentInfo } : {}),
@@ -402,7 +408,7 @@ export async function testPeerHandshake(
       };
     }
   } catch (initErr: unknown) {
-    const msg = initErr instanceof Error ? initErr.message : String(initErr);
+    const msg = redactProviderSecrets(initErr instanceof Error ? initErr.message : String(initErr));
     return { ready: false, error: msg };
   } finally {
     if (timer) clearTimeout(timer);
