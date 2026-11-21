@@ -143,11 +143,18 @@ export class GeminiProvider extends LLMProvider {
     }
 
     const apiKey = requireApiKey(this.apiKey, 'Gemini');
+    const generationConfig: Record<string, any> = {
+      temperature: resolveTemperature(options.temperature, 0.1)
+    };
+    if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+      generationConfig['maxOutputTokens'] = Math.floor(options.maxTokens);
+    }
+    if (options.jsonMode) {
+      generationConfig['responseMimeType'] = 'application/json';
+    }
     const payload: Record<string, any> = {
       contents,
-      generationConfig: {
-        temperature: resolveTemperature(options.temperature, 0.1)
-      }
+      generationConfig
     };
 
     if (systemParts.length > 0) {
