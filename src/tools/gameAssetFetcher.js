@@ -320,10 +320,17 @@ export const gameAssetFetcher = {
     async execute(args = {}, sandbox) {
         try {
             const { action, category = 'all', query = '', url, preset, outputFilename, outputDir } = args || {};
-            const workspace = sandbox?.workspaceRoot ?? sandbox?.workspacePaths?.[0] ?? sandbox?.parentLoop?.workspaceRoot;
+            const scope = resolveToolWorkspaceRoots(sandbox);
+            const workspace = scope.primaryRoot ?? undefined;
             const targetDir = outputDir || (workspace ? path.join(path.resolve(workspace), '.tmp_causyne_3d', 'assets') : getWorkspaceTempDir());
-            if (sandbox && sandbox.isPathAllowed && !sandbox.isPathAllowed(path.resolve(targetDir))) {
-                return { success: false, error: `Path outside allowed workspace boundary: ${targetDir}` };
+            const resolvedTargetDir = path.resolve(targetDir);
+            if (sandbox && !scope.grantAllAccess) {
+                if (typeof sandbox.isPathAllowed === 'function' && !sandbox.isPathAllowed(resolvedTargetDir)) {
+                    return { success: false, error: `Path outside allowed workspace boundary: ${targetDir}` };
+                }
+                if (scope.roots.length > 0 && !isPhysicalPathAllowed(resolvedTargetDir, scope.roots)) {
+                    return { success: false, error: `Path outside allowed workspace boundary: ${targetDir}` };
+                }
             }
             if (action === 'search_cc0') {
                 const results = [];
@@ -425,7 +432,7 @@ export const gameAssetFetcher = {
             return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
         catch (err) {
-            return { success: false, error: getErrorMessage(err) };
+            return { success: false, error: sanitizeToolError(err) };
         }
     }
 };
