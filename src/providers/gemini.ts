@@ -55,6 +55,7 @@ export class GeminiProvider extends LLMProvider {
     messages = this.prepareMessages(messages);
     const systemParts: Array<{ text: string }> = [];
     const contents: Array<{ role: string; parts: Array<Record<string, any>> }> = [];
+    const toolNameById = new Map<string, string>();
 
     for (const msg of messages) {
       if (msg.role === 'system') {
@@ -71,9 +72,11 @@ export class GeminiProvider extends LLMProvider {
         const parts: Array<Record<string, any>> = [];
         if (msg.content) parts.push({ text: String(msg.content) });
         for (const tc of msg.tool_calls) {
+          const normalizedName = normalizeToolName(tc.function?.name || '');
+          if (typeof tc.id === 'string' && tc.id && normalizedName) toolNameById.set(tc.id, normalizedName);
           const fcPart: Record<string, any> = {
             functionCall: {
-              name: normalizeToolName(tc.function?.name || ''),
+              name: normalizedName,
               args: safeParseJsonObject(tc.function?.arguments)
             }
           };
@@ -83,9 +86,10 @@ export class GeminiProvider extends LLMProvider {
         }
         contents.push({ role, parts });
       } else if (msg.role === 'tool') {
+        const resolvedName = normalizeToolName(msg.name || (typeof msg.tool_call_id === 'string' ? toolNameById.get(msg.tool_call_id) : '') || 'tool');
         const responsePart = {
           functionResponse: {
-            name: normalizeToolName(msg.name || ''),
+            name: resolvedName,
             response: { result: msg.content ?? '' }
           }
         };
