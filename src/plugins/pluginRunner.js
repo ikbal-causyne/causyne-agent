@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const MAX_INPUT_BYTES = 1024 * 1024;
 const RESULT_PREFIX = 'CAUSYNE_PLUGIN_RESULT:';
@@ -19,11 +21,19 @@ async function readInput() {
 async function main() {
     const entry = process.argv[2];
     const exportName = process.argv[3] || 'execute';
-    if (!entry)
-        throw new Error('Plugin entry path is required');
+    if (!entry || entry.includes('\0') || !path.isAbsolute(entry)) {
+        throw new Error('Plugin entry must be an absolute path');
+    }
+    if (!EXPORT_IDENT.test(exportName) || FORBIDDEN_EXPORTS.has(exportName)) {
+        throw new Error(`Invalid plugin export name ${JSON.stringify(exportName)}`);
+    }
+    const stat = fs.lstatSync(entry);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+        throw new Error('Plugin entry must be a regular non-symlink file');
+    }
     const payload = await readInput();
     const imported = (await import(pathToFileURL(entry).href));
-    const execute = imported[exportName];
+    const execute = Object.hasOwn(imported, exportName) ? imported[exportName] : undefined;
     if (typeof execute !== 'function') {
         throw new Error(`Plugin export ${JSON.stringify(exportName)} is not a function`);
     }
