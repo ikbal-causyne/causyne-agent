@@ -369,7 +369,8 @@
     "src/tools/codeTools.ts",
     "src/tools/printer.ts",
     "src/tools/subagentOrchestrator.ts",
-    "src/tools/executeProceduralMedia.ts"
+    "src/tools/executeProceduralMedia.ts",
+    "src/tools/palmierAutomator.ts"
   ],
   "exclude": [
     "node_modules",
