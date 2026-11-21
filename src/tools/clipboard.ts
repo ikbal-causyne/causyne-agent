@@ -1,5 +1,7 @@
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+
+const MAX_CLIPBOARD_BYTES = 256 * 1024;
 
 export interface ClipboardArgs {
   action?: 'read' | 'write' | string | undefined;
@@ -35,15 +37,20 @@ export const clipboard = {
         write(text: string): Promise<void>;
       };
 
-      if (args.action === 'read') {
+      if (args?.action === 'read') {
         const content = await clipboardy.read();
-        return { success: true, output: content };
-      } else if (args.action === 'write') {
+        const sanitized = sanitizeToolText(content, MAX_CLIPBOARD_BYTES);
+        return { success: true, output: sanitized };
+      } else if (args?.action === 'write') {
         if (typeof args.text !== 'string' || !args.text) {
           return { success: false, error: 'Text argument is required for write action' };
         }
+        const byteLen = Buffer.byteLength(args.text, 'utf8');
+        if (byteLen > MAX_CLIPBOARD_BYTES) {
+          return { success: false, error: `Clipboard write exceeds maximum limit of ${MAX_CLIPBOARD_BYTES} bytes.` };
+        }
         await clipboardy.write(args.text);
-        return { success: true, output: `Successfully wrote ${Buffer.byteLength(args.text, 'utf8')} bytes to OS Clipboard.` };
+        return { success: true, output: `Successfully wrote ${byteLen} bytes to OS Clipboard.` };
       } else {
         return { success: false, error: 'Invalid clipboard action; expected "read" or "write".' };
       }
