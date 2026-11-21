@@ -73,6 +73,8 @@ const CREDENTIAL_SUBPATHS = [
   '.netrc',
   '.git-credentials',
   '.pypirc',
+  '.npmrc',
+  '.docker/config.json',
   'Library/Keychains'
 ];
 
