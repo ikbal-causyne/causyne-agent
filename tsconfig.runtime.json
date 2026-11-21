@@ -371,7 +371,8 @@
     "src/tools/subagentOrchestrator.ts",
     "src/tools/executeProceduralMedia.ts",
     "src/tools/palmierAutomator.ts",
-    "src/tools/manageLocalAiDependencies.ts"
+    "src/tools/manageLocalAiDependencies.ts",
+    "src/tools/godotAutomator.ts"
   ],
   "exclude": [
     "node_modules",
