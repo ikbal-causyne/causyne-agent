@@ -349,7 +349,8 @@
     "src/verification/statechart.ts",
     "src/verification/cliProbe.ts",
     "src/verification/uiRuntime.ts",
-    "src/tools/toolPathSafety.ts"
+    "src/tools/toolPathSafety.ts",
+    "src/tools/clipboard.ts"
   ],
   "exclude": [
     "node_modules",
