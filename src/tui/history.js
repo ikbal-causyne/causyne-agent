@@ -13,6 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import { redactSecrets } from './text.js';
+import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { causyneHome } from '../utils/paths.js';
 export const MAX_ENTRIES = 500;
 function historyPath() {
@@ -20,7 +21,9 @@ function historyPath() {
 }
 /** True when the line carries something that looks like a credential. */
 export function looksSensitive(line) {
-    return redactSecrets(line) !== line;
+    if (typeof line !== 'string' || !line)
+        return false;
+    return redactSecrets(line) !== line || redactProviderSecrets(line) !== line;
 }
 export class PromptHistory {
     file;
