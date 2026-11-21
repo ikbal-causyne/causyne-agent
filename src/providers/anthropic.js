@@ -149,7 +149,10 @@ export class AnthropicProvider extends LLMProvider {
                     anthropicMessages.push({ role: 'system', content: String(msg.content ?? '') });
                     continue;
                 }
-                const block = { type: 'text', text: String(msg.content ?? '') };
+                const sysText = String(msg.content ?? '');
+                if (!sysText.trim())
+                    continue;
+                const block = { type: 'text', text: sysText };
                 if (msg.cacheAnchor && this.enableCaching && systemCacheBreakpoints < MAX_SYSTEM_CACHE_BREAKPOINTS) {
                     block['cache_control'] = this.cacheControl();
                     systemCacheBreakpoints++;
@@ -197,7 +200,7 @@ export class AnthropicProvider extends LLMProvider {
         const apiKey = requireApiKey(this.apiKey, 'Anthropic');
         const payload = {
             model: this.model,
-            system: systemBlocks,
+            ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
             messages: anthropicMessages,
             max_tokens: typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1
                 ? Math.floor(options.maxTokens)
