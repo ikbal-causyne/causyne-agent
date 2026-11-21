@@ -26,9 +26,19 @@ export class TaskBuffer {
         return target;
     }
     async appendOutput(taskId, stepData) {
+        this.ensureDir();
         const file = this.getBufferPath(taskId);
+        try {
+            const stat = fs.lstatSync(file);
+            if (stat.isSymbolicLink() || !stat.isFile())
+                return;
+        }
+        catch (err) {
+            if (err?.code !== 'ENOENT')
+                throw err;
+        }
         const entry = JSON.stringify({ ts: Date.now(), ...stepData }) + '\n';
-        fs.appendFileSync(file, entry);
+        fs.appendFileSync(file, entry, { mode: 0o600 });
     }
     async getBuffer(taskId) {
         const file = this.getBufferPath(taskId);

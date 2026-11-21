@@ -32,9 +32,16 @@ export class TaskBuffer {
   }
 
   async appendOutput(taskId: string, stepData: Record<string, unknown>): Promise<void> {
+    this.ensureDir();
     const file = this.getBufferPath(taskId);
+    try {
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink() || !stat.isFile()) return;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
+    }
     const entry = JSON.stringify({ ts: Date.now(), ...stepData }) + '\n';
-    fs.appendFileSync(file, entry);
+    fs.appendFileSync(file, entry, { mode: 0o600 });
   }
 
   async getBuffer(taskId: string): Promise<Record<string, unknown>[]> {
