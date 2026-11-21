@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
@@ -25,6 +26,36 @@ function digestOf(text) {
         hash = ((hash * 33) ^ source.charCodeAt(i)) >>> 0;
     }
     return `${hash.toString(16)}:${source.length}`;
+}
+function writeSessionAtomic(file, state) {
+    ensureSessionDir();
+    try {
+        if (fs.lstatSync(file).isSymbolicLink())
+            return;
+    }
+    catch {
+        // file may not exist yet
+    }
+    const body = JSON.stringify(state, null, 2);
+    const temporary = `${file}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+    try {
+        const fd = fs.openSync(temporary, 'wx', 0o600);
+        try {
+            fs.writeFileSync(fd, body, 'utf8');
+            fs.fsyncSync(fd);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(temporary, file);
+    }
+    catch (err) {
+        try {
+            fs.unlinkSync(temporary);
+        }
+        catch { /* ignore cleanup error */ }
+        throw err;
+    }
 }
 export function recordObservation(taskId, app, treeText) {
     if (!isSessionTrackingEnabled())
