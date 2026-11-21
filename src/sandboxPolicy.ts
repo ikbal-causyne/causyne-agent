@@ -58,7 +58,12 @@ const CREDENTIAL_EXACT_BASENAMES = new Set([
   'id_ecdsa',
   'id_dsa',
   'credentials.json',
-  'application_default_credentials.json'
+  'application_default_credentials.json',
+  '.htpasswd',
+  'kubeconfig',
+  'terraform.tfvars',
+  'terraform.tfvars.json',
+  '.terraformrc'
 ]);
 
 const SENSITIVE_WRITE_EXACT_BASENAMES = new Set([
@@ -233,6 +238,8 @@ export function isExtendedCredentialPath(targetPath: string): boolean {
   for (let i = 0; i < lowerParts.length - 1; i++) {
     if (lowerParts[i] === 'library' && lowerParts[i + 1] === 'keychains') return true;
     if (lowerParts[i] === '.docker' && lowerParts[i + 1] === 'config.json') return true;
+    if (lowerParts[i] === 'gh' && lowerParts[i + 1] === 'hosts.yml') return true;
+    if (lowerParts[i] === 'gcloud' && (lowerParts[i + 1] === 'credentials.db' || lowerParts[i + 1] === 'access_tokens.db')) return true;
   }
 
   const baseLower = lowerParts[lowerParts.length - 1] ?? '';
@@ -250,6 +257,15 @@ export function isExtendedCredentialPath(targetPath: string): boolean {
   if (
     (baseLower.startsWith('service-account') || baseLower.startsWith('service_account')) &&
     baseLower.endsWith('.json')
+  ) {
+    return true;
+  }
+
+  const isSafeTemplate = SAFE_ENV_TEMPLATE_SUFFIXES.some(suffix => baseLower.endsWith(suffix));
+  if (
+    !isSafeTemplate &&
+    !baseLower.endsWith('.pub') &&
+    (baseLower.endsWith('.pem') || baseLower.endsWith('.key') || baseLower.endsWith('.p12') || baseLower.endsWith('.pfx'))
   ) {
     return true;
   }
