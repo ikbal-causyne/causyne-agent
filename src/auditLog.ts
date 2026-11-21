@@ -47,9 +47,17 @@ export class AuditLog {
       ...eventData
     };
 
-    // Append to file synchronously to ensure it writes before any potential crash
     try {
-      fs.appendFileSync(this.logFile, JSON.stringify(entry) + '\n');
+      this.ensureLogDir();
+      const target = this.currentLogFile();
+      try {
+        const stat = fs.lstatSync(target);
+        if (stat.isSymbolicLink() || !stat.isFile()) return;
+      } catch (statErr: unknown) {
+        const code = typeof statErr === 'object' && statErr !== null && 'code' in statErr ? String(statErr.code) : '';
+        if (code !== 'ENOENT') return;
+      }
+      fs.appendFileSync(target, JSON.stringify(entry) + '\n', { encoding: 'utf8', mode: 0o600 });
     } catch (e: unknown) {
       console.error('Failed to write audit log:', e);
     }
