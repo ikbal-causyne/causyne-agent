@@ -3,7 +3,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
-const RESULT_PREFIX = 'CAUSYNE_PLUGIN_RESULT:';
+const RAW_TOKEN = typeof process.env.CAUSYNE_PLUGIN_TOKEN === 'string' && /^[0-9a-f]{16,64}$/i.test(process.env.CAUSYNE_PLUGIN_TOKEN)
+  ? process.env.CAUSYNE_PLUGIN_TOKEN
+  : '';
+const RESULT_PREFIX = RAW_TOKEN ? `CAUSYNE_PLUGIN_RESULT:${RAW_TOKEN}:` : 'CAUSYNE_PLUGIN_RESULT:';
 const EXPORT_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const FORBIDDEN_EXPORTS = new Set(['__proto__', 'constructor', 'prototype']);
 
