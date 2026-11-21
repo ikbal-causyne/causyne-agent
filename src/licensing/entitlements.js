@@ -203,6 +203,14 @@ export class EntitlementClient {
         this.identity = null;
     }
     async call(pathname, body, { register = false } = {}) {
+        if (typeof pathname !== 'string'
+            || !pathname.startsWith('/')
+            || pathname.startsWith('//')
+            || pathname.length > 256
+            || pathname.includes('..')
+            || /[\s\r\n\0]/.test(pathname)) {
+            throw new EntitlementAccessError('INVALID_REQUEST', 'Invalid entitlement API path.');
+        }
         const identity = this.identity ||= loadInstallationIdentity(this.stateRoot);
         const method = body === undefined ? 'GET' : 'POST';
         const raw = body === undefined ? '' : JSON.stringify(body);
