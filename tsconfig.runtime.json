@@ -79,6 +79,7 @@
     "src/providers/xai.ts",
     "src/providers/qwen-byok.ts",
     "src/providers/dashscope-byok.ts",
+    "src/providers/ollama.ts",
     "src/providers/openrouter.ts",
     "src/providers/byokHttp.ts",
     "src/providers/byokStream.ts",
