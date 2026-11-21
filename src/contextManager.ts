@@ -437,30 +437,49 @@ export const STAGE4_COLLAPSE_THRESHOLD = 0.85;
 
 export function snipOversizedToolOutputs(
   messages: ContextMessage[],
-  options: SnipOptions = {}
+  options?: SnipOptions | null
 ): { snippedCount: number; reclaimedChars: number } {
-  const threshold = options.threshold || STAGE2_SNIP_CHARS;
-  const headChars = options.headChars || STAGE2_SNIP_HEAD;
-  const tailChars = options.tailChars || STAGE2_SNIP_TAIL;
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return { snippedCount: 0, reclaimedChars: 0 };
+  }
+  const safeOpts: SnipOptions = options && typeof options === 'object' ? options : {};
+  const threshold = typeof safeOpts.threshold === 'number' && Number.isFinite(safeOpts.threshold) && safeOpts.threshold > 0
+    ? Math.floor(safeOpts.threshold)
+    : STAGE2_SNIP_CHARS;
+  let headChars = typeof safeOpts.headChars === 'number' && Number.isFinite(safeOpts.headChars) && safeOpts.headChars >= 0
+    ? Math.floor(safeOpts.headChars)
+    : STAGE2_SNIP_HEAD;
+  let tailChars = typeof safeOpts.tailChars === 'number' && Number.isFinite(safeOpts.tailChars) && safeOpts.tailChars >= 0
+    ? Math.floor(safeOpts.tailChars)
+    : STAGE2_SNIP_TAIL;
+  if (headChars + tailChars >= threshold) {
+    const budget = Math.max(0, threshold - 1);
+    headChars = Math.floor(budget * 0.65);
+    tailChars = budget - headChars;
+  }
 
   let snippedCount = 0;
   let reclaimedChars = 0;
 
   for (const msg of messages) {
+    if (!msg) continue;
     if (msg.role !== 'tool' && !msg.tool_call_id) continue;
     if (typeof msg.content !== 'string') continue;
 
     const len = msg.content.length;
     if (len > threshold) {
-      const removed = len - (headChars + tailChars);
-      const head = msg.content.slice(0, headChars);
-      const tail = msg.content.slice(-tailChars);
-      const pointer = msg.spillPath ? ` Full output preserved at: ${msg.spillPath}.` : '';
+      const removed = Math.max(0, len - (headChars + tailChars));
+      const head = headChars > 0 ? msg.content.slice(0, headChars) : '';
+      const tail = tailChars > 0 ? msg.content.slice(-tailChars) : '';
+      const cleanSpill = typeof msg.spillPath === 'string' && msg.spillPath.trim()
+        ? msg.spillPath.replace(/[\r\n\0]/g, '')
+        : '';
+      const pointer = cleanSpill ? ` Full output preserved at: ${cleanSpill}.` : '';
 
       msg.content = `${head}\n\n[... SNIPPED ${removed.toLocaleString()} CHARS (${Math.round(removed / CHARS_PER_TOKEN).toLocaleString()} TOKENS) TO PREVENT CONTEXT OVERFLOW.${pointer} Use targeted file reads to inspect specific sections ...] \n\n${tail}`;
 
       snippedCount++;
-      reclaimedChars += (len - msg.content.length);
+      reclaimedChars += Math.max(0, len - msg.content.length);
     }
   }
 
