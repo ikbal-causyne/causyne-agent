@@ -41,10 +41,13 @@ function resolveInside(root: string, relativePath: string): string {
   return resolved;
 }
 
+const BIDI_AND_ZW_RE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+
 function cleanLine(value: unknown, maximum: number): string {
   return String(value ?? '')
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(BIDI_AND_ZW_RE, '')
     .replace(/[<>]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -57,9 +60,10 @@ function readSkillFile(file: string): string {
   if (stat.nlink > 1) throw new Error(`${file} must not be a hardlink`);
   if (stat.size > MAX_SKILL_BYTES) throw new Error(`${file} exceeds ${MAX_SKILL_BYTES / 1024} KB`);
   return fs.readFileSync(file, 'utf8')
-    // Keep newlines and tabs, but remove control bytes that can corrupt a prompt.
+    // Keep newlines and tabs, but remove control bytes and bidi overrides that can corrupt a prompt.
     // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    .replace(BIDI_AND_ZW_RE, '');
 }
 
 /**
