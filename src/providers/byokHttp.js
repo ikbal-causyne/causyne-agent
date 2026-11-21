@@ -116,7 +116,7 @@ export function validateProviderEndpointUrl(rawUrl, options = {}) {
         && options.hasApiKey === true
         && options.allowInsecureHttp !== true
         && !isLoopbackHost(parsed.hostname)) {
-        throw new Error(`${label} refused to send an API key over unencrypted remote HTTP (${parsed.hostname}). Use https:// or set allowInsecureHttp: true for a trusted private network.`);
+        throw new Error(`${label} refused to send an API key over unencrypted remote HTTP (${safeDisplay(parsed.hostname)}). Use https:// or set allowInsecureHttp: true for a trusted private network.`);
     }
     return parsed.toString();
 }
