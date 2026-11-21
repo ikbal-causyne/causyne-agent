@@ -106,6 +106,8 @@ export async function runPtyProbe(options = {}) {
         let nodeStdoutTruncated = false;
         let stderr = '';
         let spawnedError = null;
+        let hardTimedOut = false;
+        let killTimer = null;
         const child = spawn('python3', ['-c', DRIVER, JSON.stringify(config)], {
             cwd,
             shell: false,
@@ -135,8 +137,31 @@ export async function runPtyProbe(options = {}) {
                 stderr = stderr.slice(-MAX_NODE_STDERR);
             }
         });
-        child.on('error', (error) => { spawnedError = String(error.message || error); });
+        const hardTimer = setTimeout(() => {
+            hardTimedOut = true;
+            try {
+                child.kill('SIGTERM');
+            }
+            catch { }
+            killTimer = setTimeout(() => {
+                try {
+                    child.kill('SIGKILL');
+                }
+                catch { }
+            }, 1500);
+            killTimer.unref();
+        }, timeoutMs + 5000);
+        hardTimer.unref();
+        const clearTimers = () => {
+            clearTimeout(hardTimer);
+            if (killTimer) {
+                clearTimeout(killTimer);
+                killTimer = null;
+            }
+        };
+        child.on('error', (error) => { spawnedError = String(error.message || error); clearTimers(); });
         child.on('close', () => {
+            clearTimers();
             if (spawnedError && /ENOENT/.test(spawnedError)) {
                 resolve({
                     status: 'unavailable',
@@ -163,7 +188,8 @@ export async function runPtyProbe(options = {}) {
                 cleanedStderr = stderr.slice(0, markerIdx) + afterLine;
             }
             const truncated = Boolean(detail?.truncated || nodeStdoutTruncated);
-            const success = Boolean(detail && !detail.timeout && !truncated
+            const timedOut = Boolean(detail?.timeout || hardTimedOut);
+            const success = Boolean(detail && !timedOut && !truncated
                 && detail.exit === expectedExitCode && detail.inputSent
                 && (contains === null || stdout.includes(contains)));
             resolve({
@@ -173,7 +199,7 @@ export async function runPtyProbe(options = {}) {
                 stdout,
                 stderr: cleanedStderr,
                 exitCode: detail?.exit ?? null,
-                timedOut: detail?.timeout ?? null,
+                timedOut: detail ? timedOut : (hardTimedOut ? true : null),
                 truncated: detail ? truncated : (nodeStdoutTruncated ? true : null),
                 inputSent: detail?.inputSent ?? false,
                 reason: detail ? null : (spawnedError || 'PTY driver produced no valid exit evidence'),
