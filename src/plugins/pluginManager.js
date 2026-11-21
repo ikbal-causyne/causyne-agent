@@ -229,8 +229,8 @@ function readPlugin(directory) {
     if (typeof manifest.version !== 'string' || !VERSION.test(manifest.version)) {
         throw new Error('Plugin version must use SemVer');
     }
-    if (typeof manifest.description !== 'string' || !manifest.description.trim()) {
-        throw new Error('Plugin description is required');
+    if (typeof manifest.description !== 'string' || !manifest.description.trim() || manifest.description.length > 2000) {
+        throw new Error('Plugin description is required (max 2000 chars)');
     }
     const manifestTools = manifest.tools ?? [];
     if (!Array.isArray(manifestTools))
@@ -241,15 +241,19 @@ function readPlugin(directory) {
     const pluginCapabilities = validateCapabilities(manifest.capabilities, manifest.name);
     const names = new Set();
     const tools = manifestTools.map((tool) => {
-        if (!TOOL_NAME.test(tool?.name || ''))
-            throw new Error(`Invalid tool name ${JSON.stringify(tool?.name)}`);
+        if (!tool || typeof tool !== 'object' || Array.isArray(tool)) {
+            throw new Error('Plugin tool entry must be an object');
+        }
+        if (typeof tool.name !== 'string' || !TOOL_NAME.test(tool.name)) {
+            throw new Error(`Invalid tool name ${JSON.stringify(tool.name)}`);
+        }
         if (names.has(tool.name))
             throw new Error(`Duplicate tool name ${tool.name}`);
         names.add(tool.name);
         if (typeof tool.description !== 'string' || !tool.description.trim()) {
             throw new Error(`Tool ${tool.name} needs a description`);
         }
-        if (!tool.parameters || tool.parameters.type !== 'object') {
+        if (!tool.parameters || typeof tool.parameters !== 'object' || Array.isArray(tool.parameters) || tool.parameters.type !== 'object') {
             throw new Error(`Tool ${tool.name} parameters must be an object JSON schema`);
         }
         const entry = resolveInside(directory, tool.entry);
