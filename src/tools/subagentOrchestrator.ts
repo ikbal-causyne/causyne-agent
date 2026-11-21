@@ -186,9 +186,13 @@ export const subagentOrchestrator = {
         for (const [key, worker] of activeSubagents.entries()) {
           if (key === id || worker.name === id) {
             try { if (worker.loop) worker.loop.abort(); } catch { /* ignore */ }
+            if (worker.journalStarted) {
+              try { failSubagentJournal(worker.subagentId, 'Stopped by kill action'); } catch { /* ignore */ }
+            }
             worker.status = 'killed';
+            worker.loop = null;
             activeSubagents.delete(key);
-            return { success: true, output: `Subagent ${key} (${worker.name}) stopped.` };
+            return { success: true, output: `Subagent ${sanitizeToolText(key, 64)} (${sanitizeToolText(worker.name, 64)}) stopped.` };
           }
         }
         return { success: false, error: `Subagent ${id} not found.` };
@@ -285,15 +289,27 @@ export const subagentOrchestrator = {
 
       activeSubagents.set(subagentId, record);
 
+      const pruneCompleted = (): void => {
+        if (activeSubagents.size <= MAX_RETAINED_SUBAGENTS) return;
+        for (const [k, v] of activeSubagents.entries()) {
+          if (activeSubagents.size <= MAX_RETAINED_SUBAGENTS) break;
+          if (v.status !== 'running') activeSubagents.delete(k);
+        }
+      };
+
       const work = executeSubagent(record, parentLoop)
         .then((result) => {
           record.status = 'completed';
           record.summary = result.summary;
+          record.loop = null;
+          pruneCompleted();
           return result;
         })
         .catch((error: unknown) => {
           record.status = 'failed';
-          record.error = getErrorMessage(error);
+          record.error = sanitizeToolError(error);
+          record.loop = null;
+          pruneCompleted();
           throw error;
         });
 
