@@ -1075,6 +1075,9 @@ export const COMMANDS = [
                 ? transcript.frames.filter((f) => f.kind === 'reasoning' || f.meta?.reasoning === true)
                 : [];
             const sub = (argv[0] || 'toggle').toLowerCase();
+            if (sub !== 'toggle' && sub !== 'expand' && sub !== 'collapse') {
+                return fail('Usage: /thinking [toggle|expand|collapse]');
+            }
             let newCollapsed;
             if (sub === 'expand') {
                 newCollapsed = false;

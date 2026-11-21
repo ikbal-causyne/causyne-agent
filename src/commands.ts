@@ -1193,7 +1193,10 @@ export const COMMANDS: SlashCommandDefinition[] = [
         ? transcript.frames.filter((f: any) => f.kind === 'reasoning' || f.meta?.reasoning === true)
         : [];
       const sub = (argv[0] || 'toggle').toLowerCase();
-      let newCollapsed;
+      if (sub !== 'toggle' && sub !== 'expand' && sub !== 'collapse') {
+        return fail('Usage: /thinking [toggle|expand|collapse]');
+      }
+      let newCollapsed: boolean;
       if (sub === 'expand') {
         newCollapsed = false;
       } else if (sub === 'collapse') {
