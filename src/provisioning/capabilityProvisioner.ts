@@ -348,14 +348,19 @@ export async function requireCapabilityModule(packageName: string): Promise<any>
   } catch (resolveError: unknown) {
     const manifestPath = path.join(modulePath, 'package.json');
     let mainField = 'index.js';
-    if (fs.existsSync(manifestPath)) {
-      try {
+    try {
+      const mStat = fs.lstatSync(manifestPath);
+      if (!mStat.isSymbolicLink() && mStat.isFile() && mStat.size <= 256 * 1024) {
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-        mainField = String(manifest.main || manifest.module || 'index.js');
-      } catch { /* ignore */ }
-    }
-    entryPoint = path.join(modulePath, mainField);
-    if (!fs.existsSync(entryPoint)) {
+        const candidate = manifest.main || manifest.module;
+        if (typeof candidate === 'string' && candidate.trim() && !candidate.includes('\0') && !path.isAbsolute(candidate)) {
+          mainField = candidate.trim();
+        }
+      }
+    } catch { /* ignore */ }
+    entryPoint = path.resolve(modulePath, mainField);
+    const realEntryFallback = physicalPath(entryPoint);
+    if (!realEntryFallback || !isWithinPhysicalPath(realEntryFallback, realModulePath) || !fs.existsSync(entryPoint)) {
       const msg = resolveError instanceof Error ? resolveError.message : String(resolveError);
       throw new Error(`Capability module ${packageName} has no resolvable entry point: ${msg}`);
     }
