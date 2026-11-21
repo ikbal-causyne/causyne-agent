@@ -264,8 +264,17 @@ export async function probePresetAuth(preset: BuiltinPeerPreset): Promise<{ auth
 
   const probe = preset.authProbe;
 
-  if (probe.type === 'file_exists' && probe.filePath) {
-    const exists = fs.existsSync(probe.filePath);
+  if (probe.type === 'file_exists') {
+    if (!probe.filePath || !path.isAbsolute(probe.filePath)) {
+      return { authenticated: false, reason: 'Credentials file path unavailable' };
+    }
+    let exists = false;
+    try {
+      const stat = fs.lstatSync(probe.filePath);
+      exists = !stat.isSymbolicLink() && stat.isFile();
+    } catch {
+      exists = false;
+    }
     return {
       authenticated: exists,
       reason: exists ? 'OAuth credentials file detected' : `Credentials file not found at ${probe.filePath}`
@@ -277,7 +286,7 @@ export async function probePresetAuth(preset: BuiltinPeerPreset): Promise<{ auth
       return { authenticated: false, reason: `${probe.command} CLI not found on PATH` };
     }
     try {
-      const { stdout } = await execFileAsync(probe.command, probe.args || [], { timeout: 8000 });
+      const { stdout } = await execFileAsync(probe.command, probe.args || [], { timeout: 8000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
       const parsed = JSON.parse(stdout.trim());
       if (probe.jsonField && typeof parsed === 'object' && parsed !== null) {
         const val = (parsed as Record<string, unknown>)[probe.jsonField];
@@ -298,7 +307,7 @@ export async function probePresetAuth(preset: BuiltinPeerPreset): Promise<{ auth
       return { authenticated: false, reason: `${probe.command} CLI not found on PATH` };
     }
     try {
-      const result = await execFileAsync(probe.command, probe.args || [], { timeout: 8000 }).catch((e) => e);
+      const result = await execFileAsync(probe.command, probe.args || [], { timeout: 8000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 }).catch((e) => e);
       const combined = `${result?.stdout || ''}\n${result?.stderr || ''}`.toLowerCase();
       if (probe.negativeMatch && combined.includes(probe.negativeMatch.toLowerCase())) {
         return { authenticated: false, reason: 'CLI reported not logged in' };
