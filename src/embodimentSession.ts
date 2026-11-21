@@ -143,7 +143,8 @@ export function describeSession(taskId: unknown): string {
 export function clearSession(taskId: unknown): void {
   try {
     const file = sessionFile(taskId);
-    if (fs.existsSync(file)) fs.unlinkSync(file);
+    const stat = fs.lstatSync(file);
+    if (stat.isFile()) fs.unlinkSync(file);
   } catch {
     // Fail open.
   }
