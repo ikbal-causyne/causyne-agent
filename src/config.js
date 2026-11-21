@@ -137,54 +137,64 @@ export function loadConfig() {
     }
     return defaultConfig;
 }
+function readEnvSecret(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
 export function detectEnvironmentProvider() {
     const env = process.env;
-    if (env.GEMINI_API_KEY || env.GOOGLE_API_KEY) {
+    const geminiKey = readEnvSecret(env.GEMINI_API_KEY) || readEnvSecret(env.GOOGLE_API_KEY);
+    if (geminiKey) {
         return {
             provider: 'gemini',
-            apiKey: env.GEMINI_API_KEY || env.GOOGLE_API_KEY || '',
+            apiKey: geminiKey,
             model: DEFAULT_MODEL_BY_PROVIDER.gemini || ''
         };
     }
-    if (env.ANTHROPIC_API_KEY) {
+    const anthropicKey = readEnvSecret(env.ANTHROPIC_API_KEY);
+    if (anthropicKey) {
         return {
             provider: 'anthropic',
-            apiKey: env.ANTHROPIC_API_KEY,
+            apiKey: anthropicKey,
             model: DEFAULT_MODEL_BY_PROVIDER.anthropic || ''
         };
     }
-    if (env.OPENAI_API_KEY) {
+    const openaiKey = readEnvSecret(env.OPENAI_API_KEY);
+    if (openaiKey) {
         return {
             provider: 'openai',
-            apiKey: env.OPENAI_API_KEY,
+            apiKey: openaiKey,
             model: DEFAULT_MODEL_BY_PROVIDER.openai || ''
         };
     }
-    if (env.DEEPSEEK_API_KEY) {
+    const deepseekKey = readEnvSecret(env.DEEPSEEK_API_KEY);
+    if (deepseekKey) {
         return {
             provider: 'deepseek',
-            apiKey: env.DEEPSEEK_API_KEY,
+            apiKey: deepseekKey,
             model: DEFAULT_MODEL_BY_PROVIDER.deepseek || ''
         };
     }
-    if (env.XAI_API_KEY || env.GROK_API_KEY) {
+    const xaiKey = readEnvSecret(env.XAI_API_KEY) || readEnvSecret(env.GROK_API_KEY);
+    if (xaiKey) {
         return {
             provider: 'xai',
-            apiKey: env.XAI_API_KEY || env.GROK_API_KEY || '',
+            apiKey: xaiKey,
             model: DEFAULT_MODEL_BY_PROVIDER.xai || ''
         };
     }
-    if (env.MOONSHOT_API_KEY) {
+    const moonshotKey = readEnvSecret(env.MOONSHOT_API_KEY);
+    if (moonshotKey) {
         return {
             provider: 'moonshot',
-            apiKey: env.MOONSHOT_API_KEY,
+            apiKey: moonshotKey,
             model: DEFAULT_MODEL_BY_PROVIDER.moonshot || ''
         };
     }
-    if (env.DASHSCOPE_API_KEY || env.QWEN_API_KEY) {
+    const dashscopeKey = readEnvSecret(env.DASHSCOPE_API_KEY) || readEnvSecret(env.QWEN_API_KEY);
+    if (dashscopeKey) {
         return {
             provider: 'dashscope-byok',
-            apiKey: env.DASHSCOPE_API_KEY || env.QWEN_API_KEY || '',
+            apiKey: dashscopeKey,
             model: DEFAULT_MODEL_BY_PROVIDER['dashscope-byok'] || ''
         };
     }
