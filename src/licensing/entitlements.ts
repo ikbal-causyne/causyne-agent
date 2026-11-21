@@ -153,11 +153,30 @@ function saveInstallationIdentity(identity: InstallationIdentity): void {
     installationId: identity.installationId
   };
   const file = identity.file;
-  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(temp, JSON.stringify(value), { mode: 0o600 });
+    const existing = fs.lstatSync(file);
+    if (existing.isSymbolicLink() || !existing.isFile()) {
+      throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Refusing to overwrite symlink or non-regular identity file.');
+    }
+  } catch (err: unknown) {
+    if (err instanceof EntitlementAccessError) throw err;
+    const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+    if (code !== 'ENOENT') throw err;
+  }
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  const payload = Buffer.from(JSON.stringify(value), 'utf8');
+  try {
+    const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+    try {
+      fs.writeSync(fd, payload, 0, payload.length);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(temp, file);
-    try { fs.chmodSync(file, 0o600); } catch { /* Windows ACLs differ */ }
+    if (process.platform !== 'win32') {
+      try { fs.chmodSync(file, 0o600); } catch { /* Windows ACLs differ */ }
+    }
   } finally {
     try { fs.unlinkSync(temp); } catch { /* rename removed it */ }
   }
