@@ -57,14 +57,19 @@ export const fsDelete = {
         if (!capability.ok) throw new Error(capability.reason);
         const trash = await loadCapabilityPackage('trash') as (paths: string[]) => Promise<void>;
         await trash([target]);
-        return { success: true, output: `Moved ${args.path} to OS Trash/Recycle Bin.` };
+        return { success: true, output: `Moved ${sanitizeToolText(args.path, 260)} to OS Trash/Recycle Bin.` };
       } catch {
         const trashDir = path.dirname(target);
-        const trashName = `.causyne_trash_${Date.now()}_${path.basename(target)}`;
+        const entropy = crypto.randomBytes(6).toString('hex');
+        const trashName = `.causyne_trash_${Date.now()}_${entropy}_${path.basename(target)}`;
         const trashPath = path.join(trashDir, trashName);
+        const existingTrash = await fs.lstat(trashPath).catch(() => null);
+        if (existingTrash) {
+          return { success: false, error: 'Virtual trash collision detected; retry deletion.' };
+        }
 
         await fs.rename(target, trashPath);
-        return { success: true, output: `OS recycle bin unavailable; used the safe-rename fallback: moved ${args.path} to ${trashPath}` };
+        return { success: true, output: `OS recycle bin unavailable; used the safe-rename fallback: moved ${sanitizeToolText(args.path, 260)} to ${sanitizeToolText(trashPath, 260)}` };
       }
     } catch (e: unknown) {
       return { success: false, error: getErrorMessage(e) };
