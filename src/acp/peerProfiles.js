@@ -20,7 +20,7 @@ function asStringArray(value, limit, maxChars) {
         return null;
     const result = [];
     for (const item of value) {
-        if (typeof item !== 'string')
+        if (typeof item !== 'string' || /[\r\n\0]/.test(item))
             return null;
         result.push(item.slice(0, maxChars));
     }
@@ -36,7 +36,7 @@ function asEnv(value) {
             break;
         if (!ENV_NAME.test(name))
             continue;
-        if (typeof raw !== 'string')
+        if (typeof raw !== 'string' || raw.includes('\0'))
             continue;
         result[name] = raw.slice(0, MAX_ENV_VALUE_CHARS);
         count += 1;
@@ -51,7 +51,7 @@ function parseProfile(raw) {
     if (!PROFILE_ID.test(id))
         return null;
     const command = typeof record.command === 'string' ? record.command.trim() : '';
-    if (!command || command.length > 500)
+    if (!command || command.length > 500 || /[\r\n\0]/.test(command))
         return null;
     const args = asStringArray(record.args ?? [], MAX_ARGS, MAX_ARG_CHARS);
     if (args === null)
@@ -81,9 +81,8 @@ function parseProfile(raw) {
     const timeoutSeconds = typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
         ? Math.max(5, Math.min(1800, Math.round(record.timeoutSeconds)))
         : 120;
-    const label = typeof record.label === 'string' && record.label.trim()
-        ? record.label.trim().slice(0, 100)
-        : id;
+    const rawLabel = typeof record.label === 'string' ? record.label.replace(/[\r\n\0]+/g, ' ').trim() : '';
+    const label = rawLabel ? rawLabel.slice(0, 100) : id;
     return { id, label, command, args, cwd, policy, timeoutSeconds, env: asEnv(record.env) };
 }
 export function loadPeerProfiles() {

@@ -39,7 +39,7 @@ function asStringArray(value: unknown, limit: number, maxChars: number): string[
   if (value.length > limit) return null;
   const result: string[] = [];
   for (const item of value) {
-    if (typeof item !== 'string') return null;
+    if (typeof item !== 'string' || /[\r\n\0]/.test(item)) return null;
     result.push(item.slice(0, maxChars));
   }
   return result;
@@ -52,7 +52,7 @@ function asEnv(value: unknown): Record<string, string> {
   for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
     if (count >= MAX_ENV_ENTRIES) break;
     if (!ENV_NAME.test(name)) continue;
-    if (typeof raw !== 'string') continue;
+    if (typeof raw !== 'string' || raw.includes('\0')) continue;
     result[name] = raw.slice(0, MAX_ENV_VALUE_CHARS);
     count += 1;
   }
@@ -65,7 +65,7 @@ function parseProfile(raw: unknown): PeerProfile | null {
   const id = typeof record.id === 'string' ? record.id.trim() : '';
   if (!PROFILE_ID.test(id)) return null;
   const command = typeof record.command === 'string' ? record.command.trim() : '';
-  if (!command || command.length > 500) return null;
+  if (!command || command.length > 500 || /[\r\n\0]/.test(command)) return null;
   const args = asStringArray(record.args ?? [], MAX_ARGS, MAX_ARG_CHARS);
   if (args === null) return null;
   let cwd: string | null = null;
@@ -88,9 +88,8 @@ function parseProfile(raw: unknown): PeerProfile | null {
   const timeoutSeconds = typeof record.timeoutSeconds === 'number' && Number.isFinite(record.timeoutSeconds)
     ? Math.max(5, Math.min(1800, Math.round(record.timeoutSeconds)))
     : 120;
-  const label = typeof record.label === 'string' && record.label.trim()
-    ? record.label.trim().slice(0, 100)
-    : id;
+  const rawLabel = typeof record.label === 'string' ? record.label.replace(/[\r\n\0]+/g, ' ').trim() : '';
+  const label = rawLabel ? rawLabel.slice(0, 100) : id;
   return { id, label, command, args, cwd, policy, timeoutSeconds, env: asEnv(record.env) };
 }
 
