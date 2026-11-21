@@ -13,6 +13,17 @@ function resolveInside(root, relativePath) {
     if (resolved === resolvedRoot || !resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
         throw new Error(`Skill path escapes plugin root: ${relativePath}`);
     }
+    let cursor = path.dirname(resolved);
+    while (cursor !== resolvedRoot && cursor.startsWith(`${resolvedRoot}${path.sep}`)) {
+        const ancestorStat = fs.lstatSync(cursor);
+        if (ancestorStat.isSymbolicLink() || !ancestorStat.isDirectory()) {
+            throw new Error(`Skill path must not traverse symlinks: ${relativePath}`);
+        }
+        const parent = path.dirname(cursor);
+        if (parent === cursor)
+            break;
+        cursor = parent;
+    }
     const realRoot = physicalPath(resolvedRoot);
     const realTarget = physicalPath(resolved);
     if (!realRoot || !realTarget || realTarget === realRoot || !isWithinPhysicalPath(realTarget, realRoot)) {
