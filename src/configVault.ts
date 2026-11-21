@@ -76,10 +76,13 @@ export function atomicWriteSecretFileSync(targetPath: string, content: string | 
   const tempPath = path.join(dir, `.${path.basename(resolved)}.${suffix}.tmp`);
 
   try {
-    if (typeof content === 'string') {
-      fs.writeFileSync(tempPath, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    } else {
-      fs.writeFileSync(tempPath, content, { mode: 0o600, flag: 'wx' });
+    const payload = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
+    const fd = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+    try {
+      fs.writeSync(fd, payload, 0, payload.length);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
     }
     if (process.platform !== 'win32') {
       try {
