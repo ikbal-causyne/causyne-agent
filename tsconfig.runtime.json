@@ -303,7 +303,8 @@
     "src/tui/sessionPickerView.ts",
     "src/licensing/policy.ts",
     "src/licensing/entitlements.ts",
-    "src/provisioning/capabilityConsent.ts"
+    "src/provisioning/capabilityConsent.ts",
+    "src/provisioning/capabilityTools.ts"
   ],
   "exclude": [
     "node_modules",

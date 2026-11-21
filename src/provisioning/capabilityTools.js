@@ -7,24 +7,23 @@
 // A tool appears here only when the capability is REQUIRED for it to do
 // anything. fs_delete is deliberately absent: it prefers the OS recycle bin but
 // has a real safe-rename fallback, so it works with no capability at all.
-
 import { isGroupDeclined } from './capabilityConsent.js';
-
 export const TOOLS_BY_GROUP = {
-  browser: ['browser_act'],
-  vision: ['screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector'],
-  ocr: [],
-  system: ['process_list'],
-  desktop: ['clipboard'],
-  archive: ['archive']
+    browser: ['browser_act'],
+    vision: ['screenshot', 'vision_inspect_ui', 'game_canvas_audit', 'game_web_runtime_inspector'],
+    ocr: [],
+    system: ['process_list'],
+    desktop: ['clipboard'],
+    archive: ['archive']
 };
-
 /** Catalogue names the user has explicitly declined the capability for. */
 export function declinedToolNames() {
-  const declined = new Set();
-  for (const [group, tools] of Object.entries(TOOLS_BY_GROUP)) {
-    if (!isGroupDeclined(group)) continue;
-    for (const name of tools) declined.add(name);
-  }
-  return declined;
+    const declined = new Set();
+    for (const [group, tools] of Object.entries(TOOLS_BY_GROUP)) {
+        if (!isGroupDeclined(group))
+            continue;
+        for (const name of tools)
+            declined.add(name);
+    }
+    return declined;
 }
