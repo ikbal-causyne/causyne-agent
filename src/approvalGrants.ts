@@ -37,8 +37,13 @@ export interface ApprovalScope {
 /** Tool names approved for the rest of this process. Deliberately in memory. */
 const standingApprovals = new Set<string>();
 
+const MAX_STANDING_APPROVALS = 256;
+
 function normalizeToolName(toolName: unknown): string {
-  return String(toolName || '').trim();
+  if (typeof toolName !== 'string') return '';
+  const trimmed = toolName.trim();
+  if (!trimmed || trimmed === '*' || trimmed.length > 128 || /[\r\n\0]/.test(trimmed)) return '';
+  return trimmed.replace(/\./g, '_');
 }
 
 /** Record a standing approval for one canonical tool name. */

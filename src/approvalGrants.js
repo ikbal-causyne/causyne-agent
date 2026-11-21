@@ -19,8 +19,14 @@
 // side-effect of a keypress in a modal.
 /** Tool names approved for the rest of this process. Deliberately in memory. */
 const standingApprovals = new Set();
+const MAX_STANDING_APPROVALS = 256;
 function normalizeToolName(toolName) {
-    return String(toolName || '').trim();
+    if (typeof toolName !== 'string')
+        return '';
+    const trimmed = toolName.trim();
+    if (!trimmed || trimmed === '*' || trimmed.length > 128 || /[\r\n\0]/.test(trimmed))
+        return '';
+    return trimmed.replace(/\./g, '_');
 }
 /** Record a standing approval for one canonical tool name. */
 export function grantAlways(toolName) {
