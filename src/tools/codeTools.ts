@@ -117,7 +117,7 @@ export const codeVerifySyntax = {
             success: true,
             valid: false,
             syntaxErrors,
-            rawStderr: stderr,
+            rawStderr: sanitizeToolText(stderr, 4096),
             message: `SyntaxError detected during pre-flight check of ${resolvedPath}`
           };
         }
@@ -164,7 +164,7 @@ export const codeVerifySyntax = {
       return {
         success: false,
         valid: false,
-        error: `Syntax verification failure: ${getErrorMessage(error)}`
+        error: `Syntax verification failure: ${sanitizeToolError(error)}`
       };
     }
   }
@@ -185,26 +185,14 @@ export const codeListSymbols = {
       required: ['filePath']
     }
   },
-  execute: async (args: CodeToolArgs = {}, _context?: ToolWorkspaceContext): Promise<CodeListSymbolsResult> => {
+  execute: async (args: CodeToolArgs = {}, context?: ToolWorkspaceContext): Promise<CodeListSymbolsResult> => {
     try {
-      const filePath = args?.filePath;
-      if (typeof filePath !== 'string' || !filePath.trim()) {
-        return { success: false, error: 'filePath is required' };
-      }
-      const resolvedPath = path.resolve(filePath);
-
-      if (!fs.existsSync(resolvedPath)) {
-        return {
-          success: false,
-          error: `File not found at path: ${resolvedPath}`
-        };
-      }
-
+      const { resolved: resolvedPath } = await assertSafeWorkspaceInput(args?.filePath, context, { maxBytes: MAX_CODE_TOOL_BYTES });
       const content = await fs.promises.readFile(resolvedPath, 'utf8');
       const lines = content.split('\n');
       const symbols: CodeSymbolEntry[] = [];
 
-      for (let i = 0; i < lines.length; i++) {
+      for (let i = 0; i < lines.length && symbols.length < MAX_CODE_SYMBOLS; i++) {
         const line = lines[i] ?? '';
         const trimmed = line.trim();
         const lineNum = i + 1;
@@ -276,7 +264,7 @@ export const codeListSymbols = {
     } catch (error: unknown) {
       return {
         success: false,
-        error: `Failed to index symbols: ${getErrorMessage(error)}`
+        error: `Failed to index symbols: ${sanitizeToolError(error)}`
       };
     }
   }
