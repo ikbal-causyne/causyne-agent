@@ -361,7 +361,8 @@
     "src/tools/astryxOracle.ts",
     "src/tools/procTerm.ts",
     "src/tools/gitExec.ts",
-    "src/tools/codeSearchAst.ts"
+    "src/tools/codeSearchAst.ts",
+    "src/tools/pdfReader.ts"
   ],
   "exclude": [
     "node_modules",
