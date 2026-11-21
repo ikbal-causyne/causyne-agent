@@ -233,7 +233,10 @@ export async function printUsageReport(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function buildCheckpointsText(limit = 15): string {
-  const groups = listGroups(limit);
+  const safeLimit = typeof limit === 'number' && Number.isFinite(limit)
+    ? Math.max(1, Math.min(500, Math.floor(limit)))
+    : 15;
+  const groups = listGroups(safeLimit);
   const stats = getStoreStats();
   const lines: string[] = [];
 
