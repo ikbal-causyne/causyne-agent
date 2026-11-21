@@ -213,10 +213,12 @@ function summariseToolResult(msg: ContextMessage): string {
   return `${DECAY_MARKER} ${toolLabel}${verdict}. Output (${sizeKb} KB) was cleared to protect the context window.${pointer || fallback}`;
 }
 
-export function decayToolResults(messages: ContextMessage[], options: DecayToolResultsOptions = {}): number {
-  const keepRecent = Number.isInteger(options.keepRecent) ? (options.keepRecent as number) : 8;
-  const minChars = Number.isInteger(options.minChars) ? (options.minChars as number) : 600;
-  const keepMediaRecent = Number.isInteger(options.keepMediaRecent) ? (options.keepMediaRecent as number) : 2;
+export function decayToolResults(messages: ContextMessage[], options?: DecayToolResultsOptions | null): number {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+  const safeOpts: DecayToolResultsOptions = options && typeof options === 'object' ? options : {};
+  const keepRecent = Number.isInteger(safeOpts.keepRecent) ? Math.max(0, safeOpts.keepRecent as number) : 8;
+  const minChars = Number.isInteger(safeOpts.minChars) ? Math.max(0, safeOpts.minChars as number) : 600;
+  const keepMediaRecent = Number.isInteger(safeOpts.keepMediaRecent) ? Math.max(0, safeOpts.keepMediaRecent as number) : 2;
 
   let reclaimed = 0;
   let toolsSeen = 0;

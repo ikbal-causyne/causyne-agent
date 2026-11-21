@@ -162,10 +162,13 @@ function summariseToolResult(msg) {
     const toolLabel = safeDisplay(msg.name || 'tool') || 'tool';
     return `${DECAY_MARKER} ${toolLabel}${verdict}. Output (${sizeKb} KB) was cleared to protect the context window.${pointer || fallback}`;
 }
-export function decayToolResults(messages, options = {}) {
-    const keepRecent = Number.isInteger(options.keepRecent) ? options.keepRecent : 8;
-    const minChars = Number.isInteger(options.minChars) ? options.minChars : 600;
-    const keepMediaRecent = Number.isInteger(options.keepMediaRecent) ? options.keepMediaRecent : 2;
+export function decayToolResults(messages, options) {
+    if (!Array.isArray(messages) || messages.length === 0)
+        return 0;
+    const safeOpts = options && typeof options === 'object' ? options : {};
+    const keepRecent = Number.isInteger(safeOpts.keepRecent) ? Math.max(0, safeOpts.keepRecent) : 8;
+    const minChars = Number.isInteger(safeOpts.minChars) ? Math.max(0, safeOpts.minChars) : 600;
+    const keepMediaRecent = Number.isInteger(safeOpts.keepMediaRecent) ? Math.max(0, safeOpts.keepMediaRecent) : 2;
     let reclaimed = 0;
     let toolsSeen = 0;
     let mediaSeen = 0;
