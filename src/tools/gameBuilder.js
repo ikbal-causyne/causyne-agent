@@ -3,8 +3,9 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import { assertSafeWorkspaceOutput, atomicWriteFileSafe, escapeHtmlText, escapeJsString, getErrorMessage, resolveScopedPath, resolveToolWorkspaceRoots, safeFilenameStrict, sanitizeToolError } from './toolPathSafety.js';
 const MAX_CUSTOM_HTML_CHARS = 2 * 1024 * 1024;
-function getWorkspaceTempDir() {
-    const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
+function getWorkspaceTempDir(sandbox) {
+    const baseDir = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+    const tmpDir = path.join(baseDir, '.tmp_causyne_3d');
     if (!fsSync.existsSync(tmpDir)) {
         fsSync.mkdirSync(tmpDir, { recursive: true });
     }
@@ -839,15 +840,24 @@ export const gameBuilder = {
             required: ['title', 'engine']
         }
     },
-    async execute(args = {}, _sandbox) {
+    async execute(args = {}, sandbox) {
         try {
             const { title = 'Untitled Game', engine = 'canvas2d', template, audio = true, customScript, outputDir, filename = 'game.html' } = args || {};
-            const targetDir = outputDir || getWorkspaceTempDir();
+            const safeName = safeFilenameStrict(filename, 128);
+            if (!safeName) {
+                return { success: false, error: 'filename must be a plain file name without path separators or reserved device names.' };
+            }
+            const targetDir = outputDir
+                ? resolveScopedPath(outputDir, sandbox)
+                : getWorkspaceTempDir(sandbox);
             if (!fsSync.existsSync(targetDir)) {
                 await fs.mkdir(targetDir, { recursive: true });
             }
             let htmlContent = '';
             if (template === 'custom' && customScript) {
+                if (customScript.length > MAX_CUSTOM_HTML_CHARS) {
+                    return { success: false, error: `customScript exceeds maximum size of ${MAX_CUSTOM_HTML_CHARS} characters.` };
+                }
                 htmlContent = customScript;
             }
             else if (template === 'cyberpunk_racer_3d') {
@@ -862,8 +872,8 @@ export const gameBuilder = {
             else {
                 htmlContent = getArcadePlatformer2dTemplate(title, audio);
             }
-            const filePath = path.join(targetDir, filename);
-            await fs.writeFile(filePath, htmlContent, 'utf8');
+            const filePath = await assertSafeWorkspaceOutput(path.join(targetDir, safeName), sandbox, { scopeRoot: targetDir });
+            await atomicWriteFileSafe(filePath, htmlContent);
             return {
                 success: true,
                 output: JSON.stringify({
@@ -879,7 +889,7 @@ export const gameBuilder = {
             };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };

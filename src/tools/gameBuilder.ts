@@ -16,8 +16,9 @@ import {
 
 const MAX_CUSTOM_HTML_CHARS = 2 * 1024 * 1024;
 
-function getWorkspaceTempDir(): string {
-  const tmpDir = path.join(process.cwd(), '.tmp_causyne_3d');
+function getWorkspaceTempDir(sandbox?: ToolWorkspaceContext): string {
+  const baseDir = resolveToolWorkspaceRoots(sandbox).primaryRoot || process.cwd();
+  const tmpDir = path.join(baseDir, '.tmp_causyne_3d');
   if (!fsSync.existsSync(tmpDir)) {
     fsSync.mkdirSync(tmpDir, { recursive: true });
   }
@@ -858,16 +859,25 @@ export const gameBuilder = {
     }
   },
 
-  async execute(args: { title?: string | undefined; engine?: string | undefined; template?: string | undefined; audio?: boolean | undefined; customScript?: string | undefined; outputDir?: string | undefined; filename?: string | undefined } = {}, _sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
+  async execute(args: { title?: string | undefined; engine?: string | undefined; template?: string | undefined; audio?: boolean | undefined; customScript?: string | undefined; outputDir?: string | undefined; filename?: string | undefined } = {}, sandbox?: ToolWorkspaceContext): Promise<{ success: boolean; output?: string | undefined; error?: string | undefined }> {
     try {
       const { title = 'Untitled Game', engine = 'canvas2d', template, audio = true, customScript, outputDir, filename = 'game.html' } = args || {};
-      const targetDir = outputDir || getWorkspaceTempDir();
+      const safeName = safeFilenameStrict(filename, 128);
+      if (!safeName) {
+        return { success: false, error: 'filename must be a plain file name without path separators or reserved device names.' };
+      }
+      const targetDir = outputDir
+        ? resolveScopedPath(outputDir, sandbox)
+        : getWorkspaceTempDir(sandbox);
       if (!fsSync.existsSync(targetDir)) {
         await fs.mkdir(targetDir, { recursive: true });
       }
 
       let htmlContent = '';
       if (template === 'custom' && customScript) {
+        if (customScript.length > MAX_CUSTOM_HTML_CHARS) {
+          return { success: false, error: `customScript exceeds maximum size of ${MAX_CUSTOM_HTML_CHARS} characters.` };
+        }
         htmlContent = customScript;
       } else if (template === 'cyberpunk_racer_3d') {
         htmlContent = getCyberpunkRacer3dTemplate(title, audio);
@@ -879,8 +889,8 @@ export const gameBuilder = {
         htmlContent = getArcadePlatformer2dTemplate(title, audio);
       }
 
-      const filePath = path.join(targetDir, filename);
-      await fs.writeFile(filePath, htmlContent, 'utf8');
+      const filePath = await assertSafeWorkspaceOutput(path.join(targetDir, safeName), sandbox, { scopeRoot: targetDir });
+      await atomicWriteFileSafe(filePath, htmlContent);
 
       return {
         success: true,
@@ -896,7 +906,7 @@ export const gameBuilder = {
         }, null, 2)
       };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
