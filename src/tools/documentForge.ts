@@ -52,6 +52,74 @@ export interface DocumentForgeArgs {
   inspectImagesDir?: string;
 }
 
+interface DocumentForgeContext {
+  workspaceRoot?: string;
+  workspacePaths?: string[];
+  grantAllAccess?: boolean;
+  parentLoop?: { workspaceRoot?: string };
+}
+
+function resolveDocPath(raw: string, context?: DocumentForgeContext): string {
+  const trimmed = raw.trim();
+  if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+    return resolveUserPath(trimmed);
+  }
+  if (path.isAbsolute(trimmed)) return path.resolve(trimmed);
+  const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
+    || context?.workspaceRoot?.trim()
+    || context?.workspacePaths?.find((p): p is string => typeof p === 'string' && p.trim().length > 0)?.trim();
+  return path.resolve(baseRoot ? resolveUserPath(baseRoot) : process.cwd(), trimmed);
+}
+
+function canonicalDocPath(target: string): string {
+  const resolved = path.resolve(target);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    let current = resolved;
+    const missing: string[] = [];
+    for (let i = 0; i < 64; i++) {
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      missing.unshift(path.basename(current));
+      current = parent;
+      try {
+        return path.join(fs.realpathSync(current), ...missing);
+      } catch {
+        continue;
+      }
+    }
+    return resolved;
+  }
+}
+
+function assertDocScope(target: string, context?: DocumentForgeContext, isWrite = false): void {
+  if (isWrite && fs.existsSync(target) && fs.lstatSync(target).isSymbolicLink()) {
+    throw new Error(`Refusing to overwrite symbolic link: ${target}`);
+  }
+  if (!context || context.grantAllAccess === true) return;
+  const configured = Array.isArray(context.workspacePaths)
+    ? context.workspacePaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).map(p => p.trim())
+    : [];
+  const roots = configured.length > 0
+    ? configured
+    : [context.parentLoop?.workspaceRoot, context.workspaceRoot]
+      .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+      .map(p => p.trim());
+  if (roots.length === 0) return;
+  const physical = canonicalDocPath(target);
+  for (const root of roots) {
+    try {
+      const realRoot = fs.realpathSync(resolveUserPath(root));
+      const rel = path.relative(realRoot, physical);
+      if (rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel))) return;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(`Document path resolves outside the selected workspace: ${target}`);
+}
+
 export const documentForgeTool = {
   schema: {
     name: 'document_forge',
@@ -159,107 +227,124 @@ export const documentForgeTool = {
     }
   },
 
-  async execute(args: DocumentForgeArgs = {}, _context: any = {}): Promise<{ success: boolean; [key: string]: any }> {
-    const action = args.action || 'compile_document';
-
-    switch (action) {
-      case 'compile_document': {
-        if (!args.documentSpec) {
-          return { success: false, error: 'compile_document requires documentSpec.' };
-        }
-        const compiled = compileDocumentHtml(args.documentSpec);
-        if (args.outputPath) {
-          const target = resolveUserPath(args.outputPath);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, compiled.html, 'utf8');
-        }
-        return {
-          success: true,
-          html: compiled.html,
-          outputPath: args.outputPath ? resolveUserPath(args.outputPath) : undefined
-        };
+  async execute(args: DocumentForgeArgs = {}, context: DocumentForgeContext = {}): Promise<{ success: boolean; [key: string]: any }> {
+    try {
+      if (!args || typeof args !== 'object' || Array.isArray(args)) {
+        return { success: false, error: 'document_forge requires an arguments object.' };
       }
+      const action = args.action || 'compile_document';
 
-      case 'render_pdf': {
-        if (!args.sourceHtmlPath || !args.outputPdfPath) {
-          return { success: false, error: 'render_pdf requires sourceHtmlPath and outputPdfPath.' };
+      switch (action) {
+        case 'compile_document': {
+          if (!args.documentSpec) {
+            return { success: false, error: 'compile_document requires documentSpec.' };
+          }
+          const compiled = compileDocumentHtml(args.documentSpec);
+          let resolvedOut: string | undefined;
+          if (args.outputPath) {
+            resolvedOut = resolveDocPath(args.outputPath, context);
+            assertDocScope(resolvedOut, context, true);
+            fs.mkdirSync(path.dirname(resolvedOut), { recursive: true });
+            fs.writeFileSync(resolvedOut, compiled.html, 'utf8');
+          }
+          return {
+            success: true,
+            html: compiled.html,
+            outputPath: resolvedOut
+          };
         }
-        const src = resolveUserPath(args.sourceHtmlPath);
-        const out = resolveUserPath(args.outputPdfPath);
-        const res = await renderHtmlToPdf(src, out);
-        return res;
+
+        case 'render_pdf': {
+          if (!args.sourceHtmlPath || !args.outputPdfPath) {
+            return { success: false, error: 'render_pdf requires sourceHtmlPath and outputPdfPath.' };
+          }
+          const src = resolveDocPath(args.sourceHtmlPath, context);
+          const out = resolveDocPath(args.outputPdfPath, context);
+          assertDocScope(src, context, false);
+          assertDocScope(out, context, true);
+          const res = await renderHtmlToPdf(src, out);
+          return res;
+        }
+
+        case 'inspect_pages': {
+          if (!args.outputPdfPath) {
+            return { success: false, error: 'inspect_pages requires outputPdfPath.' };
+          }
+          const pdf = resolveDocPath(args.outputPdfPath, context);
+          assertDocScope(pdf, context, false);
+          const imgDir = args.inspectImagesDir ? resolveDocPath(args.inspectImagesDir, context) : undefined;
+          if (imgDir) assertDocScope(imgDir, context, true);
+          const res = await inspectPdfPages(pdf, imgDir);
+          return res;
+        }
+
+        case 'audit_text': {
+          if (!args.textContent) {
+            return { success: false, error: 'audit_text requires textContent parameter.' };
+          }
+          const res = auditTextContent(args.textContent);
+          return { success: true, ...res };
+        }
+
+        case 'audit_budget': {
+          if (!args.budgetSpec) {
+            return { success: false, error: 'audit_budget requires budgetSpec parameter.' };
+          }
+          const res = auditBudgetArithmetic(args.budgetSpec);
+          return { success: true, ...res };
+        }
+
+        case 'format_screenplay': {
+          if (!args.screenplaySpec) {
+            return { success: false, error: 'format_screenplay requires screenplaySpec.' };
+          }
+          const formatted = formatScreenplayHtml(args.screenplaySpec);
+          let resolvedOut: string | undefined;
+          if (args.outputPath) {
+            resolvedOut = resolveDocPath(args.outputPath, context);
+            assertDocScope(resolvedOut, context, true);
+            fs.mkdirSync(path.dirname(resolvedOut), { recursive: true });
+            fs.writeFileSync(resolvedOut, formatted.html, 'utf8');
+          }
+          return {
+            success: true,
+            html: formatted.html,
+            outputPath: resolvedOut
+          };
+        }
+
+        case 'format_shotlist': {
+          if (!args.shotList || !Array.isArray(args.shotList.shots)) {
+            return { success: false, error: 'format_shotlist requires shotList with a shots array.' };
+          }
+          const formatted = formatShotListHtml(args.shotList.title, args.shotList.shots);
+          let resolvedOut: string | undefined;
+          if (args.outputPath) {
+            resolvedOut = resolveDocPath(args.outputPath, context);
+            assertDocScope(resolvedOut, context, true);
+            fs.mkdirSync(path.dirname(resolvedOut), { recursive: true });
+            fs.writeFileSync(resolvedOut, formatted.html, 'utf8');
+          }
+          return {
+            success: true,
+            html: formatted.html,
+            outputPath: resolvedOut
+          };
+        }
+
+        case 'analyze_vo': {
+          if (!args.voBlocks || !Array.isArray(args.voBlocks)) {
+            return { success: false, error: 'analyze_vo requires voBlocks array.' };
+          }
+          const res = analyzeVoiceOverTiming(args.voBlocks);
+          return { success: true, analysis: res };
+        }
+
+        default:
+          return { success: false, error: `Unsupported document_forge action: ${action}` };
       }
-
-      case 'inspect_pages': {
-        if (!args.outputPdfPath) {
-          return { success: false, error: 'inspect_pages requires outputPdfPath.' };
-        }
-        const pdf = resolveUserPath(args.outputPdfPath);
-        const imgDir = args.inspectImagesDir ? resolveUserPath(args.inspectImagesDir) : undefined;
-        const res = await inspectPdfPages(pdf, imgDir);
-        return res;
-      }
-
-      case 'audit_text': {
-        if (!args.textContent) {
-          return { success: false, error: 'audit_text requires textContent parameter.' };
-        }
-        const res = auditTextContent(args.textContent);
-        return { success: true, ...res };
-      }
-
-      case 'audit_budget': {
-        if (!args.budgetSpec) {
-          return { success: false, error: 'audit_budget requires budgetSpec parameter.' };
-        }
-        const res = auditBudgetArithmetic(args.budgetSpec);
-        return { success: true, ...res };
-      }
-
-      case 'format_screenplay': {
-        if (!args.screenplaySpec) {
-          return { success: false, error: 'format_screenplay requires screenplaySpec.' };
-        }
-        const formatted = formatScreenplayHtml(args.screenplaySpec);
-        if (args.outputPath) {
-          const target = resolveUserPath(args.outputPath);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, formatted.html, 'utf8');
-        }
-        return {
-          success: true,
-          html: formatted.html,
-          outputPath: args.outputPath ? resolveUserPath(args.outputPath) : undefined
-        };
-      }
-
-      case 'format_shotlist': {
-        if (!args.shotList) {
-          return { success: false, error: 'format_shotlist requires shotList parameter.' };
-        }
-        const formatted = formatShotListHtml(args.shotList.title, args.shotList.shots);
-        if (args.outputPath) {
-          const target = resolveUserPath(args.outputPath);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.writeFileSync(target, formatted.html, 'utf8');
-        }
-        return {
-          success: true,
-          html: formatted.html,
-          outputPath: args.outputPath ? resolveUserPath(args.outputPath) : undefined
-        };
-      }
-
-      case 'analyze_vo': {
-        if (!args.voBlocks || !Array.isArray(args.voBlocks)) {
-          return { success: false, error: 'analyze_vo requires voBlocks array.' };
-        }
-        const res = analyzeVoiceOverTiming(args.voBlocks);
-        return { success: true, analysis: res };
-      }
-
-      default:
-        return { success: false, error: `Unsupported document_forge action: ${action}` };
+    } catch (error: unknown) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
 };
