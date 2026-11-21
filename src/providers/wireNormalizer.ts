@@ -129,14 +129,20 @@ export function extractTextToolCalls(
   const calls: ChatResponseToolCall[] = [];
   if (!text || typeof text !== 'string') return calls;
   let index = 0;
+  const seenIds = new Set<string>();
   for (const parsed of extractToolCallJsonObjects(text)) {
     const fnObj = isPlainObject(parsed['function']) ? parsed['function'] : null;
     const rawName = String(parsed['name'] || parsed['tool'] || fnObj?.['name'] || '').trim();
     if (!rawName) continue;
     const name = normalizeToolName(rawName);
+    if (!name) continue;
     const rawArgs = resolveToolCallEnvelopeArguments(parsed);
+    let id = sanitizeProviderToolId(parsed['id'], prefix, index);
+    if (seenIds.has(id)) id = `${id.slice(0, 56)}_${index}`;
+    seenIds.add(id);
+    index++;
     calls.push({
-      id: sanitizeProviderToolId(parsed['id'], prefix, index++),
+      id,
       type: 'function',
       function: {
         name,
