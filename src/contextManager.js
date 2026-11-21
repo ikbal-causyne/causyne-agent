@@ -6,6 +6,7 @@
 //   3. Real compaction — amputated messages are replaced by a single summary message.
 //   4. Sequence sanitising — guarantees valid tool_call / tool_result pairing.
 import { buildDecayPointer } from './outputStore.js';
+import { safeDisplay } from './tui/text.js';
 export const CHARS_PER_TOKEN = 4;
 export const RESULT_CAPS = {
     fs_read: 32000,
@@ -142,14 +143,14 @@ export function measureMessages(messages) {
 }
 const DECAY_MARKER = '[decayed]';
 function summariseToolResult(msg) {
-    const raw = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+    const raw = safeSerializeContent(msg.content);
     const sizeKb = (raw.length / 1024).toFixed(1);
     let verdict = '';
     try {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
             verdict = parsed.success === false
-                ? ` failed: ${String(parsed.error || '').slice(0, 160)}`
+                ? ` failed: ${safeDisplay(String(parsed.error || '')).slice(0, 160)}`
                 : ' succeeded';
         }
     }
@@ -158,7 +159,8 @@ function summariseToolResult(msg) {
     }
     const pointer = buildDecayPointer({ path: msg.spillPath });
     const fallback = ' Re-run the tool or read the specific file/lines again if you still need it.';
-    return `${DECAY_MARKER} ${msg.name || 'tool'}${verdict}. Output (${sizeKb} KB) was cleared to protect the context window.${pointer || fallback}`;
+    const toolLabel = safeDisplay(msg.name || 'tool') || 'tool';
+    return `${DECAY_MARKER} ${toolLabel}${verdict}. Output (${sizeKb} KB) was cleared to protect the context window.${pointer || fallback}`;
 }
 export function decayToolResults(messages, options = {}) {
     const keepRecent = Number.isInteger(options.keepRecent) ? options.keepRecent : 8;

@@ -7,6 +7,7 @@
 //   4. Sequence sanitising — guarantees valid tool_call / tool_result pairing.
 
 import { buildDecayPointer } from './outputStore.js';
+import { safeDisplay } from './tui/text.js';
 
 export interface ContextMessage {
   role: string;
@@ -190,7 +191,7 @@ export function measureMessages(messages: readonly ContextMessage[] | null | und
 const DECAY_MARKER = '[decayed]';
 
 function summariseToolResult(msg: ContextMessage): string {
-  const raw = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+  const raw = safeSerializeContent(msg.content);
   const sizeKb = (raw.length / 1024).toFixed(1);
 
   let verdict = '';
@@ -198,7 +199,7 @@ function summariseToolResult(msg: ContextMessage): string {
     const parsed = JSON.parse(raw) as Record<string, unknown> | null;
     if (parsed && typeof parsed === 'object') {
       verdict = parsed.success === false
-        ? ` failed: ${String(parsed.error || '').slice(0, 160)}`
+        ? ` failed: ${safeDisplay(String(parsed.error || '')).slice(0, 160)}`
         : ' succeeded';
     }
   } catch {
@@ -207,8 +208,9 @@ function summariseToolResult(msg: ContextMessage): string {
 
   const pointer = buildDecayPointer({ path: msg.spillPath });
   const fallback = ' Re-run the tool or read the specific file/lines again if you still need it.';
+  const toolLabel = safeDisplay(msg.name || 'tool') || 'tool';
 
-  return `${DECAY_MARKER} ${msg.name || 'tool'}${verdict}. Output (${sizeKb} KB) was cleared to protect the context window.${pointer || fallback}`;
+  return `${DECAY_MARKER} ${toolLabel}${verdict}. Output (${sizeKb} KB) was cleared to protect the context window.${pointer || fallback}`;
 }
 
 export function decayToolResults(messages: ContextMessage[], options: DecayToolResultsOptions = {}): number {
