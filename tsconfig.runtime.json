@@ -382,7 +382,8 @@
     "src/tools/gameQuestArcBuilder.ts",
     "src/tools/gameLoreForge.ts",
     "src/tools/gameSceneBuilder.ts",
-    "src/tools/gameEconomyBalancer.ts"
+    "src/tools/gameEconomyBalancer.ts",
+    "src/tools/gameTilemapGenerator.ts"
   ],
   "exclude": [
     "node_modules",
