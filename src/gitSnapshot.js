@@ -13,6 +13,10 @@ import { causyneHome } from './utils/paths.js';
 const GIT_TIMEOUT_MS = 20000;
 /** Untracked files above this are excluded rather than stored. */
 const MAX_UNTRACKED_BYTES = 2 * 1024 * 1024;
+const GIT_SHA_PATTERN = /^[0-9a-f]{40,64}$/i;
+function isValidGitSha(sha) {
+    return typeof sha === 'string' && GIT_SHA_PATTERN.test(sha);
+}
 /**
  * Run git.
  *
@@ -200,6 +204,8 @@ export function captureTree(worktree) {
  * What restoring `files` would change — WITHOUT touching the worktree.
  */
 export function previewRestore(worktree, fromTree) {
+    if (!isValidGitSha(fromTree))
+        return [];
     const gitDir = initShadow(worktree);
     const tempIndex = path.join(gitDir, `preview-${crypto.randomUUID()}.index`);
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
@@ -256,6 +262,9 @@ function classify(added, removed) {
  * Restore the worktree to `fromTree`.
  */
 export function restoreTree(worktree, fromTree) {
+    if (!isValidGitSha(fromTree)) {
+        throw new Error('Refusing restore: invalid git tree SHA');
+    }
     const gitDir = initShadow(worktree);
     const current = captureTree(worktree);
     const toRemove = [];
