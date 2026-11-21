@@ -147,7 +147,9 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
     limit: outputLimit
   };
   return new Promise<PtyProbeResult>(resolve => {
+    const maxNodeStdout = outputLimit + 16384;
     let stdout = '';
+    let nodeStdoutTruncated = false;
     let stderr = '';
     let spawnedError: string | null = null;
     const child = spawn('python3', ['-c', DRIVER, JSON.stringify(config)], {
@@ -157,7 +159,20 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...sanitizeSubprocessEnv(process.env), CAUSYNE_VERIFY_PROBE: '1' }
     });
-    child.stdout.on('data', (bytes: Buffer) => { stdout += bytes.toString('utf8'); });
+    child.stdout.on('data', (bytes: Buffer) => {
+      const remaining = maxNodeStdout - stdout.length;
+      if (remaining <= 0) {
+        nodeStdoutTruncated = true;
+        return;
+      }
+      const text = bytes.toString('utf8');
+      if (text.length > remaining) {
+        stdout += text.slice(0, remaining);
+        nodeStdoutTruncated = true;
+      } else {
+        stdout += text;
+      }
+    });
     child.stderr.on('data', (bytes: Buffer) => { stderr += bytes.toString('utf8'); });
     child.on('error', (error: Error) => { spawnedError = String(error.message || error); });
     child.on('close', () => {
@@ -181,7 +196,8 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
         const afterLine = lineEnd === -1 ? '' : stderr.slice(lineEnd + 1);
         cleanedStderr = stderr.slice(0, markerIdx) + afterLine;
       }
-      const success = Boolean(detail && !detail.timeout && !detail.truncated
+      const truncated = Boolean(detail?.truncated || nodeStdoutTruncated);
+      const success = Boolean(detail && !detail.timeout && !truncated
         && detail.exit === expectedExitCode && detail.inputSent
         && (contains === null || stdout.includes(contains)));
       resolve({
@@ -192,7 +208,7 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
         stderr: cleanedStderr,
         exitCode: detail?.exit ?? null,
         timedOut: detail?.timeout ?? null,
-        truncated: detail?.truncated ?? null,
+        truncated: detail ? truncated : (nodeStdoutTruncated ? true : null),
         inputSent: detail?.inputSent ?? false,
         reason: detail ? null : (spawnedError || 'PTY driver produced no valid exit evidence'),
         limitation: 'PTY verifies terminal input/output, not desktop pixels or host mouse settings'
