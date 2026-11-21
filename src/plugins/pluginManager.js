@@ -33,8 +33,21 @@ const CAPABILITIES = new Set([
 ]);
 function ensureRoot() {
     const root = pluginRoot();
-    if (!fs.existsSync(root))
+    if (!fs.existsSync(root)) {
         fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+    }
+    else {
+        const stat = fs.lstatSync(root);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+            throw new Error('Refusing symlink or non-directory plugin root');
+        }
+    }
+    if (process.platform !== 'win32') {
+        try {
+            fs.chmodSync(root, 0o700);
+        }
+        catch { /* ignore */ }
+    }
 }
 function safeObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};

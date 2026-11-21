@@ -87,7 +87,17 @@ export interface PluginListing {
 
 function ensureRoot(): void {
   const root = pluginRoot();
-  if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(root)) {
+    fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  } else {
+    const stat = fs.lstatSync(root);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error('Refusing symlink or non-directory plugin root');
+    }
+  }
+  if (process.platform !== 'win32') {
+    try { fs.chmodSync(root, 0o700); } catch { /* ignore */ }
+  }
 }
 
 function safeObject(value: unknown): Record<string, any> {
