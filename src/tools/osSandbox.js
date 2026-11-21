@@ -453,12 +453,28 @@ export function buildBubblewrapArgs(shell, shellArgs, options) {
             if (masked.has(variant))
                 continue;
             try {
-                const stat = fs.statSync(variant);
-                if (stat.isDirectory()) {
+                const lstat = fs.lstatSync(variant);
+                if (lstat.isSymbolicLink()) {
+                    let targetIsDir = false;
+                    try {
+                        targetIsDir = fs.statSync(variant).isDirectory();
+                    }
+                    catch {
+                        targetIsDir = false;
+                    }
+                    masked.add(variant);
+                    if (targetIsDir) {
+                        args.push('--tmpfs', variant);
+                    }
+                    else {
+                        args.push('--ro-bind', '/dev/null', variant);
+                    }
+                }
+                else if (lstat.isDirectory()) {
                     masked.add(variant);
                     args.push('--tmpfs', variant);
                 }
-                else if (stat.isFile()) {
+                else if (lstat.isFile()) {
                     masked.add(variant);
                     args.push('--ro-bind', '/dev/null', variant);
                 }
