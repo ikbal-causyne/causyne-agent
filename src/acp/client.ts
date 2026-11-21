@@ -285,18 +285,24 @@ export class AcpClient {
     }
   }
 
-  async setSessionMode(sessionId: string, modeId: string): Promise<void> {
+  async setSessionMode(sessionId: string, modeId: string, signal?: AbortSignal): Promise<void> {
+    if (typeof sessionId !== 'string' || !sessionId.trim() || typeof modeId !== 'string' || !modeId.trim()) {
+      throw new Error('setSessionMode requires non-empty sessionId and modeId');
+    }
     await this.request<void>(ACP_METHODS.SET_MODE, {
       sessionId,
       modeId
-    }, 30_000);
+    }, 30_000, signal);
   }
 
-  async loadSession(sessionId: string, cwd?: string): Promise<unknown> {
+  async loadSession(sessionId: string, cwd?: string, signal?: AbortSignal): Promise<unknown> {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      throw new Error('loadSession requires a non-empty sessionId');
+    }
     const res = await this.request<unknown>(ACP_METHODS.LOAD, {
       sessionId,
       cwd: cwd || this.options.cwd
-    }, 30_000);
+    }, 30_000, signal);
     this.recordSessionModels(sessionId, res);
     return res;
   }

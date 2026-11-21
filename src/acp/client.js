@@ -208,17 +208,23 @@ export class AcpClient {
             throw err;
         }
     }
-    async setSessionMode(sessionId, modeId) {
+    async setSessionMode(sessionId, modeId, signal) {
+        if (typeof sessionId !== 'string' || !sessionId.trim() || typeof modeId !== 'string' || !modeId.trim()) {
+            throw new Error('setSessionMode requires non-empty sessionId and modeId');
+        }
         await this.request(ACP_METHODS.SET_MODE, {
             sessionId,
             modeId
-        }, 30_000);
+        }, 30_000, signal);
     }
-    async loadSession(sessionId, cwd) {
+    async loadSession(sessionId, cwd, signal) {
+        if (typeof sessionId !== 'string' || !sessionId.trim()) {
+            throw new Error('loadSession requires a non-empty sessionId');
+        }
         const res = await this.request(ACP_METHODS.LOAD, {
             sessionId,
             cwd: cwd || this.options.cwd
-        }, 30_000);
+        }, 30_000, signal);
         this.recordSessionModels(sessionId, res);
         return res;
     }
