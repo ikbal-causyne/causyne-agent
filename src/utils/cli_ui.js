@@ -101,14 +101,15 @@ export const UI = {
     printWarning(msg) { console.log(`  ${paint('warn', GLYPHS.bullet)} ${safeDisplay(String(msg ?? ''))}`); },
     printError(msg) { console.log(`  ${paint('danger', GLYPHS.cross)} ${safeDisplay(String(msg ?? ''))}`); },
     printFatalBox(title, lines) {
-        const safeLines = Array.isArray(lines) ? lines : [String(lines)];
-        const width = cardWidth(safeLines, title);
+        const safeTitle = safeDisplay(String(title ?? ''));
+        const safeLines = (Array.isArray(lines) ? lines : [String(lines ?? '')]).map(l => safeDisplay(String(l ?? '')));
+        const width = cardWidth(safeLines, safeTitle);
         const inner = width - 2;
         const edge = (l, r) => console.log(`  ${paint('danger', l + (BOX.h ?? '-').repeat(inner) + r)}`);
         const row = (text) => console.log(`  ${paint('danger', BOX.v ?? '|')} ${padEnd(truncate(text, inner - 2, GLYPHS.ellipsis), inner - 2)} ${paint('danger', BOX.v ?? '|')}`);
         console.log('');
         edge(BOX.tl ?? '+', BOX.tr ?? '+');
-        row(themeBold(paint('danger', title)));
+        row(themeBold(paint('danger', safeTitle)));
         edge(BOX.l ?? '+', BOX.r ?? '+');
         for (const line of safeLines)
             row(line);
