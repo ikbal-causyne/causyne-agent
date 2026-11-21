@@ -29,7 +29,6 @@ import {
 } from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
-// @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
 import { listSessions, getActiveSessionId, renameSession, getSession } from './sessionStore.js';
 import {
   serverStatus, grantServer, revokeServer, addServer, removeServer,
@@ -800,7 +799,6 @@ export const COMMANDS: SlashCommandDefinition[] = [
     description: 'Start a new clean chat session in this workspace',
     dialogTitle: 'New Session',
     run: async (_args = [], context = {}) => {
-      // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
       const store = await import('./sessionStore.js');
       const memory = context.loop && context.loop.memoryManager;
       const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
@@ -851,7 +849,6 @@ export const COMMANDS: SlashCommandDefinition[] = [
       }
     },
     run: async (args = [], context = {}) => {
-      // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
       const store = await import('./sessionStore.js');
       const verb = String(args[0] || '').toLowerCase();
       const memory = context.loop && context.loop.memoryManager;
@@ -995,7 +992,6 @@ export const COMMANDS: SlashCommandDefinition[] = [
       }
     },
     run: async (args = [], context = {}) => {
-      // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
       const store = await import('./sessionStore.js');
       const { revokeAllAlways } = await import('./approvalGrants.js');
       const memory = context.loop && context.loop.memoryManager;

@@ -7,7 +7,6 @@ import { unifiedDiff, looksBinary } from './textDiff.js';
 import { causyneHome } from './utils/paths.js';
 import { isProtectedPhysicalPath, isWithinPhysicalPath, physicalPath } from './agent/workspaceBoundary.js';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
-// @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
 import { getActiveSessionId, restoreSessionFromSnapshot, sessionTranscriptFile } from './sessionStore.js';
 function debugLog(message) {
     if (process.env.CAUSYNE_DEBUG !== '1')

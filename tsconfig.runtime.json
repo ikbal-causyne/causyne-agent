@@ -332,7 +332,8 @@
     "src/modelIds.ts",
     "src/modelCatalogue.ts",
     "src/designPalettes.ts",
-    "src/slopDetector.ts"
+    "src/slopDetector.ts",
+    "src/sessionStore.ts"
   ],
   "exclude": [
     "node_modules",
