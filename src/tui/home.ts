@@ -200,7 +200,8 @@ export const PROVIDERS: ProviderChoice[] = RAW_PROVIDERS.map((entry) => ({
 }));
 
 /** Run the shared setup transaction inside the existing prompt. */
-export function configureInPrompt(prompt: { openLayer: (layer: unknown) => unknown }, store?: any): Promise<any> {
+export function configureInPrompt(prompt: { openLayer: (layer: unknown) => unknown } | null | undefined, store?: any): Promise<any> {
+  if (!prompt || typeof prompt.openLayer !== 'function') return Promise.resolve(null);
   return runSetup({
     select: (options: any) => new Promise((resolve) => {
       const layer = new SelectLayer({ ...options, onPick: resolve });
