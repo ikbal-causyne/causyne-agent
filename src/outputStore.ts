@@ -158,10 +158,14 @@ export function renderSpillDocument(result: unknown, meta?: SpillMeta | null): s
   if (result === null || typeof result !== 'object') return String(result);
   const safeMeta = meta && typeof meta === 'object' ? meta : {};
 
+  const cleanMeta = (val: unknown, fallback: string): string => {
+    const s = String(val == null ? '' : val).replace(/[\r\n\0]+/g, ' ').trim();
+    return s ? s.slice(0, 128) : fallback;
+  };
   const header = [
     '=== CAUSYNE TOOL OUTPUT (full, untruncated) ===',
-    `tool : ${String(safeMeta.tool || 'unknown')}`,
-    `task : ${String(safeMeta.taskId || 'unknown')}   step: ${safeMeta.step == null ? 'unknown' : String(safeMeta.step)}`,
+    `tool : ${cleanMeta(safeMeta.tool, 'unknown')}`,
+    `task : ${cleanMeta(safeMeta.taskId, 'unknown')}   step: ${safeMeta.step == null ? 'unknown' : cleanMeta(safeMeta.step, 'unknown')}`,
     `saved: ${new Date().toISOString()}`
   ];
 
