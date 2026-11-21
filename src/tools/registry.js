@@ -82,6 +82,7 @@ import { resolveActiveTools } from '../toolPacks.js';
 import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
 import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
 import { canonicalizeToolName } from './toolSelfRepair.js';
+import { safeDisplay } from '../tui/text.js';
 function validateSchema(schema) {
     if (!schema || typeof schema !== 'object' || !schema.name || !schema.description) {
         console.error(`[REGISTRY WARNING] Tool schema missing required name or description:`, schema);
@@ -141,7 +142,7 @@ for (const module of TOOL_MODULES) {
         continue;
     const name = normalizeToolName(module.schema.name);
     if (typeof module.execute !== 'function') {
-        console.error(`[REGISTRY WARNING] Tool "${name}" has no execute() and cannot run — skipping.`);
+        console.error(`[REGISTRY WARNING] Tool "${safeDisplay(name)}" has no execute() and cannot run — skipping.`);
         continue;
     }
     TOOL_DEFINITIONS.push({ ...module.schema, name });

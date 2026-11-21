@@ -83,6 +83,7 @@ import { resolveActiveTools } from '../toolPacks.js';
 import { discoverTools, resolveMcpTool, isMcpToolName } from '../mcp/mcpRegistry.js';
 import { getPluginToolDefinitions, resolvePluginTool } from '../plugins/pluginManager.js';
 import { canonicalizeToolName } from './toolSelfRepair.js';
+import { safeDisplay } from '../tui/text.js';
 
 // Phase 6 AGI Upgrade: Schema Validation Hook
 export interface ToolDefinition {
@@ -169,7 +170,7 @@ for (const module of TOOL_MODULES) {
 
   const name = normalizeToolName(module.schema.name);
   if (typeof module.execute !== 'function') {
-    console.error(`[REGISTRY WARNING] Tool "${name}" has no execute() and cannot run — skipping.`);
+    console.error(`[REGISTRY WARNING] Tool "${safeDisplay(name)}" has no execute() and cannot run — skipping.`);
     continue;
   }
 
