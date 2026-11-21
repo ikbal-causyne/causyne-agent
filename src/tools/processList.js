@@ -1,5 +1,6 @@
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const MAX_PROCESS_ROWS = 200;
 export const processList = {
     schema: {
         name: 'process.list',
@@ -33,9 +34,9 @@ export const processList = {
                 const needle = args.filter.toLowerCase();
                 filtered = filtered.filter((p) => String(p.name || '').toLowerCase().includes(needle));
             }
-            const formatted = filtered.map((p) => ({
+            const formatted = filtered.slice(0, MAX_PROCESS_ROWS).map((p) => ({
                 pid: p.pid ?? 0,
-                name: String(p.name || ''),
+                name: sanitizeToolText(p.name || '', 160),
                 cpu_percent: Math.round(p.cpu ?? 0),
                 ram_mb: Math.round((p.memRss ?? 0) / 1024)
             }));
