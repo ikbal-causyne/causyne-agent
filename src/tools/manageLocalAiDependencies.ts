@@ -2,8 +2,44 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import util from 'node:util';
-import os from 'node:os';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { causyneHome } from '../utils/paths.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import {
+  getErrorMessage,
+  resolveToolWorkspaceRoots,
+  sanitizeToolError,
+  sanitizeToolText,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const PIP_HIJACK_ENV_KEYS = [
+  'PIP_INDEX_URL',
+  'PIP_EXTRA_INDEX_URL',
+  'PIP_FIND_LINKS',
+  'PIP_TRUSTED_HOST',
+  'PIP_CONFIG_FILE',
+  'PYTHONSTARTUP'
+] as const;
+
+function buildSafePipEnv(): NodeJS.ProcessEnv {
+  const env = sanitizeSubprocessEnv(process.env);
+  for (const key of PIP_HIJACK_ENV_KEYS) {
+    delete env[key];
+  }
+  return env;
+}
+
+function assertNotSymlinkIfExists(targetPath: string, label: string): void {
+  try {
+    const stat = fs.lstatSync(targetPath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing to use symlinked ${label}: ${targetPath}`);
+    }
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return;
+    throw err;
+  }
+}
 
 const execFilePromise = util.promisify(execFile);
 
@@ -15,8 +51,7 @@ export function isExactPyPiPin(value: unknown): value is string {
 
 async function findInstalledEngine(engine: string): Promise<string | null> {
   if (engine !== 'godot' && engine !== 'blender') return null;
-  const homeDir = os.homedir();
-  const causyneEngineDir = path.join(homeDir, '.causyne', 'engines', engine);
+  const causyneEngineDir = path.join(causyneHome(), 'engines', engine);
   const isWindows = process.platform === 'win32';
 
   const possiblePaths = engine === 'godot' ? [
@@ -37,7 +72,12 @@ async function findInstalledEngine(engine: string): Promise<string | null> {
 
   try {
     const locator = isWindows ? 'where.exe' : 'which';
-    const { stdout } = await execFilePromise(locator, [engine], { timeout: 5000 });
+    const { stdout } = await execFilePromise(locator, [engine], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+      env: sanitizeSubprocessEnv(process.env)
+    });
     const trimmed = (stdout.trim().split('\n')[0] ?? '').trim();
     if (trimmed && fs.existsSync(trimmed)) return trimmed;
   } catch { /* ignore */ }
@@ -70,7 +110,7 @@ export const manageLocalDependencies = {
     }
   },
 
-  execute: async (args: ManageLocalDependenciesArgs = {}, _sandbox?: ToolWorkspaceContext): Promise<Record<string, unknown>> => {
+  execute: async (args: ManageLocalDependenciesArgs = {}, sandbox?: ToolWorkspaceContext): Promise<Record<string, unknown>> => {
     try {
       const { action, engine, simulateMissing, packages, group } = args || {};
 
@@ -173,7 +213,13 @@ export const manageLocalDependencies = {
         const venvPath = path.join(aiToolsDir, 'venv');
         if (!fs.existsSync(venvPath)) {
           const python = process.platform === 'win32' ? 'python.exe' : 'python3';
-          await execFilePromise(python, ['-m', 'venv', venvPath], { timeout: 120000 });
+          await execFilePromise(python, ['-m', 'venv', venvPath], {
+            timeout: 120000,
+            maxBuffer: 4 * 1024 * 1024,
+            windowsHide: true,
+            env: buildSafePipEnv(),
+            ...(sandbox?.signal ? { signal: sandbox.signal } : {})
+          });
           return { success: true, output: `Created Python virtual environment at ${venvPath}` };
         }
         return { success: true, output: 'Virtual environment already exists.' };
@@ -192,7 +238,13 @@ export const manageLocalDependencies = {
           const { stdout } = await execFilePromise(
             pipCmd,
             ['install', '--disable-pip-version-check', '--no-input', '--', ...packages],
-            { timeout: 10 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 }
+            {
+              timeout: 10 * 60 * 1000,
+              maxBuffer: 10 * 1024 * 1024,
+              windowsHide: true,
+              env: buildSafePipEnv(),
+              ...(sandbox?.signal ? { signal: sandbox.signal } : {})
+            }
           );
           return { success: true, output: `Installed approved Python dependencies: ${packages.join(', ')}`, logs: stdout };
         } catch (pipErr: unknown) {
