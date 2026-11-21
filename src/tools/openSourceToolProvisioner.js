@@ -432,6 +432,19 @@ export const openSourceToolProvisioner = {
                     instruction: `Ask user for consent via request_decision or run 'open_source_tool_provisioner' with confirm: true after obtaining agreement.`
                 };
             }
+            if (!evalReport.compatible) {
+                return {
+                    success: false,
+                    installed: false,
+                    status: 'INSUFFICIENT_HARDWARE',
+                    toolId: selectedTool.id,
+                    error: evalReport.reason,
+                    evaluation: evalReport,
+                    ...(selectedTool.lightweightAlternativeId && selectedTool.lightweightAlternativeId !== selectedTool.id
+                        ? { lightweightAlternative: selectedTool.lightweightAlternativeId }
+                        : {})
+                };
+            }
             // Refuse fabricated installation success for non-pip binary/git tools whose installer is not automated here.
             if (selectedTool.installMethod !== 'pip' || !selectedTool.pipPackages || selectedTool.pipPackages.length === 0) {
                 return {
