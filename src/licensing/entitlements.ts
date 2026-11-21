@@ -86,7 +86,7 @@ function requireIdentityFields(value: unknown): Omit<InstallationIdentity, 'file
 }
 
 /** No hardware serials, MAC addresses, device fingerprint or email required. */
-export function loadInstallationIdentity(stateRoot = causyneHome()): InstallationIdentity {
+export function loadInstallationIdentity(stateRoot = causyneHome(), depth = 0): InstallationIdentity {
   if (typeof stateRoot !== 'string' || !stateRoot.trim() || stateRoot.includes('\0')) {
     throw new EntitlementAccessError('IDENTITY_CORRUPT', 'Invalid state directory for installation identity.');
   }
@@ -126,7 +126,7 @@ export function loadInstallationIdentity(stateRoot = causyneHome()): Installatio
     fs.writeFileSync(fd, JSON.stringify(identity), 'utf8');
   } catch (error: unknown) {
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
-    if (code === 'EEXIST') return loadInstallationIdentity(stateRoot);
+    if (code === 'EEXIST' && depth < 3) return loadInstallationIdentity(resolvedRoot, depth + 1);
     throw error;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
