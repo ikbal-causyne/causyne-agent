@@ -115,7 +115,8 @@ describe('the invoked skill reaches the request', () => {
       .split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
 
     const branch = cli.slice(cli.indexOf("effect === 'invoke-skill'"));
-    const body = branch.slice(0, branch.indexOf('} else'));
+    const elseMatch = branch.match(/\}\s*else\b/);
+    const body = elseMatch ? branch.slice(0, elseMatch.index) : branch;
     assert.match(body, /loop\.activeSkill\s*=/, 'the loop must be told which skill is active');
     assert.match(body, /task\s*=/, 'the instruction must become the task');
     assert.ok(!/continue;/.test(body),
