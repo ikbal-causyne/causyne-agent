@@ -75,6 +75,34 @@ export const gameCanvasAudit = {
       });
 
       const page = await browser!.newPage();
+      if (typeof page.setRequestInterception === 'function') {
+        await page.setRequestInterception(true);
+        page.on('request', async (req: { url(): string; continue(): Promise<void>; abort(): Promise<void> }) => {
+          try {
+            const reqUrl = String(req.url() || '');
+            if (reqUrl.startsWith('data:') || reqUrl.startsWith('blob:')) {
+              await req.continue();
+              return;
+            }
+            if (reqUrl.startsWith('file://')) {
+              const reqPath = path.resolve(fileURLToPath(new URL(reqUrl)));
+              if (localRoot && (reqPath === localRoot || reqPath.startsWith(localRoot + path.sep))) {
+                await req.continue();
+                return;
+              }
+              await req.abort();
+              return;
+            }
+            await assertBrowserNavigableUrl(reqUrl);
+            await req.continue();
+          } catch {
+            await req.abort().catch(() => {});
+          }
+        });
+      }
+      if (sandbox?.signal?.aborted) {
+        return { success: false, error: 'Canvas audit aborted' };
+      }
       await page.goto(url, { waitUntil: 'load', timeout: 15000 });
       await new Promise((r) => setTimeout(r, 1000));
 
@@ -119,7 +147,7 @@ export const gameCanvasAudit = {
         verification_summary: 'PASS: Canvas rendering detected and pixel variance is high.'
       };
     } catch (e: unknown) {
-      return { success: false, error: 'Canvas Audit crashed: ' + getErrorMessage(e) };
+      return { success: false, error: 'Canvas Audit crashed: ' + sanitizeToolError(e) };
     } finally {
       if (browser) {
         await browser.close().catch(() => {});
