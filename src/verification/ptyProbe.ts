@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
+import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 
 const DRIVER = String.raw`
 import base64, json, os, pty, select, signal, sys, time
@@ -151,7 +152,7 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, CAUSYNE_VERIFY_PROBE: '1' }
+      env: { ...sanitizeSubprocessEnv(process.env), CAUSYNE_VERIFY_PROBE: '1' }
     });
     child.stdout.on('data', (bytes: Buffer) => { stdout += bytes.toString('utf8'); });
     child.stderr.on('data', (bytes: Buffer) => { stderr += bytes.toString('utf8'); });
