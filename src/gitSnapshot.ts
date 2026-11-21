@@ -277,17 +277,26 @@ export function previewRestore(worktree: string, fromTree: string): GitPreviewCh
 
     runGit(['--git-dir', gitDir, 'read-tree', current], { env });
     const raw = runGit(
-      ['--git-dir', gitDir, 'diff', '--numstat', '--find-renames', current, fromTree],
+      ['--git-dir', gitDir, 'diff', '--numstat', '--find-renames', '-z', current, fromTree],
       { env }
     );
 
     const changes: GitPreviewChange[] = [];
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      const parts = line.split('\t');
+    const tokens = raw.split('\0');
+    let idx = 0;
+    while (idx < tokens.length) {
+      const entry = tokens[idx++] ?? '';
+      if (!entry) continue;
+      const parts = entry.split('\t');
       const added = parts[0] ?? '';
       const removed = parts[1] ?? '';
-      const file = parts[2] ?? '';
+      let file = parts[2] ?? '';
+      if (!file) {
+        // Rename/copy under -z emits empty third field followed by oldPath and newPath NUL tokens.
+        const oldPath = tokens[idx++] ?? '';
+        const newPath = tokens[idx++] ?? '';
+        file = newPath || oldPath;
+      }
       if (!file) continue;
 
       let patch = '';
