@@ -129,6 +129,64 @@ export const archive = {
   }
 };
 
+function isUnsafeArchiveMemberName(member: string): boolean {
+  const normalized = member.replace(/\\/g, '/').trim();
+  if (!normalized) return true;
+  if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) return true;
+  return normalized.split('/').some(seg => seg === '..');
+}
+
+function precheckNativeZipEntries(source: string): void {
+  const listing = execFileSync('unzip', ['-Z', '-s', source], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    timeout: 15_000,
+    maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true
+  });
+  for (const line of listing.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('Archive:') || trimmed.startsWith('Zip file size:') || /^\d+\s+files?,/.test(trimmed)) continue;
+    if (/^l/.test(trimmed)) {
+      throw new Error(`Refusing symlink entry inside zip archive: ${trimmed}`);
+    }
+    const parts = trimmed.split(/\s+/);
+    const name = parts.slice(8).join(' ');
+    if (name && isUnsafeArchiveMemberName(name)) {
+      throw new Error(`Refusing unsafe zip archive path traversal entry: ${name}`);
+    }
+  }
+}
+
+function precheckNativeTarEntries(source: string): void {
+  const listing = execFileSync('tar', ['-tvf', source], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    timeout: 15_000,
+    maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true
+  });
+  for (const line of listing.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^[lhbcp]/.test(trimmed) || trimmed.includes(' -> ')) {
+      throw new Error(`Refusing symlink or special device entry inside tar archive: ${trimmed}`);
+    }
+  }
+  const names = execFileSync('tar', ['-tf', source], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+    timeout: 15_000,
+    maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true
+  });
+  for (const name of names.split('\n')) {
+    if (name.trim() && isUnsafeArchiveMemberName(name)) {
+      throw new Error(`Refusing unsafe tar archive path traversal entry: ${name}`);
+    }
+  }
+}
+
 async function extractArchive(source: string, dest: string): Promise<ArchiveResult> {
   await fs.mkdir(dest, { recursive: true });
 
@@ -146,22 +204,42 @@ async function extractArchive(source: string, dest: string): Promise<ArchiveResu
   const isZip = source.toLowerCase().endsWith('.zip') || source.toLowerCase().endsWith('.jar');
   const isTar = /\.(tar|tar\.gz|tgz|tar\.bz2|tar\.xz)$/i.test(source);
 
-  // 2. Native unzip on macOS / Linux
+  // 2. Native unzip on macOS / Linux (pre-checked against Zip-Slip and symlinks)
   if (isZip) {
     try {
-      execFileSync('unzip', ['-q', '-o', source, '-d', dest], { stdio: 'pipe' });
+      precheckNativeZipEntries(source);
+      execFileSync('unzip', ['-q', '-o', source, '-d', dest], {
+        stdio: 'pipe',
+        timeout: 60_000,
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true
+      });
       return { success: true, output: `Extracted successfully to ${dest} (via unzip)` };
-    } catch {
+    } catch (zipErr: any) {
+      const msg = String(zipErr?.message || '');
+      if (msg.startsWith('Refusing ')) {
+        return { success: false, error: msg };
+      }
       // Fall through to python3 or powershell
     }
   }
 
-  // 3. Native tar on macOS / Linux
+  // 3. Native tar on macOS / Linux (pre-checked against Tar-Slip and symlinks)
   if (isTar || !isZip) {
     try {
-      execFileSync('tar', ['-xf', source, '-C', dest], { stdio: 'pipe' });
+      precheckNativeTarEntries(source);
+      execFileSync('tar', ['-xf', source, '-C', dest], {
+        stdio: 'pipe',
+        timeout: 60_000,
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true
+      });
       return { success: true, output: `Extracted successfully to ${dest} (via tar)` };
-    } catch {
+    } catch (tarErr: any) {
+      const msg = String(tarErr?.message || '');
+      if (msg.startsWith('Refusing ')) {
+        return { success: false, error: msg };
+      }
       // Fall through
     }
   }
