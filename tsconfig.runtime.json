@@ -377,7 +377,8 @@
     "src/tools/gameWebRuntimeInspector.ts",
     "src/tools/gameCanvasAudit.ts",
     "src/tools/gameVfxEmitterGen.ts",
-    "src/tools/gameDataForge.ts"
+    "src/tools/gameDataForge.ts",
+    "src/tools/gameCinematicSequencer.ts"
   ],
   "exclude": [
     "node_modules",
