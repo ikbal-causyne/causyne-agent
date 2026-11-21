@@ -80,7 +80,23 @@ export const gitExec = {
       return { success: false, error: getErrorMessage(error) };
     }
 
+    const blockedGlobalFlags = new Set(['-c', '-C', '--git-dir', '--work-tree', '--exec-path', '--config-env', '--namespace', '--super-prefix']);
+    const blockedFlagPrefixes = ['--git-dir=', '--work-tree=', '--exec-path=', '--config-env=', '--upload-pack=', '--receive-pack=', '--output=', '-c'];
     const subcommand = argv[0];
+    if (!subcommand || subcommand.startsWith('-')) {
+      return { success: false, error: 'Git command must start with a subcommand rather than global options.' };
+    }
+    for (const token of argv) {
+      if (blockedGlobalFlags.has(token) || token === '--ext-diff' || token === '--upload-pack' || token === '--receive-pack') {
+        return { success: false, error: `Disallowed Git option "${sanitizeToolText(token, 64)}" is blocked for workspace isolation.` };
+      }
+      if (blockedFlagPrefixes.some((prefix) => token.startsWith(prefix) && (prefix !== '-c' || token.length > 2))) {
+        return { success: false, error: `Disallowed Git option "${sanitizeToolText(token, 64)}" is blocked for workspace isolation.` };
+      }
+    }
+    if (subcommand === 'config' && argv.some((token) => /(?:sshcommand|fsmonitor|hookspath|credential\.helper|diff\.external|pager|alias\.)/i.test(token))) {
+      return { success: false, error: 'Modifying command-executing Git config keys is blocked.' };
+    }
     if (subcommand === 'rebase' && argv.some((arg) => arg === '-i' || arg === '--interactive')) {
       return { success: false, error: 'Interactive Git rebase is not supported. Use precise non-interactive commands.' };
     }
