@@ -309,7 +309,8 @@
     "src/plugins/pluginRunner.ts",
     "src/plugins/pluginManager.ts",
     "src/verification/ptyProbe.ts",
-    "src/verification/interactivePty.ts"
+    "src/verification/interactivePty.ts",
+    "src/tui/terminalInputFramer.ts"
   ],
   "exclude": [
     "node_modules",
