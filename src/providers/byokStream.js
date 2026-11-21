@@ -323,6 +323,14 @@ export async function streamOpenAICompatibleChat(options) {
                 content += delta.content;
                 options.onChunk?.(delta.content);
             }
+            else if (Array.isArray(delta.content)) {
+                for (const part of delta.content) {
+                    if (isRecord(part) && typeof part.text === 'string' && part.text.length > 0) {
+                        content += part.text;
+                        options.onChunk?.(part.text);
+                    }
+                }
+            }
             if (Array.isArray(delta.tool_calls)) {
                 for (let pos = 0; pos < delta.tool_calls.length; pos++) {
                     const tc = delta.tool_calls[pos];
@@ -364,7 +372,7 @@ export async function streamOpenAICompatibleChat(options) {
                     }
                 }
             }
-        });
+        }, options.signal);
     }
     finally {
         opened.cleanup();

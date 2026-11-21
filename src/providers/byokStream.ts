@@ -406,6 +406,13 @@ export async function streamOpenAICompatibleChat(
         if (typeof delta.content === 'string' && delta.content.length > 0) {
           content += delta.content;
           options.onChunk?.(delta.content);
+        } else if (Array.isArray(delta.content)) {
+          for (const part of delta.content) {
+            if (isRecord(part) && typeof part.text === 'string' && part.text.length > 0) {
+              content += part.text;
+              options.onChunk?.(part.text);
+            }
+          }
         }
 
         if (Array.isArray(delta.tool_calls)) {
@@ -443,7 +450,8 @@ export async function streamOpenAICompatibleChat(
             }
           }
         }
-      }
+      },
+      options.signal
     );
   } finally {
     opened.cleanup();
