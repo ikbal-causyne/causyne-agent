@@ -60,7 +60,8 @@ export class TaskBuffer {
         catch {
             return [];
         }
-        if (!stat.isFile())
+        const MAX_BUFFER_FILE_BYTES = 8 * 1024 * 1024;
+        if (!stat.isFile() || stat.size > MAX_BUFFER_FILE_BYTES)
             return [];
         const content = fs.readFileSync(file, 'utf8');
         return content.split('\n')
