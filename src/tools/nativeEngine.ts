@@ -106,7 +106,14 @@ function resolveNew(root: string, value: string, name: string): string {
 
 function resolveForParams(root: string, value: string, name: string, isOutput: boolean): string {
   const target = path.resolve(root, value);
-  const existing = nearestExisting(target);
+  try {
+    const stat = fs.lstatSync(target);
+    if (stat.isSymbolicLink()) throw new Error(`${name} cannot target a symbolic link`);
+    if (isOutput) throw new Error(`${name} already exists; select a new path`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const existing = nearestExisting(isOutput ? path.dirname(target) : target);
   const actualBase = fs.realpathSync(existing);
   const actual = path.join(actualBase, path.relative(existing, target));
   if (!inside(root, actual)) throw new Error(`${name} must stay inside the workspace`);
