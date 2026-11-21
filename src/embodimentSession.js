@@ -57,20 +57,24 @@ function writeSessionAtomic(file, state) {
         throw err;
     }
 }
+function cleanSessionText(value, maxLen = 120) {
+    // eslint-disable-next-line no-control-regex
+    return String(value ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, maxLen);
+}
 export function recordObservation(taskId, app, treeText) {
     if (!isSessionTrackingEnabled())
         return;
     try {
-        ensureSessionDir();
         const previous = readSession(taskId) || {};
+        const cleanApp = cleanSessionText(app, 120);
         const state = {
             ...previous,
-            app: app || previous.app || '',
+            app: cleanApp || previous.app || '',
             lastTreeDigest: digestOf(treeText),
             lastTreeNodeCount: String(treeText || '').split('\n').filter(Boolean).length,
             observedAt: new Date().toISOString()
         };
-        fs.writeFileSync(sessionFile(taskId), JSON.stringify(state, null, 2), { mode: 0o600 });
+        writeSessionAtomic(sessionFile(taskId), state);
     }
     catch {
         // Fail open: a lost session record must never fail the task.

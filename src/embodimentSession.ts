@@ -67,19 +67,24 @@ function writeSessionAtomic(file: string, state: EmbodimentSessionState): void {
   }
 }
 
+function cleanSessionText(value: unknown, maxLen = 120): string {
+  // eslint-disable-next-line no-control-regex
+  return String(value ?? '').replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, maxLen);
+}
+
 export function recordObservation(taskId: unknown, app: string, treeText: unknown): void {
   if (!isSessionTrackingEnabled()) return;
   try {
-    ensureSessionDir();
     const previous = readSession(taskId) || {};
+    const cleanApp = cleanSessionText(app, 120);
     const state: EmbodimentSessionState = {
       ...previous,
-      app: app || previous.app || '',
+      app: cleanApp || previous.app || '',
       lastTreeDigest: digestOf(treeText),
       lastTreeNodeCount: String(treeText || '').split('\n').filter(Boolean).length,
       observedAt: new Date().toISOString()
     };
-    fs.writeFileSync(sessionFile(taskId), JSON.stringify(state, null, 2), { mode: 0o600 });
+    writeSessionAtomic(sessionFile(taskId), state);
   } catch {
     // Fail open: a lost session record must never fail the task.
   }
