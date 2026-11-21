@@ -320,7 +320,7 @@ export class EntitlementClient {
         nonce,
         proof: sign(registrationText(identity.publicKey, nonce), identity.privateKeyPem)
       }, { register: true });
-      if (typeof response?.installationId !== 'string' || !/^[\da-f-]{36}$/i.test(response.installationId)) {
+      if (typeof response?.installationId !== 'string' || !UUID_RE.test(response.installationId)) {
         throw new EntitlementAccessError('REGISTRATION_ERROR', 'Licensing service returned an invalid installation ID.');
       }
       const nextId: string = response.installationId;
