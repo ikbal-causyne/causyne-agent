@@ -32,19 +32,28 @@ export const KINDS = Object.freeze([
     'session', 'user', 'assistant', 'reasoning', 'plan', 'step', 'result',
     'approval', 'notice', 'error', 'skill', 'turn', 'checkpoint'
 ]);
+const MAX_ROWS_PER_FRAME = 10000;
 function normalizeRows(produced) {
     if (!Array.isArray(produced))
         return [];
     const rows = [];
     for (const row of produced) {
+        if (rows.length >= MAX_ROWS_PER_FRAME)
+            break;
         const text = (row == null ? '' : String(row)).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         // A frame may never contain a newline or carriage return: the Stage paints
         // with relative cursor motion only, and an embedded '\n' or '\r' corrupts
         // the terminal band. Split cleanly rather than drop, so nothing is lost.
-        if (text.includes('\n'))
-            rows.push(...text.split('\n'));
-        else
+        if (text.includes('\n')) {
+            for (const part of text.split('\n')) {
+                if (rows.length >= MAX_ROWS_PER_FRAME)
+                    break;
+                rows.push(part);
+            }
+        }
+        else {
             rows.push(text);
+        }
     }
     return rows;
 }
