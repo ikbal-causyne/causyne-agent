@@ -2,7 +2,17 @@ import { execFile } from 'node:child_process';
 import util from 'node:util';
 import path from 'node:path';
 import fs from 'node:fs';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import {
+  assertSafeWorkspaceInput,
+  getErrorMessage,
+  sanitizeToolError,
+  sanitizeToolText,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
+
+const MAX_CODE_TOOL_BYTES = 4 * 1024 * 1024;
+const MAX_CODE_SYMBOLS = 1000;
 
 const execFileAsync = util.promisify(execFile);
 
@@ -51,21 +61,9 @@ export const codeVerifySyntax = {
       required: ['filePath']
     }
   },
-  execute: async (args: CodeToolArgs = {}, _context?: ToolWorkspaceContext): Promise<CodeVerifyResult> => {
+  execute: async (args: CodeToolArgs = {}, context?: ToolWorkspaceContext): Promise<CodeVerifyResult> => {
     try {
-      const filePath = args?.filePath;
-      if (typeof filePath !== 'string' || !filePath.trim()) {
-        return { success: false, valid: false, error: 'filePath is required' };
-      }
-      const resolvedPath = path.resolve(filePath);
-
-      if (!fs.existsSync(resolvedPath)) {
-        return {
-          success: false,
-          valid: false,
-          error: `File not found at path: ${resolvedPath}`
-        };
-      }
+      const { resolved: resolvedPath } = await assertSafeWorkspaceInput(args?.filePath, context, { maxBytes: MAX_CODE_TOOL_BYTES });
 
       const ext = path.extname(resolvedPath).toLowerCase();
 
