@@ -74,6 +74,7 @@
     "src/providers/openai.ts",
     "src/providers/anthropic.ts",
     "src/providers/gemini.ts",
+    "src/providers/deepseek.ts",
     "src/providers/openrouter.ts",
     "src/providers/byokHttp.ts",
     "src/providers/byokStream.ts",
