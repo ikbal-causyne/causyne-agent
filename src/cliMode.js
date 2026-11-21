@@ -329,7 +329,8 @@ export async function chatMode({ home = false } = {}) {
         catch (e) {
             if (surface)
                 surface.close();
-            process.stderr.write(`[tui] falling back to simple input: ${e instanceof Error ? e.message : String(e)}\n`);
+            const fallbackErr = safeDisplay(redactProviderSecrets(e instanceof Error ? e.message : String(e))).replace(/[\r\n]+/g, ' ').slice(0, 512);
+            process.stderr.write(`[tui] falling back to simple input: ${fallbackErr}\n`);
             prompt = null;
         }
     }
