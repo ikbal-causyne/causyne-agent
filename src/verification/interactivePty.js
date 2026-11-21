@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -83,7 +84,7 @@ result={"exit":exit_code,"timeout":timeout,"truncated":overflow,
         "completed":cursor==len(cfg["steps"]),"steps":observations,
         "requested":len(cfg["steps"])}
 os.write(1,bytes(out))
-os.write(2,("CAUSYNE_UI_PTY_RESULT:"+json.dumps(result)+"\n").encode("utf-8"))`;
+os.write(2,(cfg["marker"]+json.dumps(result)+"\n").encode("utf-8"))`;
 function bounded(value, min, max, label) {
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
         throw new RangeError('Invalid ' + label);
@@ -139,8 +140,10 @@ export async function runInteractivePty(options = {}) {
             reason: 'A Windows ConPTY adapter has not been implemented'
         };
     }
+    const markerPrefix = `CAUSYNE_UI_PTY_RESULT:${crypto.randomBytes(12).toString('hex')}:`;
     const cfg = {
         cwd,
+        marker: markerPrefix,
         exec: process.execPath,
         argv: [process.execPath, target],
         rows,
@@ -185,14 +188,21 @@ export async function runInteractivePty(options = {}) {
                 });
                 return;
             }
-            const marker = stderr.match(/CAUSYNE_UI_PTY_RESULT:(\{[^\r\n]+\})/);
+            const markerIdx = stderr.lastIndexOf(markerPrefix);
             let detail = null;
-            try {
-                if (marker && marker[1])
-                    detail = JSON.parse(marker[1]);
-            }
-            catch {
-                detail = null;
+            let cleanedStderr = stderr;
+            if (markerIdx !== -1) {
+                const jsonStart = markerIdx + markerPrefix.length;
+                const lineEnd = stderr.indexOf('\n', jsonStart);
+                const rawJson = (lineEnd === -1 ? stderr.slice(jsonStart) : stderr.slice(jsonStart, lineEnd)).replace(/\r$/, '');
+                try {
+                    detail = JSON.parse(rawJson);
+                }
+                catch {
+                    detail = null;
+                }
+                const afterLine = lineEnd === -1 ? '' : stderr.slice(lineEnd + 1);
+                cleanedStderr = stderr.slice(0, markerIdx) + afterLine;
             }
             const observations = Array.isArray(detail?.steps) ? detail.steps : [];
             const success = Boolean(detail && !detail.timeout && !detail.truncated
@@ -209,7 +219,7 @@ export async function runInteractivePty(options = {}) {
                 completed: detail?.completed ?? false,
                 observations,
                 stdout,
-                stderr: stderr.replace(/CAUSYNE_UI_PTY_RESULT:\{[^\r\n]+\}\r?\n?/, ''),
+                stderr: cleanedStderr,
                 reason: detail ? null : (spawnError?.message || 'No valid PTY evidence'),
                 limitation: 'Actual TUI components run in a PTY; host screenshots, mouse forwarding, and the full CLI launch are separate checks'
             });
