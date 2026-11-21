@@ -75,7 +75,7 @@ export async function captureTreeAsync(worktree) {
         excludeOversizedUntracked(gitDir, worktree);
         await runGitAsync(['--git-dir', gitDir, '--work-tree', worktree, 'add', '--all'], { cwd: worktree });
         const sha = (await runGitAsync(['--git-dir', gitDir, 'write-tree'])).trim();
-        return sha || null;
+        return isValidGitSha(sha) ? sha : null;
     }
     catch {
         return null;
@@ -217,7 +217,7 @@ export function captureTree(worktree) {
         excludeOversizedUntracked(gitDir, worktree);
         runGit(['--git-dir', gitDir, '--work-tree', worktree, 'add', '--all'], { cwd: worktree });
         const sha = (runGit(['--git-dir', gitDir, 'write-tree'])).trim();
-        return sha || null;
+        return isValidGitSha(sha) ? sha : null;
     }
     catch {
         return null;
