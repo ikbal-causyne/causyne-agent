@@ -60,10 +60,17 @@ function ensureStore() {
         fs.mkdirSync(OBJECTS_DIR, { recursive: true, mode: 0o700 });
     }
 }
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+function isValidSha256(hash) {
+    return typeof hash === 'string' && SHA256_HEX_RE.test(hash);
+}
 function sha256(buffer) {
     return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 function objectPath(hash) {
+    if (!isValidSha256(hash)) {
+        throw new Error('refusing invalid checkpoint object hash');
+    }
     return path.join(OBJECTS_DIR, hash.slice(0, 2), hash);
 }
 function writeObject(buffer) {
