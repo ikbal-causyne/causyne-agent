@@ -31,7 +31,12 @@ export class ProviderHttpError extends Error {
  * Preserve explicit `0` temperature (unlike `options.temperature || 0.1`).
  */
 export function resolveTemperature(value, fallback = 0.1) {
-    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+    const safeFallback = typeof fallback === 'number' && Number.isFinite(fallback)
+        ? Math.min(2, Math.max(0, fallback))
+        : 0.1;
+    if (typeof value !== 'number' || !Number.isFinite(value))
+        return safeFallback;
+    return Math.min(2, Math.max(0, value));
 }
 /**
  * Validate that a required cloud BYOK API key is present before issuing a request.
