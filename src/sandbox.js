@@ -154,11 +154,24 @@ export class Sandbox {
                 return { allowed: false, reason: `Path outside allowed workspace: ${p}`, risk: 'dangerous' };
             }
         }
+        let credentialPathHit = null;
         for (const p of pathsToCheck) {
             if (typeof p === 'string' && isCredentialPath(p)) {
-                return { allowed: true, risk: 'extreme', reason: `Touches credential material: ${p}` };
+                credentialPathHit = p;
+                break;
             }
         }
+        const withCredentialEscalation = (verdict) => {
+            if (!verdict.allowed || !credentialPathHit)
+                return verdict;
+            return {
+                allowed: true,
+                risk: 'extreme',
+                reason: verdict.reason
+                    ? `${verdict.reason} (touches credential material: ${credentialPathHit})`
+                    : `Touches credential material: ${credentialPathHit}`
+            };
+        };
         if (toolName === 'sysRun' || toolName === 'sysRunBg' || toolName === 'terminal_persistent_shell') {
             const command = args.command || args.input;
             if (command) {
@@ -166,9 +179,9 @@ export class Sandbox {
                 if (risk === 'forbidden') {
                     return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
                 }
-                return { allowed: true, risk };
+                return withCredentialEscalation({ allowed: true, risk });
             }
-            return { allowed: true, risk: 'moderate' };
+            return withCredentialEscalation({ allowed: true, risk: 'moderate' });
         }
         if (toolName === 'gitOp') {
             const command = String(args.command || '');
@@ -176,72 +189,72 @@ export class Sandbox {
             if (risk === 'forbidden') {
                 return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
             }
-            return { allowed: true, risk: /\bbranch\s+-D\b/.test(command) ? 'dangerous' : risk };
+            return withCredentialEscalation({ allowed: true, risk: /\bbranch\s+-D\b/.test(command) ? 'dangerous' : risk });
         }
         if (toolName === 'web_fetch' && args.url) {
             if (this.isInternalUrl(args.url)) {
                 return { allowed: false, reason: 'Cannot access internal/local network URLs (SSRF Protection)', risk: 'forbidden' };
             }
             if (args.outputFile) {
-                return { allowed: true, risk: 'extreme', reason: 'Downloads network content to disk' };
+                return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads network content to disk' });
             }
         }
         if (toolName === 'browser_act') {
-            return validateBrowserActSandbox(args, this.workspacePaths[0] || process.cwd(), url => this.isInternalUrl(url, { allowLoopback: true }), targetPath => this.isPathAllowed(targetPath));
+            return withCredentialEscalation(validateBrowserActSandbox(args, this.workspacePaths[0] || process.cwd(), url => this.isInternalUrl(url, { allowLoopback: true }), targetPath => this.isPathAllowed(targetPath)));
         }
         if (toolName === 'creative_apps') {
             const isReadOnly = args.action === 'status' ||
                 args.action === 'verify_bridge' ||
                 (args.action === 'live_bridge' && args.liveOperation === 'inspect_active');
-            return { allowed: true, risk: isReadOnly ? 'safe' : 'dangerous' };
+            return withCredentialEscalation({ allowed: true, risk: isReadOnly ? 'safe' : 'dangerous' });
         }
         if (toolName === 'native_engine') {
             if (args.action === 'install') {
-                return { allowed: true, risk: 'extreme', reason: 'Downloads and installs a native engine binary' };
+                return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads and installs a native engine binary' });
             }
             const readOnly = ['status', 'catalog', 'describe', 'inspect', 'probe'];
-            return { allowed: true, risk: readOnly.includes(args.action) ? 'safe' : 'dangerous' };
+            return withCredentialEscalation({ allowed: true, risk: readOnly.includes(args.action) ? 'safe' : 'dangerous' });
         }
         if (toolName === 'game_asset_fetch' && args.action === 'download_asset') {
             if (!args.url || this.isInternalUrl(args.url)) {
                 return { allowed: false, reason: 'Cannot download from an internal or invalid URL', risk: 'forbidden' };
             }
-            return { allowed: true, risk: 'extreme', reason: 'Downloads a third-party asset to disk' };
+            return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Downloads a third-party asset to disk' });
         }
         if (toolName === 'manage_local_dependencies') {
             const heavyActions = ['pipInst', 'grant_capability', 'grant_mcp_server'];
             if (heavyActions.includes(args.action)) {
-                return { allowed: true, risk: 'extreme' };
+                return withCredentialEscalation({ allowed: true, risk: 'extreme' });
             }
-            return { allowed: true, risk: 'moderate' };
+            return withCredentialEscalation({ allowed: true, risk: 'moderate' });
         }
         if (toolName === 'plugin_manager') {
-            return ['create', 'enable'].includes(args.action)
+            return withCredentialEscalation(['create', 'enable'].includes(args.action)
                 ? { allowed: true, risk: 'extreme', reason: 'Creates or trusts executable plugin code' }
-                : { allowed: true, risk: 'safe' };
+                : { allowed: true, risk: 'safe' });
         }
         if (toolName.startsWith('plugin__')) {
-            return { allowed: true, risk: 'extreme', reason: 'Executes an enabled local plugin' };
+            return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Executes an enabled local plugin' });
         }
         if (toolName === 'fs_delete') {
             if (args.path && !args.path.includes('.')) {
-                return { allowed: true, risk: 'extreme' };
+                return withCredentialEscalation({ allowed: true, risk: 'extreme' });
             }
-            return { allowed: true, risk: 'dangerous' };
+            return withCredentialEscalation({ allowed: true, risk: 'dangerous' });
         }
         if (toolName === 'proc_term') {
-            return { allowed: true, risk: 'dangerous' };
+            return withCredentialEscalation({ allowed: true, risk: 'dangerous' });
         }
         if (toolName === 'desktop_act' || toolName === 'computer_use') {
-            return { allowed: true, risk: 'extreme' };
+            return withCredentialEscalation({ allowed: true, risk: 'extreme' });
         }
         if (toolName === 'ui_forge' || toolName === 'document_forge') {
-            return { allowed: true, risk: 'safe' };
+            return withCredentialEscalation({ allowed: true, risk: 'safe' });
         }
         if (toolName === 'fs_write' || toolName === 'fs_move' || toolName === 'fs_edit' || toolName === 'MultiEdit') {
-            return { allowed: true, risk: 'moderate' };
+            return withCredentialEscalation({ allowed: true, risk: 'moderate' });
         }
-        return { allowed: true, risk: 'safe' };
+        return withCredentialEscalation({ allowed: true, risk: 'safe' });
     }
     isPathAllowed(targetPath) {
         if (typeof targetPath !== 'string' || targetPath.length === 0)
