@@ -311,7 +311,7 @@ export async function readBoundedResponseText(
     const text = await response.text();
     const byteLen = Buffer.byteLength(text, 'utf8');
     if (byteLen > limit) {
-      if (options.truncate) return text.slice(0, limit);
+      if (options.truncate) return Buffer.from(text, 'utf8').subarray(0, limit).toString('utf8');
       throw new Error(
         `${options.label || 'Provider'} response exceeded maximum allowed size (${limit} bytes).`
       );
