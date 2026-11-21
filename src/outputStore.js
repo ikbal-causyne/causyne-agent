@@ -206,12 +206,18 @@ export function pruneOutputStore() {
             return 0;
         const cutoff = Date.now() - RETENTION_MS;
         let removed = 0;
+        const dirStat = fs.lstatSync(dir);
+        if (dirStat.isSymbolicLink() || !dirStat.isDirectory())
+            return 0;
         for (const name of fs.readdirSync(dir)) {
             if (!name.startsWith(FILE_PREFIX))
                 continue;
             const file = path.join(dir, name);
             try {
-                if (fs.statSync(file).mtimeMs < cutoff) {
+                const stat = fs.lstatSync(file);
+                if (stat.isSymbolicLink() || !stat.isFile())
+                    continue;
+                if (stat.mtimeMs < cutoff) {
                     fs.unlinkSync(file);
                     removed++;
                 }
