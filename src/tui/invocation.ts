@@ -62,7 +62,9 @@ export function resolveInvocation(argv: readonly unknown[] = []): InvocationReso
   let unknownOption: string | null = null;
 
   for (let i = 0; i < tokens.length; i++) {
-    const token = String(tokens[i]);
+    const raw = tokens[i];
+    if (raw == null) continue;
+    const token = String(raw);
 
     // Everything past `--` is an operand by POSIX convention. Stop looking for
     // a command name; whatever we have collected is the answer.
@@ -83,7 +85,7 @@ export function resolveInvocation(argv: readonly unknown[] = []): InvocationReso
       if (arity !== undefined) {
         rootOptions.push(name);
         // Skip the value only when it was not written inline.
-        if (eq === -1) i += arity;
+        if (eq === -1 && arity > 0) i = Math.min(tokens.length - 1, i + arity);
         continue;
       }
 

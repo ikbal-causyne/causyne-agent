@@ -49,7 +49,10 @@ export function resolveInvocation(argv = []) {
     let hasHelpOrVersion = false;
     let unknownOption = null;
     for (let i = 0; i < tokens.length; i++) {
-        const token = String(tokens[i]);
+        const raw = tokens[i];
+        if (raw == null)
+            continue;
+        const token = String(raw);
         // Everything past `--` is an operand by POSIX convention. Stop looking for
         // a command name; whatever we have collected is the answer.
         if (token === '--')
@@ -67,8 +70,8 @@ export function resolveInvocation(argv = []) {
             if (arity !== undefined) {
                 rootOptions.push(name);
                 // Skip the value only when it was not written inline.
-                if (eq === -1)
-                    i += arity;
+                if (eq === -1 && arity > 0)
+                    i = Math.min(tokens.length - 1, i + arity);
                 continue;
             }
             // Rule 1: an option we do not recognise is Commander's to reject. Record
