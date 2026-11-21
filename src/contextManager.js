@@ -24,7 +24,13 @@ export const RESULT_CAPS = {
 };
 export const DEFAULT_RESULT_CAP = 32000;
 export function resultCapFor(tool) {
-    const cap = RESULT_CAPS[String(tool || '')];
+    const raw = typeof tool === 'string' ? tool.trim() : '';
+    if (!raw)
+        return DEFAULT_RESULT_CAP;
+    const canonical = raw.replace(/\./g, '_');
+    const cap = Object.hasOwn(RESULT_CAPS, raw)
+        ? RESULT_CAPS[raw]
+        : (Object.hasOwn(RESULT_CAPS, canonical) ? RESULT_CAPS[canonical] : undefined);
     return typeof cap === 'number' && Number.isFinite(cap) && cap > 0 ? cap : DEFAULT_RESULT_CAP;
 }
 export const CHAR_POOLS = {
