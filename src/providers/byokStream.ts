@@ -244,15 +244,20 @@ async function consumeNdjsonStream(
   response: Response,
   providerLabel: string,
   maxBytes: number,
-  onObject: (obj: Record<string, unknown>) => void
+  onObject: (obj: Record<string, unknown>) => void,
+  signal?: AbortSignal | undefined
 ): Promise<void> {
+  const safeMaxBytes = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 1
+    ? Math.floor(maxBytes)
+    : MAX_PROVIDER_JSON_BYTES;
   const reader = response.body!.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   let totalBytes = 0;
 
   const processLine = (rawLine: string): void => {
-    const trimmed = rawLine.trim();
+    const stripped = rawLine.charCodeAt(0) === 0xfeff ? rawLine.slice(1) : rawLine;
+    const trimmed = stripped.trim();
     if (!trimmed) return;
     try {
       const parsed: unknown = JSON.parse(trimmed);
@@ -264,14 +269,18 @@ async function consumeNdjsonStream(
 
   try {
     while (true) {
+      if (signal?.aborted) {
+        await reader.cancel().catch(() => {});
+        throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+      }
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
 
       totalBytes += value.byteLength;
-      if (totalBytes > maxBytes) {
+      if (totalBytes > safeMaxBytes) {
         await reader.cancel().catch(() => {});
-        throw new Error(`${providerLabel} stream exceeded maximum allowed size (${maxBytes} bytes).`);
+        throw new Error(`${providerLabel} stream exceeded maximum allowed size (${safeMaxBytes} bytes).`);
       }
 
       buffer += decoder.decode(value, { stream: true });
