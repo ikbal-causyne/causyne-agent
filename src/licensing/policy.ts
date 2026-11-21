@@ -7,3 +7,9 @@ export const LICENSE_API_BASE = 'https://license.causyne.com';
 export const LICENSE_PLAN_KEYS = Object.freeze([
   'monthly', 'annual', 'two_month_pass', 'two_year_pass'
 ] as const);
+
+export type LicensePlanKey = (typeof LICENSE_PLAN_KEYS)[number];
+
+export function isValidLicensePlan(plan: unknown): plan is LicensePlanKey {
+  return typeof plan === 'string' && (LICENSE_PLAN_KEYS as readonly string[]).includes(plan);
+}
