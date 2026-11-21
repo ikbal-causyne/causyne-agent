@@ -656,13 +656,16 @@ async function runPluginTool(tool, args, context) {
             capabilities: runtimeTool.capabilities
         }
     });
+    const runToken = crypto.randomBytes(16).toString('hex');
+    const resultMarker = `CAUSYNE_PLUGIN_RESULT:${runToken}:`;
     return new Promise((resolve) => {
         const child = spawn(process.execPath, childArgs, {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: {
                 PATH: process.env.PATH || '',
                 LANG: process.env.LANG || 'C.UTF-8',
-                TMPDIR: process.env.TMPDIR || ''
+                TMPDIR: process.env.TMPDIR || '',
+                CAUSYNE_PLUGIN_TOKEN: runToken
             }
         });
         let stdout = '';
@@ -693,13 +696,20 @@ async function runPluginTool(tool, args, context) {
         });
         child.on('error', (error) => finish({ success: false, error: error.message }));
         child.on('close', () => {
-            const line = stdout.split(/\r?\n/).find((value) => value.startsWith('CAUSYNE_PLUGIN_RESULT:'));
+            const lines = stdout.split(/\r?\n/);
+            let line;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                if (lines[i]?.startsWith(resultMarker)) {
+                    line = lines[i];
+                    break;
+                }
+            }
             if (!line) {
                 finish({ success: false, error: stderr.trim() || 'Plugin returned no structured result' });
                 return;
             }
             try {
-                finish(JSON.parse(line.slice('CAUSYNE_PLUGIN_RESULT:'.length)));
+                finish(JSON.parse(line.slice(resultMarker.length)));
             }
             catch (error) {
                 finish({ success: false, error: `Plugin returned invalid JSON: ${error instanceof Error ? error.message : String(error)}` });
