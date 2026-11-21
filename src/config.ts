@@ -225,10 +225,23 @@ export function detectEnvironmentProvider(): DetectedProviderConfig | null {
 }
 
 function checkBinarySync(binaryName: string): boolean {
-  if (path.isAbsolute(binaryName)) {
-    return fs.existsSync(binaryName);
+  if (typeof binaryName !== 'string' || !binaryName.trim() || /[\r\n\0]/.test(binaryName)) {
+    return false;
   }
-  const envPath = process.env.PATH || '';
+  const trimmed = binaryName.trim();
+  if (path.isAbsolute(trimmed)) {
+    try {
+      if (!fs.statSync(trimmed).isFile()) return false;
+      if (process.platform !== 'win32') fs.accessSync(trimmed, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (trimmed.includes('..') || trimmed.includes('/') || trimmed.includes('\\')) {
+    return false;
+  }
+  const envPath = process.env.PATH || process.env.Path || '';
   const delimiter = process.platform === 'win32' ? ';' : ':';
   const home = os.homedir();
   const fallbackDirs = [
@@ -244,16 +257,18 @@ function checkBinarySync(binaryName: string): boolean {
   const dirs = [...envPath.split(delimiter), ...fallbackDirs];
   const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
 
-  for (const dir of dirs) {
-    if (!dir) continue;
+  for (const rawDir of dirs) {
+    const dir = rawDir.trim();
+    if (!dir || !path.isAbsolute(dir)) continue;
     for (const ext of extensions) {
-      const full = path.join(dir, `${binaryName}${ext}`);
+      const full = path.join(dir, `${trimmed}${ext}`);
       try {
-        if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+        if (fs.statSync(full).isFile()) {
+          if (process.platform !== 'win32') fs.accessSync(full, fs.constants.X_OK);
           return true;
         }
       } catch {
-        // ignore inaccessible entry
+        // ignore inaccessible or non-executable entry
       }
     }
   }
