@@ -360,8 +360,11 @@ export function enablePlugin(name: string): any {
 }
 
 export function disablePlugin(name: string): any {
+  if (typeof name !== 'string' || !NAME.test(name) || FORBIDDEN_KEYS.has(name)) {
+    return { ok: false, error: 'Invalid plugin name' };
+  }
   const state = readState();
-  const current = safeObject(state.plugins[name]);
+  const current = Object.hasOwn(state.plugins, name) ? safeObject(state.plugins[name]) : {};
   state.plugins[name] = { ...current, enabled: false, disabledAt: Date.now() };
   writeState(state);
   return { ok: true, name };
