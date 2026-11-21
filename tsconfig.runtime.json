@@ -321,7 +321,8 @@
     "src/tui/selectList.ts",
     "src/tui/completion.ts",
     "src/tui/dialogs.ts",
-    "src/tui/home.ts"
+    "src/tui/home.ts",
+    "src/tui/stageSurface.ts"
   ],
   "exclude": [
     "node_modules",

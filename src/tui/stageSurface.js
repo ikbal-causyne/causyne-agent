@@ -20,7 +20,6 @@
 // everything but cannot scroll; doing both is the entire point.
 //
 // Pure Node: no dependency, no shell.
-
 import { Stage, stageHeight } from './stage.js';
 import { Transcript } from './transcript.js';
 import { Viewport, ScrollAcceleration, DEFAULT_SCROLL_SPEED } from './viewport.js';
@@ -36,15 +35,12 @@ import { sidebarVisible, sessionSidebarWidth, sessionMainWidth, sessionComposerW
 import { sessionStageHeight, alignTranscriptRows } from './sessionLayout.js';
 import { hasSessionTurns, collectSessionTurns, buildTurnRailCells, renderTurnPreviewCard, overlayTurnPreviewCard, resolveActiveTurnIndex, formatPreviewCardMarkdown } from './turnRail.js';
 import { registerStageConsoleGuard, setStageConsoleGuardActive, runWithStageWrite } from './consoleGuard.js';
-
 // Rows of evicted transcript held for the exit log. Eviction only happens after
 // MAX_FRAMES, so this is a bound on a pathological session, not a working limit.
 const MAX_EVICTED_ROWS = 40000;
-
 // Below this the prompt block gets the whole band and the transcript is not
 // shown at all — which is a broken screen, so the prompt is trimmed instead.
 const MIN_VIEWPORT_ROWS = 2;
-
 // The rail costs a column plus a column of air. On a narrow terminal those two
 // are worth more as text, so it turns itself off rather than crowding the
 // transcript it exists to help you navigate.
@@ -59,983 +55,905 @@ const RAIL_WIDTH = 2;
 const RAIL_BUDGET = RAIL_WIDTH + 1;
 // The interactive turn rail takes three columns at the left of each row.
 const TURN_RAIL_BUDGET = 3;
-
 // Count a prefix of terminal control sequences with a deterministic scan.
 // This preserves CSI, OSC (BEL/ST), and two-byte ESC codes without regex
 // backtracking on long or malformed terminal output.
 export function leadingAnsiControlEnd(row) {
-  if (typeof row !== 'string') return 0;
-  let index = 0;
-  while (row.charCodeAt(index) === 27) {
-    let cursor = index + 1;
-    const kind = row.charCodeAt(cursor);
-    if (kind === 91) { // ESC [
-      cursor++;
-      while (row.charCodeAt(cursor) >= 48 && row.charCodeAt(cursor) <= 63) cursor++;
-      while (row.charCodeAt(cursor) >= 32 && row.charCodeAt(cursor) <= 47) cursor++;
-      const final = row.charCodeAt(cursor);
-      if (final >= 64 && final <= 126) {
-        index = cursor + 1;
-        continue;
-      }
-    } else if (kind === 93) { // ESC ] ... BEL or ESC backslash
-      cursor++;
-      while (cursor < row.length && row.charCodeAt(cursor) !== 7 && row.charCodeAt(cursor) !== 27) cursor++;
-      if (row.charCodeAt(cursor) === 7) {
-        index = cursor + 1;
-        continue;
-      }
-      if (row.charCodeAt(cursor) === 27 && row.charCodeAt(cursor + 1) === 92) {
-        index = cursor + 2;
-        continue;
-      }
-    } else if ((kind >= 64 && kind <= 90) || (kind >= 92 && kind <= 95)) {
-      index = cursor + 1;
-      continue;
+    if (typeof row !== 'string')
+        return 0;
+    let index = 0;
+    while (row.charCodeAt(index) === 27) {
+        let cursor = index + 1;
+        const kind = row.charCodeAt(cursor);
+        if (kind === 91) { // ESC [
+            cursor++;
+            while (row.charCodeAt(cursor) >= 48 && row.charCodeAt(cursor) <= 63)
+                cursor++;
+            while (row.charCodeAt(cursor) >= 32 && row.charCodeAt(cursor) <= 47)
+                cursor++;
+            const final = row.charCodeAt(cursor);
+            if (final >= 64 && final <= 126) {
+                index = cursor + 1;
+                continue;
+            }
+        }
+        else if (kind === 93) { // ESC ] ... BEL or ESC backslash
+            cursor++;
+            while (cursor < row.length && row.charCodeAt(cursor) !== 7 && row.charCodeAt(cursor) !== 27)
+                cursor++;
+            if (row.charCodeAt(cursor) === 7) {
+                index = cursor + 1;
+                continue;
+            }
+            if (row.charCodeAt(cursor) === 27 && row.charCodeAt(cursor + 1) === 92) {
+                index = cursor + 2;
+                continue;
+            }
+        }
+        else if ((kind >= 64 && kind <= 90) || (kind >= 92 && kind <= 95)) {
+            index = cursor + 1;
+            continue;
+        }
+        break;
     }
-    break;
-  }
-  return index;
+    return index;
 }
-
 // Which marker wins when several frames fall in the same rail row. A proportional
 // rail on a long session compresses dozens of frames per row, and what you want
 // to see at a glance is the thing that went wrong or the thing you can roll back
 // to — not the forty step rows around them.
 // Inside the thumb, only a marker this loud overrides the position indicator.
-//
-// Two passes to get this right. The first draft let ANY marker win, and a dense
-// session put a marker in every slot — so the thumb, the one thing on the rail
-// that says WHERE YOU ARE, was invisible exactly when the rail mattered most.
-// The second draft set the bar at checkpoints, and a real session on a pty
-// showed why that is still wrong: a restore point is taken on every file write,
-// so the thumb came out as `▌▌▪▪▪▌` — shredded by the most routine event there
-// is. Only what is rare AND urgent is worth a row of position: an error, or an
-// approval waiting on the user.
 const RAIL_THUMB_YIELD = 80;
-
 const RAIL_PRIORITY = {
-  error: 90, approval: 80, checkpoint: 70, turn: 60, user: 50,
-  assistant: 40, reasoning: 30, skill: 25, plan: 20,
-  session: 15, step: 10, result: 5, notice: 1
+    error: 90, approval: 80, checkpoint: 70, turn: 60, user: 50,
+    assistant: 40, reasoning: 30, skill: 25, plan: 20,
+    session: 15, step: 10, result: 5, notice: 1
 };
-
+const SIGNAL_EXIT_CODES = {
+    SIGINT: 2,
+    SIGTERM: 15,
+    SIGHUP: 1
+};
+function railPriority(kind) {
+    if (!kind || !Object.hasOwn(RAIL_PRIORITY, kind))
+        return 0;
+    return RAIL_PRIORITY[kind] ?? 0;
+}
 /**
  * One row of the position indicator: a continuous rule with ONE dot at its
  * middle. Line, dot, line — the same motif the input box carries.
  *
- * Alternating every other row was the first attempt and it was wrong: over a
- * thumb of any length it reads as a long dashed line, which is the thing it was
- * supposed to stop looking like. One dot at the centre makes even a full-track
- * thumb read as a single object rather than as a run of broken marks.
- *
  * `│` is used by no marker, which is what lets a test find the thumb at all.
  */
 function thumbGlyph(offsetInThumb, thumbLength) {
-  const middle = thumbLength >= 3 ? Math.floor(thumbLength / 2) : -1;
-  return offsetInThumb === middle ? GLYPHS.dot : GLYPHS.vLine;
+    const middle = thumbLength >= 3 ? Math.floor(thumbLength / 2) : -1;
+    return offsetInThumb === middle ? GLYPHS.dot : GLYPHS.vLine;
 }
-
 /**
  * One rail cell. Every glyph is an existing GLYPH — the ambiguous-width set is
  * already accounted for by visibleWidth(), and a new character here would be a
  * new way for a row to measure one column and render two.
  */
 function railGlyph(kind) {
-  switch (kind) {
-    case 'error':      return paint('danger', GLYPHS.cross);
-    case 'approval':   return paint('warn', GLYPHS.step);
-    case 'checkpoint': return paint('success', GLYPHS.step);
-    case 'turn':       return paint('rule', GLYPHS.hLine);
-    case 'user':       return paint('user', GLYPHS.arrow);
-    case 'assistant':  return paint('agent', GLYPHS.arrow);
-    case 'reasoning':  return paint('muted', GLYPHS.dot);
-    default:           return paint('rule', GLYPHS.dot);
-  }
+    switch (kind) {
+        case 'error': return paint('danger', GLYPHS.cross);
+        case 'approval': return paint('warn', GLYPHS.step);
+        case 'checkpoint': return paint('success', GLYPHS.step);
+        case 'turn': return paint('rule', GLYPHS.hLine);
+        case 'user': return paint('user', GLYPHS.arrow);
+        case 'assistant': return paint('agent', GLYPHS.arrow);
+        case 'reasoning': return paint('muted', GLYPHS.dot);
+        default: return paint('rule', GLYPHS.dot);
+    }
 }
-
 /**
  * Wheel tuning, from the environment first and the saved config second.
- *
- * Env wins because every other Stage switch is an env var (CAUSYNE_STAGE,
- * CAUSYNE_MOUSE, CAUSYNE_RAIL) and a user debugging a terminal wants one place to
- * turn things off. The config file is where a preference lives once it is
- * settled.
  */
 export function scrollSettings(env = process.env, config = null) {
-  const safeEnv = env && typeof env === 'object' ? env : {};
-  const tui = (config && typeof config === 'object' && config.tui) || {};
-
-  let speed = Number(safeEnv.CAUSYNE_SCROLL_SPEED);
-  if (!Number.isFinite(speed) || speed <= 0) speed = Number(tui.scrollSpeed);
-  if (!Number.isFinite(speed) || speed <= 0) speed = DEFAULT_SCROLL_SPEED;
-  // A wheel that moves half the screen per notch is not a preference, it is a
-  // misconfiguration; clamp rather than obey it.
-  speed = Math.min(speed, 20);
-
-  const raw = safeEnv.CAUSYNE_SCROLL_ACCEL;
-  const accelerate = raw !== undefined && raw !== ''
-    ? raw === '1' || raw === 'true'
-    : Boolean(tui.scrollAcceleration);
-
-  return { speed, accelerate };
+    const safeEnv = env && typeof env === 'object' ? env : {};
+    const tui = (config && typeof config === 'object' && config.tui) || {};
+    let speed = Number(safeEnv.CAUSYNE_SCROLL_SPEED);
+    if (!Number.isFinite(speed) || speed <= 0)
+        speed = Number(tui.scrollSpeed);
+    if (!Number.isFinite(speed) || speed <= 0)
+        speed = DEFAULT_SCROLL_SPEED;
+    // A wheel that moves half the screen per notch is not a preference, it is a
+    // misconfiguration; clamp rather than obey it.
+    speed = Math.min(speed, 20);
+    const raw = safeEnv.CAUSYNE_SCROLL_ACCEL;
+    const accelerate = raw !== undefined && raw !== ''
+        ? raw === '1' || raw === 'true'
+        : Boolean(tui.scrollAcceleration);
+    return { speed, accelerate };
 }
-
-
 /**
  * A rail dot represents a *time-ordered group* when a long conversation is
- * compressed into fewer terminal rows. The video reference shows a titled
- * history list with timestamps, not a single-turn assistant-summary card.
- * This function never changes transcript geometry or user content.
+ * compressed into fewer terminal rows.
  */
 export function renderTurnTimelineCard(turns, maxCardWidth = 52, maxHeight = 16, offset = 0) {
-  if (!Array.isArray(turns) || turns.length === 0) {
-    return { rows: [], entries: [], entryStart: 4, maxOffset: 0 };
-  }
-  const width = Number.isFinite(maxCardWidth) ? Math.max(24, Math.min(52, Math.floor(maxCardWidth))) : 52;
-  const inner = width - 4;
-  const viewHeight = Number.isFinite(maxHeight) ? Math.max(6, Math.floor(maxHeight)) : 16;
-  const count = Math.max(1, Math.min(10, turns.length, viewHeight - 5));
-  const maxOffset = Math.max(0, turns.length - count);
-  const start = Number.isFinite(offset) ? Math.max(0, Math.min(maxOffset, Math.floor(offset))) : 0;
-  const entries = turns.slice(start, start + count);
-  const bg = '\x1b[48;2;28;28;32m';
-  const border = bg + '\x1b[38;2;75;75;82m';
-  const reset = '\x1b[0m';
-  const top = border + '╭' + '─'.repeat(width - 2) + '╮' + reset;
-  const bottom = border + '╰' + '─'.repeat(width - 2) + '╯' + reset;
-  const blank = border + '│' + bg + ' '.repeat(inner + 2) + border + '│' + reset;
-  const line = (value, style = '') => {
-    const text = truncate(formatPreviewCardMarkdown(String(value || '')), inner, '…');
-    return border + '│' + bg + ' ' + style + padEnd(text, inner) + border + ' │' + reset;
-  };
-  const shortTime = turn => {
-    const ts = Number(turn?.timestamp);
-    return Number.isFinite(ts) && ts > 0
-      ? new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-      : '';
-  };
-  const first = turns[0];
-  const last = turns[turns.length - 1];
-  const title = first?.userPrompt || 'Conversation history';
-  const range = shortTime(first) + (turns.length > 1 ? ' – ' + shortTime(last) : '');
-  const header = range.trim() + ' · ' + turns.length + (turns.length === 1 ? ' turn' : ' turns');
-  const rows = [
-    top,
-    line(title, '\x1b[1m\x1b[38;2;235;235;242m'),
-    line(header, '\x1b[38;2;145;145;155m'),
-    blank
-  ];
-  for (const turn of entries) {
-    const when = shortTime(turn);
-    const prompt = turn?.userPrompt || 'Turn ' + String(turn?.turnIndex ?? '');
-    rows.push(line((when ? when + '  ' : '') + prompt, '\x1b[38;2;185;185;193m'));
-  }
-  rows.push(bottom);
-  return { rows, entries, entryStart: 4, maxOffset };
+    if (!Array.isArray(turns) || turns.length === 0) {
+        return { rows: [], entries: [], entryStart: 4, maxOffset: 0 };
+    }
+    const width = Number.isFinite(maxCardWidth) ? Math.max(24, Math.min(52, Math.floor(maxCardWidth))) : 52;
+    const inner = width - 4;
+    const viewHeight = Number.isFinite(maxHeight) ? Math.max(6, Math.floor(maxHeight)) : 16;
+    const count = Math.max(1, Math.min(10, turns.length, viewHeight - 5));
+    const maxOffset = Math.max(0, turns.length - count);
+    const start = Number.isFinite(offset) ? Math.max(0, Math.min(maxOffset, Math.floor(offset))) : 0;
+    const entries = turns.slice(start, start + count);
+    const bg = '\x1b[48;2;28;28;32m';
+    const border = bg + '\x1b[38;2;75;75;82m';
+    const reset = '\x1b[0m';
+    const top = border + '╭' + '─'.repeat(width - 2) + '╮' + reset;
+    const bottom = border + '╰' + '─'.repeat(width - 2) + '╯' + reset;
+    const blank = border + '│' + bg + ' '.repeat(inner + 2) + border + '│' + reset;
+    const line = (value, style = '') => {
+        const text = truncate(formatPreviewCardMarkdown(String(value || '')), inner, '…');
+        return border + '│' + bg + ' ' + style + padEnd(text, inner) + border + ' │' + reset;
+    };
+    const shortTime = (turn) => {
+        const ts = Number(turn?.timestamp);
+        return Number.isFinite(ts) && ts > 0
+            ? new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+            : '';
+    };
+    const first = turns[0];
+    const last = turns[turns.length - 1];
+    const title = first?.userPrompt || 'Conversation history';
+    const range = shortTime(first) + (turns.length > 1 ? ' – ' + shortTime(last) : '');
+    const header = range.trim() + ' · ' + turns.length + (turns.length === 1 ? ' turn' : ' turns');
+    const rows = [
+        top,
+        line(title, '\x1b[1m\x1b[38;2;235;235;242m'),
+        line(header, '\x1b[38;2;145;145;155m'),
+        blank
+    ];
+    for (const turn of entries) {
+        const when = shortTime(turn);
+        const prompt = turn?.userPrompt || 'Turn ' + String(turn?.turnIndex ?? '');
+        rows.push(line((when ? when + '  ' : '') + prompt, '\x1b[38;2;185;185;193m'));
+    }
+    rows.push(bottom);
+    return { rows, entries, entryStart: 4, maxOffset };
 }
-
 export class StageSurface {
-  constructor({ out = process.stdout, env = process.env, config = null, speed, accelerate, openingWidth = 0 } = {}) {
-    this.out = out;
-    this.env = env;
-
-    this.stage = new Stage({ out, env });
-    this.lastColumns = this.stage.width();
-    this.transcript = new Transcript({
-      onEvict: (rows) => this.absorbEvicted(rows),
-      onChange: () => this.handleChange()
-    });
-    this.transcript.surface = this;
-    const tuning = scrollSettings(env, config);
-    this.viewport = new Viewport({
-      transcript: this.transcript,
-      height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2),
-      width: this.stage.width(),
-      speed: speed !== undefined ? speed : tuning.speed,
-      acceleration: (accelerate !== undefined ? accelerate : tuning.accelerate)
-        ? new ScrollAcceleration()
-        : null
-    });
-
-    // Rows that fell out of the model. Not shown, not lost: they are printed
-    // ahead of the transcript on the way out.
-    this.evicted = [];
-    this.lastHeight = 0;
-    // Set by ChatPrompt.attachSurface.
-    this.onDirty = null;
-    this.exitHook = null;
-    this.signalHooks = [];
-    // UX-02: opt out entirely, for anyone whose terminal or workflow this gets
-    // in the way of.
-    this.mouseWanted = String(env.CAUSYNE_MOUSE ?? '1') !== '0';
-    this.mouseOn = false;
-    this.mouseCaptured = false;
-    this.mouseMotionOn = false;
-    this.detached = false;
-
-    // Retained for callers that pass a measured header width. The composer now
-    // uses a stable readable width even after the first transcript entry.
-    this.openingWidth = Number.isFinite(openingWidth) && openingWidth > 0
-      ? Math.floor(openingWidth)
-      : 0;
-
-    // Tracks whether this session has ever received transcript content.
-    this.opened = false;
-    this.homeInfo = null;
-    this.homeSessionSelected = false;
-    this.sessionInfo = null;
-    this.sidebarStatus = null;
-    this.sidebarPlan = [];
-    this.fullSession = false;
-    this.lastPromptRows = [];
-    this.lastPromptCaret = null;
-    this.messageActionOverlay = null;
-    this.unregisterConsoleGuard = null;
-    this.wasModal = false;
-    this.lastBlockLength = 0;
-    this.lastUserTurnCount = 0;
-  }
-
-  get width() {
-    return this.stage.width();
-  }
-
-  composeAvailableWidth() {
-    if (this.homeInfo) return this.width;
-    return sessionMainWidth(this.width, false, this.env);
-  }
-
-  /** Home is compact; a session uses its full conversation column. */
-  composeWidth() {
-    if (this.homeInfo) return composerWidth(this.width);
-    const mainWidth = sessionMainWidth(this.width, false, this.env);
-    return sessionComposerWidth(mainWidth);
-  }
-
-  /** Keep Home distinct from a selected or newly started conversation. */
-  enterHome(info) {
-    this.homeInfo = info;
-    this.disableMouse();
-    this.homeSessionSelected = false;
-    this.sessionInfo = { title: 'Untitled', cwd: info?.cwd, provider: info?.provider, model: info?.model };
-    this.fullSession = true;
-    this.stage.invalidate();
-  }
-
-  leaveHome(sessionSelected = false) {
-    if (this.homeInfo) this.stage.invalidate();
-    this.homeInfo = null;
-    this.enableMouse();
-    if (sessionSelected) this.homeSessionSelected = true;
-  }
-
-  setSessionInfo(info) {
-    const changedSession = info?.id && this.sessionInfo?.id && info.id !== this.sessionInfo.id;
-    if (changedSession) {
-      // Sidebar plans and turn hover coordinates belong to the previous chat.
-      this.sidebarPlan = [];
-      this.hoveredTurnIndex = null;
-      this.hoveredTurnAnchorY = null;
-      this.activeTurnIndex = null;
-      this.hoveredMessageFrameId = null;
-      this.turnRailLayout = null;
+    out;
+    env;
+    stage;
+    lastColumns;
+    transcript;
+    viewport;
+    evicted;
+    lastHeight;
+    onDirty;
+    exitHook;
+    signalHooks;
+    mouseWanted;
+    mouseOn;
+    mouseCaptured;
+    mouseMotionOn;
+    detached;
+    openingWidth;
+    opened;
+    homeInfo;
+    homeSessionSelected;
+    sessionInfo;
+    sidebarStatus;
+    sidebarPlan;
+    fullSession;
+    lastPromptRows;
+    lastPromptCaret;
+    messageActionOverlay;
+    unregisterConsoleGuard;
+    wasModal;
+    lastBlockLength;
+    lastUserTurnCount;
+    hoveredTurnIndex;
+    hoveredTurnAnchorY;
+    activeTurnIndex;
+    hoveredMessageFrameId;
+    turnRailLayout;
+    turnRailCardOffset;
+    turnRailHoverSuppressed;
+    constructor({ out = process.stdout, env = process.env, config = null, speed, accelerate, openingWidth = 0 } = {}) {
+        this.out = out;
+        this.env = env && typeof env === 'object' ? env : {};
+        this.stage = new Stage({ out, env: this.env });
+        this.lastColumns = this.stage.width();
+        this.transcript = new Transcript({
+            onEvict: (rows) => this.absorbEvicted(rows),
+            onChange: () => this.handleChange()
+        });
+        this.transcript.surface = this;
+        const tuning = scrollSettings(this.env, config);
+        this.viewport = new Viewport({
+            transcript: this.transcript,
+            height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2),
+            width: this.stage.width(),
+            speed: speed !== undefined ? speed : tuning.speed,
+            acceleration: (accelerate !== undefined ? accelerate : tuning.accelerate)
+                ? new ScrollAcceleration()
+                : null
+        });
+        // Rows that fell out of the model. Not shown, not lost: they are printed
+        // ahead of the transcript on the way out.
+        this.evicted = [];
+        this.lastHeight = 0;
+        // Set by ChatPrompt.attachSurface.
+        this.onDirty = null;
+        this.exitHook = null;
+        this.signalHooks = [];
+        // UX-02: opt out entirely, for anyone whose terminal or workflow this gets
+        // in the way of.
+        this.mouseWanted = String(this.env.CAUSYNE_MOUSE ?? '1') !== '0';
+        this.mouseOn = false;
+        this.mouseCaptured = false;
+        this.mouseMotionOn = false;
+        this.detached = false;
+        // Retained for callers that pass a measured header width. The composer now
+        // uses a stable readable width even after the first transcript entry.
+        this.openingWidth = Number.isFinite(openingWidth) && openingWidth > 0
+            ? Math.floor(openingWidth)
+            : 0;
+        // Tracks whether this session has ever received transcript content.
+        this.opened = false;
+        this.homeInfo = null;
+        this.homeSessionSelected = false;
+        this.sessionInfo = null;
+        this.sidebarStatus = null;
+        this.sidebarPlan = [];
+        this.fullSession = false;
+        this.lastPromptRows = [];
+        this.lastPromptCaret = null;
+        this.messageActionOverlay = null;
+        this.unregisterConsoleGuard = null;
+        this.wasModal = false;
+        this.lastBlockLength = 0;
+        this.lastUserTurnCount = 0;
     }
-    this.sessionInfo = changedSession
-      ? { ...this.sessionInfo, activeSkill: null, contextChars: 0, ...info }
-      : { ...this.sessionInfo, ...info };
-    this.stage.invalidate();
-  }
-
-  /**
-   * Claim the band and arm the exit safety net.
-   *
-   * The hook matters: if the process dies without going through stop(), the
-   * band's rows are ordinary terminal text and nothing is corrupted, but the
-   * session would not reach scrollback. A synchronous exit handler is enough
-   * because collapse and print-through are plain writes.
-   */
-  open() {
-    // ONE row, not the whole screen.
-    //
-    // The band used to be born at `rows - 1` regardless of what it had to show.
-    // Measured at 156x78: the banner's 12 rows plus a 77-row band came to 89 on
-    // a 78-row screen, so the wordmark was scrolled 11 rows out of sight before
-    // the user had typed anything, and 73 of the 77 claimed rows were empty.
-    // present() grows it to fit what there actually is.
-    if (!this.stage.reserve(1)) return false;
-    this.unregisterConsoleGuard?.();
-    this.unregisterConsoleGuard = registerStageConsoleGuard(this);
-    if (this.out === process.stdout) setStageConsoleGuardActive(true);
-    if (!this.homeInfo) this.enableMouse();
-    this.armTeardown();
-    return true;
-  }
-
-  writeModeControl(sequence) {
-    if (!sequence) return;
-    runWithStageWrite(() => {
-      this.out.write(sequence);
-    });
-  }
-
-  syncTurnRailMotion(railHasTurns) {
-    if (!this.mouseOn || !this.mouseCaptured || !this.stage.reserved) return;
-    const preference = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '').trim();
-    // Hover needs 1003, not just 1000. Limit default motion tracking to
-    // visible turn rails; preserve explicit opt-in and opt-out preferences.
-    const wantMotion = preference === '1' || (preference !== '0' && railHasTurns);
-    if (this.mouseMotionOn === wantMotion) return;
-    this.writeModeControl(mouseHoverTracking(wantMotion, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
-    this.mouseMotionOn = wantMotion;
-    if (!wantMotion) {
-      // 1003 can replace 1000 in terminal tracking-mode state. When it is
-      // removed, explicitly restore 1000 or the wheel scrolls the shell.
-      this.writeModeControl(mouseTracking(true));
+    get width() {
+        return this.stage.width();
     }
-  }
-
-  enableMouse() {
-    if (this.homeInfo || !this.mouseWanted || this.mouseOn || !this.stage.reserved) return false;
-    this.writeModeControl(mouseTracking(true));
-    this.writeModeControl(mouseHoverTracking(true, this.env));
-    this.mouseCaptured = true;
-    this.mouseOn = true;
-    this.mouseMotionOn = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '') === '1';
-    return true;
-  }
-
-  disableMouse(force = false) {
-    if (!force && !this.mouseOn && !this.mouseCaptured) return false;
-    // Restore terminal motion modes, including stale tracking from an interrupted turn.
-    this.writeModeControl(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
-    this.writeModeControl(mouseTracking(false));
-    this.mouseCaptured = false;
-    this.mouseOn = false;
-    this.mouseMotionOn = false;
-    this.detached = false;
-    return true;
-  }
-
-  
-  armTeardown() {
-    if (this.signalHooks.length > 0 || this.exitHook) this.disarmTeardown();
-    this.exitHook = () => { try { this.close(); } catch { /* nothing left to do */ } };
-    process.once('exit', this.exitHook);
-
-    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-      const handler = () => {
-        try { this.close(); } catch { /* keep going: the exit matters more */ }
-        // Re-raise the conventional status so a caller waiting on us still sees
-        // that we were signalled rather than that we exited cleanly.
-        process.exit(128 + { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 }[signal]);
-      };
-      process.on(signal, handler);
-      this.signalHooks.push([signal, handler]);
+    composeAvailableWidth() {
+        if (this.homeInfo)
+            return this.width;
+        return sessionMainWidth(this.width, false, this.env);
     }
-  }
-
-  disarmTeardown() {
-    if (this.exitHook) {
-      process.removeListener('exit', this.exitHook);
-      this.exitHook = null;
+    /** Home is compact; a session uses its full conversation column. */
+    composeWidth() {
+        if (this.homeInfo)
+            return composerWidth(this.width);
+        const mainWidth = sessionMainWidth(this.width, false, this.env);
+        return sessionComposerWidth(mainWidth);
     }
-    for (const [signal, handler] of this.signalHooks) process.removeListener(signal, handler);
-    this.signalHooks = [];
-  }
-
-  close() {
-    // Force the terminal to release tracking, even if internal flags were stale.
-    this.disableMouse(true);
-    if (this.unregisterConsoleGuard) {
-      this.unregisterConsoleGuard();
-      this.unregisterConsoleGuard = null;
-      if (this.out === process.stdout) setStageConsoleGuardActive(false);
+    /** Keep Home distinct from a selected or newly started conversation. */
+    enterHome(info) {
+        this.homeInfo = info;
+        this.disableMouse();
+        this.homeSessionSelected = false;
+        this.sessionInfo = { title: 'Untitled', cwd: info?.cwd, provider: info?.provider, model: info?.model };
+        this.fullSession = true;
+        this.stage.invalidate();
     }
-    if (!this.stage.reserved) { this.disarmTeardown(); return false; }
-    const rows = this.snapshot();
-    this.stage.collapse();
-    this.stage.printThrough(rows);
-    this.disarmTeardown();
-    return true;
-  }
-
-  /**
-   * Hand the terminal back to something that is about to write to it directly,
-   * then take it again.
-   *
-   * Anything spawned with stdio: 'inherit' writes straight into the band and
-   * the diff has no idea it happened. Causyne has four such call sites today
-   * (autoUpdate's two npm installs, the cortex provisioner, the capability
-   * provisioner); none of them is wired to this yet, and that is recorded as an
-   * open item rather than left to be discovered.
-   */
-  suspend() {
-    if (!this.stage.reserved) return false;
-    this.disableMouse();
-    if (this.unregisterConsoleGuard) {
-      this.unregisterConsoleGuard();
-      this.unregisterConsoleGuard = null;
-      if (this.out === process.stdout) setStageConsoleGuardActive(false);
+    leaveHome(sessionSelected = false) {
+        if (this.homeInfo)
+            this.stage.invalidate();
+        this.homeInfo = null;
+        this.enableMouse();
+        if (sessionSelected)
+            this.homeSessionSelected = true;
     }
-    this.stage.collapse();
-    return true;
-  }
-
-  resume() {
-    if (this.stage.reserved) return false;
-    if (!this.stage.reserve()) return false;
-    this.unregisterConsoleGuard?.();
-    this.unregisterConsoleGuard = registerStageConsoleGuard(this);
-    if (this.out === process.stdout) setStageConsoleGuardActive(true);
-    this.stage.invalidate();
-    this.enableMouse();
-    return true;
-  }
-
-  /** Everything the session produced, oldest first. */
-  snapshot() {
-    return this.evicted.concat(this.transcript.snapshot(this.width));
-  }
-
-  absorbEvicted(rows) {
-    for (const row of rows) this.evicted.push(row);
-    if (this.evicted.length > MAX_EVICTED_ROWS) {
-      this.evicted.splice(0, this.evicted.length - MAX_EVICTED_ROWS);
+    setSessionInfo(info) {
+        const changedSession = Boolean(info?.id && this.sessionInfo?.id && info.id !== this.sessionInfo.id);
+        if (changedSession) {
+            // Sidebar plans and turn hover coordinates belong to the previous chat.
+            this.sidebarPlan = [];
+            this.hoveredTurnIndex = null;
+            this.hoveredTurnAnchorY = null;
+            this.activeTurnIndex = null;
+            this.hoveredMessageFrameId = null;
+            this.turnRailLayout = null;
+        }
+        this.sessionInfo = changedSession
+            ? { ...this.sessionInfo, activeSkill: null, contextChars: 0, ...info }
+            : { ...this.sessionInfo, ...info };
+        this.stage.invalidate();
     }
-  }
-
-  handleChange() {
-    if (!this.transcript.isEmpty()) this.opened = true;
-    let userTurns = 0;
-    for (const frame of this.transcript.frames) {
-      if (frame && frame.kind === 'user') userTurns++;
+    /**
+     * Claim the band and arm the exit safety net.
+     */
+    open() {
+        if (!this.stage.reserve(1))
+            return false;
+        this.unregisterConsoleGuard?.();
+        this.unregisterConsoleGuard = registerStageConsoleGuard(this);
+        if (this.out === process.stdout)
+            setStageConsoleGuardActive(true);
+        if (!this.homeInfo)
+            this.enableMouse();
+        this.armTeardown();
+        return true;
     }
-    if (userTurns > this.lastUserTurnCount) {
-      this.activeTurnIndex = null;
-      this.hoveredTurnIndex = null;
-      this.hoveredTurnAnchorY = null;
+    writeModeControl(sequence) {
+        if (!sequence)
+            return;
+        runWithStageWrite(() => {
+            this.out.write(sequence);
+        });
     }
-    this.lastUserTurnCount = userTurns;
-    const before = this.lastHeight;
-    const mainWidth = sessionMainWidth(this.width, false, this.env);
-    const contentWidth = this.railEnabled(mainWidth)
-      ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
-      : mainWidth;
-    const after = this.transcript.height(contentWidth);
-    this.lastHeight = after;
-    // Growth is what drives auto-scroll. Handing the delta over is also what
-    // lets the "N new below" affordance count only what arrived while the user
-    // was reading somewhere else.
-    this.viewport.refresh(Math.max(0, after - before));
-    if (this.onDirty) this.onDirty();
-  }
-
-  // -------------------------------------------------------------------------
-  // The interface ChatPrompt calls
-  // -------------------------------------------------------------------------
-
-  /**
-   * Append a permanent frame. `produce` must be a pure function of width — see
-   * the contract in transcript.js.
-   */
-  commit(kind, produce, meta = null) {
-    return this.transcript.append({ kind, produce, meta });
-  }
-
-  /**
-   * Paint the band: viewport on top, the prompt's own rows underneath.
-   */
-  present(promptRows, caret = null) {
-    if (!this.stage.reserved) return 0;
-
-    if (!this.messageActionOverlay) {
-      this.lastPromptRows = promptRows;
-      this.lastPromptCaret = caret;
+    syncTurnRailMotion(railHasTurns) {
+        if (!this.mouseOn || !this.mouseCaptured || !this.stage.reserved)
+            return;
+        const preference = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '').trim();
+        // Hover needs 1003, not just 1000. Limit default motion tracking to
+        // visible turn rails; preserve explicit opt-in and opt-out preferences.
+        const wantMotion = preference === '1' || (preference !== '0' && railHasTurns);
+        if (this.mouseMotionOn === wantMotion)
+            return;
+        this.writeModeControl(mouseHoverTracking(wantMotion, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
+        this.mouseMotionOn = wantMotion;
+        if (!wantMotion) {
+            // 1003 can replace 1000 in terminal tracking-mode state. When it is
+            // removed, explicitly restore 1000 or the wheel scrolls the shell.
+            this.writeModeControl(mouseTracking(true));
+        }
     }
-
-    // Do not grow, resize, or invalidate the band while the terminal owns
-    // scrollback; otherwise stage.grow emits newlines that shift the user's
-    // scroll position before the detached repaint guard below.
-    if (this.detached) return false;
-
-    const isModal = Boolean(caret?.modal);
-    if (isModal !== this.wasModal) {
-      this.wasModal = isModal;
-      this.stage.invalidate();
+    enableMouse() {
+        if (this.homeInfo || !this.mouseWanted || this.mouseOn || !this.stage.reserved)
+            return false;
+        this.writeModeControl(mouseTracking(true));
+        this.writeModeControl(mouseHoverTracking(true, this.env));
+        this.mouseCaptured = true;
+        this.mouseOn = true;
+        this.mouseMotionOn = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '') === '1';
+        return true;
     }
-
-    if (this.homeInfo || (caret?.modal && !caret?.inline)) {
-      this.syncTurnRailMotion(false);
-      this.turnRailLayout = null;
-      this.hoveredTurnIndex = null;
-      this.hoveredTurnAnchorY = null;
-      if (this.stage.height < this.stage.maxHeight) {
-        this.stage.grow(this.stage.maxHeight - this.stage.height);
-      }
-      const view = caret?.modal
-        ? placeDialog(promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0)
-        : placeHome(this.homeInfo, promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0);
-      return this.stage.paint(view.rows, { row: view.caretRow, col: view.caretCol, hideCursor: caret?.hideCursor });
+    disableMouse(force = false) {
+        if (!force && !this.mouseOn && !this.mouseCaptured)
+            return false;
+        // Restore terminal motion modes, including stale tracking from an interrupted turn.
+        this.writeModeControl(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
+        this.writeModeControl(mouseTracking(false));
+        this.mouseCaptured = false;
+        this.mouseOn = false;
+        this.mouseMotionOn = false;
+        this.detached = false;
+        return true;
     }
-
-    const width = this.width;
-    const sidebar = sidebarVisible(width, false, this.env);
-    const mainWidth = sessionMainWidth(width, false, this.env);
-    const rail = this.railEnabled(mainWidth);
-    const contentWidth = rail
-      ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
-      : mainWidth;
-
-    let block = Array.isArray(promptRows) && promptRows.length > 0 ? promptRows : [''];
-    let caretRow = caret && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
-    let caretCol = caret ? caret.col : 0;
-
-    // Grow the band to what there is to show, before deciding anything else.
-    //
-    // Direct chat keeps its printed header and grows with content. A session
-    // entered from Home occupies the available height at every terminal width.
-    // Its short transcript is placed next to the input below.
-    const contentRows = this.transcript.height(contentWidth);
-    const minFloor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
-    const neededWithFloor = Math.min(this.stage.maxHeight, block.length + minFloor);
-    const desired = Math.max(
-      sessionStageHeight(this.stage.maxHeight, block.length, contentRows, this.fullSession || caret?.inline),
-      neededWithFloor
-    );
-    if (desired > this.stage.height) this.stage.grow(desired - this.stage.height);
-
-    const height = this.stage.height;
-
-    // The prompt may not eat the whole band — but only once there is a
-    // transcript for it to eat. Trim from the TOP when it would: the status
-    // footer and the caret row are the last rows and the ones worth keeping,
-    // and an input box that has scrolled its own oldest row off is a smaller lie
-    // than a transcript that has vanished.
-    const floor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
-    const maxBlock = Math.max(1, height - floor);
-    if (block.length > maxBlock) {
-      const cut = block.length - maxBlock;
-      block = block.slice(cut);
-      caretRow = Math.max(0, caretRow - cut);
+    armTeardown() {
+        if (this.signalHooks.length > 0 || this.exitHook)
+            this.disarmTeardown();
+        this.exitHook = () => { try {
+            this.close();
+        }
+        catch { /* nothing left to do */ } };
+        process.once('exit', this.exitHook);
+        for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+            const handler = () => {
+                try {
+                    this.close();
+                }
+                catch { /* keep going: the exit matters more */ }
+                // Re-raise the conventional status so a caller waiting on us still sees
+                // that we were signalled rather than that we exited cleanly.
+                process.exit(128 + SIGNAL_EXIT_CODES[signal]);
+            };
+            process.on(signal, handler);
+            this.signalHooks.push([signal, handler]);
+        }
     }
-    caretRow = Math.max(0, Math.min(block.length - 1, Math.floor(caretRow)));
-
-    if (this.lastBlockLength > 0 && this.lastBlockLength !== block.length) {
-      this.stage.invalidate();
+    disarmTeardown() {
+        if (this.exitHook) {
+            process.removeListener('exit', this.exitHook);
+            this.exitHook = null;
+        }
+        for (const [signal, handler] of this.signalHooks)
+            process.removeListener(signal, handler);
+        this.signalHooks = [];
     }
-    this.lastBlockLength = block.length;
-
-    const budget = Math.max(0, height - block.length);
-    this.syncTurnRailMotion(rail && budget > 0 && hasSessionTurns(this.transcript));
-    let rows = [];
-    if (budget > 0) {
-      this.viewport.resize({ height: budget, width: contentWidth });
-      rows = alignTranscriptRows(this.viewport.rows(), contentRows);
-      // In follow mode, the viewport can land on the blank separator between
-      // two assistant frames after enough replies to fill the band. Show a
-      // subtle boundary marker in that same row instead of a visible void.
-      // Do not shift row indices: rails, hover targets and reading anchors
-      // are keyed to the original transcript row positions.
-      if (this.viewport.following && this.viewport.maxScrollTop() > 0
-          && rows.length > 0 && stripAnsi(rows[0] || '').trim() === ''
-          && rows.some(row => stripAnsi(row).trim() !== '')) {
-        rows[0] = paint('rule', ` ${GLYPHS.dot} `);
-      }
-      this.decorate(rows, contentWidth);
-      markHoveredMessage(rows, this, contentWidth);
-      if (rail) {
-        this.attachRail(rows, contentWidth);
-      } else {
-        this.turnRailLayout = null;
+    close() {
+        // Force the terminal to release tracking, even if internal flags were stale.
+        this.disableMouse(true);
+        if (this.unregisterConsoleGuard) {
+            this.unregisterConsoleGuard();
+            this.unregisterConsoleGuard = null;
+            if (this.out === process.stdout)
+                setStageConsoleGuardActive(false);
+        }
+        if (!this.stage.reserved) {
+            this.disarmTeardown();
+            return false;
+        }
+        const rows = this.snapshot();
+        this.stage.collapse();
+        this.stage.printThrough(rows);
+        this.disarmTeardown();
+        return true;
+    }
+    suspend() {
+        if (!this.stage.reserved)
+            return false;
+        this.disableMouse();
+        if (this.unregisterConsoleGuard) {
+            this.unregisterConsoleGuard();
+            this.unregisterConsoleGuard = null;
+            if (this.out === process.stdout)
+                setStageConsoleGuardActive(false);
+        }
+        this.stage.collapse();
+        return true;
+    }
+    resume() {
+        if (this.stage.reserved)
+            return false;
+        if (!this.stage.reserve())
+            return false;
+        this.unregisterConsoleGuard?.();
+        this.unregisterConsoleGuard = registerStageConsoleGuard(this);
+        if (this.out === process.stdout)
+            setStageConsoleGuardActive(true);
+        this.stage.invalidate();
+        this.enableMouse();
+        return true;
+    }
+    /** Everything the session produced, oldest first. */
+    snapshot() {
+        return this.evicted.concat(this.transcript.snapshot(this.width));
+    }
+    absorbEvicted(rows) {
+        for (const row of rows)
+            this.evicted.push(row);
+        if (this.evicted.length > MAX_EVICTED_ROWS) {
+            this.evicted.splice(0, this.evicted.length - MAX_EVICTED_ROWS);
+        }
+    }
+    handleChange() {
+        if (!this.transcript.isEmpty())
+            this.opened = true;
+        let userTurns = 0;
+        for (const frame of this.transcript.frames) {
+            if (frame && frame.kind === 'user')
+                userTurns++;
+        }
+        if (userTurns > this.lastUserTurnCount) {
+            this.activeTurnIndex = null;
+            this.hoveredTurnIndex = null;
+            this.hoveredTurnAnchorY = null;
+        }
+        this.lastUserTurnCount = userTurns;
+        const before = this.lastHeight;
+        const mainWidth = sessionMainWidth(this.width, false, this.env);
+        const contentWidth = this.railEnabled(mainWidth)
+            ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
+            : mainWidth;
+        const after = this.transcript.height(contentWidth);
+        this.lastHeight = after;
+        // Growth is what drives auto-scroll. Handing the delta over is also what
+        // lets the "N new below" affordance count only what arrived while the user
+        // was reading somewhere else.
+        this.viewport.refresh(Math.max(0, after - before));
+        if (this.onDirty)
+            this.onDirty();
+    }
+    // -------------------------------------------------------------------------
+    // The interface ChatPrompt calls
+    // -------------------------------------------------------------------------
+    /**
+     * Append a permanent frame. `produce` must be a pure function of width — see
+     * the contract in transcript.js.
+     */
+    commit(kind, produce, meta = null) {
+        return this.transcript.append({ kind, produce, meta });
+    }
+    /**
+     * Paint the band: viewport on top, the prompt's own rows underneath.
+     */
+    present(promptRows, caret = null) {
+        if (!this.stage.reserved)
+            return 0;
+        if (!this.messageActionOverlay) {
+            this.lastPromptRows = promptRows;
+            this.lastPromptCaret = caret;
+        }
+        // Do not grow, resize, or invalidate the band while the terminal owns
+        // scrollback; otherwise stage.grow emits newlines that shift the user's
+        // scroll position before the detached repaint guard below.
+        if (this.detached)
+            return false;
+        const isModal = Boolean(caret?.modal);
+        if (isModal !== this.wasModal) {
+            this.wasModal = isModal;
+            this.stage.invalidate();
+        }
+        if (this.homeInfo || (caret?.modal && !caret?.inline)) {
+            this.syncTurnRailMotion(false);
+            this.turnRailLayout = null;
+            this.hoveredTurnIndex = null;
+            this.hoveredTurnAnchorY = null;
+            if (this.stage.height < this.stage.maxHeight) {
+                this.stage.grow(this.stage.maxHeight - this.stage.height);
+            }
+            const view = caret?.modal
+                ? placeDialog(promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0)
+                : placeHome(this.homeInfo || {}, promptRows, this.width, this.stage.height, caret?.row ?? 0, caret?.col ?? 0);
+            return this.stage.paint(view.rows, {
+                row: view.caretRow,
+                col: view.caretCol,
+                ...(caret?.hideCursor !== undefined ? { hideCursor: caret.hideCursor } : {})
+            });
+        }
+        const width = this.width;
+        const sidebar = sidebarVisible(width, false, this.env);
+        const mainWidth = sessionMainWidth(width, false, this.env);
+        const rail = this.railEnabled(mainWidth);
+        const contentWidth = rail
+            ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
+            : mainWidth;
+        let block = Array.isArray(promptRows) && promptRows.length > 0 ? promptRows : [''];
+        let caretRow = caret && typeof caret.row === 'number' && Number.isFinite(caret.row) ? caret.row : Math.max(0, block.length - 1);
+        const caretCol = caret && typeof caret.col === 'number' ? caret.col : 0;
+        const contentRows = this.transcript.height(contentWidth);
+        const minFloor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
+        const neededWithFloor = Math.min(this.stage.maxHeight, block.length + minFloor);
+        const desired = Math.max(sessionStageHeight(this.stage.maxHeight, block.length, contentRows, Boolean(this.fullSession || caret?.inline)), neededWithFloor);
+        if (desired > this.stage.height)
+            this.stage.grow(desired - this.stage.height);
+        const height = this.stage.height;
+        const floor = contentRows > 0 ? MIN_VIEWPORT_ROWS : 0;
+        const maxBlock = Math.max(1, height - floor);
+        if (block.length > maxBlock) {
+            const cut = block.length - maxBlock;
+            block = block.slice(cut);
+            caretRow = Math.max(0, caretRow - cut);
+        }
+        caretRow = Math.max(0, Math.min(block.length - 1, Math.floor(caretRow)));
+        if (this.lastBlockLength > 0 && this.lastBlockLength !== block.length) {
+            this.stage.invalidate();
+        }
+        this.lastBlockLength = block.length;
+        const budget = Math.max(0, height - block.length);
+        this.syncTurnRailMotion(rail && budget > 0 && hasSessionTurns(this.transcript));
+        let rows = [];
+        if (budget > 0) {
+            this.viewport.resize({ height: budget, width: contentWidth });
+            rows = alignTranscriptRows(this.viewport.rows(), contentRows);
+            if (this.viewport.following && this.viewport.maxScrollTop() > 0
+                && rows.length > 0 && stripAnsi(rows[0] || '').trim() === ''
+                && rows.some(row => stripAnsi(row).trim() !== '')) {
+                rows[0] = paint('rule', ` ${GLYPHS.dot} `);
+            }
+            this.decorate(rows, contentWidth);
+            markHoveredMessage(rows, this, contentWidth);
+            if (rail) {
+                this.attachRail(rows, contentWidth);
+            }
+            else {
+                this.turnRailLayout = null;
+                this.hoveredTurnIndex = null;
+                this.hoveredTurnAnchorY = null;
+            }
+            if (this.hoveredTurnIndex && this.turnRailLayout?.turns?.length) {
+                const hoveredTurn = this.turnRailLayout.turns.find((t) => t.turnIndex === this.hoveredTurnIndex);
+                if (hoveredTurn) {
+                    const groupRow = this.turnRailLayout?.dotRows?.get(hoveredTurn.turnIndex);
+                    const group = this.turnRailLayout?.rowToTurns?.get(groupRow) || [hoveredTurn];
+                    const timeline = group.length > 1
+                        ? renderTurnTimelineCard(group, Math.min(52, mainWidth - 5), rows.length, this.turnRailCardOffset || 0)
+                        : null;
+                    const card = timeline?.rows || renderTurnPreviewCard(hoveredTurn, 52);
+                    const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
+                    rows = overlayTurnPreviewCard(rows, card, anchorY, this.turnRailLayout?.railX ?? 1, mainWidth);
+                    if (this.turnRailLayout) {
+                        const cardWidth = visibleWidth(card[0] || '') || 52;
+                        const railX = this.turnRailLayout.railX ?? 1;
+                        const safeAnchorY = Number.isFinite(anchorY) ? Math.floor(anchorY) : Math.floor(rows.length / 2);
+                        let cardX = railX - cardWidth - 1;
+                        if (railX <= 4 && railX + 2 < mainWidth) {
+                            cardX = railX + 2;
+                        }
+                        else if (cardX < 0) {
+                            cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 2));
+                        }
+                        const effectiveCardWidth = Math.max(1, Math.min(cardWidth, Math.max(1, mainWidth - cardX)));
+                        const startY = Math.max(0, Math.min(rows.length - card.length, safeAnchorY - Math.floor(card.length / 2)));
+                        const visibleCardHeight = Math.min(card.length, Math.max(0, rows.length - startY));
+                        this.turnRailLayout.cardRect = {
+                            x: cardX, y: startY, width: effectiveCardWidth, height: visibleCardHeight,
+                            turnIndex: hoveredTurn.turnIndex,
+                            entries: timeline?.entries || null,
+                            entryStart: timeline?.entryStart ?? null,
+                            groupTurns: group.length > 1 ? group : null,
+                            maxOffset: timeline?.maxOffset || 0
+                        };
+                    }
+                }
+            }
+            else if (this.turnRailLayout) {
+                this.turnRailLayout.cardRect = null;
+            }
+            if (this.messageActionOverlay) {
+                const overlay = this.messageActionOverlay;
+                const overlayWidth = rail ? Math.max(contentWidth, mainWidth - RAIL_BUDGET) : contentWidth;
+                const placed = placeMessageActionPanel(rows, overlay.panel, overlayWidth, Math.max(0, (this.out.rows || height) - height), overlay.layer.anchorY, overlay.layer.items.length, {
+                    messageBounds: overlay.layer.messageBounds,
+                    dimBackdrop: true
+                });
+                rows = placed.rows;
+                overlay.layer.actionLayout = placed.layout;
+            }
+        }
+        else {
+            this.turnRailLayout = null;
+            this.hoveredTurnIndex = null;
+            this.hoveredTurnAnchorY = null;
+        }
+        const mainRows = rows.concat(block);
+        const panelWidth = sidebar ? sessionSidebarWidth(width, false, this.env) : 0;
+        const panelRows = sidebar ? sessionSidebarRows({
+            ...this.sessionInfo,
+            cwd: this.sidebarStatus?.cwd || this.sessionInfo?.cwd,
+            provider: this.sidebarStatus?.provider || this.sessionInfo?.provider,
+            model: this.sidebarStatus?.model || this.sessionInfo?.model,
+            contextChars: this.sidebarStatus?.contextChars ?? this.sessionInfo?.contextChars,
+            contextLimit: this.sidebarStatus?.contextLimit ?? this.sessionInfo?.contextLimit,
+            plan: this.sidebarPlan,
+            activeSkill: this.sessionInfo?.activeSkill
+        }, mainRows.length, panelWidth) : [];
+        const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth, panelWidth) : mainRows;
+        return this.stage.paint(painted, {
+            row: rows.length + caretRow,
+            // The composer may never put its caret into the sidebar or the reserved
+            // right margin, even if layout measurements differ after a resize.
+            col: Math.max(0, Math.min(mainWidth - 2, Number.isFinite(caretCol) ? Math.floor(caretCol) : 0)),
+            ...(caret?.hideCursor !== undefined ? { hideCursor: caret.hideCursor } : {})
+        });
+    }
+    /** Draw message actions over the transcript while retaining the live composer. */
+    presentMessageActions(panel, layer) {
+        this.messageActionOverlay = { panel, layer };
+        try {
+            return this.present(this.lastPromptRows, this.lastPromptCaret);
+        }
+        finally {
+            this.messageActionOverlay = null;
+        }
+    }
+    decorate(rows, width) {
+        const state = this.viewport.state();
+        if (state.following)
+            return rows;
+        const count = state.unseen;
+        const label = count > 0
+            ? `${GLYPHS.arrow} ${count} new below`
+            : `${GLYPHS.arrow} scrolled up`;
+        const hint = `${label}  ${GLYPHS.dot}  shift+pgdn to follow`;
+        if (rows.length > 0) {
+            rows[rows.length - 1] = paint('accent', truncate(hint, Math.max(8, width - 1), GLYPHS.ellipsis));
+        }
+        return rows;
+    }
+    flushAndClear() {
+        const rows = this.snapshot();
+        this.stage.collapse();
+        this.stage.printThrough(rows);
+        this.evicted = [];
+        this.transcript.clear();
+        this.lastHeight = 0;
+        this.stage.reserve();
+        this.stage.invalidate();
+        this.viewport.toBottom();
+        return rows.length;
+    }
+    /** Clear the transcript without printing through to scrollback (for session switching). */
+    clearTranscript() {
+        this.evicted = [];
+        this.transcript.clear();
+        this.lastHeight = 0;
+        this.lastUserTurnCount = 0;
+        this.activeTurnIndex = null;
         this.hoveredTurnIndex = null;
         this.hoveredTurnAnchorY = null;
-      }
-      if (this.hoveredTurnIndex && this.turnRailLayout?.turns?.length) {
-        const hoveredTurn = this.turnRailLayout.turns.find(t => t.turnIndex === this.hoveredTurnIndex);
-        if (hoveredTurn) {
-          const groupRow = this.turnRailLayout?.dotRows?.get(hoveredTurn.turnIndex);
-          const group = this.turnRailLayout?.rowToTurns?.get(groupRow) || [hoveredTurn];
-          const timeline = group.length > 1
-            ? renderTurnTimelineCard(group, Math.min(52, mainWidth - 5), rows.length, this.turnRailCardOffset || 0)
-            : null;
-          const card = timeline?.rows || renderTurnPreviewCard(hoveredTurn, 52);
-          const anchorY = this.hoveredTurnAnchorY ?? Math.floor(rows.length / 2);
-          rows = overlayTurnPreviewCard(rows, card, anchorY, this.turnRailLayout?.railX ?? 1, mainWidth);
-          if (this.turnRailLayout) {
-            const cardWidth = visibleWidth(card[0] || '') || 52;
-            const railX = this.turnRailLayout.railX ?? 1;
-            const safeAnchorY = Number.isFinite(anchorY) ? Math.floor(anchorY) : Math.floor(rows.length / 2);
-            let cardX = railX - cardWidth - 1;
-            if (railX <= 4 && railX + 2 < mainWidth) {
-              cardX = railX + 2;
-            } else if (cardX < 0) {
-              cardX = Math.max(0, Math.min(mainWidth - cardWidth - 1, railX + 2));
+        this.turnRailLayout = null;
+        this.stage.invalidate();
+        if (this.viewport) {
+            this.viewport.manual = false;
+            this.viewport.unseen = 0;
+            this.viewport.toBottom();
+        }
+    }
+    resize() {
+        const next = stageHeight(this.out, this.env);
+        if (next < 1) {
+            this.close();
+            return false;
+        }
+        const columns = this.stage.width();
+        if (columns !== this.lastColumns || next !== this.stage.maxHeight) {
+            this.hoveredTurnIndex = null;
+            this.hoveredTurnAnchorY = null;
+        }
+        if (!this.stage.reserved || next !== this.stage.maxHeight) {
+            this.stage.resize(next, 1);
+        }
+        else if (columns !== this.lastColumns && !this.detached) {
+            this.stage.reanchor();
+        }
+        this.lastColumns = columns;
+        this.stage.invalidate();
+        const mainWidth = sessionMainWidth(this.width, false, this.env);
+        const contentWidth = this.railEnabled(mainWidth)
+            ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
+            : mainWidth;
+        this.viewport.resize({ height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2), width: contentWidth });
+        this.lastHeight = this.transcript.height(contentWidth);
+        return this.stage.reserved;
+    }
+    railEnabled(width) {
+        if (String(this.env.CAUSYNE_RAIL ?? '1') === '0')
+            return false;
+        return width >= RAIL_MIN_WIDTH;
+    }
+    buildRail(height, contentWidth) {
+        const flat = typeof this.transcript.flatten === 'function' ? this.transcript.flatten(contentWidth) : null;
+        const flatRows = Array.isArray(flat?.rows) ? flat.rows : [];
+        const markers = Array.isArray(flat?.markers) ? flat.markers : this.transcript.markers(contentWidth);
+        const rawTotal = Math.max(0, flat ? flatRows.length : this.transcript.height(contentWidth));
+        const total = Math.max(1, rawTotal);
+        const padding = rawTotal <= height ? Math.max(0, height - rawTotal) : 0;
+        const slotOf = (row) => (rawTotal <= height
+            ? Math.max(0, Math.min(height - 1, padding + row))
+            : Math.max(0, Math.min(height - 1, Math.floor((row / total) * height))));
+        const kinds = new Array(height).fill(null);
+        for (let mIdx = 0; mIdx < markers.length; mIdx++) {
+            const marker = markers[mIdx];
+            if (!marker)
+                continue;
+            if (railPriority(marker.kind) < 50)
+                continue;
+            let markerRow = marker.row;
+            if (marker.kind === 'user' && flatRows.length > 0) {
+                const nextRow = mIdx + 1 < markers.length ? (markers[mIdx + 1]?.row ?? flatRows.length) : flatRows.length;
+                if (markerRow + 1 < nextRow && markerRow + 1 < flatRows.length) {
+                    const firstLine = stripAnsi(String(flatRows[markerRow] ?? '')).trim();
+                    const secondLine = stripAnsi(String(flatRows[markerRow + 1] ?? '')).trim();
+                    if (firstLine === '' && secondLine !== '')
+                        markerRow += 1;
+                }
             }
-            const effectiveCardWidth = Math.max(1, Math.min(cardWidth, Math.max(1, mainWidth - cardX)));
-            const startY = Math.max(0, Math.min(rows.length - card.length, safeAnchorY - Math.floor(card.length / 2)));
-            const visibleCardHeight = Math.min(card.length, Math.max(0, rows.length - startY));
-            this.turnRailLayout.cardRect = {
-              x: cardX, y: startY, width: effectiveCardWidth, height: visibleCardHeight,
-              turnIndex: hoveredTurn.turnIndex,
-              entries: timeline?.entries || null,
-              entryStart: timeline?.entryStart ?? null,
-              groupTurns: group.length > 1 ? group : null,
-              maxOffset: timeline?.maxOffset || 0
-            };
-          }
+            const slot = slotOf(markerRow);
+            const held = kinds[slot];
+            if (!held || railPriority(marker.kind) > railPriority(held)) {
+                kinds[slot] = marker.kind;
+            }
         }
-      } else if (this.turnRailLayout) {
-        this.turnRailLayout.cardRect = null;
-      }
-      if (this.messageActionOverlay) {
-        const overlay = this.messageActionOverlay;
-        const overlayWidth = rail ? Math.max(contentWidth, mainWidth - RAIL_BUDGET) : contentWidth;
-        const placed = placeMessageActionPanel(rows, overlay.panel, overlayWidth,
-          Math.max(0, (this.out.rows || height) - height), overlay.layer.anchorY,
-          overlay.layer.items.length, {
-            messageBounds: overlay.layer.messageBounds,
-            dimBackdrop: true
-          });
-        rows = placed.rows;
-        overlay.layer.actionLayout = placed.layout;
-      }
-    } else {
-      this.turnRailLayout = null;
-      this.hoveredTurnIndex = null;
-      this.hoveredTurnAnchorY = null;
-    }
-
-    const mainRows = rows.concat(block);
-    const panelWidth = sidebar ? sessionSidebarWidth(width, false, this.env) : 0;
-    const panelRows = sidebar ? sessionSidebarRows({
-      ...this.sessionInfo,
-      cwd: this.sidebarStatus?.cwd || this.sessionInfo?.cwd,
-      provider: this.sidebarStatus?.provider || this.sessionInfo?.provider,
-      model: this.sidebarStatus?.model || this.sessionInfo?.model,
-      contextChars: this.sidebarStatus?.contextChars ?? this.sessionInfo?.contextChars,
-      contextLimit: this.sidebarStatus?.contextLimit ?? this.sessionInfo?.contextLimit,
-      plan: this.sidebarPlan,
-      activeSkill: this.sessionInfo?.activeSkill
-    }, mainRows.length, panelWidth) : [];
-    const painted = sidebar ? joinSessionSidebar(mainRows, panelRows, mainWidth, panelWidth) : mainRows;
-    return this.stage.paint(painted, {
-      row: rows.length + caretRow,
-      // The composer may never put its caret into the sidebar or the reserved
-      // right margin, even if layout measurements differ after a resize.
-      col: Math.max(0, Math.min(mainWidth - 2, Number.isFinite(caretCol) ? Math.floor(caretCol) : 0)),
-      hideCursor: caret?.hideCursor
-    });
-  }
-
-  /** Draw message actions over the transcript while retaining the live composer. */
-  presentMessageActions(panel, layer) {
-    this.messageActionOverlay = { panel, layer };
-    try {
-      return this.present(this.lastPromptRows, this.lastPromptCaret);
-    } finally {
-      this.messageActionOverlay = null;
-    }
-  }
-
-  /**
-   * The one thing on screen that opencode does not have: while the view is held
-   * away from the bottom, say so and say how much arrived.
-   *
-   * Without it, un-following is invisible — the transcript simply stops moving
-   * and the user cannot tell whether the agent stalled or they scrolled.
-   */
-  decorate(rows, width) {
-    const state = this.viewport.state();
-    if (state.following) return rows;
-
-    const count = state.unseen;
-    const label = count > 0
-      ? `${GLYPHS.arrow} ${count} new below`
-      : `${GLYPHS.arrow} scrolled up`;
-    const hint = `${label}  ${GLYPHS.dot}  shift+pgdn to follow`;
-    rows[rows.length - 1] = paint('accent', truncate(hint, Math.max(8, width - 1), GLYPHS.ellipsis));
-    return rows;
-  }
-
-  /**
-   * Ctrl+L: flush what is on the stage into real scrollback, then start clean.
-   *
-   * In a terminal, ctrl+L clears the screen and your history is still in
-   * scrollback. Clearing the transcript alone would destroy the session record,
-   * which is not what the key means — so print it through first. This is also
-   * the escape hatch for getting a transcript into the terminal without exiting.
-   */
-  flushAndClear() {
-    const rows = this.snapshot();
-    this.stage.collapse();
-    this.stage.printThrough(rows);
-    this.evicted = [];
-    this.transcript.clear();
-    this.lastHeight = 0;
-    this.stage.reserve();
-    this.stage.invalidate();
-    this.viewport.toBottom();
-    return rows.length;
-  }
-
-  /** Clear the transcript without printing through to scrollback (for session switching). */
-  clearTranscript() {
-    this.evicted = [];
-    this.transcript.clear();
-    this.lastHeight = 0;
-    this.lastUserTurnCount = 0;
-    this.activeTurnIndex = null;
-    this.hoveredTurnIndex = null;
-    this.hoveredTurnAnchorY = null;
-    this.turnRailLayout = null;
-    this.stage.invalidate();
-    if (this.viewport) {
-      this.viewport.manual = false;
-      this.viewport.unseen = 0;
-      this.viewport.toBottom();
-    }
-  }
-
-  /**
-   * The terminal changed size. Callers must debounce — ChatPrompt already
-   * settles resize at RESIZE_SETTLE_MS.
-   */
-  resize() {
-    const next = stageHeight(this.out, this.env);
-    if (next < 1) {
-      // The terminal became too short to hold a stage. Give the band back and
-      // let the caller fall through to the scrollback renderer rather than
-      // painting into a region that cannot hold a viewport.
-      this.close();
-      return false;
-    }
-    // A width-only resize must not collapse and re-claim the whole session.
-    // Claiming fresh lines on every drag scrolls the transcript and leaves
-    // obsolete sidebar columns behind during the 160-column breakpoint.
-    // The existing rows are already reserved: repaint them in place with
-    // their new width, clearing trailing cells through Stage.paint().
-    const columns = this.stage.width();
-    if (columns !== this.lastColumns || next !== this.stage.maxHeight) {
-      this.hoveredTurnIndex = null;
-      this.hoveredTurnAnchorY = null;
-    }
-    if (!this.stage.reserved || next !== this.stage.maxHeight) {
-      this.stage.resize(next, 1);
-    } else if (columns !== this.lastColumns && !this.detached) {
-      // macOS Terminal may physically reflow rows when the sidebar appears
-      // or disappears. The old caret row is then no longer a reliable anchor.
-      this.stage.reanchor();
-    }
-    this.lastColumns = columns;
-    this.stage.invalidate();
-    // Re-derive from the new geometry: growing the viewport lowers maxScrollTop,
-    // and leaving scrollTop above it would read as "the user scrolled away".
-    const mainWidth = sessionMainWidth(this.width, false, this.env);
-    const contentWidth = this.railEnabled(mainWidth)
-      ? Math.max(20, mainWidth - RAIL_BUDGET - (hasSessionTurns(this.transcript) ? TURN_RAIL_BUDGET : 0))
-      : mainWidth;
-    this.viewport.resize({ height: Math.max(MIN_VIEWPORT_ROWS, this.stage.height - 2), width: contentWidth });
-    this.lastHeight = this.transcript.height(contentWidth);
-    return this.stage.reserved;
-  }
-
-  /**
-   * Does this terminal get a rail?
-   */
-  railEnabled(width) {
-    if (String(this.env.CAUSYNE_RAIL ?? '1') === '0') return false;
-    return width >= RAIL_MIN_WIDTH;
-  }
-
-  /**
-   * The rail: the WHOLE session compressed into one column, plus where you are
-   * in it.
-   *
-   * Proportional, not per-row. A per-row gutter would only mark what is already
-   * on screen, which tells you nothing you cannot see; mapping the entire
-   * transcript onto the column means a glance answers "how far in am I, and is
-   * there anything back there worth going to". opencode has no equivalent —
-   * its scrollbar reports position and nothing about content.
-   *
-   * Returns `height` single-column strings.
-   */
-  buildRail(height, contentWidth) {
-    const flat = typeof this.transcript.flatten === 'function' ? this.transcript.flatten(contentWidth) : null;
-    const flatRows = Array.isArray(flat?.rows) ? flat.rows : [];
-    const markers = Array.isArray(flat?.markers) ? flat.markers : this.transcript.markers(contentWidth);
-    const rawTotal = Math.max(0, flat ? flatRows.length : this.transcript.height(contentWidth));
-    const total = Math.max(1, rawTotal);
-    const padding = rawTotal <= height ? Math.max(0, height - rawTotal) : 0;
-    const slotOf = (row) => (rawTotal <= height
-      ? Math.max(0, Math.min(height - 1, padding + row))
-      : Math.max(0, Math.min(height - 1, Math.floor((row / total) * height))));
-
-    const kinds = new Array(height).fill(null);
-    for (let mIdx = 0; mIdx < markers.length; mIdx++) {
-      const marker = markers[mIdx];
-      // Suppress repetitive step/result/reasoning noise on the overview rail.
-      // Checkpoints, user turns, approvals, and errors remain discoverable.
-      if ((RAIL_PRIORITY[marker.kind] || 0) < 50) continue;
-      let markerRow = marker.row;
-      if (marker.kind === 'user' && flatRows.length > 0) {
-        const nextRow = mIdx + 1 < markers.length ? markers[mIdx + 1].row : flatRows.length;
-        if (markerRow + 1 < nextRow && markerRow + 1 < flatRows.length) {
-          const firstLine = stripAnsi(String(flatRows[markerRow] ?? '')).trim();
-          const secondLine = stripAnsi(String(flatRows[markerRow + 1] ?? '')).trim();
-          if (firstLine === '' && secondLine !== '') markerRow += 1;
+        const state = this.viewport.state();
+        const scrollable = state.max > 0;
+        const from = scrollable ? slotOf(state.scrollTop) : -1;
+        const to = scrollable ? slotOf(Math.max(state.scrollTop, state.scrollTop + state.height - 1)) : -2;
+        const cells = new Array(height);
+        for (let i = 0; i < height; i++) {
+            const inThumb = i >= from && i <= to;
+            const kind = kinds[i];
+            const loud = Boolean(kind) && railPriority(kind) >= RAIL_THUMB_YIELD;
+            if (kind && (!inThumb || loud))
+                cells[i] = railGlyph(kind);
+            else if (inThumb)
+                cells[i] = paint('scroll', thumbGlyph(i - from, to - from + 1));
+            else
+                cells[i] = ' ';
         }
-      }
-      const slot = slotOf(markerRow);
-      const held = kinds[slot];
-      if (!held || (RAIL_PRIORITY[marker.kind] || 0) > (RAIL_PRIORITY[held] || 0)) {
-        kinds[slot] = marker.kind;
-      }
+        return cells;
     }
-
-    const state = this.viewport.state();
-    // Nothing to scroll, no thumb. A scrollbar whose track is full says the same
-    // thing as no scrollbar at all, and on an empty session it filled the whole
-    // column with position indicator for a position that could not change —
-    // noise where the rail is supposed to be information.
-    const scrollable = state.max > 0;
-    const from = scrollable ? slotOf(state.scrollTop) : -1;
-    const to = scrollable ? slotOf(Math.max(state.scrollTop, state.scrollTop + state.height - 1)) : -2;
-
-    const cells = new Array(height);
-    for (let i = 0; i < height; i++) {
-      const inThumb = i >= from && i <= to;
-      const kind = kinds[i];
-      const loud = kind && (RAIL_PRIORITY[kind] || 0) >= RAIL_THUMB_YIELD;
-      if (kind && (!inThumb || loud)) cells[i] = railGlyph(kind);
-      else if (inThumb) cells[i] = paint('scroll', thumbGlyph(i - from, to - from + 1));
-      else cells[i] = ' ';
-    }
-    return cells;
-  }
-
-  /**
-   * Lay the rail beside the viewport rows.
-   *
-   * The rows were rendered at contentWidth, so padding them out to it is what
-   * keeps the rail in one column instead of ragged against the text.
-   */
-  attachRail(rows, contentWidth) {
-    const turns = collectSessionTurns(this.transcript, contentWidth);
-    const hasTurns = turns.length > 0;
-    const isAtBottom = typeof this.viewport?.atBottom === 'function' ? this.viewport.atBottom() : false;
-    const scrollTop = this.viewport.state().scrollTop;
-    const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, scrollTop, rows.length, isAtBottom);
-    const railResult = hasTurns
-      ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex, scrollTop)
-      : null;
-
-    // Keep the original sparse rail. Cluster every turn behind the nearest
-    // *visible* dot so no unseen history becomes impossible to reach.
-    const rowToTurns = new Map();
-    const dotRows = [...(railResult?.layout?.rowToTurn?.keys() || [])].sort((a, b) => a - b);
-    for (const turn of turns) {
-      const rawRow = railResult?.layout?.dotRows?.get(turn.turnIndex);
-      if (!Number.isFinite(rawRow) || dotRows.length === 0) continue;
-      let nearest = dotRows[0];
-      let distance = Math.abs(rawRow - nearest);
-      for (const dotRow of dotRows) {
-        const delta = Math.abs(rawRow - dotRow);
-        if (delta < distance) {
-          nearest = dotRow;
-          distance = delta;
+    attachRail(rows, contentWidth) {
+        const turns = collectSessionTurns(this.transcript, contentWidth);
+        const hasTurns = turns.length > 0;
+        const isAtBottom = typeof this.viewport?.atBottom === 'function' ? this.viewport.atBottom() : false;
+        const scrollTop = this.viewport.state().scrollTop;
+        const activeTurn = this.activeTurnIndex || resolveActiveTurnIndex(turns, scrollTop, rows.length, isAtBottom);
+        const railResult = hasTurns
+            ? buildTurnRailCells(turns, rows.length, activeTurn, this.hoveredTurnIndex ?? null, scrollTop)
+            : null;
+        const rowToTurns = new Map();
+        const dotRows = [...(railResult?.layout?.rowToTurn?.keys() || [])].sort((a, b) => a - b);
+        for (const turn of turns) {
+            const rawRow = railResult?.layout?.dotRows?.get(turn.turnIndex);
+            if (rawRow === undefined || !Number.isFinite(rawRow) || dotRows.length === 0)
+                continue;
+            let nearest = dotRows[0] ?? 0;
+            let distance = Math.abs(rawRow - nearest);
+            for (const dotRow of dotRows) {
+                const delta = Math.abs(rawRow - dotRow);
+                if (delta < distance) {
+                    nearest = dotRow;
+                    distance = delta;
+                }
+            }
+            const bucket = rowToTurns.get(nearest) ?? [];
+            bucket.push(turn);
+            rowToTurns.set(nearest, bucket);
         }
-      }
-      if (!rowToTurns.has(nearest)) rowToTurns.set(nearest, []);
-      rowToTurns.get(nearest).push(turn);
-    }
-    this.turnRailLayout = {
-      railX: hasTurns ? 1 : contentWidth + 1,
-      rowToTurns,
-      stageTop: Math.max(0, (this.out.rows || this.stage.height) - this.stage.height),
-      viewportHeight: rows.length,
-      dotRows: railResult?.layout?.dotRows || new Map(),
-      rowToTurn: railResult?.layout?.rowToTurn || new Map(),
-      turns
-    };
-
-    const rail = this.buildRail(rows.length, contentWidth);
-    for (let i = 0; i < rows.length; i++) {
-      const rightCell = rail[i] || ' ';
-      let row = rows[i] || '';
-      if (hasTurns && railResult) {
-        const leftCell = railResult.cells[i] || ' ';
-        const leadEnd = leadingAnsiControlEnd(row);
-        if (row.slice(leadEnd, leadEnd + 3) === '   ') {
-          const leadEscapes = row.slice(0, leadEnd);
-          row = `${leadEscapes} ${leftCell} ${row.slice(leadEnd + 3)}`;
-        } else if (stripAnsi(row).length === 0) {
-          row = leftCell !== ' ' ? ` ${leftCell} ` : '';
-        } else {
-          row = ` ${leftCell} ${row}`;
+        this.turnRailLayout = {
+            railX: hasTurns ? 1 : contentWidth + 1,
+            rowToTurns,
+            stageTop: Math.max(0, (this.out.rows || this.stage.height) - this.stage.height),
+            viewportHeight: rows.length,
+            dotRows: railResult?.layout?.dotRows || new Map(),
+            rowToTurn: railResult?.layout?.rowToTurn || new Map(),
+            turns
+        };
+        const rail = this.buildRail(rows.length, contentWidth);
+        for (let i = 0; i < rows.length; i++) {
+            const rightCell = rail[i] || ' ';
+            let row = rows[i] || '';
+            if (hasTurns && railResult) {
+                const leftCell = railResult.cells[i] || ' ';
+                const leadEnd = leadingAnsiControlEnd(row);
+                if (row.slice(leadEnd, leadEnd + 3) === '   ') {
+                    const leadEscapes = row.slice(0, leadEnd);
+                    row = `${leadEscapes} ${leftCell} ${row.slice(leadEnd + 3)}`;
+                }
+                else if (stripAnsi(row).length === 0) {
+                    row = leftCell !== ' ' ? ` ${leftCell} ` : '';
+                }
+                else {
+                    row = ` ${leftCell} ${row}`;
+                }
+            }
+            const rowWidth = contentWidth + (hasTurns ? TURN_RAIL_BUDGET : 0);
+            const paddedRow = padEnd(truncate(row, rowWidth, ''), rowWidth);
+            const railReset = paddedRow.includes('\x1b[') ? '\x1b[0m' : '';
+            rows[i] = `${paddedRow}${railReset} ${rightCell}`;
         }
-      }
-      // Turn markers consume their own three-column lane. Preserve ALL
-      // previously rendered command text instead of clipping its last cells.
-      const rowWidth = contentWidth + (hasTurns ? TURN_RAIL_BUDGET : 0);
-      const paddedRow = padEnd(truncate(row, rowWidth, ''), rowWidth);
-      const railReset = paddedRow.includes('\x1b[') ? '\x1b[0m' : '';
-      rows[i] = `${paddedRow}${railReset} ${rightCell}`;
+        return rows;
     }
-    return rows;
-  }
-
-  /**
-   * Hand the wheel back to the terminal.
-   *
-   * THE SEAM THIS EXISTS FOR. Two things scroll: this band's viewport, and the
-   * terminal's own scrollback above it, which holds everything already flushed.
-   * With ?1000 on, the app receives every wheel report and the terminal receives
-   * none — so once the viewport reached its top, scrolling further did nothing
-   * at all and the earlier conversation was unreachable by wheel. Releasing at
-   * the boundary is what makes the two halves feel like one scroll.
-   */
-  releaseMouse() {
-    if (!this.mouseCaptured) return false;
-    // Auto-enabled rail hover must be disarmed even without env opt-in.
-    this.writeModeControl(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
-    this.writeModeControl(mouseTracking(false));
-    this.mouseCaptured = false;
-    this.mouseMotionOn = false;
-    this.detached = true;
-    return true;
-  }
-
-  /** Take it back, once the user is driving the band again. */
-  captureMouse() {
-    // Home and suspended stages must not arm modes their teardown cannot observe.
-    if (!this.mouseWanted || !this.mouseOn || !this.stage.reserved || this.mouseCaptured) return false;
-    this.writeModeControl(mouseTracking(true));
-    this.writeModeControl(mouseHoverTracking(true, this.env));
-    this.mouseCaptured = true;
-    this.mouseMotionOn = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '') === '1';
-    this.detached = false;
-    // After native scrollback, the former physical cursor location is unknown.
-    // Return to the screen bottom before repainting any transcript rows.
-    this.stage.reanchor();
-    return true;
-  }
+    releaseMouse() {
+        if (!this.mouseCaptured)
+            return false;
+        // Auto-enabled rail hover must be disarmed even without env opt-in.
+        this.writeModeControl(mouseHoverTracking(false, { ...this.env, CAUSYNE_MOUSE_HOVER: '1' }));
+        this.writeModeControl(mouseTracking(false));
+        this.mouseCaptured = false;
+        this.mouseMotionOn = false;
+        this.detached = true;
+        return true;
+    }
+    /** Take it back, once the user is driving the band again. */
+    captureMouse() {
+        // Home and suspended stages must not arm modes their teardown cannot observe.
+        if (!this.mouseWanted || !this.mouseOn || !this.stage.reserved || this.mouseCaptured)
+            return false;
+        this.writeModeControl(mouseTracking(true));
+        this.writeModeControl(mouseHoverTracking(true, this.env));
+        this.mouseCaptured = true;
+        this.mouseMotionOn = String(this.env?.CAUSYNE_MOUSE_HOVER ?? '') === '1';
+        this.detached = false;
+        // After native scrollback, the former physical cursor location is unknown.
+        // Return to the screen bottom before repainting any transcript rows.
+        this.stage.reanchor();
+        return true;
+    }
 }
-
 /**
  * Build a surface, or null when this terminal should keep the scrollback
  * renderer. Every null here is a reason the region could not be repainted
  * safely, and the fallback is the behaviour Causyne has always had.
  */
 export function createStageSurface({ out = process.stdout, env = process.env, config = null, speed, openingWidth = 0 } = {}) {
-  if (!out || !out.isTTY) return null;
-  if (String(env.TERM || '') === 'dumb') return null;
-  if (env.CAUSYNE_SIMPLE_INPUT === '1') return null;
-  if (stageHeight(out, env) < 1) return null;
-
-  // Terminal-wide motion tracking is opt-in, never silently enabled by the TUI.
-  const surface = new StageSurface({ out, env, config, speed, openingWidth });
-  if (!surface.open()) return null;
-  return surface;
+    const safeEnv = env && typeof env === 'object' ? env : {};
+    if (!out || !out.isTTY)
+        return null;
+    if (String(safeEnv.TERM || '') === 'dumb')
+        return null;
+    if (safeEnv.CAUSYNE_SIMPLE_INPUT === '1')
+        return null;
+    if (stageHeight(out, safeEnv) < 1)
+        return null;
+    // Terminal-wide motion tracking is opt-in, never silently enabled by the TUI.
+    const opts = { out, env: safeEnv, config, openingWidth };
+    if (speed !== undefined)
+        opts.speed = speed;
+    const surface = new StageSurface(opts);
+    if (!surface.open())
+        return null;
+    return surface;
 }
-
