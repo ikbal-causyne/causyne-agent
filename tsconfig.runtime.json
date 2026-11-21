@@ -381,7 +381,8 @@
     "src/tools/gameCinematicSequencer.ts",
     "src/tools/gameQuestArcBuilder.ts",
     "src/tools/gameLoreForge.ts",
-    "src/tools/gameSceneBuilder.ts"
+    "src/tools/gameSceneBuilder.ts",
+    "src/tools/gameEconomyBalancer.ts"
   ],
   "exclude": [
     "node_modules",
