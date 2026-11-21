@@ -16,7 +16,6 @@
 //    never be the reason chat does not start.
 //
 // Pure Node. No dependency, no shell.
-
 import { KeyDecoder, bracketedPaste } from './keys.js';
 import { TerminalInputFramer, INPUT_PREFIX_TIMEOUT_MS, shouldTreatAsAtomicPaste } from './terminalInputFramer.js';
 import { LineEditor } from './lineEditor.js';
@@ -26,15 +25,14 @@ import { removeInlineSlashToken, isInlineSkillInvocation } from './inlineSlash.j
 import { paint, dim, bold, GLYPHS, terminalWidth, HAS_COLOR } from './theme.js';
 import { barBlock, GUTTER } from './block.js';
 import { composerGeometry } from './composerGeometry.js';
-import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay, stripAnsi } from './text.js';
+import { visibleWidth, truncate, wrapBlock, shortenHome, safeDisplay } from './text.js';
 import { pickExample, fitHints } from './banner.js';
 import { panelRows } from './overlay.js';
 import { renderUsageCardRows, renderStatusCardRows, collectUsageCardData } from './usageCard.js';
 import { buildStatusText } from '../reporting.js';
 import { commandPalette, skillPicker, ApprovalLayer, DecisionLayer, ConfirmLayer, HomeLayer, TextLayer } from './dialogs.js';
 import { describeTool } from './toolDisplay.js';
-import { readClipboardSync, writeClipboardSync } from './clipboardSync.js';
-import { readClipboardImageSync, formatByteSize, loadLocalImageAttachment } from './clipboardImage.js';
+import { writeClipboardSync } from './clipboardSync.js';
 import { pasteIntoChatbox } from './chatboxClipboard.js';
 import { handleViewportWheel, handleScrollbarMouse } from './scrollInteraction.js';
 import { centerRows, sessionRows, dialogWidth, dialogHeight } from './layout.js';
@@ -44,2191 +42,1819 @@ import { isStartupDialog, startupDialogView } from './homeView.js';
 import { handleMessageMouse, handleMessageActionMenuMouse, isMouseMotion } from './messageInteraction.js';
 import { handleTurnRailMouse } from './turnRail.js';
 import { runWithStageWrite } from './consoleGuard.js';
-import {
-  resetTurnInterruptState,
-  shouldAcceptStatusUpdate,
-  triggerTurnInterrupt,
-  handlePromptCtrlC,
-  handlePromptEscape
-} from './composerControls.js';
-
+import { resetTurnInterruptState, shouldAcceptStatusUpdate, triggerTurnInterrupt, handlePromptCtrlC, handlePromptEscape } from './composerControls.js';
 const CTRL_C_WINDOW_MS = 2000;
-
 // Rows the editor may occupy before it starts scrolling internally.
-//
-// Without a cap, pasting a 200-line file draws 200 rows and erase() then walks
-// 200 rows back up every keystroke. The live region has to stay small enough
-// that the conversation above it is never pushed off the screen.
 const MAX_PROMPT_ROWS = 8;
-
 // How long to wait for a resize gesture to settle before repainting.
-//
-// A window drag delivers a resize event per step — dozens per second. Painting
-// the live region on each one is what filled the screen with overlapping copies
-// of the input row. One repaint per gesture is both correct and invisible to the
-// user at this delay.
 const RESIZE_SETTLE_MS = 60;
-
-// Air. The two rows that were missing.
-//
-// opencode's prompt box carries paddingTop={1} INSIDE its filled surface and a
-// one-row bordered spacer between the box and the footer
-// (component/prompt/index.tsx:1361-1363, :1487-1497). Causyne had neither: the
-// caret sat on the very first row of the fill and the footer was welded to the
-// bottom of the box, which is what made the whole thing read as jammed into the
-// last four rows of the terminal.
-//
-// They are constants rather than magic numbers in the layout because the caret
-// row is computed from them — get that wrong and the cursor parks on the wrong
-// line, which is the class of bug erase() exists to prevent.
 const PROMPT_PAD_TOP = 1;
 const PROMPT_PAD_BOTTOM = 1;
 const FOOTER_GAP = 1;
-
-// Air is what a roomy terminal can afford, and the first thing a cramped one
-// gives up.
-//
-// opencode's spacers carry `minHeight={0} flexShrink={1}` (routes/home.tsx:73-80)
-// precisely so they collapse before anything with content does. Causyne has no
-// flex engine, so the same idea is arithmetic — and it is not decoration: on a
-// 17-row terminal the extra row made the banner plus the band come to exactly 17,
-// which costs the top of the wordmark. UX-03's sweep is what caught it.
 const ROOMY_TERMINAL_ROWS = 20;
 const CRAMPED_TERMINAL_ROWS = 18;
-
 /** Can this process own the keyboard? */
 export function isInteractive() {
-  if (process.env.CAUSYNE_SIMPLE_INPUT === '1') return false;
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    if (process.env.CAUSYNE_SIMPLE_INPUT === '1')
+        return false;
+    return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
-
 export class ChatPrompt {
-  constructor(options = {}) {
-    this.out = options.out || process.stdout;
-    this.input = options.input || process.stdin;
-    this.root = options.root || process.cwd();
-    this.focusDir = options.focusDir || null;
-    this.onInterrupt = options.onInterrupt || (() => {});
-
-    // The Stage, when one is running. Null means the scrollback renderer, which
-    // is what every non-TTY, dumb terminal and CAUSYNE_STAGE=off session gets.
-    this.surface = options.surface || null;
-    this.onExit = options.onExit || (() => process.exit(0));
-    this.onExpand = options.onExpand || (() => {});
-    this.onOpenMode = options.onOpenMode || null;
-    this.onOpenModel = options.onOpenModel || null;
-    this.onOpenVariant = options.onOpenVariant || null;
-    this.messageActionLoop = options.messageActionLoop || null;
-    this.getMode = options.getMode || (() => 'B');
-
-    this.editor = new LineEditor();
-    this.history = options.history || new PromptHistory();
-    this.index = new FileIndex(this.root);
-    this._unsubscribeFileIndex = null;
-    this.bindFileIndex(this.index);
-    this.decoder = new KeyDecoder();
-    this.inputFramer = new TerminalInputFramer();
-    this.inputFrameTimer = null;
-    this.decoderRecoveryTimer = null;
-
-    this.busy = false;
-    this.active = false;
-    this.exitHook = null;
-    this.drawnRows = 0;
-    this.usageCard = null;
-    this.usageCardLoading = false;
-    this.statusCard = null;
-    this.statusCardUsage = null;
-    this.infoPanelVersion = 0;
-    this.usageRefreshPending = false;
-
-    // Which row of the drawn block the caret is parked on.
-    //
-    // erase() has to walk back up to the FIRST row of the block. It used to
-    // assume the caret was on the last one and move up drawnRows - 1 — but
-    // draw() deliberately parks it on the editor's cursor row, which is higher
-    // whenever a completion picker or a notice is showing, or the caret sits on
-    // an earlier line of a multiline message. The difference was walked up past
-    // the top of the block and then erased with \x1b[J, destroying that many
-    // rows of real conversation above the prompt.
-    this.cursorRow = 0;
-
-    // The status row of the live region, and the clock that animates it.
-    this.renderer = options.renderer || null;
-    this.statusMessage = '';
-    this.tick = 0;
-    this.tickTimer = null;
-
-    // One concrete example, chosen per session — `ask anything` teaches a new
-    // user nothing about what this agent can actually be asked to do.
-    this.example = pickExample();
-
-    // Commands for the palette, and the dialog that currently owns the keyboard.
-    //
-    // Dialogs use the live stage as a centered temporary view and restore the
-    // transcript when dismissed. Terminal scrollback is not repainted.
-    this.commands = options.commands || [];
-
-    // Is this line a COMMAND rather than a message?
-    //
-    // Injected rather than imported: commands.js pulls in the compiled skill
-    // payload, the MCP registry and the slop detector, and this file's whole
-    // premise is that it depends on nothing. The rule still lives in exactly
-    // one place (commands.js isCommandInput) — cliMode hands it down.
-    this.isCommand = typeof options.isCommand === 'function' ? options.isCommand : () => false;
-    this.layer = null;
-    this.queue = [];
-    this.waiter = null;
-    // Each submission owns its attachments; later pasted images must not leak
-    // into a turn which was already sent.
-    this.currentSubmissionAttachments = null;
-    this.completion = null;
-    this.selected = 0;
-    this.lastCtrlC = 0;
-    this.interruptedTurn = false;
-    this.notice = '';
-    this.redrawScheduled = false;
-    this.resizeTimer = null;
-    this.suspendedSurface = null;
-    this.pendingAttachments = [];
-  }
-
-  // -------------------------------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------------------------------
-
-  writeControl(sequence) {
-    if (!sequence) return;
-    runWithStageWrite(() => {
-      this.out.write(sequence);
-    });
-  }
-
-  start() {
-    if (this.active) return;
-    this.active = true;
-    this.inputFramer.clear();
-    this.input.setRawMode(true);
-    this.input.resume();
-    this.input.on('data', this.handleData);
-    this.writeControl(bracketedPaste(true));
-    // Node's normal exit does not guarantee ChatPrompt.stop() is called.
-    // Always restore bracketed paste and raw stdin when the process exits.
-    this.exitHook = () => {
-      try { this.writeControl(bracketedPaste(false)); } catch { /* terminal already closed */ }
-      try { this.input.setRawMode(false); } catch { /* stdin already closed */ }
-    };
-    process.once('exit', this.exitHook);
-    // Rows are laid out against the terminal width; without this they stay stale
-    // until the next keystroke, and a narrowed terminal wraps rows that erase()
-    // is still counting as one.
-    if (typeof this.out.on === 'function') this.out.on('resize', this.handleResize);
-  }
-
-  stop() {
-    if (!this.active) return;
-    this.active = false;
-    if (this.layer) {
-      const layer = this.layer;
-      this.layer = null;
-      if (typeof layer.answer === 'function') layer.answer(false);
-    }
-    this.stopTick();
-    if (this.inputFrameTimer) { clearTimeout(this.inputFrameTimer); this.inputFrameTimer = null; }
-    if (this.decoderRecoveryTimer) { clearTimeout(this.decoderRecoveryTimer); this.decoderRecoveryTimer = null; }
-    this.inputFramer.clear();
-    this.decoder.pending = Buffer.alloc(0);
-    if (this.resizeTimer) { clearTimeout(this.resizeTimer); this.resizeTimer = null; }
-    this.erase();
-    // The exit contract (UX-01 rev 2 clause d): the band collapses and the whole
-    // session is flushed into real terminal scrollback, so leaving Causyne leaves
-    // a transcript behind exactly as it always has.
-    if (this.surface) this.surface.close();
-    this.writeControl(bracketedPaste(false));
-    if (typeof this.out.removeListener === 'function') this.out.removeListener('resize', this.handleResize);
-    this.input.off('data', this.handleData);
-    try { this.input.setRawMode(false); } catch (e) { /* already closed */ }
-    this.input.pause();
-    if (this.exitHook) {
-      process.removeListener('exit', this.exitHook);
-      this.exitHook = null;
-    }
-  }
-
-  /**
-   * The terminal changed size. Take the live region down before redrawing it.
-   *
-   * This used to zero drawnRows and cursorRow and then schedule a draw. Zeroing
-   * the counters is what erase() reads to decide how far to walk back up — so
-   * with them at zero it returned IMMEDIATELY and removed nothing, while the
-   * caret was still parked mid-block at column 2 from the previous draw. The
-   * redraw then wrote a fresh copy starting at that column, on top of a row that
-   * already had content.
-   *
-   * One stale copy per event. Dragging a window emits hundreds, and the result
-   * was a screen filled edge to edge with overlapping copies of the input row.
-   *
-   * Erasing with the pre-resize geometry is approximate — the terminal has
-   * already reflowed what we drew — but approximate removal is categorically
-   * better than none, and the debounce below means it happens once per gesture
-   * instead of once per pixel.
-   */
-  handleResize = () => {
-    if (!this.resizeTimer) this.erase();
-    // The Stage owns its own geometry and cannot repaint a band whose height it
-    // no longer knows. Resizing it here, before the settle timer, would do it
-    // once per pixel of a drag; it is done in the settled callback below.
-    // A drag delivers a continuous stream of these. Redrawing on every one is
-    // both the corruption above and a huge amount of pointless output; settle
-    // first, then draw once.
-    if (this.resizeTimer) clearTimeout(this.resizeTimer);
-    this.resizeTimer = setTimeout(() => {
-      this.resizeTimer = null;
-      // Geometry from before the reflow is meaningless now. Drop it AFTER the
-      // erase above has used it, not before.
-      this.drawnRows = 0;
-      this.cursorRow = 0;
-      // A stage that can no longer fit gives the band back and hands the
-      // session to the scrollback renderer rather than painting into a region
-      // too short to hold a viewport.
-      const settled = settleStageResize(this.surface, this.suspendedSurface);
-      this.surface = settled.current;
-      this.suspendedSurface = settled.suspended;
-      if (settled.restored) this.attachSurface(settled.current);
-      this.draw();
-    }, RESIZE_SETTLE_MS);
-    if (this.resizeTimer.unref) this.resizeTimer.unref();
-  };
-
-  handleData = (chunk) => {
-    // KeyDecoder expects complete escape prefixes. A PTY may split ESC from
-    // `[<button;x;yM`; framing these bytes first prevents mouse coordinates
-    // from becoming chat content. Do not decode bulk paste before this step.
-    const frames = this.inputFramer.push(chunk);
-    for (const frame of frames) this.handleFramedData(frame);
-    if (this.inputFrameTimer) { clearTimeout(this.inputFrameTimer); this.inputFrameTimer = null; }
-    if (this.inputFramer.hasPending) {
-      this.inputFrameTimer = setTimeout(() => {
+    out;
+    input;
+    root;
+    focusDir;
+    onInterrupt;
+    surface;
+    onExit;
+    onExpand;
+    onOpenMode;
+    onOpenModel;
+    onOpenVariant;
+    messageActionLoop;
+    getMode;
+    editor;
+    history;
+    index;
+    _unsubscribeFileIndex;
+    decoder;
+    inputFramer;
+    inputFrameTimer;
+    decoderRecoveryTimer;
+    busy;
+    active;
+    exitHook;
+    drawnRows;
+    usageCard;
+    usageCardLoading;
+    statusCard;
+    statusCardUsage;
+    infoPanelVersion;
+    usageRefreshPending;
+    cursorRow;
+    renderer;
+    statusMessage;
+    tick;
+    tickTimer;
+    example;
+    commands;
+    isCommand;
+    layer;
+    queue;
+    waiter;
+    currentSubmissionAttachments;
+    completion;
+    selected;
+    lastCtrlC;
+    interruptedTurn;
+    notice;
+    redrawScheduled;
+    resizeTimer;
+    suspendedSurface;
+    pendingAttachments;
+    pickerLayout;
+    constructor(options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        this.out = opts.out || process.stdout;
+        this.input = opts.input || process.stdin;
+        this.root = opts.root || process.cwd();
+        this.focusDir = opts.focusDir || null;
+        this.onInterrupt = opts.onInterrupt || (() => { });
+        this.surface = opts.surface || null;
+        this.onExit = opts.onExit || (() => process.exit(0));
+        this.onExpand = opts.onExpand || (() => { });
+        this.onOpenMode = opts.onOpenMode || null;
+        this.onOpenModel = opts.onOpenModel || null;
+        this.onOpenVariant = opts.onOpenVariant || null;
+        this.messageActionLoop = opts.messageActionLoop || null;
+        this.getMode = opts.getMode || (() => 'B');
+        this.editor = new LineEditor();
+        this.history = opts.history || new PromptHistory();
+        this.index = new FileIndex(this.root);
+        this._unsubscribeFileIndex = null;
+        this.bindFileIndex(this.index);
+        this.decoder = new KeyDecoder();
+        this.inputFramer = new TerminalInputFramer();
         this.inputFrameTimer = null;
-        for (const frame of this.inputFramer.flush()) this.handleFramedData(frame);
-      }, INPUT_PREFIX_TIMEOUT_MS);
-      this.inputFrameTimer.unref?.();
-    }
-  };
-
-  flushCharBatch(charBatch) {
-    if (!charBatch) return '';
-    this.prepareKeyboardState(true);
-    this.editor.insert(charBatch);
-    if (charBatch.length < 60 && !charBatch.includes('\n')) {
-      this.refreshCompletion();
-    } else {
-      this.completion = null;
-    }
-    return '';
-  }
-
-  prepareKeyboardState(clearNotice) {
-    if (clearNotice && this.notice && !this.layer) this.notice = '';
-    if (this.surface && typeof this.surface.captureMouse === 'function') {
-      if (this.surface.captureMouse() && typeof this.notice === 'string' && this.notice.startsWith('top of this view')) {
-        this.notice = '';
-      }
-    }
-    if (this.surface) {
-      this.surface.turnRailHoverSuppressed = false;
-      if (this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
-        this.surface.hoveredTurnIndex = null;
-        this.surface.hoveredTurnAnchorY = null;
-        this.scheduleDraw();
-      }
-    }
-  }
-
-  handleFramedData = (chunk) => {
-    let motionOnly = true;
-    const str = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : '';
-    // Unbracketed bulk input remains atomic ONLY when no control sequence
-    // is still in flight. This fixes mixed mouse/typing chunks that previously
-    // bypassed KeyDecoder and leaked CSI tails into the composer.
-    if (!this.layer && shouldTreatAsAtomicPaste(chunk, this.decoder)) {
-      try {
-        this.handleKey({ name: 'paste', text: str, sequence: '' });
-      } catch (error) {
-        this.notice = `paste failed: ${error instanceof Error ? error.message : String(error)}`;
-        this.scheduleDraw();
-      }
-      this.draw();
-      return;
-    }
-
-    const keys = this.decoder.decode(chunk);
-    // A truncated CSI/X10 mouse report must not swallow the next user keystroke.
-    // Paste is exempt: its terminator may arrive across many chunks.
-    if (this.decoderRecoveryTimer) clearTimeout(this.decoderRecoveryTimer);
-    this.decoderRecoveryTimer = null;
-    if (!this.decoder.inPaste && this.decoder.pending.length > 0) {
-      this.decoderRecoveryTimer = setTimeout(() => {
         this.decoderRecoveryTimer = null;
-        const recovered = this.decoder.drainIncomplete();
-        for (const event of recovered) this.handleKey(event);
-        if (recovered.length) this.scheduleDraw();
-      }, 180);
-      this.decoderRecoveryTimer.unref?.();
-    }
-    let charBatch = '';
-
-    for (let i = 0; i < keys.length; i++) {
-      const key = keys[i];
-      if (!this.layer && key.name === 'char' && typeof key.text === 'string' && !key.alt && !key.ctrl) {
-        charBatch += key.text;
-        motionOnly = false;
-        continue;
-      }
-      if (charBatch.length > 0) {
-        charBatch = this.flushCharBatch(charBatch);
-      }
-      if (key.name !== 'mouse' || !isMouseMotion(key.sequence)) motionOnly = false;
-      try {
-        this.handleKey(key);
-      } catch (e) {
-        // A key handler must never take the session down. Say so once and
-        // carry on, rather than dying silently the way the old catch(e){} did.
-        this.notice = `input error: ${e instanceof Error ? e.message : String(e)}`;
-        this.scheduleDraw();
-      }
-    }
-
-    if (charBatch.length > 0) {
-      charBatch = this.flushCharBatch(charBatch);
-    }
-
-    // All-motion chunks repaint only when the hovered message actually changes.
-    if (!motionOnly) this.draw();
-  };
-
-  /**
-   * Let the transcript print without fighting the prompt for the same rows.
-   *
-   * The renderer writes upward from where the cursor is; the prompt lives at the
-   * bottom. Without this the two interleave and leave debris on screen.
-   */
-  attach(renderer) {
-    renderer.onBeforeWrite = () => this.erase();
-    renderer.onAfterWrite = () => this.scheduleDraw();
-
-    // Take the status line over from the renderer's spinner.
-    //
-    // That spinner writes straight to stdout with readline.cursorTo(out, 0),
-    // which lands on whatever row the caret is on — and after draw() that is a
-    // row INSIDE the prompt block. Every 90 ms frame overwrote the prompt's first
-    // row and clearLine ate the rest, leaving drawnRows describing a block that
-    // was no longer on screen. It also bypassed onBeforeWrite/onAfterWrite
-    // entirely, so the prompt never got a chance to lift itself out of the way.
-    //
-    // The renderer already has the right behaviour for this: the quiet path it
-    // uses in full-screen mode, which reports status instead of animating it.
-    // Reuse that and make the status a row of the live region.
-    this.renderer = renderer;
-    if (this.surface) this.surface.sidebarStatus = renderer.status;
-    renderer.quietStatus = true;
-    renderer.onStatusChange = (message) => {
-      if (!shouldAcceptStatusUpdate(this)) return;
-      this.statusMessage = message;
-      this.scheduleDraw();
-    };
-    renderer.onPlanChange = (plan) => {
-      if (this.surface) this.surface.sidebarPlan = plan;
-      this.scheduleDraw();
-      return this.surface && sidebarVisible(this.surface.width, false, this.surface.env) ? 'sidebar' : undefined;
-    };
-  }
-
-  /**
-   * The footer row: spinner, elapsed, steps, tokens, cost, model.
-   *
-   * One clock drives it, and only while a turn is running — an idle prompt costs
-   * no timer at all. Rendered through the renderer's own StatusLine so the
-   * usage_update counters it accumulates are the ones displayed.
-   */
-  statusRow(width) {
-    if (!this.renderer || !this.renderer.status) return [];
-    const status = this.renderer.status;
-
-    // Between turns the working numbers are all zero and the line said "ready"
-    // beside a model name — two facts nobody can act on. opencode's permanent
-    // footer shows the working directory and what the context window has left,
-    // which is what the idle form carries instead.
-    if (!this.busy) {
-      return [status.renderIdle({
-        width: Math.max(10, width),
-        hint: this.commands.length > 0 ? 'ctrl+p commands' : ''
-      })];
-    }
-
-    const frame = GLYPHS.spinner[this.tick % GLYPHS.spinner.length];
-    const since = this.renderer.turnStartedAt;
-    return [status.render({
-      message: this.statusMessage || 'working',
-      elapsedMs: since ? Date.now() - since : 0,
-      steps: this.renderer.stepCount || 0,
-      width: Math.max(10, width - 1),
-      spinnerFrame: frame,
-      tick: this.tick
-    })];
-  }
-
-  /**
-   * The line inside the input box: mode, model, provider.
-   *
-   * opencode puts exactly this row at the foot of its prompt box
-   * (`Build · MiMo V2.5 Free  OpenCode Zen`), and it is the one place the fact
-   * that matters most — which model is about to spend the user's money — is
-   * visible at the moment they press enter. Causyne showed it once in the session
-   * header and then never again.
-   */
-  agentRow(width) {
-    const status = this.renderer && this.renderer.status;
-    if (!status) return null;
-
-    const mode = `${this.busy ? 'Working' : 'Build'} ${this.getMode()}`;
-    const parts = [bold(paint('accent', mode))];
-    if (status.model) parts.push(bold(paint('ink', status.model)));
-    const line = parts.join(dim(`  ${GLYPHS.dot}  `));
-    const trailing = [status.provider, status.tier].filter(Boolean).join(' ');
-    const base = trailing ? `${line}  ${dim(trailing)}` : line;
-    const details = [];
-    if (this.queue.length) details.push(`${this.queue.length} queued`);
-    if (this.editor.lines.length > 1) details.push(`${this.editor.lines.length} lines`);
-    const extra = details.length ? dim(`  ${GLYPHS.dot}  ${details.join(' · ')}`) : '';
-    const withMeta = visibleWidth(base) + visibleWidth(extra) <= width ? base + extra : base;
-    const hints = dim('  Ctrl+G mode · Alt+M model · Ctrl+T variant');
-    const full = visibleWidth(withMeta) + visibleWidth(hints) <= width ? withMeta + hints : withMeta;
-    return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
-  }
-
-  /** Persistent checklist shown outside the chat transcript. */
-  planRows(width) {
-    if (this.surface && sidebarVisible(this.surface.width, false, this.surface.env)) return [];
-    const plan = this.renderer && Array.isArray(this.renderer.latestPlan) ? this.renderer.latestPlan : [];
-    if (plan.length === 0) return [];
-    const completed = plan.filter(item => item.status === 'completed').length;
-    const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
-    if (stageMax < 22) {
-      const activeStep = plan.find(item => item.status === 'in_progress') || plan.find(item => item.status !== 'completed') || plan[0];
-      const stepText = activeStep ? (activeStep.text || activeStep.step || '') : '';
-      const summary = `${paint('accent', GLYPHS.skill || '✦')} ${bold('plan')} ${dim(`(${completed}/${plan.length})`)} ${dim('·')} ${truncate(safeDisplay(stepText), Math.max(8, width - 24), GLYPHS.ellipsis)}`;
-      return [summary, ''];
-    }
-    const rows = [`${bold(paint('accent', 'implementation plan'))}  ${dim(`${completed}/${plan.length}`)}`];
-    // When the sidebar is absent, keep the active task visible instead of
-    // permanently showing the first five (often already completed) steps.
-    const limit = Math.min(plan.length, 5);
-    const active = plan.findIndex(item => item.status === 'in_progress');
-    const pending = plan.findIndex(item => item.status !== 'completed');
-    const focus = active >= 0 ? active : pending >= 0 ? pending : plan.length - 1;
-    const start = Math.max(0, Math.min(focus - 1, plan.length - limit));
-    if (start > 0) rows.push(`  ${dim(`${GLYPHS.ellipsis} ${start} earlier`)}`);
-    for (const item of plan.slice(start, start + limit)) {
-      const mark = item.status === 'completed'
-        ? paint('success', GLYPHS.check)
-        : item.status === 'in_progress'
-          ? paint('accent', GLYPHS.arrow)
-          : paint('muted', GLYPHS.dot);
-      rows.push(`  ${mark} ${truncate(safeDisplay(item.text || item.step || ''), Math.max(8, width - 5), GLYPHS.ellipsis)}`);
-    }
-    const remaining = plan.length - start - limit;
-    if (remaining > 0) rows.push(`  ${dim(`${GLYPHS.ellipsis} ${remaining} later`)}`);
-    rows.push('');
-    return rows;
-  }
-
-  startTick() {
-    if (this.tickTimer) return;
-    this.tickTimer = setInterval(() => {
-      this.tick++;
-      if (this.busy) this.scheduleDraw();
-      // Keep the pinned usage/status view current without disk reads every 125 ms.
-      if (this.busy && (this.usageCard || this.statusCard !== null) && this.tick % 32 === 0) {
-        this.refreshPinnedPanels();
-      }
-    }, 125);
-    if (this.tickTimer.unref) this.tickTimer.unref();
-  }
-
-  stopTick() {
-    if (!this.tickTimer) return;
-    clearInterval(this.tickTimer);
-    this.tickTimer = null;
-  }
-
-  openLayer(layer) {
-    this.closeLayer();
-    this.layer = layer;
-    if (this.surface?.stage) this.surface.stage.invalidate();
-    this.draw();
-    return layer;
-  }
-
-  closeLayer() {
-    const layer = this.layer;
-    if (!layer) return;
-    this.layer = null;
-    // Dismissing a question is an ANSWER, and the safe answer is no. A layer that
-    // is torn down without one would otherwise leave its promise pending forever
-    // and hang the turn.
-    if (typeof layer.answer === 'function') layer.answer(false);
-    if (this.surface?.stage) this.surface.stage.invalidate();
-    this.draw();
-  }
-
-  /** Every command in the app, fuzzy-searchable. */
-  openPalette() {
-    if (this.commands.length === 0) {
-      this.notice = 'no commands available';
-      return;
-    }
-    this.openLayer(commandPalette(this.commands, (command) => {
-      // Run it the way the user would have typed it, so there is one execution
-      // path for a command however it was reached.
-      this.editor.setText(`/${command.name}`);
-      this.layer = null;
-      this.submit();
-    }));
-  }
-
-  
-  openHome(items, onPick) {
-    if (!Array.isArray(items) || items.length === 0) {
-      this.notice = 'no actions available';
-      this.scheduleDraw();
-      return null;
-    }
-    return this.openLayer(new HomeLayer({
-      items,
-      onPick: (item) => {
-        this.layer = null;
-        return onPick ? onPick(item) : null;
-      }
-    }));
-  }
-
-  /**
-   * Put text on the input line, ready to be added to.
-   *
-   * Picking from the skill browser lands here: the command is written for you
-   * and the caret sits after it, so the next thing you type is what you want
-   * done. A picker that ran the skill on selection would give you no way to say
-   * that.
-   */
-  setText(text) {
-    this.editor.setText(String(text == null ? '' : text));
-    this.completion = null;
-    this.scheduleDraw();
-  }
-
-  /** Update active model and provider displayed in agentRow and status footer. */
-  updateModel(provider, model) {
-    if (this.renderer && this.renderer.status) {
-      this.renderer.status.setSession({
-        provider: provider ? String(provider) : '',
-        model: model ? String(model) : ''
-      });
-    }
-    this.scheduleDraw();
-  }
-
-  /**
-   * Browse the compiled skill library.
-   *
-   * 100 skills cannot be a flat listing — that is what overflowed the terminal
-   * at five. The picker is the same SelectLayer that already backs ctrl+p, so
-   * fuzzy search, grouping and scrolling come for free, and every row is
-   * truncated to the panel rather than to the terminal.
-   */
-  browseSkills(skills, onOpen) {
-    if (!Array.isArray(skills) || skills.length === 0) {
-      this.notice = 'no skills are compiled into this build';
-      this.scheduleDraw();
-      return;
-    }
-    this.openLayer(skillPicker(skills, (skill) => {
-      this.layer = null;
-      if (onOpen) onOpen(skill);
-    }));
-  }
-
-  /** Show local command output inside the live region, never in chat scrollback. */
-  showText(title, text, options = {}) {
-    const panelWidth = dialogWidth(this.width(), options.width || 76);
-    const contentWidth = Math.max(12, panelWidth - 4);
-    let lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth, { hang: 0 });
-    if (lines.length > 0 && lines[0].trim().toLowerCase() === String(title || '').trim().toLowerCase()) {
-      lines = lines.slice(1);
-      if (lines.length > 0 && /^[-─═_]+$/.test(lines[0].trim())) {
-        lines = lines.slice(1);
-      }
-    }
-    return this.openLayer(new TextLayer({
-      title: String(title || 'Details'),
-      lines: options.danger ? lines.map((line) => paint('danger', line)) : lines,
-      width: panelWidth,
-      height: options.height || 20
-    }));
-  }
-
-  /** Usage and Status are non-modal panels: ordinary chat must not close them. */
-  async toggleUsageCard(loop = null) {
-    if (this.usageCard || this.usageCardLoading) {
-      this.closeUsageCard();
-      return false;
-    }
-    const version = ++this.infoPanelVersion;
-    this.statusCard = null;
-    this.statusCardUsage = null;
-    this.usageCardLoading = true;
-    try {
-      const data = await collectUsageCardData(loop || this.messageActionLoop);
-      if (version !== this.infoPanelVersion || !this.usageCardLoading) return false;
-      this.usageCard = data;
-      this.usageCardLoading = false;
-      this.scheduleDraw();
-      return true;
-    } catch (error) {
-      if (version === this.infoPanelVersion) {
+        this.busy = false;
+        this.active = false;
+        this.exitHook = null;
+        this.drawnRows = 0;
+        this.usageCard = null;
         this.usageCardLoading = false;
-        this.notice = this.sanitizeSingleLine(error instanceof Error ? error.message : String(error));
+        this.statusCard = null;
+        this.statusCardUsage = null;
+        this.infoPanelVersion = 0;
+        this.usageRefreshPending = false;
+        this.cursorRow = 0;
+        this.renderer = opts.renderer || null;
+        this.statusMessage = '';
+        this.tick = 0;
+        this.tickTimer = null;
+        this.example = pickExample();
+        this.commands = opts.commands || [];
+        this.isCommand = typeof opts.isCommand === 'function' ? opts.isCommand : () => false;
+        this.layer = null;
+        this.queue = [];
+        this.waiter = null;
+        this.currentSubmissionAttachments = null;
+        this.completion = null;
+        this.selected = 0;
+        this.lastCtrlC = 0;
+        this.interruptedTurn = false;
+        this.notice = '';
+        this.redrawScheduled = false;
+        this.resizeTimer = null;
+        this.suspendedSurface = null;
+        this.pendingAttachments = [];
+        this.pickerLayout = null;
+    }
+    // -------------------------------------------------------------------------
+    // Lifecycle
+    // -------------------------------------------------------------------------
+    writeControl(sequence) {
+        if (!sequence)
+            return;
+        runWithStageWrite(() => {
+            this.out.write(sequence);
+        });
+    }
+    start() {
+        if (this.active)
+            return;
+        this.active = true;
+        this.inputFramer.clear();
+        this.input.setRawMode(true);
+        this.input.resume();
+        this.input.on('data', this.handleData);
+        this.writeControl(bracketedPaste(true));
+        this.exitHook = () => {
+            try {
+                this.writeControl(bracketedPaste(false));
+            }
+            catch { /* terminal already closed */ }
+            try {
+                this.input.setRawMode(false);
+            }
+            catch { /* stdin already closed */ }
+        };
+        process.once('exit', this.exitHook);
+        if (typeof this.out.on === 'function')
+            this.out.on('resize', this.handleResize);
+    }
+    stop() {
+        if (!this.active)
+            return;
+        this.active = false;
+        if (this.layer) {
+            const layer = this.layer;
+            this.layer = null;
+            if (typeof layer.answer === 'function')
+                layer.answer(false);
+        }
+        this.stopTick();
+        if (this.inputFrameTimer) {
+            clearTimeout(this.inputFrameTimer);
+            this.inputFrameTimer = null;
+        }
+        if (this.decoderRecoveryTimer) {
+            clearTimeout(this.decoderRecoveryTimer);
+            this.decoderRecoveryTimer = null;
+        }
+        this.inputFramer.clear();
+        this.decoder.pending = Buffer.alloc(0);
+        if (this.resizeTimer) {
+            clearTimeout(this.resizeTimer);
+            this.resizeTimer = null;
+        }
+        this.erase();
+        if (this.surface)
+            this.surface.close();
+        this.writeControl(bracketedPaste(false));
+        if (typeof this.out.removeListener === 'function')
+            this.out.removeListener('resize', this.handleResize);
+        this.input.off('data', this.handleData);
+        try {
+            this.input.setRawMode(false);
+        }
+        catch { /* already closed */ }
+        this.input.pause();
+        if (this.exitHook) {
+            process.removeListener('exit', this.exitHook);
+            this.exitHook = null;
+        }
+    }
+    handleResize = () => {
+        if (!this.resizeTimer)
+            this.erase();
+        if (this.resizeTimer)
+            clearTimeout(this.resizeTimer);
+        this.resizeTimer = setTimeout(() => {
+            this.resizeTimer = null;
+            this.drawnRows = 0;
+            this.cursorRow = 0;
+            const settled = settleStageResize(this.surface, this.suspendedSurface);
+            this.surface = settled.current;
+            this.suspendedSurface = settled.suspended;
+            if (settled.restored)
+                this.attachSurface(settled.current);
+            this.draw();
+        }, RESIZE_SETTLE_MS);
+        if (this.resizeTimer.unref)
+            this.resizeTimer.unref();
+    };
+    handleData = (chunk) => {
+        const frames = this.inputFramer.push(chunk);
+        for (const frame of frames)
+            this.handleFramedData(frame);
+        if (this.inputFrameTimer) {
+            clearTimeout(this.inputFrameTimer);
+            this.inputFrameTimer = null;
+        }
+        if (this.inputFramer.hasPending) {
+            this.inputFrameTimer = setTimeout(() => {
+                this.inputFrameTimer = null;
+                for (const frame of this.inputFramer.flush())
+                    this.handleFramedData(frame);
+            }, INPUT_PREFIX_TIMEOUT_MS);
+            this.inputFrameTimer.unref?.();
+        }
+    };
+    flushCharBatch(charBatch) {
+        if (!charBatch)
+            return '';
+        this.prepareKeyboardState(true);
+        this.editor.insert(charBatch);
+        if (charBatch.length < 60 && !charBatch.includes('\n')) {
+            this.refreshCompletion();
+        }
+        else {
+            this.completion = null;
+        }
+        return '';
+    }
+    prepareKeyboardState(clearNotice) {
+        if (clearNotice && this.notice && !this.layer)
+            this.notice = '';
+        if (this.surface && typeof this.surface.captureMouse === 'function') {
+            if (this.surface.captureMouse() && typeof this.notice === 'string' && this.notice.startsWith('top of this view')) {
+                this.notice = '';
+            }
+        }
+        if (this.surface) {
+            this.surface.turnRailHoverSuppressed = false;
+            if (this.surface.hoveredTurnIndex !== null && this.surface.hoveredTurnIndex !== undefined) {
+                this.surface.hoveredTurnIndex = null;
+                this.surface.hoveredTurnAnchorY = null;
+                this.scheduleDraw();
+            }
+        }
+    }
+    handleFramedData = (chunk) => {
+        let motionOnly = true;
+        const str = typeof chunk === 'string' ? chunk : Buffer.isBuffer(chunk) ? chunk.toString('utf8') : '';
+        if (!this.layer && shouldTreatAsAtomicPaste(chunk, this.decoder)) {
+            try {
+                this.handleKey({ name: 'paste', text: str, sequence: '' });
+            }
+            catch (error) {
+                this.notice = `paste failed: ${error instanceof Error ? error.message : String(error)}`;
+                this.scheduleDraw();
+            }
+            this.draw();
+            return;
+        }
+        const keys = this.decoder.decode(chunk);
+        if (this.decoderRecoveryTimer)
+            clearTimeout(this.decoderRecoveryTimer);
+        this.decoderRecoveryTimer = null;
+        if (!this.decoder.inPaste && this.decoder.pending.length > 0) {
+            this.decoderRecoveryTimer = setTimeout(() => {
+                this.decoderRecoveryTimer = null;
+                const recovered = this.decoder.drainIncomplete();
+                for (const event of recovered)
+                    this.handleKey(event);
+                if (recovered.length)
+                    this.scheduleDraw();
+            }, 180);
+            this.decoderRecoveryTimer.unref?.();
+        }
+        let charBatch = '';
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i];
+            if (!key)
+                continue;
+            if (!this.layer && key.name === 'char' && typeof key.text === 'string' && !key.alt && !key.ctrl) {
+                charBatch += key.text;
+                motionOnly = false;
+                continue;
+            }
+            if (charBatch.length > 0) {
+                charBatch = this.flushCharBatch(charBatch);
+            }
+            if (key.name !== 'mouse' || !isMouseMotion(key.sequence))
+                motionOnly = false;
+            try {
+                this.handleKey(key);
+            }
+            catch (e) {
+                this.notice = `input error: ${e instanceof Error ? e.message : String(e)}`;
+                this.scheduleDraw();
+            }
+        }
+        if (charBatch.length > 0) {
+            charBatch = this.flushCharBatch(charBatch);
+        }
+        if (!motionOnly)
+            this.draw();
+    };
+    attach(renderer) {
+        renderer.onBeforeWrite = () => this.erase();
+        renderer.onAfterWrite = () => this.scheduleDraw();
+        this.renderer = renderer;
+        if (this.surface)
+            this.surface.sidebarStatus = renderer.status;
+        renderer.quietStatus = true;
+        renderer.onStatusChange = (message) => {
+            if (!shouldAcceptStatusUpdate(this))
+                return;
+            this.statusMessage = message;
+            this.scheduleDraw();
+        };
+        renderer.onPlanChange = (plan) => {
+            if (this.surface)
+                this.surface.sidebarPlan = plan;
+            this.scheduleDraw();
+            return this.surface && sidebarVisible(this.surface.width, false, this.surface.env) ? 'sidebar' : undefined;
+        };
+    }
+    statusRow(width) {
+        if (!this.renderer || !this.renderer.status)
+            return [];
+        const status = this.renderer.status;
+        if (!this.busy) {
+            return [status.renderIdle({
+                    width: Math.max(10, width),
+                    hint: this.commands.length > 0 ? 'ctrl+p commands' : ''
+                })];
+        }
+        const frame = GLYPHS.spinner[this.tick % GLYPHS.spinner.length] ?? '*';
+        const since = this.renderer.turnStartedAt;
+        return [status.render({
+                message: this.statusMessage || 'working',
+                elapsedMs: since ? Date.now() - since : 0,
+                steps: this.renderer.stepCount || 0,
+                width: Math.max(10, width - 1),
+                spinnerFrame: frame,
+                tick: this.tick
+            })];
+    }
+    agentRow(width) {
+        const status = this.renderer && this.renderer.status;
+        if (!status)
+            return null;
+        const mode = `${this.busy ? 'Working' : 'Build'} ${this.getMode()}`;
+        const parts = [bold(paint('accent', mode))];
+        if (status.model)
+            parts.push(bold(paint('ink', status.model)));
+        const line = parts.join(dim(`  ${GLYPHS.dot}  `));
+        const trailing = [status.provider, status.tier].filter(Boolean).join(' ');
+        const base = trailing ? `${line}  ${dim(trailing)}` : line;
+        const details = [];
+        if (this.queue.length)
+            details.push(`${this.queue.length} queued`);
+        if (this.editor.lines.length > 1)
+            details.push(`${this.editor.lines.length} lines`);
+        const extra = details.length ? dim(`  ${GLYPHS.dot}  ${details.join(' · ')}`) : '';
+        const withMeta = visibleWidth(base) + visibleWidth(extra) <= width ? base + extra : base;
+        const hints = dim('  Ctrl+G mode · Alt+M model · Ctrl+T variant');
+        const full = visibleWidth(withMeta) + visibleWidth(hints) <= width ? withMeta + hints : withMeta;
+        return visibleWidth(full) > width ? truncate(full, width, GLYPHS.ellipsis) : full;
+    }
+    planRows(width) {
+        if (this.surface && sidebarVisible(this.surface.width, false, this.surface.env))
+            return [];
+        const plan = this.renderer && Array.isArray(this.renderer.latestPlan) ? this.renderer.latestPlan : [];
+        if (plan.length === 0)
+            return [];
+        const completed = plan.filter(item => item.status === 'completed').length;
+        const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
+        if (stageMax < 22) {
+            const activeStep = plan.find(item => item.status === 'in_progress') || plan.find(item => item.status !== 'completed') || plan[0];
+            const stepText = activeStep ? (activeStep.text || activeStep.step || '') : '';
+            const summary = `${paint('accent', GLYPHS.skill || '✦')} ${bold('plan')} ${dim(`(${completed}/${plan.length})`)} ${dim('·')} ${truncate(safeDisplay(stepText), Math.max(8, width - 24), GLYPHS.ellipsis)}`;
+            return [summary, ''];
+        }
+        const rows = [`${bold(paint('accent', 'implementation plan'))}  ${dim(`${completed}/${plan.length}`)}`];
+        const limit = Math.min(plan.length, 5);
+        const active = plan.findIndex(item => item.status === 'in_progress');
+        const pending = plan.findIndex(item => item.status !== 'completed');
+        const focus = active >= 0 ? active : pending >= 0 ? pending : plan.length - 1;
+        const start = Math.max(0, Math.min(focus - 1, plan.length - limit));
+        if (start > 0)
+            rows.push(`  ${dim(`${GLYPHS.ellipsis} ${start} earlier`)}`);
+        for (const item of plan.slice(start, start + limit)) {
+            const mark = item.status === 'completed'
+                ? paint('success', GLYPHS.check)
+                : item.status === 'in_progress'
+                    ? paint('accent', GLYPHS.arrow)
+                    : paint('muted', GLYPHS.dot);
+            rows.push(`  ${mark} ${truncate(safeDisplay(item.text || item.step || ''), Math.max(8, width - 5), GLYPHS.ellipsis)}`);
+        }
+        const remaining = plan.length - start - limit;
+        if (remaining > 0)
+            rows.push(`  ${dim(`${GLYPHS.ellipsis} ${remaining} later`)}`);
+        rows.push('');
+        return rows;
+    }
+    startTick() {
+        if (this.tickTimer)
+            return;
+        this.tickTimer = setInterval(() => {
+            this.tick++;
+            if (this.busy)
+                this.scheduleDraw();
+            if (this.busy && (this.usageCard || this.statusCard !== null) && this.tick % 32 === 0) {
+                this.refreshPinnedPanels();
+            }
+        }, 125);
+        if (this.tickTimer.unref)
+            this.tickTimer.unref();
+    }
+    stopTick() {
+        if (!this.tickTimer)
+            return;
+        clearInterval(this.tickTimer);
+        this.tickTimer = null;
+    }
+    openLayer(layer) {
+        this.closeLayer();
+        this.layer = layer;
+        if (this.surface?.stage)
+            this.surface.stage.invalidate();
+        this.draw();
+        return layer;
+    }
+    closeLayer() {
+        const layer = this.layer;
+        if (!layer)
+            return;
+        this.layer = null;
+        if (typeof layer.answer === 'function')
+            layer.answer(false);
+        if (this.surface?.stage)
+            this.surface.stage.invalidate();
+        this.draw();
+    }
+    openPalette() {
+        if (this.commands.length === 0) {
+            this.notice = 'no commands available';
+            return;
+        }
+        this.openLayer(commandPalette(this.commands, (command) => {
+            this.editor.setText(`/${command.name}`);
+            this.layer = null;
+            this.submit();
+        }));
+    }
+    openHome(items, onPick) {
+        if (!Array.isArray(items) || items.length === 0) {
+            this.notice = 'no actions available';
+            this.scheduleDraw();
+            return null;
+        }
+        return this.openLayer(new HomeLayer({
+            items,
+            onPick: (item) => {
+                this.layer = null;
+                return onPick ? onPick(item) : null;
+            }
+        }));
+    }
+    setText(text) {
+        this.editor.setText(String(text == null ? '' : text));
+        this.completion = null;
         this.scheduleDraw();
-      }
-      return false;
     }
-  }
-
-  showUsageCard(loop = null) {
-    return this.toggleUsageCard(loop);
-  }
-
-  closeUsageCard() {
-    if (!this.usageCard && !this.usageCardLoading) return false;
-    ++this.infoPanelVersion; // Invalidate an in-flight open or refresh.
-    this.usageCard = null;
-    this.usageCardLoading = false;
-    this.scheduleDraw();
-    return true;
-  }
-
-  async refreshUsageCard(loop = null) {
-    if (!this.usageCard || this.usageRefreshPending) return false;
-    const version = this.infoPanelVersion;
-    this.usageRefreshPending = true;
-    try {
-      const data = await collectUsageCardData(loop || this.messageActionLoop);
-      if (version !== this.infoPanelVersion || !this.usageCard) return false;
-      this.usageCard = data;
-      this.scheduleDraw();
-      return true;
-    } catch {
-      // A transient ledger read failure must not close an already visible panel.
-      return false;
-    } finally {
-      this.usageRefreshPending = false;
-    }
-  }
-
-  toggleStatusCard(loop = null) {
-    if (this.statusCard !== null) {
-      this.closeStatusCard();
-      return false;
-    }
-    const targetLoop = loop || this.messageActionLoop;
-    ++this.infoPanelVersion; // A pending usage read must not reopen a replaced panel.
-    this.usageCard = null;
-    this.usageCardLoading = false;
-    this.statusCardUsage = null;
-    this.statusCard = buildStatusText({ loop: targetLoop });
-    this.scheduleDraw();
-    void this.refreshStatusCardMeta(targetLoop);
-    return true;
-  }
-
-  closeStatusCard() {
-    if (this.statusCard === null) return false;
-    ++this.infoPanelVersion;
-    this.statusCard = null;
-    this.statusCardUsage = null;
-    this.scheduleDraw();
-    return true;
-  }
-
-  async refreshStatusCardMeta(loop = null) {
-    if (this.statusCard === null) return false;
-    const version = this.infoPanelVersion;
-    try {
-      const data = await collectUsageCardData(loop || this.messageActionLoop);
-      if (version !== this.infoPanelVersion || this.statusCard === null) return false;
-      this.statusCardUsage = data;
-      this.scheduleDraw();
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  refreshPinnedPanels(loop = null) {
-    const targetLoop = loop || this.messageActionLoop;
-    if (this.usageCard) void this.refreshUsageCard(targetLoop);
-    if (this.statusCard !== null) {
-      this.statusCard = buildStatusText({ loop: targetLoop });
-      this.scheduleDraw();
-      void this.refreshStatusCardMeta(targetLoop);
-    }
-  }
-
-  statusCardRows(width) {
-    if (this.statusCard === null) return [];
-    return renderStatusCardRows(this.statusCard, this.statusCardUsage, width);
-  }
-
-  /**
-   * Ask for approval of a tool call: risk, arguments and a scrollable diff.
-   *
-   * Replaces an inquirer.prompt() that took stdin while this prompt was already
-   * holding it in raw mode — the two contended, and the confirm could arrive on
-   * top of a half-drawn prompt.
-   */
-  approve(request = {}) {
-    return new Promise((resolve) => {
-      // Only the curated verb — "run", "overwrite", "delete". The layer already
-      // renders the arguments (or a diff) underneath, so passing a rendered
-      // argument summary as `detail` printed the same line twice.
-      const { verb } = describeTool(request.tool, request.args || {});
-      // Resolve with WHICH option was chosen, not just yes/no: 'always' has to
-      // reach the caller so it can record a standing approval. A bare boolean
-      // would have silently downgraded it to 'once'.
-      this.openLayer(new ApprovalLayer({
-        request,
-        verb,
-        onAnswer: (approved, scope) => resolve({ approved, scope: scope || (approved ? 'once' : 'reject') })
-      }));
-    });
-  }
-
-  /** Ask for a durable implementation choice, with a free-form option. */
-  decide(request = {}) {
-    return new Promise((resolve) => {
-      this.openLayer(new DecisionLayer({ request, onAnswer: resolve }));
-    });
-  }
-
-  /** A plain yes/no, for the questions that are not tool approvals. */
-  confirm(message, options = {}) {
-    return new Promise((resolve) => {
-      let settled = false;
-      const settle = (answer) => { if (!settled) { settled = true; resolve(Boolean(answer)); } };
-      const layer = new ConfirmLayer({
-        message,
-        defaultAnswer: options.defaultAnswer === true,
-        onAnswer: settle
-      });
-      this.openLayer(layer);
-    });
-  }
-
-  /**
-   * Columns available on the stream this prompt actually writes to.
-   *
-   * draw() used to call the global terminalWidth(), which reads
-   * process.stdout.columns. That is right in production — `out` IS stdout — but
-   * it means the widget cannot be measured against anything else, and a panel
-   * sized from the wrong width overflows and wraps, which corrupts erase()'s row
-   * count and starts eating the conversation above.
-   */
-  width() {
-    // The Stage keeps the composer at one readable measure through the session.
-    if (this.surface && typeof this.surface.composeWidth === 'function') {
-      const asked = this.surface.composeWidth();
-      if (Number.isFinite(asked) && asked > 0) return Math.max(20, asked);
-    }
-
-    const columns = this.out && this.out.columns;
-    // No ceiling. The prompt is chrome: the box, its fill and the footer are the
-    // surface the user is typing into, and they follow the window. A clamp at
-    // 120 left a stretched terminal two-thirds covered and one-third empty.
-    return Number.isFinite(columns) && columns > 0
-      ? Math.max(20, columns)
-      : terminalWidth();
-  }
-
-  scheduleDraw() {
-    if (this.redrawScheduled || !this.active) return;
-    this.redrawScheduled = true;
-    setImmediate(() => {
-      this.redrawScheduled = false;
-      this.draw();
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Reading
-  // -------------------------------------------------------------------------
-
-  /**
-   * Render submitted user message into the chat transcript.
-   */
-  renderSubmittedUserMessage(text) {
-    if (this.surface?.homeInfo) this.surface.leaveHome();
-    if (this.renderer?.renderUserMessage) this.renderer.renderUserMessage(text);
-    else this.commit('user', (width) => {
-      const blockWidth = Math.max(8, width);
-      return barBlock(
-        wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER), { hang: 0 }),
-        { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' }
-      );
-    });
-  }
-
-  /** Restore attachments if an earlier submission was handled as a local command. */
-  restoreUnconsumedAttachments() {
-    if (Array.isArray(this.currentSubmissionAttachments) && this.currentSubmissionAttachments.length) {
-      this.pendingAttachments = this.currentSubmissionAttachments.concat(this.pendingAttachments);
-    }
-    this.currentSubmissionAttachments = null;
-  }
-
-  takeSubmissionAttachments() {
-    const attachments = Array.isArray(this.pendingAttachments) ? this.pendingAttachments : [];
-    this.pendingAttachments = [];
-    return attachments;
-  }
-
-  /** Queue text with its attachments. Local command values retain their existing type. */
-  enqueueSubmission(text, { rendered = false } = {}) {
-    if (!Array.isArray(this.queue)) this.queue = [];
-    if (this.isCommand(text)) {
-      this.queue.push(text);
-    } else {
-      this.queue.push({ kind: 'chat-submission', text, attachments: this.takeSubmissionAttachments(), rendered });
-    }
-  }
-
-  /** Read in FIFO order and display a submitted message only once dispatched. */
-  read() {
-    this.restoreUnconsumedAttachments();
-    if (this.queue.length > 0) {
-      const entry = this.queue.shift();
-      const submission = entry && typeof entry === 'object' && entry.kind === 'chat-submission';
-      const text = submission ? entry.text : entry;
-      if (submission) this.currentSubmissionAttachments = entry.attachments;
-      if (typeof text === 'string' && !this.isCommand(text) && !(submission && entry.rendered)) {
-        this.renderSubmittedUserMessage(text);
-      }
-      this.scheduleDraw();
-      return Promise.resolve(text);
-    }
-    return new Promise((resolve) => { this.waiter = resolve; });
-  }
-
-  /**
-   * Resolve a pending read() with a value nobody typed.
-   *
-   * The home menu needs this: picking an action must satisfy the same read()
-   * the keyboard would have satisfied, or the caller sits waiting for a line
-   * that is never coming. It deliberately does NOT echo, add to history or
-   * touch the editor — an action is not a message, and showing `start` in the
-   * transcript as though the user had said it would be a lie about what
-   * happened. If no read is outstanding the value queues, exactly as a typed
-   * line would while a turn is running.
-   */
-  deliver(value) {
-    if (this.waiter) {
-      const resolve = this.waiter;
-      this.waiter = null;
-      resolve(value);
-      return true;
-    }
-    this.queue.push(value);
-    return false;
-  }
-
-  /**
-   * Consume and return any pending multimodal attachments (e.g. pasted screenshots).
-   */
-  consumeAttachments() {
-    // An empty submission snapshot still takes precedence over a future draft.
-    if (this.currentSubmissionAttachments !== null) {
-      const attachments = this.currentSubmissionAttachments;
-      this.currentSubmissionAttachments = null;
-      return Array.isArray(attachments) ? attachments : [];
-    }
-    return this.takeSubmissionAttachments();
-  }
-
-  /**
-   * Paste clipboard content: seamlessly supports text and screenshot images.
-   */
-  pasteClipboard() {
-    pasteIntoChatbox(this);
-  }
-
-  setBusy(busy) {
-    this.busy = busy;
-    resetTurnInterruptState(this, busy);
-    if (busy) this.startTick(); else this.stopTick();
-    if (!busy && this.usageCard) void this.refreshUsageCard();
-    if (this.statusCard !== null) {
-      this.statusCard = buildStatusText({ loop: this.messageActionLoop });
-      if (!busy) void this.refreshStatusCardMeta(this.messageActionLoop);
-    }
-    if (this.surface?.stage) this.surface.stage.invalidate();
-    this.draw();
-  }
-
-  submit() {
-    const text = this.editor.getText();
-    if (!text.trim()) return;
-    if (!Array.isArray(this.queue)) this.queue = [];
-    // busy=false does not imply read() is awaiting: command dispatch has gaps.
-    if ((this.busy || !this.waiter) && this.queue.length >= 32
-        && !/^\/(?:stop|interrupt)$/i.test(text.trim())) {
-      this.notice = '32 queued messages: wait for a turn to complete before adding another';
-      this.scheduleDraw();
-      return;
-    }
-
-    this.erase();
-    this.history.add(text);
-    this.editor.clear();
-    this.completion = null;
-    // Do not dismiss a pinned information panel on any chat submission,
-    // queued prompt, or agent run. Only Esc or the same command closes it.
-    // Instant slash command shortcuts that operate directly on the prompt surface
-    if ((text.trim().toLowerCase() === '/usage' || text.trim().toLowerCase() === '/cost')
-        && typeof this.toggleUsageCard === 'function') {
-      void this.toggleUsageCard();
-      return;
-    }
-    if (text.trim().toLowerCase() === '/status' && typeof this.toggleStatusCard === 'function') {
-      this.toggleStatusCard();
-      return;
-    }
-
-    if (text === '/observer' || text === '/observer status') {
-      import('./observerPicker.js').then(({ runInteractiveObserverPicker }) => {
-        void runInteractiveObserverPicker(this);
-      }).catch((err) => {
-        this.notice = err instanceof Error ? err.message : String(err);
+    updateModel(provider, model) {
+        if (this.renderer && this.renderer.status) {
+            this.renderer.status.setSession({
+                provider: provider ? String(provider) : '',
+                model: model ? String(model) : ''
+            });
+        }
         this.scheduleDraw();
-      });
-      return;
     }
-
-    // Control commands take priority over busy turns so the user is never locked out.
-    // Commands like /stop, /new, /model, /session, /sessions, /continuum, /clear can interrupt
-    // a stalled/long-running turn and execute immediately.
-    // Match a COMPLETE command token. Prefix tests made unrelated
-    // commands such as /newsletter interrupt an active agent turn.
-    const commandToken = text.trim().split(/\s+/, 1)[0].toLowerCase();
-    const isControlCommand = this.isCommand(text) && new Set([
-      '/stop', '/interrupt', '/new', '/model', '/models',
-      '/session', '/sessions', '/continuum', '/clear'
-    ]).has(commandToken);
-
-    // Immediate abort signals interrupt the running turn directly without queuing as a future task.
-    if ((text === '/stop' || text === '/interrupt') && this.busy) {
-      this.interrupt();
-      this.notice = 'Interrupted';
-      this.scheduleDraw();
-      return;
+    browseSkills(skills, onOpen) {
+        if (!Array.isArray(skills) || skills.length === 0) {
+            this.notice = 'no skills are compiled into this build';
+            this.scheduleDraw();
+            return;
+        }
+        this.openLayer(skillPicker(skills, (skill) => {
+            this.layer = null;
+            if (onOpen)
+                onOpen(skill);
+        }));
     }
-
-    if (isControlCommand && this.busy) {
-      this.interrupt();
+    showText(title, text, options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        const panelWidth = dialogWidth(this.width(), opts.width || 76);
+        const contentWidth = Math.max(12, panelWidth - 4);
+        let lines = wrapBlock(safeDisplay(String(text == null ? '' : text)), contentWidth, { hang: 0 });
+        if (lines.length > 0 && (lines[0] ?? '').trim().toLowerCase() === String(title || '').trim().toLowerCase()) {
+            lines = lines.slice(1);
+            if (lines.length > 0 && /^[-─═_]+$/.test((lines[0] ?? '').trim())) {
+                lines = lines.slice(1);
+            }
+        }
+        return this.openLayer(new TextLayer({
+            title: String(title || 'Details'),
+            lines: opts.danger ? lines.map((line) => paint('danger', line)) : lines,
+            width: panelWidth,
+            height: opts.height || 20
+        }));
     }
-
-    if (this.busy) {
-      // If user typed another slash command while busy, notify them rather than queuing
-      // it as a chat prompt to the model.
-      if (this.isCommand(text)) {
-        this.notice = `Command ${text} queued — will execute when current turn completes`;
-      } else {
-        this.notice = `queued (${this.queue.length + 1}) — sends when this turn ends`;
-      }
-      this.enqueueSubmission(text);
-      this.scheduleDraw();
-      return;
+    async toggleUsageCard(loop = null) {
+        if (this.usageCard || this.usageCardLoading) {
+            this.closeUsageCard();
+            return false;
+        }
+        const version = ++this.infoPanelVersion;
+        this.statusCard = null;
+        this.statusCardUsage = null;
+        this.usageCardLoading = true;
+        try {
+            const data = await collectUsageCardData(loop || this.messageActionLoop);
+            if (version !== this.infoPanelVersion || !this.usageCardLoading)
+                return false;
+            this.usageCard = data;
+            this.usageCardLoading = false;
+            this.scheduleDraw();
+            return true;
+        }
+        catch (error) {
+            if (version === this.infoPanelVersion) {
+                this.usageCardLoading = false;
+                this.notice = this.sanitizeSingleLine(error instanceof Error ? error.message : String(error));
+                this.scheduleDraw();
+            }
+            return false;
+        }
     }
-
-    // A command is control input, not conversation. Its handler decides whether
-    // to open a picker, show a text dialog, or perform an action. Keeping the
-    // invocation out of the transcript preserves the boundary between local UI
-    // and messages that were actually sent to the model.
-    if (this.isCommand(text)) {
-      const settle = this.waiter;
-      this.waiter = null;
-      if (settle) settle(text);
-      else {
-        this.enqueueSubmission(text); // no waiter yet: retain the command
-        this.notice = `queued (${this.queue.length}) — sends when ready`;
-        this.scheduleDraw?.();
-      }
-      return;
+    showUsageCard(loop = null) {
+        return this.toggleUsageCard(loop);
     }
-
-    const resolve = this.waiter;
-    this.waiter = null;
-    if (resolve) {
-      this.restoreUnconsumedAttachments();
-      this.currentSubmissionAttachments = this.takeSubmissionAttachments();
-      this.renderSubmittedUserMessage(text);
-      resolve(text);
-    } else {
-      // Display the user's submitted message immediately, as before, but
-      // retain it until the CLI registers its next read() waiter.
-      // The rendered marker prevents a duplicate transcript entry at dequeue.
-      this.renderSubmittedUserMessage(text);
-      this.enqueueSubmission(text, { rendered: true });
-      this.notice = `queued (${this.queue.length}) — sends when ready`;
-      this.scheduleDraw?.();
+    closeUsageCard() {
+        if (!this.usageCard && !this.usageCardLoading)
+            return false;
+        ++this.infoPanelVersion;
+        this.usageCard = null;
+        this.usageCardLoading = false;
+        this.scheduleDraw();
+        return true;
     }
-  }
-
-  // -------------------------------------------------------------------------
-  // Keys
-  // -------------------------------------------------------------------------
-
-  handleKey(key) {
-    const clearNotice = key.name === 'char' || key.name === 'paste' || key.name === 'backspace' || key.name === 'delete';
-    if (clearNotice && this.notice && !this.layer) {
-      this.notice = '';
+    async refreshUsageCard(loop = null) {
+        if (!this.usageCard || this.usageRefreshPending)
+            return false;
+        const version = this.infoPanelVersion;
+        this.usageRefreshPending = true;
+        try {
+            const data = await collectUsageCardData(loop || this.messageActionLoop);
+            if (version !== this.infoPanelVersion || !this.usageCard)
+                return false;
+            this.usageCard = data;
+            this.scheduleDraw();
+            return true;
+        }
+        catch {
+            return false;
+        }
+        finally {
+            this.usageRefreshPending = false;
+        }
     }
-
-    // The wheel was handed to the terminal at the top of the band; the moment
-    // the user types again they are driving this prompt, so take it back.
-    if (key.name !== 'wheel' && key.name !== 'mouse') {
-      this.prepareKeyboardState(false);
+    toggleStatusCard(loop = null) {
+        if (this.statusCard !== null) {
+            this.closeStatusCard();
+            return false;
+        }
+        const targetLoop = loop || this.messageActionLoop;
+        ++this.infoPanelVersion;
+        this.usageCard = null;
+        this.usageCardLoading = false;
+        this.statusCardUsage = null;
+        this.statusCard = buildStatusText({ loop: targetLoop });
+        this.scheduleDraw();
+        void this.refreshStatusCardMeta(targetLoop);
+        return true;
     }
-
-    if (key.ctrl && key.name === 'c') {
-      if (this.layer) { this.closeLayer(); return; }
-      if (this.editor.hasSelection) {
+    closeStatusCard() {
+        if (this.statusCard === null)
+            return false;
+        ++this.infoPanelVersion;
+        this.statusCard = null;
+        this.statusCardUsage = null;
+        this.scheduleDraw();
+        return true;
+    }
+    async refreshStatusCardMeta(loop = null) {
+        if (this.statusCard === null)
+            return false;
+        const version = this.infoPanelVersion;
+        try {
+            const data = await collectUsageCardData(loop || this.messageActionLoop);
+            if (version !== this.infoPanelVersion || this.statusCard === null)
+                return false;
+            this.statusCardUsage = data;
+            this.scheduleDraw();
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    refreshPinnedPanels(loop = null) {
+        const targetLoop = loop || this.messageActionLoop;
+        if (this.usageCard)
+            void this.refreshUsageCard(targetLoop);
+        if (this.statusCard !== null) {
+            this.statusCard = buildStatusText({ loop: targetLoop });
+            this.scheduleDraw();
+            void this.refreshStatusCardMeta(targetLoop);
+        }
+    }
+    statusCardRows(width) {
+        if (this.statusCard === null)
+            return [];
+        return renderStatusCardRows(this.statusCard, this.statusCardUsage, width);
+    }
+    approve(request = {}) {
+        return new Promise((resolve) => {
+            const { verb } = describeTool(request.tool, request.args || {});
+            this.openLayer(new ApprovalLayer({
+                request,
+                verb,
+                onAnswer: (approved, scope) => resolve({ approved, scope: scope || (approved ? 'once' : 'reject') })
+            }));
+        });
+    }
+    decide(request = {}) {
+        return new Promise((resolve) => {
+            this.openLayer(new DecisionLayer({ request, onAnswer: resolve }));
+        });
+    }
+    confirm(message, options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        return new Promise((resolve) => {
+            let settled = false;
+            const settle = (answer) => { if (!settled) {
+                settled = true;
+                resolve(Boolean(answer));
+            } };
+            const layer = new ConfirmLayer({
+                message,
+                defaultAnswer: opts.defaultAnswer === true,
+                onAnswer: settle
+            });
+            this.openLayer(layer);
+        });
+    }
+    width() {
+        if (this.surface && typeof this.surface.composeWidth === 'function') {
+            const asked = this.surface.composeWidth();
+            if (Number.isFinite(asked) && asked > 0)
+                return Math.max(20, asked);
+        }
+        const columns = this.out && this.out.columns;
+        return Number.isFinite(columns) && columns > 0
+            ? Math.max(20, columns)
+            : terminalWidth();
+    }
+    scheduleDraw() {
+        if (this.redrawScheduled || !this.active)
+            return;
+        this.redrawScheduled = true;
+        setImmediate(() => {
+            this.redrawScheduled = false;
+            this.draw();
+        });
+    }
+    renderSubmittedUserMessage(text) {
+        if (this.surface?.homeInfo)
+            this.surface.leaveHome();
+        if (this.renderer?.renderUserMessage)
+            this.renderer.renderUserMessage(text);
+        else
+            this.commit('user', (width) => {
+                const blockWidth = Math.max(8, width);
+                return barBlock(wrapBlock(safeDisplay(text), Math.max(8, blockWidth - visibleWidth(GLYPHS.barHeavy || GLYPHS.bar) - GUTTER), { hang: 0 }), { width: blockWidth, role: 'user', filled: true, surface: 'surfaceHi' });
+            });
+    }
+    restoreUnconsumedAttachments() {
+        if (Array.isArray(this.currentSubmissionAttachments) && this.currentSubmissionAttachments.length) {
+            this.pendingAttachments = this.currentSubmissionAttachments.concat(this.pendingAttachments);
+        }
+        this.currentSubmissionAttachments = null;
+    }
+    takeSubmissionAttachments() {
+        const attachments = Array.isArray(this.pendingAttachments) ? this.pendingAttachments : [];
+        this.pendingAttachments = [];
+        return attachments;
+    }
+    enqueueSubmission(text, { rendered = false } = {}) {
+        if (!Array.isArray(this.queue))
+            this.queue = [];
+        if (this.isCommand(text)) {
+            this.queue.push(text);
+        }
+        else {
+            this.queue.push({ kind: 'chat-submission', text, attachments: this.takeSubmissionAttachments(), rendered });
+        }
+    }
+    read() {
+        this.restoreUnconsumedAttachments();
+        if (this.queue.length > 0) {
+            const entry = this.queue.shift();
+            const submission = Boolean(entry && typeof entry === 'object' && entry.kind === 'chat-submission');
+            const text = submission ? entry.text : entry;
+            if (submission)
+                this.currentSubmissionAttachments = entry.attachments;
+            if (typeof text === 'string' && !this.isCommand(text) && !(submission && entry.rendered)) {
+                this.renderSubmittedUserMessage(text);
+            }
+            this.scheduleDraw();
+            return Promise.resolve(text);
+        }
+        return new Promise((resolve) => { this.waiter = resolve; });
+    }
+    deliver(value) {
+        if (this.waiter) {
+            const resolve = this.waiter;
+            this.waiter = null;
+            resolve(value);
+            return true;
+        }
+        this.queue.push(value);
+        return false;
+    }
+    consumeAttachments() {
+        if (this.currentSubmissionAttachments !== null) {
+            const attachments = this.currentSubmissionAttachments;
+            this.currentSubmissionAttachments = null;
+            return Array.isArray(attachments) ? attachments : [];
+        }
+        return this.takeSubmissionAttachments();
+    }
+    pasteClipboard() {
+        pasteIntoChatbox(this);
+    }
+    setBusy(busy) {
+        this.busy = busy;
+        resetTurnInterruptState(this, busy);
+        if (busy)
+            this.startTick();
+        else
+            this.stopTick();
+        if (!busy && this.usageCard)
+            void this.refreshUsageCard();
+        if (this.statusCard !== null) {
+            this.statusCard = buildStatusText({ loop: this.messageActionLoop });
+            if (!busy)
+                void this.refreshStatusCardMeta(this.messageActionLoop);
+        }
+        if (this.surface?.stage)
+            this.surface.stage.invalidate();
+        this.draw();
+    }
+    submit() {
+        const text = this.editor.getText();
+        if (!text.trim())
+            return;
+        if (!Array.isArray(this.queue))
+            this.queue = [];
+        if ((this.busy || !this.waiter) && this.queue.length >= 32
+            && !/^\/(?:stop|interrupt)$/i.test(text.trim())) {
+            this.notice = '32 queued messages: wait for a turn to complete before adding another';
+            this.scheduleDraw();
+            return;
+        }
+        this.erase();
+        this.history.add(text);
+        this.editor.clear();
+        this.completion = null;
+        if ((text.trim().toLowerCase() === '/usage' || text.trim().toLowerCase() === '/cost')
+            && typeof this.toggleUsageCard === 'function') {
+            void this.toggleUsageCard();
+            return;
+        }
+        if (text.trim().toLowerCase() === '/status' && typeof this.toggleStatusCard === 'function') {
+            this.toggleStatusCard();
+            return;
+        }
+        if (text === '/observer' || text === '/observer status') {
+            import('./observerPicker.js').then(({ runInteractiveObserverPicker }) => {
+                void runInteractiveObserverPicker(this);
+            }).catch((err) => {
+                this.notice = err instanceof Error ? err.message : String(err);
+                this.scheduleDraw();
+            });
+            return;
+        }
+        const commandToken = (text.trim().split(/\s+/, 1)[0] ?? '').toLowerCase();
+        const isControlCommand = this.isCommand(text) && new Set([
+            '/stop', '/interrupt', '/new', '/model', '/models',
+            '/session', '/sessions', '/continuum', '/clear'
+        ]).has(commandToken);
+        if ((text === '/stop' || text === '/interrupt') && this.busy) {
+            this.interrupt();
+            this.notice = 'Interrupted';
+            this.scheduleDraw();
+            return;
+        }
+        if (isControlCommand && this.busy) {
+            this.interrupt();
+        }
+        if (this.busy) {
+            if (this.isCommand(text)) {
+                this.notice = `Command ${text} queued — will execute when current turn completes`;
+            }
+            else {
+                this.notice = `queued (${this.queue.length + 1}) — sends when this turn ends`;
+            }
+            this.enqueueSubmission(text);
+            this.scheduleDraw();
+            return;
+        }
+        if (this.isCommand(text)) {
+            const settle = this.waiter;
+            this.waiter = null;
+            if (settle)
+                settle(text);
+            else {
+                this.enqueueSubmission(text);
+                this.notice = `queued (${this.queue.length}) — sends when ready`;
+                this.scheduleDraw?.();
+            }
+            return;
+        }
+        const resolve = this.waiter;
+        this.waiter = null;
+        if (resolve) {
+            this.restoreUnconsumedAttachments();
+            this.currentSubmissionAttachments = this.takeSubmissionAttachments();
+            this.renderSubmittedUserMessage(text);
+            resolve(text);
+        }
+        else {
+            this.renderSubmittedUserMessage(text);
+            this.enqueueSubmission(text, { rendered: true });
+            this.notice = `queued (${this.queue.length}) — sends when ready`;
+            this.scheduleDraw?.();
+        }
+    }
+    // -------------------------------------------------------------------------
+    // Keys
+    // -------------------------------------------------------------------------
+    handleKey(key) {
+        const clearNotice = key.name === 'char' || key.name === 'paste' || key.name === 'backspace' || key.name === 'delete';
+        if (clearNotice && this.notice && !this.layer) {
+            this.notice = '';
+        }
+        if (key.name !== 'wheel' && key.name !== 'mouse') {
+            this.prepareKeyboardState(false);
+        }
+        if (key.ctrl && key.name === 'c') {
+            if (this.layer) {
+                this.closeLayer();
+                return;
+            }
+            if (this.editor.hasSelection) {
+                const text = this.editor.getSelectedText();
+                writeClipboardSync(text);
+                this.editor.killRing = text;
+                this.notice = `copied selection (${text.length} chars) to clipboard`;
+                this.scheduleDraw();
+                return;
+            }
+            return this.handleCtrlC();
+        }
+        if (key.ctrl && key.name === 'd' && this.editor.isEmpty)
+            return this.onExit();
+        if (this.layer) {
+            const previousSelection = this.layer.messageActions ? this.layer.list?.selected : null;
+            const action = key.name === 'mouse' && this.layer.messageActions
+                ? handleMessageActionMenuMouse(this.layer, key)
+                : this.layer.key(key);
+            if (this.layer?.messageActions && isMouseMotion(key.sequence)
+                && previousSelection !== this.layer.list?.selected)
+                this.scheduleDraw();
+            if (action === 'close') {
+                this.closeLayer();
+                return;
+            }
+            if (action === 'dismiss')
+                this.closeLayer();
+            else if (action !== 'passthrough')
+                return;
+        }
+        if (key.name === 'paste-too-large') {
+            this.notice = 'Paste exceeds 2 MiB; input unchanged. Attach a file or reduce the selection.';
+            this.scheduleDraw();
+            return;
+        }
+        if (key.name === 'paste') {
+            if (this.surface && typeof this.surface.captureMouse === 'function') {
+                this.surface.captureMouse();
+            }
+            pasteIntoChatbox(this, key.text);
+            return;
+        }
+        if (this.completion && this.handleCompletionKey(key))
+            return;
+        if (this.handleScrollKey(key))
+            return;
+        const isModeControl = Boolean(key.ctrl && key.name === 'g');
+        const control = isModeControl ? this.onOpenMode
+            : key.alt && key.name === 'm' ? this.onOpenModel
+                : key.ctrl && key.name === 't' ? this.onOpenVariant : null;
+        if (control) {
+            if (this.busy && !isModeControl) {
+                this.notice = 'Finish or interrupt the current turn before switching controls';
+                this.scheduleDraw();
+            }
+            else {
+                Promise.resolve(control()).catch((error) => {
+                    this.notice = this.sanitizeSingleLine(error instanceof Error ? error.message : String(error));
+                    this.scheduleDraw();
+                });
+            }
+            return;
+        }
+        switch (key.name) {
+            case 'escape': return this.handleEscape();
+            case 'enter':
+                if (key.alt || key.shift) {
+                    this.editor.newline();
+                    return this.refreshCompletion();
+                }
+                return this.submit();
+            case 'tab':
+                if (key.shift)
+                    return;
+                return this.openCompletion(true);
+            case 'backspace':
+                if (key.alt)
+                    this.editor.killWordLeft();
+                else
+                    this.editor.backspace();
+                return this.refreshCompletion();
+            case 'delete':
+                this.editor.deleteForward();
+                return this.refreshCompletion();
+            case 'left': return (key.ctrl || key.alt) ? this.editor.moveWordLeft(Boolean(key.shift)) : this.editor.moveLeft(Boolean(key.shift));
+            case 'right': return (key.ctrl || key.alt) ? this.editor.moveWordRight(Boolean(key.shift)) : this.editor.moveRight(Boolean(key.shift));
+            case 'home': return this.editor.moveHome(Boolean(key.shift));
+            case 'end': return this.editor.moveEnd(Boolean(key.shift));
+            case 'up':
+                if (key.shift)
+                    return this.editor.moveUp(true);
+                return this.historyOrMove(-1);
+            case 'down':
+                if (key.shift)
+                    return this.editor.moveDown(true);
+                return this.historyOrMove(1);
+            case 'pageup':
+                if (key.shift) {
+                    this.editor.moveHome(true);
+                    this.editor.line = 0;
+                    return;
+                }
+                break;
+            case 'pagedown':
+                if (key.shift) {
+                    this.editor.moveEnd(true);
+                    this.editor.line = this.editor.lines.length - 1;
+                    return;
+                }
+                break;
+            case 'char':
+                this.editor.insert(key.text);
+                return this.refreshCompletion();
+            default: break;
+        }
+        if (key.ctrl) {
+            switch (key.name) {
+                case 'a': return this.editor.moveHome();
+                case 'e': return this.editor.moveEnd();
+                case 'k':
+                    this.editor.killToEnd();
+                    return this.refreshCompletion();
+                case 'u':
+                    this.editor.killToStart();
+                    return this.refreshCompletion();
+                case 'w':
+                    this.editor.killWordLeft();
+                    return this.refreshCompletion();
+                case 'y':
+                    this.editor.yank();
+                    return this.refreshCompletion();
+                case 'x': {
+                    if (this.cutSelection())
+                        return;
+                    break;
+                }
+                case 'p': return this.openPalette();
+                case 'l': return this.clearScreen();
+                case 'o': return this.expand();
+                case 'v': return this.pasteClipboard();
+                default: break;
+            }
+        }
+        if (key.alt && key.name === 'a') {
+            this.editor.selectAll();
+            this.notice = 'selected all input text';
+            this.scheduleDraw();
+            return;
+        }
+        if (key.alt && key.name === 'x') {
+            if (this.cutSelection())
+                return;
+        }
+        if (key.alt && (key.name === 'c' || key.name === 'w')) {
+            const text = this.editor.hasSelection
+                ? this.editor.getSelectedText()
+                : this.editor.getText();
+            if (text) {
+                writeClipboardSync(text);
+                this.editor.killRing = text;
+                this.notice = this.editor.hasSelection
+                    ? `copied selection (${text.length} chars) to clipboard`
+                    : 'copied input to clipboard';
+            }
+            else {
+                this.notice = 'input is empty (nothing to copy)';
+            }
+            this.scheduleDraw();
+            return;
+        }
+        if (key.alt && key.name === 'v')
+            return this.pasteClipboard();
+        if (key.alt && key.name === 'b')
+            return this.editor.moveWordLeft();
+        if (key.alt && key.name === 'f')
+            return this.editor.moveWordRight();
+    }
+    handleScrollKey(key) {
+        const viewport = this.surface && this.surface.viewport;
+        if (key.name === 'mouse') {
+            if (handleTurnRailMouse(key, this.surface, this))
+                return true;
+            if (this.messageActionLoop && isMouseMotion(key.sequence)) {
+                return handleMessageMouse(this, this.messageActionLoop, key);
+            }
+            if (handleScrollbarMouse(key, viewport, this.surface, this))
+                return true;
+            if (!this.layer && this.messageActionLoop)
+                return handleMessageMouse(this, this.messageActionLoop, key);
+            return true;
+        }
+        if (key.name === 'wheel') {
+            if (!viewport || !key.wheel)
+                return true;
+            const layout = this.surface?.turnRailLayout;
+            const card = layout?.cardRect;
+            const pointerX = key.wheel.x;
+            const pointerY = key.wheel.y;
+            const relativeY = pointerY - (Number.isFinite(layout?.stageTop) ? layout.stageTop : 0);
+            if (card && Array.isArray(card.groupTurns) &&
+                Number.isFinite(pointerX) && Number.isFinite(pointerY) &&
+                pointerX >= card.x && pointerX < card.x + card.width &&
+                relativeY >= card.y && relativeY < card.y + card.height &&
+                (key.wheel.direction === 'up' || key.wheel.direction === 'down')) {
+                const previous = Number.isFinite(this.surface.turnRailCardOffset)
+                    ? this.surface.turnRailCardOffset : 0;
+                const maximum = Number.isFinite(card.maxOffset) ? Math.max(0, card.maxOffset) : 0;
+                const change = key.wheel.direction === 'up' ? -1 : 1;
+                const current = Math.max(0, Math.min(maximum, previous + change));
+                if (current !== previous) {
+                    this.surface.turnRailCardOffset = current;
+                    this.scheduleDraw();
+                }
+                return true;
+            }
+            if (this.renderer?.scrollCodePanel?.(key, this.surface)) {
+                if (typeof this.scheduleDraw === 'function')
+                    this.scheduleDraw();
+                else
+                    this.draw();
+                return true;
+            }
+            if (this.renderer?.scrollThinkingPanel?.(key, this.surface)) {
+                if (typeof this.scheduleDraw === 'function')
+                    this.scheduleDraw();
+                else
+                    this.draw();
+                return true;
+            }
+            return handleViewportWheel(key, viewport, this.surface, this);
+        }
+        if (!viewport)
+            return false;
+        const clearTurnRailFocus = () => {
+            if (!this.surface)
+                return;
+            this.surface.activeTurnIndex = null;
+            this.surface.hoveredTurnIndex = null;
+            this.surface.hoveredTurnAnchorY = null;
+        };
+        if (key.name === 'pageup') {
+            clearTurnRailFocus();
+            if (key.shift)
+                viewport.toTop();
+            else
+                viewport.pageUp();
+            return true;
+        }
+        if (key.name === 'pagedown') {
+            clearTurnRailFocus();
+            if (key.shift)
+                viewport.toBottom();
+            else
+                viewport.pageDown();
+            return true;
+        }
+        if (key.shift && key.name === 'up') {
+            if (!this.editor.isEmpty)
+                return false;
+            clearTurnRailFocus();
+            viewport.lineUp();
+            return true;
+        }
+        if (key.shift && key.name === 'down') {
+            if (!this.editor.isEmpty)
+                return false;
+            clearTurnRailFocus();
+            viewport.lineDown();
+            return true;
+        }
+        if (key.alt && key.ctrl && key.name === 'u') {
+            clearTurnRailFocus();
+            viewport.halfPageUp();
+            return true;
+        }
+        if (key.alt && key.ctrl && key.name === 'd') {
+            clearTurnRailFocus();
+            viewport.halfPageDown();
+            return true;
+        }
+        const jumpViewport = (direction, kinds) => {
+            clearTurnRailFocus();
+            viewport.jump(direction, kinds);
+            return true;
+        };
+        if (key.alt && key.name === ',')
+            return jumpViewport(-1, ['step']);
+        if (key.alt && key.name === '.')
+            return jumpViewport(1, ['step']);
+        if ((key.alt && key.name === '[') || (key.alt && key.name === '<'))
+            return jumpViewport(-1, ['user']);
+        if ((key.alt && key.name === ']') || (key.alt && key.name === '>'))
+            return jumpViewport(1, ['user']);
+        if (key.alt && key.name === 'u') {
+            this.offerUndo();
+            return true;
+        }
+        return false;
+    }
+    offerUndo() {
+        const surface = this.surface;
+        if (!surface)
+            return;
+        const width = surface.viewport.width;
+        const marks = surface.transcript.markers(width).filter((m) => m.kind === 'checkpoint');
+        if (marks.length === 0) {
+            this.notice = 'no restore points in this session yet';
+            return;
+        }
+        const top = surface.viewport.scrollTop;
+        const bottom = top + surface.viewport.height;
+        const onScreen = marks.filter((m) => m.row >= top && m.row < bottom);
+        const above = marks.filter((m) => m.row < top);
+        const mark = onScreen.length ? onScreen[onScreen.length - 1] : (above.pop() || marks[0]);
+        const meta = mark?.meta || {};
+        const where = meta.path ? this.sanitizeSingleLine(shortenHome(meta.path)) : 'files changed this task';
+        const rawStep = meta.step == null ? '' : this.sanitizeSingleLine(meta.step);
+        const step = rawStep ? ` at step ${rawStep}` : '';
+        if (this.editor.isEmpty) {
+            this.editor.setText('/undo');
+            this.notice = `restore point${step} ${GLYPHS.dot} ${where} ${GLYPHS.dot} enter previews, --apply writes`;
+        }
+        else {
+            this.notice = `restore point${step} ${GLYPHS.dot} ${where} ${GLYPHS.dot} run /undo to preview`;
+        }
+    }
+    sanitizeSingleLine(value) {
+        return value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim();
+    }
+    cutSelection() {
+        if (!this.editor.hasSelection)
+            return false;
         const text = this.editor.getSelectedText();
         writeClipboardSync(text);
         this.editor.killRing = text;
-        this.notice = `copied selection (${text.length} chars) to clipboard`;
-        this.scheduleDraw();
-        return;
-      }
-      return this.handleCtrlC();
+        this.editor.deleteSelection();
+        this.notice = `cut selection (${text.length} chars) to clipboard`;
+        this.refreshCompletion();
+        return true;
     }
-    if (key.ctrl && key.name === 'd' && this.editor.isEmpty) return this.onExit();
-
-    // A dialog owns the keyboard while it is up — the editor must not also see
-    // the keystroke, or typing a filter would edit the message behind it.
-    // This MUST route before any default key handling (like paste) so modal
-    // dialogs (e.g. InputLayer for API keys) receive bracketed paste events.
-    if (this.layer) {
-      const previousSelection = this.layer.messageActions ? this.layer.list?.selected : null;
-      const action = key.name === 'mouse' && this.layer.messageActions
-        ? handleMessageActionMenuMouse(this.layer, key)
-        : this.layer.key(key);
-      if (this.layer?.messageActions && isMouseMotion(key.sequence)
-          && previousSelection !== this.layer.list?.selected) this.scheduleDraw();
-      if (action === 'close') { this.closeLayer(); return; }
-      // A layer may hand a key BACK rather than swallow it. The home menu does
-      // this for every printable character, so `↑↓` picks an action while typing
-      // goes to the input line in the same frame: 'dismiss' closes the menu and
-      // lets the key through, 'passthrough' leaves the menu up and lets it
-      // through. Silence still means "mine, ignored", so every other layer stays
-      // strictly modal — a dialog that leaks keys is the bug Layer exists to
-      // prevent, and only a layer that opts in by name can do it.
-      if (action === 'dismiss') this.closeLayer();
-      else if (action !== 'passthrough') return;
+    handleCtrlC() {
+        handlePromptCtrlC(this, () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`], CTRL_C_WINDOW_MS);
     }
-
-    if (key.name === 'paste-too-large') {
-      this.notice = 'Paste exceeds 2 MiB; input unchanged. Attach a file or reduce the selection.';
-      this.scheduleDraw();
-      return;
+    handleEscape() {
+        handlePromptEscape(this, () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]);
     }
-
-    if (key.name === 'paste') {
-      if (this.surface && typeof this.surface.captureMouse === 'function') {
-        this.surface.captureMouse();
-      }
-      pasteIntoChatbox(this, key.text);
-      return;
+    interrupt() {
+        triggerTurnInterrupt(this, () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]);
     }
-
-    if (this.completion && this.handleCompletionKey(key)) return;
-    if (this.handleScrollKey(key)) return;
-
-    const isModeControl = Boolean(key.ctrl && key.name === 'g');
-    const control = isModeControl ? this.onOpenMode
-      : key.alt && key.name === 'm' ? this.onOpenModel
-      : key.ctrl && key.name === 't' ? this.onOpenVariant : null;
-    if (control) {
-      if (this.busy && !isModeControl) {
-        this.notice = 'Finish or interrupt the current turn before switching controls';
-        this.scheduleDraw();
-      } else {
-        Promise.resolve(control()).catch(error => {
-          this.notice = this.sanitizeSingleLine(error instanceof Error ? error.message : String(error));
-          this.scheduleDraw();
+    expand() {
+        this.erase();
+        this.onExpand();
+        this.notice = '';
+    }
+    clearScreen() {
+        if (this.surface) {
+            this.surface.flushAndClear();
+            return;
+        }
+        this.erase();
+        // The one clear Causyne may perform: the user pressed ctrl+L and asked for it.
+        // UX-01 forbids clearing the terminal on the app's own initiative.
+        this.writeControl('\x1b[2J\x1b[H');
+        this.drawnRows = 0;
+        this.cursorRow = 0;
+    }
+    historyOrMove(direction) {
+        if (direction === -1 && this.editor.line > 0) {
+            this.editor.moveUp();
+            return;
+        }
+        if (direction === 1 && this.editor.line < this.editor.lines.length - 1) {
+            this.editor.moveDown();
+            return;
+        }
+        const text = direction === -1
+            ? this.history.previous(this.editor.getText())
+            : this.history.next();
+        if (text === null || text === undefined)
+            return;
+        this.editor.setText(text);
+    }
+    // -------------------------------------------------------------------------
+    // Completion
+    // -------------------------------------------------------------------------
+    bindFileIndex(index) {
+        if (typeof this._unsubscribeFileIndex === 'function')
+            this._unsubscribeFileIndex();
+        this._unsubscribeFileIndex = index.subscribe(() => {
+            if (this.index !== index || !this.active)
+                return;
+            const trigger = detectTrigger(this.editor.getText(), this.cursorOffset());
+            if (!trigger || trigger.kind !== 'file')
+                return;
+            this.openCompletion(false);
+            if (index.truncated)
+                this.notice = 'Workspace file index reached its safety limit; narrow the project root.';
+            else if (this.notice === 'Indexing workspace files…')
+                this.notice = '';
+            this.scheduleDraw();
         });
-      }
-      return;
+        void index.ensure();
     }
-
-    switch (key.name) {
-      case 'escape': return this.handleEscape();
-      case 'enter':
-        if (key.alt || key.shift) { this.editor.newline(); return this.refreshCompletion(); }
-        return this.submit();
-      case 'tab':
-        if (key.shift) return;
-        return this.openCompletion(true);
-      case 'backspace':
-        if (key.alt) this.editor.killWordLeft(); else this.editor.backspace();
-        return this.refreshCompletion();
-      case 'delete': this.editor.deleteForward(); return this.refreshCompletion();
-      case 'left': return (key.ctrl || key.alt) ? this.editor.moveWordLeft(Boolean(key.shift)) : this.editor.moveLeft(Boolean(key.shift));
-      case 'right': return (key.ctrl || key.alt) ? this.editor.moveWordRight(Boolean(key.shift)) : this.editor.moveRight(Boolean(key.shift));
-      case 'home': return this.editor.moveHome(Boolean(key.shift));
-      case 'end': return this.editor.moveEnd(Boolean(key.shift));
-      case 'up':
-        if (key.shift) return this.editor.moveUp(true);
-        return this.historyOrMove(-1);
-      case 'down':
-        if (key.shift) return this.editor.moveDown(true);
-        return this.historyOrMove(1);
-      case 'pageup':
-        if (key.shift) { this.editor.moveHome(true); this.editor.line = 0; return; }
-        break;
-      case 'pagedown':
-        if (key.shift) { this.editor.moveEnd(true); this.editor.line = this.editor.lines.length - 1; return; }
-        break;
-      case 'char': this.editor.insert(key.text); return this.refreshCompletion();
-      default: break;
+    setWorkingRoot(newRoot, focusDir = null) {
+        if (typeof this._unsubscribeFileIndex === 'function')
+            this._unsubscribeFileIndex();
+        this.index?.dispose();
+        this.root = newRoot;
+        this.focusDir = focusDir;
+        this.index = new FileIndex(newRoot);
+        this.bindFileIndex(this.index);
+        const trigger = detectTrigger(this.editor.getText(), this.cursorOffset());
+        if (trigger?.kind === 'file')
+            this.openCompletion(false);
     }
-
-    if (key.ctrl) {
-      switch (key.name) {
-        case 'a': return this.editor.moveHome();
-        case 'e': return this.editor.moveEnd();
-        case 'k': this.editor.killToEnd(); return this.refreshCompletion();
-        case 'u': this.editor.killToStart(); return this.refreshCompletion();
-        case 'w': this.editor.killWordLeft(); return this.refreshCompletion();
-        case 'y': this.editor.yank(); return this.refreshCompletion();
-        case 'x': {
-          if (this.cutSelection()) return;
-          break;
-        }
-        case 'p': return this.openPalette();
-        case 'l': return this.clearScreen();
-        case 'o': return this.expand();
-        case 'v': return this.pasteClipboard();
-        default: break;
-      }
+    cursorOffset() {
+        const before = this.editor.lines.slice(0, this.editor.line)
+            .reduce((total, line) => total + line.join('').length + 1, 0);
+        return before + (this.editor.lines[this.editor.line] ?? [])
+            .slice(0, this.editor.col).join('').length;
     }
-    if (key.alt && key.name === 'a') {
-      this.editor.selectAll();
-      this.notice = 'selected all input text';
-      this.scheduleDraw();
-      return;
-    }
-    if (key.alt && key.name === 'x') {
-      if (this.cutSelection()) return;
-    }
-    if (key.alt && (key.name === 'c' || key.name === 'w')) {
-      const text = this.editor.hasSelection
-        ? this.editor.getSelectedText()
-        : this.editor.getText();
-      if (text) {
-        writeClipboardSync(text);
-        this.editor.killRing = text;
-        this.notice = this.editor.hasSelection
-          ? `copied selection (${text.length} chars) to clipboard`
-          : 'copied input to clipboard';
-      } else {
-        this.notice = 'input is empty (nothing to copy)';
-      }
-      this.scheduleDraw();
-      return;
-    }
-    if (key.alt && key.name === 'v') return this.pasteClipboard();
-    if (key.alt && key.name === 'b') return this.editor.moveWordLeft();
-    if (key.alt && key.name === 'f') return this.editor.moveWordRight();
-  }
-
-  /**
-   * Scroll the transcript viewport. Returns true when the key was ours.
-   *
-   * Only bound when a Stage is running: without one there is no viewport, the
-   * terminal's own scrollback is the viewport, and stealing pageup from it
-   * would be worse than useless.
-   *
-   * The choices, and why they are not opencode's:
-   *
-   *  * pageup/pagedown move a full viewport MINUS ONE ROW of overlap, which is
-   *    what every pager does and what lets the eye carry across the jump.
-   *    opencode calls height/2 a "page" and height/4 a "half page" — both are
-   *    half of what their names claim, and there is no reason to inherit that.
-   *  * ctrl+u / ctrl+d are NOT scroll keys. They are kill-to-start and
-   *    delete/exit, tests/chatSurface.test.js asserts it, and a chat where the
-   *    key that deletes your line also scrolls is a trap. Half-page is on the
-   *    alt-modified pair instead.
-   *  * home/end stay with the editor, so top/bottom take the shifted pageup and
-   *    pagedown rather than fighting for them.
-   */
-  handleScrollKey(key) {
-    const viewport = this.surface && this.surface.viewport;
-
-    // A mouse report must be swallowed whether or not there is a viewport to
-    // act on. The bytes are already consumed by the decoder; letting the event
-    // fall through would put `mouse` or `wheel` into the switch below, where a
-    // future case could act on it by accident — and, worse, a terminal that
-    // kept reporting after a failed teardown would type into the user's line.
-    if (key.name === 'mouse') {
-      if (handleTurnRailMouse(key, this.surface, this)) return true;
-      if (this.messageActionLoop && isMouseMotion(key.sequence)) {
-        return handleMessageMouse(this, this.messageActionLoop, key);
-      }
-      if (handleScrollbarMouse(key, viewport, this.surface, this)) return true;
-      if (!this.layer && this.messageActionLoop) return handleMessageMouse(this, this.messageActionLoop, key);
-      return true;
-    }
-    if (key.name === 'wheel') {
-      if (!viewport || !key.wheel) return true;
-      // The reference timeline popover is itself scrollable when a dot
-      // represents more turns than can fit. Wheel input over the card must
-      // not move the chat viewport behind it.
-      const layout = this.surface?.turnRailLayout;
-      const card = layout?.cardRect;
-      const pointerX = key.wheel.x;
-      const pointerY = key.wheel.y;
-      const relativeY = pointerY - (Number.isFinite(layout?.stageTop) ? layout.stageTop : 0);
-      if (card && Array.isArray(card.groupTurns) &&
-          Number.isFinite(pointerX) && Number.isFinite(pointerY) &&
-          pointerX >= card.x && pointerX < card.x + card.width &&
-          relativeY >= card.y && relativeY < card.y + card.height &&
-          (key.wheel.direction === 'up' || key.wheel.direction === 'down')) {
-        const previous = Number.isFinite(this.surface.turnRailCardOffset)
-          ? this.surface.turnRailCardOffset : 0;
-        const maximum = Number.isFinite(card.maxOffset) ? Math.max(0, card.maxOffset) : 0;
-        const change = key.wheel.direction === 'up' ? -1 : 1;
-        const current = Math.max(0, Math.min(maximum, previous + change));
-        if (current !== previous) {
-          this.surface.turnRailCardOffset = current;
-          this.scheduleDraw();
-        }
-        return true;
-      }
-      if (this.renderer?.scrollCodePanel?.(key, this.surface)) {
-        if (typeof this.scheduleDraw === 'function') this.scheduleDraw(); else this.draw();
-        return true;
-      }
-      if (this.renderer?.scrollThinkingPanel?.(key, this.surface)) {
-        if (typeof this.scheduleDraw === 'function') this.scheduleDraw(); else this.draw();
-        return true;
-      }
-
-      return handleViewportWheel(key, viewport, this.surface, this);
-    }
-
-    if (!viewport) return false;
-
-    const clearTurnRailFocus = () => {
-      if (!this.surface) return;
-      this.surface.activeTurnIndex = null;
-      this.surface.hoveredTurnIndex = null;
-      this.surface.hoveredTurnAnchorY = null;
-    };
-
-    if (key.name === 'pageup') {
-      clearTurnRailFocus();
-      if (key.shift) viewport.toTop(); else viewport.pageUp();
-      return true;
-    }
-    if (key.name === 'pagedown') {
-      clearTurnRailFocus();
-      // Shift+PgDn is the way back to following, and it is spelled out in the
-      // affordance the surface draws while the view is held away.
-      if (key.shift) viewport.toBottom(); else viewport.pageDown();
-      return true;
-    }
-    if (key.shift && key.name === 'up') {
-      if (!this.editor.isEmpty) return false;
-      clearTurnRailFocus();
-      viewport.lineUp();
-      return true;
-    }
-    if (key.shift && key.name === 'down') {
-      if (!this.editor.isEmpty) return false;
-      clearTurnRailFocus();
-      viewport.lineDown();
-      return true;
-    }
-    if (key.alt && key.ctrl && key.name === 'u') {
-      clearTurnRailFocus();
-      viewport.halfPageUp();
-      return true;
-    }
-    if (key.alt && key.ctrl && key.name === 'd') {
-      clearTurnRailFocus();
-      viewport.halfPageDown();
-      return true;
-    }
-
-    // Jump by structure, not by rows. The transcript knows where each frame
-    // starts, so `,`/`.` step through tool calls and the shifted `<`/`>` on the
-    // same two physical keys step through exchanges — a bigger jump on the
-    // bigger key press.
-    //
-    // These are alt-modified because a bare bracket is a character the user is
-    // entitled to type; the plan's `[`/`]` could not be bound at all, and
-    // alt+[ is worse than unbound — ESC [ IS the CSI introducer, so it is
-    // indistinguishable from the start of an escape sequence.
-    const jumpViewport = (direction, kinds) => {
-      clearTurnRailFocus();
-      viewport.jump(direction, kinds);
-      return true;
-    };
-    if (key.alt && key.name === ',') return jumpViewport(-1, ['step']);
-    if (key.alt && key.name === '.') return jumpViewport(1, ['step']);
-    // Exchanges are marked by the USER's message, not by the turn footer. Both
-    // sit at almost the same seam — a footer is immediately followed by the next
-    // question — so accepting either made the jump land twice two rows apart
-    // instead of once per exchange.
-    if ((key.alt && key.name === '[') || (key.alt && key.name === '<')) return jumpViewport(-1, ['user']);
-    if ((key.alt && key.name === ']') || (key.alt && key.name === '>')) return jumpViewport(1, ['user']);
-
-    if (key.alt && key.name === 'u') { this.offerUndo(); return true; }
-
-    return false;
-  }
-
-  /**
-   * OFFER the undo for the restore point you are looking at. Never perform it.
-   *
-   * The rail marks every restore point, which makes scrolling back a way of
-   * finding somewhere to roll back TO — and that is worth nothing if reaching it
-   * means remembering a command. This puts the command in the input line for
-   * review; it does not run it, and it does not overwrite a message you were
-   * part-way through typing.
-   *
-   * `/undo` is preview-by-default and needs `--apply` to write, so even the
-   * accidental path here is a read. That is deliberate: a single keystroke may
-   * not be able to overwrite a day's work.
-   *
-   * WHAT THIS IS NOT: undo for *exactly* that point. `/undo` takes a task, not a
-   * checkpoint id, so there is no way to ask for "the state at this marker"
-   * without changing restore semantics — which is not a terminal-UI change and
-   * is not being smuggled into one. The notice says which step the marker is, so
-   * the choice is at least informed.
-   */
-  offerUndo() {
-    const surface = this.surface;
-    if (!surface) return;
-    const width = surface.viewport.width;
-    const marks = surface.transcript.markers(width).filter((m) => m.kind === 'checkpoint');
-    if (marks.length === 0) {
-      this.notice = 'no restore points in this session yet';
-      return;
-    }
-
-    const top = surface.viewport.scrollTop;
-    const bottom = top + surface.viewport.height;
-    const onScreen = marks.filter((m) => m.row >= top && m.row < bottom);
-    const above = marks.filter((m) => m.row < top);
-    const mark = onScreen.length ? onScreen[onScreen.length - 1] : (above.pop() || marks[0]);
-    const meta = mark.meta || {};
-
-    const where = meta.path ? this.sanitizeSingleLine(shortenHome(meta.path)) : 'files changed this task';
-    const rawStep = meta.step == null ? '' : this.sanitizeSingleLine(meta.step);
-    const step = rawStep ? ` at step ${rawStep}` : '';
-
-    if (this.editor.isEmpty) {
-      this.editor.setText('/undo');
-      this.notice = `restore point${step} ${GLYPHS.dot} ${where} ${GLYPHS.dot} enter previews, --apply writes`;
-    } else {
-      // Their draft is theirs. Say what is there and leave the line alone.
-      this.notice = `restore point${step} ${GLYPHS.dot} ${where} ${GLYPHS.dot} run /undo to preview`;
-    }
-  }
-
-  sanitizeSingleLine(value) {
-    return value == null ? '' : safeDisplay(String(value)).replace(/\s+/g, ' ').trim();
-  }
-
-  cutSelection() {
-    if (!this.editor.hasSelection) return false;
-    const text = this.editor.getSelectedText();
-    writeClipboardSync(text);
-    this.editor.killRing = text;
-    this.editor.deleteSelection();
-    this.notice = `cut selection (${text.length} chars) to clipboard`;
-    this.refreshCompletion();
-    return true;
-  }
-
-  handleCtrlC() {
-    handlePromptCtrlC(
-      this,
-      () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`],
-      CTRL_C_WINDOW_MS
-    );
-  }
-
-  handleEscape() {
-    handlePromptEscape(
-      this,
-      () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]
-    );
-  }
-
-  interrupt() {
-    triggerTurnInterrupt(
-      this,
-      () => [`${paint('warn', GLYPHS.cross)} ${dim('interrupted')}`]
-    );
-  }
-
-  /** Show the last tool output in full, above the prompt. */
-  expand() {
-    this.erase();
-    this.onExpand();
-    this.notice = '';
-  }
-
-  clearScreen() {
-    // On the Stage, ctrl+L means what it means in a terminal: the screen goes
-    // blank and your history is still behind you. Clearing the transcript alone
-    // would destroy the session record, so the surface prints it through into
-    // real scrollback first and then starts the band clean. It is also the
-    // escape hatch for getting a transcript out of the band without exiting.
-    if (this.surface) { this.surface.flushAndClear(); return; }
-
-    this.erase();
-    // The one clear Causyne may perform: the user pressed ctrl+L and asked for it.
-    // UX-01 forbids clearing the terminal on the app's own initiative.
-    this.writeControl('\x1b[2J\x1b[H');
-    this.drawnRows = 0;
-    this.cursorRow = 0;
-  }
-
-  historyOrMove(direction) {
-    // Inside a multi-line buffer the arrows move the cursor; history is only
-    // reachable from the edge, which is what every shell does.
-    if (direction === -1 && this.editor.line > 0) return this.editor.moveUp();
-    if (direction === 1 && this.editor.line < this.editor.lines.length - 1) return this.editor.moveDown();
-
-    const text = direction === -1
-      ? this.history.previous(this.editor.getText())
-      : this.history.next();
-    if (text === null || text === undefined) return;
-    this.editor.setText(text);
-  }
-
-  // -------------------------------------------------------------------------
-  // Completion
-  // -------------------------------------------------------------------------
-
-  /** A completed scan must refresh the currently displayed @ picker. */
-  bindFileIndex(index) {
-    if (typeof this._unsubscribeFileIndex === 'function') this._unsubscribeFileIndex();
-    this._unsubscribeFileIndex = index.subscribe(() => {
-      // Ignore a late callback from a previous workspace or a dismissed prompt.
-      if (this.index !== index || !this.active) return;
-      const trigger = detectTrigger(this.editor.getText(), this.cursorOffset());
-      if (!trigger || trigger.kind !== 'file') return;
-      this.openCompletion(false);
-      if (index.truncated) this.notice = 'Workspace file index reached its safety limit; narrow the project root.';
-      else if (this.notice === 'Indexing workspace files…') this.notice = '';
-      this.scheduleDraw();
-    });
-    void index.ensure();
-  }
-
-  /** Dynamically re-target the prompt root and optional focused subproject. */
-  setWorkingRoot(newRoot, focusDir = null) {
-    if (typeof this._unsubscribeFileIndex === 'function') this._unsubscribeFileIndex();
-    this.index?.dispose();
-    this.root = newRoot;
-    this.focusDir = focusDir;
-    this.index = new FileIndex(newRoot);
-    this.bindFileIndex(this.index);
-    const trigger = detectTrigger(this.editor.getText(), this.cursorOffset());
-    if (trigger?.kind === 'file') this.openCompletion(false);
-  }
-
-  cursorOffset() {
-    // The editor stores Unicode code points; String.slice() in the completion
-    // provider expects UTF-16 code units. Count units at this API boundary.
-    const before = this.editor.lines.slice(0, this.editor.line)
-      .reduce((total, line) => total + line.join('').length + 1, 0);
-    return before + this.editor.lines[this.editor.line]
-      .slice(0, this.editor.col).join('').length;
-  }
-
-  openCompletion(force = false) {
-    const text = this.editor.getText();
-    const result = suggest(text, this.cursorOffset(), {
-      root: this.root,
-      index: this.index,
-      focusDir: this.focusDir
-    });
-    if (!result) {
-      if (force) this.notice = 'nothing to complete here';
-      // Close a picker whose trigger has gone.
-      this.completion = null;
-      return;
-    }
-    this.completion = result;
-    this.selected = 0;
-  }
-
-  /** Re-run completion after an edit; close it when the trigger is gone. */
-  refreshCompletion() {
-    if (!this.completion) {
-      const text = this.editor.getText();
-      const offset = this.cursorOffset();
-      const opens = Boolean(detectTrigger(text, offset));
-      if (opens) this.openCompletion(false);
-      return;
-    }
-    this.openCompletion(false);
-    if (this.completion) this.selected = Math.min(this.selected, this.completion.items.length - 1);
-  }
-
-  /**
-   * Is the only suggestion the thing that is already typed?
-   *
-   * `/skill mine` offers exactly one completion — `mine` — which is what the
-   * user has already written. Accepting it changes nothing, refreshCompletion()
-   * immediately reopens the picker on the same text, and Enter becomes a key
-   * that can never submit. The command was unreachable.
-   *
-   * openclaw solves this with shouldSubmitExactArgumentCompletion
-   * (src/tui/commands.ts): when the sole completion equals the argument text,
-   * submit instead of completing. Same rule here, extended to a whole command
-   * so `/undo` submits on the first Enter rather than the second.
-   *
-   * Deliberately NOT applied to file completion: there, accepting a directory
-   * that matches exactly is how you drill into it.
-   */
-  completionIsExact() {
-    if (!this.completion || this.completion.items.length !== 1) return false;
-    const [item] = this.completion.items;
-    if (this.completion.kind === 'command-argument') return item.value === this.completion.query;
-    if (this.completion.kind === 'command') return item.value === this.editor.getText();
-    return false;
-  }
-
-  handleCompletionKey(key) {
-    if (key.name === 'up') { this.moveSelection(-1); return true; }
-    if (key.name === 'down') { this.moveSelection(1); return true; }
-    // The wheel, PgUp and PgDn belong to the open picker. Letting them fall
-    // through scrolled the transcript behind a frozen menu.
-    if (key.name === 'wheel') {
-      const direction = key.wheel && key.wheel.direction;
-      if (direction === 'up') this.moveSelectionClamped(-1);
-      else if (direction === 'down') this.moveSelectionClamped(1);
-      this.scheduleDraw();
-      return true;
-    }
-    if (key.name === 'pageup' && !key.shift) {
-      this.moveSelectionClamped(-MAX_VISIBLE);
-      this.scheduleDraw();
-      return true;
-    }
-    if (key.name === 'pagedown' && !key.shift) {
-      this.moveSelectionClamped(MAX_VISIBLE);
-      this.scheduleDraw();
-      return true;
-    }
-    if (key.name === 'mouse') {
-      if (key.mouse && key.mouse.pressed && key.mouse.button === 0 && !isMouseMotion(key.sequence)) {
-        let item = null;
-        const hasZeroY = Number.isFinite(key.mouse.y);
-        const rawMouseRow = hasZeroY
-          ? Math.floor(key.mouse.y)
-          : (Number.isFinite(key.mouse.row) ? Math.floor(key.mouse.row) : NaN);
-        if (this.pickerLayout && Number.isFinite(rawMouseRow)) {
-          const stageHeight = this.surface?.stage?.height || this.out?.rows || process.stdout.rows || 24;
-          const termRows = Number.isFinite(this.out?.rows) && this.out.rows > 0
-            ? Math.floor(this.out.rows)
-            : stageHeight;
-          // KeyDecoder emits 0-based x/y screen coordinates; legacy unit tests pass 1-based row/col.
-          const promptTop = hasZeroY
-            ? Math.max(0, termRows - this.pickerLayout.totalPromptRows)
-            : Math.max(1, stageHeight - this.pickerLayout.totalPromptRows + 1);
-          const pickerTop = promptTop + this.pickerLayout.pickerStart;
-          const pickerBottom = pickerTop + this.pickerLayout.pickerCount - 1;
-          const mouseX = Number.isFinite(key.mouse.x) ? Math.floor(key.mouse.x) : NaN;
-          const mainW = this.surface
-            ? sessionMainWidth(this.surface.width, Boolean(this.surface.homeInfo), this.surface.env)
-            : Infinity;
-          const inMainColumn = !Number.isFinite(mouseX) || (mouseX >= 0 && mouseX < mainW);
-
-          if (inMainColumn && rawMouseRow >= pickerTop && rawMouseRow <= pickerBottom) {
-            // The picker renders a scrolled window (renderPicker); a click maps
-            // to the item under the cursor, not to the first page of items.
-            const items = Array.isArray(this.completion.items) ? this.completion.items : [];
-            const total = items.length;
-            const windowStart = Math.max(0, Math.min(this.selected - MAX_VISIBLE + 1, total - MAX_VISIBLE));
-            const index = windowStart + (rawMouseRow - pickerTop);
-            if (index >= 0 && index < total) {
-              this.selected = index;
-              item = items[index];
-            }
-          } else {
-            // Click outside picker closes it
+    openCompletion(force = false) {
+        const text = this.editor.getText();
+        const result = suggest(text, this.cursorOffset(), {
+            root: this.root,
+            index: this.index,
+            focusDir: this.focusDir
+        });
+        if (!result) {
+            if (force)
+                this.notice = 'nothing to complete here';
             this.completion = null;
+            return;
+        }
+        this.completion = result;
+        this.selected = 0;
+    }
+    refreshCompletion() {
+        if (!this.completion) {
+            const text = this.editor.getText();
+            const offset = this.cursorOffset();
+            const opens = Boolean(detectTrigger(text, offset));
+            if (opens)
+                this.openCompletion(false);
+            return;
+        }
+        this.openCompletion(false);
+        if (this.completion)
+            this.selected = Math.min(this.selected, this.completion.items.length - 1);
+    }
+    completionIsExact() {
+        if (!this.completion || this.completion.items.length !== 1)
+            return false;
+        const item = this.completion.items[0];
+        if (!item)
+            return false;
+        if (this.completion.kind === 'command-argument')
+            return item.value === this.completion.query;
+        if (this.completion.kind === 'command')
+            return item.value === this.editor.getText();
+        return false;
+    }
+    handleCompletionKey(key) {
+        if (!this.completion)
+            return false;
+        if (key.name === 'up') {
+            this.moveSelection(-1);
+            return true;
+        }
+        if (key.name === 'down') {
+            this.moveSelection(1);
+            return true;
+        }
+        if (key.name === 'wheel') {
+            const direction = key.wheel && key.wheel.direction;
+            if (direction === 'up')
+                this.moveSelectionClamped(-1);
+            else if (direction === 'down')
+                this.moveSelectionClamped(1);
             this.scheduleDraw();
             return true;
-          }
-        } else {
-          const items = Array.isArray(this.completion.items) ? this.completion.items : [];
-          item = items[this.selected];
         }
-
-        if (item) {
-          if (this.completion.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
-            const selectedCommand = this.completion.kind === 'command'
-              ? item.value : `/${this.completion.command} ${item.value}`;
-            this.runInlineSlashSelection(selectedCommand);
+        if (key.name === 'pageup' && !key.shift) {
+            this.moveSelectionClamped(-MAX_VISIBLE);
+            this.scheduleDraw();
             return true;
-          }
-          if (this.completion.kind === 'command') {
-            // A skill entry goes onto the line so the user can say what to do
-            // with it; clicking it used to invoke it immediately with no task.
-            if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
-              this.acceptCompletion();
-              return true;
+        }
+        if (key.name === 'pagedown' && !key.shift) {
+            this.moveSelectionClamped(MAX_VISIBLE);
+            this.scheduleDraw();
+            return true;
+        }
+        if (key.name === 'mouse') {
+            if (key.mouse && key.mouse.pressed && key.mouse.button === 0 && !isMouseMotion(key.sequence)) {
+                let item = null;
+                const hasZeroY = Number.isFinite(key.mouse.y);
+                const rawMouseRow = hasZeroY
+                    ? Math.floor(key.mouse.y)
+                    : (Number.isFinite(key.mouse.row) ? Math.floor(key.mouse.row) : Number.NaN);
+                if (this.pickerLayout && Number.isFinite(rawMouseRow)) {
+                    const stageHeight = this.surface?.stage?.height || this.out?.rows || process.stdout.rows || 24;
+                    const termRows = Number.isFinite(this.out?.rows) && this.out.rows > 0
+                        ? Math.floor(this.out.rows)
+                        : stageHeight;
+                    const promptTop = hasZeroY
+                        ? Math.max(0, termRows - this.pickerLayout.totalPromptRows)
+                        : Math.max(1, stageHeight - this.pickerLayout.totalPromptRows + 1);
+                    const pickerTop = promptTop + this.pickerLayout.pickerStart;
+                    const pickerBottom = pickerTop + this.pickerLayout.pickerCount - 1;
+                    const mouseX = Number.isFinite(key.mouse.x) ? Math.floor(key.mouse.x) : Number.NaN;
+                    const mainW = this.surface
+                        ? sessionMainWidth(this.surface.width, Boolean(this.surface.homeInfo), this.surface.env)
+                        : Infinity;
+                    const inMainColumn = !Number.isFinite(mouseX) || (mouseX >= 0 && mouseX < mainW);
+                    if (inMainColumn && rawMouseRow >= pickerTop && rawMouseRow <= pickerBottom) {
+                        const items = Array.isArray(this.completion.items) ? this.completion.items : [];
+                        const total = items.length;
+                        const windowStart = Math.max(0, Math.min(this.selected - MAX_VISIBLE + 1, total - MAX_VISIBLE));
+                        const index = windowStart + (rawMouseRow - pickerTop);
+                        if (index >= 0 && index < total) {
+                            this.selected = index;
+                            item = items[index];
+                        }
+                    }
+                    else {
+                        this.completion = null;
+                        this.scheduleDraw();
+                        return true;
+                    }
+                }
+                else {
+                    const items = Array.isArray(this.completion.items) ? this.completion.items : [];
+                    item = items[this.selected];
+                }
+                if (item) {
+                    if (this.completion.kind !== 'file' && this.completion.inline) {
+                        const selectedCommand = this.completion.kind === 'command'
+                            ? item.value : `/${this.completion.command} ${item.value}`;
+                        this.runInlineSlashSelection(selectedCommand);
+                        return true;
+                    }
+                    if (this.completion.kind === 'command') {
+                        if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
+                            this.acceptCompletion();
+                            return true;
+                        }
+                        this.submitPickedCommand(item.value);
+                        return true;
+                    }
+                    if (this.completion.kind === 'command-argument') {
+                        this.submitPickedCommand(`/${this.completion.command} ${item.value}`);
+                        return true;
+                    }
+                    this.acceptCompletion();
+                    return true;
+                }
             }
-            this.submitPickedCommand(item.value);
             return true;
-          }
-          if (this.completion.kind === 'command-argument') {
-            this.submitPickedCommand(`/${this.completion.command} ${item.value}`);
+        }
+        if (key.name === 'enter' && !key.alt && !key.shift) {
+            const item = this.completion.items && this.completion.items[this.selected];
+            if (item && this.completion.kind !== 'file' && this.completion.inline) {
+                const selectedCommand = this.completion.kind === 'command'
+                    ? item.value : `/${this.completion.command} ${item.value}`;
+                this.runInlineSlashSelection(selectedCommand);
+                return true;
+            }
+            if (this.completion.kind === 'command' && item) {
+                if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
+                    this.acceptCompletion();
+                    return true;
+                }
+                this.submitPickedCommand(item.value);
+                return true;
+            }
+            if (this.completionIsExact()) {
+                this.completion = null;
+                return false;
+            }
+            this.acceptCompletion();
             return true;
-          }
-          this.acceptCompletion();
-          return true;
         }
-      }
-      return true;
-    }
-    if (key.name === 'enter' && !key.alt && !key.shift) {
-      const item = this.completion.items && this.completion.items[this.selected];
-      if (item && this.completion.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
-        const selectedCommand = this.completion.kind === 'command'
-          ? item.value : `/${this.completion.command} ${item.value}`;
-        this.runInlineSlashSelection(selectedCommand);
-        return true;
-      }
-      if (this.completion.kind === 'command' && item) {
-        if (typeof item.value === 'string' && (item.value.startsWith('/skills ') || item.value.startsWith('/skill '))) {
-          this.acceptCompletion();
-          return true;
+        if (key.name === 'tab') {
+            if (this.completion.kind !== 'file' && this.completion.inline) {
+                this.notice = 'Press Enter to run the selected command; your unsent draft is preserved.';
+                this.scheduleDraw();
+                return true;
+            }
+            this.acceptCompletion();
+            return true;
         }
-        // Instant execution on single Enter for any pure slash command
-        this.submitPickedCommand(item.value);
-        return true;
-      }
-      if (this.completionIsExact()) {
-        // Nothing left to complete. Close the picker and let the key through to
-        // submit, rather than re-offering what is already on the line.
-        this.completion = null;
+        if (key.name === 'escape') {
+            const dismissed = this.completion;
+            this.completion = null;
+            if (!(dismissed.kind !== 'file' && dismissed.inline) && /^\s*\/[a-z0-9_?-]*$/i.test(this.editor.getText())) {
+                this.editor.clear();
+            }
+            this.scheduleDraw();
+            return true;
+        }
         return false;
-      }
-      this.acceptCompletion();
-      return true;
     }
-    if (key.name === 'tab') {
-      if (this.completion?.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
-        // Tab must never silently turn an unsent message into a local command.
-        this.notice = 'Press Enter to run the selected command; your unsent draft is preserved.';
-        this.scheduleDraw();
-        return true;
-      }
-      this.acceptCompletion();
-      return true;
+    moveSelection(direction) {
+        const count = Array.isArray(this.completion?.items) ? this.completion.items.length : 0;
+        if (count === 0)
+            return;
+        this.selected = (((this.selected + direction) % count) + count) % count;
     }
-    if (key.name === 'escape') {
-      const dismissed = this.completion;
-      this.completion = null;
-      // Only discard a standalone leading command token. Never erase a
-      // longer draft just because its first character happens to be /.
-      if (!dismissed?.inline && /^\s*\/[a-z0-9_?-]*$/i.test(this.editor.getText())) {
-        this.editor.clear();
-      }
-      this.scheduleDraw();
-      return true;
+    moveSelectionClamped(delta) {
+        const count = Array.isArray(this.completion?.items) ? this.completion.items.length : 0;
+        if (count === 0)
+            return;
+        this.selected = Math.max(0, Math.min(count - 1, this.selected + delta));
     }
-    return false;
-  }
-
-  moveSelection(direction) {
-    const count = Array.isArray(this.completion?.items) ? this.completion.items.length : 0;
-    if (count === 0) return;
-    this.selected = (((this.selected + direction) % count) + count) % count;
-  }
-
-  /** Move without wrapping: a wheel or page key stops at either end. */
-  moveSelectionClamped(delta) {
-    const count = Array.isArray(this.completion?.items) ? this.completion.items.length : 0;
-    if (count === 0) return;
-    this.selected = Math.max(0, Math.min(count - 1, this.selected + delta));
-  }
-
-  /**
-   * Run a command chosen in the picker through the same path as typing it.
-   *
-   * deliver() bypassed submit(): during a running turn a picked `/stop` was
-   * queued behind the very turn it was meant to stop, and the command never
-   * reached input history.
-   */
-  submitPickedCommand(value) {
-    this.completion = null;
-    this.editor.setText(value);
-    this.submit();
-  }
-
-  /**
-   * Execute an explicitly selected slash action from anywhere in a draft.
-   * Ordinary commands run through submit() with the unsent draft suspended;
-   * selecting a compiled skill applies it to the draft as its instruction.
-   * Neither path changes parseCommand() or interprets ambient prose as control.
-   */
-  runInlineSlashSelection(value) {
-    const trigger = this.completion;
-    if (!trigger?.inline || (trigger.kind !== 'command' && trigger.kind !== 'command-argument')) {
-      this.submitPickedCommand(value);
-      return;
+    submitPickedCommand(value) {
+        this.completion = null;
+        this.editor.setText(value);
+        this.submit();
     }
-
-    const currentText = this.editor.getText();
-    const currentCursor = this.cursorOffset();
-    let remaining;
-    try {
-      remaining = removeInlineSlashToken(currentText, currentCursor, trigger);
-    } catch (error) {
-      // The draft might have changed since the last render. Never execute a
-      // command selected against stale input or erase user-authored text.
-      this.notice = 'The command text changed. Reopen the / menu and select again.';
-      this.completion = null;
-      this.scheduleDraw();
-      return;
-    }
-
-    const consumeDraft = isInlineSkillInvocation(value) && remaining.text.trim().length > 0;
-    const commandText = consumeDraft ? `${value} ${remaining.text.trim()}` : value;
-
-    // submit() itself protects the queue, but return early here to avoid
-    // discarding the unfinished inline token when the command was not queued.
-    if (this.busy && this.queue.length >= 32 && !/^\/(?:stop|interrupt)$/i.test(commandText)) {
-      this.notice = '32 queued messages: command not submitted; your draft is unchanged.';
-      this.scheduleDraw();
-      return;
-    }
-
-    this.completion = null;
-    try {
-      this.editor.setText(commandText);
-      this.submit(); // existing history, permission and command-dispatch boundary
-    } finally {
-      this.editor.setText(consumeDraft ? '' : remaining.text);
-      if (!consumeDraft) this.setCursorOffset(remaining.cursor);
-      this.completion = null;
-      this.scheduleDraw();
-    }
-  }
-
-  acceptCompletion() {
-    const item = this.completion.items[this.selected];
-    if (!item) { this.completion = null; return; }
-    const applied = applyCompletion(
-      this.editor.getText(), this.cursorOffset(), this.completion, item
-    );
-    this.editor.setText(applied.text);
-    // setText parks the cursor at the end; put it back where the insert ended.
-    this.setCursorOffset(applied.cursor);
-    this.completion = null;
-    this.refreshCompletion();
-  }
-
-  setCursorOffset(offset) {
-    // Convert completion's UTF-16 offset back into the editor's code-point
-    // column, never splitting a surrogate pair or moving to the wrong row.
-    let remaining = Math.max(0, Number.isFinite(offset) ? offset : 0);
-    for (let index = 0; index < this.editor.lines.length; index++) {
-      const line = this.editor.lines[index];
-      const units = line.join('').length;
-      if (remaining <= units || index === this.editor.lines.length - 1) {
-        let column = 0;
-        let consumed = 0;
-        while (column < line.length && consumed + line[column].length <= remaining) {
-          consumed += line[column].length;
-          column++;
+    runInlineSlashSelection(value) {
+        const trigger = this.completion;
+        if (!trigger || trigger.kind === 'file' || !trigger.inline) {
+            this.submitPickedCommand(value);
+            return;
         }
-        this.editor.line = index;
-        this.editor.col = column;
-        return;
-      }
-      remaining -= units + 1;
+        const currentText = this.editor.getText();
+        const currentCursor = this.cursorOffset();
+        let remaining;
+        try {
+            remaining = removeInlineSlashToken(currentText, currentCursor, trigger);
+        }
+        catch {
+            this.notice = 'The command text changed. Reopen the / menu and select again.';
+            this.completion = null;
+            this.scheduleDraw();
+            return;
+        }
+        const consumeDraft = isInlineSkillInvocation(value) && remaining.text.trim().length > 0;
+        const commandText = consumeDraft ? `${value} ${remaining.text.trim()}` : value;
+        if (this.busy && this.queue.length >= 32 && !/^\/(?:stop|interrupt)$/i.test(commandText)) {
+            this.notice = '32 queued messages: command not submitted; your draft is unchanged.';
+            this.scheduleDraw();
+            return;
+        }
+        this.completion = null;
+        try {
+            this.editor.setText(commandText);
+            this.submit();
+        }
+        finally {
+            this.editor.setText(consumeDraft ? '' : remaining.text);
+            if (!consumeDraft)
+                this.setCursorOffset(remaining.cursor);
+            this.completion = null;
+            this.scheduleDraw();
+        }
     }
-  }
-
-  // -------------------------------------------------------------------------
-  // Drawing
-  // -------------------------------------------------------------------------
-
-  /** Preview pending input without falsely adding unsent text to the transcript. */
-  queuedPreviewRows(width) {
-    if (this.queue.length === 0) return [];
-    const last = this.queue[this.queue.length - 1];
-    const text = typeof last === 'string' ? last
-      : last && typeof last.text === 'string' ? last.text : 'pending action';
-    const prefix = `  Queued (${this.queue.length}): `;
-    const available = Math.max(0, width - visibleWidth(prefix) - 2);
-    // Do not reformat megabyte-sized pastes on every running-turn redraw.
-    const preview = safeDisplay(text.slice(0, 160).replace(/\s+/g, ' ').trim());
-    return [dim(prefix + truncate(preview, available, GLYPHS.ellipsis))];
-  }
-
-  /**
-   * Clamp every row so the terminal can never wrap one of them.
-   *
-   * THE invariant of the live region. erase() walks back up `cursorRow` rows and
-   * clears with \x1b[J, and both numbers are LOGICAL row counts. A row wider
-   * than the terminal occupies TWO physical rows, so the walk lands one row too
-   * low and \x1b[J then clears from the middle of the block — leaving the rows
-   * above it on screen as debris. That is the doubled hint row and the trail of
-   * half-drawn glyphs in the reported screenshot.
-   *
-   * Measuring correctly is necessary but not sufficient: every glyph in GLYPHS is
-   * East Asian Ambiguous (see text.js), so the measurement can legitimately
-   * disagree with the terminal by a column. Cutting to width - 1 makes a wrap
-   * impossible whatever the measurement says, and leaves the last column free so
-   * a row that lands exactly on the edge cannot trip the terminal's deferred-wrap
-   * state either.
-   *
-   * truncate() is escape-aware and closes an open SGR at the cut, so a clamped
-   * row cannot leak colour into the row below.
-   */
-  clampRows(rows, width) {
-    const limit = Math.max(1, width - 1);
-    return rows.map((row) => (visibleWidth(row) <= limit ? row : truncate(row, limit, '')));
-  }
-
-  /** Remove everything this prompt drew, leaving the cursor where it started. */
-  erase() {
-    // Nothing of ours is on the terminal in stage mode — the band is painted by
-    // a diff and the previous frame is a row array, not screen state. Walking
-    // up and clearing here would erase rows the Stage owns and then paint over
-    // them, which is the collision this method exists to prevent.
-    if (this.surface) return;
-    if (this.drawnRows === 0) {
-      // Nothing of OURS is on screen — but the caret may still be sitting at a
-      // non-zero column, because whoever wrote last left it there. Writing the
-      // block from there puts its first row at that offset, which is how a
-      // second `▏` appeared beside the first on the same row. Returning to
-      // column 0 costs one byte and removes the whole class.
-      this.out.write('\r');
-      return;
+    acceptCompletion() {
+        if (!this.completion)
+            return;
+        const item = this.completion.items[this.selected];
+        if (!item) {
+            this.completion = null;
+            return;
+        }
+        const applied = applyCompletion(this.editor.getText(), this.cursorOffset(), this.completion, item);
+        this.editor.setText(applied.text);
+        this.setCursorOffset(applied.cursor);
+        this.completion = null;
+        this.refreshCompletion();
     }
-    if (this.cursorRow > 0) this.out.write(`\x1b[${this.cursorRow}A`);
-    this.out.write('\r\x1b[J');
-    this.drawnRows = 0;
-    this.cursorRow = 0;
-  }
-
-  draw() {
-    if (this.resizeTimer) return;
-    if (!this.active) return;
-    this.erase();
-
-    const width = this.width();
-    if (this.layer) return this.drawLayer(width);
-
-    // The input is a BLOCK, not a line.
-    //
-    // It used to be a bare `▸ ` prefix, so the place the user types looked like
-    // one more row of shell output among all the others. opencode gives its
-    // prompt a left border in the agent's colour and a filled surface
-    // (component/prompt/index.tsx:1353), which is what makes the input read as a
-    // surface you are writing INTO. Every row of the block is inset by the same
-    // gutter, so the caret column is a constant rather than a special case for
-    // row 0 — which is also one fewer thing for erase() to get wrong.
-    // Reserve one editor cell for the caret. The left bar and gutter are
-    // consumed by barBlock; the remaining full-width body is not all editable.
-    // This prevents a full sentence from placing the cursor beyond the fill.
-    const { boxWidth, inset, editorWidth } = composerGeometry(
-      width, visibleWidth(GLYPHS.barHeavy || GLYPHS.bar), GUTTER
-    );
-    const inner = editorWidth;
-    const layout = this.editor.render(editorWidth, '');
-
-    // Scroll the editor internally rather than growing without bound: keep a
-    // window of MAX_PROMPT_ROWS that always contains the caret.
-    const start = Math.max(0, Math.min(layout.cursorRow - MAX_PROMPT_ROWS + 1,
-      layout.rows.length - MAX_PROMPT_ROWS));
-    const top = Math.max(0, start);
-    const window = layout.rows.slice(top, top + MAX_PROMPT_ROWS);
-    const caretRow = layout.cursorRow - top;
-    let body = window.slice();
-
-    if (!this.editor.isEmpty) {
-      body = body.map((line) => {
-        if (typeof line !== 'string' || !line.includes('[Image ')) return line;
-        return line.replace(/\[Image (\d+)\]/g, (_m, num) => {
-          return paint('warn', bold(`[Image ${num}]`));
+    setCursorOffset(offset) {
+        let remaining = Math.max(0, Number.isFinite(offset) ? offset : 0);
+        for (let index = 0; index < this.editor.lines.length; index++) {
+            const line = this.editor.lines[index] ?? [];
+            const units = line.join('').length;
+            if (remaining <= units || index === this.editor.lines.length - 1) {
+                let column = 0;
+                let consumed = 0;
+                while (column < line.length && consumed + (line[column]?.length ?? 0) <= remaining) {
+                    consumed += line[column]?.length ?? 0;
+                    column++;
+                }
+                this.editor.line = index;
+                this.editor.col = column;
+                return;
+            }
+            remaining -= units + 1;
+        }
+    }
+    // -------------------------------------------------------------------------
+    // Drawing
+    // -------------------------------------------------------------------------
+    queuedPreviewRows(width) {
+        if (this.queue.length === 0)
+            return [];
+        const last = this.queue[this.queue.length - 1];
+        const text = typeof last === 'string' ? last
+            : last && typeof last.text === 'string' ? last.text : 'pending action';
+        const prefix = `  Queued (${this.queue.length}): `;
+        const available = Math.max(0, width - visibleWidth(prefix) - 2);
+        const preview = safeDisplay(text.slice(0, 160).replace(/\s+/g, ' ').trim());
+        return [dim(prefix + truncate(preview, available, GLYPHS.ellipsis))];
+    }
+    clampRows(rows, width) {
+        const limit = Math.max(1, width - 1);
+        return rows.map((row) => (visibleWidth(row) <= limit ? row : truncate(row, limit, '')));
+    }
+    erase() {
+        if (this.surface)
+            return;
+        if (this.drawnRows === 0) {
+            this.out.write('\r');
+            return;
+        }
+        if (this.cursorRow > 0)
+            this.out.write(`\x1b[${this.cursorRow}A`);
+        this.out.write('\r\x1b[J');
+        this.drawnRows = 0;
+        this.cursorRow = 0;
+    }
+    draw() {
+        if (this.resizeTimer)
+            return;
+        if (!this.active)
+            return;
+        this.erase();
+        const width = this.width();
+        if (this.layer) {
+            this.drawLayer(width);
+            return;
+        }
+        const { boxWidth, inset, editorWidth } = composerGeometry(width, visibleWidth(GLYPHS.barHeavy || GLYPHS.bar), GUTTER);
+        const inner = editorWidth;
+        const layout = this.editor.render(editorWidth, '');
+        const start = Math.max(0, Math.min(layout.cursorRow - MAX_PROMPT_ROWS + 1, layout.rows.length - MAX_PROMPT_ROWS));
+        const top = Math.max(0, start);
+        const windowRows = layout.rows.slice(top, top + MAX_PROMPT_ROWS);
+        const caretRow = layout.cursorRow - top;
+        let body = windowRows.slice();
+        if (!this.editor.isEmpty) {
+            body = body.map((line) => {
+                if (typeof line !== 'string' || !line.includes('[Image '))
+                    return line;
+                return line.replace(/\[Image (\d+)\]/g, (_m, num) => {
+                    return paint('warn', bold(`[Image ${num}]`));
+                });
+            });
+        }
+        if (this.editor.isEmpty && !this.completion) {
+            const idle = fitHints([`try "${this.example}"`, '/ commands', '@ files', '^V image'], Math.max(8, inner), 'ask anything');
+            body = [dim(this.busy ? 'type to queue a message…' : idle)];
+        }
+        const agent = this.completion ? null : this.agentRow(inner);
+        if (agent)
+            body = body.concat(['', agent]);
+        const rows = Number(this.out && this.out.rows);
+        const roomy = !Number.isFinite(rows) || rows >= ROOMY_TERMINAL_ROWS;
+        const padTop = (!Number.isFinite(rows) || rows >= CRAMPED_TERMINAL_ROWS) ? PROMPT_PAD_TOP : 0;
+        const padBottom = roomy ? PROMPT_PAD_BOTTOM : 0;
+        const padded = new Array(padTop).fill('')
+            .concat(body, new Array(padBottom).fill(''));
+        const boxRows = barBlock(padded, {
+            width: boxWidth,
+            role: this.busy ? 'accent' : 'user',
+            filled: true,
+            surface: 'surface',
+            punctuate: false
         });
-      });
+        const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, boxWidth)
+            : this.statusCard !== null ? this.statusCardRows(boxWidth) : [];
+        const planRows = this.planRows(width);
+        const pickerRows = this.completion ? this.pickerRows(width) : [];
+        this.pickerLayout = this.completion ? {
+            pickerStart: usageCardRows.length + planRows.length + boxRows.length,
+            pickerCount: pickerRows.length,
+            totalPromptRows: 0
+        } : null;
+        const queuedRows = this.queuedPreviewRows(width);
+        const cleanNotice = this.notice ? this.sanitizeSingleLine(this.notice) : '';
+        const noticeRows = cleanNotice ? [dim(`  ${cleanNotice}`)] : [];
+        const status = this.statusRow(width);
+        const gap = status.length > 0 ? new Array(FOOTER_GAP).fill('') : [];
+        const all = this.clampRows(usageCardRows.concat(planRows, boxRows, pickerRows, queuedRows, noticeRows, gap, status), width);
+        if (this.pickerLayout)
+            this.pickerLayout.totalPromptRows = all.length;
+        const availableWidth = this.surface?.composeAvailableWidth
+            ? this.surface.composeAvailableWidth()
+            : sessionMainWidth(this.surface?.width || terminalWidth(), false, this.surface?.env);
+        const positioned = this.surface
+            ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
+            : { rows: all, inset: 0 };
+        this.present(positioned.rows, usageCardRows.length + planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
     }
-
-    if (this.editor.isEmpty && !this.completion) {
-      const idle = fitHints([`try "${this.example}"`, '/ commands', '@ files', '^V image'], Math.max(8, inner), 'ask anything');
-      body = [dim(this.busy ? 'type to queue a message…' : idle)];
+    present(all, caretRow, caretCol) {
+        const rows = Array.isArray(all) ? all : [];
+        const maxRow = Math.max(0, rows.length - 1);
+        const safeRow = Number.isFinite(caretRow) ? Math.max(0, Math.min(maxRow, Math.floor(caretRow))) : 0;
+        const safeCol = Number.isFinite(caretCol) ? Math.max(0, Math.floor(caretCol)) : 0;
+        const hideCursor = Boolean(this.busy && this.editor.isEmpty);
+        if (this.surface) {
+            this.drawnRows = 0;
+            this.cursorRow = 0;
+            this.surface.present(rows, {
+                row: safeRow,
+                col: safeCol,
+                hideCursor,
+                modal: Boolean(this.layer),
+                inline: Boolean(this.layer && !isStartupDialog(this.surface))
+            });
+            return;
+        }
+        this.out.write(rows.join('\n'));
+        this.drawnRows = rows.length;
+        const below = rows.length - 1 - safeRow;
+        if (below > 0)
+            this.out.write(`\x1b[${below}A`);
+        this.cursorRow = safeRow;
+        this.out.write('\r');
+        if (safeCol > 0)
+            this.out.write(`\x1b[${safeCol}C`);
+        if (hideCursor) {
+            this.out.write('\x1b[?25l');
+        }
+        else {
+            this.out.write('\x1b[?25h');
+        }
     }
-
-    // The model line lives INSIDE the box, as its last row — except while a
-    // completion picker is open. The suggestions belong to the text being
-    // typed, and an ambient status row wedged between the two breaks that
-    // connection for no gain; opencode floats its autocomplete directly against
-    // the input for the same reason.
-    //
-    // A blank row separates the two. Without it the box is two lines of text
-    // touching, which reads as a list; the reference leaves a row of space and
-    // that is most of what makes it read as a surface you are typing into.
-    const agent = this.completion ? null : this.agentRow(inner);
-    if (agent) body = body.concat(['', agent]);
-
-    // Air at the top of the surface and at the bottom, with the caret moved down
-    // to match. The box is the thing the user is about to type into; it earns
-    // the room.
-    const rows = Number(this.out && this.out.rows);
-    const roomy = !Number.isFinite(rows) || rows >= ROOMY_TERMINAL_ROWS;
-    const padTop = (!Number.isFinite(rows) || rows >= CRAMPED_TERMINAL_ROWS) ? PROMPT_PAD_TOP : 0;
-    const padBottom = roomy ? PROMPT_PAD_BOTTOM : 0;
-
-    const padded = new Array(padTop).fill('')
-      .concat(body, new Array(padBottom).fill(''));
-    const boxRows = barBlock(padded, {
-      width: boxWidth,
-      role: this.busy ? 'accent' : 'user',
-      filled: true,
-      surface: 'surface',
-      punctuate: false
-    });
-
-    const usageCardRows = this.usageCard ? renderUsageCardRows(this.usageCard, boxWidth)
-      : this.statusCard !== null ? this.statusCardRows(boxWidth) : [];
-    const planRows = this.planRows(width);
-    const pickerRows = this.completion ? this.pickerRows(width) : [];
-    this.pickerLayout = this.completion ? {
-      pickerStart: usageCardRows.length + planRows.length + boxRows.length,
-      pickerCount: pickerRows.length,
-      totalPromptRows: 0
-    } : null;
-    const queuedRows = this.queuedPreviewRows(width);
-    const cleanNotice = this.notice ? this.sanitizeSingleLine(this.notice) : '';
-    const noticeRows = cleanNotice ? [dim(`  ${cleanNotice}`)] : [];
-
-    // And a row of air between the box and the footer. The picker and a notice
-    // belong to the input and stay welded to it — opencode floats its
-    // autocomplete directly against the prompt for the same reason — so the gap
-    // goes after them, immediately above the status row.
-    const status = this.statusRow(width);
-    const gap = status.length > 0 ? new Array(FOOTER_GAP).fill('') : [];
-
-    const all = this.clampRows(
-      usageCardRows.concat(planRows, boxRows, pickerRows, queuedRows, noticeRows, gap, status), width
-    );
-    if (this.pickerLayout) this.pickerLayout.totalPromptRows = all.length;
-
-    // Park the cursor where the user is typing, not at the end of the picker.
-    const availableWidth = this.surface?.composeAvailableWidth
-      ? this.surface.composeAvailableWidth()
-      : sessionMainWidth(this.surface?.width || terminalWidth(), false, this.surface?.env);
-    const positioned = this.surface
-      ? (this.surface.homeInfo ? centerRows(all, this.surface.width) : sessionRows(all, availableWidth))
-      : { rows: all, inset: 0 };
-    this.present(positioned.rows, usageCardRows.length + planRows.length + caretRow + padTop, layout.cursorCol + inset + positioned.inset);
-  }
-
-  /**
-   * Put the composed block on screen.
-   *
-   * The two draw paths used to end with the same eleven lines of cursor
-   * arithmetic; extracting it is what lets the Stage substitute itself for
-   * stdout without either path knowing. In stage mode the rows are handed to
-   * the surface, which stacks the transcript viewport above them and paints the
-   * whole band in one diff — so drawnRows/cursorRow stay at zero, because
-   * nothing of ours is on the terminal for erase() to walk back over.
-   */
-  present(all, caretRow, caretCol) {
-    const rows = Array.isArray(all) ? all : [];
-    const maxRow = Math.max(0, rows.length - 1);
-    const safeRow = Number.isFinite(caretRow) ? Math.max(0, Math.min(maxRow, Math.floor(caretRow))) : 0;
-    const safeCol = Number.isFinite(caretCol) ? Math.max(0, Math.floor(caretCol)) : 0;
-    const hideCursor = Boolean(this.busy && this.editor.isEmpty);
-    if (this.surface) {
-      this.drawnRows = 0;
-      this.cursorRow = 0;
-      this.surface.present(rows, { row: safeRow, col: safeCol, hideCursor,
-        modal: Boolean(this.layer), inline: Boolean(this.layer && !isStartupDialog(this.surface)) });
-      return;
+    attachSurface(surface) {
+        this.surface = surface || null;
+        if (!surface)
+            return;
+        surface.onDirty = () => this.scheduleDraw();
     }
-
-    this.out.write(rows.join('\n'));
-    this.drawnRows = rows.length;
-
-    const below = rows.length - 1 - safeRow;
-    if (below > 0) this.out.write(`\x1b[${below}A`);
-    this.cursorRow = safeRow;
-    this.out.write('\r');
-    if (safeCol > 0) this.out.write(`\x1b[${safeCol}C`);
-    if (hideCursor) {
-      this.out.write('\x1b[?25l');
-    } else {
-      this.out.write('\x1b[?25h');
+    commit(kind, produce) {
+        const clamped = (width) => this.clampRows(produce(width), width);
+        if (this.surface) {
+            this.surface.commit(kind, clamped);
+            return;
+        }
+        this.erase();
+        this.out.write(clamped(this.width()).join('\n') + '\n');
     }
-  }
-
-  /**
-   * Attach a Stage surface. From here on the prompt composes rows and this
-   * decides where they land.
-   */
-  attachSurface(surface) {
-    this.surface = surface || null;
-    if (!surface) return;
-    surface.onDirty = () => this.scheduleDraw();
-  }
-
-  /**
-   * Put a finished block into the transcript.
-   *
-   * `produce` must be a pure function of width — a stage frame is re-rendered
-   * on every resize, so anything it closes over must already be resolved. In
-   * scrollback mode it is called once, immediately, and printed.
-   */
-  commit(kind, produce) {
-    // clampRows() guarded the live region and nothing else, so a committed
-    // block could still be exactly terminal-width, wrap, and desynchronise the
-    // row count erase() walks back. The net belongs on both paths, not one.
-    const clamped = (width) => this.clampRows(produce(width), width);
-    if (this.surface) { this.surface.commit(kind, clamped); return; }
-    this.erase();
-    this.out.write(clamped(this.width()).join('\n') + '\n');
-  }
-
-  /** The live region while a dialog is up: the panel, then the status row. */
-  drawLayer(width) {
-    const preferredHeight = typeof this.layer.preferredHeight === 'function'
-      ? this.layer.preferredHeight()
-      : 14;
-    if (this.layer.messageActions && this.surface?.presentMessageActions) {
-      const availableWidth = this.surface.composeAvailableWidth
-        ? this.surface.composeAvailableWidth()
-        : sessionMainWidth(this.surface.width, false, this.surface.env);
-      const requestedWidth = typeof this.layer.preferredWidth === 'function'
-        ? this.layer.preferredWidth(Math.max(8, availableWidth - 3))
-        : (this.layer.width || 64);
-      const panelWidth = dialogWidth(Math.max(8, availableWidth - 3), requestedWidth);
-      const panel = panelRows(this.layer, panelWidth, preferredHeight);
-      this.surface.presentMessageActions(panel, this.layer);
-      return;
+    drawLayer(width) {
+        const preferredHeight = typeof this.layer.preferredHeight === 'function'
+            ? this.layer.preferredHeight()
+            : 14;
+        if (this.layer.messageActions && this.surface?.presentMessageActions) {
+            const availableWidth = this.surface.composeAvailableWidth
+                ? this.surface.composeAvailableWidth()
+                : sessionMainWidth(this.surface.width, false, this.surface.env);
+            const requestedWidth = typeof this.layer.preferredWidth === 'function'
+                ? this.layer.preferredWidth(Math.max(8, availableWidth - 3))
+                : (this.layer.width || 64);
+            const panelWidth = dialogWidth(Math.max(8, availableWidth - 3), requestedWidth);
+            const panel = panelRows(this.layer, panelWidth, preferredHeight);
+            this.surface.presentMessageActions(panel, this.layer);
+            return;
+        }
+        if (isStartupDialog(this.surface)) {
+            const view = startupDialogView(this.layer, this.surface.width, this.surface.stage.maxHeight);
+            this.present(view.rows, view.caretRow, view.caretCol);
+            return;
+        }
+        const inline = Boolean(this.surface && !this.surface.homeInfo);
+        const availableWidth = inline
+            ? (this.surface.composeAvailableWidth
+                ? this.surface.composeAvailableWidth()
+                : sessionMainWidth(this.surface.width, false, this.surface.env))
+            : width;
+        const panelWidth = dialogWidth(availableWidth, this.layer.width || 64);
+        const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
+        const statusReserve = 2;
+        const availableDialogRows = Math.max(4, stageMax - statusReserve);
+        const maxHeight = dialogHeight(availableDialogRows, preferredHeight);
+        const panel = panelRows(this.layer, panelWidth, maxHeight);
+        const status = this.statusRow(width);
+        const all = this.clampRows(panel.concat(status), width);
+        const cursor = this.layer.cursor;
+        const centered = this.surface ? centerRows(all, availableWidth) : { rows: all, inset: 0 };
+        const stageHeight = this.surface?.stage?.height || this.out?.rows || all.length;
+        const outRows = Number.isFinite(this.out?.rows) && this.out.rows > 0
+            ? Math.floor(this.out.rows)
+            : stageHeight;
+        this.layer.panelGeometry = {
+            inset: centered.inset,
+            optionScreenRow: Math.max(0, outRows - status.length - 2)
+        };
+        this.present(centered.rows, cursor ? 1 + cursor.y : 0, (cursor ? 2 + cursor.x : 0) + centered.inset);
     }
-    if (isStartupDialog(this.surface)) {
-      const view = startupDialogView(this.layer, this.surface.width, this.surface.stage.maxHeight);
-      return this.present(view.rows, view.caretRow, view.caretCol);
+    pickerRows(width) {
+        if (!this.completion)
+            return [];
+        const rows = renderPicker(this.completion.items, this.selected, width);
+        const labelWidth = Math.min(36, rows.reduce((max, row) => Math.max(max, visibleWidth(row.label)), 0));
+        const drawn = rows.map((row) => {
+            const marker = row.selected ? paint('accent', GLYPHS.arrow) : ' ';
+            const label = truncate(row.label, labelWidth, GLYPHS.ellipsis);
+            const padded = label + ' '.repeat(Math.max(0, labelWidth - visibleWidth(label)));
+            const name = row.selected ? bold(paint('ink', padded)) : paint('ink', padded);
+            const description = row.description
+                ? dim('  ' + truncate(row.description, Math.max(0, width - labelWidth - 8), GLYPHS.ellipsis))
+                : '';
+            return `  ${marker} ${name}${description}`;
+        });
+        const matched = this.completion.total || this.completion.items.length;
+        const hidden = matched - drawn.length;
+        if (hidden > 0)
+            drawn.push(dim(`    ${GLYPHS.ellipsis} ${hidden} more`));
+        if (this.completion.kind !== 'file' && this.completion.inline) {
+            drawn.push(dim('    ' + truncate('Enter run  ·  Esc dismiss  ·  draft protected', Math.max(0, width - 5))));
+        }
+        return drawn;
     }
-    const inline = this.surface && !this.surface.homeInfo;
-    const availableWidth = inline
-      ? (this.surface.composeAvailableWidth
-        ? this.surface.composeAvailableWidth()
-        : sessionMainWidth(this.surface.width, false, this.surface.env))
-      : width;
-    const panelWidth = dialogWidth(availableWidth, this.layer.width || 64);
-    const stageMax = this.surface?.stage?.maxHeight || this.out?.rows || 24;
-    const statusReserve = 2; // status row + margin
-    const availableDialogRows = Math.max(4, stageMax - statusReserve);
-    const maxHeight = dialogHeight(availableDialogRows, preferredHeight);
-    const panel = panelRows(this.layer, panelWidth, maxHeight);
-    const status = this.statusRow(width);
-    const all = this.clampRows(panel.concat(status), width);
-
-    // panelRows() called body(), which is where a layer publishes its cursor.
-    const cursor = this.layer.cursor;
-    const centered = this.surface ? centerRows(all, availableWidth) : { rows: all, inset: 0 };
-    const stageHeight = this.surface?.stage?.height || this.out?.rows || all.length;
-    const outRows = Number.isFinite(this.out?.rows) && this.out.rows > 0
-      ? Math.floor(this.out.rows)
-      : stageHeight;
-    this.layer.panelGeometry = {
-      inset: centered.inset,
-      // Anchor at the panel's last body row above the bottom border and status rows (0-based screen row).
-      optionScreenRow: Math.max(0, outRows - status.length - 2)
-    };
-    this.present(centered.rows, cursor ? 1 + cursor.y : 0,
-      (cursor ? 2 + cursor.x : 0) + centered.inset);
-  }
-
-  pickerRows(width) {
-    const rows = renderPicker(this.completion.items, this.selected, width);
-    const labelWidth = Math.min(
-      36,
-      rows.reduce((max, row) => Math.max(max, visibleWidth(row.label)), 0)
-    );
-
-    const drawn = rows.map((row) => {
-      const marker = row.selected ? paint('accent', GLYPHS.arrow) : ' ';
-      const label = truncate(row.label, labelWidth, GLYPHS.ellipsis);
-      const padded = label + ' '.repeat(Math.max(0, labelWidth - visibleWidth(label)));
-      const name = row.selected ? bold(paint('ink', padded)) : paint('ink', padded);
-      const description = row.description
-        ? dim('  ' + truncate(row.description, Math.max(0, width - labelWidth - 8), GLYPHS.ellipsis))
-        : '';
-      return `  ${marker} ${name}${description}`;
-    });
-
-    // Count against everything that MATCHED, not against the capped array the
-    // picker happens to hold. Reporting the capped figure told the user there
-    // were 42 more entries when 107 were reachable by scrolling.
-    const matched = this.completion.total || this.completion.items.length;
-    const hidden = matched - drawn.length;
-    if (hidden > 0) drawn.push(dim(`    ${GLYPHS.ellipsis} ${hidden} more`));
-    if (this.completion?.inline && (this.completion.kind === 'command' || this.completion.kind === 'command-argument')) {
-      drawn.push(dim('    ' + truncate('Enter run  ·  Esc dismiss  ·  draft protected', Math.max(0, width - 5))));
-    }
-    return drawn;
-  }
 }
-
-/**
- * Hint line for the session header — the keys that are not discoverable.
- *
- * FITTED to the terminal. The full list is 140 columns; printed unconditionally
- * it wrapped on any terminal narrower than that, which is how the very first
- * thing a user sees ended up broken across two rows mid-word. Fragments are
- * dropped from the right — least important first — rather than the line being
- * truncated, because a hint clipped mid-key is worse than a missing one.
- */
 export function keyHints(width = terminalWidth()) {
-  const parts = [
-    'enter send', 'alt+enter newline', 'ctrl+p palette', '/ commands', '@ files',
-    '↑ history', 'tab complete', 'esc interrupt', 'ctrl+o expand'
-  ];
-  const separator = `  ${GLYPHS.dot}  `;
-  const kept = parts.slice();
-  // Reserve a column, for the same reason every drawn row does: a line landing
-  // exactly on the margin trips the terminal's deferred wrap.
-  while (kept.length > 1 && visibleWidth(kept.join(separator)) > width - 1) kept.pop();
-  return HAS_COLOR
-    ? kept.map((part) => dim(part)).join(dim(separator))
-    : kept.join(separator);
+    const parts = [
+        'enter send', 'alt+enter newline', 'ctrl+p palette', '/ commands', '@ files',
+        '↑ history', 'tab complete', 'esc interrupt', 'ctrl+o expand'
+    ];
+    const separator = `  ${GLYPHS.dot}  `;
+    const kept = parts.slice();
+    while (kept.length > 1 && visibleWidth(kept.join(separator)) > width - 1)
+        kept.pop();
+    return HAS_COLOR
+        ? kept.map((part) => dim(part)).join(dim(separator))
+        : kept.join(separator);
 }
-
 export { MAX_VISIBLE };
