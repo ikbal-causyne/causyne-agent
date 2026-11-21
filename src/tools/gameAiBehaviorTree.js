@@ -1,6 +1,4 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { getErrorMessage } from './toolPathSafety.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe, boundedFiniteNumber, escapeGodotString, sanitizeToolError } from './toolPathSafety.js';
 export const gameAiBehaviorTree = {
     schema: {
         name: 'game.ai_behavior_tree',
@@ -20,13 +18,14 @@ export const gameAiBehaviorTree = {
             required: ['action', 'entityName']
         }
     },
-    async execute(args = {}, _sandbox) {
+    async execute(args = {}, sandbox) {
         try {
             const { action, entityName = 'Enemy', aiType = '2d', patrolSpeed = 60.0, chaseSpeed = 130.0, attackRange = 45.0, detectRange = 220.0, outputPath } = args || {};
-            const safePatrol = Number.isFinite(Number(patrolSpeed)) ? Number(patrolSpeed) : 60.0;
-            const safeChase = Number.isFinite(Number(chaseSpeed)) ? Number(chaseSpeed) : 130.0;
-            const safeAttack = Number.isFinite(Number(attackRange)) ? Number(attackRange) : 45.0;
-            const safeDetect = Number.isFinite(Number(detectRange)) ? Number(detectRange) : 220.0;
+            const safeEntity = escapeGodotString(entityName, 100);
+            const safePatrol = boundedFiniteNumber(patrolSpeed, 60.0, 0.1, 10_000);
+            const safeChase = boundedFiniteNumber(chaseSpeed, 130.0, 0.1, 10_000);
+            const safeAttack = boundedFiniteNumber(attackRange, 45.0, 0.1, 10_000);
+            const safeDetect = boundedFiniteNumber(detectRange, 220.0, 0.1, 100_000);
             if (action === 'generate_enemy_ai_script') {
                 const bodyClass = aiType === '3d' ? 'CharacterBody3D' : 'CharacterBody2D';
                 const vecType = aiType === '3d' ? 'Vector3' : 'Vector2';
@@ -53,7 +52,7 @@ var patrol_timer: float = 0.0
 func _ready() -> void:
 \tcurrent_hp = max_hp
 \ttarget_player = get_tree().get_first_node_in_group("player")
-\tprint("[AI Ready] ${entityName} initialized in PATROL state.")
+\tprint("[AI Ready] ${safeEntity} initialized in PATROL state.")
 
 func _physics_process(delta: float) -> void:
 \tif current_state == AIState.DEAD or current_state == AIState.STUNNED:
@@ -107,7 +106,7 @@ func take_damage(amount: float) -> void:
 \tif current_state == AIState.DEAD:
 \t\treturn
 \tcurrent_hp -= amount
-\tprint("[AI Damage] ${entityName} took ", amount, " damage. HP remaining: ", current_hp)
+\tprint("[AI Damage] ${safeEntity} took ", amount, " damage. HP remaining: ", current_hp)
 \tif current_hp <= 0:
 \t\tchange_state(AIState.DEAD)
 \telse:
@@ -126,8 +125,8 @@ func change_state(new_state: AIState) -> void:
 \t\tqueue_free()
 `;
                 if (outputPath) {
-                    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-                    await fs.writeFile(outputPath, gdScript, 'utf8');
+                    const finalPath = await assertSafeWorkspaceOutput(outputPath, sandbox);
+                    await atomicWriteFileSafe(finalPath, gdScript);
                 }
                 return {
                     success: true,
@@ -144,7 +143,7 @@ func change_state(new_state: AIState) -> void:
             if (action === 'generate_boss_phase_controller') {
                 const bossScript = `extends CharacterBody2D
 
-# Multi-Phase Boss Necromancer Controller (${entityName})
+# Multi-Phase Boss Necromancer Controller (${safeEntity})
 enum BossPhase { PHASE_1_SPELLS, PHASE_2_SUMMONS, PHASE_3_ENRAGE, DEFEATED }
 
 @export var max_hp: float = 800.0
@@ -186,7 +185,7 @@ func take_damage(amount: float) -> void:
             return { success: false, error: `Unknown action: ${String(action ?? '')}` };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
