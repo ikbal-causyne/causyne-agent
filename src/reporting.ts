@@ -72,16 +72,19 @@ function tokensOf(value: unknown): number {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const safe = typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  if (safe < 1024) return `${Math.floor(safe)} B`;
+  if (safe < 1024 * 1024) return `${(safe / 1024).toFixed(1)} KB`;
+  return `${(safe / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatNumber(value: unknown): string {
-  return Number(value || 0).toLocaleString('en-US');
+  const n = Number(value);
+  return (Number.isFinite(n) ? n : 0).toLocaleString('en-US');
 }
 
 function formatAge(ts: number): string {
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return 'unknown';
   const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (seconds < 60) return `${seconds}s ago`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
@@ -361,7 +364,8 @@ export function printUndo(taskId?: string, options: UndoCommandOptions = {}): bo
 
 /** `3d 4h 12m` — uptime a human reads at a glance. */
 export function formatUptime(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
+  const safeMs = typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : 0;
+  const totalSeconds = Math.floor(safeMs / 1000);
   const days = Math.floor(totalSeconds / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
