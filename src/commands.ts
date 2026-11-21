@@ -182,12 +182,12 @@ export const COMMANDS: SlashCommandDefinition[] = [
       const [wanted] = argv;
       if (wanted) {
         const command = resolveCommand(wanted);
-        if (!command) return fail(`No command named "${wanted}". Try /help.`);
+        if (!command) return fail(`No command named "${safeDisplay(wanted)}". Try /help.`);
         const aliases = command.aliases?.length ? `\n  aliases : ${command.aliases.map(a => '/' + a).join(', ')}` : '';
         return ok(`${command.usage}\n  ${command.description}${aliases}`);
       }
       const visible = listCommands(ctx.surface);
-      const width = Math.max(...visible.map(c => c.usage.length));
+      const width = visible.reduce((max, c) => Math.max(max, c.usage.length), 0);
       const lines = ['Commands', ''];
       for (const command of visible) {
         lines.push(`  ${command.usage.padEnd(width)}  ${command.description}`);
