@@ -258,6 +258,10 @@ export async function streamOpenAICompatibleChat(options) {
         body: JSON.stringify(streamPayload)
     });
     if (opened.mode === 'json') {
+        if (isRecord(opened.data.error)) {
+            const msg = redactProviderSecrets(typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error), options.secrets);
+            throw new Error(`${options.providerLabel} stream error: ${msg}`);
+        }
         const choices = Array.isArray(opened.data.choices) ? opened.data.choices : [];
         const first = isRecord(choices[0]) ? choices[0] : null;
         const message = first && isRecord(first.message) ? first.message : null;
