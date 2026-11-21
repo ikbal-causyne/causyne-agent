@@ -43,11 +43,18 @@ export const fsMove = {
             }
             catch (err) {
                 if (err?.code === 'EXDEV') {
-                    const stat = await fs.stat(src);
-                    if (stat.isDirectory()) {
-                        return { success: false, error: 'Cannot atomically move entire directories across partitions yet. Please compress, move, and extract.' };
+                    if (srcStat.isSymbolicLink() || !srcStat.isFile()) {
+                        return { success: false, error: 'Cross-partition move supports regular files only.' };
                     }
-                    await pipeline(createReadStream(src), createWriteStream(dest));
+                    const tempDest = `${dest}.part-${process.pid}-${Date.now()}`;
+                    try {
+                        await pipeline(createReadStream(src), createWriteStream(tempDest, { flags: 'wx', mode: 0o600 }));
+                        await fs.rename(tempDest, dest);
+                    }
+                    catch (copyErr) {
+                        await fs.unlink(tempDest).catch(() => { });
+                        throw copyErr;
+                    }
                     await fs.unlink(src);
                 }
                 else {
