@@ -70,6 +70,8 @@ export class MemoryManager {
         if (!this.session || !Array.isArray(this.session.messages))
             return [];
         return this.session.messages.filter((m) => {
+            if (!m || typeof m !== 'object')
+                return false;
             if (m.role !== 'system')
                 return true;
             if (typeof m.content === 'string' && m.content.startsWith('[Continuum'))
