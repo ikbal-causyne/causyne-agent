@@ -113,8 +113,16 @@ export const gitExec = {
             return { success: false, error: 'Destructive Git action requires the agent session approval and sandbox policy.' };
         }
         return new Promise((resolve) => {
-            execFile('git', argv, { cwd, maxBuffer: 5 * 1024 * 1024 }, (error, stdout, stderr) => {
-                const fullOutput = (stdout || '') + '\n' + (stderr || '');
+            execFile('git', argv, {
+                cwd,
+                timeout: 60_000,
+                maxBuffer: 5 * 1024 * 1024,
+                windowsHide: true,
+                env: { ...sanitizeSubprocessEnv(process.env), GIT_TERMINAL_PROMPT: '0' }
+            }, (error, stdout, stderr) => {
+                const safeOut = sanitizeToolText(stdout || '', 256_000);
+                const safeErr = sanitizeToolText(stderr || '', 64_000);
+                const fullOutput = safeOut + '\n' + safeErr;
                 if (fullOutput.includes('CONFLICT (content): Merge conflict')) {
                     resolve({
                         success: false,
@@ -124,10 +132,10 @@ export const gitExec = {
                     return;
                 }
                 if (error) {
-                    resolve({ success: false, output: stdout, error: stderr || error.message, exitCode: error.code });
+                    resolve({ success: false, output: safeOut, error: safeErr || sanitizeToolText(error.message, 600), exitCode: error.code });
                 }
                 else {
-                    resolve({ success: true, output: stdout || stderr, exitCode: 0 });
+                    resolve({ success: true, output: safeOut || safeErr, exitCode: 0 });
                 }
             });
         });
