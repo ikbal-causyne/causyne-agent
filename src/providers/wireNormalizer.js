@@ -246,7 +246,7 @@ export function prepareMessagesForAnthropic(provider, messages) {
         if (!isPlainObject(msg))
             continue;
         if (msg['role'] === 'system') {
-            const { spillPath: _spill, ...rest } = msg;
+            const { spillPath: _spill, thinking_blocks: _tb, reasoning_content: _rc, ...rest } = msg;
             prepared.push(rest);
             continue;
         }
