@@ -549,40 +549,51 @@ export async function chatMode({ home = false } = {}) {
 }
 export async function execCommand(command) {
     const entitlementGate = getProcessEntitlementGate();
+    const onPaused = (error) => {
+        console.error('Causyne access paused:', error instanceof Error ? error.message : String(error));
+    };
     try {
-        await entitlementGate.begin((error) => {
-            console.error('Causyne access paused:', error instanceof Error ? error.message : String(error));
-        });
+        await entitlementGate.begin(onPaused);
     }
     catch (error) {
         console.error('Causyne access unavailable:', error instanceof Error ? error.message : String(error));
         process.exitCode = 2;
         return;
     }
-    const { Sandbox } = await import('./sandbox.js');
-    const sandbox = new Sandbox();
-    const validation = sandbox.validate('sysRun', { command });
-    if (!validation.allowed) {
-        console.error(`\x1b[31m[BLOCKED]\x1b[0m ${validation.reason}`);
-        process.exit(1);
-    }
-    if (validation.risk === 'extreme' || validation.risk === 'dangerous') {
-        const approved = await askConfirm(`${paint('warn', GLYPHS.warnMark)} Run: ${command}\n  Allow once?`);
-        if (!approved) {
-            console.log('Cancelled.');
-            process.exit(1);
+    let exitCode = 1;
+    try {
+        const { Sandbox } = await import('./sandbox.js');
+        const sandbox = new Sandbox();
+        const validation = sandbox.validate('sysRun', { command });
+        if (!validation.allowed) {
+            console.error(`\x1b[31m[BLOCKED]\x1b[0m ${validation.reason}`);
+            exitCode = 1;
+            return;
+        }
+        if (validation.risk === 'extreme' || validation.risk === 'dangerous') {
+            const approved = await askConfirm(`${paint('warn', GLYPHS.warnMark)} Run: ${command}\n  Allow once?`);
+            if (!approved) {
+                console.log('Cancelled.');
+                exitCode = 1;
+                return;
+            }
+        }
+        console.log(`Running: ${command}`);
+        const { sysRun } = await import('./tools/sysRun.js');
+        const result = await sysRun.execute({ command });
+        if (result.success) {
+            console.log(result.output);
+            exitCode = 0;
+        }
+        else {
+            console.error(result.error || result.output);
+            exitCode = 1;
         }
     }
-    console.log(`Running: ${command}`);
-    const { sysRun } = await import('./tools/sysRun.js');
-    const result = await sysRun.execute({ command });
-    if (result.success) {
-        console.log(result.output);
+    finally {
+        entitlementGate.end(onPaused);
     }
-    else {
-        console.error(result.error || result.output);
-    }
-    process.exit(result.success ? 0 : 1);
+    process.exit(exitCode);
 }
 export async function interactiveConfig(options = {}) {
     const config = loadConfig();
