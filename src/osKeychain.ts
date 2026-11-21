@@ -55,9 +55,13 @@ function isValidHexKey(raw: string): boolean {
 }
 
 function findInPath(binary: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!binary || binary.includes('..') || binary.includes('/') || binary.includes('\\') || /[\r\n\0]/.test(binary)) {
+    return null;
+  }
   const pathVal = env.PATH || env.Path || '';
-  for (const dir of pathVal.split(path.delimiter)) {
-    if (!dir) continue;
+  for (const rawDir of pathVal.split(path.delimiter)) {
+    const dir = rawDir.trim();
+    if (!dir || !path.isAbsolute(dir)) continue;
     const full = path.join(dir, binary);
     try {
       fs.accessSync(full, fs.constants.X_OK);

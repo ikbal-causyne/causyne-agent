@@ -36,9 +36,13 @@ function isValidHexKey(raw) {
     return raw.length === EXPECTED_KEY_HEX_LEN && /^[0-9a-fA-F]+$/.test(raw);
 }
 function findInPath(binary, env = process.env) {
+    if (!binary || binary.includes('..') || binary.includes('/') || binary.includes('\\') || /[\r\n\0]/.test(binary)) {
+        return null;
+    }
     const pathVal = env.PATH || env.Path || '';
-    for (const dir of pathVal.split(path.delimiter)) {
-        if (!dir)
+    for (const rawDir of pathVal.split(path.delimiter)) {
+        const dir = rawDir.trim();
+        if (!dir || !path.isAbsolute(dir))
             continue;
         const full = path.join(dir, binary);
         try {
