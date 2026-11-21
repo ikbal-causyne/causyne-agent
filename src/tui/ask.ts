@@ -17,6 +17,7 @@
 import readline from 'readline';
 import { ChatPrompt, isInteractive } from './prompt.js';
 import { SelectLayer, InputLayer, ConfirmLayer, DecisionLayer } from './dialogs.js';
+import { safeDisplay } from './text.js';
 
 export interface FallbackQuestionOptions {
   mask?: boolean;
@@ -116,7 +117,8 @@ export function fallbackQuestion(
       resolve(value);
     };
     rl.once('close', () => done(null));
-    rl.question(`${question} `, (answer) => {
+    const safeQuestion = safeDisplay(String(question ?? ''));
+    rl.question(`${safeQuestion} `, (answer) => {
       rl.close();
       done(answer);
     });
@@ -125,7 +127,7 @@ export function fallbackQuestion(
       // hook for exactly this; the prompt itself still has to be drawn or the
       // user sees nothing at all.
       rl._writeToOutput = function (text: string): void {
-        if (text.includes(question) && rl.output) rl.output.write(text);
+        if (text.includes(safeQuestion) && rl.output) rl.output.write(text);
       };
     }
   });
@@ -148,9 +150,11 @@ export async function askSelect(options: AskSelectOptions = {}): Promise<AskSele
   }
 
   // Numbered list is the honest fallback: it needs no cursor control at all.
-  console.log(`\n${title}`);
+  console.log(`\n${safeDisplay(title)}`);
   items.forEach((item, index) => {
-    console.log(`  ${String(index + 1).padStart(2)}. ${item.label}${item.description ? `  — ${item.description}` : ''}`);
+    const label = safeDisplay(item?.label || '');
+    const desc = item?.description ? safeDisplay(item.description) : '';
+    console.log(`  ${String(index + 1).padStart(2)}. ${label}${desc ? `  — ${desc}` : ''}`);
   });
   const raw = await fallbackQuestion(`Choose 1-${items.length}:`);
   if (raw === null) return null;
@@ -176,7 +180,7 @@ export async function askText(options: AskTextOptions = {}): Promise<string | nu
       }));
       if (answer === undefined) answer = await fallbackQuestion(`${title}:`, { mask });
     } else {
-      if (lines.length) console.log('\n' + lines.join('\n'));
+      if (lines.length) console.log('\n' + lines.map(l => safeDisplay(String(l ?? ''))).join('\n'));
       answer = await fallbackQuestion(`${title}:`, { mask });
     }
 
@@ -184,7 +188,7 @@ export async function askText(options: AskTextOptions = {}): Promise<string | nu
 
     const problem = validate ? validate(answer) : null;
     if (!problem) return answer;
-    console.log(`  ${problem}`);
+    console.log(`  ${safeDisplay(String(problem))}`);
     value = answer;
   }
 }
