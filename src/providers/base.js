@@ -78,7 +78,7 @@ export class LLMProvider {
             ? cfg.supportsAudio
             : null;
         this.preserveThinkingBlocks = false;
-        this.preserveReasoningContent = false;
+        this.preserveReasoningContent = true;
     }
     get supportsVision() {
         if (this.visionOverride !== null)
