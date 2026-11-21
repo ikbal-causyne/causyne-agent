@@ -40,7 +40,11 @@ export function isValidNpmPackageName(packageName: unknown): packageName is stri
 }
 
 function capabilityDir(): string {
-  return path.join(causyneHome(), 'capabilities');
+  const home = causyneHome();
+  if (typeof home !== 'string' || !home.trim() || home.includes('\0')) {
+    throw new Error('Invalid Causyne home directory');
+  }
+  return path.resolve(home, 'capabilities');
 }
 
 // Groups exist so consent is asked once per capability a human recognises

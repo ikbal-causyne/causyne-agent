@@ -22,7 +22,11 @@ export function isValidNpmPackageName(packageName) {
     return NPM_PACKAGE_NAME_RE.test(packageName);
 }
 function capabilityDir() {
-    return path.join(causyneHome(), 'capabilities');
+    const home = causyneHome();
+    if (typeof home !== 'string' || !home.trim() || home.includes('\0')) {
+        throw new Error('Invalid Causyne home directory');
+    }
+    return path.resolve(home, 'capabilities');
 }
 // Groups exist so consent is asked once per capability a human recognises
 // ("let it see the screen"), not once per npm package. Names stay in value
