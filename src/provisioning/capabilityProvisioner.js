@@ -196,14 +196,41 @@ export async function provisionCapabilities(groups) {
     const manifestPath = path.join(dir, 'package.json');
     const desired = JSON.stringify(manifestFor(target), null, 2);
     let needsInstall = true;
-    if (fs.existsSync(manifestPath)) {
-        try {
-            needsInstall = fs.readFileSync(manifestPath, 'utf8') !== desired;
+    try {
+        const mStat = fs.lstatSync(manifestPath);
+        if (mStat.isSymbolicLink() || !mStat.isFile()) {
+            throw new Error('Refusing symlink or non-regular capability package.json');
         }
-        catch { /* ignore */ }
+        needsInstall = fs.readFileSync(manifestPath, 'utf8') !== desired;
     }
-    if (needsInstall)
-        fs.writeFileSync(manifestPath, desired);
+    catch (err) {
+        const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+        if (code !== 'ENOENT')
+            throw err;
+    }
+    if (needsInstall) {
+        const tempPath = `${manifestPath}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+        const payload = Buffer.from(desired, 'utf8');
+        try {
+            const fd = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+            try {
+                fs.writeSync(fd, payload, 0, payload.length);
+                fs.fsyncSync(fd);
+            }
+            finally {
+                fs.closeSync(fd);
+            }
+            fs.renameSync(tempPath, manifestPath);
+        }
+        catch (writeErr) {
+            try {
+                if (fs.existsSync(tempPath))
+                    fs.unlinkSync(tempPath);
+            }
+            catch { /* ignore */ }
+            throw writeErr;
+        }
+    }
     if (!fs.existsSync(path.join(dir, 'package-lock.json')))
         needsInstall = true;
     for (const group of target) {
