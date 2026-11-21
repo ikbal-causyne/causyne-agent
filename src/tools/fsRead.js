@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
+import { isOutputRecoveryRead } from '../outputRecovery.js';
 function expandHomePath(raw) {
     const trimmed = raw.trim();
     if (trimmed === '~')
@@ -28,6 +29,17 @@ function checkReadScope(target, context) {
             .map(p => p.trim());
     if (roots.length === 0)
         return null;
+    if (Array.isArray(context.parentLoop?.messages)) {
+        const knownSpills = new Set();
+        for (const msg of context.parentLoop.messages) {
+            if (typeof msg?.spillPath === 'string' && msg.spillPath.trim()) {
+                knownSpills.add(path.resolve(msg.spillPath));
+            }
+        }
+        if (knownSpills.size > 0 && isOutputRecoveryRead('fs_read', target, knownSpills)) {
+            return null;
+        }
+    }
     let realTarget;
     try {
         realTarget = fs.realpathSync(target);

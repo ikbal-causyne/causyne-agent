@@ -86,8 +86,16 @@ export const archive = {
             const baseRoot = context?.parentLoop?.workspaceRoot?.trim()
                 || context?.workspaceRoot?.trim()
                 || context?.workspacePaths?.find((p) => typeof p === 'string' && p.trim().length > 0)?.trim();
-            const source = expandArchivePath(args.source, baseRoot);
-            const dest = expandArchivePath(args.destination, baseRoot);
+            const isHomeOrAbs = (val) => {
+                const trimmed = val.trim();
+                return trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\') || path.isAbsolute(trimmed);
+            };
+            const source = (!baseRoot || isHomeOrAbs(args.source))
+                ? resolveUserPath(args.source)
+                : expandArchivePath(args.source, baseRoot);
+            const dest = (!baseRoot || isHomeOrAbs(args.destination))
+                ? resolveUserPath(args.destination)
+                : expandArchivePath(args.destination, baseRoot);
             assertArchiveScope(source, context);
             assertArchiveScope(dest, context);
             if (!existsSync(source)) {

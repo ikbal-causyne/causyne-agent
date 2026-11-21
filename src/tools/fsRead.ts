@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
+import { isOutputRecoveryRead } from '../outputRecovery.js';
 
 export interface FsReadArgs {
   path: string;
@@ -14,7 +15,10 @@ export interface FsReadContext {
   workspacePaths?: string[];
   grantAllAccess?: boolean;
   signal?: AbortSignal;
-  parentLoop?: { workspaceRoot?: string };
+  parentLoop?: {
+    workspaceRoot?: string;
+    messages?: ReadonlyArray<{ spillPath?: unknown }>;
+  };
 }
 
 function expandHomePath(raw: string): string {
@@ -42,6 +46,17 @@ function checkReadScope(target: string, context?: FsReadContext): string | null 
       .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
       .map(p => p.trim());
   if (roots.length === 0) return null;
+  if (Array.isArray(context.parentLoop?.messages)) {
+    const knownSpills = new Set<string>();
+    for (const msg of context.parentLoop.messages) {
+      if (typeof msg?.spillPath === 'string' && msg.spillPath.trim()) {
+        knownSpills.add(path.resolve(msg.spillPath));
+      }
+    }
+    if (knownSpills.size > 0 && isOutputRecoveryRead('fs_read', target, knownSpills)) {
+      return null;
+    }
+  }
   let realTarget: string;
   try {
     realTarget = fs.realpathSync(target);

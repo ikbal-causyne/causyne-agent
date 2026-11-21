@@ -48,11 +48,9 @@ export const viewImage = {
         || (Array.isArray(sandbox?.workspacePaths)
           ? sandbox.workspacePaths.find((p: unknown): p is string => typeof p === 'string' && p.trim().length > 0)?.trim()
           : undefined);
-      const targetPath = isHome
-        ? resolveUserPath(rawPath)
-        : path.isAbsolute(rawPath)
-          ? path.resolve(rawPath)
-          : path.resolve(baseRoot ? resolveUserPath(baseRoot) : process.cwd(), rawPath);
+      const targetPath = isHome || path.isAbsolute(rawPath) || !baseRoot
+        ? resolveUserPath(args.path)
+        : path.resolve(resolveUserPath(baseRoot), rawPath);
 
       if (!existsSync(targetPath)) {
         return { success: false, error: `Image not found at ${targetPath}` };
