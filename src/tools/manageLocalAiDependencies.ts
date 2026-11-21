@@ -179,7 +179,8 @@ export const manageLocalDependencies = {
           : { success: false, error: `The "${group}" capability could not be prepared in this environment.` };
       }
 
-      const workspaceDir = process.cwd();
+      const scope = resolveToolWorkspaceRoots(sandbox);
+      const workspaceDir = scope.primaryRoot || process.cwd();
       const aiToolsDir = path.join(workspaceDir, '.ai_tools');
 
       if (action === 'check_and_setupEng') {
@@ -209,8 +210,10 @@ export const manageLocalDependencies = {
       }
 
       if (action === 'setup_venv') {
+        assertNotSymlinkIfExists(aiToolsDir, '.ai_tools directory');
         if (!fs.existsSync(aiToolsDir)) fs.mkdirSync(aiToolsDir, { recursive: true, mode: 0o700 });
         const venvPath = path.join(aiToolsDir, 'venv');
+        assertNotSymlinkIfExists(venvPath, 'venv directory');
         if (!fs.existsSync(venvPath)) {
           const python = process.platform === 'win32' ? 'python.exe' : 'python3';
           await execFilePromise(python, ['-m', 'venv', venvPath], {
@@ -229,8 +232,14 @@ export const manageLocalDependencies = {
           return { success: false, error: 'Every Python dependency must be an exact PyPI pin such as pillow==11.3.0. Options, URLs, VCS references, local paths and unpinned requirements are blocked.' };
         }
 
+        assertNotSymlinkIfExists(aiToolsDir, '.ai_tools directory');
+        const venvPath = path.join(aiToolsDir, 'venv');
+        assertNotSymlinkIfExists(venvPath, 'venv directory');
         const isWindows = process.platform === 'win32';
-        const pipCmd = isWindows ? path.join(aiToolsDir, 'venv', 'Scripts', 'pip.exe') : path.join(aiToolsDir, 'venv', 'bin', 'pip');
+        const pipBinDir = isWindows ? path.join(venvPath, 'Scripts') : path.join(venvPath, 'bin');
+        assertNotSymlinkIfExists(pipBinDir, 'venv bin directory');
+        const pipCmd = isWindows ? path.join(pipBinDir, 'pip.exe') : path.join(pipBinDir, 'pip');
+        assertNotSymlinkIfExists(pipCmd, 'pip executable');
 
         if (!fs.existsSync(pipCmd)) return { success: false, error: 'Virtual environment not found. Run setup_venv first.' };
 
