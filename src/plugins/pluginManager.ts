@@ -6,8 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { causyneHome } from '../utils/paths.js';
 import { parsePluginSkills, type PluginSkill } from './pluginSkills.js';
 
-const PLUGIN_ROOT = path.join(causyneHome(), 'plugins');
-const STATE_FILE = path.join(PLUGIN_ROOT, 'state.json');
+function pluginRoot(): string {
+  return path.join(causyneHome(), 'plugins');
+}
+function stateFile(): string {
+  return path.join(pluginRoot(), 'state.json');
+}
+const PLUGIN_ROOT = pluginRoot();
+const STATE_FILE = stateFile();
 const RUNNER_FILE = fileURLToPath(new URL('./pluginRunner.js', import.meta.url));
 const PACKAGE_FILE = fileURLToPath(new URL('../../package.json', import.meta.url));
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -80,7 +86,8 @@ export interface PluginListing {
 }
 
 function ensureRoot(): void {
-  if (!fs.existsSync(PLUGIN_ROOT)) fs.mkdirSync(PLUGIN_ROOT, { recursive: true, mode: 0o700 });
+  const root = pluginRoot();
+  if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true, mode: 0o700 });
 }
 
 function safeObject(value: unknown): Record<string, any> {
@@ -89,8 +96,9 @@ function safeObject(value: unknown): Record<string, any> {
 
 function readState(): PluginState {
   try {
-    if (!fs.existsSync(STATE_FILE)) return { version: 1, plugins: {} };
-    const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) as Record<string, unknown>;
+    const sf = stateFile();
+    if (!fs.existsSync(sf)) return { version: 1, plugins: {} };
+    const parsed = JSON.parse(fs.readFileSync(sf, 'utf8')) as Record<string, unknown>;
     return { version: 1, plugins: safeObject(parsed?.plugins) };
   } catch {
     return { version: 1, plugins: {} };
@@ -99,9 +107,10 @@ function readState(): PluginState {
 
 function writeState(state: PluginState): void {
   ensureRoot();
-  const temporary = `${STATE_FILE}.tmp_${process.pid}`;
+  const sf = stateFile();
+  const temporary = `${sf}.tmp_${process.pid}`;
   fs.writeFileSync(temporary, JSON.stringify(state, null, 2), { mode: 0o600 });
-  fs.renameSync(temporary, STATE_FILE);
+  fs.renameSync(temporary, sf);
 }
 
 function resolveInside(root: string, relativePath: unknown): string {
@@ -242,9 +251,10 @@ function readPlugin(directory: string): ParsedPlugin {
 
 function pluginDirectories(): string[] {
   ensureRoot();
-  return fs.readdirSync(PLUGIN_ROOT, { withFileTypes: true })
+  const root = pluginRoot();
+  return fs.readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-    .map((entry) => path.join(PLUGIN_ROOT, entry.name))
+    .map((entry) => path.join(root, entry.name))
     .sort();
 }
 
@@ -284,7 +294,7 @@ export function listPlugins(): PluginListing[] {
 export function enablePlugin(name: string): any {
   if (typeof name !== 'string' || !NAME.test(name)) return { ok: false, error: 'Invalid plugin name' };
   try {
-    const plugin = readPlugin(resolveInside(PLUGIN_ROOT, name));
+    const plugin = readPlugin(resolveInside(pluginRoot(), name));
     const state = readState();
     state.plugins[name] = { enabled: true, digest: plugin.digest, enabledAt: Date.now() };
     writeState(state);
@@ -338,7 +348,7 @@ export function createPlugin(input: {
   }
 
   ensureRoot();
-  const directory = path.join(PLUGIN_ROOT, name);
+  const directory = path.join(pluginRoot(), name);
   if (fs.existsSync(directory)) return { ok: false, error: `Plugin ${name} already exists` };
 
   const entryName = `${toolName}.js`;
@@ -427,7 +437,7 @@ export function createSkillPlugin(input: {
     }]
   };
   ensureRoot();
-  const directory = path.join(PLUGIN_ROOT, name);
+  const directory = path.join(pluginRoot(), name);
   if (fs.existsSync(directory)) return { ok: false, error: 'Plugin already exists' };
   let created = false;
   try {
