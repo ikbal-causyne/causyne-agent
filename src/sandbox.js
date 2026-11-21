@@ -165,9 +165,9 @@ export class Sandbox {
         const pathsToCheck = [];
         if (canonicalToolName !== 'fs_read_skill') {
             const PATH_ARGUMENTS = [
-                'path', 'searchPath', 'cwd', 'source', 'destination',
-                'file_path', 'filePath', 'filepath', 'directory',
-                'targetFile', 'outputFile', 'outputPath'
+                'path', 'searchPath', 'cwd', 'workdir', 'dir', 'source', 'destination',
+                'file_path', 'filePath', 'filepath', 'directory', 'inputPath', 'targetPath',
+                'targetFile', 'outputFile', 'outputPath', 'outFile', 'outputDir', 'previewFile'
             ];
             for (const field of PATH_ARGUMENTS) {
                 if (safeArgs[field])
@@ -177,6 +177,12 @@ export class Sandbox {
                 for (const dir of safeArgs.target_directories) {
                     if (typeof dir === 'string' && dir.trim())
                         pathsToCheck.push(dir);
+                }
+            }
+            if (Array.isArray(safeArgs.files)) {
+                for (const entry of safeArgs.files) {
+                    if (typeof entry === 'string' && entry.trim())
+                        pathsToCheck.push(entry);
                 }
             }
         }
