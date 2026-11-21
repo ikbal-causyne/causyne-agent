@@ -59,8 +59,15 @@ export function isLoopbackHost(rawHostname) {
         .replace(/\.$/, '');
     if (!host)
         return false;
-    if (host === 'localhost' || host.endsWith('.localhost') || host === '::1')
+    if (host === 'localhost'
+        || host.endsWith('.localhost')
+        || host === '::1'
+        || host === '0:0:0:0:0:0:0:1'
+        || /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(host))
         return true;
+    if (host.startsWith('::ffff:127.')) {
+        return isLoopbackHost(host.slice(7));
+    }
     if (host.startsWith('127.')) {
         const octets = host.split('.');
         return octets.length === 4 && octets.every((part) => {
