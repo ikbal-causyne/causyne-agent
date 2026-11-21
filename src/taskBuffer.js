@@ -10,9 +10,7 @@ export class TaskBuffer {
     }
     ensureDir() {
         const dir = bufferDir();
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     safeTaskId(taskId) {
         const cleaned = String(taskId || 'default').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+/, '');

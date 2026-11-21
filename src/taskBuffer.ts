@@ -13,9 +13,7 @@ export class TaskBuffer {
 
   ensureDir(): void {
     const dir = bufferDir();
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
   safeTaskId(taskId: unknown): string {
