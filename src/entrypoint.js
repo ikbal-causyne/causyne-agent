@@ -301,7 +301,8 @@ if (invocation.isBareRoot) {
     }
     announceDevEmulator(invocation.rootOptions.includes('--dev-emulator'));
     chatMode({ home: true }).catch((e) => {
-        console.error(e instanceof Error && e.stack ? e.stack : e);
+        const detail = e instanceof Error && e.stack ? e.stack : String(e);
+        console.error(redactProviderSecrets(detail));
         process.exit(1);
     });
 }
