@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from './utils/paths.js';
+import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
+import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 
 export type GitChangeStatus = 'added' | 'deleted' | 'modified' | 'binary';
 
@@ -339,7 +341,17 @@ export function restoreTree(worktree: string, fromTree: string): void {
   );
 
   for (const absolute of toRemove) {
-    try { fs.rmSync(absolute, { force: true }); } catch { /* ignore cleanup error */ }
+    try {
+      if (!isPhysicalPathAllowed(absolute, [worktree], false)) continue;
+      const stat = fs.lstatSync(absolute);
+      if (stat.isSymbolicLink()) {
+        fs.unlinkSync(absolute);
+      } else if (stat.isFile()) {
+        fs.rmSync(absolute, { force: true });
+      }
+    } catch {
+      // ignore cleanup error
+    }
   }
 }
 

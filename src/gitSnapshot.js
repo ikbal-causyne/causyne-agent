@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from './utils/paths.js';
+import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
+import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 /** A git call that hangs must not hang a task. */
 const GIT_TIMEOUT_MS = 20000;
 /** Untracked files above this are excluded rather than stored. */
@@ -311,9 +313,19 @@ export function restoreTree(worktree, fromTree) {
     runGit(['--git-dir', gitDir, '--work-tree', worktree, 'checkout', fromTree, '--', '.'], { cwd: worktree });
     for (const absolute of toRemove) {
         try {
-            fs.rmSync(absolute, { force: true });
+            if (!isPhysicalPathAllowed(absolute, [worktree], false))
+                continue;
+            const stat = fs.lstatSync(absolute);
+            if (stat.isSymbolicLink()) {
+                fs.unlinkSync(absolute);
+            }
+            else if (stat.isFile()) {
+                fs.rmSync(absolute, { force: true });
+            }
         }
-        catch { /* ignore cleanup error */ }
+        catch {
+            // ignore cleanup error
+        }
     }
 }
 /** Retention: the shadow repo prunes itself rather than growing forever. */
