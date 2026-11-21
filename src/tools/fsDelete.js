@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import crypto from 'node:crypto';
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { getErrorMessage, resolveScopedPath, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
 export const fsDelete = {
     schema: {
         name: 'fs.delete',
@@ -16,14 +17,18 @@ export const fsDelete = {
             required: ['path']
         }
     },
-    async execute(args = {}, _context) {
+    async execute(args = {}, context) {
         try {
-            if (typeof args?.path !== 'string' || !args.path.trim()) {
-                return { success: false, error: 'path is required' };
+            const target = resolveScopedPath(args?.path, context);
+            if (isBlockedWorkspaceRoot(target)) {
+                return { success: false, error: 'Refusing to delete a protected system root directory.' };
             }
-            const target = args.path.replace(/^~\//, os.homedir() + '/');
-            const stats = await fs.stat(target);
-            if (stats.isDirectory() && !args.recursive) {
+            const scope = resolveToolWorkspaceRoots(context);
+            if (scope.roots.some((root) => path.resolve(root) === target)) {
+                return { success: false, error: 'Refusing to delete the workspace root directory itself.' };
+            }
+            const stats = await fs.lstat(target);
+            if (stats.isDirectory() && !args?.recursive) {
                 return { success: false, error: 'Target is a directory. recursive must be true' };
             }
             try {
