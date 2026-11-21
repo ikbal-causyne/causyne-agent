@@ -87,7 +87,12 @@ export const codeVerifySyntax = {
         }
       } else if (['.js', '.mjs', '.cjs'].includes(ext)) {
         try {
-          await execFileAsync(process.execPath, ['--check', resolvedPath]);
+          await execFileAsync(process.execPath, ['--check', resolvedPath], {
+            timeout: 15_000,
+            maxBuffer: 2 * 1024 * 1024,
+            env: sanitizeSubprocessEnv(process.env),
+            windowsHide: true
+          });
           return {
             success: true,
             valid: true,
@@ -118,7 +123,13 @@ export const codeVerifySyntax = {
         }
       } else if (['.ts', '.tsx'].includes(ext)) {
         try {
-          await execFileAsync('npx', ['--no', 'tsc', '--noEmit', '--skipLibCheck', resolvedPath]);
+          const npxBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+          await execFileAsync(npxBin, ['--no', 'tsc', '--noEmit', '--skipLibCheck', resolvedPath], {
+            timeout: 30_000,
+            maxBuffer: 2 * 1024 * 1024,
+            env: sanitizeSubprocessEnv(process.env),
+            windowsHide: true
+          });
           return {
             success: true,
             valid: true,
