@@ -219,7 +219,16 @@ export function isPersistentServerCommand(cmd) {
 }
 export const SERVER_READY_PATTERN = /(?:https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):[0-9]+|serving\s+http\s+on|server\s+(?:running|started)|ready\s+in\s+[0-9]+|terra_server_running)/i;
 const COMMAND_CACHE_TTL_MS = 60_000;
+const MAX_CACHE_ENTRIES = 64;
 const commandCache = new Map();
+function setCachedResult(key, entry) {
+    if (commandCache.size >= MAX_CACHE_ENTRIES && !commandCache.has(key)) {
+        const oldest = commandCache.keys().next().value;
+        if (oldest !== undefined)
+            commandCache.delete(oldest);
+    }
+    commandCache.set(key, entry);
+}
 export function clearSysRunCache() {
     commandCache.clear();
 }
@@ -433,15 +442,24 @@ export const sysRun = {
                     }
                 }, 2500);
             }
+            let settled = false;
+            const finish = (result) => {
+                if (settled)
+                    return;
+                settled = true;
+                if (timeoutId)
+                    clearTimeout(timeoutId);
+                if (serverGraceTimer)
+                    clearTimeout(serverGraceTimer);
+                resolve(result);
+            };
             let timeoutId;
             if (timeoutMs > 0) {
                 timeoutId = setTimeout(() => {
-                    if (isDetached)
+                    if (isDetached || settled)
                         return;
-                    if (serverGraceTimer)
-                        clearTimeout(serverGraceTimer);
                     child.kill('SIGKILL');
-                    resolve({
+                    finish({
                         success: false,
                         output: cleanSubprocessOutput(outputBuffer),
                         error: `Process timed out after ${timeoutMs}ms`,
@@ -450,13 +468,9 @@ export const sysRun = {
                 }, timeoutMs);
             }
             child.on('error', (err) => {
-                if (isDetached)
+                if (isDetached || settled)
                     return;
-                if (timeoutId)
-                    clearTimeout(timeoutId);
-                if (serverGraceTimer)
-                    clearTimeout(serverGraceTimer);
-                resolve({
+                finish({
                     success: false,
                     output: cleanSubprocessOutput(outputBuffer),
                     error: err.message,
@@ -464,25 +478,21 @@ export const sysRun = {
                 });
             });
             child.on('close', (code) => {
-                if (isDetached)
+                if (isDetached || settled)
                     return;
-                if (timeoutId)
-                    clearTimeout(timeoutId);
-                if (serverGraceTimer)
-                    clearTimeout(serverGraceTimer);
                 const cleanOutput = cleanSubprocessOutput(outputBuffer);
                 const exitCode = typeof code === 'number' ? code : 1;
                 if (exitCode === 0) {
                     const res = { success: true, output: cleanOutput, exitCode: 0 };
                     if (isIdempotent) {
-                        commandCache.set(cacheKey, {
+                        setCachedResult(cacheKey, {
                             output: cleanOutput,
                             exitCode: 0,
                             success: true,
                             timestamp: Date.now()
                         });
                     }
-                    resolve(res);
+                    finish(res);
                 }
                 else if (exitCode === 1 && isFinalCommandSearch(rawCommand)) {
                     // Semantic Exit Code Normalization: Search tool found 0 matching lines.
@@ -493,7 +503,7 @@ export const sysRun = {
                         note: 'Command executed successfully with 0 search matches.'
                     };
                     if (isIdempotent) {
-                        commandCache.set(cacheKey, {
+                        setCachedResult(cacheKey, {
                             output: res.output,
                             exitCode: 1,
                             success: true,
@@ -501,7 +511,7 @@ export const sysRun = {
                             timestamp: Date.now()
                         });
                     }
-                    resolve(res);
+                    finish(res);
                 }
                 else {
                     let errorMsg = `Command exited with code ${exitCode}`;
@@ -509,10 +519,10 @@ export const sysRun = {
                         errorMsg = 'adb failed: multiple devices/emulators connected. Pass `-s <serial>` (e.g. `adb -s emulator-5554 ...`) or set `export ANDROID_SERIAL=<serial>`.';
                     }
                     if (signal && signal.aborted) {
-                        resolve({ success: false, output: cleanOutput, error: 'Process killed by user.', exitCode: 1 });
+                        finish({ success: false, output: cleanOutput, error: 'Process killed by user.', exitCode: 1 });
                     }
                     else {
-                        resolve({ success: false, output: cleanOutput, error: errorMsg, exitCode });
+                        finish({ success: false, output: cleanOutput, error: errorMsg, exitCode });
                     }
                 }
             });
