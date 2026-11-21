@@ -333,7 +333,8 @@
     "src/modelCatalogue.ts",
     "src/designPalettes.ts",
     "src/slopDetector.ts",
-    "src/sessionStore.ts"
+    "src/sessionStore.ts",
+    "src/taskBuffer.ts"
   ],
   "exclude": [
     "node_modules",
