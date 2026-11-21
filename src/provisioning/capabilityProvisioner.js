@@ -60,6 +60,9 @@ export const GROUP_DESCRIPTIONS = {
     archive: 'create and extract zip archives'
 };
 export const GROUP_NAMES = Object.keys(GROUP_PACKAGES);
+export function isKnownGroup(group) {
+    return typeof group === 'string' && Object.hasOwn(GROUP_PACKAGES, group);
+}
 /** Which group owns a package, or null when the package is not ours. */
 export function groupForPackage(packageName) {
     for (const [group, packages] of Object.entries(GROUP_PACKAGES)) {

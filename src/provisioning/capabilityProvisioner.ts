@@ -82,6 +82,10 @@ export const GROUP_DESCRIPTIONS: Record<string, string> = {
 
 export const GROUP_NAMES: string[] = Object.keys(GROUP_PACKAGES);
 
+export function isKnownGroup(group: unknown): group is string {
+  return typeof group === 'string' && Object.hasOwn(GROUP_PACKAGES, group);
+}
+
 /** Which group owns a package, or null when the package is not ours. */
 export function groupForPackage(packageName: string): string | null {
   for (const [group, packages] of Object.entries(GROUP_PACKAGES)) {
