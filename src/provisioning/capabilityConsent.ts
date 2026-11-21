@@ -7,12 +7,21 @@
 
 import { loadConfig } from '../config.js';
 
+const FORBIDDEN_CONSENT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const GROUP_KEY_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+
 export function consentMap(): Record<string, boolean> {
+  const clean: Record<string, boolean> = Object.create(null);
   try {
-    const raw = loadConfig().capabilityConsent;
-    return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, boolean>) : {};
+    const raw = loadConfig()?.capabilityConsent;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return clean;
+    for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+      if (FORBIDDEN_CONSENT_KEYS.has(key) || !GROUP_KEY_RE.test(key)) continue;
+      if (typeof val === 'boolean') clean[key] = val;
+    }
+    return clean;
   } catch {
-    return {};
+    return clean;
   }
 }
 
