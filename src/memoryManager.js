@@ -26,12 +26,14 @@ export class MemoryManager {
     session;
     constructor(workspace = process.cwd(), sessionId = null, options = {}) {
         this.ensureMemoryDir();
-        this.workspace = workspace;
-        if (sessionId) {
-            this.session = getSession(sessionId) || createSession(workspace, 'Untitled', false);
+        const safeWorkspace = typeof workspace === 'string' && workspace.trim() ? workspace : process.cwd();
+        const safeOptions = options && typeof options === 'object' ? options : {};
+        this.workspace = safeWorkspace;
+        if (typeof sessionId === 'string' && sessionId.trim()) {
+            this.session = getSession(sessionId) || createSession(safeWorkspace, 'Untitled', false);
         }
         else {
-            this.session = resolveSession(workspace, options);
+            this.session = resolveSession(safeWorkspace, safeOptions);
         }
     }
     get sessionId() { return this.session ? this.session.id : null; }
@@ -61,9 +63,11 @@ export class MemoryManager {
         return forked;
     }
     ensureMemoryDir() {
-        const dir = memoryDir();
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        try {
+            fs.mkdirSync(memoryDir(), { recursive: true, mode: 0o700 });
+        }
+        catch {
+            // Directory creation failure is handled cleanly by session persistence.
         }
     }
     loadHistory() {
