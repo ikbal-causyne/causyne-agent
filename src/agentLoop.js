@@ -1,4 +1,5 @@
 import { clearSysRunCache } from './tools/sysRun.js';
+import { sanitizeSubprocessEnv } from './tools/subprocessEnv.js';
 import { NetworkHostGuard } from './reliability/networkHostGuard.js';
 import { inspectRequestedImageAssets } from './reliability/assetEvidence.js';
 import { inspect3DVisualEvidence } from './reliability/visualEvidence.js';
@@ -106,7 +107,7 @@ export { isActionableTaskPrompt, isGenericHandoffResponse, isDesktopWallpaperCha
 function readMacDesktopPictures() {
     try {
         return execFileSync('osascript', ['-e', 'tell application "System Events" to get picture of every desktop'], {
-            encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore']
+            encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: sanitizeSubprocessEnv(process.env)
         }).trim() || null;
     }
     catch {
