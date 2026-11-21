@@ -10,7 +10,7 @@ increasingly autonomous AI, with clear boundaries and human control.
 This repository is an early source-available development snapshot. Public
 documentation is intentionally concise while the project is evolving.
 
-Learn more at [causyne.com](https://causyne.com/).
+Learn more at [causyne.com](https://causyne.com/)
 
 ## Installation
 
