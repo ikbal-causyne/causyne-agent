@@ -122,10 +122,10 @@ function detectDefaultTypography(text) {
     const declaresFontFamily = /font-family\s*:/i.test(text);
     if (!declaresFontFamily)
         return null;
-    const loadsWebFont = /@font-face|fonts\.googleapis\.com|fonts\.bunny\.net|@import\s+url\([^)]*font/i.test(text);
+    const loadsWebFont = /@font-face|fonts\.googleapis\.com|fonts\.bunny\.net|@import\s+url\([^)]{0,512}font/i.test(text);
     if (loadsWebFont)
         return null;
-    const onlySystemStacks = !/font-family\s*:\s*[^;]*['"][A-Za-z]/i.test(text);
+    const onlySystemStacks = !/font-family\s*:\s*[^;]{0,512}['"][A-Za-z]/i.test(text);
     if (!onlySystemStacks)
         return null;
     return {
