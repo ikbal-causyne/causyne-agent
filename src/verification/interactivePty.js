@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
@@ -134,7 +134,7 @@ export async function runInteractivePty(options = {}) {
     const target = realpathSync(path.resolve(cwd, script));
     const relative = path.relative(cwd, target);
     if (!relative || relative === '..' || relative.startsWith('..' + path.sep)
-        || path.isAbsolute(relative) || !/\.[cm]?js$/.test(target)) {
+        || path.isAbsolute(relative) || !/\.[cm]?js$/.test(target) || !statSync(target).isFile()) {
         throw new Error('Interactive verification target must be a workspace JavaScript file');
     }
     if (process.platform === 'win32') {
