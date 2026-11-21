@@ -365,7 +365,8 @@
     "src/tools/pdfReader.ts",
     "src/tools/persistentShell.ts",
     "src/tools/axSnapshot.ts",
-    "src/tools/desktopAct.ts"
+    "src/tools/desktopAct.ts",
+    "src/tools/codeTools.ts"
   ],
   "exclude": [
     "node_modules",
