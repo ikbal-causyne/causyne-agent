@@ -54,7 +54,9 @@ function clone<T>(value: T): T {
 }
 
 function textLabel(value: unknown, limit = 80): string {
-  const cleaned = String(value ?? '')
+  const raw = String(value ?? '');
+  const boundedRaw = raw.length > 1024 ? raw.slice(0, 1024) : raw;
+  const cleaned = boundedRaw
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1f\x7f<>"\x60\\|[\]{};#]/g, ' ')
     .replace(/\s+/g, ' ')
