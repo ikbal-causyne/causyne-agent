@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { recordObservation } from '../embodimentSession.js';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText, type ToolWorkspaceContext } from './toolPathSafety.js';
+
+const MAX_AX_OUTPUT_CHARS = 128 * 1024;
 
 const MAC_AX_SCRIPT = readFileSync(new URL('../tool-scripts/ax_snapshot.applescript', import.meta.url), 'utf8');
 const WINDOWS_AX_SCRIPT = readFileSync(new URL('../tool-scripts/ax_snapshot.ps1', import.meta.url), 'utf8');
@@ -25,7 +28,7 @@ function runWithScriptOnStdin(
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(binary, args);
+      child = spawn(binary, args, { env: sanitizeSubprocessEnv(process.env), windowsHide: true });
     } catch (e: unknown) {
       resolve({ code: -1, stdout: '', stderr: getErrorMessage(e) });
       return;
@@ -42,12 +45,17 @@ function runWithScriptOnStdin(
     };
 
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* already gone */ }
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, 1000).unref();
       done({ code: -1, stdout, stderr: stderr + '\ntimed out' });
     }, timeoutMs);
 
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.stdout.on('data', (d: Buffer) => {
+      if (stdout.length < MAX_AX_OUTPUT_CHARS) stdout += d.toString('utf8').slice(0, MAX_AX_OUTPUT_CHARS - stdout.length);
+    });
+    child.stderr.on('data', (d: Buffer) => {
+      if (stderr.length < MAX_AX_OUTPUT_CHARS) stderr += d.toString('utf8').slice(0, MAX_AX_OUTPUT_CHARS - stderr.length);
+    });
     child.on('error', (e: Error) => { done({ code: -1, stdout, stderr: e.message }); });
     child.on('close', (code: number | null) => { done({ code: code ?? -1, stdout, stderr }); });
 
