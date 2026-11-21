@@ -464,13 +464,16 @@ export class EntitlementGate {
     end(onBlocked) {
         if (!this.enabled)
             return;
-        if (onBlocked)
+        if (typeof onBlocked === 'function')
             this.listeners.delete(onBlocked);
         this.activeRuns = Math.max(0, this.activeRuns - 1);
         this.pausedRuns = Math.min(this.pausedRuns, this.activeRuns);
-        if (this.activeRuns === 0 && this.timer) {
-            clearInterval(this.timer);
-            this.timer = null;
+        if (this.activeRuns === 0) {
+            if (this.timer) {
+                clearInterval(this.timer);
+                this.timer = null;
+            }
+            this.listeners.clear();
         }
     }
 }
