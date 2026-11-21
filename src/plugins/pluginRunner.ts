@@ -2,6 +2,8 @@ import { pathToFileURL } from 'node:url';
 
 const MAX_INPUT_BYTES = 1024 * 1024;
 const RESULT_PREFIX = 'CAUSYNE_PLUGIN_RESULT:';
+const EXPORT_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+const FORBIDDEN_EXPORTS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function writeResult(payload: unknown): void {
   process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(payload)}\n`);
