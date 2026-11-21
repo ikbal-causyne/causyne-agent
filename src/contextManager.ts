@@ -365,7 +365,8 @@ export function describeDroppedMessages(dropped: readonly ContextMessage[] | nul
     : 'Earlier exchange omitted.';
 }
 
-export function sanitizeSequences(messages: ContextMessage[]): ContextMessage[] {
+export function sanitizeSequences(messages: ContextMessage[] | null | undefined): ContextMessage[] {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     if (!msg) continue;

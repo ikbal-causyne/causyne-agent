@@ -302,6 +302,8 @@ export function describeDroppedMessages(dropped) {
         : 'Earlier exchange omitted.';
 }
 export function sanitizeSequences(messages) {
+    if (!Array.isArray(messages) || messages.length === 0)
+        return [];
     for (let i = 0; i < messages.length; i++) {
         const msg = messages[i];
         if (!msg)
