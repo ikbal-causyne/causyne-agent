@@ -26,8 +26,8 @@ function getHeader(response, name) {
     return '';
 }
 function isJsonContentType(contentType) {
-    const lower = contentType.toLowerCase();
-    return lower.includes('application/json') || lower.includes('+json');
+    const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase();
+    return mediaType === 'application/json' || mediaType.endsWith('+json');
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

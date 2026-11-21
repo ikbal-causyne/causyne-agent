@@ -49,8 +49,8 @@ function getHeader(response: Response, name: string): string {
 }
 
 function isJsonContentType(contentType: string): boolean {
-  const lower = contentType.toLowerCase();
-  return lower.includes('application/json') || lower.includes('+json');
+  const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase();
+  return mediaType === 'application/json' || mediaType.endsWith('+json');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
