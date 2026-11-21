@@ -176,24 +176,29 @@ export function initShadow(worktree: string): string {
   runGit(['--git-dir', gitDir, 'config', 'core.autocrlf', 'false']);
 
   const sourceObjects = path.join(worktree, '.git', 'objects');
-  if (fs.existsSync(sourceObjects)) {
-    try {
+  try {
+    const objStat = fs.lstatSync(sourceObjects);
+    if (!objStat.isSymbolicLink() && objStat.isDirectory()) {
       const infoDir = path.join(gitDir, 'objects', 'info');
-      fs.mkdirSync(infoDir, { recursive: true });
-      fs.writeFileSync(path.join(infoDir, 'alternates'), `${sourceObjects}\n`, 'utf8');
-    } catch {
-      // best-effort alternates setup
+      fs.mkdirSync(infoDir, { recursive: true, mode: 0o700 });
+      const altPath = path.join(infoDir, 'alternates');
+      if (!fs.existsSync(altPath) || !fs.lstatSync(altPath).isSymbolicLink()) {
+        fs.writeFileSync(altPath, `${sourceObjects}\n`, { encoding: 'utf8', mode: 0o600 });
+      }
     }
+  } catch {
+    // best-effort alternates setup
   }
 
   if (!alreadyInitialised) {
     const sourceIndex = path.join(worktree, '.git', 'index');
-    if (fs.existsSync(sourceIndex)) {
-      try {
+    try {
+      const idxStat = fs.lstatSync(sourceIndex);
+      if (!idxStat.isSymbolicLink() && idxStat.isFile()) {
         fs.copyFileSync(sourceIndex, path.join(gitDir, 'index'));
-      } catch {
-        // best-effort index reuse
       }
+    } catch {
+      // best-effort index reuse
     }
   }
 
@@ -231,8 +236,11 @@ function excludeOversizedUntracked(gitDir: string, worktree: string): void {
 
   try {
     const infoDir = path.join(gitDir, 'info');
-    fs.mkdirSync(infoDir, { recursive: true });
-    fs.writeFileSync(path.join(infoDir, 'exclude'), `${oversized.join('\n')}\n`, 'utf8');
+    fs.mkdirSync(infoDir, { recursive: true, mode: 0o700 });
+    const excludeFile = path.join(infoDir, 'exclude');
+    if (!fs.existsSync(excludeFile) || !fs.lstatSync(excludeFile).isSymbolicLink()) {
+      fs.writeFileSync(excludeFile, `${oversized.join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+    }
   } catch {
     // best-effort exclude write
   }
