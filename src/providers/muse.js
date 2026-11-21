@@ -17,10 +17,13 @@ const AUDIO_CAPABLE = MUSE_CHAT_MODELS.filter((m) => m.audio).map((m) => m.id);
 export function isContributorModel(model) {
     return String(model || '').toLowerCase().endsWith('-contributor');
 }
+const VALID_MUSE_EFFORTS = new Set(['low', 'medium', 'high', 'max', 'off']);
 export function clampReasoningEffort(effort, model) {
-    const requested = String(effort || '').toLowerCase();
-    if (!requested || requested === 'off')
-        return requested || null;
+    const requested = String(effort || '').trim().toLowerCase();
+    if (!requested || !VALID_MUSE_EFFORTS.has(requested))
+        return null;
+    if (requested === 'off')
+        return 'off';
     if (requested === 'max' && isContributorModel(model))
         return 'high';
     return requested;
@@ -29,7 +32,8 @@ export class MuseProvider extends OpenAICompatibleProvider {
     contextTokens;
     constructor(config = {}) {
         super(config);
-        this.baseUrl = `${MUSE_BASE_URL}/chat/completions`;
+        if (!config.baseUrl)
+            this.baseUrl = `${MUSE_BASE_URL}/chat/completions`;
         this.providerLabel = 'Meta (Muse)';
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['muse']) || '');
         this.visionModels = ['muse-spark'];
