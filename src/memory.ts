@@ -19,11 +19,13 @@ function memoryFilePath(): string {
 function initMemory(): string {
   const filePath = memoryFilePath();
   const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, JSON.stringify({ facts: [] }, null, 2));
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fs.lstatSync(filePath);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      fs.writeFileSync(filePath, JSON.stringify({ facts: [] }, null, 2), { flag: 'wx', mode: 0o600 });
+    }
   }
   return filePath;
 }

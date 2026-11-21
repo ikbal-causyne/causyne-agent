@@ -8,11 +8,14 @@ function memoryFilePath() {
 function initMemory() {
     const filePath = memoryFilePath();
     const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+        fs.lstatSync(filePath);
     }
-    if (!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath, JSON.stringify({ facts: [] }, null, 2));
+    catch (err) {
+        if (err?.code === 'ENOENT') {
+            fs.writeFileSync(filePath, JSON.stringify({ facts: [] }, null, 2), { flag: 'wx', mode: 0o600 });
+        }
     }
     return filePath;
 }
