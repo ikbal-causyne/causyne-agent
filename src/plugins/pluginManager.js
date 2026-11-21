@@ -28,6 +28,7 @@ const MAX_RESULT_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TOOL_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
+const EXPORT_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const CAPABILITIES = new Set([
     'workspace:read',
@@ -253,6 +254,10 @@ function readPlugin(directory) {
         }
         const entry = resolveInside(directory, tool.entry);
         regularFile(entry, MAX_ENTRY_BYTES);
+        const exportName = tool.export === undefined ? 'execute' : tool.export;
+        if (typeof exportName !== 'string' || !EXPORT_IDENT.test(exportName) || FORBIDDEN_KEYS.has(exportName)) {
+            throw new Error(`Tool ${tool.name} has invalid export name ${JSON.stringify(exportName)}`);
+        }
         const capabilities = validateCapabilities(tool.capabilities ?? pluginCapabilities, `${manifest.name}/${tool.name}`);
         return {
             localName: tool.name,
@@ -260,7 +265,7 @@ function readPlugin(directory) {
             description: tool.description.trim().slice(0, 1000),
             parameters: tool.parameters,
             entry,
-            exportName: typeof tool.export === 'string' && tool.export ? tool.export : 'execute',
+            exportName,
             capabilities,
             timeoutMs: Number.isInteger(tool.timeoutMs)
                 ? Math.max(1000, Math.min(tool.timeoutMs, 120_000))
