@@ -248,8 +248,23 @@ export function saveVaultKeyToKeychain(
     });
     if (res.status !== 0 || typeof res.stdout !== 'string' || !res.stdout.trim()) return false;
     const blobFile = dpapiBlobPath(vaultDir);
-    fs.mkdirSync(path.dirname(blobFile), { recursive: true });
-    fs.writeFileSync(blobFile, `${res.stdout.trim()}\n`, { encoding: 'utf8', mode: 0o600 });
+    const dir = path.dirname(blobFile);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try {
+      const existing = fs.lstatSync(blobFile);
+      if (existing.isSymbolicLink() || !existing.isFile()) return false;
+    } catch (err: unknown) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+      if (code !== 'ENOENT') return false;
+    }
+    const tempFile = path.join(dir, `.vault_key.dpapi.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`);
+    try {
+      fs.writeFileSync(tempFile, `${res.stdout.trim()}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      fs.renameSync(tempFile, blobFile);
+    } catch {
+      try { if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile); } catch { /* ignore */ }
+      return false;
+    }
     return true;
   }
 
