@@ -666,11 +666,15 @@ export const COMMANDS: SlashCommandDefinition[] = [
       if (verb === 'import') {
         const requested = args.slice(1).join(' ').trim();
         if (!requested) return fail('Usage: /plans import <json-file>');
-        const file = path.resolve(requested.replace(/^~(?=\/)/, os.homedir()));
+        if (requested.includes('\0')) return fail('Invalid plan file path.');
+        const expanded = requested === '~'
+          ? os.homedir()
+          : (requested.startsWith('~/') || requested.startsWith('~\\') ? path.join(os.homedir(), requested.slice(2)) : requested);
+        const file = path.resolve(expanded);
         try {
-          const stat = fs.statSync(file);
-          if (!stat.isFile() || stat.size > 1024 * 1024) {
-            return fail('Plan seed must be one JSON file no larger than 1 MB.');
+          const stat = fs.lstatSync(file);
+          if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1024 * 1024) {
+            return fail('Plan seed must be one regular JSON file (not a symlink) no larger than 1 MB.');
           }
           const outcome = cache.prewarmPlans(JSON.parse(fs.readFileSync(file, 'utf8')));
           const detail = outcome.errors.length > 0 ? `\n${outcome.errors.join('\n')}` : '';
