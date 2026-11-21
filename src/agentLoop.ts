@@ -1020,7 +1020,11 @@ export class AgentLoop {
   abort() {
     this.stopRequested = true;
     if (this.abortController) {
-      this.abortController.abort();
+      try {
+        this.abortController.abort();
+      } catch {
+        // An abort listener error must not prevent provider/approval teardown.
+      }
     }
     if (this.llm && typeof (this.llm as any).abort === 'function') {
       try {
