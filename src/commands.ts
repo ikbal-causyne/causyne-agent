@@ -1784,7 +1784,11 @@ export const COMMANDS: SlashCommandDefinition[] = [
       if (sub === 'connect') {
         const candidateKey = argv[1];
         if (candidateKey && candidateKey.trim()) {
-          saveOpenRouterKey(candidateKey.trim(), { setAsActive: true });
+          const trimmedKey = candidateKey.trim();
+          if (/[\s\r\n\0]/.test(trimmedKey) || trimmedKey.length < 8) {
+            return fail('Invalid OpenRouter API key format.');
+          }
+          saveOpenRouterKey(trimmedKey, { setAsActive: true });
           return ok('Saved OpenRouter API key and switched active model to openrouter/free.');
         }
 
@@ -1828,7 +1832,7 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
           return ok('Successfully authenticated with OpenRouter! Now using openrouter/free.');
         } catch (err) {
-          return fail(`OpenRouter connection error: ${errMsg(err)}\nFallback: run "/openrouter connect <api-key>" with an API key from https://openrouter.ai/keys`);
+          return fail(`OpenRouter connection error: ${safeDisplay(redactProviderSecrets(errMsg(err)))}\nFallback: run "/openrouter connect <api-key>" with an API key from https://openrouter.ai/keys`);
         }
       }
 
