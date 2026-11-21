@@ -316,7 +316,13 @@ export class AcpClient {
       this.notifyPendingActivity();
       // handleLine already notifies options.onUpdate for this session. Calling
       // it again here duplicated every live chunk and file-action frame.
-      if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') {
+      if (
+        update.sessionUpdate === 'agent_message_chunk' &&
+        update.content !== null &&
+        typeof update.content === 'object' &&
+        update.content.type === 'text' &&
+        typeof update.content.text === 'string'
+      ) {
         collected = `${collected}${update.content.text}`.slice(0, MAX_UPDATE_CHARS);
       }
     };
@@ -489,7 +495,13 @@ export class AcpClient {
     const method = (parsed as { method?: unknown }).method;
     if (method === ACP_METHODS.UPDATE) {
       const params = (parsed as { params?: SessionNotification }).params;
-      if (params && typeof params.sessionId === 'string' && params.update) {
+      if (
+        params &&
+        typeof params.sessionId === 'string' &&
+        params.update !== null &&
+        typeof params.update === 'object' &&
+        !Array.isArray(params.update)
+      ) {
         this.recordSessionModels(params.sessionId, params.update);
         this.trackToolCall(params.sessionId, params.update);
         for (const listener of [...this.updateListeners]) {
