@@ -25,7 +25,8 @@ export function getPackageVersion() {
             const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
             if (pkg && typeof pkg === 'object' && 'version' in pkg) {
                 const version = pkg.version;
-                if (typeof version === 'string' && version.trim()) {
+                // eslint-disable-next-line no-control-regex
+                if (typeof version === 'string' && version.trim() && version.trim().length <= 64 && !/[\x00-\x1f\x7f]/.test(version)) {
                     return version.trim();
                 }
             }
