@@ -30,6 +30,7 @@ const OUTPUT_KEYS = new Set(['output', 'outputPath', 'out', 'outputFile']);
 
 type ToolContext = {
   signal?: AbortSignal;
+  workspaceRoot?: string;
   workspacePaths?: string[];
   parentLoop?: unknown;
 };
@@ -142,7 +143,10 @@ function validateParamPaths(value: unknown, root: string, key: string, depth: nu
 }
 
 function workspaceFrom(context: ToolContext): string {
-  const candidate = context.workspacePaths?.find((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  const loopRoot = (context.parentLoop as { workspaceRoot?: unknown } | undefined)?.workspaceRoot;
+  const candidate = context.workspacePaths?.find((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    || (typeof loopRoot === 'string' && loopRoot.trim() ? loopRoot.trim() : undefined)
+    || (typeof context.workspaceRoot === 'string' && context.workspaceRoot.trim() ? context.workspaceRoot.trim() : undefined);
   return fs.realpathSync(path.resolve(candidate || process.cwd()));
 }
 
@@ -214,13 +218,12 @@ function parseRequest(value: unknown): NativeEngineRequest {
 function validateRequest(request: NativeEngineRequest, workspace: string): NativeEngineContext {
   const project = request.project ? resolveExisting(workspace, request.project, 'project') : undefined;
   const saveAs = request.saveAs ? resolveNew(workspace, request.saveAs, 'saveAs') : undefined;
-  if (saveAs) fs.mkdirSync(path.dirname(saveAs), { recursive: true, mode: 0o700 });
   if (request.demo && project) throw new Error('demo and project cannot be combined');
   if (request.save && !project) throw new Error('save requires an existing project');
   if (request.save && saveAs) throw new Error('save and saveAs cannot be combined');
+  let output: string | undefined;
   if (request.output && (request.action === 'export' || request.action === 'render')) {
-    const output = resolveNew(workspace, request.output, 'output');
-    fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o700 });
+    output = resolveNew(workspace, request.output, 'output');
   }
   if (request.action === 'execute' && !request.command) throw new Error('execute requires command');
   if (request.action === 'describe' && !request.command) throw new Error('describe requires command');
@@ -243,6 +246,8 @@ function validateRequest(request: NativeEngineRequest, workspace: string): Nativ
       if (step.params) validateParamPaths(step.params, workspace, 'params', 0, { count: 0 });
     }
   }
+  if (saveAs) fs.mkdirSync(path.dirname(saveAs), { recursive: true, mode: 0o700 });
+  if (output) fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o700 });
   return {
     workspace,
     ...(project === undefined ? {} : { project }),
