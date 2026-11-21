@@ -102,7 +102,8 @@ const AUDIO_MIME_BY_FORMAT: Record<string, string> = {
 
 /** Map a container format token to the MIME type a provider expects. */
 export function mimeTypeForAudioFormat(format: unknown): string {
-  return AUDIO_MIME_BY_FORMAT[String(format || '').toLowerCase()] || 'audio/wav';
+  const key = String(format || '').trim().toLowerCase();
+  return Object.hasOwn(AUDIO_MIME_BY_FORMAT, key) ? AUDIO_MIME_BY_FORMAT[key]! : 'audio/wav';
 }
 
 /**
@@ -113,9 +114,11 @@ export function audioFormatForMimeType(mimeType: unknown): string {
   for (const [format, candidate] of Object.entries(AUDIO_MIME_BY_FORMAT)) {
     if (candidate === mime) return format;
   }
-  if (mime === 'audio/mp3') return 'mp3';
+  if (mime === 'audio/mp3' || mime === 'audio/x-mpeg') return 'mp3';
   if (mime === 'audio/x-wav' || mime === 'audio/wave') return 'wav';
   if (mime === 'audio/x-m4a') return 'm4a';
+  if (mime === 'audio/x-flac') return 'flac';
+  if (mime === 'audio/x-aac') return 'aac';
   return 'wav';
 }
 

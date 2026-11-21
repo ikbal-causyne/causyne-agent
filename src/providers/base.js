@@ -14,7 +14,8 @@ const AUDIO_MIME_BY_FORMAT = {
 };
 /** Map a container format token to the MIME type a provider expects. */
 export function mimeTypeForAudioFormat(format) {
-    return AUDIO_MIME_BY_FORMAT[String(format || '').toLowerCase()] || 'audio/wav';
+    const key = String(format || '').trim().toLowerCase();
+    return Object.hasOwn(AUDIO_MIME_BY_FORMAT, key) ? AUDIO_MIME_BY_FORMAT[key] : 'audio/wav';
 }
 /**
  * Map a MIME type to the short format token OpenAI's input_audio expects.
@@ -25,12 +26,16 @@ export function audioFormatForMimeType(mimeType) {
         if (candidate === mime)
             return format;
     }
-    if (mime === 'audio/mp3')
+    if (mime === 'audio/mp3' || mime === 'audio/x-mpeg')
         return 'mp3';
     if (mime === 'audio/x-wav' || mime === 'audio/wave')
         return 'wav';
     if (mime === 'audio/x-m4a')
         return 'm4a';
+    if (mime === 'audio/x-flac')
+        return 'flac';
+    if (mime === 'audio/x-aac')
+        return 'aac';
     return 'wav';
 }
 /** True for an audio content block in either the OpenAI or the Gemini shape. */
