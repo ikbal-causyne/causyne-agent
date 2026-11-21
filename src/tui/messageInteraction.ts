@@ -6,7 +6,6 @@ import {
   type SessionRecord
 } from '../sessionJournal.js';
 import { revokeAllAlways } from '../approvalGrants.js';
-// @ts-expect-error Legacy checkpoints module has no TypeScript declarations yet.
 import { undoLast } from '../checkpoints.js';
 import { writeClipboardSync } from './clipboardSync.js';
 import { setTransientNotice } from './consoleGuard.js';
