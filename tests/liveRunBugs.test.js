@@ -321,7 +321,7 @@ test('tui: the band stops painting while the terminal owns the scroll', async ()
   const source = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('../src/tui/stageSurface.js', import.meta.url), 'utf8'));
 
-  assert.match(source, /if \(this\.detached\) return false;/, 'the band paints again while detached');
+  assert.match(source, /if \(this\.detached\)\s*(?:\{\s*)?return false;(?:\s*\})?/, 'the band paints again while detached');
 
   const surface = Object.create(StageSurface.prototype);
   surface.out = { write: () => {} };
