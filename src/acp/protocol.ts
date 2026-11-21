@@ -566,15 +566,18 @@ export function extractAcpSessionModels(payload: unknown): AcpDiscoveredSessionM
 
   const record = payload as Record<string, unknown>;
 
+  const MAX_DISCOVERED_MODELS = 500;
+  const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
   const registerModel = (rawId: unknown, rawLabel?: unknown): void => {
     if (typeof rawId !== 'string') return;
     const id = rawId.trim();
-    if (!id) return;
+    if (!id || id.length > 200 || FORBIDDEN_KEYS.has(id)) return;
     if (!availableModels.includes(id)) {
+      if (availableModels.length >= MAX_DISCOVERED_MODELS) return;
       availableModels.push(id);
     }
     if (typeof rawLabel === 'string' && rawLabel.trim()) {
-      modelLabels[id] = rawLabel.trim();
+      modelLabels[id] = rawLabel.trim().slice(0, 200);
     }
   };
 

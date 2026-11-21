@@ -95,17 +95,21 @@ export function extractAcpSessionModels(payload) {
         return { availableModels, modelLabels, usesConfigOption };
     }
     const record = payload;
+    const MAX_DISCOVERED_MODELS = 500;
+    const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
     const registerModel = (rawId, rawLabel) => {
         if (typeof rawId !== 'string')
             return;
         const id = rawId.trim();
-        if (!id)
+        if (!id || id.length > 200 || FORBIDDEN_KEYS.has(id))
             return;
         if (!availableModels.includes(id)) {
+            if (availableModels.length >= MAX_DISCOVERED_MODELS)
+                return;
             availableModels.push(id);
         }
         if (typeof rawLabel === 'string' && rawLabel.trim()) {
-            modelLabels[id] = rawLabel.trim();
+            modelLabels[id] = rawLabel.trim().slice(0, 200);
         }
     };
     // 1. Inspect ACP v1 configOptions (e.g. OpenCode, Claude Agent ACP, Codex ACP, Gemini ACP)
