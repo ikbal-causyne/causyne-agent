@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 /** Install optional capabilities without writing over the active terminal UI. */
 export function installCapabilityManifest(directory) {
     if (typeof directory !== 'string' || !directory.trim() || directory.includes('\0')) {
@@ -19,7 +20,8 @@ export function installCapabilityManifest(directory) {
             encoding: 'utf8',
             maxBuffer: 2 * 1024 * 1024,
             timeout: 120_000,
-            windowsHide: true
+            windowsHide: true,
+            env: sanitizeSubprocessEnv(process.env)
         });
     }
     catch (error) {
