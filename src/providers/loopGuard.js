@@ -27,10 +27,11 @@ export class CausyneLoopGuard {
     inCooldownUntil = 0;
     config;
     constructor(customConfig) {
+        const positiveInt = (val, fallback) => typeof val === 'number' && Number.isFinite(val) && val >= 1 ? Math.floor(val) : fallback;
         this.config = {
-            maxEvents: customConfig?.maxEvents ?? 15,
-            windowMs: customConfig?.windowMs ?? 120_000,
-            cooldownMs: customConfig?.cooldownMs ?? 300_000
+            maxEvents: positiveInt(customConfig?.maxEvents, 15),
+            windowMs: positiveInt(customConfig?.windowMs, 120_000),
+            cooldownMs: positiveInt(customConfig?.cooldownMs, 300_000)
         };
     }
     recordAction() {
