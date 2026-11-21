@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
+import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
 
 const DRIVER = String.raw`
 import base64, json, os, pty, select, signal, sys, time
@@ -129,6 +130,9 @@ export async function runPtyProbe(options: PtyProbeOptions = {}): Promise<PtyPro
     throw new TypeError('Invalid PTY probe assertion');
   }
   const cwd = realpathSync(workspace);
+  if (isBlockedWorkspaceRoot(cwd)) {
+    throw new Error('Verification workspace cannot be a protected system root');
+  }
   const executable = resolveCommand(workspace, program);
   if (process.platform === 'win32') {
     return {
