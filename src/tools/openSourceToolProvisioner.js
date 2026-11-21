@@ -340,7 +340,8 @@ export const openSourceToolProvisioner = {
             if (!toolId) {
                 return { success: false, error: 'Missing toolId for evaluate action.' };
             }
-            const tool = CURATED_OPEN_SOURCE_CATALOGUE[toolId];
+            const getCatalogueTool = (id) => Object.hasOwn(CURATED_OPEN_SOURCE_CATALOGUE, id) ? CURATED_OPEN_SOURCE_CATALOGUE[id] : undefined;
+            const tool = getCatalogueTool(toolId);
             if (!tool) {
                 return { success: false, error: `Unknown toolId "${toolId}". Choose from: ${Object.keys(CURATED_OPEN_SOURCE_CATALOGUE).join(', ')}` };
             }
@@ -366,13 +367,14 @@ export const openSourceToolProvisioner = {
             if (!toolId) {
                 return { success: false, error: 'Missing toolId to install.' };
             }
-            let tool = CURATED_OPEN_SOURCE_CATALOGUE[toolId];
+            const getCatalogueTool = (id) => Object.hasOwn(CURATED_OPEN_SOURCE_CATALOGUE, id) ? CURATED_OPEN_SOURCE_CATALOGUE[id] : undefined;
+            let tool = getCatalogueTool(toolId);
             if (!tool) {
                 return { success: false, error: `Tool "${toolId}" not found in catalogue.` };
             }
             let selectedTool = tool;
             if (forceAlternative && tool.lightweightAlternativeId) {
-                const alt = CURATED_OPEN_SOURCE_CATALOGUE[tool.lightweightAlternativeId];
+                const alt = getCatalogueTool(tool.lightweightAlternativeId);
                 if (alt) {
                     selectedTool = alt;
                     toolId = alt.id;
@@ -382,7 +384,7 @@ export const openSourceToolProvisioner = {
             // MANDATORY HITL GATE: If not confirmed, pause and formulate decision proposal
             if (!confirm) {
                 const altProfile = selectedTool.lightweightAlternativeId
-                    ? CURATED_OPEN_SOURCE_CATALOGUE[selectedTool.lightweightAlternativeId]
+                    ? getCatalogueTool(selectedTool.lightweightAlternativeId)
                     : undefined;
                 return {
                     success: true,
