@@ -146,6 +146,7 @@ async function runHomeAction(
   action: any,
   { prompt, conn, finish, loop }: { prompt: any; conn: LocalCLIConnection; finish: () => void; loop: any }
 ): Promise<'exit' | null> {
+  if (!action || typeof action !== 'object') return null;
   const reopen = (): void => { if (prompt) openHomeMenu(prompt, conn); };
 
   switch (action.kind) {
@@ -262,7 +263,8 @@ export async function runTask(task: string, options: RunTaskOptions = {}): Promi
   process.exitCode = completed ? 0 : 1;
 }
 
-export async function chatMode({ home = false }: { home?: boolean } = {}): Promise<void> {
+export async function chatMode(options?: { home?: boolean } | null): Promise<void> {
+  const home = Boolean(options && typeof options === 'object' && options.home);
   const conn = new LocalCLIConnection();
   const taskId = `cli_chat_${Date.now()}`;
   let loop: any = new AgentLoop(conn, taskId, null);
@@ -623,20 +625,21 @@ export async function execCommand(command: string): Promise<void> {
   process.exit(exitCode);
 }
 
-export async function interactiveConfig(options: { provider?: string; apikey?: string; model?: string } = {}): Promise<void> {
+export async function interactiveConfig(options: { provider?: string; apikey?: string; model?: string } | null | undefined = {}): Promise<void> {
+  const safeOptions = options && typeof options === 'object' ? options : {};
   const config = loadConfig();
 
   console.log(logoLines() + '\n' + bold('  Causyne Agent · Guided Setup & Configuration') + '\n'
     + dim('  Standardized UI/UX · Models · Providers · Permissions · Creative Studio Bridge\n'));
 
-  if (options.provider || options.apikey || options.model) {
-    if (options.provider && options.provider !== config.provider) {
+  if (safeOptions.provider || safeOptions.apikey || safeOptions.model) {
+    if (safeOptions.provider && safeOptions.provider !== config.provider) {
       config.apiKey = '';
       delete config.baseUrl;
     }
-    if (options.provider) config.provider = options.provider;
-    if (options.apikey) config.apiKey = options.apikey;
-    if (options.model) config.model = options.model;
+    if (safeOptions.provider) config.provider = safeOptions.provider;
+    if (safeOptions.apikey) config.apiKey = safeOptions.apikey;
+    if (safeOptions.model) config.model = safeOptions.model;
     saveConfig(config);
     console.log(paint('success', '  Configuration saved via flags.') + '\n');
     return;
