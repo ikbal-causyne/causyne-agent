@@ -330,12 +330,16 @@ function readPlugin(directory: string): ParsedPlugin {
 }
 
 function pluginDirectories(): string[] {
-  ensureRoot();
-  const root = pluginRoot();
-  return fs.readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-    .map((entry) => path.join(root, entry.name))
-    .sort();
+  try {
+    ensureRoot();
+    const root = pluginRoot();
+    return fs.readdirSync(root, { withFileTypes: true })
+      .filter((entry) => !entry.isSymbolicLink() && entry.isDirectory() && !entry.name.startsWith('.'))
+      .map((entry) => path.join(root, entry.name))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 export function listPlugins(): PluginListing[] {

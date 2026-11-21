@@ -293,12 +293,17 @@ function readPlugin(directory) {
     };
 }
 function pluginDirectories() {
-    ensureRoot();
-    const root = pluginRoot();
-    return fs.readdirSync(root, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
-        .map((entry) => path.join(root, entry.name))
-        .sort();
+    try {
+        ensureRoot();
+        const root = pluginRoot();
+        return fs.readdirSync(root, { withFileTypes: true })
+            .filter((entry) => !entry.isSymbolicLink() && entry.isDirectory() && !entry.name.startsWith('.'))
+            .map((entry) => path.join(root, entry.name))
+            .sort();
+    }
+    catch {
+        return [];
+    }
 }
 export function listPlugins() {
     const state = readState();
