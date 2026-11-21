@@ -124,7 +124,7 @@ export function audioFormatForMimeType(mimeType: unknown): string {
 
 /** True for an audio content block in either the OpenAI or the Gemini shape. */
 export function isAudioBlock(block: any): boolean {
-  if (!block) return false;
+  if (!block || typeof block !== 'object') return false;
   if (block.type === 'input_audio') return true;
   return Boolean(block.inlineData && String(block.inlineData.mimeType || '').startsWith('audio/'));
 }
@@ -204,7 +204,7 @@ export class LLMProvider {
     if (!Array.isArray(msg.content)) return msg;
 
     const content = msg.content.map((block: any) => {
-      if (!block) return block;
+      if (!block || typeof block !== 'object') return block;
 
       if (this.audioPayloadFormat === 'gemini') {
         if (block.type === 'input_audio') {
