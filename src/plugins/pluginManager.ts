@@ -624,16 +624,22 @@ export function getPluginSkills(): PluginSkill[] {
   return skills;
 }
 
-function permissionArgs(tool: EnabledPluginTool, workspaceRoot: string): string[] {
+function permissionArgs(tool: EnabledPluginTool, workspaceRoots: readonly string[]): string[] {
   // Node resolves `.js` module type by walking to package.json. Grant that one
   // metadata file explicitly; granting the repository root would let an
   // extension read Causyne's entire source tree for no functional reason.
   const readable = [path.dirname(RUNNER_FILE), PACKAGE_FILE, tool.pluginDirectory];
   const writable: string[] = [];
   if (tool.capabilities.includes('workspace:read') || tool.capabilities.includes('workspace:write')) {
-    readable.push(workspaceRoot);
+    for (const root of workspaceRoots) {
+      if (!readable.includes(root)) readable.push(root);
+    }
   }
-  if (tool.capabilities.includes('workspace:write')) writable.push(workspaceRoot);
+  if (tool.capabilities.includes('workspace:write')) {
+    for (const root of workspaceRoots) {
+      if (!writable.includes(root)) writable.push(root);
+    }
+  }
 
   // Repeat the flag. Comma-joining paths is parsed as one literal path by
   // Node's permission model on current releases.
@@ -668,6 +674,14 @@ async function runPluginTool(tool: EnabledPluginTool, args: unknown, context: an
     return { success: false, error: 'Invalid workspace root for plugin execution' };
   }
   const workspaceRoot = path.resolve(rawWorkspace);
+  if (isBlockedWorkspaceRoot(workspaceRoot)) {
+    return { success: false, error: 'Refusing plugin execution on a blocked system root' };
+  }
+  const realWorkspaceRoot = physicalPath(workspaceRoot) || workspaceRoot;
+  const workspacePermissionRoots = realWorkspaceRoot === workspaceRoot
+    ? [workspaceRoot]
+    : [workspaceRoot, realWorkspaceRoot];
+
   // Resolve filesystem aliases before handing paths to Node's permission
   // model. On macOS, /var and /tmp are symlinks into /private; authorizing the
   // alias while the module loader opens the canonical target causes a false
@@ -678,7 +692,7 @@ async function runPluginTool(tool: EnabledPluginTool, args: unknown, context: an
     pluginDirectory: fs.realpathSync(tool.pluginDirectory)
   };
   const childArgs = [
-    ...permissionArgs(runtimeTool, workspaceRoot),
+    ...permissionArgs(runtimeTool, workspacePermissionRoots),
     RUNNER_FILE,
     runtimeTool.entry,
     runtimeTool.exportName
