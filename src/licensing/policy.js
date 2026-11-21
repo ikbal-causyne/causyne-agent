@@ -7,6 +7,8 @@ export const LICENSE_API_BASE = 'https://license.causyne.com';
 export const LICENSE_PLAN_KEYS = Object.freeze([
     'monthly', 'annual', 'two_month_pass', 'two_year_pass'
 ]);
+export const LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX = 'lemonsqueezy.com';
+export const MAX_ENTITLEMENT_RESPONSE_BYTES = 256 * 1024;
 export function isValidLicensePlan(plan) {
     return typeof plan === 'string' && LICENSE_PLAN_KEYS.includes(plan);
 }

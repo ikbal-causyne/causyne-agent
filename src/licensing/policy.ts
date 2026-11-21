@@ -10,6 +10,9 @@ export const LICENSE_PLAN_KEYS = Object.freeze([
 
 export type LicensePlanKey = (typeof LICENSE_PLAN_KEYS)[number];
 
+export const LICENSE_CHECKOUT_ALLOWED_HOST_SUFFIX = 'lemonsqueezy.com';
+export const MAX_ENTITLEMENT_RESPONSE_BYTES = 256 * 1024;
+
 export function isValidLicensePlan(plan: unknown): plan is LicensePlanKey {
   return typeof plan === 'string' && (LICENSE_PLAN_KEYS as readonly string[]).includes(plan);
 }
