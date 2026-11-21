@@ -747,6 +747,9 @@ function restoreFileState(absolutePath: string, before: SnapshotRecord | null | 
     return 'removed';
   }
   if (before.kind === 'symlink') {
+    if (typeof before.target !== 'string' || !before.target || before.target.includes('\0')) {
+      throw new Error('refusing to restore symlink with invalid target');
+    }
     try { fs.lstatSync(absolutePath); fs.unlinkSync(absolutePath); } catch { /* nothing there */ }
     fs.symlinkSync(before.target, absolutePath);
     return 'restored symlink';
@@ -756,13 +759,26 @@ function restoreFileState(absolutePath: string, before: SnapshotRecord | null | 
     return 'restored directory';
   }
   if (before.kind !== 'file') return 'skipped (not a regular file)';
-  if (before.skipped || !before.hash) return `skipped (${before.skipped || 'missing_hash'})`;
+  if (before.skipped || !before.hash || !isValidSha256(before.hash)) {
+    return `skipped (${before.skipped || 'missing_hash'})`;
+  }
 
   const buffer = readObject(before.hash);
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-  const temp = `${absolutePath}.causyne_restore_${process.pid}_${Date.now()}`;
-  fs.writeFileSync(temp, buffer, { mode: before.mode || 0o644 });
-  fs.renameSync(temp, absolutePath);
+  const temp = `${absolutePath}.causyne_restore_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+  try {
+    const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, before.mode || 0o644);
+    try {
+      fs.writeSync(fd, buffer, 0, buffer.length);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temp, absolutePath);
+  } catch (err: unknown) {
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
+    throw err;
+  }
   return 'restored';
 }
 
