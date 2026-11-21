@@ -279,8 +279,13 @@ async function extractArchive(source, dest) {
     // 5. Windows PowerShell fallback
     if (process.platform === 'win32') {
         try {
-            const psScript = `Expand-Archive -Path '${source.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`;
-            execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], { stdio: 'pipe' });
+            const psScript = `Expand-Archive -LiteralPath '${source.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`;
+            execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
+                stdio: 'pipe',
+                timeout: 60_000,
+                maxBuffer: 10 * 1024 * 1024,
+                windowsHide: true
+            });
             return { success: true, output: `Extracted successfully to ${dest} (via PowerShell)` };
         }
         catch (e) {
@@ -305,8 +310,10 @@ async function compressArchive(source, dest) {
                     resolve(res);
                 };
                 const output = createWriteStream(dest);
-                const format = dest.toLowerCase().endsWith('.tar') || dest.toLowerCase().endsWith('.tar.gz') ? 'tar' : 'zip';
-                const archiveStream = archiver(format, { zlib: { level: 9 } });
+                const lowerDest = dest.toLowerCase();
+                const isTarGz = lowerDest.endsWith('.tar.gz') || lowerDest.endsWith('.tgz');
+                const format = lowerDest.endsWith('.tar') || isTarGz ? 'tar' : 'zip';
+                const archiveStream = archiver(format, format === 'tar' ? { gzip: isTarGz } : { zlib: { level: 9 } });
                 output.on('close', () => settle({ success: true, output: `Compressed ${archiveStream.pointer()} total bytes to ${dest}` }));
                 output.on('error', (err) => settle({ success: false, error: err?.message || String(err) }));
                 archiveStream.on('error', (err) => settle({ success: false, error: err?.message || String(err) }));
@@ -335,15 +342,17 @@ async function compressArchive(source, dest) {
     }
     const isZip = dest.toLowerCase().endsWith('.zip');
     const isTar = /\.(tar|tar\.gz|tgz)$/i.test(dest);
+    const isTarGz = /\.(tar\.gz|tgz)$/i.test(dest);
     const stat = statSync(source);
+    const execOpts = { stdio: 'pipe', timeout: 60_000, maxBuffer: 10 * 1024 * 1024, windowsHide: true };
     // 2. Native zip on macOS / Linux
     if (isZip) {
         try {
             if (stat.isDirectory()) {
-                execFileSync('zip', ['-q', '-r', dest, '.'], { cwd: source, stdio: 'pipe' });
+                execFileSync('zip', ['-q', '-r', dest, '.'], { cwd: source, ...execOpts });
             }
             else {
-                execFileSync('zip', ['-q', dest, path.basename(source)], { cwd: path.dirname(source), stdio: 'pipe' });
+                execFileSync('zip', ['-q', dest, '--', path.basename(source)], { cwd: path.dirname(source), ...execOpts });
             }
             return { success: true, output: `Compressed successfully to ${dest} (via zip)` };
         }
@@ -354,11 +363,12 @@ async function compressArchive(source, dest) {
     // 3. Native tar on macOS / Linux
     if (isTar) {
         try {
+            const tarFlag = isTarGz ? '-czf' : '-cf';
             if (stat.isDirectory()) {
-                execFileSync('tar', ['-czf', dest, '-C', source, '.'], { stdio: 'pipe' });
+                execFileSync('tar', [tarFlag, dest, '-C', source, '.'], execOpts);
             }
             else {
-                execFileSync('tar', ['-czf', dest, '-C', path.dirname(source), path.basename(source)], { stdio: 'pipe' });
+                execFileSync('tar', [tarFlag, dest, '-C', path.dirname(source), '--', path.basename(source)], execOpts);
             }
             return { success: true, output: `Compressed successfully to ${dest} (via tar)` };
         }
@@ -383,7 +393,7 @@ async function compressArchive(source, dest) {
                 '        z.write(src, os.path.basename(src))\n',
             source,
             dest
-        ], { stdio: 'pipe' });
+        ], execOpts);
         return { success: true, output: `Compressed successfully to ${dest} (via python3 zipfile)` };
     }
     catch (pyErr) {
