@@ -113,7 +113,7 @@ export function escapeSeatbeltPath(rawPath: string): string | null {
 
 function resolveCanonicalPaths(rawPath: string): string[] {
   const resolved = path.resolve(rawPath);
-  const out = new Set<string>([resolved]);
+  const out = new Set<string>();
   try {
     const real = fs.realpathSync.native(resolved);
     out.add(real);
@@ -135,6 +135,7 @@ function resolveCanonicalPaths(rawPath: string): string[] {
       }
     }
   }
+  out.add(resolved);
   return [...out];
 }
 

@@ -65,7 +65,7 @@ export function escapeSeatbeltPath(rawPath) {
 }
 function resolveCanonicalPaths(rawPath) {
     const resolved = path.resolve(rawPath);
-    const out = new Set([resolved]);
+    const out = new Set();
     try {
         const real = fs.realpathSync.native(resolved);
         out.add(real);
@@ -90,6 +90,7 @@ function resolveCanonicalPaths(rawPath) {
             }
         }
     }
+    out.add(resolved);
     return [...out];
 }
 function isSameOrChildPath(candidate, parent) {
