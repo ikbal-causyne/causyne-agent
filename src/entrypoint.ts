@@ -17,6 +17,7 @@ import { resolveInvocation } from './tui/invocation.js';
 import { safeDisplay } from './tui/text.js';
 import { resolveUserPath } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
+import { redactProviderSecrets } from './providers/byokHttp.js';
 
 function requestedWorkingDirectory(argv: readonly unknown[] = []): string | null {
   const tokens = Array.isArray(argv) ? argv.slice(2) : [];
@@ -114,7 +115,7 @@ program
         permissionMode: options.permissionMode
       });
     } catch (err: unknown) {
-      console.error(err instanceof Error ? err.message : String(err));
+      console.error(redactProviderSecrets(err instanceof Error ? err.message : String(err)));
       process.exit(2);
     }
   });
@@ -183,7 +184,7 @@ program
         await runTask(prompt, options);
       }
     } catch (err: unknown) {
-      console.error(err instanceof Error ? err.message : String(err));
+      console.error(redactProviderSecrets(err instanceof Error ? err.message : String(err)));
       process.exit(2);
     }
   });
