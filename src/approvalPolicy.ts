@@ -24,11 +24,11 @@ export interface ToolApprovalInput {
 
 /** Read the live session mode from the tool context; never infer it from a tool argument. */
 export function isAutonomousToolContext(context: unknown): boolean {
-  if (!context || typeof context !== 'object') return false;
+  if (!context || typeof context !== 'object' || Array.isArray(context)) return false;
   const parentLoop = (context as { parentLoop?: unknown }).parentLoop;
-  if (!parentLoop || typeof parentLoop !== 'object') return false;
+  if (!parentLoop || typeof parentLoop !== 'object' || Array.isArray(parentLoop)) return false;
   const config = (parentLoop as { config?: unknown }).config;
-  if (!config || typeof config !== 'object') return false;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
   const mode = (config as { autonomyMode?: unknown }).autonomyMode;
   return mode === 'C' || mode === undefined;
 }
@@ -73,7 +73,11 @@ export function isWholeFileDeletion(tool: string, args: Record<string, unknown>)
       : '';
   if (/^\s*git\s+rm\s+--cached\b[^;&|\n`$()]*$/i.test(command)) return false;
   return command.length > 0
-    && (WHOLE_FILE_DELETE.test(command) || DELETE_API_CALL.test(command) || NESTED_SHELL_DELETE.test(command));
+    && (WHOLE_FILE_DELETE.test(command)
+      || hasFindDelete(command)
+      || hasGitForceClean(command)
+      || DELETE_API_CALL.test(command)
+      || NESTED_SHELL_DELETE.test(command));
 }
 
 /** Routine browser verification inside the isolated agent browser (preview, snapshot, click, fill, screenshot, etc.) does not require HITL in Mode B or C unless uploading or downloading files. */

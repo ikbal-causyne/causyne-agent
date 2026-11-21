@@ -9,13 +9,13 @@ export function currentToolAutonomyMode() {
 }
 /** Read the live session mode from the tool context; never infer it from a tool argument. */
 export function isAutonomousToolContext(context) {
-    if (!context || typeof context !== 'object')
+    if (!context || typeof context !== 'object' || Array.isArray(context))
         return false;
     const parentLoop = context.parentLoop;
-    if (!parentLoop || typeof parentLoop !== 'object')
+    if (!parentLoop || typeof parentLoop !== 'object' || Array.isArray(parentLoop))
         return false;
     const config = parentLoop.config;
-    if (!config || typeof config !== 'object')
+    if (!config || typeof config !== 'object' || Array.isArray(config))
         return false;
     const mode = config.autonomyMode;
     return mode === 'C' || mode === undefined;
@@ -62,7 +62,11 @@ export function isWholeFileDeletion(tool, args) {
     if (/^\s*git\s+rm\s+--cached\b[^;&|\n`$()]*$/i.test(command))
         return false;
     return command.length > 0
-        && (WHOLE_FILE_DELETE.test(command) || DELETE_API_CALL.test(command) || NESTED_SHELL_DELETE.test(command));
+        && (WHOLE_FILE_DELETE.test(command)
+            || hasFindDelete(command)
+            || hasGitForceClean(command)
+            || DELETE_API_CALL.test(command)
+            || NESTED_SHELL_DELETE.test(command));
 }
 /** Routine browser verification inside the isolated agent browser (preview, snapshot, click, fill, screenshot, etc.) does not require HITL in Mode B or C unless uploading or downloading files. */
 export function isRoutineBrowserVerification(tool, args) {
