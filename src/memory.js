@@ -22,6 +22,9 @@ function initMemory() {
 export function getMemory() {
     try {
         const filePath = initMemory();
+        const stat = fs.lstatSync(filePath);
+        if (!stat.isFile())
+            return normalizeMemoryData({ facts: [] });
         const data = fs.readFileSync(filePath, 'utf-8');
         return normalizeMemoryData(JSON.parse(data));
     }
