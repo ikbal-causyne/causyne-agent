@@ -30,15 +30,15 @@ function runPath(initial, transition, invariant, path) {
         }
     }
     catch (error) {
-        return { failed: true, reason: error instanceof Error ? error.message : String(error), step: -1 };
+        return { failed: true, reason: String(error instanceof Error ? error.message : error).slice(0, 1024), step: -1 };
     }
     try {
         const error = failure(invariant(state));
         if (error)
-            return { failed: true, reason: error, step: -1 };
+            return { failed: true, reason: error.slice(0, 1024), step: -1 };
     }
     catch (error) {
-        return { failed: true, reason: error instanceof Error ? error.message : String(error), step: -1 };
+        return { failed: true, reason: String(error instanceof Error ? error.message : error).slice(0, 1024), step: -1 };
     }
     for (let i = 0; i < path.length; i++) {
         try {
@@ -50,10 +50,10 @@ function runPath(initial, transition, invariant, path) {
                 state = next;
             const error = failure(invariant(state));
             if (error)
-                return { failed: true, reason: error, step: i };
+                return { failed: true, reason: error.slice(0, 1024), step: i };
         }
         catch (error) {
-            return { failed: true, reason: error instanceof Error ? error.message : String(error), step: i };
+            return { failed: true, reason: String(error instanceof Error ? error.message : error).slice(0, 1024), step: i };
         }
     }
     return { failed: false, reason: null, step: path.length };

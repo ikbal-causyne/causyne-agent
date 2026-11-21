@@ -62,13 +62,13 @@ function runPath<TState, TAction>(
       throw new TypeError('Async initial state is not supported');
     }
   } catch (error: unknown) {
-    return { failed: true, reason: error instanceof Error ? error.message : String(error), step: -1 };
+    return { failed: true, reason: String(error instanceof Error ? error.message : error).slice(0, 1024), step: -1 };
   }
   try {
     const error = failure(invariant(state));
-    if (error) return { failed: true, reason: error, step: -1 };
+    if (error) return { failed: true, reason: error.slice(0, 1024), step: -1 };
   } catch (error: unknown) {
-    return { failed: true, reason: error instanceof Error ? error.message : String(error), step: -1 };
+    return { failed: true, reason: String(error instanceof Error ? error.message : error).slice(0, 1024), step: -1 };
   }
   for (let i = 0; i < path.length; i++) {
     try {
@@ -77,9 +77,9 @@ function runPath<TState, TAction>(
       if (isThenable(next)) throw new TypeError('Async transitions are not supported');
       if (next !== undefined) state = next;
       const error = failure(invariant(state));
-      if (error) return { failed: true, reason: error, step: i };
+      if (error) return { failed: true, reason: error.slice(0, 1024), step: i };
     } catch (error: unknown) {
-      return { failed: true, reason: error instanceof Error ? error.message : String(error), step: i };
+      return { failed: true, reason: String(error instanceof Error ? error.message : error).slice(0, 1024), step: i };
     }
   }
   return { failed: false, reason: null, step: path.length };
