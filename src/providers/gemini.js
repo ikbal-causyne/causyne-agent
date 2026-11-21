@@ -90,9 +90,11 @@ export class GeminiProvider extends LLMProvider {
             }
             else {
                 if (Array.isArray(msg.content)) {
-                    const mappedParts = msg.content.map((part) => {
+                    const rawMapped = msg.content.map((part) => {
+                        if (!part || typeof part !== 'object')
+                            return null;
                         if (part.type === 'text')
-                            return { text: part.text };
+                            return { text: typeof part.text === 'string' ? part.text : '' };
                         if (part.type === 'image_url') {
                             const rawUrl = typeof part.image_url?.url === 'string' ? part.image_url.url : '';
                             const marker = rawUrl.indexOf('base64,');
@@ -117,8 +119,9 @@ export class GeminiProvider extends LLMProvider {
                         }
                         if (part.inlineData)
                             return part;
-                        return { text: '' };
-                    });
+                        return null;
+                    }).filter((p) => p !== null);
+                    const mappedParts = rawMapped.length > 0 ? rawMapped : [{ text: '' }];
                     contents.push({ role, parts: mappedParts });
                 }
                 else {

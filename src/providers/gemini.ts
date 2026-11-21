@@ -106,8 +106,9 @@ export class GeminiProvider extends LLMProvider {
         }
       } else {
         if (Array.isArray(msg.content)) {
-          const mappedParts = msg.content.map((part: any) => {
-            if (part.type === 'text') return { text: part.text };
+          const rawMapped = msg.content.map((part: any) => {
+            if (!part || typeof part !== 'object') return null;
+            if (part.type === 'text') return { text: typeof part.text === 'string' ? part.text : '' };
             if (part.type === 'image_url') {
               const rawUrl = typeof part.image_url?.url === 'string' ? part.image_url.url : '';
               const marker = rawUrl.indexOf('base64,');
@@ -130,8 +131,9 @@ export class GeminiProvider extends LLMProvider {
               };
             }
             if (part.inlineData) return part;
-            return { text: '' };
-          });
+            return null;
+          }).filter((p: any): p is Record<string, any> => p !== null);
+          const mappedParts = rawMapped.length > 0 ? rawMapped : [{ text: '' }];
           contents.push({ role, parts: mappedParts });
         } else {
           contents.push({ role, parts: [{ text: msg.content ?? '' }] });
