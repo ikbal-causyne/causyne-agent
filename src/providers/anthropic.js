@@ -315,16 +315,20 @@ export class AnthropicProvider extends LLMProvider {
         const thinkingBlocks = [];
         let reasoningContent = '';
         for (const block of (Array.isArray(data['content']) ? data['content'] : [])) {
+            if (!block || typeof block !== 'object')
+                continue;
             if (block.type === 'thinking' || block.type === 'redacted_thinking') {
                 thinkingBlocks.push(block);
                 if (typeof block.thinking === 'string')
                     reasoningContent += block.thinking;
             }
             else if (block.type === 'text') {
-                content += block.text || '';
+                content += typeof block.text === 'string' ? block.text : '';
             }
             else if (block.type === 'tool_use') {
                 const callName = normalizeToolName(block.name || '');
+                if (!callName)
+                    continue;
                 toolCalls.push({
                     id: sanitizeProviderToolId(block.id, 'toolu', toolCalls.length),
                     type: 'function',
