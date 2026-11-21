@@ -636,6 +636,7 @@ export async function streamAnthropicMessages(
  */
 export function buildGeminiStreamUrl(generateContentUrl: string): string {
   const parsed = new URL(generateContentUrl);
+  parsed.searchParams.delete('key');
   if (parsed.pathname.endsWith(':generateContent')) {
     parsed.pathname = `${parsed.pathname.slice(0, -':generateContent'.length)}:streamGenerateContent`;
   }
