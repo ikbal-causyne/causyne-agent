@@ -1118,6 +1118,9 @@ export const reverseEngineering = {
     // ── ACTION: DECOMPILE ─────────────────────────────────────────────────
     if (action === 'decompile') {
       try {
+        if (functionName !== undefined && (typeof functionName !== 'string' || !/^[A-Za-z0-9_.$:@<>~+][A-Za-z0-9_.$:@<>~+-]{0,255}$/.test(functionName))) {
+          return { success: false, error: 'Invalid functionName: contains disallowed characters for disassembler/decompiler invocation.' };
+        }
         let disassemblyText = '';
 
         // 1. Try sovereign engine decompilation
@@ -1133,8 +1136,13 @@ export const reverseEngineering = {
         // 2. Fallbacks if engine output is empty
         if (!disassemblyText && engine === 'rizin') {
           try {
-            const args = ['-q', '-c', functionName ? `pdf @ ${functionName}` : 'pdr @ main', resolvedFile];
-            const rzRes = await execFileAsync('rizin', args, { timeout: 30000 });
+            const rzArgs = ['-q', '-c', functionName ? `pdf @ ${functionName}` : 'pdr @ main', resolvedFile];
+            const rzRes = await execFileAsync('rizin', rzArgs, {
+              timeout: 30000,
+              maxBuffer: 10 * 1024 * 1024,
+              windowsHide: true,
+              ...(context.signal ? { signal: context.signal } : {})
+            });
             disassemblyText = rzRes.stdout;
           } catch (e: unknown) {
             disassemblyText = `[Rizin failed: ${e instanceof Error ? e.message : String(e)}]`;
@@ -1146,7 +1154,12 @@ export const reverseEngineering = {
             const otoolArgs = ['-tvV'];
             if (functionName) otoolArgs.push('-p', functionName);
             otoolArgs.push(resolvedFile);
-            const res = await execFileAsync('otool', otoolArgs, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
+            const res = await execFileAsync('otool', otoolArgs, {
+              timeout: 30000,
+              maxBuffer: 10 * 1024 * 1024,
+              windowsHide: true,
+              ...(context.signal ? { signal: context.signal } : {})
+            });
             disassemblyText = res.stdout;
           } catch {
             // fallback to objdump
@@ -1158,7 +1171,12 @@ export const reverseEngineering = {
             const objdumpArgs = ['--disassemble'];
             if (functionName) objdumpArgs.push(`--disassemble=${functionName}`);
             objdumpArgs.push(resolvedFile);
-            const res = await execFileAsync('objdump', objdumpArgs, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
+            const res = await execFileAsync('objdump', objdumpArgs, {
+              timeout: 30000,
+              maxBuffer: 10 * 1024 * 1024,
+              windowsHide: true,
+              ...(context.signal ? { signal: context.signal } : {})
+            });
             disassemblyText = res.stdout;
           } catch {
             disassemblyText = `Decompiler not available on system for ${path.basename(resolvedFile)}. Install Ghidra or Rizin for advanced decompilation.`;
