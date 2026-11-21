@@ -40,7 +40,15 @@ export const executeProceduralMedia = {
                 const scriptPath = path.join(workspaceDir, `temp_proc_${process.pid}_${crypto.randomBytes(6).toString('hex')}.cjs`);
                 fs.writeFileSync(scriptPath, code, { flag: 'wx', mode: 0o600 });
                 try {
-                    await execFilePromise(process.execPath, [scriptPath], { cwd: workspaceDir, timeout: 10000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+                    const execOpts = {
+                        cwd: workspaceDir,
+                        timeout: 10000,
+                        maxBuffer: 4 * 1024 * 1024,
+                        windowsHide: true,
+                        env: sanitizeSubprocessEnv(process.env),
+                        ...(sandbox?.signal ? { signal: sandbox.signal } : {})
+                    };
+                    await execFilePromise(process.execPath, [scriptPath], execOpts);
                 }
                 catch (jsErr) {
                     const e = jsErr;
@@ -61,7 +69,15 @@ export const executeProceduralMedia = {
                 fs.writeFileSync(scriptPath, code, { flag: 'wx', mode: 0o600 });
                 try {
                     const pythonBin = process.platform === 'win32' ? 'python.exe' : 'python3';
-                    await execFilePromise(pythonBin, [scriptPath], { cwd: workspaceDir, timeout: 10000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+                    const execOpts = {
+                        cwd: workspaceDir,
+                        timeout: 10000,
+                        maxBuffer: 4 * 1024 * 1024,
+                        windowsHide: true,
+                        env: sanitizeSubprocessEnv(process.env),
+                        ...(sandbox?.signal ? { signal: sandbox.signal } : {})
+                    };
+                    await execFilePromise(pythonBin, [scriptPath], execOpts);
                 }
                 catch (pyError) {
                     const e = pyError;
