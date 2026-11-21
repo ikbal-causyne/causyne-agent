@@ -73,8 +73,11 @@ const SGR = /\x1b\[[0-9;]*m/g;
  * paste' heuristic. Allow bulk pasted ANSI-colored logs, which an existing
  * regression test expects to arrive as a single multiline editor insertion.
  */
+const MAX_ATOMIC_PASTE_BYTES = 2 * 1024 * 1024;
+
 export function shouldTreatAsAtomicPaste(raw: Buffer | Uint8Array | string | null | undefined, decoder?: DecoderLike | null): boolean {
   if (raw == null) return false;
+  if (typeof raw === 'string' ? raw.length > MAX_ATOMIC_PASTE_BYTES : raw.byteLength > MAX_ATOMIC_PASTE_BYTES) return false;
   let text: string;
   if (typeof raw === 'string') text = raw;
   else {
