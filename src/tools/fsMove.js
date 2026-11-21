@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
-import os from 'node:os';
-import { getErrorMessage } from './toolPathSafety.js';
+import path from 'node:path';
+import { getErrorMessage, assertSafeWorkspaceOutput, resolveScopedPath, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
 export const fsMove = {
     schema: {
         name: 'fs.move',
@@ -17,19 +17,26 @@ export const fsMove = {
             required: ['source', 'destination']
         }
     },
-    async execute(args = {}, _context) {
+    async execute(args = {}, context) {
         try {
-            if (typeof args?.source !== 'string' || typeof args?.destination !== 'string') {
-                return { success: false, error: 'source and destination are required' };
+            const src = resolveScopedPath(args?.source, context);
+            const dest = await assertSafeWorkspaceOutput(args?.destination, context);
+            if (src === dest) {
+                return { success: false, error: 'Source and destination refer to the same path.' };
             }
-            const src = args.source.replace(/^~\//, os.homedir() + '/');
-            const dest = args.destination.replace(/^~\//, os.homedir() + '/');
-            if (!args.overwrite) {
-                try {
-                    await fs.access(dest);
+            const srcStat = await fs.lstat(src);
+            const destStat = await fs.lstat(dest).catch((err) => {
+                if (err.code === 'ENOENT')
+                    return null;
+                throw err;
+            });
+            if (destStat) {
+                if (!args?.overwrite) {
                     return { success: false, error: 'Destination already exists and overwrite is false.' };
                 }
-                catch { /* dest does not exist, safe */ }
+                if (destStat.isSymbolicLink() || destStat.isDirectory()) {
+                    return { success: false, error: 'Refusing to overwrite symlink or directory destination.' };
+                }
             }
             try {
                 await fs.rename(src, dest);
