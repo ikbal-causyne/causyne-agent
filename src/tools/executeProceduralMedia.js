@@ -1,93 +1,105 @@
-import fs from 'fs';
-import path from 'path';
-import { exec } from 'child_process';
-import util from 'util';
-import vm from 'vm';
-import os from 'os';
-
-const execPromise = util.promisify(exec);
-
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
+import util from 'node:util';
+import os from 'node:os';
+import { getErrorMessage } from './toolPathSafety.js';
+const execFilePromise = util.promisify(execFile);
 export const executeProceduralMedia = {
-  schema: {
-    name: 'execute_procedural_media',
-    description: 'Sandboxed Procedural Generation (Mode A). Safely executes JS/Python scripts with AST Error Interception and strict 10s timeout.',
-    parameters: {
-      type: 'object',
-      properties: {
-        code: { type: 'string', description: 'The JavaScript/Python code. MUST save output to outputFileName.' },
-        language: { type: 'string', enum: ['javascript', 'python'] },
-        outputFileName: { type: 'string', description: 'Absolute path for output.' }
-      },
-      required: ['code', 'language', 'outputFileName']
-    }
-  },
-  
-  execute: async (args, sandbox) => {
-    try {
-      const { code, language } = args;
-      let outputFilePath = args.outputFileName.replace(/^~\//, os.homedir() + '/');
-      outputFilePath = path.resolve(outputFilePath);
-
-      if (sandbox && sandbox.isPathAllowed && !sandbox.isPathAllowed(outputFilePath)) {
-        return { success: false, error: `Path outside allowed workspace: ${outputFilePath}` };
-      }
-
-      const workspaceDir = path.dirname(outputFilePath);
-      if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
-      
-      // Phase 5 AGI Upgrade: Sandboxed Execution & Timeout
-      if (language.toLowerCase() === 'javascript') {
-        const sandboxContext = {
-          require: require,
-          console: console,
-          Buffer: Buffer,
-          process: { cwd: () => workspaceDir }, // Restricted process
-          setTimeout, clearTimeout
-        };
-        
-        vm.createContext(sandboxContext);
-        
+    schema: {
+        name: 'execute_procedural_media',
+        description: 'Sandboxed Procedural Generation (Mode A). Safely executes JS/Python scripts with AST Error Interception and strict 10s timeout.',
+        parameters: {
+            type: 'object',
+            properties: {
+                code: { type: 'string', description: 'The JavaScript/Python code. MUST save output to outputFileName.' },
+                language: { type: 'string', enum: ['javascript', 'python'] },
+                outputFileName: { type: 'string', description: 'Absolute path for output.' }
+            },
+            required: ['code', 'language', 'outputFileName']
+        }
+    },
+    execute: async (args = {}, sandbox) => {
         try {
-          const script = new vm.Script(code);
-          // Strict 10-second timeout to prevent infinite while(true) loops
-          script.runInContext(sandboxContext, { timeout: 10000 });
-        } catch (vmError) {
-          // Phase 5 AGI Upgrade: AST Error Interception
-          return { success: false, error: `[AUTO-CORRECTION REQUIRED] VM Syntax/Runtime Error intercepted: ${vmError.message}\nStack: ${vmError.stack}\nPlease fix the math/syntax in the script and retry.` };
+            const code = args?.code;
+            const language = args?.language;
+            if (typeof code !== 'string' || typeof language !== 'string' || typeof args?.outputFileName !== 'string') {
+                return { success: false, error: 'code, language, and outputFileName are required.' };
+            }
+            let outputFilePath = args.outputFileName.replace(/^~\//, os.homedir() + '/');
+            outputFilePath = path.resolve(outputFilePath);
+            if (sandbox && sandbox.isPathAllowed && !sandbox.isPathAllowed(outputFilePath)) {
+                return { success: false, error: `Path outside allowed workspace: ${outputFilePath}` };
+            }
+            const workspaceDir = path.dirname(outputFilePath);
+            if (!fs.existsSync(workspaceDir))
+                fs.mkdirSync(workspaceDir, { recursive: true });
+            const lang = language.toLowerCase();
+            if (lang === 'javascript') {
+                const scriptPath = path.join(workspaceDir, `temp_proc_${process.pid}_${crypto.randomBytes(6).toString('hex')}.cjs`);
+                fs.writeFileSync(scriptPath, code, { flag: 'wx', mode: 0o600 });
+                try {
+                    await execFilePromise(process.execPath, [scriptPath], { cwd: workspaceDir, timeout: 10000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+                }
+                catch (jsErr) {
+                    const e = jsErr;
+                    return {
+                        success: false,
+                        error: `[AUTO-CORRECTION REQUIRED] JavaScript Execution Error: ${e?.stderr || getErrorMessage(jsErr)}\nPlease fix the math/syntax in the script and retry.`
+                    };
+                }
+                finally {
+                    try {
+                        fs.unlinkSync(scriptPath);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+            else if (lang === 'python') {
+                const scriptPath = path.join(workspaceDir, `temp_proc_${process.pid}_${crypto.randomBytes(6).toString('hex')}.py`);
+                fs.writeFileSync(scriptPath, code, { flag: 'wx', mode: 0o600 });
+                try {
+                    const pythonBin = process.platform === 'win32' ? 'python.exe' : 'python3';
+                    await execFilePromise(pythonBin, [scriptPath], { cwd: workspaceDir, timeout: 10000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+                }
+                catch (pyError) {
+                    const e = pyError;
+                    return {
+                        success: false,
+                        error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${e?.message || e?.stderr || getErrorMessage(pyError)}\nPlease fix the math/syntax and retry.`
+                    };
+                }
+                finally {
+                    try {
+                        fs.unlinkSync(scriptPath);
+                    }
+                    catch { /* ignore */ }
+                }
+            }
+            else {
+                return { success: false, error: 'Unsupported language. Use javascript or python.' };
+            }
+            if (fs.existsSync(outputFilePath)) {
+                const stat = fs.lstatSync(outputFilePath);
+                if (!stat.isFile()) {
+                    return { success: false, error: '[AUTO-CORRECTION REQUIRED] Output path is not a regular file.' };
+                }
+                if (stat.size === 0) {
+                    return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed but output file (${args.outputFileName}) is 0 bytes. Code failed to generate valid media.` };
+                }
+                return {
+                    success: true,
+                    message: `Procedural media generated successfully at ${outputFilePath} (${stat.size} bytes)`,
+                    filePath: outputFilePath
+                };
+            }
+            else {
+                return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed, but expected output file (${args.outputFileName}) was not created.` };
+            }
         }
-      } 
-      else if (language.toLowerCase() === 'python') {
-        const scriptPath = path.join(workspaceDir, `temp_proc_${Date.now()}.py`);
-        fs.writeFileSync(scriptPath, code);
-        
-        try {
-          // Timeout enforced at process level
-          await execPromise(`python3 "${scriptPath}"`, { cwd: workspaceDir, timeout: 10000 });
-        } catch (pyError) {
-          if (fs.existsSync(scriptPath)) fs.unlinkSync(scriptPath);
-          return { success: false, error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${pyError.message || pyError.stderr}\nPlease fix the math/syntax and retry.` };
+        catch (err) {
+            return { success: false, error: getErrorMessage(err) };
         }
-        if (fs.existsSync(scriptPath)) fs.unlinkSync(scriptPath);
-      } else {
-        return { success: false, error: 'Unsupported language. Use javascript or python.' };
-      }
-      
-      // Phase 5 AGI Upgrade: Format Verification (Ensure file exists and > 0 bytes)
-      if (fs.existsSync(outputFilePath)) {
-        const stat = fs.statSync(outputFilePath);
-        if (stat.size === 0) {
-          return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed but output file (${args.outputFileName}) is 0 bytes. Code failed to generate valid media.` };
-        }
-        return { 
-          success: true, 
-          message: `Procedural media generated successfully at ${outputFilePath} (${stat.size} bytes)`,
-          filePath: outputFilePath
-        };
-      } else {
-        return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed, but expected output file (${args.outputFileName}) was not created.` };
-      }
-    } catch (err) {
-      return { success: false, error: err.message };
     }
-  }
 };

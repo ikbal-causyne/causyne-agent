@@ -368,7 +368,8 @@
     "src/tools/desktopAct.ts",
     "src/tools/codeTools.ts",
     "src/tools/printer.ts",
-    "src/tools/subagentOrchestrator.ts"
+    "src/tools/subagentOrchestrator.ts",
+    "src/tools/executeProceduralMedia.ts"
   ],
   "exclude": [
     "node_modules",

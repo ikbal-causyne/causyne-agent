@@ -1,0 +1,110 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
+import util from 'node:util';
+import os from 'node:os';
+import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+
+const execFilePromise = util.promisify(execFile);
+
+export interface ExecuteProceduralMediaArgs {
+  code?: string | undefined;
+  language?: 'javascript' | 'python' | string | undefined;
+  outputFileName?: string | undefined;
+}
+
+export interface ExecuteProceduralMediaResult {
+  success: boolean;
+  message?: string | undefined;
+  filePath?: string | undefined;
+  error?: string | undefined;
+}
+
+export const executeProceduralMedia = {
+  schema: {
+    name: 'execute_procedural_media',
+    description: 'Sandboxed Procedural Generation (Mode A). Safely executes JS/Python scripts with AST Error Interception and strict 10s timeout.',
+    parameters: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'The JavaScript/Python code. MUST save output to outputFileName.' },
+        language: { type: 'string', enum: ['javascript', 'python'] },
+        outputFileName: { type: 'string', description: 'Absolute path for output.' }
+      },
+      required: ['code', 'language', 'outputFileName']
+    }
+  },
+
+  execute: async (args: ExecuteProceduralMediaArgs = {}, sandbox?: ToolWorkspaceContext): Promise<ExecuteProceduralMediaResult> => {
+    try {
+      const code = args?.code;
+      const language = args?.language;
+      if (typeof code !== 'string' || typeof language !== 'string' || typeof args?.outputFileName !== 'string') {
+        return { success: false, error: 'code, language, and outputFileName are required.' };
+      }
+      let outputFilePath = args.outputFileName.replace(/^~\//, os.homedir() + '/');
+      outputFilePath = path.resolve(outputFilePath);
+
+      if (sandbox && sandbox.isPathAllowed && !sandbox.isPathAllowed(outputFilePath)) {
+        return { success: false, error: `Path outside allowed workspace: ${outputFilePath}` };
+      }
+
+      const workspaceDir = path.dirname(outputFilePath);
+      if (!fs.existsSync(workspaceDir)) fs.mkdirSync(workspaceDir, { recursive: true });
+
+      const lang = language.toLowerCase();
+      if (lang === 'javascript') {
+        const scriptPath = path.join(workspaceDir, `temp_proc_${process.pid}_${crypto.randomBytes(6).toString('hex')}.cjs`);
+        fs.writeFileSync(scriptPath, code, { flag: 'wx', mode: 0o600 });
+        try {
+          await execFilePromise(process.execPath, [scriptPath], { cwd: workspaceDir, timeout: 10000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+        } catch (jsErr: unknown) {
+          const e = jsErr as { stderr?: string; message?: string };
+          return {
+            success: false,
+            error: `[AUTO-CORRECTION REQUIRED] JavaScript Execution Error: ${e?.stderr || getErrorMessage(jsErr)}\nPlease fix the math/syntax in the script and retry.`
+          };
+        } finally {
+          try { fs.unlinkSync(scriptPath); } catch { /* ignore */ }
+        }
+      } else if (lang === 'python') {
+        const scriptPath = path.join(workspaceDir, `temp_proc_${process.pid}_${crypto.randomBytes(6).toString('hex')}.py`);
+        fs.writeFileSync(scriptPath, code, { flag: 'wx', mode: 0o600 });
+        try {
+          const pythonBin = process.platform === 'win32' ? 'python.exe' : 'python3';
+          await execFilePromise(pythonBin, [scriptPath], { cwd: workspaceDir, timeout: 10000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+        } catch (pyError: unknown) {
+          const e = pyError as { stderr?: string; message?: string };
+          return {
+            success: false,
+            error: `[AUTO-CORRECTION REQUIRED] Python Execution Error: ${e?.message || e?.stderr || getErrorMessage(pyError)}\nPlease fix the math/syntax and retry.`
+          };
+        } finally {
+          try { fs.unlinkSync(scriptPath); } catch { /* ignore */ }
+        }
+      } else {
+        return { success: false, error: 'Unsupported language. Use javascript or python.' };
+      }
+
+      if (fs.existsSync(outputFilePath)) {
+        const stat = fs.lstatSync(outputFilePath);
+        if (!stat.isFile()) {
+          return { success: false, error: '[AUTO-CORRECTION REQUIRED] Output path is not a regular file.' };
+        }
+        if (stat.size === 0) {
+          return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed but output file (${args.outputFileName}) is 0 bytes. Code failed to generate valid media.` };
+        }
+        return {
+          success: true,
+          message: `Procedural media generated successfully at ${outputFilePath} (${stat.size} bytes)`,
+          filePath: outputFilePath
+        };
+      } else {
+        return { success: false, error: `[AUTO-CORRECTION REQUIRED] Script executed, but expected output file (${args.outputFileName}) was not created.` };
+      }
+    } catch (err: unknown) {
+      return { success: false, error: getErrorMessage(err) };
+    }
+  }
+};
