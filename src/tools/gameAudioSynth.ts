@@ -209,11 +209,12 @@ export const gameAudioSynth = {
       }
 
       if (action === 'generate_sound_pack') {
-        if (!projectDir || !fsSync.existsSync(projectDir)) {
+        const scopedProjectDir = projectDir ? resolveScopedPath(projectDir, sandbox) : '';
+        if (!scopedProjectDir || !fsSync.existsSync(scopedProjectDir)) {
           return { success: false, error: `Valid projectDir is required for generate_sound_pack. Found: ${String(projectDir ?? '')}` };
         }
 
-        const sfxDir = path.join(projectDir, 'audio', 'sfx');
+        const sfxDir = path.join(scopedProjectDir, 'audio', 'sfx');
         await fs.mkdir(sfxDir, { recursive: true });
 
         const essentials = [
@@ -239,7 +240,7 @@ export const gameAudioSynth = {
           success: true,
           output: JSON.stringify({
             status: 'GENERATED_SOUND_PACK',
-            project_dir: projectDir,
+            project_dir: scopedProjectDir,
             total_sounds_created: generatedFiles.length,
             files: generatedFiles
           }, null, 2)
@@ -248,7 +249,7 @@ export const gameAudioSynth = {
 
       return { success: false, error: `Unknown action: ${String(action ?? '')}` };
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
