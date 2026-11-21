@@ -40,6 +40,28 @@ const READ_ONLY_INVOCATIONS: Record<string, RegExp> = {
   git: /^git\s+reset\s+(--\s*)?$/
 };
 
+function hasLinearPipeToShell(lowerText: string): boolean {
+  const pipeIdx = lowerText.indexOf('|');
+  if (pipeIdx === -1) return false;
+  const beforePipe = lowerText.slice(0, pipeIdx);
+  if (!/\b(?:curl|wget)\s/.test(beforePipe)) return false;
+  const afterPipe = lowerText.slice(pipeIdx + 1).trimStart();
+  return /^(?:sh|bash)(?:\s|$)/.test(afterPipe);
+}
+
+function hasRansomwareKeyword(lowerText: string): boolean {
+  if (lowerText.includes('ransomware')) return true;
+  const encIdx = lowerText.indexOf('encrypt');
+  return encIdx !== -1 && lowerText.indexOf('ransom', encIdx + 7) !== -1;
+}
+
+function hasDangerousFindAction(unit: string): boolean {
+  const findMatch = /\bfind\b/.exec(unit);
+  if (!findMatch) return false;
+  const tail = unit.slice(findMatch.index + findMatch[0].length);
+  return /\s-(?:exec|execdir|delete)\b/.test(tail);
+}
+
 function isReadOnlyInvocation(segment: unknown): boolean {
   const text = String(segment || '').trim();
   const leadingWord = text.split(/\s+/)[0] || '';
@@ -363,8 +385,6 @@ export class Sandbox {
 
     const FORBIDDEN_PATTERNS: readonly RegExp[] = [
       /:\(\)\s*\{\s*:\|:&\s*\};/,
-      /curl\s+.*\|\s*(sh|bash)/,
-      /wget\s+.*\|\s*(sh|bash)/,
       /<\(\s*(curl|wget)\b/,
       />\s*\/dev\/sda/,
       /nmap\s+-s[STUVFN]/i,
@@ -376,11 +396,15 @@ export class Sandbox {
       /aircrack|airmon|aireplay/i,
       /ettercap|arpspoof|bettercap/i,
       /nikto/i,
-      /xmrig|cpuminer|minerd/i,
-      /ransomware|encrypt.*ransom/i
+      /xmrig|cpuminer|minerd/i
     ];
 
     const analyzed = analyzeShellCommand(command);
+    if (hasLinearPipeToShell(normalized) || hasRansomwareKeyword(normalized)) return 'forbidden';
+    for (const rawUnit of analyzed.allRawUnits) {
+      const lowerUnit = rawUnit.toLowerCase();
+      if (hasLinearPipeToShell(lowerUnit) || hasRansomwareKeyword(lowerUnit)) return 'forbidden';
+    }
     for (const pattern of FORBIDDEN_PATTERNS) {
       if (pattern.test(normalized)) return 'forbidden';
       for (const rawUnit of analyzed.allRawUnits) {
@@ -446,13 +470,8 @@ export class Sandbox {
       }
     }
 
-    const DANGEROUS_PATTERNS: readonly RegExp[] = [
-      /\bfind\b[\s\S]*\s-(exec|execdir|delete)\b/
-    ];
     for (const unit of scanUnits) {
-      for (const pattern of DANGEROUS_PATTERNS) {
-        if (pattern.test(unit)) return 'dangerous';
-      }
+      if (hasDangerousFindAction(unit)) return 'dangerous';
     }
 
     const MODERATE_PREFIXES = [
