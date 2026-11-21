@@ -166,9 +166,18 @@ export class AcpServer {
         }
     }
     async handleLine(line) {
+        const cleaned = line.replace(/^\uFEFF/, '').replace(/\r$/, '');
+        if (cleaned.length > MAX_JSONRPC_BUFFER_BYTES) {
+            this.write({
+                jsonrpc: '2.0',
+                id: null,
+                error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Request frame exceeds maximum size' }
+            });
+            return;
+        }
         let parsed;
         try {
-            parsed = JSON.parse(line);
+            parsed = JSON.parse(cleaned);
         }
         catch {
             this.write({ jsonrpc: '2.0', id: null, error: { code: ACP_ERROR_CODES.PARSE_ERROR, message: 'Parse error' } });
