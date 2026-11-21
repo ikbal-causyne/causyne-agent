@@ -33,7 +33,10 @@ const CONTEXT_OVERFLOW_PHRASES: readonly string[] = [
   'context window is full',
   'prompt token count exceeds',
   'string too long for context',
-  'payload too large'
+  'payload too large',
+  'exceeds the maximum number of tokens',
+  'maximum prompt length',
+  'input token count exceeds'
 ];
 
 export class CausyneLoopGuard {
