@@ -275,13 +275,16 @@ export const openSourceToolProvisioner = {
         }
     },
     async execute(args, sandbox = {}) {
-        const action = String(args['action'] || 'discover');
-        const intent = typeof args['intent'] === 'string' ? args['intent'] : '';
-        let toolId = typeof args['toolId'] === 'string' ? args['toolId'].toLowerCase().trim() : '';
-        const confirm = args['confirm'] === true || isAutonomousToolContext(sandbox);
-        const forceAlternative = args['forceAlternative'] === true;
-        const workspaceDir = (Array.isArray(sandbox['workspacePaths']) && sandbox['workspacePaths'][0])
-            ? String(sandbox['workspacePaths'][0])
+        const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+        const safeSandbox = sandbox && typeof sandbox === 'object' && !Array.isArray(sandbox) ? sandbox : {};
+        const action = String(safeArgs['action'] || 'discover');
+        const intent = typeof safeArgs['intent'] === 'string' ? safeArgs['intent'] : '';
+        let toolId = typeof safeArgs['toolId'] === 'string' ? safeArgs['toolId'].toLowerCase().trim() : '';
+        const confirm = safeArgs['confirm'] === true || isAutonomousToolContext(safeSandbox);
+        const forceAlternative = safeArgs['forceAlternative'] === true;
+        const signal = safeSandbox['signal'] instanceof AbortSignal ? safeSandbox['signal'] : undefined;
+        const workspaceDir = (Array.isArray(safeSandbox['workspacePaths']) && safeSandbox['workspacePaths'][0])
+            ? String(safeSandbox['workspacePaths'][0])
             : process.cwd();
         const specs = await detectSystemSpecs(workspaceDir);
         // ── ACTION: DISCOVER ──────────────────────────────────────────────────
@@ -466,7 +469,11 @@ export const openSourceToolProvisioner = {
             const venvPython = isWin ? path.join(venvDir, 'Scripts', 'python.exe') : path.join(venvDir, 'bin', 'python');
             if (!fs.existsSync(venvPip)) {
                 try {
-                    await execFilePromise(pythonBin, ['-m', 'venv', venvDir], { timeout: 120000 });
+                    await execFilePromise(pythonBin, ['-m', 'venv', venvDir], {
+                        timeout: 120000,
+                        windowsHide: true,
+                        ...(signal ? { signal } : {})
+                    });
                 }
                 catch (e) {
                     const errMsg = e instanceof Error ? e.message : String(e);
@@ -476,7 +483,7 @@ export const openSourceToolProvisioner = {
             // Install packages if pip-based
             if (selectedTool.installMethod === 'pip' && selectedTool.pipPackages && selectedTool.pipPackages.length > 0) {
                 try {
-                    await execFilePromise(venvPip, ['install', '--disable-pip-version-check', '--no-input', ...selectedTool.pipPackages], { timeout: 10 * 60 * 1000, maxBuffer: 10 * 1024 * 1024 });
+                    await execFilePromise(venvPip, ['install', '--disable-pip-version-check', '--no-input', ...selectedTool.pipPackages], { timeout: 10 * 60 * 1000, maxBuffer: 10 * 1024 * 1024, windowsHide: true, ...(signal ? { signal } : {}) });
                 }
                 catch (pipErr) {
                     const errMsg = pipErr instanceof Error ? pipErr.message : String(pipErr);
@@ -488,7 +495,10 @@ export const openSourceToolProvisioner = {
             let installedMap = {};
             try {
                 if (fs.existsSync(manifestFile)) {
-                    installedMap = JSON.parse(await fsp.readFile(manifestFile, 'utf8'));
+                    const parsedManifest = JSON.parse(await fsp.readFile(manifestFile, 'utf8'));
+                    if (parsedManifest && typeof parsedManifest === 'object' && !Array.isArray(parsedManifest)) {
+                        installedMap = parsedManifest;
+                    }
                 }
             }
             catch {
