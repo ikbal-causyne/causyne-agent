@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from '../utils/paths.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { atomicWriteSecretFileSync } from '../configVault.js';
 import { getPresetProfile, BUILTIN_PEER_PRESETS } from './agentCatalog.js';
 
 export type PeerPolicy = 'read-only' | 'ask' | 'workspace';
@@ -96,7 +97,10 @@ function parseProfile(raw: unknown): PeerProfile | null {
 export function loadPeerProfiles(): PeerProfile[] {
   let raw: unknown;
   try {
-    raw = JSON.parse(fs.readFileSync(peerProfilesPath(), 'utf8'));
+    const file = peerProfilesPath();
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 1024 * 1024) return [];
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
     return [];
   }
@@ -122,27 +126,27 @@ export function loadPeerProfiles(): PeerProfile[] {
 
 export function savePeerProfiles(profiles: PeerProfile[]): void {
   const file = peerProfilesPath();
-  const dir = path.dirname(file);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
   const content: PeerProfilesFile = {
     schemaVersion: 1,
     peers: profiles
   };
-  fs.writeFileSync(file, JSON.stringify(content, null, 2), 'utf8');
+  atomicWriteSecretFileSync(file, JSON.stringify(content, null, 2));
 }
 
 export function addPeerProfile(profile: PeerProfile): { ok: boolean; error?: string } {
+  const validated = parseProfile(profile);
+  if (!validated) {
+    return { ok: false, error: 'Invalid peer profile configuration.' };
+  }
   const current = loadPeerProfiles();
-  const idx = current.findIndex((p) => p.id === profile.id);
+  const idx = current.findIndex((p) => p.id === validated.id);
   if (idx >= 0) {
-    current[idx] = profile;
+    current[idx] = validated;
   } else {
     if (current.length >= MAX_PEERS) {
       return { ok: false, error: `Maximum of ${MAX_PEERS} peer profiles exceeded.` };
     }
-    current.push(profile);
+    current.push(validated);
   }
   try {
     savePeerProfiles(current);
