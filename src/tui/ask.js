@@ -125,7 +125,8 @@ export async function askSelect(options = {}) {
 export async function askText(options = {}) {
     let { title = '', lines = [], value = '', placeholder = '', mask = false, validate = null } = options && typeof options === 'object' ? options : {};
     lines = Array.isArray(lines) ? lines : [];
-    while (true) {
+    const MAX_ASK_ATTEMPTS = 25;
+    for (let attempt = 0; attempt < MAX_ASK_ATTEMPTS; attempt++) {
         let answer;
         if (canAskInPanel()) {
             answer = await hostOneLayer((resolve) => new InputLayer({
@@ -149,6 +150,7 @@ export async function askText(options = {}) {
         console.log(`  ${safeDisplay(String(problem))}`);
         value = answer;
     }
+    return null;
 }
 /** A yes/no, defaulting to no on dismissal. */
 export async function askConfirm(message) {

@@ -169,7 +169,8 @@ export async function askText(options: AskTextOptions = {}): Promise<string | nu
   let { title = '', lines = [], value = '', placeholder = '', mask = false, validate = null } =
     options && typeof options === 'object' ? options : {};
   lines = Array.isArray(lines) ? lines : [];
-  while (true) {
+  const MAX_ASK_ATTEMPTS = 25;
+  for (let attempt = 0; attempt < MAX_ASK_ATTEMPTS; attempt++) {
     let answer: string | null | undefined;
 
     if (canAskInPanel()) {
@@ -191,6 +192,7 @@ export async function askText(options: AskTextOptions = {}): Promise<string | nu
     console.log(`  ${safeDisplay(String(problem))}`);
     value = answer;
   }
+  return null;
 }
 
 /** A yes/no, defaulting to no on dismissal. */
