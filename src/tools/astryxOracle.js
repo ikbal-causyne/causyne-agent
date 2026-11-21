@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getErrorMessage } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
 const execFileAsync = promisify(execFile);
 export const astryxOracle = {
     schema: {
@@ -23,8 +24,14 @@ export const astryxOracle = {
         }
     },
     execute: async (args = {}, _context) => {
-        const { command, target = '' } = args;
-        const sanitizedTarget = String(target ?? '').replace(/[^a-zA-Z0-9_-]/g, '');
+        const safeArgs = args && typeof args === 'object' ? args : {};
+        const { command, target = '' } = safeArgs;
+        const rawTarget = typeof target === 'string' ? target.slice(0, 128) : '';
+        const cleaned = rawTarget.replace(/[^a-zA-Z0-9_-]/g, '');
+        let startIdx = 0;
+        while (startIdx < cleaned.length && cleaned[startIdx] === '-')
+            startIdx++;
+        const sanitizedTarget = cleaned.slice(startIdx);
         let cliArgs = [];
         switch (command) {
             case 'list_components':
