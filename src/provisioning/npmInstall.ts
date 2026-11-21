@@ -15,6 +15,11 @@ export function installCapabilityManifest(directory: string): void {
   if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) {
     throw new Error('Refusing symlink or non-directory capability installation target');
   }
+  const manifestPath = path.join(resolvedDir, 'package.json');
+  const manifestStat = fs.lstatSync(manifestPath);
+  if (manifestStat.isSymbolicLink() || !manifestStat.isFile()) {
+    throw new Error('Refusing missing, symlinked, or non-regular capability package.json');
+  }
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   try {
     execFileSync(npm, ['install', '--ignore-scripts', '--no-fund'], {
