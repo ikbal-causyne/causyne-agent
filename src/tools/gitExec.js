@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { currentToolAutonomyMode } from '../approvalPolicy.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, resolveScopedPath, resolveToolWorkspaceRoots, sanitizeToolText } from './toolPathSafety.js';
 export function parseGitArguments(raw) {
     if (typeof raw !== 'string' || !raw.trim())
         throw new Error('A Git subcommand is required.');
+    if (raw.includes('\0'))
+        throw new Error('Git commands cannot contain NUL bytes.');
     const argv = [];
     let token = '';
     let quote = null;

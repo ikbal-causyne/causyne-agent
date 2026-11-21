@@ -1,7 +1,14 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { currentToolAutonomyMode } from '../approvalPolicy.js';
-import { getErrorMessage, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import {
+  getErrorMessage,
+  resolveScopedPath,
+  resolveToolWorkspaceRoots,
+  sanitizeToolText,
+  type ToolWorkspaceContext
+} from './toolPathSafety.js';
 
 export interface GitExecArgs {
   command?: string | undefined;
@@ -17,6 +24,7 @@ export interface GitExecResult {
 
 export function parseGitArguments(raw: unknown): string[] {
   if (typeof raw !== 'string' || !raw.trim()) throw new Error('A Git subcommand is required.');
+  if (raw.includes('\0')) throw new Error('Git commands cannot contain NUL bytes.');
   const argv: string[] = [];
   let token = '';
   let quote: string | null = null;
