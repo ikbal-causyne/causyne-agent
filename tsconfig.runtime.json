@@ -384,7 +384,8 @@
     "src/tools/gameSceneBuilder.ts",
     "src/tools/gameEconomyBalancer.ts",
     "src/tools/gameTilemapGenerator.ts",
-    "src/tools/gameDialogueTreeGen.ts"
+    "src/tools/gameDialogueTreeGen.ts",
+    "src/tools/gameShaderForge.ts"
   ],
   "exclude": [
     "node_modules",
