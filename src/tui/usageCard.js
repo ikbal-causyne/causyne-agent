@@ -8,7 +8,6 @@ import { visibleWidth, padEnd, safeDisplay, truncate } from './text.js';
 import { FRAME } from './overlay.js';
 import { TokenTracker } from '../tokenTracker.js';
 import { loadConfig } from '../config.js';
-// @ts-expect-error reporting.js has no TypeScript declaration yet.
 import { buildContextReport } from '../reporting.js';
 import { isAntigravityProvider } from '../providers/antigravity.js';
 import { isAcpProvider } from '../providers/acp.js';

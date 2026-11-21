@@ -71,6 +71,7 @@
     "src/gitSnapshot.ts",
     "src/checkpoints.ts",
     "src/contextManager.ts",
+    "src/reporting.ts",
     "src/infra/telemetry.ts",
     "src/session/sidechainEvents.ts",
     "src/session/cachePressure.ts",
