@@ -30,6 +30,7 @@ const FILE_PREFIX = 'tool_';
 const PREVIEW_LINES = 40;
 const PREVIEW_CHARS = 4000;
 const MAX_SPILL_BYTES = 64 * 1024 * 1024;
+const MAX_STORE_BYTES = 256 * 1024 * 1024;
 /**
  * The spill can be switched off entirely. Set CAUSYNE_OUTPUT_SPILL=0 to fall
  * back to plain truncation.
@@ -209,6 +210,8 @@ export function pruneOutputStore() {
         const dirStat = fs.lstatSync(dir);
         if (dirStat.isSymbolicLink() || !dirStat.isDirectory())
             return 0;
+        const survivors = [];
+        let totalBytes = 0;
         for (const name of fs.readdirSync(dir)) {
             if (!name.startsWith(FILE_PREFIX))
                 continue;
@@ -221,9 +224,28 @@ export function pruneOutputStore() {
                     fs.unlinkSync(file);
                     removed++;
                 }
+                else {
+                    survivors.push({ file, size: stat.size, mtimeMs: stat.mtimeMs });
+                    totalBytes += stat.size;
+                }
             }
             catch {
                 // a file that vanished under us needs no pruning
+            }
+        }
+        if (totalBytes > MAX_STORE_BYTES) {
+            survivors.sort((a, b) => a.mtimeMs - b.mtimeMs);
+            for (const item of survivors) {
+                if (totalBytes <= MAX_STORE_BYTES)
+                    break;
+                try {
+                    fs.unlinkSync(item.file);
+                    totalBytes -= item.size;
+                    removed++;
+                }
+                catch {
+                    // ignore race
+                }
             }
         }
         return removed;
