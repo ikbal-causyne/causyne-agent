@@ -204,6 +204,7 @@ export class AcpServer {
             const session = params && typeof params.sessionId === 'string' ? this.sessions.get(params.sessionId) : undefined;
             if (session) {
                 session.cancelled = true;
+                this.rejectPendingForSession(session.id, 'session cancelled');
                 try {
                     session.loop?.abort();
                 }
