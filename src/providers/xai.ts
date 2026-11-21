@@ -11,9 +11,16 @@ import {
 import { streamOpenAICompatibleChat, wantsStreaming } from './byokStream.js';
 
 export class XAIProvider extends LLMProvider {
+  allowInsecureHttp: boolean;
+  reasoningEffort: string | null;
+
   constructor(config: ProviderConfig = {}) {
     super(config);
-    this.baseUrl = 'https://api.x.ai/v1/chat/completions';
+    const customUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+    this.baseUrl = customUrl || 'https://api.x.ai/v1/chat/completions';
+    this.allowInsecureHttp = config.allowInsecureHttp === true;
+    const rawEffort = typeof config.reasoningEffort === 'string' ? config.reasoningEffort.trim().toLowerCase() : '';
+    this.reasoningEffort = rawEffort === 'low' || rawEffort === 'high' ? rawEffort : null;
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['xai']) || '');
     this.visionModels = ['grok-4', 'vision'];
     this.audioModels = [];
@@ -28,6 +35,13 @@ export class XAIProvider extends LLMProvider {
       messages: sanitizedMessages,
       temperature: resolveTemperature(options.temperature, 0.1)
     };
+
+    if (this.reasoningEffort && (this.model || '').toLowerCase().includes('grok-3-mini')) {
+      payload['reasoning_effort'] = this.reasoningEffort;
+    }
+    if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+      payload['max_tokens'] = Math.floor(options.maxTokens);
+    }
 
     if (options.jsonMode) {
       payload['response_format'] = { type: 'json_object' };
@@ -53,7 +67,8 @@ export class XAIProvider extends LLMProvider {
       timeoutMs: options.timeoutMs,
       providerLabel: 'xAI',
       secrets: [apiKey],
-      hasApiKey: true
+      hasApiKey: true,
+      allowInsecureHttp: this.allowInsecureHttp
     };
 
     const data = wantsStreaming(options)
