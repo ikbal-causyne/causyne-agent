@@ -105,7 +105,10 @@ export class AcpServer {
         this.loopFactory = options.loopFactory ?? null;
         this.agentName = options.agentName ?? 'Causyne Agent';
         this.agentVersion = options.agentVersion ?? '0.0.0';
-        this.permissionTimeoutMs = options.permissionTimeoutMs ?? 10 * 60 * 1000;
+        const rawTimeout = options.permissionTimeoutMs;
+        this.permissionTimeoutMs = typeof rawTimeout === 'number' && Number.isFinite(rawTimeout)
+            ? Math.max(1_000, Math.min(3_600_000, Math.round(rawTimeout)))
+            : 10 * 60 * 1000;
     }
     start() {
         if (!this.input || this.dataListener)
