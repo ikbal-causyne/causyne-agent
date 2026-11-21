@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import os from 'node:os';
 import { getEnhancedEnv } from './sysRun.js';
-import { getErrorMessage } from './toolPathSafety.js';
+import { getErrorMessage, boundedInteger, resolveScopedPath, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+const MAX_PERSISTENT_SESSIONS = 8;
+const MAX_BUFFER_CHARS = 256 * 1024;
+const ALLOWED_POSIX_SHELLS = new Set(['/bin/sh', '/bin/bash', '/bin/zsh', '/usr/bin/bash', '/usr/bin/zsh', '/usr/local/bin/bash', '/usr/local/bin/zsh']);
 const sessions = new Map();
 export function cleanupPersistentShells() {
     for (const [, session] of sessions.entries()) {
@@ -29,14 +31,19 @@ export const persistentShell = {
             required: ['command']
         }
     },
-    async execute(args = {}, _context = {}) {
+    async execute(args = {}, context = {}) {
         try {
-            const command = args.command;
-            if (typeof command !== 'string' || !command)
+            const safeArgs = args && typeof args === 'object' ? args : {};
+            const command = safeArgs.command;
+            if (typeof command !== 'string' || !command.trim())
                 return { success: false, error: 'Command parameter is required.' };
-            const sessionId = args.sessionId || 'default';
-            const reset = args.reset === true;
-            const timeoutMs = args.timeoutMs || 30000;
+            if (command.includes('\0'))
+                return { success: false, error: 'Command cannot contain NUL bytes.' };
+            const sessionId = typeof safeArgs.sessionId === 'string' && safeArgs.sessionId.trim()
+                ? safeArgs.sessionId.trim().slice(0, 64)
+                : 'default';
+            const reset = safeArgs.reset === true;
+            const timeoutMs = boundedInteger(safeArgs.timeoutMs, 30000, 1000, 120_000);
             if (reset && sessions.has(sessionId)) {
                 try {
                     sessions.get(sessionId)?.process.kill('SIGTERM');
@@ -46,12 +53,19 @@ export const persistentShell = {
             }
             let session = sessions.get(sessionId);
             if (!session) {
+                if (sessions.size >= MAX_PERSISTENT_SESSIONS) {
+                    return { success: false, error: `Maximum persistent shell sessions (${MAX_PERSISTENT_SESSIONS}) reached. Reset or reuse an existing sessionId.` };
+                }
                 const isWin = process.platform === 'win32';
-                const shellBin = isWin ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh');
-                const shellArgs = isWin ? ['-NoLogo', '-NoExit', '-Command', '-'] : [];
-                const initialCwd = typeof args.cwd === 'string' && args.cwd.trim()
-                    ? args.cwd.replace(/^~\//, os.homedir() + '/')
-                    : process.cwd();
+                const envShell = process.env.SHELL || '';
+                const shellBin = isWin
+                    ? 'powershell.exe'
+                    : (ALLOWED_POSIX_SHELLS.has(envShell) ? envShell : '/bin/sh');
+                const shellArgs = isWin ? ['-NoLogo', '-NoProfile', '-NoExit', '-Command', '-'] : [];
+                const scope = resolveToolWorkspaceRoots(context);
+                const initialCwd = typeof safeArgs.cwd === 'string' && safeArgs.cwd.trim()
+                    ? resolveScopedPath(safeArgs.cwd, context)
+                    : (scope.primaryRoot || process.cwd());
                 const proc = spawn(shellBin, shellArgs, {
                     cwd: initialCwd,
                     env: { ...getEnhancedEnv(), CAUSYNE_PERSISTENT_SHELL: '1', PS1: '' },
