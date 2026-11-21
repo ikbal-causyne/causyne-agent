@@ -201,17 +201,29 @@ script = ExtResource("1_main")
                         }
                     };
                 }
-                if (!projectDir || !fsSync.existsSync(projectDir)) {
-                    return { success: false, error: `Valid projectDir is required for syntax validation. Found: ${String(projectDir ?? '')}` };
+                const scopedProjectDir = projectDir ? resolveScopedPath(projectDir, context) : '';
+                if (!scopedProjectDir || !fsSync.existsSync(scopedProjectDir)) {
+                    return { success: false, error: `Valid projectDir is required for syntax validation. Found: ${sanitizeToolText(projectDir ?? '', 200)}` };
                 }
-                const cliArgs = ['--headless', '--check-only', '--path', projectDir];
-                if (targetFile)
-                    cliArgs.push(targetFile);
+                assertSafeCliArg(scopedProjectDir, 'projectDir');
+                const cliArgs = ['--headless', '--check-only', '--path', scopedProjectDir];
+                if (targetFile) {
+                    const safeTarget = assertSafeCliArg(String(targetFile), 'targetFile');
+                    if (!safeTarget.startsWith('res://'))
+                        resolveScopedPath(safeTarget, context);
+                    cliArgs.push(safeTarget);
+                }
                 let stdout = '';
                 let stderr = '';
                 let exitCode = 0;
                 try {
-                    const res = await execFileAsync(bin, cliArgs, { maxBuffer: 15 * 1024 * 1024 });
+                    const res = await execFileAsync(bin, cliArgs, {
+                        maxBuffer: 15 * 1024 * 1024,
+                        timeout: GODOT_CLI_TIMEOUT_MS,
+                        windowsHide: true,
+                        env: sanitizeSubprocessEnv(process.env),
+                        ...(context?.signal ? { signal: context.signal } : {})
+                    });
                     stdout = res.stdout;
                     stderr = res.stderr;
                 }
@@ -219,7 +231,7 @@ script = ExtResource("1_main")
                     const e = execErr;
                     exitCode = typeof e?.code === 'number' ? e.code : 1;
                     stdout = e?.stdout || '';
-                    stderr = e?.stderr || getErrorMessage(execErr);
+                    stderr = e?.stderr || sanitizeToolError(execErr);
                 }
                 const combined = `${stdout}\n${stderr}`;
                 const lines = combined.split('\n');
@@ -279,17 +291,28 @@ script = ExtResource("1_main")
                         }
                     };
                 }
-                if (!projectDir || !fsSync.existsSync(projectDir)) {
-                    return { success: false, error: `Valid projectDir is required for testing. Found: ${String(projectDir ?? '')}` };
+                const scopedProjectDir = projectDir ? resolveScopedPath(projectDir, context) : '';
+                if (!scopedProjectDir || !fsSync.existsSync(scopedProjectDir)) {
+                    return { success: false, error: `Valid projectDir is required for testing. Found: ${sanitizeToolText(projectDir ?? '', 200)}` };
                 }
-                const targetScene = scenePath || 'res://scenes/main.tscn';
-                const cliArgs = ['--headless', '--path', projectDir, targetScene, '--quit-after', String(durationFrames)];
+                assertSafeCliArg(scopedProjectDir, 'projectDir');
+                const targetScene = assertSafeCliArg(scenePath || 'res://scenes/main.tscn', 'scenePath');
+                if (!targetScene.startsWith('res://'))
+                    resolveScopedPath(targetScene, context);
+                const safeFrames = boundedInteger(durationFrames, 300, 1, 36000);
+                const cliArgs = ['--headless', '--path', scopedProjectDir, targetScene, '--quit-after', String(safeFrames)];
                 let stdout = '';
                 let stderr = '';
                 let exitCode = 0;
                 const startTime = Date.now();
                 try {
-                    const res = await execFileAsync(bin, cliArgs, { maxBuffer: 20 * 1024 * 1024 });
+                    const res = await execFileAsync(bin, cliArgs, {
+                        maxBuffer: 20 * 1024 * 1024,
+                        timeout: GODOT_CLI_TIMEOUT_MS,
+                        windowsHide: true,
+                        env: sanitizeSubprocessEnv(process.env),
+                        ...(context?.signal ? { signal: context.signal } : {})
+                    });
                     stdout = res.stdout;
                     stderr = res.stderr;
                 }
@@ -297,7 +320,7 @@ script = ExtResource("1_main")
                     const e = execErr;
                     exitCode = typeof e?.code === 'number' ? e.code : 1;
                     stdout = e?.stdout || '';
-                    stderr = e?.stderr || getErrorMessage(execErr);
+                    stderr = e?.stderr || sanitizeToolError(execErr);
                 }
                 const durationMs = Date.now() - startTime;
                 const combined = `${stdout}\n${stderr}`;
@@ -330,32 +353,59 @@ script = ExtResource("1_main")
                     };
                 }
                 let targetScript = scriptPath;
+                let tempScriptFile = null;
                 if (scriptPath && (scriptPath.includes('func ') || scriptPath.includes('extends '))) {
-                    const tempScriptFile = path.join(getWorkspaceTempDir(), `auto_run_${Date.now()}.gd`);
-                    await fs.writeFile(tempScriptFile, scriptPath, 'utf8');
+                    if (scriptPath.length > 512 * 1024) {
+                        return { success: false, error: 'Inline GDScript exceeds 512 KiB limit.' };
+                    }
+                    tempScriptFile = path.join(getWorkspaceTempDir(context), `auto_run_${process.pid}_${crypto.randomBytes(8).toString('hex')}.gd`);
+                    await fs.writeFile(tempScriptFile, scriptPath, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
                     targetScript = tempScriptFile;
                 }
-                const cliArgs = ['--headless'];
-                if (projectDir && fsSync.existsSync(projectDir)) {
-                    cliArgs.push('--path', projectDir);
+                else if (targetScript) {
+                    targetScript = assertSafeCliArg(targetScript, 'scriptPath');
+                    if (!targetScript.startsWith('res://')) {
+                        targetScript = resolveScopedPath(targetScript, context);
+                    }
                 }
-                if (targetScript) {
-                    cliArgs.push('-s', targetScript);
+                try {
+                    const cliArgs = ['--headless'];
+                    if (projectDir) {
+                        const scopedProjectDir = resolveScopedPath(projectDir, context);
+                        if (fsSync.existsSync(scopedProjectDir)) {
+                            assertSafeCliArg(scopedProjectDir, 'projectDir');
+                            cliArgs.push('--path', scopedProjectDir);
+                        }
+                    }
+                    if (targetScript) {
+                        cliArgs.push('-s', targetScript);
+                    }
+                    else {
+                        return { success: false, error: 'scriptPath (or raw GDScript string) is required for headless_run.' };
+                    }
+                    const { stdout, stderr } = await execFileAsync(bin, cliArgs, {
+                        maxBuffer: 15 * 1024 * 1024,
+                        timeout: GODOT_CLI_TIMEOUT_MS,
+                        windowsHide: true,
+                        env: sanitizeSubprocessEnv(process.env),
+                        ...(context?.signal ? { signal: context.signal } : {})
+                    });
+                    return {
+                        success: true,
+                        output: JSON.stringify({
+                            layer: 'Headless CLI Execution',
+                            binary: bin,
+                            script: targetScript,
+                            stdout: sanitizeToolText(stdout.trim(), 4000),
+                            stderr: sanitizeToolText(stderr.trim(), 4000)
+                        }, null, 2)
+                    };
                 }
-                else {
-                    return { success: false, error: 'scriptPath (or raw GDScript string) is required for headless_run.' };
+                finally {
+                    if (tempScriptFile) {
+                        await fs.unlink(tempScriptFile).catch(() => { });
+                    }
                 }
-                const { stdout, stderr } = await execFileAsync(bin, cliArgs, { maxBuffer: 15 * 1024 * 1024 });
-                return {
-                    success: true,
-                    output: JSON.stringify({
-                        layer: 'Headless CLI Execution',
-                        binary: bin,
-                        script: targetScript,
-                        stdout: stdout.trim(),
-                        stderr: stderr.trim()
-                    }, null, 2)
-                };
             }
             if (action === 'export_project') {
                 const bin = simulateMissing ? null : getGodotBinary();
@@ -370,13 +420,25 @@ script = ExtResource("1_main")
                         }
                     };
                 }
-                if (!projectDir || !fsSync.existsSync(projectDir)) {
-                    return { success: false, error: `Valid projectDir containing project.godot is required. Found: ${String(projectDir ?? '')}` };
+                const scopedProjectDir = projectDir ? resolveScopedPath(projectDir, context) : '';
+                if (!scopedProjectDir || !fsSync.existsSync(scopedProjectDir)) {
+                    return { success: false, error: `Valid projectDir containing project.godot is required. Found: ${sanitizeToolText(projectDir ?? '', 200)}` };
                 }
-                const preset = exportPreset || 'HTML5';
-                const finalOutput = outputPath || path.join(getWorkspaceTempDir(), `export_${preset.toLowerCase()}_${Date.now()}.${preset === 'Android' ? 'apk' : 'html'}`);
-                const cliArgs = ['--headless', '--path', projectDir, '--export-release', preset, finalOutput];
-                const { stdout } = await execFileAsync(bin, cliArgs, { maxBuffer: 20 * 1024 * 1024 });
+                assertSafeCliArg(scopedProjectDir, 'projectDir');
+                const preset = assertSafeCliArg(exportPreset || 'HTML5', 'exportPreset');
+                const presetSlug = safeSlugIdentifier(preset.toLowerCase(), 'html5', 32);
+                const finalOutput = outputPath
+                    ? await assertSafeWorkspaceOutput(outputPath, context)
+                    : path.join(getWorkspaceTempDir(context), `export_${presetSlug}_${Date.now()}.${preset === 'Android' ? 'apk' : 'html'}`);
+                assertSafeCliArg(finalOutput, 'outputPath');
+                const cliArgs = ['--headless', '--path', scopedProjectDir, '--export-release', preset, finalOutput];
+                const { stdout } = await execFileAsync(bin, cliArgs, {
+                    maxBuffer: 20 * 1024 * 1024,
+                    timeout: GODOT_CLI_TIMEOUT_MS,
+                    windowsHide: true,
+                    env: sanitizeSubprocessEnv(process.env),
+                    ...(context?.signal ? { signal: context.signal } : {})
+                });
                 return {
                     success: true,
                     output: JSON.stringify({
@@ -385,14 +447,14 @@ script = ExtResource("1_main")
                         output_file: finalOutput,
                         file_exists: fsSync.existsSync(finalOutput),
                         size_bytes: fsSync.existsSync(finalOutput) ? (await fs.stat(finalOutput)).size : 0,
-                        stdout: stdout.trim()
+                        stdout: sanitizeToolText(stdout.trim(), 4000)
                     }, null, 2)
                 };
             }
-            return { success: false, error: `Unknown action: ${String(action ?? '')}` };
+            return { success: false, error: `Unknown action: ${sanitizeToolText(action ?? '', 80)}` };
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };
