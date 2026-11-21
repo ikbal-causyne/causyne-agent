@@ -1129,6 +1129,12 @@ export const COMMANDS = [
                     loop.rearmAbortController();
                 if (loop.memoryManager)
                     loop.memoryManager.clearHistory();
+                if (loop.tokenTracker && typeof loop.tokenTracker.reset === 'function') {
+                    loop.tokenTracker.reset();
+                }
+                if (ctx.prompt && Array.isArray(ctx.prompt.pendingAttachments)) {
+                    ctx.prompt.pendingAttachments = [];
+                }
                 const renderer = ctx.prompt?.renderer || loop.connection?.renderer;
                 if (renderer && typeof renderer.clearTranscript === 'function') {
                     renderer.clearTranscript();
