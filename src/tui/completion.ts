@@ -297,6 +297,7 @@ function isPhysicalChild(root: string, candidate: string): boolean {
 
 /** Instant, shell-style completion of one directory level. */
 function directoryItems(root: string, partial: string): CompletionItem[] {
+  if (typeof root !== 'string' || !root || root.includes('\0') || typeof partial !== 'string' || partial.includes('\0')) return [];
   const slash = partial.lastIndexOf('/');
   const dirPart = slash === -1 ? '' : partial.slice(0, slash + 1);
   const target = path.resolve(root, dirPart);
