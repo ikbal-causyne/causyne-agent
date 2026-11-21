@@ -53,7 +53,7 @@ export const fsDelete = {
             }
         }
         catch (e) {
-            return { success: false, error: getErrorMessage(e) };
+            return { success: false, error: sanitizeToolError(e) };
         }
     }
 };

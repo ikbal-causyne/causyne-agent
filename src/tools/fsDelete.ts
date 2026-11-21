@@ -72,7 +72,7 @@ export const fsDelete = {
         return { success: true, output: `OS recycle bin unavailable; used the safe-rename fallback: moved ${sanitizeToolText(args.path, 260)} to ${sanitizeToolText(trashPath, 260)}` };
       }
     } catch (e: unknown) {
-      return { success: false, error: getErrorMessage(e) };
+      return { success: false, error: sanitizeToolError(e) };
     }
   }
 };
