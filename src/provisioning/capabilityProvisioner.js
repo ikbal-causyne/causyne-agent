@@ -231,8 +231,15 @@ export async function provisionCapabilities(groups) {
             throw writeErr;
         }
     }
-    if (!fs.existsSync(path.join(dir, 'package-lock.json')))
+    const lockPath = path.join(dir, 'package-lock.json');
+    try {
+        const lockStat = fs.lstatSync(lockPath);
+        if (lockStat.isSymbolicLink() || !lockStat.isFile())
+            needsInstall = true;
+    }
+    catch {
         needsInstall = true;
+    }
     for (const group of target) {
         if (!isGroupInstalled(group)) {
             needsInstall = true;
