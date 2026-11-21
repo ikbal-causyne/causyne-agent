@@ -362,7 +362,8 @@
     "src/tools/procTerm.ts",
     "src/tools/gitExec.ts",
     "src/tools/codeSearchAst.ts",
-    "src/tools/pdfReader.ts"
+    "src/tools/pdfReader.ts",
+    "src/tools/persistentShell.ts"
   ],
   "exclude": [
     "node_modules",
