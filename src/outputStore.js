@@ -89,16 +89,17 @@ function headPreview(text) {
  * read-only disk or a full volume degrades this feature back to plain
  * truncation, it does not fail the task.
  */
-export function spillToolOutput(text, meta = {}) {
+export function spillToolOutput(text, meta) {
     if (!isSpillEnabled())
         return null;
     if (typeof text !== 'string' || text.length === 0)
         return null;
+    const safeMeta = meta && typeof meta === 'object' ? meta : {};
     try {
         const dir = ensureOutputDir();
-        const taskId = safeFragment(meta.taskId, 'task');
-        const step = safeFragment(meta.step, '0');
-        const tool = safeFragment(meta.tool, 'tool');
+        const taskId = safeFragment(safeMeta.taskId, 'task');
+        const step = safeFragment(safeMeta.step, '0');
+        const tool = safeFragment(safeMeta.tool, 'tool');
         const stamp = `${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
         const file = path.join(dir, `${FILE_PREFIX}${taskId}_${step}_${tool}_${stamp}.txt`);
         let payload = text;
@@ -124,15 +125,16 @@ export function spillToolOutput(text, meta = {}) {
  * Render a tool result into a document that is actually READABLE by the tools
  * we tell the model to use on it.
  */
-export function renderSpillDocument(result, meta = {}) {
+export function renderSpillDocument(result, meta) {
     if (typeof result === 'string')
         return result;
     if (result === null || typeof result !== 'object')
         return String(result);
+    const safeMeta = meta && typeof meta === 'object' ? meta : {};
     const header = [
         '=== CAUSYNE TOOL OUTPUT (full, untruncated) ===',
-        `tool : ${String(meta.tool || 'unknown')}`,
-        `task : ${String(meta.taskId || 'unknown')}   step: ${meta.step == null ? 'unknown' : String(meta.step)}`,
+        `tool : ${String(safeMeta.tool || 'unknown')}`,
+        `task : ${String(safeMeta.taskId || 'unknown')}   step: ${safeMeta.step == null ? 'unknown' : String(safeMeta.step)}`,
         `saved: ${new Date().toISOString()}`
     ];
     const sections = [];
