@@ -2,8 +2,19 @@ import { execFile } from 'node:child_process';
 import util from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
-import { getErrorMessage } from './toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './subprocessEnv.js';
+import { getErrorMessage, assertSafeWorkspaceInput, boundedInteger, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+function validatePrinterName(value) {
+    if (value === undefined || value === null || value === '')
+        return undefined;
+    if (typeof value !== 'string')
+        throw new Error('printerName must be a string');
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > 128 || trimmed.startsWith('-') || /[^a-zA-Z0-9._\- ()]/.test(trimmed)) {
+        throw new Error('printerName contains invalid or disallowed characters');
+    }
+    return trimmed;
+}
 const execFileAsync = util.promisify(execFile);
 export const printerPrint = {
     schema: {
@@ -28,35 +39,34 @@ export const printerPrint = {
             required: ['filePath']
         }
     },
-    execute: async (args = {}, _context) => {
+    execute: async (args = {}, context) => {
         try {
-            const { filePath, printerName, copies = 1 } = args;
-            if (typeof filePath !== 'string' || !filePath.trim()) {
-                return { success: false, error: 'filePath is required' };
-            }
-            const resolvedPath = path.resolve(filePath);
-            if (!fs.existsSync(resolvedPath)) {
-                return {
-                    success: false,
-                    error: `Document not found at path: ${resolvedPath}`
-                };
+            const safeArgs = args && typeof args === 'object' ? args : {};
+            const safePrinter = validatePrinterName(safeArgs.printerName);
+            const safeCopies = boundedInteger(safeArgs.copies, 1, 1, 20);
+            const printerName = safePrinter;
+            const copies = safeCopies;
+            const { resolved: resolvedPath } = await assertSafeWorkspaceInput(safeArgs.filePath, context, { maxBytes: 50 * 1024 * 1024 });
+            if (resolvedPath.startsWith('\\\\') || resolvedPath.startsWith('//')) {
+                return { success: false, error: 'UNC network paths are not permitted for direct printing.' };
             }
             const platform = os.platform();
+            const env = sanitizeSubprocessEnv(process.env);
             if (platform === 'darwin' || platform === 'linux') {
                 const lpArgs = [];
-                if (printerName) {
-                    lpArgs.push('-d', printerName);
+                if (safePrinter) {
+                    lpArgs.push('-d', safePrinter);
                 }
-                if (copies && copies > 1) {
-                    lpArgs.push('-n', String(copies));
+                if (safeCopies > 1) {
+                    lpArgs.push('-n', String(safeCopies));
                 }
                 lpArgs.push('--', resolvedPath);
-                const { stdout, stderr } = await execFileAsync('lp', lpArgs);
+                const { stdout, stderr } = await execFileAsync('lp', lpArgs, { timeout: 30_000, maxBuffer: 1024 * 1024, env, windowsHide: true });
                 return {
                     success: true,
-                    message: `Document successfully dispatched to CUPS print spooler (${printerName || 'Default Printer'}). Zero human touch.`,
-                    stdout: (stdout || '').trim(),
-                    stderr: (stderr || '').trim()
+                    message: `Document successfully dispatched to CUPS print spooler (${safePrinter || 'Default Printer'}). Zero human touch.`,
+                    stdout: sanitizeToolText((stdout || '').trim(), 2000),
+                    stderr: sanitizeToolText((stderr || '').trim(), 2000)
                 };
             }
             else if (platform === 'win32') {
