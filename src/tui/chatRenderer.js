@@ -393,19 +393,27 @@ export class ChatRenderer {
         }
         const since = this.turnStartedAt || Date.now();
         this.spinnerTimer = setInterval(() => {
-            readline.cursorTo(this.out, 0);
-            const frame = GLYPHS.spinner[this.spinnerIndex % GLYPHS.spinner.length] ?? '*';
-            this.out.write(this.status.render({
-                message: this.currentStatus,
-                elapsedMs: Date.now() - since,
-                steps: this.stepCount,
-                width: this.width() - 1,
-                spinnerFrame: frame,
-                tick: this.spinnerIndex
-            }));
-            readline.clearLine(this.out, 1);
-            this.spinnerIndex++;
+            try {
+                readline.cursorTo(this.out, 0);
+                const frame = GLYPHS.spinner[this.spinnerIndex % GLYPHS.spinner.length] ?? '*';
+                if (this.out && typeof this.out.write === 'function') {
+                    this.out.write(this.status.render({
+                        message: this.currentStatus,
+                        elapsedMs: Date.now() - since,
+                        steps: this.stepCount,
+                        width: this.width() - 1,
+                        spinnerFrame: frame,
+                        tick: this.spinnerIndex
+                    }));
+                }
+                readline.clearLine(this.out, 1);
+                this.spinnerIndex++;
+            }
+            catch {
+                this.stopSpinner();
+            }
         }, 125);
+        this.spinnerTimer.unref?.();
     }
     stopSpinner() {
         if (this.quietStatus) {
