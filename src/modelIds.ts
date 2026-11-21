@@ -22,7 +22,7 @@ const DOTLESS_MODEL_FAMILIES: readonly string[] = ['claude-'];
 export function canonicalModelId(model: string): string;
 export function canonicalModelId(model: unknown): unknown;
 export function canonicalModelId(model: unknown): unknown {
-  if (typeof model !== 'string' || model === '') return model;
+  if (typeof model !== 'string' || model === '' || model.length > 256) return model;
 
   const lowered = model.toLowerCase();
   for (const family of DOTLESS_MODEL_FAMILIES) {

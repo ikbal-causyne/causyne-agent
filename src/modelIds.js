@@ -12,7 +12,7 @@
 /** Vendor prefixes whose canonical ids never contain a dot. */
 const DOTLESS_MODEL_FAMILIES = ['claude-'];
 export function canonicalModelId(model) {
-    if (typeof model !== 'string' || model === '')
+    if (typeof model !== 'string' || model === '' || model.length > 256)
         return model;
     const lowered = model.toLowerCase();
     for (const family of DOTLESS_MODEL_FAMILIES) {
