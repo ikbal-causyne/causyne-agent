@@ -142,11 +142,21 @@ export class OpenRouterProvider extends LLMProvider {
                 const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
                 this.handleHttpErrors(response.status, cleanError, retryAfterMs);
             }
-            if (shouldStream && response.body) {
+            const contentType = (response.headers?.get?.('content-type') ?? '')
+                .split(';')[0]?.trim().toLowerCase() ?? '';
+            const isJsonReply = contentType === 'application/json' || contentType.endsWith('+json');
+            if (shouldStream && response.body && !isJsonReply) {
                 return await this.handleStreamingResponse(response, options, freeFormPaths);
             }
             else {
-                return await this.handleJsonResponse(response, freeFormPaths, apiKey);
+                const res = await this.handleJsonResponse(response, freeFormPaths, apiKey);
+                if (shouldStream) {
+                    if (res.reasoningContent)
+                        options.onReasoningChunk?.(res.reasoningContent);
+                    if (res.content)
+                        options.onChunk?.(res.content);
+                }
+                return res;
             }
         }
         finally {
