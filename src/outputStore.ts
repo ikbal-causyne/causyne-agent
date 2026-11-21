@@ -168,14 +168,21 @@ export function renderSpillDocument(result: unknown, meta?: SpillMeta | null): s
   const sections: string[] = [];
   const scalars: string[] = [];
 
+  const safeJson = (val: unknown, pretty: boolean): string => {
+    try {
+      return pretty ? JSON.stringify(val, null, 2) : JSON.stringify(val);
+    } catch {
+      return '"[unserializable]"';
+    }
+  };
+
   for (const [key, value] of Object.entries(result as Record<string, unknown>)) {
     if (typeof value === 'string' && value.length > 500) {
-      // Raw, unescaped — this is the whole point.
       sections.push(`\n--- field: ${key} (${value.length} chars) ---\n${value}`);
     } else if (value !== null && typeof value === 'object') {
-      sections.push(`\n--- field: ${key} (JSON) ---\n${JSON.stringify(value, null, 2)}`);
+      sections.push(`\n--- field: ${key} (JSON) ---\n${safeJson(value, true)}`);
     } else {
-      scalars.push(`${key}: ${JSON.stringify(value)}`);
+      scalars.push(`${key}: ${safeJson(value, false)}`);
     }
   }
 
