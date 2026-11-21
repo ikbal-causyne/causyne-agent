@@ -160,6 +160,9 @@ function parseMachO(buffer: Buffer, depth = 0): Partial<BinaryInspectionResult> 
 }
 
 function parseElf(buffer: Buffer): Partial<BinaryInspectionResult> {
+  if (buffer.length < 20) {
+    return { format: 'ELF', architecture: 'unknown' };
+  }
   const is64 = buffer[4] === 2;
   const isLe = buffer[5] === 1;
 

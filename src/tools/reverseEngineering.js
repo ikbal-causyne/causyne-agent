@@ -99,6 +99,9 @@ function parseMachO(buffer, depth = 0) {
     };
 }
 function parseElf(buffer) {
+    if (buffer.length < 20) {
+        return { format: 'ELF', architecture: 'unknown' };
+    }
     const is64 = buffer[4] === 2;
     const isLe = buffer[5] === 1;
     const readU16 = (off) => isLe ? buffer.readUInt16LE(off) : buffer.readUInt16BE(off);
