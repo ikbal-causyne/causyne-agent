@@ -1,5 +1,6 @@
 const DEFAULT_MAX_STATES = 256;
 const DEFAULT_MAX_DEPTH = 7;
+const MAX_EDGES = 8000;
 function isThenable(value) {
     return Boolean(value && (typeof value === 'object' || typeof value === 'function') && typeof value.then === 'function');
 }
@@ -125,6 +126,10 @@ export function buildBoundedStatechart(options = {}) {
             }
             if (!target) {
                 target = addNode(stable, node.trace.concat({ label }));
+            }
+            if (edges.length >= MAX_EDGES) {
+                incomplete = true;
+                break;
             }
             edges.push({ from: node.id, to: target.id, action: label });
         }
