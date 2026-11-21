@@ -135,9 +135,17 @@ export class Sandbox {
     }
     updateWorkspacePaths(newPaths) {
         if (Array.isArray(newPaths) && newPaths.length > 0) {
-            const safePaths = newPaths
-                .filter((p) => typeof p === 'string' && !isBlockedWorkspaceRoot(p))
-                .map(p => path.resolve(p));
+            const seen = new Set();
+            const safePaths = [];
+            for (const p of newPaths) {
+                if (typeof p !== 'string' || p.includes('\0') || !p.trim() || isBlockedWorkspaceRoot(p))
+                    continue;
+                const resolved = path.resolve(p.trim());
+                if (!seen.has(resolved)) {
+                    seen.add(resolved);
+                    safePaths.push(resolved);
+                }
+            }
             if (safePaths.length > 0) {
                 this.workspacePaths = safePaths;
                 return { success: true, paths: this.workspacePaths };
@@ -146,10 +154,10 @@ export class Sandbox {
         return { success: false, reason: 'Invalid or blocked paths provided' };
     }
     addWorkspacePath(newPath) {
-        if (typeof newPath !== 'string' || isBlockedWorkspaceRoot(newPath)) {
+        if (typeof newPath !== 'string' || newPath.includes('\0') || !newPath.trim() || isBlockedWorkspaceRoot(newPath)) {
             return this.workspacePaths;
         }
-        const resolved = path.resolve(newPath);
+        const resolved = path.resolve(newPath.trim());
         if (!this.workspacePaths.includes(resolved)) {
             this.workspacePaths.push(resolved);
         }

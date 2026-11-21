@@ -162,9 +162,16 @@ export class Sandbox {
 
   updateWorkspacePaths(newPaths: unknown): { success: boolean; paths?: string[]; reason?: string } {
     if (Array.isArray(newPaths) && newPaths.length > 0) {
-      const safePaths = newPaths
-        .filter((p): p is string => typeof p === 'string' && !isBlockedWorkspaceRoot(p))
-        .map(p => path.resolve(p));
+      const seen = new Set<string>();
+      const safePaths: string[] = [];
+      for (const p of newPaths) {
+        if (typeof p !== 'string' || p.includes('\0') || !p.trim() || isBlockedWorkspaceRoot(p)) continue;
+        const resolved = path.resolve(p.trim());
+        if (!seen.has(resolved)) {
+          seen.add(resolved);
+          safePaths.push(resolved);
+        }
+      }
 
       if (safePaths.length > 0) {
         this.workspacePaths = safePaths;
@@ -175,10 +182,10 @@ export class Sandbox {
   }
 
   addWorkspacePath(newPath: unknown): string[] {
-    if (typeof newPath !== 'string' || isBlockedWorkspaceRoot(newPath)) {
+    if (typeof newPath !== 'string' || newPath.includes('\0') || !newPath.trim() || isBlockedWorkspaceRoot(newPath)) {
       return this.workspacePaths;
     }
-    const resolved = path.resolve(newPath);
+    const resolved = path.resolve(newPath.trim());
     if (!this.workspacePaths.includes(resolved)) {
       this.workspacePaths.push(resolved);
     }
