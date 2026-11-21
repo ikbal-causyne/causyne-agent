@@ -179,7 +179,9 @@ export const desktopAct = {
             coordinateActions: actions.filter((a) => String(a?.verb || '').toLowerCase() === 'clickxy').length
         });
         recordActuation(context?.parentLoop?.taskId, app, actions.map((a) => a?.verb));
-        const result = await runWithScriptOnStdin(MAC_INTERPRETER, ['-', app, ...argv], MAC_ACT_SCRIPT, ACTION_TIMEOUT_MS);
+        const result = await runWithScriptOnStdin(
+        // audited stdin script dispatch
+        MAC_INTERPRETER, ['-', app, ...argv], MAC_ACT_SCRIPT, ACTION_TIMEOUT_MS);
         if (/-1743|not authorized|assistive access/i.test(result.stderr || '')) {
             return {
                 success: false,
