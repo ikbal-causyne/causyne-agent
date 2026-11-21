@@ -156,9 +156,11 @@ export function pruneSessions(): void {
     if (!fs.existsSync(dir)) return;
     const cutoff = Date.now() - RETENTION_MS;
     for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue;
       const file = path.join(dir, name);
       try {
-        if (fs.statSync(file).mtimeMs < cutoff) fs.unlinkSync(file);
+        const stat = fs.lstatSync(file);
+        if (stat.isFile() && stat.mtimeMs < cutoff) fs.unlinkSync(file);
       } catch { /* skip this one */ }
     }
   } catch {
