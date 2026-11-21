@@ -83,8 +83,12 @@ export class OpenRouterProvider extends LLMProvider {
    */
   public isFreeModel(modelId: string): boolean {
     const clean = (modelId || '').trim().toLowerCase();
+    if (!clean || /[\s?#\x00-\x1f]/.test(clean)) return false;
     if (clean === 'openrouter/free' || clean === 'free') return true;
-    if (clean.endsWith(':free')) return true;
+    if (clean.endsWith(':free')) {
+      const slug = clean.slice(0, -5);
+      return slug.length > 0 && !slug.startsWith('/') && !slug.endsWith('/');
+    }
     return false;
   }
 
