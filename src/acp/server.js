@@ -22,6 +22,7 @@ const MODES = {
 const MAX_PROMPT_CHARS = 200_000;
 const MAX_RAW_CHARS = 4000;
 const MAX_JSONRPC_BUFFER_BYTES = 8 * 1024 * 1024;
+const MAX_SESSIONS = 128;
 function textFromPrompt(prompt) {
     const parts = [];
     for (const block of prompt) {
