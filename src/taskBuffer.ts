@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 
-const BUFFER_DIR = path.join(causyneHome(), 'buffers');
+function bufferDir(): string {
+  return path.join(causyneHome(), 'buffers');
+}
 
 export class TaskBuffer {
   constructor() {
@@ -10,13 +12,14 @@ export class TaskBuffer {
   }
 
   ensureDir(): void {
-    if (!fs.existsSync(BUFFER_DIR)) {
-      fs.mkdirSync(BUFFER_DIR, { recursive: true });
+    const dir = bufferDir();
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
   }
 
   getBufferPath(taskId: string): string {
-    return path.join(BUFFER_DIR, `${taskId}.jsonl`);
+    return path.join(bufferDir(), `${taskId}.jsonl`);
   }
 
   async appendOutput(taskId: string, stepData: Record<string, unknown>): Promise<void> {
