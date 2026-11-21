@@ -738,6 +738,7 @@ export class AcpServer {
   private closeSession(params: CloseSessionRequest | undefined): Record<string, never> {
     const session = this.requireSession(params?.sessionId);
     session.cancelled = true;
+    this.rejectPendingForSession(session.id, 'session closed');
     try {
       session.loop?.abort();
     } catch {
