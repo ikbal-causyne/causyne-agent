@@ -1109,9 +1109,15 @@ function directorySize(dir: string): number {
     let entries: fs.Dirent[];
     try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { continue; }
     for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) { stack.push(full); continue; }
-      try { total += fs.statSync(full).size; } catch { /* ignore */ }
+      try {
+        const stat = fs.lstatSync(full);
+        if (!stat.isSymbolicLink() && stat.isFile()) total += stat.size;
+      } catch {
+        /* ignore */
+      }
     }
   }
   return total;
@@ -1157,11 +1163,21 @@ export function pruneStore(): { removedEntries: number; removedObjects: number }
     try { shards = fs.readdirSync(objs); } catch { shards = []; }
     for (const shard of shards) {
       const shardDir = path.join(objs, shard);
+      try {
+        const sStat = fs.lstatSync(shardDir);
+        if (sStat.isSymbolicLink() || !sStat.isDirectory()) continue;
+      } catch { continue; }
       let objects: string[];
       try { objects = fs.readdirSync(shardDir); } catch { continue; }
       for (const name of objects) {
         if (live.has(name)) continue;
-        try { fs.unlinkSync(path.join(shardDir, name)); removedObjects++; } catch { /* ignore */ }
+        const objFile = path.join(shardDir, name);
+        try {
+          const oStat = fs.lstatSync(objFile);
+          if (oStat.isSymbolicLink() || !oStat.isFile()) continue;
+          fs.unlinkSync(objFile);
+          removedObjects++;
+        } catch { /* ignore */ }
       }
       try { if (fs.readdirSync(shardDir).length === 0) fs.rmdirSync(shardDir); } catch { /* ignore */ }
     }
@@ -1231,12 +1247,20 @@ export function buildTaskDiff(taskId: string): any {
     if (seen.has(relative)) continue;
     seen.add(relative);
 
-    const beforeBuffer = entry.before && entry.before.kind === 'file' && entry.before.hash
-      ? readObject(entry.before.hash)
-      : null;
+    let beforeBuffer: Buffer | null = null;
+    if (entry.before && entry.before.kind === 'file' && entry.before.hash && isValidSha256(entry.before.hash)) {
+      try {
+        beforeBuffer = readObject(entry.before.hash);
+      } catch {
+        beforeBuffer = null;
+      }
+    }
     let afterBuffer: Buffer | null = null;
     try {
-      if (fs.existsSync(entry.path)) afterBuffer = fs.readFileSync(entry.path);
+      const afterStat = fs.lstatSync(entry.path);
+      if (!afterStat.isSymbolicLink() && afterStat.isFile() && afterStat.size <= MAX_FILE_BYTES) {
+        afterBuffer = fs.readFileSync(entry.path);
+      }
     } catch { /* ignore */ }
 
     const status = !beforeBuffer ? 'created' : !afterBuffer ? 'deleted' : 'modified';
