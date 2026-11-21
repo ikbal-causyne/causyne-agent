@@ -57,8 +57,14 @@ async function main() {
     if (typeof execute !== 'function') {
         throw new Error(`Plugin export ${JSON.stringify(exportName)} is not a function`);
     }
-    const result = await execute(payload.args || {}, payload.context || {});
-    writeResult(result && typeof result === 'object'
+    const safeArgs = payload.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
+        ? payload.args
+        : {};
+    const safeContext = payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
+        ? payload.context
+        : {};
+    const result = await execute(safeArgs, safeContext);
+    writeResult(result && typeof result === 'object' && !Array.isArray(result)
         ? result
         : { success: true, output: result });
 }
