@@ -395,7 +395,11 @@ export function fileLink(text: unknown, absolutePath: unknown): string {
   const pathText = typeof absolutePath === 'string' ? absolutePath : '';
   // eslint-disable-next-line no-control-regex
   if (!HAS_HYPERLINKS || !pathText || /[\x00-\x1f\x7f]/.test(pathText)) return String(text);
-  return link(text, 'file://' + encodeURI(pathText));
+  const normalized = pathText.replace(/\\/g, '/');
+  const isAbsolutePath = normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized);
+  if (!isAbsolutePath) return String(text);
+  const urlPath = normalized.startsWith('/') ? normalized : '/' + normalized;
+  return link(text, 'file://' + encodeURI(urlPath));
 }
 
 /**

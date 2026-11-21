@@ -365,7 +365,12 @@ export function fileLink(text, absolutePath) {
     // eslint-disable-next-line no-control-regex
     if (!HAS_HYPERLINKS || !pathText || /[\x00-\x1f\x7f]/.test(pathText))
         return String(text);
-    return link(text, 'file://' + encodeURI(pathText));
+    const normalized = pathText.replace(/\\/g, '/');
+    const isAbsolutePath = normalized.startsWith('/') || /^[a-zA-Z]:\//.test(normalized);
+    if (!isAbsolutePath)
+        return String(text);
+    const urlPath = normalized.startsWith('/') ? normalized : '/' + normalized;
+    return link(text, 'file://' + encodeURI(urlPath));
 }
 /**
  * The terminal's ACTUAL width. Chrome fills it.
