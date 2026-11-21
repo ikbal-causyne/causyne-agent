@@ -316,7 +316,8 @@
     "src/tui/history.ts",
     "src/tui/transcript.ts",
     "src/tui/diff.ts",
-    "src/tui/keys.ts"
+    "src/tui/keys.ts",
+    "src/tui/lineEditor.ts"
   ],
   "exclude": [
     "node_modules",

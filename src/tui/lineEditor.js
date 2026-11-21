@@ -13,455 +13,457 @@
 // landed in them; putting bytes on the terminal belongs to prompt.js.
 //
 // Pure Node. No dependency, no shell.
-
 import { truncate, visibleWidth } from './text.js';
 import { writeClipboardSync, readClipboardSync } from './clipboardSync.js';
-
 /** Split into code points, so one emoji is one editable unit. */
 function toCodePoints(text) {
-  return Array.from(String(text == null ? '' : text));
+    return Array.from(String(text == null ? '' : text));
 }
-
 function normalizeNewlines(text) {
-  return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    return String(text == null ? '' : text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
-
 // A "word" for word-wise movement. Deliberately generous: an identifier, a
 // path segment and a flag should each move as one unit.
 const WORD_CHARACTER = /[\p{L}\p{N}_-]/u;
-
 function isInsideRange(lineIdx, colIdx, { start, end }) {
-  if (lineIdx < start.line || lineIdx > end.line) return false;
-  if (lineIdx === start.line && lineIdx === end.line) {
-    return colIdx >= start.col && colIdx < end.col;
-  }
-  if (lineIdx === start.line) return colIdx >= start.col;
-  if (lineIdx === end.line) return colIdx < end.col;
-  return true;
+    if (lineIdx < start.line || lineIdx > end.line)
+        return false;
+    if (lineIdx === start.line && lineIdx === end.line) {
+        return colIdx >= start.col && colIdx < end.col;
+    }
+    if (lineIdx === start.line)
+        return colIdx >= start.col;
+    if (lineIdx === end.line)
+        return colIdx < end.col;
+    return true;
 }
-
 export class LineEditor {
-  constructor(initial = '') {
-    this.setText(initial);
-    this.killRing = '';
-    this.selectionAnchor = null;
-  }
-
-  // -------------------------------------------------------------------------
-  // Content
-  // -------------------------------------------------------------------------
-
-  setText(text) {
-    this.lines = normalizeNewlines(text).split('\n').map(toCodePoints);
-    if (this.lines.length === 0) this.lines = [[]];
-    this.line = this.lines.length - 1;
-    this.col = this.lines[this.line].length;
-    this.selectionAnchor = null;
-  }
-
-  getText() {
-    return this.lines.map((line) => line.join('')).join('\n');
-  }
-
-  get isEmpty() {
-    return this.lines.length === 1 && this.lines[0].length === 0;
-  }
-
-  get hasSelection() {
-    return Boolean(
-      this.selectionAnchor &&
-      (this.selectionAnchor.line !== this.line || this.selectionAnchor.col !== this.col)
-    );
-  }
-
-  _clampPos(pos) {
-    const maxLine = Math.max(0, this.lines.length - 1);
-    const rawLine = Number.isFinite(pos?.line) ? Math.floor(pos.line) : 0;
-    const line = Math.max(0, Math.min(maxLine, rawLine));
-    const maxCol = this.lines[line]?.length ?? 0;
-    const rawCol = Number.isFinite(pos?.col) ? Math.floor(pos.col) : 0;
-    const col = Math.max(0, Math.min(maxCol, rawCol));
-    return { line, col };
-  }
-
-  getSelectionRange() {
-    if (!this.hasSelection || !this.selectionAnchor) return null;
-    const a = this._clampPos(this.selectionAnchor);
-    const b = this._clampPos({ line: this.line, col: this.col });
-    if (a.line === b.line && a.col === b.col) return null;
-    if (a.line < b.line || (a.line === b.line && a.col <= b.col)) {
-      return { start: a, end: b };
+    lines;
+    line;
+    col;
+    killRing;
+    selectionAnchor;
+    constructor(initial = '') {
+        this.lines = [[]];
+        this.line = 0;
+        this.col = 0;
+        this.killRing = '';
+        this.selectionAnchor = null;
+        this.setText(initial);
     }
-    return { start: b, end: a };
-  }
-
-  getSelectedText() {
-    const range = this.getSelectionRange();
-    if (!range) return '';
-    const { start, end } = range;
-    if (start.line === end.line) {
-      return this.lines[start.line].slice(start.col, end.col).join('');
+    // -------------------------------------------------------------------------
+    // Content
+    // -------------------------------------------------------------------------
+    setText(text) {
+        this.lines = normalizeNewlines(text).split('\n').map(toCodePoints);
+        if (this.lines.length === 0)
+            this.lines = [[]];
+        this.line = this.lines.length - 1;
+        this.col = this.lines[this.line]?.length ?? 0;
+        this.selectionAnchor = null;
     }
-    const parts = [];
-    parts.push(this.lines[start.line].slice(start.col).join(''));
-    for (let i = start.line + 1; i < end.line; i++) {
-      parts.push(this.lines[i].join(''));
+    getText() {
+        return this.lines.map((line) => line.join('')).join('\n');
     }
-    parts.push(this.lines[end.line].slice(0, end.col).join(''));
-    return parts.join('\n');
-  }
-
-  clearSelection() {
-    this.selectionAnchor = null;
-  }
-
-  deleteSelection() {
-    const range = this.getSelectionRange();
-    if (!range) return false;
-    const { start, end } = range;
-    const firstLine = this.lines[start.line].slice(0, start.col);
-    const lastLine = this.lines[end.line].slice(end.col);
-    const merged = firstLine.concat(lastLine);
-    this.lines.splice(start.line, end.line - start.line + 1, merged);
-    if (this.lines.length === 0) this.lines = [[]];
-    this.line = start.line;
-    this.col = start.col;
-    this.selectionAnchor = null;
-    return true;
-  }
-
-  selectAll() {
-    if (this.isEmpty) return;
-    this.selectionAnchor = { line: 0, col: 0 };
-    this.line = this.lines.length - 1;
-    this.col = this.lines[this.line].length;
-  }
-
-  clear() {
-    this.lines = [[]];
-    this.line = 0;
-    this.col = 0;
-    this.selectionAnchor = null;
-  }
-
-  /** Insert text at the cursor. Embedded newlines split the line, as a paste does. */
-  insert(text) {
-    if (this.hasSelection) this.deleteSelection();
-    const normalized = normalizeNewlines(text);
-    const parts = normalized.split('\n');
-    const current = this.lines[this.line];
-    const before = current.slice(0, this.col);
-    const after = current.slice(this.col);
-
-    if (parts.length === 1) {
-      this.lines[this.line] = before.concat(toCodePoints(parts[0]), after);
-      this.col += toCodePoints(parts[0]).length;
-      return;
+    get isEmpty() {
+        return this.lines.length === 1 && (this.lines[0]?.length ?? 0) === 0;
     }
-
-    const inserted = parts.map(toCodePoints);
-    const first = before.concat(inserted[0]);
-    const last = inserted[inserted.length - 1].concat(after);
-    const middle = inserted.slice(1, -1);
-
-    this.lines.splice(this.line, 1, first, ...middle, last);
-    this.line += parts.length - 1;
-    this.col = inserted[inserted.length - 1].length;
-  }
-
-  newline() {
-    if (this.hasSelection) this.deleteSelection();
-    const current = this.lines[this.line];
-    const before = current.slice(0, this.col);
-    const after = current.slice(this.col);
-    this.lines.splice(this.line, 1, before, after);
-    this.line += 1;
-    this.col = 0;
-  }
-
-  backspace() {
-    if (this.hasSelection) {
-      this.deleteSelection();
-      return;
+    get hasSelection() {
+        return Boolean(this.selectionAnchor &&
+            (this.selectionAnchor.line !== this.line || this.selectionAnchor.col !== this.col));
     }
-    if (this.col > 0) {
-      this.lines[this.line].splice(this.col - 1, 1);
-      this.col -= 1;
-      return;
+    _clampPos(pos) {
+        const maxLine = Math.max(0, this.lines.length - 1);
+        const rawLine = typeof pos?.line === 'number' && Number.isFinite(pos.line) ? Math.floor(pos.line) : 0;
+        const line = Math.max(0, Math.min(maxLine, rawLine));
+        const maxCol = this.lines[line]?.length ?? 0;
+        const rawCol = typeof pos?.col === 'number' && Number.isFinite(pos.col) ? Math.floor(pos.col) : 0;
+        const col = Math.max(0, Math.min(maxCol, rawCol));
+        return { line, col };
     }
-    if (this.line === 0) return;
-    // Joining lines: the cursor lands where the two met.
-    const removed = this.lines.splice(this.line, 1)[0];
-    this.line -= 1;
-    this.col = this.lines[this.line].length;
-    this.lines[this.line] = this.lines[this.line].concat(removed);
-  }
-
-  deleteForward() {
-    if (this.hasSelection) {
-      this.deleteSelection();
-      return;
+    getSelectionRange() {
+        if (!this.hasSelection || !this.selectionAnchor)
+            return null;
+        const a = this._clampPos(this.selectionAnchor);
+        const b = this._clampPos({ line: this.line, col: this.col });
+        if (a.line === b.line && a.col === b.col)
+            return null;
+        if (a.line < b.line || (a.line === b.line && a.col <= b.col)) {
+            return { start: a, end: b };
+        }
+        return { start: b, end: a };
     }
-    const current = this.lines[this.line];
-    if (this.col < current.length) {
-      current.splice(this.col, 1);
-      return;
+    getSelectedText() {
+        const range = this.getSelectionRange();
+        if (!range)
+            return '';
+        const { start, end } = range;
+        if (start.line === end.line) {
+            return (this.lines[start.line] ?? []).slice(start.col, end.col).join('');
+        }
+        const parts = [];
+        parts.push((this.lines[start.line] ?? []).slice(start.col).join(''));
+        for (let i = start.line + 1; i < end.line; i++) {
+            parts.push((this.lines[i] ?? []).join(''));
+        }
+        parts.push((this.lines[end.line] ?? []).slice(0, end.col).join(''));
+        return parts.join('\n');
     }
-    if (this.line >= this.lines.length - 1) return;
-    const next = this.lines.splice(this.line + 1, 1)[0];
-    this.lines[this.line] = current.concat(next);
-  }
-
-  // -------------------------------------------------------------------------
-  // Movement
-  // -------------------------------------------------------------------------
-
-  _trackSelection(extend) {
-    if (extend) {
-      if (!this.selectionAnchor) {
-        this.selectionAnchor = { line: this.line, col: this.col };
-      }
-    } else if (this.selectionAnchor) {
-      this.selectionAnchor = null;
+    clearSelection() {
+        this.selectionAnchor = null;
     }
-  }
-
-  moveTo(line, col, extend = false) {
-    this._trackSelection(extend);
-    const safeLine = Number.isFinite(line) ? Math.floor(line) : this.line;
-    const safeCol = Number.isFinite(col) ? Math.floor(col) : this.col;
-    this.line = Math.max(0, Math.min(this.lines.length - 1, safeLine));
-    this.col = Math.max(0, Math.min(this.lines[this.line].length, safeCol));
-  }
-
-  moveLeft(extend = false) {
-    this._trackSelection(extend);
-    if (this.col > 0) { this.col -= 1; return; }
-    if (this.line > 0) { this.line -= 1; this.col = this.lines[this.line].length; }
-  }
-
-  moveRight(extend = false) {
-    this._trackSelection(extend);
-    if (this.col < this.lines[this.line].length) { this.col += 1; return; }
-    if (this.line < this.lines.length - 1) { this.line += 1; this.col = 0; }
-  }
-
-  moveUp(extend = false) {
-    this._trackSelection(extend);
-    if (this.line === 0) {
-      if (extend) this.col = 0;
-      return false;
+    deleteSelection() {
+        const range = this.getSelectionRange();
+        if (!range)
+            return false;
+        const { start, end } = range;
+        const firstLine = (this.lines[start.line] ?? []).slice(0, start.col);
+        const lastLine = (this.lines[end.line] ?? []).slice(end.col);
+        const merged = firstLine.concat(lastLine);
+        this.lines.splice(start.line, end.line - start.line + 1, merged);
+        if (this.lines.length === 0)
+            this.lines = [[]];
+        this.line = start.line;
+        this.col = start.col;
+        this.selectionAnchor = null;
+        return true;
     }
-    this.line -= 1;
-    this.col = Math.min(this.col, this.lines[this.line].length);
-    return true;
-  }
-
-  moveDown(extend = false) {
-    this._trackSelection(extend);
-    if (this.line >= this.lines.length - 1) {
-      if (extend) this.col = this.lines[this.line].length;
-      return false;
+    selectAll() {
+        if (this.isEmpty)
+            return;
+        this.selectionAnchor = { line: 0, col: 0 };
+        this.line = this.lines.length - 1;
+        this.col = this.lines[this.line]?.length ?? 0;
     }
-    this.line += 1;
-    this.col = Math.min(this.col, this.lines[this.line].length);
-    return true;
-  }
-
-  moveHome(extend = false) {
-    this._trackSelection(extend);
-    this.col = 0;
-  }
-
-  moveEnd(extend = false) {
-    this._trackSelection(extend);
-    this.col = this.lines[this.line].length;
-  }
-
-  moveWordLeft(extend = false) {
-    this._trackSelection(extend);
-    const line = this.lines[this.line];
-    if (this.col === 0) {
-      if (this.line > 0) { this.line -= 1; this.col = this.lines[this.line].length; }
-      return;
+    clear() {
+        this.lines = [[]];
+        this.line = 0;
+        this.col = 0;
+        this.selectionAnchor = null;
     }
-    let index = this.col;
-    while (index > 0 && !WORD_CHARACTER.test(line[index - 1])) index -= 1;
-    while (index > 0 && WORD_CHARACTER.test(line[index - 1])) index -= 1;
-    this.col = index;
-  }
-
-  moveWordRight(extend = false) {
-    this._trackSelection(extend);
-    const line = this.lines[this.line];
-    if (this.col === line.length) {
-      if (this.line < this.lines.length - 1) { this.line += 1; this.col = 0; }
-      return;
+    /** Insert text at the cursor. Embedded newlines split the line, as a paste does. */
+    insert(text) {
+        if (this.hasSelection)
+            this.deleteSelection();
+        const normalized = normalizeNewlines(text);
+        const parts = normalized.split('\n');
+        const current = this.lines[this.line] ?? [];
+        const before = current.slice(0, this.col);
+        const after = current.slice(this.col);
+        if (parts.length === 1) {
+            const codePoints = toCodePoints(parts[0] ?? '');
+            this.lines[this.line] = before.concat(codePoints, after);
+            this.col += codePoints.length;
+            return;
+        }
+        const inserted = parts.map(toCodePoints);
+        const firstInserted = inserted[0] ?? [];
+        const lastInserted = inserted[inserted.length - 1] ?? [];
+        const first = before.concat(firstInserted);
+        const last = lastInserted.concat(after);
+        const middle = inserted.slice(1, -1);
+        this.lines.splice(this.line, 1, first, ...middle, last);
+        this.line += parts.length - 1;
+        this.col = lastInserted.length;
     }
-    let index = this.col;
-    while (index < line.length && !WORD_CHARACTER.test(line[index])) index += 1;
-    while (index < line.length && WORD_CHARACTER.test(line[index])) index += 1;
-    this.col = index;
-  }
-
-  // -------------------------------------------------------------------------
-  // Kill and yank — the readline bindings a terminal user already has muscle
-  // memory for. Killed text goes to a ring so Ctrl+Y can put it back.
-  // -------------------------------------------------------------------------
-
-  _killSelection() {
-    this.killRing = this.getSelectedText();
-    this.deleteSelection();
-    if (this.killRing) writeClipboardSync(this.killRing);
-  }
-
-  killToEnd() {
-    if (this.hasSelection) {
-      this._killSelection();
-      return;
+    newline() {
+        if (this.hasSelection)
+            this.deleteSelection();
+        const current = this.lines[this.line] ?? [];
+        const before = current.slice(0, this.col);
+        const after = current.slice(this.col);
+        this.lines.splice(this.line, 1, before, after);
+        this.line += 1;
+        this.col = 0;
     }
-    const line = this.lines[this.line];
-    this.killRing = line.slice(this.col).join('');
-    this.lines[this.line] = line.slice(0, this.col);
-    if (this.killRing) writeClipboardSync(this.killRing);
-  }
-
-  killToStart() {
-    if (this.hasSelection) {
-      this._killSelection();
-      return;
+    backspace() {
+        if (this.hasSelection) {
+            this.deleteSelection();
+            return;
+        }
+        const current = this.lines[this.line] ?? [];
+        if (this.col > 0) {
+            current.splice(this.col - 1, 1);
+            this.col -= 1;
+            return;
+        }
+        if (this.line === 0)
+            return;
+        // Joining lines: the cursor lands where the two met.
+        const removed = this.lines.splice(this.line, 1)[0] ?? [];
+        this.line -= 1;
+        const prev = this.lines[this.line] ?? [];
+        this.col = prev.length;
+        this.lines[this.line] = prev.concat(removed);
     }
-    const line = this.lines[this.line];
-    this.killRing = line.slice(0, this.col).join('');
-    this.lines[this.line] = line.slice(this.col);
-    this.col = 0;
-    if (this.killRing) writeClipboardSync(this.killRing);
-  }
-
-  killWordLeft() {
-    if (this.hasSelection) {
-      this._killSelection();
-      return;
+    deleteForward() {
+        if (this.hasSelection) {
+            this.deleteSelection();
+            return;
+        }
+        const current = this.lines[this.line] ?? [];
+        if (this.col < current.length) {
+            current.splice(this.col, 1);
+            return;
+        }
+        if (this.line >= this.lines.length - 1)
+            return;
+        const next = this.lines.splice(this.line + 1, 1)[0] ?? [];
+        this.lines[this.line] = current.concat(next);
     }
-    if (this.col === 0) {
-      if (this.line > 0) {
-        this.killRing = '\n';
-        this.backspace();
-        writeClipboardSync(this.killRing);
-      }
-      return;
-    }
-    const start = this.col;
-    this.moveWordLeft();
-    const line = this.lines[this.line];
-    this.killRing = line.slice(this.col, start).join('');
-    line.splice(this.col, start - this.col);
-    if (this.killRing) writeClipboardSync(this.killRing);
-  }
-
-  yank() {
-    if (!this.killRing) {
-      const clip = readClipboardSync();
-      if (clip) this.killRing = clip;
-    }
-    if (this.killRing) this.insert(this.killRing);
-  }
-
-  // -------------------------------------------------------------------------
-  // Layout
-  // -------------------------------------------------------------------------
-
-  /**
-   * Lay the buffer out for a terminal `width` columns wide.
-   *
-   * Returns the display rows plus where the cursor ended up in them. A logical
-   * line longer than the terminal soft-wraps onto several rows, so display row
-   * and logical line are not the same number — mixing them up is what makes a
-   * redraw leave debris on screen.
-   */
-  render(width, continuation = '') {
-    const usable = Number.isFinite(width) && width > 0 ? Math.max(8, Math.floor(width)) : 8;
-    const rows = [];
-    let cursorRow = 0;
-    let cursorCol = 0;
-    const range = this.getSelectionRange();
-
-    for (let index = 0; index < this.lines.length; index++) {
-      const rawPrefix = index === 0 ? '' : String(continuation ?? '');
-      const prefix = visibleWidth(rawPrefix) >= usable ? truncate(rawPrefix, usable - 1, '') : rawPrefix;
-      const prefixWidth = visibleWidth(prefix);
-      const budget = Math.max(1, usable - prefixWidth);
-      const line = this.lines[index];
-      const isCurrentLine = index === this.line;
-
-      let row = prefix;
-      let used = 0;
-      let placed = false;
-
-      let pos = 0;
-      while (pos <= line.length) {
-        if (pos === line.length) {
-          if (isCurrentLine && pos === this.col && !placed) {
-            // An exact-width final row has no cell after its last glyph.
-            // Move the caret onto an empty continuation row instead of
-            // positioning it outside the editing surface. Preserve text.
-            if (used >= budget && pos > 0) {
-              rows.push(row);
-              row = prefix;
-              used = 0;
+    // -------------------------------------------------------------------------
+    // Movement
+    // -------------------------------------------------------------------------
+    _trackSelection(extend) {
+        if (extend) {
+            if (!this.selectionAnchor) {
+                this.selectionAnchor = { line: this.line, col: this.col };
             }
-            cursorRow = rows.length;
-            cursorCol = Math.min(usable - 1, prefixWidth + used);
-            placed = true;
-          }
-          break;
         }
-
-        const isSpace = /\s/.test(line[pos]);
-        let nextPos = pos;
-        let tokenWidth = 0;
-        while (nextPos < line.length && (/\s/.test(line[nextPos]) === isSpace)) {
-          tokenWidth += visibleWidth(line[nextPos]);
-          nextPos++;
+        else if (this.selectionAnchor) {
+            this.selectionAnchor = null;
         }
-
-        // If non-whitespace word exceeds remaining space on non-empty line: wrap to next line first!
-        if (used > 0 && used + tokenWidth > budget && !isSpace) {
-          rows.push(row);
-          row = prefix;
-          used = 0;
-        }
-
-        while (pos < nextPos) {
-          const char = line[pos];
-          const charWidth = visibleWidth(char);
-
-          if (used + charWidth > budget && used > 0) {
-            rows.push(row);
-            row = prefix;
-            used = 0;
-          }
-
-          if (isCurrentLine && pos === this.col && !placed) {
-            cursorRow = rows.length;
-            cursorCol = Math.min(usable - 1, prefixWidth + used);
-            placed = true;
-          }
-
-          const isSelected = range ? isInsideRange(index, pos, range) : false;
-          row += isSelected ? `\x1b[7m${char}\x1b[27m` : char;
-          used += charWidth;
-          pos++;
-        }
-      }
-
-      rows.push(row);
-      if (isCurrentLine && !placed) {
-        cursorRow = rows.length - 1;
-        cursorCol = Math.min(usable - 1, prefixWidth + used);
-      }
     }
-
-    return { rows, cursorRow, cursorCol };
-  }
+    moveTo(line, col, extend = false) {
+        this._trackSelection(extend);
+        const safeLine = Number.isFinite(line) ? Math.floor(line) : this.line;
+        const safeCol = Number.isFinite(col) ? Math.floor(col) : this.col;
+        this.line = Math.max(0, Math.min(this.lines.length - 1, safeLine));
+        this.col = Math.max(0, Math.min(this.lines[this.line]?.length ?? 0, safeCol));
+    }
+    moveLeft(extend = false) {
+        this._trackSelection(extend);
+        if (this.col > 0) {
+            this.col -= 1;
+            return;
+        }
+        if (this.line > 0) {
+            this.line -= 1;
+            this.col = this.lines[this.line]?.length ?? 0;
+        }
+    }
+    moveRight(extend = false) {
+        this._trackSelection(extend);
+        const currentLen = this.lines[this.line]?.length ?? 0;
+        if (this.col < currentLen) {
+            this.col += 1;
+            return;
+        }
+        if (this.line < this.lines.length - 1) {
+            this.line += 1;
+            this.col = 0;
+        }
+    }
+    moveUp(extend = false) {
+        this._trackSelection(extend);
+        if (this.line === 0) {
+            if (extend)
+                this.col = 0;
+            return false;
+        }
+        this.line -= 1;
+        this.col = Math.min(this.col, this.lines[this.line]?.length ?? 0);
+        return true;
+    }
+    moveDown(extend = false) {
+        this._trackSelection(extend);
+        if (this.line >= this.lines.length - 1) {
+            if (extend)
+                this.col = this.lines[this.line]?.length ?? 0;
+            return false;
+        }
+        this.line += 1;
+        this.col = Math.min(this.col, this.lines[this.line]?.length ?? 0);
+        return true;
+    }
+    moveHome(extend = false) {
+        this._trackSelection(extend);
+        this.col = 0;
+    }
+    moveEnd(extend = false) {
+        this._trackSelection(extend);
+        this.col = this.lines[this.line]?.length ?? 0;
+    }
+    moveWordLeft(extend = false) {
+        this._trackSelection(extend);
+        const line = this.lines[this.line] ?? [];
+        if (this.col === 0) {
+            if (this.line > 0) {
+                this.line -= 1;
+                this.col = this.lines[this.line]?.length ?? 0;
+            }
+            return;
+        }
+        let index = this.col;
+        while (index > 0 && !WORD_CHARACTER.test(line[index - 1] ?? ''))
+            index -= 1;
+        while (index > 0 && WORD_CHARACTER.test(line[index - 1] ?? ''))
+            index -= 1;
+        this.col = index;
+    }
+    moveWordRight(extend = false) {
+        this._trackSelection(extend);
+        const line = this.lines[this.line] ?? [];
+        if (this.col === line.length) {
+            if (this.line < this.lines.length - 1) {
+                this.line += 1;
+                this.col = 0;
+            }
+            return;
+        }
+        let index = this.col;
+        while (index < line.length && !WORD_CHARACTER.test(line[index] ?? ''))
+            index += 1;
+        while (index < line.length && WORD_CHARACTER.test(line[index] ?? ''))
+            index += 1;
+        this.col = index;
+    }
+    // -------------------------------------------------------------------------
+    // Kill and yank — the readline bindings a terminal user already has muscle
+    // memory for. Killed text goes to a ring so Ctrl+Y can put it back.
+    // -------------------------------------------------------------------------
+    _killSelection() {
+        this.killRing = this.getSelectedText();
+        this.deleteSelection();
+        if (this.killRing)
+            writeClipboardSync(this.killRing);
+    }
+    killToEnd() {
+        if (this.hasSelection) {
+            this._killSelection();
+            return;
+        }
+        const line = this.lines[this.line] ?? [];
+        this.killRing = line.slice(this.col).join('');
+        this.lines[this.line] = line.slice(0, this.col);
+        if (this.killRing)
+            writeClipboardSync(this.killRing);
+    }
+    killToStart() {
+        if (this.hasSelection) {
+            this._killSelection();
+            return;
+        }
+        const line = this.lines[this.line] ?? [];
+        this.killRing = line.slice(0, this.col).join('');
+        this.lines[this.line] = line.slice(this.col);
+        this.col = 0;
+        if (this.killRing)
+            writeClipboardSync(this.killRing);
+    }
+    killWordLeft() {
+        if (this.hasSelection) {
+            this._killSelection();
+            return;
+        }
+        if (this.col === 0) {
+            if (this.line > 0) {
+                this.killRing = '\n';
+                this.backspace();
+                writeClipboardSync(this.killRing);
+            }
+            return;
+        }
+        const start = this.col;
+        this.moveWordLeft();
+        const line = this.lines[this.line] ?? [];
+        this.killRing = line.slice(this.col, start).join('');
+        line.splice(this.col, start - this.col);
+        if (this.killRing)
+            writeClipboardSync(this.killRing);
+    }
+    yank() {
+        if (!this.killRing) {
+            const clip = readClipboardSync();
+            if (clip)
+                this.killRing = clip;
+        }
+        if (this.killRing)
+            this.insert(this.killRing);
+    }
+    // -------------------------------------------------------------------------
+    // Layout
+    // -------------------------------------------------------------------------
+    /**
+     * Lay the buffer out for a terminal `width` columns wide.
+     *
+     * Returns the display rows plus where the cursor ended up in them. A logical
+     * line longer than the terminal soft-wraps onto several rows, so display row
+     * and logical line are not the same number — mixing them up is what makes a
+     * redraw leave debris on screen.
+     */
+    render(width, continuation = '') {
+        const usable = Number.isFinite(width) && width > 0 ? Math.max(8, Math.floor(width)) : 8;
+        const rows = [];
+        let cursorRow = 0;
+        let cursorCol = 0;
+        const range = this.getSelectionRange();
+        for (let index = 0; index < this.lines.length; index++) {
+            const rawPrefix = index === 0 ? '' : String(continuation ?? '');
+            const prefix = visibleWidth(rawPrefix) >= usable ? truncate(rawPrefix, usable - 1, '') : rawPrefix;
+            const prefixWidth = visibleWidth(prefix);
+            const budget = Math.max(1, usable - prefixWidth);
+            const line = this.lines[index] ?? [];
+            const isCurrentLine = index === this.line;
+            let row = prefix;
+            let used = 0;
+            let placed = false;
+            let pos = 0;
+            while (pos <= line.length) {
+                if (pos === line.length) {
+                    if (isCurrentLine && pos === this.col && !placed) {
+                        // An exact-width final row has no cell after its last glyph.
+                        // Move the caret onto an empty continuation row instead of
+                        // positioning it outside the editing surface. Preserve text.
+                        if (used >= budget && pos > 0) {
+                            rows.push(row);
+                            row = prefix;
+                            used = 0;
+                        }
+                        cursorRow = rows.length;
+                        cursorCol = Math.min(usable - 1, prefixWidth + used);
+                        placed = true;
+                    }
+                    break;
+                }
+                const isSpace = /\s/.test(line[pos] ?? '');
+                let nextPos = pos;
+                let tokenWidth = 0;
+                while (nextPos < line.length && (/\s/.test(line[nextPos] ?? '') === isSpace)) {
+                    tokenWidth += visibleWidth(line[nextPos] ?? '');
+                    nextPos++;
+                }
+                // If non-whitespace word exceeds remaining space on non-empty line: wrap to next line first!
+                if (used > 0 && used + tokenWidth > budget && !isSpace) {
+                    rows.push(row);
+                    row = prefix;
+                    used = 0;
+                }
+                while (pos < nextPos) {
+                    const char = line[pos] ?? '';
+                    const charWidth = visibleWidth(char);
+                    if (used + charWidth > budget && used > 0) {
+                        rows.push(row);
+                        row = prefix;
+                        used = 0;
+                    }
+                    if (isCurrentLine && pos === this.col && !placed) {
+                        cursorRow = rows.length;
+                        cursorCol = Math.min(usable - 1, prefixWidth + used);
+                        placed = true;
+                    }
+                    const isSelected = range ? isInsideRange(index, pos, range) : false;
+                    row += isSelected ? `\x1b[7m${char}\x1b[27m` : char;
+                    used += charWidth;
+                    pos++;
+                }
+            }
+            rows.push(row);
+            if (isCurrentLine && !placed) {
+                cursorRow = rows.length - 1;
+                cursorCol = Math.min(usable - 1, prefixWidth + used);
+            }
+        }
+        return { rows, cursorRow, cursorCol };
+    }
 }
