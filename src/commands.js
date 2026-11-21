@@ -10,2529 +10,2398 @@
 // /undo is src/checkpoints.js. Nothing here reimplements behaviour; it exposes it.
 //
 // ZERO-MALWARE: pure JS over existing modules. No shell, no dependency, no eval.
-
 import { COMPILED_SKILLS } from './compiledSkills.js';
-import {
-  readCompiledSkill, listCompiledSkills, invalidateUserSkills, userSkillProblems
-} from './skillsManager.js';
-import {
-  userSkillsRoot, parseSkillId, writeUserSkill, deleteUserSkill, skillTemplate
-} from './userSkills.js';
+import { readCompiledSkill, listCompiledSkills, invalidateUserSkills, userSkillProblems } from './skillsManager.js';
+import { userSkillsRoot, parseSkillId, writeUserSkill, deleteUserSkill, skillTemplate } from './userSkills.js';
 import { buildContextText, buildUsageText, buildCheckpointsText, buildUndoText, buildStatusText } from './reporting.js';
 import { loadConfig, saveConfig } from './config.js';
-import {
-  resolveAvailableModels,
-  getCuratedModels,
-  getAvailableProvidersOverview,
-  resolveAvailableProvidersOverview,
-  pickDefaultPeerModel
-} from './dynamicCatalogue.js';
+import { resolveAvailableModels, getCuratedModels, getAvailableProvidersOverview, resolveAvailableProvidersOverview, pickDefaultPeerModel } from './dynamicCatalogue.js';
 import { DEFAULT_MODEL_BY_PROVIDER, PEER_MODEL_CATALOGUE } from './modelCatalogue.js';
 import { isAcpProvider } from './providers/acp.js';
-import { listSessions, getActiveSessionId } from './sessionStore.js';
-import {
-  serverStatus, grantServer, revokeServer, addServer, removeServer,
-  connectServer, disconnectServer, refreshServer
-} from './mcp/mcpRegistry.js';
+// @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
+import { listSessions, getActiveSessionId, renameSession, getSession } from './sessionStore.js';
+import { serverStatus, grantServer, revokeServer, addServer, removeServer, connectServer, disconnectServer, refreshServer } from './mcp/mcpRegistry.js';
 import { analyzeFiles, formatFindings } from './slopDetector.js';
-import { suggestMovements, formatMovementBrief, DESIGN_MOVEMENTS } from './designPalettes.js';
-import {
-  loadPeerProfiles, addPeerProfile, removePeerProfile, listAllPeers, getPeerProfile
-} from './acp/peerProfiles.js';
-import {
-  detectAllPeers, testPeerHandshake, BUILTIN_PEER_PRESETS
-} from './acp/agentCatalog.js';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { execFileSync } from 'child_process';
+import * as designPalettesMod from './designPalettes.js';
+const { suggestMovements, formatMovementBrief, DESIGN_MOVEMENTS } = designPalettesMod;
+import { loadPeerProfiles, addPeerProfile, removePeerProfile, listAllPeers, getPeerProfile } from './acp/peerProfiles.js';
+import { detectAllPeers, testPeerHandshake, BUILTIN_PEER_PRESETS } from './acp/agentCatalog.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { runCopyCommand, runPasteCommand } from './tui/chatboxClipboard.js';
 import { loadLocalImageAttachment, formatByteSize } from './tui/clipboardImage.js';
 import { getPackageVersion } from './version.js';
 import { listGroups } from './checkpoints.js';
-import { renameSession, getSession } from './sessionStore.js';
-import { listPlugins } from './plugins/pluginManager.js';
-import {
-  getOpenRouterStatus,
-  startLoopbackAuth,
-  saveOpenRouterKey,
-  disconnectOpenRouter,
-  setOpenRouterDataCollection,
-  buildAuthorizationUrl,
-  generatePkceCodes
-} from './auth/openrouterAuth.js';
-
+import * as pluginManagerMod from './plugins/pluginManager.js';
+const listPlugins = pluginManagerMod.listPlugins;
+import { getOpenRouterStatus, startLoopbackAuth, saveOpenRouterKey, disconnectOpenRouter, setOpenRouterDataCollection, buildAuthorizationUrl, generatePkceCodes } from './auth/openrouterAuth.js';
 export const SCOPES = ['local'];
-
 function ok(output, extra = {}) {
-  return { ok: true, output, ...extra };
+    return { ok: true, output, ...extra };
 }
 function fail(output) {
-  return { ok: false, output };
+    return { ok: false, output };
 }
-
+function errMsg(err) {
+    return err instanceof Error ? err.message : String(err);
+}
 // ---------------------------------------------------------------------------
 // The table
 // ---------------------------------------------------------------------------
-
 export const COMMANDS = [
-  {
-    name: 'setup', aliases: ['config', 'connect'], scope: 'local', usage: '/setup',
-    description: 'Configure provider, endpoint, model and autonomy',
-    run: async (_argv, ctx) => {
-      if (!ctx.prompt) return ok('Run causyne setup in an interactive terminal.');
-      const { configureInPrompt } = await import('./tui/home.js');
-      const result = await configureInPrompt(ctx.prompt, { loadConfig, saveConfig });
-      return ok(result ? `Saved ${result.provider} / ${result.model}. Connection has not been tested.` : 'Cancelled. Nothing was changed.');
-    }
-  },
-
-  {
-    name: 'help',
-    aliases: ['?', 'commands'],
-    scope: 'local',
-    usage: '/help [command]',
-    description: 'List the available commands',
-    dialogTitle: 'Commands',
-    complete: () => {
-      return listCommands('terminal').map((c) => ({
-        value: c.name,
-        label: c.name,
-        description: c.description
-      }));
+    {
+        name: 'setup', aliases: ['config', 'connect'], scope: 'local', usage: '/setup',
+        description: 'Configure provider, endpoint, model and autonomy',
+        run: async (_argv, ctx) => {
+            if (!ctx.prompt)
+                return ok('Run causyne setup in an interactive terminal.');
+            // @ts-expect-error Legacy tui/home.js has no TypeScript declarations yet.
+            const { configureInPrompt } = await import('./tui/home.js');
+            const result = await configureInPrompt(ctx.prompt, { loadConfig, saveConfig });
+            return ok(result ? `Saved ${result.provider} / ${result.model}. Connection has not been tested.` : 'Cancelled. Nothing was changed.');
+        }
     },
-    run: (argv, ctx) => {
-      const [wanted] = argv;
-      if (wanted) {
-        const command = resolveCommand(wanted);
-        if (!command) return fail(`No command named "${wanted}". Try /help.`);
-        const aliases = command.aliases?.length ? `\n  aliases : ${command.aliases.map(a => '/' + a).join(', ')}` : '';
-        return ok(`${command.usage}\n  ${command.description}${aliases}`);
-      }
-      const visible = listCommands(ctx.surface);
-      const width = Math.max(...visible.map(c => c.usage.length));
-      const lines = ['Commands', ''];
-      for (const command of visible) {
-        lines.push(`  ${command.usage.padEnd(width)}  ${command.description}`);
-      }
-      lines.push('');
-      lines.push('Anything not starting with / is sent to the agent as a task.');
-      return ok(lines.join('\n'));
-    }
-  },
-
-  {
-    name: 'cd',
-    aliases: ['cwd', 'workspace'],
-    scope: 'local',
-    usage: '/cd [directory]',
-    description: 'View or change active working directory and project focus',
-    complete: () => {
-      try {
-        const entries = fs.readdirSync(process.cwd(), { withFileTypes: true });
-        return entries
-          .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-          .map(e => ({
-            value: e.name.includes(' ') ? `"${e.name}"` : e.name,
-            label: e.name + '/',
-            description: 'directory'
-          }));
-      } catch (e) {
-        return [];
-      }
-    },
-    run: async (argv, ctx) => {
-      const target = argv.join(' ').trim().replace(/^["']|["']$/g, '');
-      if (!target) {
-        return ok(`Current working directory: ${process.cwd()}`);
-      }
-      const resolved = path.resolve(process.cwd(), target.replace(/^~\//, os.homedir() + '/'));
-      if (!fs.existsSync(resolved)) {
-        return fail(`Directory not found: ${resolved}`);
-      }
-      const stat = fs.statSync(resolved);
-      if (!stat.isDirectory()) {
-        return fail(`Not a directory: ${resolved}`);
-      }
-      // Do not mutate the existing AgentLoop: its workspaceRoot, Sandbox,
-      // MemoryManager and loaded session belong to the previous workspace.
-      // The chat controller rebuilds the loop after this explicit command.
-      let canonicalRoot;
-      try {
-        canonicalRoot = fs.realpathSync(resolved);
-        process.chdir(canonicalRoot);
-      } catch (err) {
-        return fail(`Cannot switch to ${resolved}: ${err.message}`);
-      }
-      if (ctx.prompt && typeof ctx.prompt.setWorkingRoot === 'function') {
-        ctx.prompt.setWorkingRoot(canonicalRoot);
-      }
-      return ok(`Working directory changed to: ${canonicalRoot}`, {
-        effect: 'workspace-changed', workspaceRoot: canonicalRoot
-      });
-    }
-  },
-
-  {
-    name: 'skill',
-    scope: 'local',
-    usage: '/skill new <domain>/<name> | /skill edit <domain>/<name> | /skill rm <domain>/<name> | /skill mine',
-    description: 'Create, edit or remove your own skills',
-
-    // Only the ACTIONS. This used to append the user's skill ids too, but a
-    // skill id is the second argument (`/skill rm team/x`) and completion only
-    // reaches the first — so accepting one produced `/skill team/x` and an
-    // "Unknown action" error. Offering something in a position where it cannot
-    // work is worse than offering nothing.
-    complete: () => {
-      const mine = listCompiledSkills().filter((skill) => skill.source === 'user');
-      return [
-        { value: 'new', label: 'new', description: 'scaffold a new skill you own' },
-        { value: 'mine', label: 'mine', description: `list your own skills (${mine.length})` },
-        { value: 'edit', label: 'edit', description: 'show where one of your skills lives' },
-        { value: 'rm', label: 'rm', description: 'remove one of your skills' }
-      ];
-    },
-
-    run: (argv) => {
-      const [action, target, ...rest] = argv;
-      const mine = () => listCompiledSkills().filter((skill) => skill.source === 'user');
-      if (rest.length > 0) {
-        return fail(`/skill takes at most one target. Ignored: ${JSON.stringify(rest.join(' '))}\n`
-          + 'A skill name is one word: lowercase letters, digits and hyphens.');
-      }
-
-      if (action === 'clear' || action === 'off' || action === 'reset') {
-        return { ok: true, effect: 'clear-skill', output: 'Active skill cleared.' };
-      }
-
-      if (!action || (action === 'new' && !target) || action === 'create') {
-        return { ok: true, effect: 'create-skill' };
-      }
-
-      if (action === 'mine' || action === 'list') {
-        const own = mine();
-        const problems = userSkillProblems();
-        const lines = [`Your own skills (${own.length})`, ''];
-        if (own.length === 0) {
-          lines.push(`  none yet — ${userSkillsRoot()}`);
-          lines.push('');
-          lines.push('  /skill new <domain>/<name>   scaffold one');
-          lines.push('  or ask Causyne to write one for you: "make me a skill for our release process"');
-        } else {
-          for (const skill of own) lines.push(`  ${skill.domain}/${skill.id} — ${skill.description}`);
-          lines.push('');
-          lines.push(`  stored in ${userSkillsRoot()}`);
-          lines.push('  yours shadow a compiled skill of the same id, so you can correct any of them');
-        }
-        if (problems.length > 0) {
-          lines.push('');
-          lines.push('Problems:');
-          for (const problem of problems) lines.push(`  ${problem}`);
-        }
-        return ok(lines.join('\n'));
-      }
-
-      if (action === 'new') {
-        const parsed = parseSkillId(target);
-        if (parsed.error) return fail(parsed.error);
-        const written = writeUserSkill({
-          domain: parsed.domain,
-          name: parsed.name,
-          content: skillTemplate(parsed.domain, parsed.name)
-        });
-        if (!written.ok) return fail(written.error);
-        invalidateUserSkills();
-        return ok([
-          `Created ${parsed.domain}/${parsed.name}`,
-          '',
-          `  ${written.path}`,
-          '',
-          'Open it and fill in the workflow. Every step ends with a "Done when:" line you can',
-          'actually check, and the file closes with a Verification section — that is what makes',
-          'a skill a procedure rather than a note. The description decides when the agent reaches',
-          'for it, so write it as "what this does. Use when …".'
-        ].join('\n'));
-      }
-
-      if (action === 'edit') {
-        const parsed = parseSkillId(target);
-        if (parsed.error) return fail(parsed.error);
-        const found = mine().find((s) => s.domain === parsed.domain && s.id === parsed.name);
-        if (!found) {
-          return fail(`${target} is not one of your skills. /skill mine lists them, `
-            + `/skill new ${target} creates it.`);
-        }
-        return ok(`${target}\n\n  ${path.join(userSkillsRoot(), parsed.domain, parsed.name, 'SKILL.md')}`);
-      }
-
-      if (action === 'rm') {
-        const parsed = parseSkillId(target);
-        if (parsed.error) return fail(parsed.error);
-        const removed = deleteUserSkill(parsed.domain, parsed.name);
-        if (!removed.ok) return fail(removed.error);
-        invalidateUserSkills();
-        return ok(`Removed ${target}`);
-      }
-
-      return fail(`Unknown action "${action}". Use new, edit, rm or mine.`);
-    }
-  },
-  {
-    name: 'skills',
-    scope: 'local',
-    usage: '/skills [domain | domain/skill [instruction] | domain/skill --show]',
-    description: 'Run a skill on your task, browse the library, or read one with --show',
-
-    /**
-     * Argument suggestions, offered as the user types `/skills <prefix>`.
-     *
-     * openclaw's contract (src/tui/commands.ts getArgumentCompletions): the
-     * command owns its argument vocabulary and the prompt asks for it. Ranking
-     * and filtering are the prompt's job — this returns the whole vocabulary and
-     * completion.js scores it with the same function it uses for commands and
-     * filenames, so `/skills doc` reaches devops/docker-multi-stage-builds by a
-     * basename-prefix match rather than needing the domain typed first.
-     *
-     * Domains are offered alongside skills because `/skills devops` is a valid
-     * argument in its own right.
-     */
-    complete: () => {
-      const skills = listCompiledSkills();
-      const domains = [...new Set(skills.map((skill) => skill.domain))]
-        .map((domain) => ({
-          value: domain,
-          label: domain,
-          description: `${skills.filter((s) => s.domain === domain).length} skills`
-        }));
-      const base = [
-        { value: 'clear', label: 'clear', description: 'clear the currently active skill' },
-        ...domains
-      ];
-      return base.concat(skills.map((skill) => ({
-        value: `${skill.domain}/${skill.id}`,
-        // Rank against the skill id as well as the full path, so typing the
-        // skill name alone finds it without knowing which domain it lives in.
-        match: `${skill.domain}/${skill.id}`,
-        label: `${skill.domain}/${skill.id}`,
-        description: skill.description
-      })));
-    },
-    run: (argv) => {
-      const [target] = argv;
-
-      if (target === 'clear' || target === 'off' || target === 'reset') {
-        return { ok: true, effect: 'clear-skill', output: 'Active skill cleared.' };
-      }
-
-      if (!target) {
-        const catalogue = listCompiledSkills();
-        if (catalogue.length === 0) return ok('No skills are compiled into this build.');
-
-        // An interactive terminal browses; everything else reads. The picker is
-        // fuzzy-searchable and truncates to its own pane, so a 100-skill library
-        // stays usable and cannot overflow the terminal — the failure the flat
-        // listing had at five skills, let alone a hundred.
-        const summary = ['Compiled skills', ''];
-        const byDomain = new Map();
-        for (const skill of catalogue) {
-          if (!byDomain.has(skill.domain)) byDomain.set(skill.domain, []);
-          byDomain.get(skill.domain).push(skill);
-        }
-        for (const [domain, skills] of byDomain) {
-          summary.push(`  ${domain} (${skills.length})`);
-          for (const skill of skills) {
-            summary.push(`    ${domain}/${skill.id} — ${skill.description || skill.name || ''}`);
-          }
-        }
-        summary.push('');
-        summary.push(`${catalogue.length} skills across ${byDomain.size} domains.`);
-        summary.push('Read one with /skills <domain>/<skill>.');
-
-        const pickerItems = [
-          {
-            domain: 'custom',
-            id: 'create',
-            name: '+ Create new skill...',
-            description: 'Author a new custom procedure with interactive wizard',
-            isCreateAction: true
-          },
-          ...catalogue
-        ];
-
-        return { ok: true, output: summary.join('\n'), effect: 'pick-skill', items: pickerItems };
-      }
-
-      if (target.includes('/')) {
-        const separator = target.indexOf('/');
-        const domain = target.slice(0, separator);
-        const id = target.slice(separator + 1);
-        const content = readCompiledSkill(domain, id);
-        if (typeof content === 'string' && content.startsWith('Error:')) return fail(content);
-
-        // Everything after the skill id is the TASK.
-        //
-        // `/skills` used to take argv[0] and discard the rest, so
-        // `/skills data/notebook-to-production please produksi ini` silently
-        // threw away "please produksi ini" and printed the document instead.
-        const instruction = argv.slice(1).join(' ').trim();
-
-        // `--show` reads it as a document. Anything else RUNS it.
-        if (instruction === '--show' || instruction === '-s') {
-          return ok(stripFrontmatter(content));
-        }
-
-        return {
-          ok: true,
-          effect: 'invoke-skill',
-          skill: { id: `${domain}/${id}`, content },
-          instruction,
-          output: `${domain}/${id}`
-        };
-      }
-
-      const skills = COMPILED_SKILLS[target];
-      if (!skills) {
-        return fail(`No skill domain "${target}". Available: ${Object.keys(COMPILED_SKILLS).join(', ')}`);
-      }
-      const names = Object.keys(skills);
-      if (names.length === 0) return ok(`Domain "${target}" has no compiled skills.`);
-
-      const listing = [`${target} skills (${names.length})`, '',
-        ...names.map(id => `  ${target}/${id} — ${skills[id].description || ''}`)].join('\n');
-
-      // Trailing text after a DOMAIN means the user tried to invoke something.
-      // A domain is not a skill, so it cannot be run — but silently listing and
-      // discarding what they typed is the same failure the skill branch had.
-      const extra = argv.slice(1).join(' ').trim();
-      if (extra && extra !== '--show' && extra !== '-s') {
-        return fail(`"${target}" is a domain, not a skill — there is nothing to run.\n`
-          + `Pick one of its skills and try again, for example:\n`
-          + `  /skills ${target}/${names[0]} ${extra}\n\n${listing}`);
-      }
-      return ok(listing);
-    }
-  },
-
-  {
-    name: 'undo',
-    scope: 'local',
-    usage: '/undo [taskId] [--step] [--full] [--apply]',
-    description: "Preview rolling back the last task's file changes (--apply to write)",
-    dialogTitle: 'Undo',
-    complete: () => {
-      try {
-        const groups = listGroups(10);
-        return [
-          { value: '--apply', label: '--apply', description: 'apply rollback directly to workspace' },
-          { value: '--step', label: '--step', description: 'roll back just the single last file change' },
-          { value: '--full', label: '--full', description: 'roll back entire workspace tree drift' },
-          ...groups.map((g) => ({
-            value: g.taskId,
-            label: g.taskId,
-            description: g.prompt ? `${g.prompt.slice(0, 36)} (${g.fileEntries.length} files)` : `${g.fileEntries.length} files`
-          }))
-        ];
-      } catch (e) {
-        return [
-          { value: '--apply', label: '--apply', description: 'apply rollback directly' },
-          { value: '--step', label: '--step', description: 'roll back just the single last file change' }
-        ];
-      }
-    },
-    run: (argv, ctx = {}) => {
-      const flags = new Set(argv.filter(a => a.startsWith('--')));
-      const taskId = argv.find(a => !a.startsWith('--'));
-
-      // PREVIEW by default. Typing /undo used to restore files immediately —
-      // no preview, no confirmation, and none of the running-task guard the
-      // structured rollback flow has. A chat box is not a place where one word
-      // should be able to overwrite a day's work, so the destructive form has
-      // to be asked for by name.
-      const apply = flags.has('--apply');
-      const workspaceRoot = ctx.loop?.workspaceRoot || process.cwd();
-
-      const { ok: succeeded, text } = buildUndoText(taskId, {
-        step: flags.has('--step'),
-        full: flags.has('--full'),
-        dryRun: !apply,
-        workspaceRoot
-      });
-
-      if (!succeeded) return fail(text);
-      if (apply) return ok(text, { effect: 'inline' });
-      return ok(`${text}\n\nNothing was written. Run the same command with --apply to restore these files.`);
-    }
-  },
-
-  {
-    name: 'print',
-    scope: 'local',
-    usage: '/print',
-    description: 'Flush this session into the terminal scrollback and start the stage clean',
-    run: (argv, ctx) => {
-      // The Stage keeps the transcript in memory and paints a window of it, so
-      // until you exit, nothing is in your terminal's own scrollback to grep,
-      // copy or pipe. This is the way out without ending the session — and it
-      // prints BEFORE clearing, because ctrl+L in a terminal leaves your history
-      // behind and so must this.
-      const surface = ctx && ctx.prompt && ctx.prompt.surface;
-      if (!surface) {
-        return ok('Nothing to flush: this session already prints straight into your terminal.');
-      }
-      const rows = surface.flushAndClear();
-      return ok(`Printed ${rows} row${rows === 1 ? '' : 's'} into your terminal scrollback.`);
-    }
-  },
-
-  {
-    name: 'checkpoints',
-    aliases: ['ck'],
-    scope: 'local',
-    usage: '/checkpoints [count]',
-    description: 'List recent undo checkpoints',
-    dialogTitle: 'Checkpoints',
-    run: (argv) => ok(buildCheckpointsText(parseInt(argv[0], 10) || 15))
-  },
-
-  {
-    name: 'context',
-    aliases: ['ctx'],
-    scope: 'local',
-    usage: '/context',
-    description: 'Show what fills the context window',
-    dialogTitle: 'Context',
-    run: () => ok(buildContextText())
-  },
-
-  {
-    name: 'usage',
-    aliases: ['cost'],
-    scope: 'local',
-    usage: '/usage',
-    description: 'Show token usage and estimated cost',
-    dialogTitle: 'Usage',
-    run: async (argv, ctx = {}) => {
-      if (ctx.prompt && typeof ctx.prompt.toggleUsageCard === 'function') {
-        await ctx.prompt.toggleUsageCard(ctx.loop);
-        return ok('', { effect: 'silent' });
-      }
-      return ok(await buildUsageText());
-    }
-  },
-
-  {
-    name: 'diff',
-    aliases: ['changes', 'git-diff'],
-    scope: 'local',
-    usage: '/diff [staged | stat]',
-    description: 'Show working tree or staged diff for the active workspace',
-    dialogTitle: 'Diff',
-    complete: () => [
-      { value: 'staged', label: 'staged', description: 'show staged changes only (--cached)' },
-      { value: 'stat', label: 'stat', description: 'show diff summary statistics' }
-    ],
-    run: (argv, ctx = {}) => {
-      const ws = ctx.loop?.workspaceRoot || process.cwd();
-      const sub = (argv[0] || '').toLowerCase();
-      try {
-        let isGit = fs.existsSync(path.join(ws, '.git'));
-        if (!isGit) {
-          try {
-            execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
-            isGit = true;
-          } catch {
-            isGit = false;
-          }
-        }
-
-        if (!isGit) {
-          return ok(`Workspace "${ws}" is not a git repository.`);
-        }
-
-        const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
-        if (!status) {
-          return ok('Working tree is clean. No uncommitted changes in this workspace.');
-        }
-
-        let diffArgs = ['diff'];
-        if (sub === 'staged' || sub === '--cached') {
-          diffArgs = ['diff', '--cached'];
-        } else if (sub === 'stat') {
-          diffArgs = ['diff', '--stat', 'HEAD'];
-        }
-        const diffCmd = `git ${diffArgs.join(' ')}`;
-
-        const diffOutput = execFileSync('git', diffArgs, { cwd: ws, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
-        const header = `Git Status (${ws}):\n${status}\n\n${'─'.repeat(50)}\n${diffCmd}:\n`;
-        return ok(diffOutput ? `${header}\n${diffOutput}` : `${header}\n(no file diff for ${diffCmd})`);
-      } catch (err) {
-        return fail(`Could not inspect git diff: ${err.message}`);
-      }
-    }
-  },
-
-  {
-    name: 'plans',
-    scope: 'local',
-    usage: '/plans [import <json-file> | forget]',
-    description: 'Inspect, pre-warm, or clear reusable task plans',
-    dialogTitle: 'Plan cache',
-    complete: () => [
-      { value: 'import', label: 'import', description: 'import seed plans from a JSON file' },
-      { value: 'forget', label: 'forget', description: 'clear all cached plans' }
-    ],
-    run: async (args = []) => {
-      const cache = await import('./planCache.js');
-      const verb = String(args[0] || '').toLowerCase();
-
-      if (verb === 'forget') {
-        const removed = cache.forgetPlans();
-        return ok(`Forgot ${removed} cached plan${removed === 1 ? '' : 's'}.`);
-      }
-
-      if (verb === 'import') {
-        const requested = args.slice(1).join(' ').trim();
-        if (!requested) return fail('Usage: /plans import <json-file>');
-        const file = path.resolve(requested.replace(/^~(?=\/)/, os.homedir()));
-        try {
-          const stat = fs.statSync(file);
-          if (!stat.isFile() || stat.size > 1024 * 1024) {
-            return fail('Plan seed must be one JSON file no larger than 1 MB.');
-          }
-          const outcome = cache.prewarmPlans(JSON.parse(fs.readFileSync(file, 'utf8')));
-          const detail = outcome.errors.length > 0 ? `\n${outcome.errors.join('\n')}` : '';
-          return outcome.accepted > 0
-            ? ok(`Imported ${outcome.accepted} plan${outcome.accepted === 1 ? '' : 's'}; rejected ${outcome.rejected}.${detail}`)
-            : fail(`No plans were imported.${detail}`);
-        } catch (error) {
-          return fail(`Could not import plan seeds: ${error.message}`);
-        }
-      }
-
-      const stats = cache.planStats();
-      return ok([
-        `${stats.count} cached plan${stats.count === 1 ? '' : 's'}`,
-        `Hits: ${stats.hits}/${stats.lookups} (${(stats.hitRate * 100).toFixed(1)}%) — exact ${stats.exactHits}, fuzzy ${stats.fuzzyHits}`,
-        `Average lookup: ${stats.averageLookupMs.toFixed(3)} ms; max ${stats.maxLookupMs.toFixed(3)} ms`,
-        stats.disabled
-          ? `Lookup cooling down until ${new Date(stats.disabledUntil).toISOString()} after persistent misses.`
-          : 'Lookup active.',
-        '',
-        'Pre-warm with /plans import <json-file>. Clear with /plans forget.'
-      ].join('\n'));
-    }
-  },
-
-  {
-    name: 'plugins',
-    scope: 'local',
-    usage: '/plugins [list | enable <name> | disable <name>]',
-    description: 'Inspect or change trust for local plugins',
-    dialogTitle: 'Plugins',
-    complete: () => {
-      try {
-        const rows = listPlugins();
-        return [
-          { value: 'list', label: 'list', description: 'list local plugins and trust status' },
-          ...rows.map((p) => ({
-            value: `enable ${p.name}`,
-            label: `enable ${p.name}`,
-            description: `enable plugin ${p.name}`
-          })),
-          ...rows.map((p) => ({
-            value: `disable ${p.name}`,
-            label: `disable ${p.name}`,
-            description: `disable plugin ${p.name}`
-          }))
-        ];
-      } catch (e) {
-        return [
-          { value: 'list', label: 'list', description: 'list local plugins' },
-          { value: 'enable', label: 'enable', description: 'enable a local plugin' },
-          { value: 'disable', label: 'disable', description: 'disable a local plugin' }
-        ];
-      }
-    },
-    run: async (args = []) => {
-      const manager = await import('./plugins/pluginManager.js');
-      const verb = String(args[0] || '').toLowerCase();
-      const name = String(args[1] || '');
-      if (verb === 'enable') {
-        if (!name) return fail('Usage: /plugins enable <name>');
-        const result = manager.enablePlugin(name);
-        return result.ok
-          ? ok(`Enabled ${name} at manifest digest ${result.digest}. Changes will revoke trust automatically.`)
-          : fail(`Could not enable ${name}: ${result.error}`);
-      }
-      if (verb === 'disable') {
-        if (!name) return fail('Usage: /plugins disable <name>');
-        const result = manager.disablePlugin(name);
-        return result.ok ? ok(`Disabled ${name}.`) : fail(`Could not disable ${name}: ${result.error}`);
-      }
-
-      const rows = manager.listPlugins();
-      if (rows.length === 0) return ok(`No local plugins. Plugin root: ${manager.PLUGIN_ROOT}`);
-      return ok(rows.map((plugin) => {
-        const state = plugin.invalid ? 'invalid' : plugin.modified ? 'modified; trust revoked' : plugin.enabled ? 'enabled' : 'disabled';
-        const capabilities = Array.isArray(plugin.capabilities) && plugin.capabilities.length > 0
-          ? plugin.capabilities.join(', ')
-          : 'none';
-        return `  ${plugin.name} ${plugin.version || ''} — ${state}; capabilities: ${capabilities}`;
-      }).join('\n') + `\n\nPlugin root: ${manager.PLUGIN_ROOT}`);
-    }
-  },
-
-  {
-    name: 'new',
-    aliases: ['new-session'],
-    scope: 'local',
-    usage: '/new',
-    description: 'Start a new clean chat session in this workspace',
-    dialogTitle: 'New Session',
-    run: async (_args = [], context = {}) => {
-      const store = await import('./sessionStore.js');
-      const memory = context.loop && context.loop.memoryManager;
-      const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
-      const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
-      if (context.loop) {
-        context.loop.messages = [];
-        context.loop.taskId = `cli_chat_${Date.now()}`;
-        if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
-          context.loop.tokenTracker.reset();
-        }
-      }
-      const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
-      if (renderer && typeof renderer.renderSessionHistory === 'function') {
-        renderer.renderSessionHistory([], { id: next.id, title: next.title, messagesCount: 0 });
-      }
-      if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
-        context.prompt.surface.viewport.toBottom();
-      }
-      if (context.prompt?.editor?.clear) {
-        context.prompt.editor.clear();
-        if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
-      }
-      return ok(`Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
-    }
-  },
-
-  {
-    name: 'sessions',
-    aliases: ['session'],
-    scope: 'local',
-    usage: '/sessions [new | switch <id> | delete <id>]',
-    description: 'List chat sessions, or switch to one',
-    dialogTitle: 'Sessions',
-    complete: () => {
-      try {
-        const rows = listSessions().slice(0, 15);
-        return [
-          { value: 'new', label: 'new', description: 'start a fresh conversation in this workspace' },
-          ...rows.map(r => ({
-            value: `switch ${r.id}`,
-            label: `switch ${r.id}`,
-            description: `${r.title} (${r.messageCount} msgs)`
-          }))
-        ];
-      } catch (e) {
-        return [{ value: 'new', label: 'new', description: 'start a fresh conversation' }];
-      }
-    },
-    run: async (args = [], context = {}) => {
-      const store = await import('./sessionStore.js');
-      const verb = String(args[0] || '').toLowerCase();
-      const memory = context.loop && context.loop.memoryManager;
-      const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
-
-      // If interactive TUI prompt is available and no sub-arguments are given, open interactive picker modal
-      if ((!args || args.length === 0 || (args.length === 1 && args[0] === '')) && context.prompt) {
-        const { runInteractiveSessionPicker } = await import('./tui/sessionPicker.js');
-        const message = await runInteractiveSessionPicker(context.prompt, {
-          loop: context.loop,
-          workspace
-        });
-        return ok(message, { effect: 'silent' });
-      }
-
-      if (verb === 'new') {
-        const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
-        if (context.loop) {
-          context.loop.messages = [];
-          context.loop.taskId = `cli_chat_${Date.now()}`;
-          if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
-            context.loop.tokenTracker.reset();
-          }
-        }
-        if (context.prompt?.editor?.clear) {
-          context.prompt.editor.clear();
-          if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
-        }
-        return ok(`Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
-      }
-
-      if (verb === 'switch' && args[1]) {
-        const next = memory ? memory.useSession(args[1]) : store.switchSession(args[1]);
-        if (!next) return fail(`No session "${args[1]}".`);
-        const historyMessages = memory ? memory.loadHistory() : next.messages.filter(m => m.role !== 'system');
-        if (context.loop) {
-          context.loop.messages = historyMessages;
-          context.loop.taskId = `cli_chat_${Date.now()}`;
-          if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
-            context.loop.tokenTracker.reset();
-          }
-        }
-        const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
-        if (renderer && typeof renderer.renderSessionHistory === 'function') {
-          renderer.renderSessionHistory(historyMessages, {
-            id: next.id,
-            title: next.title,
-            messagesCount: next.messages.length
-          });
-        }
-        if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
-          context.prompt.surface.viewport.toBottom();
-        }
-        if (context.prompt?.editor?.clear) {
-          context.prompt.editor.clear();
-          if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
-        }
-        return ok(`Switched to "${next.title}" (${next.messages.length} messages, ${next.id}).`, { effect: 'inline' });
-      }
-
-      if (verb === 'fork') {
-        const sourceId = args[1] || (memory ? memory.sessionId : store.getActiveSessionId());
-        if (!sourceId) return fail('No session specified to fork.');
-        const forked = memory && memory.sessionId === sourceId
-          ? memory.forkSession()
-          : store.forkSession(sourceId, { makeActive: true });
-        if (!forked) return fail(`Could not fork session "${sourceId}".`);
-
-        // CRITICAL TRUST INVARIANT (Claude Code Architecture, p. 24):
-        // Permissions and allowlists NEVER carry across forks.
-        const { revokeAllAlways } = await import('./approvalGrants.js');
-        revokeAllAlways();
-        if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
-          context.loop.resetApprovalScope();
-        }
-
-        const historyMessages = memory ? memory.loadHistory() : forked.messages.filter(m => m.role !== 'system');
-        if (context.loop) {
-          context.loop.messages = historyMessages;
-          context.loop.taskId = `cli_chat_${Date.now()}`;
-          if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
-            context.loop.tokenTracker.reset();
-          }
-        }
-        const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
-        if (renderer && typeof renderer.renderSessionHistory === 'function') {
-          renderer.renderSessionHistory(historyMessages, {
-            id: forked.id,
-            title: forked.title,
-            messagesCount: forked.messages.length
-          });
-        }
-        if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
-          context.prompt.surface.viewport.toBottom();
-        }
-        if (context.prompt?.editor?.clear) {
-          context.prompt.editor.clear();
-          if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
-        }
-        return ok(`Forked session into "${forked.title}" (${forked.messages.length} messages, ${forked.id}).\nPermissions and standing approvals were reset; any gated actions will request authorization anew.`, { effect: 'inline' });
-      }
-
-      if (verb === 'delete' && args[1]) {
-        return store.deleteSession(args[1]) ? ok(`Deleted session "${args[1]}".`) : fail(`No session "${args[1]}".`);
-      }
-
-      const rows = store.listSessions();
-      if (rows.length === 0) {
-        return ok('No sessions yet. This conversation becomes one as soon as you send something.');
-      }
-
-      const active = memory?.sessionId || store.getActiveSessionId();
-      const { formatSessionsTextReport } = await import('./tui/sessionPicker.js');
-
-      return ok(
-        formatSessionsTextReport(rows, active, workspace),
-        { effect: 'pick-session', items: rows, active }
-      );
-    }
-  },
-
-  {
-    name: 'fork',
-    aliases: ['branch', 'fork-session'],
-    scope: 'local',
-    usage: '/fork [sessionId]',
-    description: 'Fork the conversation into a new session without copying permissions',
-    dialogTitle: 'Fork Session',
-    complete: () => {
-      try {
-        const rows = listSessions().slice(0, 15);
-        return rows.map(r => ({
-          value: r.id,
-          label: r.id,
-          description: `${r.title} (${r.messageCount} msgs)`
-        }));
-      } catch (e) {
-        return [];
-      }
-    },
-    run: async (args = [], context = {}) => {
-      const store = await import('./sessionStore.js');
-      const { revokeAllAlways } = await import('./approvalGrants.js');
-      const memory = context.loop && context.loop.memoryManager;
-
-      const sourceId = args[0] || (memory ? memory.sessionId : store.getActiveSessionId());
-      if (!sourceId) {
-        return fail('No active or specified session to fork.');
-      }
-
-      const sourceSession = store.getSession(sourceId);
-      if (!sourceSession) {
-        return fail(`Session "${sourceId}" not found.`);
-      }
-
-      const forked = memory && memory.sessionId === sourceId
-        ? memory.forkSession()
-        : store.forkSession(sourceId, { makeActive: true });
-
-      if (!forked) {
-        return fail(`Could not fork session "${sourceId}".`);
-      }
-
-      // CRITICAL SECURITY INVARIANT (Claude Code Architecture, p. 24):
-      // Permissions and allowlists MUST NOT be copied across the fork.
-      revokeAllAlways();
-      if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
-        context.loop.resetApprovalScope();
-      }
-
-      if (memory) {
-        memory.session = forked;
-      }
-      const historyMessages = memory ? memory.loadHistory() : forked.messages.filter(m => m.role !== 'system');
-      if (context.loop) {
-        context.loop.messages = historyMessages;
-        context.loop.taskId = `cli_chat_${Date.now()}`;
-        if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
-          context.loop.tokenTracker.reset();
-        }
-      }
-
-      const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
-      if (renderer && typeof renderer.renderSessionHistory === 'function') {
-        renderer.renderSessionHistory(historyMessages, {
-          id: forked.id,
-          title: forked.title,
-          messagesCount: forked.messages.length
-        });
-      }
-      if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
-        context.prompt.surface.viewport.toBottom();
-      }
-      if (context.prompt?.editor?.clear) {
-        context.prompt.editor.clear();
-        if (typeof context.prompt.scheduleDraw === 'function') context.prompt.scheduleDraw();
-      }
-
-      return ok(`Forked session "${sourceSession.title}" into "${forked.title}" (${forked.id}) with ${forked.messages.length} messages.\nPermissions and allowlists reset: tools will request approval anew.`, { effect: 'inline' });
-    }
-  },
-
-  {
-    name: 'continuum',
-    aliases: ['resume'],
-    scope: 'local',
-    usage: '/continuum [list | read <id> | adopt <id>]',
-    description: 'Cross-agent session extraction and resumption (Antigravity, OpenCode, Codex, Claude Code)',
-    dialogTitle: 'Continuum',
-    complete: () => [
-      { value: 'list', label: 'list', description: 'scan and list cross-agent sessions' },
-      { value: 'adopt', label: 'adopt', description: 'adopt and resume a peer agent session' },
-      { value: 'read', label: 'read', description: 'preview transcript of a peer session' }
-    ],
-    run: async (args = [], context = {}) => {
-      const {
-        ContinuumScanner,
-        adoptContinuumSession,
-        runInteractiveContinuum,
-        openContinuumPreview
-      } = await import('./continuum/index.js');
-
-      const verb = String(args[0] || '').toLowerCase();
-      const targetId = args[1];
-
-      // If interactive modal prompt is available and no subverb is passed
-      if (!verb && context.prompt && typeof context.prompt.openLayer === 'function') {
-        const resultText = await runInteractiveContinuum(context.prompt, {
-          loop: context.loop
-        });
-        return ok(resultText, { effect: 'silent' });
-      }
-
-      const scanner = context.scanner || new ContinuumScanner();
-
-      if (verb === 'read' && targetId) {
-        if (context.prompt && typeof context.prompt.openLayer === 'function') {
-          const opened = await openContinuumPreview(targetId, context.prompt, scanner);
-          if (opened) return ok(`Displaying preview for ${targetId}.`);
-        }
-        const detail = await scanner.fetchSession(targetId);
-        if (!detail) return fail(`No peer session found with ID "${targetId}".`);
-        const transcriptText = detail.messages.map(m => `[${m.role.toUpperCase()}] ${m.content}`).join('\n\n');
-        return ok(`=== ${detail.title} (${detail.sourceLabel}) ===\nWorkspace: ${detail.workspacePath}\n\n${transcriptText}`);
-      }
-
-      if (verb === 'adopt' && targetId) {
-        const adoptRes = await adoptContinuumSession(targetId, {
-          scanner,
-          currentLoopMessages: context.loop?.messages
-        });
-        if (!adoptRes.ok) return fail(adoptRes.error || `Failed to adopt session "${targetId}".`);
-        if (context.loop?.memoryManager) {
-          context.loop.memoryManager.useSession(adoptRes.sessionId);
-          if (typeof context.loop.memoryManager.loadHistory === 'function') {
-            context.loop.messages = context.loop.memoryManager.loadHistory();
-          }
-        }
-        return ok(`Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\nActive Causyne session: ${adoptRes.sessionId}.`);
-      }
-
-      // Default or 'list':
-      const sessions = await scanner.scanAllSessions({ limit: 40 });
-      if (sessions.length === 0) {
-        return ok('No peer agent sessions discovered across Antigravity, OpenCode, Codex, or Claude Code.');
-      }
-
-      const lines = sessions.map(s => {
-        const when = new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ');
-        const ws = s.workspacePath ? path.basename(s.workspacePath) : '(default)';
-        return `  [${s.sourceLabel.padEnd(12)}] ${s.id.padEnd(38)} ${when}  ${String(s.messageCount).padStart(3)} msgs  ${ws}\n      ${s.title}`;
-      });
-
-      return ok(
-        `Discovered ${sessions.length} cross-agent sessions:\n`
-        + lines.join('\n')
-        + '\n\nUsage:\n  /continuum                  — open interactive picker\n  /continuum adopt <id>       — adopt & resume session\n  /continuum read <id>        — preview full transcript'
-      );
-    }
-  },
-
-  {
-    name: 'approvals',
-    scope: 'local',
-    usage: '/approvals [clear]',
-    description: 'List tools granted "Allow always", or revoke them',
-    dialogTitle: 'Approvals',
-    complete: () => [
-      { value: 'clear', label: 'clear', description: 'revoke all standing "Allow always" grants' }
-    ],
-    // A standing grant with no way to see or revoke it is a trap, not a
-    // convenience. This is the way out, and the confirm dialog that grants one
-    // names this command so the user is told about it at the moment it matters.
-    run: async (args = []) => {
-      const { listAlwaysAllowed, revokeAllAlways } = await import('./approvalGrants.js');
-
-      if (String(args[0] || '').toLowerCase() === 'clear') {
-        const count = revokeAllAlways();
-        return ok(count === 0
-          ? 'No standing approvals to revoke.'
-          : `Revoked ${count} standing approval${count === 1 ? '' : 's'}. Causyne will ask again.`);
-      }
-
-      const granted = listAlwaysAllowed();
-      if (granted.length === 0) {
-        return ok('No standing approvals. Every gated action still asks.');
-      }
-      return ok(
-        'Running without asking, until Causyne restarts:\n'
-        + granted.map((tool) => `  - ${tool}`).join('\n')
-        + '\n\nRevoke with /approvals clear.'
-      );
-    }
-  },
-
-  {
-    name: 'thinking',
-    aliases: ['thought', 'thoughts'],
-    scope: 'local',
-    usage: '/thinking [toggle|expand|collapse]',
-    description: 'Toggle or fold thinking process chunks in the conversation transcript',
-    complete: () => [
-      { value: 'toggle', label: 'toggle', description: 'toggle collapsed state of thinking blocks' },
-      { value: 'expand', label: 'expand', description: 'expand all thinking blocks' },
-      { value: 'collapse', label: 'collapse', description: 'collapse all thinking blocks' }
-    ],
-    run: (argv, ctx) => {
-      const surface = ctx?.prompt?.surface;
-      const transcript = surface?.transcript;
-      const reasoningFrames = Array.isArray(transcript?.frames)
-        ? transcript.frames.filter((f) => f.kind === 'reasoning' || f.meta?.reasoning === true)
-        : [];
-      const sub = (argv[0] || 'toggle').toLowerCase();
-      let newCollapsed;
-      if (sub === 'expand') {
-        newCollapsed = false;
-      } else if (sub === 'collapse') {
-        newCollapsed = true;
-      } else {
-        const last = reasoningFrames[reasoningFrames.length - 1];
-        newCollapsed = !Boolean(last?.meta?.collapsed);
-      }
-      for (const frame of reasoningFrames) {
-        if (frame.meta) {
-          frame.meta.collapsed = newCollapsed;
-          frame.rows = null;
-          frame.renderedWidth = -1;
-        }
-      }
-      if (transcript) {
-        transcript.cache = null;
-        transcript.revision++;
-        transcript.changed?.();
-      }
-
-      const msg = reasoningFrames.length === 0
-        ? 'No thinking process frames found in the current conversation.'
-        : `${newCollapsed ? 'Collapsed' : 'Expanded'} ${reasoningFrames.length} thinking frame${reasoningFrames.length === 1 ? '' : 's'}.`;
-
-      if (ctx.prompt) {
-        ctx.prompt.notice = msg;
-        if (ctx.prompt.scheduleDraw) ctx.prompt.scheduleDraw();
-        return ok(msg, { effect: 'silent' });
-      }
-      return ok(msg);
-    }
-  },
-
-  {
-    name: 'clear',
-    aliases: ['reset'],
-    scope: 'local',
-    usage: '/clear',
-    description: 'Clear the conversation and start from a fresh context',
-    run: (argv, ctx) => {
-      const loop = ctx.loop;
-      if (loop) {
-        loop.messages = [];
-        loop.unlockedPacks = new Set();
-        loop.unlockedTools = new Set();
-        loop.unlockOrder = [];
-        loop.staticContext = null;
-        loop.isInitialized = false;
-        if (typeof loop.rearmAbortController === 'function') loop.rearmAbortController();
-        if (loop.memoryManager) loop.memoryManager.clearHistory();
-        const renderer = ctx.prompt?.renderer || loop.connection?.renderer;
-        if (renderer && typeof renderer.clearTranscript === 'function') {
-          renderer.clearTranscript();
-        }
-        if (ctx.prompt?.surface?.viewport && typeof ctx.prompt.surface.viewport.toBottom === 'function') {
-          ctx.prompt.surface.viewport.toBottom();
-        }
-        if (ctx.prompt?.scheduleDraw) ctx.prompt.scheduleDraw();
-        return ok('Conversation cleared. The next task starts from a clean context.');
-      }
-      return fail('No active session to clear.');
-    }
-  },
-
-  {
-    name: 'compact',
-    aliases: ['compress', 'summarize'],
-    scope: 'local',
-    usage: '/compact',
-    description: 'Condense earlier conversation turns into a structured state checkpoint to reclaim tokens',
-    dialogTitle: 'Context Compaction',
-    run: async (argv, ctx) => {
-      const { runCompactSlashCommand } = await import('./core/contextCompactor.js');
-      const res = await runCompactSlashCommand(argv, ctx);
-      return res.ok ? ok(res.output) : fail(res.output);
-    }
-  },
-
-  {
-    name: 'copy',
-    aliases: ['cp', 'clip'],
-    scope: 'local',
-    usage: '/copy [input | last | <text>]',
-    description: 'Copy chatbox input, last assistant response, or text to system clipboard',
-    complete: () => [
-      { value: 'last', label: 'last', description: 'copy last assistant response to clipboard' },
-      { value: 'input', label: 'input', description: 'copy current chatbox input to clipboard' }
-    ],
-    run: (argv, ctx) => {
-      const res = runCopyCommand(argv, ctx);
-      return res.ok
-        ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
-        : fail(res.output);
-    }
-  },
-
-  {
-    name: 'paste',
-    aliases: ['pasteclip'],
-    scope: 'local',
-    usage: '/paste [text]',
-    description: 'Paste clipboard content or text into the chatbox input',
-    run: (argv, ctx) => {
-      const res = runPasteCommand(argv, ctx);
-      return res.ok
-        ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
-        : fail(res.output);
-    }
-  },
-
-  {
-    name: 'image',
-    aliases: ['attach', 'screenshot'],
-    scope: 'local',
-    usage: '/image [path]',
-    description: 'Attach a screenshot from clipboard or a local image file to the chat prompt',
-    run: (argv, ctx) => {
-      if (!ctx.prompt) {
-        return fail('The /image command is only available in interactive chat mode.');
-      }
-      if (argv.length === 0) {
-        const res = runPasteCommand([], ctx);
-        return res.ok ? ok(res.output, { effect: 'silent' }) : fail(res.output);
-      }
-      const rawPath = argv.join(' ');
-      const img = loadLocalImageAttachment(rawPath);
-      if (!img) {
-        return fail(`Could not load image at "${rawPath}". Ensure file exists and is a valid image (PNG, JPEG, WebP, GIF).`);
-      }
-      if (!Array.isArray(ctx.prompt.pendingAttachments)) {
-        ctx.prompt.pendingAttachments = [];
-      }
-      ctx.prompt.pendingAttachments.push(img);
-      ctx.prompt.editor.insert(`[Image: ${img.name}] `);
-      ctx.prompt.notice = `attached image ${img.name} (${formatByteSize(img.size)})`;
-      ctx.prompt.scheduleDraw();
-      return ok(`Attached image ${img.name} (${formatByteSize(img.size)}) to chat prompt.`, { effect: 'silent' });
-    }
-  },
-
-  {
-    name: 'stop',
-    aliases: ['abort'],
-    scope: 'local',
-    usage: '/stop',
-    description: 'Stop the task that is currently running',
-    run: (argv, ctx) => {
-      const loop = ctx.loop;
-      if (loop && typeof loop.abort === 'function') {
-        loop.abort();
-        if (ctx.prompt) ctx.prompt.notice = 'stop requested';
-        return ok('Stop requested.', { effect: ctx.prompt ? 'silent' : undefined });
-      }
-      return fail('Nothing is running.');
-    }
-  },
-
-  {
-    name: 'model',
-    aliases: ['models'],
-    scope: 'local',
-    usage: '/model [list | refresh | provider/model | model]',
-    description: 'Show, list or change the model in use',
-    dialogTitle: 'Model',
-    complete: () => {
-      const config = loadConfig();
-      const currentProvider = config.provider || '';
-      const overview = getAvailableProvidersOverview(config);
-      const items = [
-        { value: 'list', label: 'list', description: 'overview of all BYOK and ACP models' },
-        { value: 'refresh', label: 'refresh', description: 'poll provider API for live models' }
-      ];
-
-      // 1. Models for the active provider
-      const curated = getCuratedModels(currentProvider);
-      for (const m of curated) {
-        items.push({ value: m, label: m, description: `[active] ${currentProvider}` });
-      }
-
-      // 2. ACP Peer Agents (with live auto-detected status)
-      for (const peer of overview.acp) {
-        const statusTag = peer.installed ? '(ready)' : '(not installed)';
-        items.push({
-          value: peer.providerKey,
-          label: peer.providerKey,
-          description: `[ACP: ${peer.label}] ${statusTag}`
-        });
-
-        if (peer.installed && Array.isArray(peer.models)) {
-          for (const m of peer.models.slice(0, 3)) {
-            if (peer.isCurrent && curated.includes(m)) continue;
-            const targetVal = m.includes('/') ? m : `${peer.providerKey}/${m}`;
-            items.push({
-              value: targetVal,
-              label: targetVal,
-              description: `[ACP: ${peer.label}]`
-            });
-          }
-        }
-      }
-
-      // 3. BYOK Providers (Cloud & Local)
-      for (const p of overview.byok) {
-        const configTag = p.isConfigured ? '(configured)' : '(needs key)';
-        items.push({
-          value: p.id,
-          label: p.id,
-          description: `[BYOK: ${p.label}] ${configTag}`
-        });
-
-        if (p.isConfigured && Array.isArray(p.models)) {
-          for (const m of p.models.slice(0, 2)) {
-            if (p.isCurrent && curated.includes(m)) continue;
-            items.push({
-              value: `${p.id}/${m}`,
-              label: `${p.id}/${m}`,
-              description: `[BYOK: ${p.label}]`
-            });
-          }
-        }
-      }
-
-      return items;
-    },
-    run: async (argv, ctx = {}) => {
-      const config = loadConfig();
-      const overview = getAvailableProvidersOverview(config);
-
-      if (argv.length === 0) {
-        if (ctx.prompt) {
-          const { runInteractiveModelPicker } = await import('./tui/modelPicker.js');
-          const output = await runInteractiveModelPicker(ctx.prompt, { loadConfig, saveConfig }, { loop: ctx.loop });
-          if (ctx.loop) {
-            ctx.loop.config = loadConfig();
-            if (typeof ctx.loop.updateTierLimits === 'function') {
-              ctx.loop.updateTierLimits();
+    {
+        name: 'help',
+        aliases: ['?', 'commands'],
+        scope: 'local',
+        usage: '/help [command]',
+        description: 'List the available commands',
+        dialogTitle: 'Commands',
+        complete: () => {
+            return listCommands('terminal').map((c) => ({
+                value: c.name,
+                label: c.name,
+                description: c.description
+            }));
+        },
+        run: (argv, ctx) => {
+            const [wanted] = argv;
+            if (wanted) {
+                const command = resolveCommand(wanted);
+                if (!command)
+                    return fail(`No command named "${wanted}". Try /help.`);
+                const aliases = command.aliases?.length ? `\n  aliases : ${command.aliases.map(a => '/' + a).join(', ')}` : '';
+                return ok(`${command.usage}\n  ${command.description}${aliases}`);
             }
-          }
-          return ok(output, { effect: 'silent' });
+            const visible = listCommands(ctx.surface);
+            const width = Math.max(...visible.map(c => c.usage.length));
+            const lines = ['Commands', ''];
+            for (const command of visible) {
+                lines.push(`  ${command.usage.padEnd(width)}  ${command.description}`);
+            }
+            lines.push('');
+            lines.push('Anything not starting with / is sent to the agent as a task.');
+            return ok(lines.join('\n'));
         }
-
-        const lines = [
-          `Active Provider : ${config.provider || 'no provider configured'}`,
-          `Active Model    : ${config.model || 'none'}`,
-          '',
-          '────────────────────────────────────────────────────────────',
-          'BYOK PROVIDERS (Cloud & Local API)',
-          '────────────────────────────────────────────────────────────'
-        ];
-        for (const p of overview.byok) {
-          const status = p.isConfigured ? (p.isCurrent ? '● Configured (Active)' : '○ Configured') : '─ Not configured (run /setup)';
-          lines.push(`  • ${p.label.padEnd(26)} [${status}]`);
-        }
-        lines.push('');
-        lines.push('────────────────────────────────────────────────────────────');
-        lines.push('ACP PEER AGENTS (Local Coding Agents & CLI Engines)');
-        lines.push('────────────────────────────────────────────────────────────');
-        for (const peer of overview.acp) {
-          const icon = peer.installed ? '✓' : '✕';
-          const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
-          lines.push(`  ${icon} ${peer.label.padEnd(24)} — ${status}`);
-        }
-        lines.push('');
-        lines.push('Use /model list to see all models in each category.');
-        lines.push('Use /model <name> or /model acp/<peer> to switch model.');
-        lines.push('Use /setup to configure credentials and endpoints.');
-        return ok(lines.join('\n'));
-      }
-
-      const first = argv[0].toLowerCase();
-      if (first === 'list' || first === 'ls') {
-        const targetProvider = argv[1];
-
-        // Specific provider requested (e.g. /model list gemini)
-        if (targetProvider && targetProvider !== 'all') {
-          const result = await resolveAvailableModels(targetProvider, config);
-          const active = config.model;
-          const lines = [
-            `Available models for ${targetProvider} (source: ${result.source}):`,
-            ''
-          ];
-          for (const m of result.models) {
-            const isCurrent = m === active && config.provider === targetProvider;
-            lines.push(`  ${isCurrent ? '• ' : '  '}${m}${isCurrent ? '  (active)' : ''}`);
-          }
-          if (result.models.length === 0) {
-            lines.push('  (this peer CLI publishes no model list; enter one with /model <name>)');
-          }
-          lines.push('');
-          lines.push('Use /model <name> to select, or /model refresh to poll the provider API.');
-          return ok(lines.join('\n'));
-        }
-
-        // Comprehensive categorized listing
-        const lines = [
-          '============================================================',
-          'BYOK PROVIDERS (Cloud APIs & Local Endpoints)',
-          '============================================================'
-        ];
-        for (const p of overview.byok) {
-          const badge = p.isConfigured ? (p.isCurrent ? '● ACTIVE' : '○ CONFIGURED') : 'NEEDS KEY';
-          lines.push(`  • ${p.label} [${badge}]`);
-          const modelSample = p.models.slice(0, 5).join(', ');
-          lines.push(`    Models: ${modelSample}${p.models.length > 5 ? `, ... (${p.models.length} total)` : ''}`);
-          lines.push(`    Switch: /model ${p.id}/${p.defaultModel}`);
-          lines.push('');
-        }
-
-        lines.push('============================================================');
-        lines.push('ACP PEER AGENTS (Local Agents & CLI Engines)');
-        lines.push('============================================================');
-        for (const peer of overview.acp) {
-          const icon = peer.installed ? '✓' : '✕';
-          const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
-          lines.push(`  ${icon} ${peer.label} — ${status}`);
-          lines.push(`     Command: ${peer.command}`);
-          if (peer.installed) {
-            lines.push(`     Models:  ${peer.models.join(', ')}`);
-            lines.push(`     Switch:  /model ${peer.providerKey}`);
-          } else {
-            lines.push(`     Setup:   ${peer.setupInstruction}`);
-          }
-          lines.push('');
-        }
-
-        lines.push('------------------------------------------------------------');
-        lines.push('Use /model <name> or /model acp/<peer> to select.');
-        lines.push('Use /setup to configure credentials or endpoints.');
-        return ok(lines.join('\n'));
-      }
-
-      if (first === 'refresh') {
-        const targetRefresh = argv[1];
-        if (targetRefresh && targetRefresh.toLowerCase() === 'all') {
-          const refreshed = await resolveAvailableProvidersOverview(config, { forceRefresh: true });
-          const readyCount = refreshed.acp.filter(p => p.installed).length + refreshed.byok.filter(p => p.isConfigured).length;
-          return ok(`Refreshed live models across ${readyCount} installed/configured providers. Run /model list to view.`);
-        }
-        const providerToRefresh = targetRefresh || config.provider;
-        if (!providerToRefresh) return fail('No provider configured. Run /setup first.');
-        const result = await resolveAvailableModels(providerToRefresh, config, true);
-        return ok(`Refreshed ${providerToRefresh} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
-      }
-
-      if (first === 'test') {
-        const targetProvider = argv[1] || config.provider;
-        const targetModel = argv[2] || (targetProvider === config.provider ? config.model : undefined);
-        if (!targetProvider) return fail('No provider specified or configured. Run /setup first.');
-
-        const testConfig = { ...config, provider: targetProvider };
-        if (targetModel) {
-          testConfig.model = targetModel;
-        } else if (targetProvider !== config.provider) {
-          delete testConfig.model;
-        }
-        if (config.providerKeys && config.providerKeys[targetProvider]) {
-          testConfig.apiKey = config.providerKeys[targetProvider];
-        }
-
-        try {
-          const { createProvider } = await import('./providers/factory.js');
-          const providerInstance = createProvider(testConfig);
-          const t0 = performance.now();
-          const response = await providerInstance.chat([
-            { role: 'user', content: 'Respond with exactly: OK' }
-          ], { maxTokens: 16 });
-          const latencyMs = Math.round(performance.now() - t0);
-
-          const outputLines = [
-            `✓ API Call Test Succeeded: "${targetProvider}" / "${providerInstance.model || targetModel || 'default'}"`,
-            '',
-            `  • Round-trip Latency : ${latencyMs} ms`,
-            `  • Response Content   : ${JSON.stringify(response.content || '').slice(0, 80)}`,
-            `  • Tokens Used        : ${response.usage ? `${response.usage.promptTokens} in / ${response.usage.completionTokens} out` : 'unreported'}`,
-            '',
-            'Wire format, credentials, and model endpoint are verified and accurate.'
-          ];
-          return ok(outputLines.join('\n'));
-        } catch (err) {
-          return fail(
-            `✕ API Call Test Failed for "${targetProvider}" / "${targetModel || config.model || 'default'}":\n\n`
-            + `  Error: ${err.message || err}\n\n`
-            + `Checks:\n`
-            + `  - Verify the API key in /setup.\n`
-            + `  - Check if the model is active with "/model list ${targetProvider}".\n`
-            + `  - Ensure the provider endpoint or account has sufficient quota.`
-          );
-        }
-      }
-
-      const rawRequested = argv.join(' ').trim().replace(/^\/model\s+/i, '');
-
-      // Helper to cleanly activate a provider + model, persist config, update live loop & prompt
-      const activateModel = (nextProvider, nextModel, feedbackMessage) => {
-        const isProviderChange = nextProvider !== config.provider;
-        if (isProviderChange) {
-          if (nextProvider === 'antigravity' || nextProvider === 'pi' || nextProvider.startsWith('acp/')) {
-            config.apiKey = '';
-            delete config.baseUrl;
-          } else {
-            config.apiKey = (config.providerKeys && config.providerKeys[nextProvider]) || '';
-            delete config.baseUrl;
-          }
-        }
-        config.provider = nextProvider;
-        config.model = nextModel;
-        saveConfig(config);
-
-        if (ctx.loop) {
-          ctx.loop.config = loadConfig();
-          if (typeof ctx.loop.updateTierLimits === 'function') {
-            ctx.loop.updateTierLimits();
-          }
-        }
-        if (ctx.prompt) {
-          if (typeof ctx.prompt.updateModel === 'function') {
-            ctx.prompt.updateModel(config.provider, config.model);
-          } else if (ctx.prompt.renderer?.status) {
-            ctx.prompt.renderer.status.setSession({ provider: config.provider, model: config.model });
-            if (typeof ctx.prompt.scheduleDraw === 'function') ctx.prompt.scheduleDraw();
-          }
-        }
-        return ok(feedbackMessage || `Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
-      };
-
-      // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
-      if (rawRequested.toLowerCase() === 'antigravity' || rawRequested.toLowerCase().startsWith('antigravity/')) {
-        const agyPeer = overview.acp.find(p => p.id === 'antigravity');
-        if (agyPeer && !agyPeer.installed) {
-          return fail(`Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nModel was not changed.`);
-        }
-        const agyModel = rawRequested.includes('/')
-          ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
-          : pickDefaultPeerModel('antigravity', agyPeer?.models);
-        return activateModel('antigravity', agyModel, `Now using Google Antigravity / ${agyModel}.`);
-      }
-
-      // 2. acp/<peer> or acp/<peer>/<model>
-      const acpTarget = rawRequested.match(/^acp\/([a-z0-9_-]+)(?:\/(.+))?$/i);
-      if (acpTarget) {
-        const peer = acpTarget[1].toLowerCase();
-        const nextProvider = `acp/${peer}`;
-        const peerInfo = overview.acp.find(p => p.id === peer);
-        if (peerInfo && !peerInfo.installed) {
-          return fail(`Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nModel was not changed.`);
-        }
-        const peerModel = acpTarget[2]
-          ? acpTarget[2].trim()
-          : pickDefaultPeerModel(nextProvider, peerInfo?.models);
-        return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
-      }
-
-      // 3. Known ACP peer directly (e.g. opencode, opencode/deepseek-v4.1-flash-free, claude)
-      const slashIndex = rawRequested.indexOf('/');
-      const prefix = (slashIndex > 0 ? rawRequested.slice(0, slashIndex) : rawRequested).toLowerCase();
-      const acpPeer = overview.acp.find(p => p.id === prefix || p.providerKey === prefix);
-      if (acpPeer && acpPeer.id !== 'antigravity') {
-        const nextProvider = acpPeer.providerKey;
-        if (!acpPeer.installed) {
-          return fail(`Notice: "${acpPeer.label}" CLI is not installed on this machine.\nBinary "${acpPeer.id}" was not found on PATH.\nSetup: ${acpPeer.setupInstruction}\n\nModel was not changed.`);
-        }
-        let peerModel;
-        if (slashIndex > 0) {
-          const rest = rawRequested.slice(slashIndex + 1).trim();
-          if (
-            (Array.isArray(acpPeer.models) && acpPeer.models.includes(rawRequested)) ||
-            (PEER_MODEL_CATALOGUE[acpPeer.id] && PEER_MODEL_CATALOGUE[acpPeer.id].includes(rawRequested)) ||
-            (acpPeer.id === 'opencode' && rawRequested.startsWith('opencode/'))
-          ) {
-            peerModel = rawRequested;
-          } else {
-            peerModel = rest;
-          }
-        } else {
-          peerModel = pickDefaultPeerModel(nextProvider, acpPeer.models);
-        }
-        return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
-      }
-
-      // 4. Known BYOK provider prefix (e.g. gemini/gemini-2.5-flash, anthropic/claude-3-7-sonnet)
-      const byokProvider = overview.byok.find(p => p.id === prefix || (p.id === 'qwen' && prefix === 'dashscope-byok'));
-      if (byokProvider) {
-        const nextProvider = byokProvider.id;
-        const byokModel = slashIndex > 0 ? rawRequested.slice(slashIndex + 1).trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || byokProvider.defaultModel);
-        return activateModel(nextProvider, byokModel, `Now using ${nextProvider} / ${byokModel}.`);
-      }
-
-      // 5. Look up by model name across BYOK and ACP catalogues
-      for (const p of overview.byok) {
-        if (p.models && p.models.some(m => m.toLowerCase() === rawRequested.toLowerCase())) {
-          const exactModel = p.models.find(m => m.toLowerCase() === rawRequested.toLowerCase()) || rawRequested;
-          return activateModel(p.id, exactModel, `Now using ${p.id} / ${exactModel}.`);
-        }
-      }
-      for (const peer of overview.acp) {
-        if (peer.models && peer.models.some(m => m.toLowerCase() === rawRequested.toLowerCase())) {
-          const exactModel = peer.models.find(m => m.toLowerCase() === rawRequested.toLowerCase()) || rawRequested;
-          return activateModel(peer.providerKey, exactModel, `Now using ${peer.providerKey} / ${exactModel}.`);
-        }
-      }
-
-      // 6. If currently in ACP and model is custom for that peer
-      if (isAcpProvider(config.provider)) {
-        return activateModel(config.provider, rawRequested, `Now using ${config.provider} / ${rawRequested}.`);
-      }
-
-      // 7. Generic provider/model separator or bare model
-      if (slashIndex > 0) {
-        const prov = rawRequested.slice(0, slashIndex).trim();
-        const mod = rawRequested.slice(slashIndex + 1).trim();
-        return activateModel(prov, mod, `Now using ${prov} / ${mod}.`);
-      } else {
-        return activateModel(config.provider || 'antigravity', rawRequested, `Now using ${config.provider || 'antigravity'} / ${rawRequested}.`);
-      }
-    }
-  },
-
-  {
-    name: 'openrouter',
-    aliases: ['free'],
-    scope: 'local',
-    usage: '/openrouter [status | connect | disconnect | privacy <deny|allow>]',
-    description: 'Connect OpenRouter account for free cloud AI models (openrouter/free)',
-    dialogTitle: 'OpenRouter Free',
-    complete: () => [
-      { value: 'status', label: 'status', description: 'view connection and data collection status' },
-      { value: 'connect', label: 'connect', description: 'connect your OpenRouter account via OAuth PKCE' },
-      { value: 'privacy deny', label: 'privacy deny', description: 'strict privacy (default): restrict provider data collection' },
-      { value: 'privacy allow', label: 'privacy allow', description: 'permit routing to training-eligible providers' },
-      { value: 'disconnect', label: 'disconnect', description: 'disconnect OpenRouter account' }
-    ],
-    run: async (argv, ctx = {}) => {
-      const sub = (argv[0] || 'status').toLowerCase();
-
-      if (sub === 'status') {
-        const status = getOpenRouterStatus();
-        const lines = [
-          'OpenRouter Free Models — Connection Status',
-          '',
-          `  • Connected        : ${status.connected ? 'YES' : 'NO'}`,
-          `  • Active Provider  : ${status.active ? 'YES (OpenRouter is active)' : 'NO (using ' + (loadConfig().provider || 'none') + ')'}`,
-          `  • Default Model    : ${status.model}`,
-          `  • Privacy Policy   : provider.data_collection = "${status.dataCollection}"`,
-          `  • Stored Key       : ${status.maskedKey || 'none'} (${status.keySource || 'unconfigured'})`,
-          '',
-          status.connected
-            ? 'OpenRouter Free is ready. Run "/model openrouter/free" to select it.'
-            : 'To connect your account, run "/openrouter connect".'
-        ];
-        return ok(lines.join('\n'));
-      }
-
-      if (sub === 'disconnect') {
-        const updatedConfig = disconnectOpenRouter();
-        if (ctx.loop) {
-          ctx.loop.config = updatedConfig;
-          if (typeof ctx.loop.updateTierLimits === 'function') {
-            ctx.loop.updateTierLimits();
-          }
-        }
-        if (ctx.prompt) {
-          if (typeof ctx.prompt.updateModel === 'function') {
-            ctx.prompt.updateModel(
-              updatedConfig.provider || 'antigravity',
-              updatedConfig.model || 'Gemini 3.8 Flash (Low)'
-            );
-          } else if (ctx.prompt.renderer?.status) {
-            ctx.prompt.renderer.status.setSession({
-              provider: updatedConfig.provider || 'antigravity',
-              model: updatedConfig.model || 'Gemini 3.8 Flash (Low)'
+    },
+    {
+        name: 'cd',
+        aliases: ['cwd', 'workspace'],
+        scope: 'local',
+        usage: '/cd [directory]',
+        description: 'View or change active working directory and project focus',
+        complete: () => {
+            try {
+                const entries = fs.readdirSync(process.cwd(), { withFileTypes: true });
+                return entries
+                    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+                    .map(e => ({
+                    value: e.name.includes(' ') ? `"${e.name}"` : e.name,
+                    label: e.name + '/',
+                    description: 'directory'
+                }));
+            }
+            catch (e) {
+                return [];
+            }
+        },
+        run: async (argv, ctx) => {
+            const target = argv.join(' ').trim().replace(/^["']|["']$/g, '');
+            if (!target) {
+                return ok(`Current working directory: ${process.cwd()}`);
+            }
+            const resolved = path.resolve(process.cwd(), target.replace(/^~\//, os.homedir() + '/'));
+            if (!fs.existsSync(resolved)) {
+                return fail(`Directory not found: ${resolved}`);
+            }
+            const stat = fs.statSync(resolved);
+            if (!stat.isDirectory()) {
+                return fail(`Not a directory: ${resolved}`);
+            }
+            // Do not mutate the existing AgentLoop: its workspaceRoot, Sandbox,
+            // MemoryManager and loaded session belong to the previous workspace.
+            // The chat controller rebuilds the loop after this explicit command.
+            let canonicalRoot;
+            try {
+                canonicalRoot = fs.realpathSync(resolved);
+                process.chdir(canonicalRoot);
+            }
+            catch (err) {
+                return fail(`Cannot switch to ${resolved}: ${errMsg(err)}`);
+            }
+            if (ctx.prompt && typeof ctx.prompt.setWorkingRoot === 'function') {
+                ctx.prompt.setWorkingRoot(canonicalRoot);
+            }
+            return ok(`Working directory changed to: ${canonicalRoot}`, {
+                effect: 'workspace-changed', workspaceRoot: canonicalRoot
             });
-            if (typeof ctx.prompt.scheduleDraw === 'function') ctx.prompt.scheduleDraw();
-          }
         }
-        return ok(
-          `OpenRouter account disconnected and API key removed from local vault.\n` +
-          `Active model reverted to ${updatedConfig.provider || 'antigravity'} / ${updatedConfig.model || 'Gemini 3.8 Flash (Low)'}.`
-        );
-      }
-
-      if (sub === 'privacy' || sub === 'data-collection') {
-        const val = (argv[1] || '').toLowerCase();
-        if (val !== 'deny' && val !== 'allow') {
-          return fail('Usage: /openrouter privacy <deny | allow>');
+    },
+    {
+        name: 'skill',
+        scope: 'local',
+        usage: '/skill new <domain>/<name> | /skill edit <domain>/<name> | /skill rm <domain>/<name> | /skill mine',
+        description: 'Create, edit or remove your own skills',
+        // Only the ACTIONS. This used to append the user's skill ids too, but a
+        // skill id is the second argument (`/skill rm team/x`) and completion only
+        // reaches the first — so accepting one produced `/skill team/x` and an
+        // "Unknown action" error. Offering something in a position where it cannot
+        // work is worse than offering nothing.
+        complete: () => {
+            const mine = listCompiledSkills().filter((skill) => skill.source === 'user');
+            return [
+                { value: 'new', label: 'new', description: 'scaffold a new skill you own' },
+                { value: 'mine', label: 'mine', description: `list your own skills (${mine.length})` },
+                { value: 'edit', label: 'edit', description: 'show where one of your skills lives' },
+                { value: 'rm', label: 'rm', description: 'remove one of your skills' }
+            ];
+        },
+        run: (argv) => {
+            const [action, target, ...rest] = argv;
+            const mine = () => listCompiledSkills().filter((skill) => skill.source === 'user');
+            if (rest.length > 0) {
+                return fail(`/skill takes at most one target. Ignored: ${JSON.stringify(rest.join(' '))}\n`
+                    + 'A skill name is one word: lowercase letters, digits and hyphens.');
+            }
+            if (action === 'clear' || action === 'off' || action === 'reset') {
+                return { ok: true, effect: 'clear-skill', output: 'Active skill cleared.' };
+            }
+            if (!action || (action === 'new' && !target) || action === 'create') {
+                return { ok: true, effect: 'create-skill' };
+            }
+            if (action === 'mine' || action === 'list') {
+                const own = mine();
+                const problems = userSkillProblems();
+                const lines = [`Your own skills (${own.length})`, ''];
+                if (own.length === 0) {
+                    lines.push(`  none yet — ${userSkillsRoot()}`);
+                    lines.push('');
+                    lines.push('  /skill new <domain>/<name>   scaffold one');
+                    lines.push('  or ask Causyne to write one for you: "make me a skill for our release process"');
+                }
+                else {
+                    for (const skill of own)
+                        lines.push(`  ${skill.domain}/${skill.id} — ${skill.description}`);
+                    lines.push('');
+                    lines.push(`  stored in ${userSkillsRoot()}`);
+                    lines.push('  yours shadow a compiled skill of the same id, so you can correct any of them');
+                }
+                if (problems.length > 0) {
+                    lines.push('');
+                    lines.push('Problems:');
+                    for (const problem of problems)
+                        lines.push(`  ${problem}`);
+                }
+                return ok(lines.join('\n'));
+            }
+            if (action === 'new') {
+                const parsed = parseSkillId(target);
+                if (parsed.error)
+                    return fail(parsed.error);
+                const domain = parsed.domain || '';
+                const skillName = parsed.name || '';
+                const written = writeUserSkill({
+                    domain,
+                    name: skillName,
+                    content: skillTemplate(domain, skillName)
+                });
+                if (!written.ok)
+                    return fail(written.error || 'Could not create skill.');
+                invalidateUserSkills();
+                return ok([
+                    `Created ${parsed.domain}/${parsed.name}`,
+                    '',
+                    `  ${written.path}`,
+                    '',
+                    'Open it and fill in the workflow. Every step ends with a "Done when:" line you can',
+                    'actually check, and the file closes with a Verification section — that is what makes',
+                    'a skill a procedure rather than a note. The description decides when the agent reaches',
+                    'for it, so write it as "what this does. Use when …".'
+                ].join('\n'));
+            }
+            if (action === 'edit') {
+                const parsed = parseSkillId(target);
+                if (parsed.error)
+                    return fail(parsed.error);
+                const found = mine().find((s) => s.domain === parsed.domain && s.id === parsed.name);
+                if (!found) {
+                    return fail(`${target} is not one of your skills. /skill mine lists them, `
+                        + `/skill new ${target} creates it.`);
+                }
+                return ok(`${target}\n\n  ${path.join(userSkillsRoot(), parsed.domain || '', parsed.name || '', 'SKILL.md')}`);
+            }
+            if (action === 'rm') {
+                const parsed = parseSkillId(target);
+                if (parsed.error)
+                    return fail(parsed.error);
+                const removed = deleteUserSkill(parsed.domain || '', parsed.name || '');
+                if (!removed.ok)
+                    return fail(removed.error || 'Could not remove skill.');
+                invalidateUserSkills();
+                return ok(`Removed ${target}`);
+            }
+            return fail(`Unknown action "${action}". Use new, edit, rm or mine.`);
         }
-        setOpenRouterDataCollection(val);
-        const disclosure = val === 'allow'
-          ? '\nNotice: Setting data_collection to "allow" means training-eligible providers are eligible for routing. It does not by itself establish user consent to model training or guarantee training occurs.'
-          : '\nNotice: Strict privacy active. Provider data collection for model training is strictly denied.';
-        return ok(`OpenRouter data_collection policy set to "${val}".${disclosure}`);
-      }
-
-      if (sub === 'connect') {
-        const candidateKey = argv[1];
-        if (candidateKey && candidateKey.trim()) {
-          saveOpenRouterKey(candidateKey.trim(), { setAsActive: true });
-          return ok('Saved OpenRouter API key and switched active model to openrouter/free.');
+    },
+    {
+        name: 'skills',
+        scope: 'local',
+        usage: '/skills [domain | domain/skill [instruction] | domain/skill --show]',
+        description: 'Run a skill on your task, browse the library, or read one with --show',
+        /**
+         * Argument suggestions, offered as the user types `/skills <prefix>`.
+         *
+         * openclaw's contract (src/tui/commands.ts getArgumentCompletions): the
+         * command owns its argument vocabulary and the prompt asks for it. Ranking
+         * and filtering are the prompt's job — this returns the whole vocabulary and
+         * completion.js scores it with the same function it uses for commands and
+         * filenames, so `/skills doc` reaches devops/docker-multi-stage-builds by a
+         * basename-prefix match rather than needing the domain typed first.
+         *
+         * Domains are offered alongside skills because `/skills devops` is a valid
+         * argument in its own right.
+         */
+        complete: () => {
+            const skills = listCompiledSkills();
+            const domains = [...new Set(skills.map((skill) => skill.domain))]
+                .map((domain) => ({
+                value: domain,
+                label: domain,
+                description: `${skills.filter((s) => s.domain === domain).length} skills`
+            }));
+            const base = [
+                { value: 'clear', label: 'clear', description: 'clear the currently active skill' },
+                ...domains
+            ];
+            return base.concat(skills.map((skill) => ({
+                value: `${skill.domain}/${skill.id}`,
+                // Rank against the skill id as well as the full path, so typing the
+                // skill name alone finds it without knowing which domain it lives in.
+                match: `${skill.domain}/${skill.id}`,
+                label: `${skill.domain}/${skill.id}`,
+                description: skill.description
+            })));
+        },
+        run: (argv) => {
+            const [target] = argv;
+            if (target === 'clear' || target === 'off' || target === 'reset') {
+                return { ok: true, effect: 'clear-skill', output: 'Active skill cleared.' };
+            }
+            if (!target) {
+                const catalogue = listCompiledSkills();
+                if (catalogue.length === 0)
+                    return ok('No skills are compiled into this build.');
+                // An interactive terminal browses; everything else reads. The picker is
+                // fuzzy-searchable and truncates to its own pane, so a 100-skill library
+                // stays usable and cannot overflow the terminal — the failure the flat
+                // listing had at five skills, let alone a hundred.
+                const summary = ['Compiled skills', ''];
+                const byDomain = new Map();
+                for (const skill of catalogue) {
+                    if (!byDomain.has(skill.domain))
+                        byDomain.set(skill.domain, []);
+                    byDomain.get(skill.domain).push(skill);
+                }
+                for (const [domain, skills] of byDomain) {
+                    summary.push(`  ${domain} (${skills.length})`);
+                    for (const skill of skills) {
+                        summary.push(`    ${domain}/${skill.id} — ${skill.description || skill.name || ''}`);
+                    }
+                }
+                summary.push('');
+                summary.push(`${catalogue.length} skills across ${byDomain.size} domains.`);
+                summary.push('Read one with /skills <domain>/<skill>.');
+                const pickerItems = [
+                    {
+                        domain: 'custom',
+                        id: 'create',
+                        name: '+ Create new skill...',
+                        description: 'Author a new custom procedure with interactive wizard',
+                        isCreateAction: true
+                    },
+                    ...catalogue
+                ];
+                return { ok: true, output: summary.join('\n'), effect: 'pick-skill', items: pickerItems };
+            }
+            if (target.includes('/')) {
+                const separator = target.indexOf('/');
+                const domain = target.slice(0, separator);
+                const id = target.slice(separator + 1);
+                const content = readCompiledSkill(domain, id);
+                if (typeof content === 'string' && content.startsWith('Error:'))
+                    return fail(content);
+                // Everything after the skill id is the TASK.
+                //
+                // `/skills` used to take argv[0] and discard the rest, so
+                // `/skills data/notebook-to-production please produksi ini` silently
+                // threw away "please produksi ini" and printed the document instead.
+                const instruction = argv.slice(1).join(' ').trim();
+                // `--show` reads it as a document. Anything else RUNS it.
+                if (instruction === '--show' || instruction === '-s') {
+                    return ok(stripFrontmatter(content));
+                }
+                return {
+                    ok: true,
+                    effect: 'invoke-skill',
+                    skill: { id: `${domain}/${id}`, content },
+                    instruction,
+                    output: `${domain}/${id}`
+                };
+            }
+            const skills = COMPILED_SKILLS[target];
+            if (!skills) {
+                return fail(`No skill domain "${target}". Available: ${Object.keys(COMPILED_SKILLS).join(', ')}`);
+            }
+            const names = Object.keys(skills);
+            if (names.length === 0)
+                return ok(`Domain "${target}" has no compiled skills.`);
+            const listing = [`${target} skills (${names.length})`, '',
+                ...names.map(id => `  ${target}/${id} — ${skills[id]?.description || ''}`)].join('\n');
+            // Trailing text after a DOMAIN means the user tried to invoke something.
+            // A domain is not a skill, so it cannot be run — but silently listing and
+            // discarding what they typed is the same failure the skill branch had.
+            const extra = argv.slice(1).join(' ').trim();
+            if (extra && extra !== '--show' && extra !== '-s') {
+                return fail(`"${target}" is a domain, not a skill — there is nothing to run.\n`
+                    + `Pick one of its skills and try again, for example:\n`
+                    + `  /skills ${target}/${names[0]} ${extra}\n\n${listing}`);
+            }
+            return ok(listing);
         }
-
-        const isSsh = Boolean(process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION);
-        if (isSsh) {
-          const pkce = generatePkceCodes();
-          const authUrl = buildAuthorizationUrl('urn:ietf:wg:oauth:2.0:oob', pkce.codeChallenge, pkce.state);
-          const lines = [
-            'SSH / Headless environment detected.',
-            'Please open the following authorization URL in your browser:',
-            '',
-            `  ${authUrl}`,
-            '',
-            'After authorizing, configure your key using:',
-            '  /openrouter connect <your-api-key>'
-          ];
-          return ok(lines.join('\n'));
+    },
+    {
+        name: 'undo',
+        scope: 'local',
+        usage: '/undo [taskId] [--step] [--full] [--apply]',
+        description: "Preview rolling back the last task's file changes (--apply to write)",
+        dialogTitle: 'Undo',
+        complete: () => {
+            try {
+                const groups = listGroups(10);
+                return [
+                    { value: '--apply', label: '--apply', description: 'apply rollback directly to workspace' },
+                    { value: '--step', label: '--step', description: 'roll back just the single last file change' },
+                    { value: '--full', label: '--full', description: 'roll back entire workspace tree drift' },
+                    ...groups.map((g) => ({
+                        value: g.taskId,
+                        label: g.taskId,
+                        description: g.prompt ? `${g.prompt.slice(0, 36)} (${g.fileEntries.length} files)` : `${g.fileEntries.length} files`
+                    }))
+                ];
+            }
+            catch (e) {
+                return [
+                    { value: '--apply', label: '--apply', description: 'apply rollback directly' },
+                    { value: '--step', label: '--step', description: 'roll back just the single last file change' }
+                ];
+            }
+        },
+        run: (argv, ctx = {}) => {
+            const flags = new Set(argv.filter(a => a.startsWith('--')));
+            const taskId = argv.find(a => !a.startsWith('--'));
+            // PREVIEW by default. Typing /undo used to restore files immediately —
+            // no preview, no confirmation, and none of the running-task guard the
+            // structured rollback flow has. A chat box is not a place where one word
+            // should be able to overwrite a day's work, so the destructive form has
+            // to be asked for by name.
+            const apply = flags.has('--apply');
+            const workspaceRoot = ctx.loop?.workspaceRoot || process.cwd();
+            const { ok: succeeded, text } = buildUndoText(taskId, {
+                step: flags.has('--step'),
+                full: flags.has('--full'),
+                dryRun: !apply,
+                workspaceRoot
+            });
+            if (!succeeded)
+                return fail(text);
+            if (apply)
+                return ok(text, { effect: 'inline' });
+            return ok(`${text}\n\nNothing was written. Run the same command with --apply to restore these files.`);
         }
-
-        try {
-          const resultPromise = startLoopbackAuth({
-            timeoutMs: 120_000,
-            openBrowser: true
-          });
-
-          if (ctx.prompt && typeof ctx.prompt.scheduleDraw === 'function') {
+    },
+    {
+        name: 'print',
+        scope: 'local',
+        usage: '/print',
+        description: 'Flush this session into the terminal scrollback and start the stage clean',
+        run: (argv, ctx) => {
+            // The Stage keeps the transcript in memory and paints a window of it, so
+            // until you exit, nothing is in your terminal's own scrollback to grep,
+            // copy or pipe. This is the way out without ending the session — and it
+            // prints BEFORE clearing, because ctrl+L in a terminal leaves your history
+            // behind and so must this.
+            const surface = ctx && ctx.prompt && ctx.prompt.surface;
+            if (!surface) {
+                return ok('Nothing to flush: this session already prints straight into your terminal.');
+            }
+            const rows = surface.flushAndClear();
+            return ok(`Printed ${rows} row${rows === 1 ? '' : 's'} into your terminal scrollback.`);
+        }
+    },
+    {
+        name: 'checkpoints',
+        aliases: ['ck'],
+        scope: 'local',
+        usage: '/checkpoints [count]',
+        description: 'List recent undo checkpoints',
+        dialogTitle: 'Checkpoints',
+        run: (argv) => ok(buildCheckpointsText(parseInt(argv[0] || '', 10) || 15))
+    },
+    {
+        name: 'context',
+        aliases: ['ctx'],
+        scope: 'local',
+        usage: '/context',
+        description: 'Show what fills the context window',
+        dialogTitle: 'Context',
+        run: () => ok(buildContextText())
+    },
+    {
+        name: 'usage',
+        aliases: ['cost'],
+        scope: 'local',
+        usage: '/usage',
+        description: 'Show token usage and estimated cost',
+        dialogTitle: 'Usage',
+        run: async (argv, ctx = {}) => {
+            if (ctx.prompt && typeof ctx.prompt.toggleUsageCard === 'function') {
+                await ctx.prompt.toggleUsageCard(ctx.loop);
+                return ok('', { effect: 'silent' });
+            }
+            return ok(await buildUsageText());
+        }
+    },
+    {
+        name: 'diff',
+        aliases: ['changes', 'git-diff'],
+        scope: 'local',
+        usage: '/diff [staged | stat]',
+        description: 'Show working tree or staged diff for the active workspace',
+        dialogTitle: 'Diff',
+        complete: () => [
+            { value: 'staged', label: 'staged', description: 'show staged changes only (--cached)' },
+            { value: 'stat', label: 'stat', description: 'show diff summary statistics' }
+        ],
+        run: (argv, ctx = {}) => {
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const sub = (argv[0] || '').toLowerCase();
+            try {
+                let isGit = fs.existsSync(path.join(ws, '.git'));
+                if (!isGit) {
+                    try {
+                        execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
+                        isGit = true;
+                    }
+                    catch {
+                        isGit = false;
+                    }
+                }
+                if (!isGit) {
+                    return ok(`Workspace "${ws}" is not a git repository.`);
+                }
+                const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
+                if (!status) {
+                    return ok('Working tree is clean. No uncommitted changes in this workspace.');
+                }
+                let diffArgs = ['diff'];
+                if (sub === 'staged' || sub === '--cached') {
+                    diffArgs = ['diff', '--cached'];
+                }
+                else if (sub === 'stat') {
+                    diffArgs = ['diff', '--stat', 'HEAD'];
+                }
+                const diffCmd = `git ${diffArgs.join(' ')}`;
+                const diffOutput = execFileSync('git', diffArgs, { cwd: ws, encoding: 'utf8', maxBuffer: 1024 * 1024 }).trim();
+                const header = `Git Status (${ws}):\n${status}\n\n${'─'.repeat(50)}\n${diffCmd}:\n`;
+                return ok(diffOutput ? `${header}\n${diffOutput}` : `${header}\n(no file diff for ${diffCmd})`);
+            }
+            catch (err) {
+                return fail(`Could not inspect git diff: ${errMsg(err)}`);
+            }
+        }
+    },
+    {
+        name: 'plans',
+        scope: 'local',
+        usage: '/plans [import <json-file> | forget]',
+        description: 'Inspect, pre-warm, or clear reusable task plans',
+        dialogTitle: 'Plan cache',
+        complete: () => [
+            { value: 'import', label: 'import', description: 'import seed plans from a JSON file' },
+            { value: 'forget', label: 'forget', description: 'clear all cached plans' }
+        ],
+        run: async (args = []) => {
+            const cache = await import('./planCache.js');
+            const verb = String(args[0] || '').toLowerCase();
+            if (verb === 'forget') {
+                const removed = cache.forgetPlans();
+                return ok(`Forgot ${removed} cached plan${removed === 1 ? '' : 's'}.`);
+            }
+            if (verb === 'import') {
+                const requested = args.slice(1).join(' ').trim();
+                if (!requested)
+                    return fail('Usage: /plans import <json-file>');
+                const file = path.resolve(requested.replace(/^~(?=\/)/, os.homedir()));
+                try {
+                    const stat = fs.statSync(file);
+                    if (!stat.isFile() || stat.size > 1024 * 1024) {
+                        return fail('Plan seed must be one JSON file no larger than 1 MB.');
+                    }
+                    const outcome = cache.prewarmPlans(JSON.parse(fs.readFileSync(file, 'utf8')));
+                    const detail = outcome.errors.length > 0 ? `\n${outcome.errors.join('\n')}` : '';
+                    return outcome.accepted > 0
+                        ? ok(`Imported ${outcome.accepted} plan${outcome.accepted === 1 ? '' : 's'}; rejected ${outcome.rejected}.${detail}`)
+                        : fail(`No plans were imported.${detail}`);
+                }
+                catch (error) {
+                    return fail(`Could not import plan seeds: ${errMsg(error)}`);
+                }
+            }
+            const stats = cache.planStats();
+            return ok([
+                `${stats.count} cached plan${stats.count === 1 ? '' : 's'}`,
+                `Hits: ${stats.hits}/${stats.lookups} (${(stats.hitRate * 100).toFixed(1)}%) — exact ${stats.exactHits}, fuzzy ${stats.fuzzyHits}`,
+                `Average lookup: ${stats.averageLookupMs.toFixed(3)} ms; max ${stats.maxLookupMs.toFixed(3)} ms`,
+                stats.disabled
+                    ? `Lookup cooling down until ${new Date(stats.disabledUntil).toISOString()} after persistent misses.`
+                    : 'Lookup active.',
+                '',
+                'Pre-warm with /plans import <json-file>. Clear with /plans forget.'
+            ].join('\n'));
+        }
+    },
+    {
+        name: 'plugins',
+        scope: 'local',
+        usage: '/plugins [list | enable <name> | disable <name>]',
+        description: 'Inspect or change trust for local plugins',
+        dialogTitle: 'Plugins',
+        complete: () => {
+            try {
+                const rows = listPlugins();
+                return [
+                    { value: 'list', label: 'list', description: 'list local plugins and trust status' },
+                    ...rows.map((p) => ({
+                        value: `enable ${p.name}`,
+                        label: `enable ${p.name}`,
+                        description: `enable plugin ${p.name}`
+                    })),
+                    ...rows.map((p) => ({
+                        value: `disable ${p.name}`,
+                        label: `disable ${p.name}`,
+                        description: `disable plugin ${p.name}`
+                    }))
+                ];
+            }
+            catch (e) {
+                return [
+                    { value: 'list', label: 'list', description: 'list local plugins' },
+                    { value: 'enable', label: 'enable', description: 'enable a local plugin' },
+                    { value: 'disable', label: 'disable', description: 'disable a local plugin' }
+                ];
+            }
+        },
+        run: async (args = []) => {
+            const manager = await import('./plugins/pluginManager.js');
+            const verb = String(args[0] || '').toLowerCase();
+            const name = String(args[1] || '');
+            if (verb === 'enable') {
+                if (!name)
+                    return fail('Usage: /plugins enable <name>');
+                const result = manager.enablePlugin(name);
+                return result.ok
+                    ? ok(`Enabled ${name} at manifest digest ${result.digest}. Changes will revoke trust automatically.`)
+                    : fail(`Could not enable ${name}: ${result.error}`);
+            }
+            if (verb === 'disable') {
+                if (!name)
+                    return fail('Usage: /plugins disable <name>');
+                const result = manager.disablePlugin(name);
+                return result.ok ? ok(`Disabled ${name}.`) : fail(`Could not disable ${name}: ${result.error}`);
+            }
+            const rows = manager.listPlugins();
+            if (rows.length === 0)
+                return ok(`No local plugins. Plugin root: ${manager.PLUGIN_ROOT}`);
+            return ok(rows.map((plugin) => {
+                const state = plugin.invalid ? 'invalid' : plugin.modified ? 'modified; trust revoked' : plugin.enabled ? 'enabled' : 'disabled';
+                const capabilities = Array.isArray(plugin.capabilities) && plugin.capabilities.length > 0
+                    ? plugin.capabilities.join(', ')
+                    : 'none';
+                return `  ${plugin.name} ${plugin.version || ''} — ${state}; capabilities: ${capabilities}`;
+            }).join('\n') + `\n\nPlugin root: ${manager.PLUGIN_ROOT}`);
+        }
+    },
+    {
+        name: 'new',
+        aliases: ['new-session'],
+        scope: 'local',
+        usage: '/new',
+        description: 'Start a new clean chat session in this workspace',
+        dialogTitle: 'New Session',
+        run: async (_args = [], context = {}) => {
+            // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
+            const store = await import('./sessionStore.js');
+            const memory = context.loop && context.loop.memoryManager;
+            const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
+            const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
+            if (context.loop) {
+                context.loop.messages = [];
+                context.loop.taskId = `cli_chat_${Date.now()}`;
+                if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+                    context.loop.tokenTracker.reset();
+                }
+            }
+            const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+            if (renderer && typeof renderer.renderSessionHistory === 'function') {
+                renderer.renderSessionHistory([], { id: next.id, title: next.title, messagesCount: 0 });
+            }
+            if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+                context.prompt.surface.viewport.toBottom();
+            }
+            if (context.prompt?.editor?.clear) {
+                context.prompt.editor.clear();
+                if (typeof context.prompt.scheduleDraw === 'function')
+                    context.prompt.scheduleDraw();
+            }
+            return ok(`Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
+        }
+    },
+    {
+        name: 'sessions',
+        aliases: ['session'],
+        scope: 'local',
+        usage: '/sessions [new | switch <id> | delete <id>]',
+        description: 'List chat sessions, or switch to one',
+        dialogTitle: 'Sessions',
+        complete: () => {
+            try {
+                const rows = listSessions().slice(0, 15);
+                return [
+                    { value: 'new', label: 'new', description: 'start a fresh conversation in this workspace' },
+                    ...rows.map((r) => ({
+                        value: `switch ${r.id}`,
+                        label: `switch ${r.id}`,
+                        description: `${r.title} (${r.messageCount} msgs)`
+                    }))
+                ];
+            }
+            catch (e) {
+                return [{ value: 'new', label: 'new', description: 'start a fresh conversation' }];
+            }
+        },
+        run: async (args = [], context = {}) => {
+            // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
+            const store = await import('./sessionStore.js');
+            const verb = String(args[0] || '').toLowerCase();
+            const memory = context.loop && context.loop.memoryManager;
+            const workspace = context.loop?.workspaceRoot || context.prompt?.root || process.cwd();
+            // If interactive TUI prompt is available and no sub-arguments are given, open interactive picker modal
+            if ((!args || args.length === 0 || (args.length === 1 && args[0] === '')) && context.prompt) {
+                const { runInteractiveSessionPicker } = await import('./tui/sessionPicker.js');
+                const message = await runInteractiveSessionPicker(context.prompt, {
+                    loop: context.loop,
+                    workspace
+                });
+                return ok(message, { effect: 'silent' });
+            }
+            if (verb === 'new') {
+                const next = memory ? memory.startNewSession('Untitled') : store.createSession(workspace, 'Untitled', true);
+                if (context.loop) {
+                    context.loop.messages = [];
+                    context.loop.taskId = `cli_chat_${Date.now()}`;
+                    if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+                        context.loop.tokenTracker.reset();
+                    }
+                }
+                if (context.prompt?.editor?.clear) {
+                    context.prompt.editor.clear();
+                    if (typeof context.prompt.scheduleDraw === 'function')
+                        context.prompt.scheduleDraw();
+                }
+                return ok(`Started new session: "${next.title}" (${next.id}).`, { effect: 'inline' });
+            }
+            if (verb === 'switch' && args[1]) {
+                const next = memory ? memory.useSession(args[1]) : store.switchSession(args[1]);
+                if (!next)
+                    return fail(`No session "${args[1]}".`);
+                const historyMessages = memory ? memory.loadHistory() : next.messages.filter((m) => m.role !== 'system');
+                if (context.loop) {
+                    context.loop.messages = historyMessages;
+                    context.loop.taskId = `cli_chat_${Date.now()}`;
+                    if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+                        context.loop.tokenTracker.reset();
+                    }
+                }
+                const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+                if (renderer && typeof renderer.renderSessionHistory === 'function') {
+                    renderer.renderSessionHistory(historyMessages, {
+                        id: next.id,
+                        title: next.title,
+                        messagesCount: next.messages.length
+                    });
+                }
+                if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+                    context.prompt.surface.viewport.toBottom();
+                }
+                if (context.prompt?.editor?.clear) {
+                    context.prompt.editor.clear();
+                    if (typeof context.prompt.scheduleDraw === 'function')
+                        context.prompt.scheduleDraw();
+                }
+                return ok(`Switched to "${next.title}" (${next.messages.length} messages, ${next.id}).`, { effect: 'inline' });
+            }
+            if (verb === 'fork') {
+                const sourceId = args[1] || (memory ? memory.sessionId : store.getActiveSessionId());
+                if (!sourceId)
+                    return fail('No session specified to fork.');
+                const forked = memory && memory.sessionId === sourceId
+                    ? memory.forkSession()
+                    : store.forkSession(sourceId, { makeActive: true });
+                if (!forked)
+                    return fail(`Could not fork session "${sourceId}".`);
+                // CRITICAL TRUST INVARIANT (Claude Code Architecture, p. 24):
+                // Permissions and allowlists NEVER carry across forks.
+                const { revokeAllAlways } = await import('./approvalGrants.js');
+                revokeAllAlways();
+                if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
+                    context.loop.resetApprovalScope();
+                }
+                const historyMessages = memory ? memory.loadHistory() : forked.messages.filter((m) => m.role !== 'system');
+                if (context.loop) {
+                    context.loop.messages = historyMessages;
+                    context.loop.taskId = `cli_chat_${Date.now()}`;
+                    if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+                        context.loop.tokenTracker.reset();
+                    }
+                }
+                const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+                if (renderer && typeof renderer.renderSessionHistory === 'function') {
+                    renderer.renderSessionHistory(historyMessages, {
+                        id: forked.id,
+                        title: forked.title,
+                        messagesCount: forked.messages.length
+                    });
+                }
+                if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+                    context.prompt.surface.viewport.toBottom();
+                }
+                if (context.prompt?.editor?.clear) {
+                    context.prompt.editor.clear();
+                    if (typeof context.prompt.scheduleDraw === 'function')
+                        context.prompt.scheduleDraw();
+                }
+                return ok(`Forked session into "${forked.title}" (${forked.messages.length} messages, ${forked.id}).\nPermissions and standing approvals were reset; any gated actions will request authorization anew.`, { effect: 'inline' });
+            }
+            if (verb === 'delete' && args[1]) {
+                return store.deleteSession(args[1]) ? ok(`Deleted session "${args[1]}".`) : fail(`No session "${args[1]}".`);
+            }
+            const rows = store.listSessions();
+            if (rows.length === 0) {
+                return ok('No sessions yet. This conversation becomes one as soon as you send something.');
+            }
+            const active = memory?.sessionId || store.getActiveSessionId();
+            const { formatSessionsTextReport } = await import('./tui/sessionPicker.js');
+            return ok(formatSessionsTextReport(rows, active, workspace), { effect: 'pick-session', items: rows, active });
+        }
+    },
+    {
+        name: 'fork',
+        aliases: ['branch', 'fork-session'],
+        scope: 'local',
+        usage: '/fork [sessionId]',
+        description: 'Fork the conversation into a new session without copying permissions',
+        dialogTitle: 'Fork Session',
+        complete: () => {
+            try {
+                const rows = listSessions().slice(0, 15);
+                return rows.map((r) => ({
+                    value: r.id,
+                    label: r.id,
+                    description: `${r.title} (${r.messageCount} msgs)`
+                }));
+            }
+            catch (e) {
+                return [];
+            }
+        },
+        run: async (args = [], context = {}) => {
+            // @ts-expect-error Legacy sessionStore.js has no TypeScript declarations yet.
+            const store = await import('./sessionStore.js');
+            const { revokeAllAlways } = await import('./approvalGrants.js');
+            const memory = context.loop && context.loop.memoryManager;
+            const sourceId = args[0] || (memory ? memory.sessionId : store.getActiveSessionId());
+            if (!sourceId) {
+                return fail('No active or specified session to fork.');
+            }
+            const sourceSession = store.getSession(sourceId);
+            if (!sourceSession) {
+                return fail(`Session "${sourceId}" not found.`);
+            }
+            const forked = memory && memory.sessionId === sourceId
+                ? memory.forkSession()
+                : store.forkSession(sourceId, { makeActive: true });
+            if (!forked) {
+                return fail(`Could not fork session "${sourceId}".`);
+            }
+            // CRITICAL SECURITY INVARIANT (Claude Code Architecture, p. 24):
+            // Permissions and allowlists MUST NOT be copied across the fork.
+            revokeAllAlways();
+            if (context.loop && typeof context.loop.resetApprovalScope === 'function') {
+                context.loop.resetApprovalScope();
+            }
+            if (memory) {
+                memory.session = forked;
+            }
+            const historyMessages = memory ? memory.loadHistory() : forked.messages.filter((m) => m.role !== 'system');
+            if (context.loop) {
+                context.loop.messages = historyMessages;
+                context.loop.taskId = `cli_chat_${Date.now()}`;
+                if (context.loop.tokenTracker && typeof context.loop.tokenTracker.reset === 'function') {
+                    context.loop.tokenTracker.reset();
+                }
+            }
+            const renderer = context.prompt?.renderer || context.loop?.connection?.renderer;
+            if (renderer && typeof renderer.renderSessionHistory === 'function') {
+                renderer.renderSessionHistory(historyMessages, {
+                    id: forked.id,
+                    title: forked.title,
+                    messagesCount: forked.messages.length
+                });
+            }
+            if (context.prompt?.surface?.viewport && typeof context.prompt.surface.viewport.toBottom === 'function') {
+                context.prompt.surface.viewport.toBottom();
+            }
+            if (context.prompt?.editor?.clear) {
+                context.prompt.editor.clear();
+                if (typeof context.prompt.scheduleDraw === 'function')
+                    context.prompt.scheduleDraw();
+            }
+            return ok(`Forked session "${sourceSession.title}" into "${forked.title}" (${forked.id}) with ${forked.messages.length} messages.\nPermissions and allowlists reset: tools will request approval anew.`, { effect: 'inline' });
+        }
+    },
+    {
+        name: 'continuum',
+        aliases: ['resume'],
+        scope: 'local',
+        usage: '/continuum [list | read <id> | adopt <id>]',
+        description: 'Cross-agent session extraction and resumption (Antigravity, OpenCode, Codex, Claude Code)',
+        dialogTitle: 'Continuum',
+        complete: () => [
+            { value: 'list', label: 'list', description: 'scan and list cross-agent sessions' },
+            { value: 'adopt', label: 'adopt', description: 'adopt and resume a peer agent session' },
+            { value: 'read', label: 'read', description: 'preview transcript of a peer session' }
+        ],
+        run: async (args = [], context = {}) => {
+            const { ContinuumScanner, adoptContinuumSession, runInteractiveContinuum, openContinuumPreview } = await import('./continuum/index.js');
+            const verb = String(args[0] || '').toLowerCase();
+            const targetId = args[1];
+            // If interactive modal prompt is available and no subverb is passed
+            if (!verb && context.prompt && typeof context.prompt.openLayer === 'function') {
+                const resultText = await runInteractiveContinuum(context.prompt, {
+                    loop: context.loop
+                });
+                return ok(resultText, { effect: 'silent' });
+            }
+            const scanner = context.scanner || new ContinuumScanner();
+            if (verb === 'read' && targetId) {
+                if (context.prompt && typeof context.prompt.openLayer === 'function') {
+                    const opened = await openContinuumPreview(targetId, context.prompt, scanner);
+                    if (opened)
+                        return ok(`Displaying preview for ${targetId}.`);
+                }
+                const detail = await scanner.fetchSession(targetId);
+                if (!detail)
+                    return fail(`No peer session found with ID "${targetId}".`);
+                const transcriptText = detail.messages.map((m) => `[${m.role.toUpperCase()}] ${m.content}`).join('\n\n');
+                return ok(`=== ${detail.title} (${detail.sourceLabel}) ===\nWorkspace: ${detail.workspacePath}\n\n${transcriptText}`);
+            }
+            if (verb === 'adopt' && targetId) {
+                const adoptRes = await adoptContinuumSession(targetId, {
+                    scanner,
+                    currentLoopMessages: context.loop?.messages
+                });
+                if (!adoptRes.ok)
+                    return fail(adoptRes.error || `Failed to adopt session "${targetId}".`);
+                if (context.loop?.memoryManager) {
+                    context.loop.memoryManager.useSession(adoptRes.sessionId);
+                    if (typeof context.loop.memoryManager.loadHistory === 'function') {
+                        context.loop.messages = context.loop.memoryManager.loadHistory();
+                    }
+                }
+                return ok(`Successfully adopted session "${adoptRes.title}" from ${adoptRes.sourcePlatform.toUpperCase()} (${adoptRes.messageCount} messages compacted).\nActive Causyne session: ${adoptRes.sessionId}.`);
+            }
+            // Default or 'list':
+            const sessions = await scanner.scanAllSessions({ limit: 40 });
+            if (sessions.length === 0) {
+                return ok('No peer agent sessions discovered across Antigravity, OpenCode, Codex, or Claude Code.');
+            }
+            const lines = sessions.map((s) => {
+                const when = new Date(s.updatedAt).toISOString().slice(0, 16).replace('T', ' ');
+                const ws = s.workspacePath ? path.basename(s.workspacePath) : '(default)';
+                return `  [${s.sourceLabel.padEnd(12)}] ${s.id.padEnd(38)} ${when}  ${String(s.messageCount).padStart(3)} msgs  ${ws}\n      ${s.title}`;
+            });
+            return ok(`Discovered ${sessions.length} cross-agent sessions:\n`
+                + lines.join('\n')
+                + '\n\nUsage:\n  /continuum                  — open interactive picker\n  /continuum adopt <id>       — adopt & resume session\n  /continuum read <id>        — preview full transcript');
+        }
+    },
+    {
+        name: 'approvals',
+        scope: 'local',
+        usage: '/approvals [clear]',
+        description: 'List tools granted "Allow always", or revoke them',
+        dialogTitle: 'Approvals',
+        complete: () => [
+            { value: 'clear', label: 'clear', description: 'revoke all standing "Allow always" grants' }
+        ],
+        // A standing grant with no way to see or revoke it is a trap, not a
+        // convenience. This is the way out, and the confirm dialog that grants one
+        // names this command so the user is told about it at the moment it matters.
+        run: async (args = []) => {
+            const { listAlwaysAllowed, revokeAllAlways } = await import('./approvalGrants.js');
+            if (String(args[0] || '').toLowerCase() === 'clear') {
+                const count = revokeAllAlways();
+                return ok(count === 0
+                    ? 'No standing approvals to revoke.'
+                    : `Revoked ${count} standing approval${count === 1 ? '' : 's'}. Causyne will ask again.`);
+            }
+            const granted = listAlwaysAllowed();
+            if (granted.length === 0) {
+                return ok('No standing approvals. Every gated action still asks.');
+            }
+            return ok('Running without asking, until Causyne restarts:\n'
+                + granted.map((tool) => `  - ${tool}`).join('\n')
+                + '\n\nRevoke with /approvals clear.');
+        }
+    },
+    {
+        name: 'thinking',
+        aliases: ['thought', 'thoughts'],
+        scope: 'local',
+        usage: '/thinking [toggle|expand|collapse]',
+        description: 'Toggle or fold thinking process chunks in the conversation transcript',
+        complete: () => [
+            { value: 'toggle', label: 'toggle', description: 'toggle collapsed state of thinking blocks' },
+            { value: 'expand', label: 'expand', description: 'expand all thinking blocks' },
+            { value: 'collapse', label: 'collapse', description: 'collapse all thinking blocks' }
+        ],
+        run: (argv, ctx) => {
+            const surface = ctx?.prompt?.surface;
+            const transcript = surface?.transcript;
+            const reasoningFrames = Array.isArray(transcript?.frames)
+                ? transcript.frames.filter((f) => f.kind === 'reasoning' || f.meta?.reasoning === true)
+                : [];
+            const sub = (argv[0] || 'toggle').toLowerCase();
+            let newCollapsed;
+            if (sub === 'expand') {
+                newCollapsed = false;
+            }
+            else if (sub === 'collapse') {
+                newCollapsed = true;
+            }
+            else {
+                const last = reasoningFrames[reasoningFrames.length - 1];
+                newCollapsed = !Boolean(last?.meta?.collapsed);
+            }
+            for (const frame of reasoningFrames) {
+                if (frame.meta) {
+                    frame.meta.collapsed = newCollapsed;
+                    frame.rows = null;
+                    frame.renderedWidth = -1;
+                }
+            }
+            if (transcript) {
+                transcript.cache = null;
+                transcript.revision++;
+                transcript.changed?.();
+            }
+            const msg = reasoningFrames.length === 0
+                ? 'No thinking process frames found in the current conversation.'
+                : `${newCollapsed ? 'Collapsed' : 'Expanded'} ${reasoningFrames.length} thinking frame${reasoningFrames.length === 1 ? '' : 's'}.`;
+            if (ctx.prompt) {
+                ctx.prompt.notice = msg;
+                if (ctx.prompt.scheduleDraw)
+                    ctx.prompt.scheduleDraw();
+                return ok(msg, { effect: 'silent' });
+            }
+            return ok(msg);
+        }
+    },
+    {
+        name: 'clear',
+        aliases: ['reset'],
+        scope: 'local',
+        usage: '/clear',
+        description: 'Clear the conversation and start from a fresh context',
+        run: (argv, ctx) => {
+            const loop = ctx.loop;
+            if (loop) {
+                loop.messages = [];
+                loop.unlockedPacks = new Set();
+                loop.unlockedTools = new Set();
+                loop.unlockOrder = [];
+                loop.staticContext = null;
+                loop.isInitialized = false;
+                if (typeof loop.rearmAbortController === 'function')
+                    loop.rearmAbortController();
+                if (loop.memoryManager)
+                    loop.memoryManager.clearHistory();
+                const renderer = ctx.prompt?.renderer || loop.connection?.renderer;
+                if (renderer && typeof renderer.clearTranscript === 'function') {
+                    renderer.clearTranscript();
+                }
+                if (ctx.prompt?.surface?.viewport && typeof ctx.prompt.surface.viewport.toBottom === 'function') {
+                    ctx.prompt.surface.viewport.toBottom();
+                }
+                if (ctx.prompt?.scheduleDraw)
+                    ctx.prompt.scheduleDraw();
+                return ok('Conversation cleared. The next task starts from a clean context.');
+            }
+            return fail('No active session to clear.');
+        }
+    },
+    {
+        name: 'compact',
+        aliases: ['compress', 'summarize'],
+        scope: 'local',
+        usage: '/compact',
+        description: 'Condense earlier conversation turns into a structured state checkpoint to reclaim tokens',
+        dialogTitle: 'Context Compaction',
+        run: async (argv, ctx) => {
+            const { runCompactSlashCommand } = await import('./core/contextCompactor.js');
+            const res = await runCompactSlashCommand(argv, ctx);
+            return res.ok ? ok(res.output) : fail(res.output);
+        }
+    },
+    {
+        name: 'copy',
+        aliases: ['cp', 'clip'],
+        scope: 'local',
+        usage: '/copy [input | last | <text>]',
+        description: 'Copy chatbox input, last assistant response, or text to system clipboard',
+        complete: () => [
+            { value: 'last', label: 'last', description: 'copy last assistant response to clipboard' },
+            { value: 'input', label: 'input', description: 'copy current chatbox input to clipboard' }
+        ],
+        run: (argv, ctx) => {
+            const res = runCopyCommand(argv, ctx);
+            return res.ok
+                ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
+                : fail(res.output);
+        }
+    },
+    {
+        name: 'paste',
+        aliases: ['pasteclip'],
+        scope: 'local',
+        usage: '/paste [text]',
+        description: 'Paste clipboard content or text into the chatbox input',
+        run: (argv, ctx) => {
+            const res = runPasteCommand(argv, ctx);
+            return res.ok
+                ? ok(res.output, { effect: ctx.prompt ? 'silent' : undefined })
+                : fail(res.output);
+        }
+    },
+    {
+        name: 'image',
+        aliases: ['attach', 'screenshot'],
+        scope: 'local',
+        usage: '/image [path]',
+        description: 'Attach a screenshot from clipboard or a local image file to the chat prompt',
+        run: (argv, ctx) => {
+            if (!ctx.prompt) {
+                return fail('The /image command is only available in interactive chat mode.');
+            }
+            if (argv.length === 0) {
+                const res = runPasteCommand([], ctx);
+                return res.ok ? ok(res.output, { effect: 'silent' }) : fail(res.output);
+            }
+            const rawPath = argv.join(' ');
+            const img = loadLocalImageAttachment(rawPath);
+            if (!img) {
+                return fail(`Could not load image at "${rawPath}". Ensure file exists and is a valid image (PNG, JPEG, WebP, GIF).`);
+            }
+            if (!Array.isArray(ctx.prompt.pendingAttachments)) {
+                ctx.prompt.pendingAttachments = [];
+            }
+            ctx.prompt.pendingAttachments.push(img);
+            ctx.prompt.editor.insert(`[Image: ${img.name}] `);
+            ctx.prompt.notice = `attached image ${img.name} (${formatByteSize(img.size)})`;
             ctx.prompt.scheduleDraw();
-          }
-
-          const { apiKey } = await resultPromise;
-          saveOpenRouterKey(apiKey, { setAsActive: true });
-
-          if (ctx.loop) {
-            ctx.loop.config = loadConfig();
-          }
-          if (ctx.prompt) {
-            if (typeof ctx.prompt.updateModel === 'function') {
-              ctx.prompt.updateModel('openrouter', 'openrouter/free');
-            }
-          }
-
-          return ok('Successfully authenticated with OpenRouter! Now using openrouter/free.');
-        } catch (err) {
-          return fail(`OpenRouter connection error: ${err.message || err}\nFallback: run "/openrouter connect <api-key>" with an API key from https://openrouter.ai/keys`);
+            return ok(`Attached image ${img.name} (${formatByteSize(img.size)}) to chat prompt.`, { effect: 'silent' });
         }
-      }
-
-      return fail('Usage: /openrouter [status | connect | disconnect | privacy <deny|allow>]');
-    }
-  },
-
-  {
-    name: 'mcp',
-    scope: 'local',
-    usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke|connect|disconnect|test|refresh <name>]',
-    description: 'Manage and diagnose MCP server connections',
-    dialogTitle: 'MCP servers',
-    complete: () => {
-      try {
-        const servers = serverStatus();
-        const base = [
-          { value: 'add', label: 'add', description: 'add a new stdio or SSE/HTTP MCP server' }
-        ];
-        for (const s of servers) {
-          base.push({ value: `test ${s.name}`, label: `test ${s.name}`, description: `test ${s.name} connection` });
-          base.push({ value: `grant ${s.name}`, label: `grant ${s.name}`, description: `grant consent to ${s.name}` });
-          base.push({ value: `revoke ${s.name}`, label: `revoke ${s.name}`, description: `revoke consent from ${s.name}` });
-          base.push({ value: `remove ${s.name}`, label: `remove ${s.name}`, description: `remove ${s.name}` });
-          base.push({ value: `refresh ${s.name}`, label: `refresh ${s.name}`, description: `refresh tools for ${s.name}` });
-          base.push({ value: `disconnect ${s.name}`, label: `disconnect ${s.name}`, description: `disconnect ${s.name}` });
-        }
-        return base;
-      } catch (e) {
-        return [{ value: 'add', label: 'add', description: 'add an MCP server' }];
-      }
     },
-    run: async (argv) => {
-      const [action, serverName, ...rest] = argv;
-
-      if (action === 'add') {
-        if (!serverName) {
-          return fail('Usage: mcp add <name> <command> [args…]\n   or: mcp add <name> --url <https://…>');
-        }
-        if (rest.length === 0) return fail(`Give "${serverName}" a command to run, or --url for an HTTP server.`);
-
-        let definition;
-        if (rest[0] === '--url') {
-          if (!rest[1]) return fail('--url needs a URL.');
-          definition = { name: serverName, url: rest[1] };
-        } else {
-          definition = { name: serverName, command: rest[0], args: rest.slice(1) };
-        }
-
-        const result = addServer(definition);
-        if (!result.ok) return fail(`Could not add "${serverName}": ${result.error}`);
-
-        // Registering is not consenting — say so, because a stdio server is a
-        // process Causyne will spawn on this machine.
-        return ok(
-          `Added "${serverName}".\n\n`
-          + `It is NOT enabled yet. A stdio MCP server is a program Causyne runs on\n`
-          + `this computer, so enabling it is a separate, deliberate step:\n`
-          + `  mcp grant ${serverName}`
-        );
-      }
-
-      if (action === 'remove') {
-        if (!serverName) return fail('Usage: /mcp remove <server>');
-        const result = removeServer(serverName);
-        if (!result.ok) return fail(result.error);
-        return ok(`Removed "${serverName}" and dropped its consent.`);
-      }
-
-      if (action === 'grant' || action === 'revoke') {
-        if (!serverName) return fail(`Usage: /mcp ${action} <server>`);
-        const known = serverStatus().some(s => s.name === serverName);
-        if (!known) return fail(`No MCP server named "${serverName}" is configured.`);
-        if (action === 'grant') {
-          const granted = grantServer(serverName);
-          if (!granted.ok) return fail(granted.error);
-          return ok(`Granted "${serverName}". Its tools enter the catalogue on the next task.`);
-        }
-        revokeServer(serverName);
-        return ok(`Revoked "${serverName}". Its tools are no longer callable.`);
-      }
-
-      if (['connect', 'test', 'refresh', 'disconnect'].includes(action)) {
-        if (!serverName) return fail(`Usage: /mcp ${action} <server>`);
-        const known = serverStatus().some(server => server.name === serverName);
-        if (!known) return fail(`No MCP server named "${serverName}" is configured.`);
-
-        if (action === 'disconnect') {
-          await disconnectServer(serverName);
-          return ok(`Disconnected "${serverName}". Its grant remains in place.`);
-        }
-
-        if (action === 'refresh') {
-          const tools = await refreshServer(serverName);
-          return ok(`Refreshed "${serverName}": ${tools.length} tool(s) available${tools.length ? ` — ${tools.map(tool => tool.name).join(', ')}` : ''}.`);
-        }
-
-        const client = await connectServer(serverName);
-        return ok(
-          `${action === 'test' ? 'MCP test passed' : 'Connected'}: "${serverName}"\n`
-          + `Transport: ${client.status.transport || 'unknown'}\n`
-          + `Server: ${client.serverInfo ? `${client.serverInfo.name} ${client.serverInfo.version}` : 'identity not provided'}\n`
-          + `Tools: ${client.tools.length}${client.tools.length ? ` — ${client.tools.map(tool => tool.name).join(', ')}` : ''}`
-        );
-      }
-
-      if (action) {
-        return fail(`Unknown mcp action "${action}". Try: add, remove, grant, revoke, connect, disconnect, test, refresh, or mcp on its own to list.`);
-      }
-
-      const servers = serverStatus();
-      if (servers.length === 0) {
-        return ok('No MCP servers are configured.\n\nAdd one with:\n  mcp add <name> <command> [args…]\n  mcp add <name> --url <https://…>\n\n(prefix with / in chat, or `causyne-agent mcp …` in a terminal)', { effect: 'pick-mcp' });
-      }
-      const lines = ['MCP servers', ''];
-      for (const server of servers) {
-        lines.push(`  ${server.name}  [${server.transport}]  ${server.granted ? 'granted' : 'NOT granted'}  ${server.status}`);
-        lines.push(`    ${server.target}`);
-        if (server.tools.length > 0) lines.push(`    tools: ${server.tools.join(', ')}`);
-        if (server.error) lines.push(`    error: ${server.error}`);
-      }
-      lines.push('');
-      lines.push('  mcp grant <name> to enable, mcp test <name> to diagnose, mcp remove <name> to delete.');
-      return ok(lines.join('\n'), { effect: 'pick-mcp' });
-    }
-  },
-
-  {
-    name: 'peers',
-    scope: 'local',
-    usage: '/peers [detect | test <id> | add <id> <command…> | remove <id>]',
-    description: 'Manage, discover, and test external ACP peer agents (Claude Code, OpenCode, Codex, Gemini, Hermes, etc.)',
-    dialogTitle: 'ACP peer agents',
-    complete: () => {
-      try {
-        const peers = listAllPeers();
-        return [
-          { value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' },
-          ...peers.map((p) => ({
-            value: `test ${p.id}`,
-            label: `test ${p.id}`,
-            description: `test zero-token handshake with ${p.label}`
-          })),
-          ...peers.map((p) => ({
-            value: `remove ${p.id}`,
-            label: `remove ${p.id}`,
-            description: `remove peer profile for ${p.label}`
-          }))
-        ];
-      } catch (e) {
-        return [{ value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' }];
-      }
-    },
-    run: async (argv) => {
-      const [action, peerId, ...rest] = argv;
-
-      if (action === 'detect') {
-        const detected = await detectAllPeers();
-        const lines = ['Discovered ACP Peer Agents', ''];
-        for (const item of detected) {
-          const statusIcon = item.status === 'ready' ? '✓' : (item.status === 'needs_auth' ? '△ ' : '✕');
-          lines.push(`  ${statusIcon} ${item.id} (${item.label}) — ${item.status.toUpperCase()}`);
-          lines.push(`     Command: ${item.command} ${item.args.join(' ')}`);
-          if (item.details) lines.push(`     Details: ${item.details}`);
-          if (item.setupInstruction) lines.push(`     Setup: ${item.setupInstruction}`);
-        }
-        lines.push('');
-        lines.push('Use /peers test <id> to test zero-token handshake against a specific peer.');
-        lines.push('Any ready peer can be your model provider: /model acp/<id>');
-        return ok(lines.join('\n'));
-      }
-
-      if (action === 'test') {
-        if (!peerId) return fail('Usage: /peers test <id>');
-        if (peerId === 'antigravity') {
-          const { resolveAgyBinary } = await import('./providers/antigravity.js');
-          const bin = resolveAgyBinary();
-          return ok(
-            `✓ Agent Peer Test Passed: "antigravity"\n\n`
-            + `Agent: Google Antigravity (AGY)\n`
-            + `Command: ${bin} --output-format json\n`
-            + `Policy: local-cli\n`
-            + `Frontier Models: Gemini 4 Argon, Gemini 3.8 Flash, Claude Sonnet 5.5\n\n`
-            + `Ready to serve as primary AI provider or peer delegation.`
-          );
-        }
-        const profile = getPeerProfile(peerId);
-        if (!profile) return fail(`No peer agent found for "${peerId}". Try /peers detect to see available agents.`);
-
-        const handshake = await testPeerHandshake({
-          command: profile.command,
-          args: profile.args,
-          cwd: profile.cwd || process.cwd(),
-          timeoutMs: 15000
-        });
-
-        if (handshake.ready) {
-          const name = handshake.agentInfo ? `${handshake.agentInfo.name} ${handshake.agentInfo.version}` : profile.label;
-          return ok(
-            `✓ ACP Peer Test Passed: "${peerId}"\n\n`
-            + `Agent: ${name}\n`
-            + `Command: ${profile.command} ${profile.args.join(' ')}\n`
-            + `Policy: ${profile.policy}\n`
-            + `Auth Methods: ${handshake.authMethods?.join(', ') || 'none'}\n\n`
-            + `Ready to receive delegated tasks via peer_agent_delegate.`
-          );
-        } else {
-          return fail(
-            `✕ ACP Peer Test Failed: "${peerId}"\n\n`
-            + `Error: ${handshake.error || 'Handshake failed'}\n`
-            + `Command: ${profile.command} ${profile.args.join(' ')}`
-          );
-        }
-      }
-
-      if (action === 'add') {
-        if (!peerId) return fail('Usage: /peers add <id> <command> [args…]');
-        if (rest.length === 0) return fail(`Give "${peerId}" a command to run (e.g. opencode acp).`);
-
-        const newProfile = {
-          id: peerId.trim().toLowerCase(),
-          label: peerId,
-          command: rest[0],
-          args: rest.slice(1),
-          cwd: null,
-          policy: 'workspace',
-          timeoutSeconds: 180,
-          env: {}
-        };
-
-        const res = addPeerProfile(newProfile);
-        if (!res.ok) return fail(`Could not save peer: ${res.error}`);
-        return ok(`Added peer "${peerId}" [policy: workspace]. Edit ~/.causyne/peers.json to customize policy, timeout, or environment.`);
-      }
-
-      if (action === 'remove') {
-        if (!peerId) return fail('Usage: /peers remove <id>');
-        const res = removePeerProfile(peerId);
-        if (!res.ok) return fail(res.error || `Could not remove peer "${peerId}".`);
-        return ok(`Removed peer profile "${peerId}".`);
-      }
-
-      if (action) {
-        return fail(`Unknown peers action "${action}". Try: detect, test, add, remove, or peers on its own to list.`);
-      }
-
-      // Default: list all configured and discovered peers
-      const peers = listAllPeers();
-      const lines = ['Configured & Preset ACP Peer Agents', ''];
-      for (const peer of peers) {
-        lines.push(`  • ${peer.id} (${peer.label}) [policy: ${peer.policy}, timeout: ${peer.timeoutSeconds}s]`);
-        lines.push(`    Command: ${peer.command} ${peer.args.join(' ')}`);
-      }
-      lines.push('');
-      lines.push('Commands:');
-      lines.push('  /peers detect     Scan local system for installed ACP agents');
-      lines.push('  /peers test <id>  Verify zero-token connection to an agent');
-      lines.push('  /peers add <id>   Add or override a peer command');
-      return ok(lines.join('\n'));
-    }
-  },
-
-  {
-    name: 'slop',
-    scope: 'local',
-    usage: '/slop <file… | directory> [--movements]',
-    description: 'Score HTML/CSS against the anti-AI-slop rules (Vision §7)',
-    dialogTitle: 'Slop audit',
-    complete: () => [
-      { value: '--movements', label: '--movements', description: 'show recommended design movements' }
-    ],
-    run: (argv) => {
-      const wantsMovements = argv.includes('--movements');
-      const targets = argv.filter(a => !a.startsWith('--'));
-
-      if (wantsMovements && targets.length === 0) {
-        return ok('Design movements to commit to:\n\n' + formatMovementBrief(DESIGN_MOVEMENTS));
-      }
-      const scanTargets = targets.length > 0 ? targets : ['.'];
-
-      const files = [];
-      const collect = (target) => {
-        const resolved = path.resolve(String(target).replace(/^~\//, os.homedir() + '/'));
-        let stats;
-        try { stats = fs.statSync(resolved); } catch (e) { return `not found: ${target}`; }
-
-        if (stats.isDirectory()) {
-          const stack = [resolved];
-          while (stack.length > 0 && files.length < 200) {
-            const dir = stack.pop();
-            let entries;
-            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { continue; }
-            for (const entry of entries) {
-              if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-              const full = path.join(dir, entry.name);
-              if (entry.isDirectory()) stack.push(full);
-              else if (entry.isFile()) {
-                try { files.push({ path: full, content: fs.readFileSync(full, 'utf8') }); } catch (e) {}
-              }
+    {
+        name: 'stop',
+        aliases: ['abort'],
+        scope: 'local',
+        usage: '/stop',
+        description: 'Stop the task that is currently running',
+        run: (argv, ctx) => {
+            const loop = ctx.loop;
+            if (loop && typeof loop.abort === 'function') {
+                loop.abort();
+                if (ctx.prompt)
+                    ctx.prompt.notice = 'stop requested';
+                return ok('Stop requested.', { effect: ctx.prompt ? 'silent' : undefined });
             }
-          }
-          return null;
+            return fail('Nothing is running.');
         }
-        try { files.push({ path: resolved, content: fs.readFileSync(resolved, 'utf8') }); } catch (e) {
-          return `could not read: ${target}`;
+    },
+    {
+        name: 'model',
+        aliases: ['models'],
+        scope: 'local',
+        usage: '/model [list | refresh | provider/model | model]',
+        description: 'Show, list or change the model in use',
+        dialogTitle: 'Model',
+        complete: () => {
+            const config = loadConfig();
+            const currentProvider = config.provider || '';
+            const overview = getAvailableProvidersOverview(config);
+            const items = [
+                { value: 'list', label: 'list', description: 'overview of all BYOK and ACP models' },
+                { value: 'refresh', label: 'refresh', description: 'poll provider API for live models' }
+            ];
+            // 1. Models for the active provider
+            const curated = getCuratedModels(currentProvider);
+            for (const m of curated) {
+                items.push({ value: m, label: m, description: `[active] ${currentProvider}` });
+            }
+            // 2. ACP Peer Agents (with live auto-detected status)
+            for (const peer of overview.acp) {
+                const statusTag = peer.installed ? '(ready)' : '(not installed)';
+                items.push({
+                    value: peer.providerKey,
+                    label: peer.providerKey,
+                    description: `[ACP: ${peer.label}] ${statusTag}`
+                });
+                if (peer.installed && Array.isArray(peer.models)) {
+                    for (const m of peer.models.slice(0, 3)) {
+                        if (peer.isCurrent && curated.includes(m))
+                            continue;
+                        const targetVal = m.includes('/') ? m : `${peer.providerKey}/${m}`;
+                        items.push({
+                            value: targetVal,
+                            label: targetVal,
+                            description: `[ACP: ${peer.label}]`
+                        });
+                    }
+                }
+            }
+            // 3. BYOK Providers (Cloud & Local)
+            for (const p of overview.byok) {
+                const configTag = p.isConfigured ? '(configured)' : '(needs key)';
+                items.push({
+                    value: p.id,
+                    label: p.id,
+                    description: `[BYOK: ${p.label}] ${configTag}`
+                });
+                if (p.isConfigured && Array.isArray(p.models)) {
+                    for (const m of p.models.slice(0, 2)) {
+                        if (p.isCurrent && curated.includes(m))
+                            continue;
+                        items.push({
+                            value: `${p.id}/${m}`,
+                            label: `${p.id}/${m}`,
+                            description: `[BYOK: ${p.label}]`
+                        });
+                    }
+                }
+            }
+            return items;
+        },
+        run: async (argv, ctx = {}) => {
+            const config = loadConfig();
+            const overview = getAvailableProvidersOverview(config);
+            if (argv.length === 0) {
+                if (ctx.prompt) {
+                    const { runInteractiveModelPicker } = await import('./tui/modelPicker.js');
+                    const output = await runInteractiveModelPicker(ctx.prompt, { loadConfig, saveConfig }, { loop: ctx.loop });
+                    if (ctx.loop) {
+                        ctx.loop.config = loadConfig();
+                        if (typeof ctx.loop.updateTierLimits === 'function') {
+                            ctx.loop.updateTierLimits();
+                        }
+                    }
+                    return ok(output, { effect: 'silent' });
+                }
+                const lines = [
+                    `Active Provider : ${config.provider || 'no provider configured'}`,
+                    `Active Model    : ${config.model || 'none'}`,
+                    '',
+                    '────────────────────────────────────────────────────────────',
+                    'BYOK PROVIDERS (Cloud & Local API)',
+                    '────────────────────────────────────────────────────────────'
+                ];
+                for (const p of overview.byok) {
+                    const status = p.isConfigured ? (p.isCurrent ? '● Configured (Active)' : '○ Configured') : '─ Not configured (run /setup)';
+                    lines.push(`  • ${p.label.padEnd(26)} [${status}]`);
+                }
+                lines.push('');
+                lines.push('────────────────────────────────────────────────────────────');
+                lines.push('ACP PEER AGENTS (Local Coding Agents & CLI Engines)');
+                lines.push('────────────────────────────────────────────────────────────');
+                for (const peer of overview.acp) {
+                    const icon = peer.installed ? '✓' : '✕';
+                    const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
+                    lines.push(`  ${icon} ${peer.label.padEnd(24)} — ${status}`);
+                }
+                lines.push('');
+                lines.push('Use /model list to see all models in each category.');
+                lines.push('Use /model <name> or /model acp/<peer> to switch model.');
+                lines.push('Use /setup to configure credentials and endpoints.');
+                return ok(lines.join('\n'));
+            }
+            const first = (argv[0] || '').toLowerCase();
+            if (first === 'list' || first === 'ls') {
+                const targetProvider = argv[1];
+                // Specific provider requested (e.g. /model list gemini)
+                if (targetProvider && targetProvider !== 'all') {
+                    const result = await resolveAvailableModels(targetProvider, config);
+                    const active = config.model;
+                    const lines = [
+                        `Available models for ${targetProvider} (source: ${result.source}):`,
+                        ''
+                    ];
+                    for (const m of result.models) {
+                        const isCurrent = m === active && config.provider === targetProvider;
+                        lines.push(`  ${isCurrent ? '• ' : '  '}${m}${isCurrent ? '  (active)' : ''}`);
+                    }
+                    if (result.models.length === 0) {
+                        lines.push('  (this peer CLI publishes no model list; enter one with /model <name>)');
+                    }
+                    lines.push('');
+                    lines.push('Use /model <name> to select, or /model refresh to poll the provider API.');
+                    return ok(lines.join('\n'));
+                }
+                // Comprehensive categorized listing
+                const lines = [
+                    '============================================================',
+                    'BYOK PROVIDERS (Cloud APIs & Local Endpoints)',
+                    '============================================================'
+                ];
+                for (const p of overview.byok) {
+                    const badge = p.isConfigured ? (p.isCurrent ? '● ACTIVE' : '○ CONFIGURED') : 'NEEDS KEY';
+                    lines.push(`  • ${p.label} [${badge}]`);
+                    const modelSample = p.models.slice(0, 5).join(', ');
+                    lines.push(`    Models: ${modelSample}${p.models.length > 5 ? `, ... (${p.models.length} total)` : ''}`);
+                    lines.push(`    Switch: /model ${p.id}/${p.defaultModel}`);
+                    lines.push('');
+                }
+                lines.push('============================================================');
+                lines.push('ACP PEER AGENTS (Local Agents & CLI Engines)');
+                lines.push('============================================================');
+                for (const peer of overview.acp) {
+                    const icon = peer.installed ? '✓' : '✕';
+                    const status = peer.installed ? (peer.isCurrent ? 'READY (Active)' : 'READY') : 'NOT INSTALLED';
+                    lines.push(`  ${icon} ${peer.label} — ${status}`);
+                    lines.push(`     Command: ${peer.command}`);
+                    if (peer.installed) {
+                        lines.push(`     Models:  ${peer.models.join(', ')}`);
+                        lines.push(`     Switch:  /model ${peer.providerKey}`);
+                    }
+                    else {
+                        lines.push(`     Setup:   ${peer.setupInstruction}`);
+                    }
+                    lines.push('');
+                }
+                lines.push('------------------------------------------------------------');
+                lines.push('Use /model <name> or /model acp/<peer> to select.');
+                lines.push('Use /setup to configure credentials or endpoints.');
+                return ok(lines.join('\n'));
+            }
+            if (first === 'refresh') {
+                const targetRefresh = argv[1];
+                if (targetRefresh && targetRefresh.toLowerCase() === 'all') {
+                    const refreshed = await resolveAvailableProvidersOverview(config, { forceRefresh: true });
+                    const readyCount = refreshed.acp.filter(p => p.installed).length + refreshed.byok.filter(p => p.isConfigured).length;
+                    return ok(`Refreshed live models across ${readyCount} installed/configured providers. Run /model list to view.`);
+                }
+                const providerToRefresh = targetRefresh || config.provider;
+                if (!providerToRefresh)
+                    return fail('No provider configured. Run /setup first.');
+                const result = await resolveAvailableModels(providerToRefresh, config, true);
+                return ok(`Refreshed ${providerToRefresh} models (${result.models.length} available, source: ${result.source}). Run /model list to view.`);
+            }
+            if (first === 'test') {
+                const targetProvider = argv[1] || config.provider;
+                const targetModel = argv[2] || (targetProvider === config.provider ? config.model : undefined);
+                if (!targetProvider)
+                    return fail('No provider specified or configured. Run /setup first.');
+                const testConfig = { ...config, provider: targetProvider };
+                if (targetModel) {
+                    testConfig.model = targetModel;
+                }
+                else if (targetProvider !== config.provider) {
+                    delete testConfig.model;
+                }
+                if (config.providerKeys && config.providerKeys[targetProvider]) {
+                    testConfig.apiKey = config.providerKeys[targetProvider];
+                }
+                try {
+                    const { createProvider } = await import('./providers/factory.js');
+                    const providerInstance = createProvider(testConfig);
+                    const t0 = performance.now();
+                    const response = await providerInstance.chat([
+                        { role: 'user', content: 'Respond with exactly: OK' }
+                    ], { maxTokens: 16 });
+                    const latencyMs = Math.round(performance.now() - t0);
+                    const outputLines = [
+                        `✓ API Call Test Succeeded: "${targetProvider}" / "${providerInstance.model || targetModel || 'default'}"`,
+                        '',
+                        `  • Round-trip Latency : ${latencyMs} ms`,
+                        `  • Response Content   : ${JSON.stringify(response.content || '').slice(0, 80)}`,
+                        `  • Tokens Used        : ${response.usage ? `${response.usage.promptTokens} in / ${response.usage.completionTokens} out` : 'unreported'}`,
+                        '',
+                        'Wire format, credentials, and model endpoint are verified and accurate.'
+                    ];
+                    return ok(outputLines.join('\n'));
+                }
+                catch (err) {
+                    return fail(`✕ API Call Test Failed for "${targetProvider}" / "${targetModel || config.model || 'default'}":\n\n`
+                        + `  Error: ${errMsg(err)}\n\n`
+                        + `Checks:\n`
+                        + `  - Verify the API key in /setup.\n`
+                        + `  - Check if the model is active with "/model list ${targetProvider}".\n`
+                        + `  - Ensure the provider endpoint or account has sufficient quota.`);
+                }
+            }
+            const rawRequested = argv.join(' ').trim().replace(/^\/model\s+/i, '');
+            // Helper to cleanly activate a provider + model, persist config, update live loop & prompt
+            const activateModel = (nextProvider, nextModel, feedbackMessage) => {
+                const isProviderChange = nextProvider !== config.provider;
+                if (isProviderChange) {
+                    if (nextProvider === 'antigravity' || nextProvider === 'pi' || nextProvider.startsWith('acp/')) {
+                        config.apiKey = '';
+                        delete config.baseUrl;
+                    }
+                    else {
+                        config.apiKey = (config.providerKeys && config.providerKeys[nextProvider]) || '';
+                        delete config.baseUrl;
+                    }
+                }
+                config.provider = nextProvider;
+                config.model = nextModel;
+                saveConfig(config);
+                if (ctx.loop) {
+                    ctx.loop.config = loadConfig();
+                    if (typeof ctx.loop.updateTierLimits === 'function') {
+                        ctx.loop.updateTierLimits();
+                    }
+                }
+                if (ctx.prompt) {
+                    if (typeof ctx.prompt.updateModel === 'function') {
+                        ctx.prompt.updateModel(config.provider, config.model);
+                    }
+                    else if (ctx.prompt.renderer?.status) {
+                        ctx.prompt.renderer.status.setSession({ provider: config.provider, model: config.model });
+                        if (typeof ctx.prompt.scheduleDraw === 'function')
+                            ctx.prompt.scheduleDraw();
+                    }
+                }
+                return ok(feedbackMessage || `Now using ${config.provider} / ${config.model}.`, { effect: 'inline' });
+            };
+            // 1. Antigravity provider (e.g. antigravity or antigravity/Gemini 3.8 Flash (High))
+            if (rawRequested.toLowerCase() === 'antigravity' || rawRequested.toLowerCase().startsWith('antigravity/')) {
+                const agyPeer = overview.acp.find(p => p.id === 'antigravity');
+                if (agyPeer && !agyPeer.installed) {
+                    return fail(`Notice: Antigravity CLI (agy) is not installed on this machine.\nSetup: ${agyPeer.setupInstruction}\n\nModel was not changed.`);
+                }
+                const agyModel = rawRequested.includes('/')
+                    ? rawRequested.slice(rawRequested.indexOf('/') + 1).trim()
+                    : pickDefaultPeerModel('antigravity', agyPeer?.models);
+                return activateModel('antigravity', agyModel, `Now using Google Antigravity / ${agyModel}.`);
+            }
+            // 2. acp/<peer> or acp/<peer>/<model>
+            const acpTarget = rawRequested.match(/^acp\/([a-z0-9_-]+)(?:\/(.+))?$/i);
+            if (acpTarget) {
+                const peer = (acpTarget[1] || '').toLowerCase();
+                const nextProvider = `acp/${peer}`;
+                const peerInfo = overview.acp.find(p => p.id === peer);
+                if (peerInfo && !peerInfo.installed) {
+                    return fail(`Notice: "${peerInfo.label}" CLI is not installed on this machine.\nBinary "${peerInfo.id}" was not found on PATH.\nSetup: ${peerInfo.setupInstruction}\n\nModel was not changed.`);
+                }
+                const peerModel = acpTarget[2]
+                    ? acpTarget[2].trim()
+                    : pickDefaultPeerModel(nextProvider, peerInfo?.models);
+                return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
+            }
+            // 3. Known ACP peer directly (e.g. opencode, opencode/deepseek-v4.1-flash-free, claude)
+            const slashIndex = rawRequested.indexOf('/');
+            const prefix = (slashIndex > 0 ? rawRequested.slice(0, slashIndex) : rawRequested).toLowerCase();
+            const acpPeer = overview.acp.find(p => p.id === prefix || p.providerKey === prefix);
+            if (acpPeer && acpPeer.id !== 'antigravity') {
+                const nextProvider = acpPeer.providerKey;
+                if (!acpPeer.installed) {
+                    return fail(`Notice: "${acpPeer.label}" CLI is not installed on this machine.\nBinary "${acpPeer.id}" was not found on PATH.\nSetup: ${acpPeer.setupInstruction}\n\nModel was not changed.`);
+                }
+                let peerModel;
+                if (slashIndex > 0) {
+                    const rest = rawRequested.slice(slashIndex + 1).trim();
+                    if ((Array.isArray(acpPeer.models) && acpPeer.models.includes(rawRequested)) ||
+                        (PEER_MODEL_CATALOGUE[acpPeer.id]?.includes(rawRequested)) ||
+                        (acpPeer.id === 'opencode' && rawRequested.startsWith('opencode/'))) {
+                        peerModel = rawRequested;
+                    }
+                    else {
+                        peerModel = rest;
+                    }
+                }
+                else {
+                    peerModel = pickDefaultPeerModel(nextProvider, acpPeer.models);
+                }
+                return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
+            }
+            // 4. Known BYOK provider prefix (e.g. gemini/gemini-2.5-flash, anthropic/claude-3-7-sonnet)
+            const byokProvider = overview.byok.find(p => p.id === prefix || (p.id === 'qwen' && prefix === 'dashscope-byok'));
+            if (byokProvider) {
+                const nextProvider = byokProvider.id;
+                const byokModel = slashIndex > 0 ? rawRequested.slice(slashIndex + 1).trim() : (DEFAULT_MODEL_BY_PROVIDER[nextProvider] || byokProvider.defaultModel);
+                return activateModel(nextProvider, byokModel, `Now using ${nextProvider} / ${byokModel}.`);
+            }
+            // 5. Look up by model name across BYOK and ACP catalogues
+            for (const p of overview.byok) {
+                if (p.models && p.models.some(m => m.toLowerCase() === rawRequested.toLowerCase())) {
+                    const exactModel = p.models.find(m => m.toLowerCase() === rawRequested.toLowerCase()) || rawRequested;
+                    return activateModel(p.id, exactModel, `Now using ${p.id} / ${exactModel}.`);
+                }
+            }
+            for (const peer of overview.acp) {
+                if (peer.models && peer.models.some(m => m.toLowerCase() === rawRequested.toLowerCase())) {
+                    const exactModel = peer.models.find(m => m.toLowerCase() === rawRequested.toLowerCase()) || rawRequested;
+                    return activateModel(peer.providerKey, exactModel, `Now using ${peer.providerKey} / ${exactModel}.`);
+                }
+            }
+            // 6. If currently in ACP and model is custom for that peer
+            if (isAcpProvider(config.provider)) {
+                return activateModel(config.provider, rawRequested, `Now using ${config.provider} / ${rawRequested}.`);
+            }
+            // 7. Generic provider/model separator or bare model
+            if (slashIndex > 0) {
+                const prov = rawRequested.slice(0, slashIndex).trim();
+                const mod = rawRequested.slice(slashIndex + 1).trim();
+                return activateModel(prov, mod, `Now using ${prov} / ${mod}.`);
+            }
+            else {
+                return activateModel(config.provider || 'antigravity', rawRequested, `Now using ${config.provider || 'antigravity'} / ${rawRequested}.`);
+            }
         }
-        return null;
-      };
-
-      const problems = scanTargets.map(collect).filter(Boolean);
-      if (files.length === 0) {
-        return ok(problems.length > 0 ? problems.join('\n') : 'No HTML/CSS/component files found — nothing to score. Try: /slop <path> or /slop --movements.');
-      }
-
-      const result = analyzeFiles(files);
-      if (result.scanned.length === 0) {
-        return ok('No HTML/CSS/component files among the targets — nothing to score.');
-      }
-      if (result.findings.length === 0) {
-        return ok(`Scanned ${result.scanned.length} file(s). Score 0 — clean. No slop signatures found.`);
-      }
-      const brief = result.verdict === 'slop' ? formatMovementBrief(suggestMovements([], 3)) : '';
-      return ok(`Scanned ${result.scanned.length} file(s).\n\n` + formatFindings(result, brief));
-    }
-  },
-
-  {
-    name: 'status',
-    scope: 'local',
-    usage: '/status',
-    description: 'Show the current provider, autonomy mode and workspace scope',
-    dialogTitle: 'Status',
-    // One builder, shared with `causyne status`, so status output cannot drift.
-    run: (argv, ctx = {}) => {
-      if (ctx.prompt && typeof ctx.prompt.toggleStatusCard === 'function') {
-        ctx.prompt.toggleStatusCard(ctx.loop);
-        return ok('', { effect: 'silent' });
-      }
-      return ok(buildStatusText({ loop: ctx.loop || null }));
-    }
-  },
-
-  {
-    name: 'observer',
-    scope: 'local',
-    usage: '/observer [status|toggle|mode <deterministic|advisory>|endpoint <url|none>|model <name>|strictness <relaxed|standard|strict>|test|audit|reset]',
-    description: 'Inspect or configure the Cold Observer',
-    dialogTitle: 'Cold Observer',
-    complete: () => [
-      { value: 'status', label: 'status', description: 'view Cold Observer status and audits' },
-      { value: 'toggle', label: 'toggle', description: 'toggle Cold Observer on/off' },
-      { value: 'mode deterministic', label: 'mode deterministic', description: 'fast deterministic rules' },
-      { value: 'mode advisory', label: 'mode advisory', description: 'neural advisory verification' },
-      { value: 'strictness standard', label: 'strictness standard', description: 'standard safety strictness' },
-      { value: 'strictness strict', label: 'strictness strict', description: 'maximum safety strictness' },
-      { value: 'test', label: 'test', description: 'test advisory endpoint' },
-      { value: 'audit', label: 'audit', description: 'show recent audit history' },
-      { value: 'reset', label: 'reset', description: 'restore default settings' }
-    ],
-    run: async (argv, ctx = {}) => {
-      const { coldObserver } = await import('./observer/coldObserver.js');
-
-      // If interactive prompt is active and no sub-arguments or 'status' is given, open the interactive setup menu
-      if ((!argv || argv.length === 0 || argv[0] === '' || argv[0] === 'status') && ctx.prompt) {
-        const { runInteractiveObserverPicker } = await import('./tui/observerPicker.js');
-        const message = await runInteractiveObserverPicker(ctx.prompt);
-        return ok(message, { effect: 'silent' });
-      }
-
-      const sub = (argv[0] || 'status').toLowerCase();
-
-      if (sub === 'toggle') {
-        const current = coldObserver.getConfig();
-        coldObserver.updateConfig({ enabled: !current.enabled });
-        return ok(`Cold Observer is now ${!current.enabled ? 'ENABLED' : 'DISABLED'}.`);
-      }
-
-      if (sub === 'mode') {
-        const targetMode = String(argv[1] || '').toLowerCase();
-        if (!['deterministic', 'advisory', 'local', 'hybrid'].includes(targetMode)) {
-          return fail('Invalid mode. Choose: deterministic or advisory.');
+    },
+    {
+        name: 'openrouter',
+        aliases: ['free'],
+        scope: 'local',
+        usage: '/openrouter [status | connect | disconnect | privacy <deny|allow>]',
+        description: 'Connect OpenRouter account for free cloud AI models (openrouter/free)',
+        dialogTitle: 'OpenRouter Free',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'view connection and data collection status' },
+            { value: 'connect', label: 'connect', description: 'connect your OpenRouter account via OAuth PKCE' },
+            { value: 'privacy deny', label: 'privacy deny', description: 'strict privacy (default): restrict provider data collection' },
+            { value: 'privacy allow', label: 'privacy allow', description: 'permit routing to training-eligible providers' },
+            { value: 'disconnect', label: 'disconnect', description: 'disconnect OpenRouter account' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const sub = (argv[0] || 'status').toLowerCase();
+            if (sub === 'status') {
+                const status = getOpenRouterStatus();
+                const lines = [
+                    'OpenRouter Free Models — Connection Status',
+                    '',
+                    `  • Connected        : ${status.connected ? 'YES' : 'NO'}`,
+                    `  • Active Provider  : ${status.active ? 'YES (OpenRouter is active)' : 'NO (using ' + (loadConfig().provider || 'none') + ')'}`,
+                    `  • Default Model    : ${status.model}`,
+                    `  • Privacy Policy   : provider.data_collection = "${status.dataCollection}"`,
+                    `  • Stored Key       : ${status.maskedKey || 'none'} (${status.keySource || 'unconfigured'})`,
+                    '',
+                    status.connected
+                        ? 'OpenRouter Free is ready. Run "/model openrouter/free" to select it.'
+                        : 'To connect your account, run "/openrouter connect".'
+                ];
+                return ok(lines.join('\n'));
+            }
+            if (sub === 'disconnect') {
+                const updatedConfig = disconnectOpenRouter();
+                if (ctx.loop) {
+                    ctx.loop.config = updatedConfig;
+                    if (typeof ctx.loop.updateTierLimits === 'function') {
+                        ctx.loop.updateTierLimits();
+                    }
+                }
+                if (ctx.prompt) {
+                    if (typeof ctx.prompt.updateModel === 'function') {
+                        ctx.prompt.updateModel(updatedConfig.provider || 'antigravity', updatedConfig.model || 'Gemini 3.8 Flash (Low)');
+                    }
+                    else if (ctx.prompt.renderer?.status) {
+                        ctx.prompt.renderer.status.setSession({
+                            provider: updatedConfig.provider || 'antigravity',
+                            model: updatedConfig.model || 'Gemini 3.8 Flash (Low)'
+                        });
+                        if (typeof ctx.prompt.scheduleDraw === 'function')
+                            ctx.prompt.scheduleDraw();
+                    }
+                }
+                return ok(`OpenRouter account disconnected and API key removed from local vault.\n` +
+                    `Active model reverted to ${updatedConfig.provider || 'antigravity'} / ${updatedConfig.model || 'Gemini 3.8 Flash (Low)'}.`);
+            }
+            if (sub === 'privacy' || sub === 'data-collection') {
+                const val = (argv[1] || '').toLowerCase();
+                if (val !== 'deny' && val !== 'allow') {
+                    return fail('Usage: /openrouter privacy <deny | allow>');
+                }
+                setOpenRouterDataCollection(val);
+                const disclosure = val === 'allow'
+                    ? '\nNotice: Setting data_collection to "allow" means training-eligible providers are eligible for routing. It does not by itself establish user consent to model training or guarantee training occurs.'
+                    : '\nNotice: Strict privacy active. Provider data collection for model training is strictly denied.';
+                return ok(`OpenRouter data_collection policy set to "${val}".${disclosure}`);
+            }
+            if (sub === 'connect') {
+                const candidateKey = argv[1];
+                if (candidateKey && candidateKey.trim()) {
+                    saveOpenRouterKey(candidateKey.trim(), { setAsActive: true });
+                    return ok('Saved OpenRouter API key and switched active model to openrouter/free.');
+                }
+                const isSsh = Boolean(process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION);
+                if (isSsh) {
+                    const pkce = generatePkceCodes();
+                    const authUrl = buildAuthorizationUrl('urn:ietf:wg:oauth:2.0:oob', pkce.codeChallenge, pkce.state);
+                    const lines = [
+                        'SSH / Headless environment detected.',
+                        'Please open the following authorization URL in your browser:',
+                        '',
+                        `  ${authUrl}`,
+                        '',
+                        'After authorizing, configure your key using:',
+                        '  /openrouter connect <your-api-key>'
+                    ];
+                    return ok(lines.join('\n'));
+                }
+                try {
+                    const resultPromise = startLoopbackAuth({
+                        timeoutMs: 120_000,
+                        openBrowser: true
+                    });
+                    if (ctx.prompt && typeof ctx.prompt.scheduleDraw === 'function') {
+                        ctx.prompt.scheduleDraw();
+                    }
+                    const { apiKey } = await resultPromise;
+                    saveOpenRouterKey(apiKey, { setAsActive: true });
+                    if (ctx.loop) {
+                        ctx.loop.config = loadConfig();
+                    }
+                    if (ctx.prompt) {
+                        if (typeof ctx.prompt.updateModel === 'function') {
+                            ctx.prompt.updateModel('openrouter', 'openrouter/free');
+                        }
+                    }
+                    return ok('Successfully authenticated with OpenRouter! Now using openrouter/free.');
+                }
+                catch (err) {
+                    return fail(`OpenRouter connection error: ${errMsg(err)}\nFallback: run "/openrouter connect <api-key>" with an API key from https://openrouter.ai/keys`);
+                }
+            }
+            return fail('Usage: /openrouter [status | connect | disconnect | privacy <deny|allow>]');
         }
-        coldObserver.updateConfig({ mode: targetMode });
-        return ok(`Cold Observer mode set to "${coldObserver.getConfig().mode}".`);
-      }
-
-      if (sub === 'endpoint') {
-        const target = String(argv[1] || '').trim();
-        try {
-          coldObserver.updateConfig({ endpoint: target === 'none' ? '' : target });
-        } catch (error) {
-          return fail(error instanceof Error ? error.message : 'Invalid endpoint.');
+    },
+    {
+        name: 'mcp',
+        scope: 'local',
+        usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke|connect|disconnect|test|refresh <name>]',
+        description: 'Manage and diagnose MCP server connections',
+        dialogTitle: 'MCP servers',
+        complete: () => {
+            try {
+                const servers = serverStatus();
+                const base = [
+                    { value: 'add', label: 'add', description: 'add a new stdio or SSE/HTTP MCP server' }
+                ];
+                for (const s of servers) {
+                    base.push({ value: `test ${s.name}`, label: `test ${s.name}`, description: `test ${s.name} connection` });
+                    base.push({ value: `grant ${s.name}`, label: `grant ${s.name}`, description: `grant consent to ${s.name}` });
+                    base.push({ value: `revoke ${s.name}`, label: `revoke ${s.name}`, description: `revoke consent from ${s.name}` });
+                    base.push({ value: `remove ${s.name}`, label: `remove ${s.name}`, description: `remove ${s.name}` });
+                    base.push({ value: `refresh ${s.name}`, label: `refresh ${s.name}`, description: `refresh tools for ${s.name}` });
+                    base.push({ value: `disconnect ${s.name}`, label: `disconnect ${s.name}`, description: `disconnect ${s.name}` });
+                }
+                return base;
+            }
+            catch (e) {
+                return [{ value: 'add', label: 'add', description: 'add an MCP server' }];
+            }
+        },
+        run: async (argv) => {
+            const [action, serverName, ...rest] = argv;
+            if (action === 'add') {
+                if (!serverName) {
+                    return fail('Usage: mcp add <name> <command> [args…]\n   or: mcp add <name> --url <https://…>');
+                }
+                if (rest.length === 0)
+                    return fail(`Give "${serverName}" a command to run, or --url for an HTTP server.`);
+                let definition;
+                if (rest[0] === '--url') {
+                    if (!rest[1])
+                        return fail('--url needs a URL.');
+                    definition = { name: serverName, url: rest[1] };
+                }
+                else {
+                    definition = { name: serverName, command: rest[0] || '', args: rest.slice(1) };
+                }
+                const result = addServer(definition);
+                if (!result.ok)
+                    return fail(`Could not add "${serverName}": ${result.error}`);
+                // Registering is not consenting — say so, because a stdio server is a
+                // process Causyne will spawn on this machine.
+                return ok(`Added "${serverName}".\n\n`
+                    + `It is NOT enabled yet. A stdio MCP server is a program Causyne runs on\n`
+                    + `this computer, so enabling it is a separate, deliberate step:\n`
+                    + `  mcp grant ${serverName}`);
+            }
+            if (action === 'remove') {
+                if (!serverName)
+                    return fail('Usage: /mcp remove <server>');
+                const result = removeServer(serverName);
+                if (!result.ok)
+                    return fail(result.error || 'Could not remove server.');
+                return ok(`Removed "${serverName}" and dropped its consent.`);
+            }
+            if (action === 'grant' || action === 'revoke') {
+                if (!serverName)
+                    return fail(`Usage: /mcp ${action} <server>`);
+                const known = serverStatus().some(s => s.name === serverName);
+                if (!known)
+                    return fail(`No MCP server named "${serverName}" is configured.`);
+                if (action === 'grant') {
+                    const granted = grantServer(serverName);
+                    if (!granted.ok)
+                        return fail(granted.error || 'Could not grant server.');
+                    return ok(`Granted "${serverName}". Its tools enter the catalogue on the next task.`);
+                }
+                revokeServer(serverName);
+                return ok(`Revoked "${serverName}". Its tools are no longer callable.`);
+            }
+            if (action && ['connect', 'test', 'refresh', 'disconnect'].includes(action)) {
+                if (!serverName)
+                    return fail(`Usage: /mcp ${action} <server>`);
+                const known = serverStatus().some(server => server.name === serverName);
+                if (!known)
+                    return fail(`No MCP server named "${serverName}" is configured.`);
+                if (action === 'disconnect') {
+                    await disconnectServer(serverName);
+                    return ok(`Disconnected "${serverName}". Its grant remains in place.`);
+                }
+                if (action === 'refresh') {
+                    const tools = await refreshServer(serverName);
+                    return ok(`Refreshed "${serverName}": ${tools.length} tool(s) available${tools.length ? ` — ${tools.map(tool => tool.name).join(', ')}` : ''}.`);
+                }
+                const client = await connectServer(serverName);
+                return ok(`${action === 'test' ? 'MCP test passed' : 'Connected'}: "${serverName}"\n`
+                    + `Transport: ${client.status.transport || 'unknown'}\n`
+                    + `Server: ${client.serverInfo ? `${client.serverInfo.name} ${client.serverInfo.version}` : 'identity not provided'}\n`
+                    + `Tools: ${client.tools.length}${client.tools.length ? ` — ${client.tools.map(tool => tool.name).join(', ')}` : ''}`);
+            }
+            if (action) {
+                return fail(`Unknown mcp action "${action}". Try: add, remove, grant, revoke, connect, disconnect, test, refresh, or mcp on its own to list.`);
+            }
+            const servers = serverStatus();
+            if (servers.length === 0) {
+                return ok('No MCP servers are configured.\n\nAdd one with:\n  mcp add <name> <command> [args…]\n  mcp add <name> --url <https://…>\n\n(prefix with / in chat, or `causyne-agent mcp …` in a terminal)', { effect: 'pick-mcp' });
+            }
+            const lines = ['MCP servers', ''];
+            for (const server of servers) {
+                lines.push(`  ${server.name}  [${server.transport}]  ${server.granted ? 'granted' : 'NOT granted'}  ${server.status}`);
+                lines.push(`    ${server.target}`);
+                if (server.tools.length > 0)
+                    lines.push(`    tools: ${server.tools.join(', ')}`);
+                if (server.error)
+                    lines.push(`    error: ${server.error}`);
+            }
+            lines.push('');
+            lines.push('  mcp grant <name> to enable, mcp test <name> to diagnose, mcp remove <name> to delete.');
+            return ok(lines.join('\n'), { effect: 'pick-mcp' });
         }
-        const endpoint = coldObserver.getConfig().endpoint;
-        return ok(endpoint ? `Advisory endpoint set to ${endpoint}.` : 'Advisory endpoint cleared.');
-      }
-
-      if (sub === 'model') {
-        const target = String(argv[1] || '').trim();
-        coldObserver.updateConfig({ model: target === 'none' ? '' : target });
-        const model = coldObserver.getConfig().model;
-        return ok(model ? `Advisory model set to ${model}.` : 'Advisory model cleared.');
-      }
-
-      if (sub === 'strictness') {
-        const target = String(argv[1] || '').toLowerCase();
-        if (!['relaxed', 'standard', 'strict', 'moderate', 'paranoid'].includes(target)) {
-          return fail('Invalid strictness. Choose: relaxed, standard, or strict.');
+    },
+    {
+        name: 'peers',
+        scope: 'local',
+        usage: '/peers [detect | test <id> | add <id> <command…> | remove <id>]',
+        description: 'Manage, discover, and test external ACP peer agents (Claude Code, OpenCode, Codex, Gemini, Hermes, etc.)',
+        dialogTitle: 'ACP peer agents',
+        complete: () => {
+            try {
+                const peers = listAllPeers();
+                return [
+                    { value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' },
+                    ...peers.map((p) => ({
+                        value: `test ${p.id}`,
+                        label: `test ${p.id}`,
+                        description: `test zero-token handshake with ${p.label}`
+                    })),
+                    ...peers.map((p) => ({
+                        value: `remove ${p.id}`,
+                        label: `remove ${p.id}`,
+                        description: `remove peer profile for ${p.label}`
+                    }))
+                ];
+            }
+            catch (e) {
+                return [{ value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' }];
+            }
+        },
+        run: async (argv) => {
+            const [action, peerId, ...rest] = argv;
+            if (action === 'detect') {
+                const detected = await detectAllPeers();
+                const lines = ['Discovered ACP Peer Agents', ''];
+                for (const item of detected) {
+                    const statusIcon = item.status === 'ready' ? '✓' : (item.status === 'needs_auth' ? '△ ' : '✕');
+                    lines.push(`  ${statusIcon} ${item.id} (${item.label}) — ${item.status.toUpperCase()}`);
+                    lines.push(`     Command: ${item.command} ${item.args.join(' ')}`);
+                    if (item.details)
+                        lines.push(`     Details: ${item.details}`);
+                    if (item.setupInstruction)
+                        lines.push(`     Setup: ${item.setupInstruction}`);
+                }
+                lines.push('');
+                lines.push('Use /peers test <id> to test zero-token handshake against a specific peer.');
+                lines.push('Any ready peer can be your model provider: /model acp/<id>');
+                return ok(lines.join('\n'));
+            }
+            if (action === 'test') {
+                if (!peerId)
+                    return fail('Usage: /peers test <id>');
+                if (peerId === 'antigravity') {
+                    const { resolveAgyBinary } = await import('./providers/antigravity.js');
+                    const bin = resolveAgyBinary();
+                    return ok(`✓ Agent Peer Test Passed: "antigravity"\n\n`
+                        + `Agent: Google Antigravity (AGY)\n`
+                        + `Command: ${bin} --output-format json\n`
+                        + `Policy: local-cli\n`
+                        + `Frontier Models: Gemini 4 Argon, Gemini 3.8 Flash, Claude Sonnet 5.5\n\n`
+                        + `Ready to serve as primary AI provider or peer delegation.`);
+                }
+                const profile = getPeerProfile(peerId);
+                if (!profile)
+                    return fail(`No peer agent found for "${peerId}". Try /peers detect to see available agents.`);
+                const handshake = await testPeerHandshake({
+                    command: profile.command,
+                    args: profile.args,
+                    cwd: profile.cwd || process.cwd(),
+                    timeoutMs: 15000
+                });
+                if (handshake.ready) {
+                    const name = handshake.agentInfo ? `${handshake.agentInfo.name} ${handshake.agentInfo.version}` : profile.label;
+                    return ok(`✓ ACP Peer Test Passed: "${peerId}"\n\n`
+                        + `Agent: ${name}\n`
+                        + `Command: ${profile.command} ${profile.args.join(' ')}\n`
+                        + `Policy: ${profile.policy}\n`
+                        + `Auth Methods: ${handshake.authMethods?.join(', ') || 'none'}\n\n`
+                        + `Ready to receive delegated tasks via peer_agent_delegate.`);
+                }
+                else {
+                    return fail(`✕ ACP Peer Test Failed: "${peerId}"\n\n`
+                        + `Error: ${handshake.error || 'Handshake failed'}\n`
+                        + `Command: ${profile.command} ${profile.args.join(' ')}`);
+                }
+            }
+            if (action === 'add') {
+                if (!peerId)
+                    return fail('Usage: /peers add <id> <command> [args…]');
+                if (rest.length === 0)
+                    return fail(`Give "${peerId}" a command to run (e.g. opencode acp).`);
+                const newProfile = {
+                    id: peerId.trim().toLowerCase(),
+                    label: peerId,
+                    command: rest[0] || '',
+                    args: rest.slice(1),
+                    cwd: null,
+                    policy: 'workspace',
+                    timeoutSeconds: 180,
+                    env: {}
+                };
+                const res = addPeerProfile(newProfile);
+                if (!res.ok)
+                    return fail(`Could not save peer: ${res.error}`);
+                return ok(`Added peer "${peerId}" [policy: workspace]. Edit ~/.causyne/peers.json to customize policy, timeout, or environment.`);
+            }
+            if (action === 'remove') {
+                if (!peerId)
+                    return fail('Usage: /peers remove <id>');
+                const res = removePeerProfile(peerId);
+                if (!res.ok)
+                    return fail(res.error || `Could not remove peer "${peerId}".`);
+                return ok(`Removed peer profile "${peerId}".`);
+            }
+            if (action) {
+                return fail(`Unknown peers action "${action}". Try: detect, test, add, remove, or peers on its own to list.`);
+            }
+            // Default: list all configured and discovered peers
+            const peers = listAllPeers();
+            const lines = ['Configured & Preset ACP Peer Agents', ''];
+            for (const peer of peers) {
+                lines.push(`  • ${peer.id} (${peer.label}) [policy: ${peer.policy}, timeout: ${peer.timeoutSeconds}s]`);
+                lines.push(`    Command: ${peer.command} ${peer.args.join(' ')}`);
+            }
+            lines.push('');
+            lines.push('Commands:');
+            lines.push('  /peers detect     Scan local system for installed ACP agents');
+            lines.push('  /peers test <id>  Verify zero-token connection to an agent');
+            lines.push('  /peers add <id>   Add or override a peer command');
+            return ok(lines.join('\n'));
         }
-        coldObserver.updateConfig({ strictness: target });
-        return ok(`Cold Observer strictness set to "${coldObserver.getConfig().strictness}".`);
-      }
-
-      if (sub === 'test') {
-        const health = await coldObserver.healthCheck();
-        if (!health.endpoint) {
-          return ok('No advisory endpoint configured. The deterministic observer needs no endpoint and remains active.');
+    },
+    {
+        name: 'slop',
+        scope: 'local',
+        usage: '/slop <file… | directory> [--movements]',
+        description: 'Score HTML/CSS against the anti-AI-slop rules (Vision §7)',
+        dialogTitle: 'Slop audit',
+        complete: () => [
+            { value: '--movements', label: '--movements', description: 'show recommended design movements' }
+        ],
+        run: (argv) => {
+            const wantsMovements = argv.includes('--movements');
+            const targets = argv.filter(a => !a.startsWith('--'));
+            if (wantsMovements && targets.length === 0) {
+                return ok('Design movements to commit to:\n\n' + formatMovementBrief(DESIGN_MOVEMENTS));
+            }
+            const scanTargets = targets.length > 0 ? targets : ['.'];
+            const files = [];
+            const collect = (target) => {
+                const resolved = path.resolve(String(target).replace(/^~\//, os.homedir() + '/'));
+                let stats;
+                try {
+                    stats = fs.statSync(resolved);
+                }
+                catch {
+                    return `not found: ${target}`;
+                }
+                if (stats.isDirectory()) {
+                    const stack = [resolved];
+                    while (stack.length > 0 && files.length < 200) {
+                        const dir = stack.pop();
+                        let entries;
+                        try {
+                            entries = fs.readdirSync(dir, { withFileTypes: true });
+                        }
+                        catch (e) {
+                            continue;
+                        }
+                        for (const entry of entries) {
+                            if (entry.name === 'node_modules' || entry.name.startsWith('.'))
+                                continue;
+                            const full = path.join(dir, entry.name);
+                            if (entry.isDirectory())
+                                stack.push(full);
+                            else if (entry.isFile()) {
+                                try {
+                                    files.push({ path: full, content: fs.readFileSync(full, 'utf8') });
+                                }
+                                catch (e) { }
+                            }
+                        }
+                    }
+                    return null;
+                }
+                try {
+                    files.push({ path: resolved, content: fs.readFileSync(resolved, 'utf8') });
+                }
+                catch (e) {
+                    return `could not read: ${target}`;
+                }
+                return null;
+            };
+            const problems = scanTargets.map(collect).filter(Boolean);
+            if (files.length === 0) {
+                return ok(problems.length > 0 ? problems.join('\n') : 'No HTML/CSS/component files found — nothing to score. Try: /slop <path> or /slop --movements.');
+            }
+            const result = analyzeFiles(files);
+            if (result.scanned.length === 0) {
+                return ok('No HTML/CSS/component files among the targets — nothing to score.');
+            }
+            if (result.findings.length === 0) {
+                return ok(`Scanned ${result.scanned.length} file(s). Score 0 — clean. No slop signatures found.`);
+            }
+            const brief = result.verdict === 'slop' ? formatMovementBrief(suggestMovements([], 3)) : '';
+            return ok(`Scanned ${result.scanned.length} file(s).\n\n` + formatFindings(result, brief));
         }
-        return ok([
-          `Endpoint: ${health.endpoint}`,
-          `Model:    ${health.model || '(unset)'}`,
-          `Healthy:  ${health.healthy ? 'yes' : 'no'} (${health.latencyMs}ms)`,
-          `Detail:   ${health.detail}`
-        ].join('\n'));
-      }
-
-      if (sub === 'reset') {
-        coldObserver.updateConfig({
-          enabled: true,
-          mode: 'deterministic',
-          endpoint: '',
-          model: '',
-          timeoutMs: 800,
-          strictness: 'standard'
-        });
-        return ok('Cold Observer configuration reset to defaults.');
-      }
-
-      if (sub === 'audit') {
-        const audits = coldObserver.getAuditHistory();
-        if (audits.length === 0) {
-          return ok('No Cold Observer audit records yet.');
+    },
+    {
+        name: 'status',
+        scope: 'local',
+        usage: '/status',
+        description: 'Show the current provider, autonomy mode and workspace scope',
+        dialogTitle: 'Status',
+        // One builder, shared with `causyne status`, so status output cannot drift.
+        run: (argv, ctx = {}) => {
+            if (ctx.prompt && typeof ctx.prompt.toggleStatusCard === 'function') {
+                ctx.prompt.toggleStatusCard(ctx.loop);
+                return ok('', { effect: 'silent' });
+            }
+            return ok(buildStatusText({ loop: ctx.loop || null }));
         }
-        const lines = audits.slice(-10).map((a) => {
-          const time = new Date(a.timestamp).toLocaleTimeString();
-          const tag = a.type === 'mutation' ? `[mutation ${a.tool || ''}]` : '[verification]';
-          const score = typeof a.riskScore === 'number' ? `(risk ${(a.riskScore * 100).toFixed(0)}%)` : '';
-          const veto = a.veto ? 'VETO' : 'pass';
-          return `${time} ${tag} ${veto} ${score} ${a.details}`;
-        });
-        return ok(`Recent Cold Observer audits (last 10):\n\n${lines.join('\n')}`);
-      }
-
-      const cfg = coldObserver.getConfig();
-      const audits = coldObserver.getAuditHistory();
-      const vetoes = audits.filter((a) => a.veto).length;
-      return ok([
-        'Cold Observer',
-        '──────────────────────────────────────────────',
-        `Status:       ${cfg.enabled ? 'Active (mutations and completion claims)' : 'Disabled'}`,
-        `Mode:         ${cfg.mode.toUpperCase()}`,
-        `Strictness:   ${cfg.strictness}`,
-        `Advisory:     ${cfg.endpoint ? `${cfg.model || '(model unset)'} at ${cfg.endpoint}` : 'not configured (deterministic only)'}`,
-        `Audit events: ${audits.length} recorded (${vetoes} vetoes enforced)`,
-        '',
-        'Subcommands:',
-        '  /observer toggle                            Enable or disable protection',
-        '  /observer mode <deterministic|advisory>     Choose the review mode',
-        '  /observer endpoint <url|none>               Set a loopback advisory endpoint',
-        '  /observer model <name>                      Set the advisory model name',
-        '  /observer strictness <relaxed|standard|strict>',
-        '  /observer test                              Probe the advisory endpoint',
-        '  /observer audit                             Inspect recent audits',
-        '  /observer reset                             Restore defaults'
-      ].join('\n'));
-    }
-  },
-
-  {
-    name: 'acp',
-    scope: 'local',
-    usage: '/acp [status|peers]',
-    description: 'Agent Client Protocol (ACP) server and peer delegation status',
-    dialogTitle: 'Agent Client Protocol',
-    complete: () => [
-      { value: 'status', label: 'status', description: 'view ACP protocol server status' },
-      { value: 'peers', label: 'peers', description: 'view ACP peer delegation configuration' }
-    ],
-    run: async (argv) => {
-      const sub = (argv[0] || 'status').toLowerCase();
-      if (sub === 'peer' || sub === 'peers') {
-        const { loadPeerProfiles, peerProfilesPath } = await import('./acp/peerProfiles.js');
-        const profiles = loadPeerProfiles();
-        return ok([
-          'Peer delegation (ACP)',
-          '──────────────────────────────────────────────',
-          `Profiles file: ${peerProfilesPath()}`,
-          `Configured:    ${profiles.length === 0 ? 'none' : profiles.map((p) => `${p.id} (${p.policy})`).join(', ')}`,
-          '',
-          'The model selects a profile id and writes a prompt. Executable, arguments,',
-          'working directory, and environment always come from the profile file.'
-        ].join('\n'));
-      }
-      return ok([
-        'Agent Client Protocol (ACP) - Causyne Agent',
-        '──────────────────────────────────────────────',
-        'Version:        ACP v1 (JSON-RPC 2.0 over stdio)',
-        'Server command: causyne acp',
-        'Wire:           newline-delimited JSON-RPC',
-        'Sessions:       session/new, session/prompt, session/cancel, session/update',
-        'Optional:       session/list, session/close, session/set_mode',
-        'Workspace:      one workspace per server process',
-        '',
-        'Run "causyne acp" to connect this agent to any ACP client.'
-      ].join('\n'));
-    }
-  },
-
-  {
-    name: 'init',
-    aliases: ['initialize'],
-    scope: 'local',
-    usage: '/init',
-    description: 'Inspect active workspace architecture and generate or update AGENTS.md instructions',
-    dialogTitle: 'Workspace Init',
-    run: async (argv, ctx = {}) => {
-      const ws = ctx.loop?.workspaceRoot || process.cwd();
-      const files = fs.existsSync(ws) ? fs.readdirSync(ws) : [];
-      const hasPkg = files.includes('package.json');
-      const hasCargo = files.includes('Cargo.toml');
-      const hasPy = files.includes('pyproject.toml') || files.includes('requirements.txt');
-      const hasGo = files.includes('go.mod');
-      const hasAgents = files.includes('AGENTS.md');
-
-      const detected = [];
-      if (hasPkg) detected.push('Node.js / JavaScript / TypeScript');
-      if (hasCargo) detected.push('Rust / Cargo');
-      if (hasPy) detected.push('Python');
-      if (hasGo) detected.push('Go');
-      if (detected.length === 0) detected.push('Generic workspace');
-
-      const summary = [
-        `Workspace Initializer: ${ws}`,
-        `Ecosystem: ${detected.join(', ')}`,
-        `AGENTS.md: ${hasAgents ? 'Present (ready for refresh)' : 'Not found (needs creation)'}`,
-        '',
-        'To have Causyne Agent inspect and establish conventions for this project,',
-        'run this turn or press Enter to prompt the agent:'
-      ].join('\n');
-
-      if (ctx.prompt) {
-        ctx.prompt.editor.setText('Analyze this project architecture, testing setup, and style conventions, then create or update AGENTS.md for this workspace.');
-        ctx.prompt.scheduleDraw();
-        return ok(summary, { effect: 'inline' });
-      }
-      return ok(summary);
-    }
-  },
-
-  {
-    name: 'review',
-    aliases: ['code-review', 'pr-review'],
-    scope: 'local',
-    usage: '/review [target]',
-    description: 'Run an immediate code review on working tree changes or a file',
-    dialogTitle: 'Code Review',
-    run: async (argv, ctx = {}) => {
-      const ws = ctx.loop?.workspaceRoot || process.cwd();
-      const target = argv.join(' ').trim();
-      let promptText = '';
-      if (target) {
-        promptText = `Please review ${target} for security vulnerabilities, logic correctness, performance, and best practices.`;
-      } else {
-        try {
-          const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
-          if (!status) {
-            return ok('Working tree is clean. To review a specific file, run: /review <path>');
-          }
-          promptText = `Please review current uncommitted workspace changes (git diff) for correctness, edge cases, regression risk, and code quality.`;
-        } catch {
-          promptText = `Please review the files in this workspace for code quality, architectural consistency, and potential bugs.`;
+    },
+    {
+        name: 'observer',
+        scope: 'local',
+        usage: '/observer [status|toggle|mode <deterministic|advisory>|endpoint <url|none>|model <name>|strictness <relaxed|standard|strict>|test|audit|reset]',
+        description: 'Inspect or configure the Cold Observer',
+        dialogTitle: 'Cold Observer',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'view Cold Observer status and audits' },
+            { value: 'toggle', label: 'toggle', description: 'toggle Cold Observer on/off' },
+            { value: 'mode deterministic', label: 'mode deterministic', description: 'fast deterministic rules' },
+            { value: 'mode advisory', label: 'mode advisory', description: 'neural advisory verification' },
+            { value: 'strictness standard', label: 'strictness standard', description: 'standard safety strictness' },
+            { value: 'strictness strict', label: 'strictness strict', description: 'maximum safety strictness' },
+            { value: 'test', label: 'test', description: 'test advisory endpoint' },
+            { value: 'audit', label: 'audit', description: 'show recent audit history' },
+            { value: 'reset', label: 'reset', description: 'restore default settings' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const { coldObserver } = await import('./observer/coldObserver.js');
+            // If interactive prompt is active and no sub-arguments or 'status' is given, open the interactive setup menu
+            if ((!argv || argv.length === 0 || argv[0] === '' || argv[0] === 'status') && ctx.prompt) {
+                const { runInteractiveObserverPicker } = await import('./tui/observerPicker.js');
+                const message = await runInteractiveObserverPicker(ctx.prompt);
+                return ok(message, { effect: 'silent' });
+            }
+            const sub = (argv[0] || 'status').toLowerCase();
+            if (sub === 'toggle') {
+                const current = coldObserver.getConfig();
+                coldObserver.updateConfig({ enabled: !current.enabled });
+                return ok(`Cold Observer is now ${!current.enabled ? 'ENABLED' : 'DISABLED'}.`);
+            }
+            if (sub === 'mode') {
+                const targetMode = String(argv[1] || '').toLowerCase();
+                if (!['deterministic', 'advisory', 'local', 'hybrid'].includes(targetMode)) {
+                    return fail('Invalid mode. Choose: deterministic or advisory.');
+                }
+                coldObserver.updateConfig({ mode: targetMode });
+                return ok(`Cold Observer mode set to "${coldObserver.getConfig().mode}".`);
+            }
+            if (sub === 'endpoint') {
+                const target = String(argv[1] || '').trim();
+                try {
+                    coldObserver.updateConfig({ endpoint: target === 'none' ? '' : target });
+                }
+                catch (error) {
+                    return fail(error instanceof Error ? error.message : 'Invalid endpoint.');
+                }
+                const endpoint = coldObserver.getConfig().endpoint;
+                return ok(endpoint ? `Advisory endpoint set to ${endpoint}.` : 'Advisory endpoint cleared.');
+            }
+            if (sub === 'model') {
+                const target = String(argv[1] || '').trim();
+                coldObserver.updateConfig({ model: target === 'none' ? '' : target });
+                const model = coldObserver.getConfig().model;
+                return ok(model ? `Advisory model set to ${model}.` : 'Advisory model cleared.');
+            }
+            if (sub === 'strictness') {
+                const target = String(argv[1] || '').toLowerCase();
+                if (!['relaxed', 'standard', 'strict', 'moderate', 'paranoid'].includes(target)) {
+                    return fail('Invalid strictness. Choose: relaxed, standard, or strict.');
+                }
+                coldObserver.updateConfig({ strictness: target });
+                return ok(`Cold Observer strictness set to "${coldObserver.getConfig().strictness}".`);
+            }
+            if (sub === 'test') {
+                const health = await coldObserver.healthCheck();
+                if (!health.endpoint) {
+                    return ok('No advisory endpoint configured. The deterministic observer needs no endpoint and remains active.');
+                }
+                return ok([
+                    `Endpoint: ${health.endpoint}`,
+                    `Model:    ${health.model || '(unset)'}`,
+                    `Healthy:  ${health.healthy ? 'yes' : 'no'} (${health.latencyMs}ms)`,
+                    `Detail:   ${health.detail}`
+                ].join('\n'));
+            }
+            if (sub === 'reset') {
+                coldObserver.updateConfig({
+                    enabled: true,
+                    mode: 'deterministic',
+                    endpoint: '',
+                    model: '',
+                    timeoutMs: 800,
+                    strictness: 'standard'
+                });
+                return ok('Cold Observer configuration reset to defaults.');
+            }
+            if (sub === 'audit') {
+                const audits = coldObserver.getAuditHistory();
+                if (audits.length === 0) {
+                    return ok('No Cold Observer audit records yet.');
+                }
+                const lines = audits.slice(-10).map((a) => {
+                    const time = new Date(a.timestamp).toLocaleTimeString();
+                    const tag = a.type === 'mutation' ? `[mutation ${a.tool || ''}]` : '[verification]';
+                    const score = typeof a.riskScore === 'number' ? `(risk ${(a.riskScore * 100).toFixed(0)}%)` : '';
+                    const veto = a.veto ? 'VETO' : 'pass';
+                    return `${time} ${tag} ${veto} ${score} ${a.details}`;
+                });
+                return ok(`Recent Cold Observer audits (last 10):\n\n${lines.join('\n')}`);
+            }
+            const cfg = coldObserver.getConfig();
+            const audits = coldObserver.getAuditHistory();
+            const vetoes = audits.filter((a) => a.veto).length;
+            return ok([
+                'Cold Observer',
+                '──────────────────────────────────────────────',
+                `Status:       ${cfg.enabled ? 'Active (mutations and completion claims)' : 'Disabled'}`,
+                `Mode:         ${cfg.mode.toUpperCase()}`,
+                `Strictness:   ${cfg.strictness}`,
+                `Advisory:     ${cfg.endpoint ? `${cfg.model || '(model unset)'} at ${cfg.endpoint}` : 'not configured (deterministic only)'}`,
+                `Audit events: ${audits.length} recorded (${vetoes} vetoes enforced)`,
+                '',
+                'Subcommands:',
+                '  /observer toggle                            Enable or disable protection',
+                '  /observer mode <deterministic|advisory>     Choose the review mode',
+                '  /observer endpoint <url|none>               Set a loopback advisory endpoint',
+                '  /observer model <name>                      Set the advisory model name',
+                '  /observer strictness <relaxed|standard|strict>',
+                '  /observer test                              Probe the advisory endpoint',
+                '  /observer audit                             Inspect recent audits',
+                '  /observer reset                             Restore defaults'
+            ].join('\n'));
         }
-      }
-
-      if (ctx.prompt) {
-        ctx.prompt.editor.setText(promptText);
-        ctx.prompt.scheduleDraw();
-        return ok(`Ready to review: "${promptText}"`, { effect: 'inline' });
-      }
-      return ok(`Code review target: ${promptText}`);
-    }
-  },
-
-  {
-    name: 'retry',
-    aliases: ['again', 'redo'],
-    scope: 'local',
-    usage: '/retry',
-    description: 'Re-send the last user prompt in this session',
-    run: async (argv, ctx = {}) => {
-      const messages = ctx.loop?.messages || [];
-      const lastUser = [...messages].reverse().find(m => m.role === 'user' && typeof m.content === 'string');
-      if (!lastUser || !lastUser.content) {
-        return fail('No previous user prompt found in this session to retry.');
-      }
-      const promptText = lastUser.content;
-      if (ctx.prompt) {
-        ctx.prompt.editor.setText(promptText);
-        ctx.prompt.scheduleDraw();
-        return ok(`Re-loaded last prompt: "${promptText.slice(0, 80)}"`, { effect: 'inline' });
-      }
-      return ok(`Last prompt: ${promptText}`);
-    }
-  },
-
-  {
-    name: 'title',
-    aliases: ['rename'],
-    scope: 'local',
-    usage: '/title [new title]',
-    description: 'View or rename the active chat session title',
-    dialogTitle: 'Session Title',
-    run: async (argv, ctx = {}) => {
-      const activeId = getActiveSessionId();
-      if (!activeId) return fail('No active session.');
-      const session = getSession(activeId);
-      const currentTitle = session ? session.title : 'Untitled';
-
-      const newTitle = argv.join(' ').trim();
-      if (!newTitle) {
-        return ok(`Active session ID: ${activeId}\nCurrent title: "${currentTitle}"\n\nTo rename, run: /title <new name>`);
-      }
-
-      const renamed = renameSession(activeId, newTitle);
-      if (!renamed) return fail(`Could not rename session "${activeId}".`);
-
-      if (ctx.loop?.memoryManager?.session) {
-        ctx.loop.memoryManager.session.title = newTitle;
-      }
-      if (ctx.prompt?.renderer?.status) {
-        ctx.prompt.renderer.status.setSession({ title: newTitle });
-      }
-      if (ctx.prompt?.surface?.stage) {
-        ctx.prompt.scheduleDraw();
-      }
-
-      return ok(`Session renamed to: "${newTitle}"`, { effect: 'inline' });
-    }
-  },
-
-  {
-    name: 'mode',
-    aliases: ['autonomy'],
-    scope: 'local',
-    usage: '/mode [A | B | C]',
-    description: 'View or switch autonomy mode (A: Ask, B: Balanced, C: Autonomous)',
-    dialogTitle: 'Autonomy Mode',
-    complete: () => [
-      { value: 'A', label: 'A', description: 'Ask — review actions before execution' },
-      { value: 'B', label: 'B', description: 'Balanced — normal supervised autonomy' },
-      { value: 'C', label: 'C', description: 'Autonomous — maximum runway within policy' }
-    ],
-    run: async (argv, ctx = {}) => {
-      const config = loadConfig();
-      const target = (argv[0] || '').toUpperCase().trim();
-      if (!target) {
-        if (ctx.prompt) {
-          const { openModeControl } = await import('./tui/composerControls.js');
-          if (ctx.loop) {
-            openModeControl(ctx.prompt, ctx.loop);
-            return ok('Opened mode selector.', { effect: 'silent' });
-          }
+    },
+    {
+        name: 'acp',
+        scope: 'local',
+        usage: '/acp [status|peers]',
+        description: 'Agent Client Protocol (ACP) server and peer delegation status',
+        dialogTitle: 'Agent Client Protocol',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'view ACP protocol server status' },
+            { value: 'peers', label: 'peers', description: 'view ACP peer delegation configuration' }
+        ],
+        run: async (argv) => {
+            const sub = (argv[0] || 'status').toLowerCase();
+            if (sub === 'peer' || sub === 'peers') {
+                const { loadPeerProfiles, peerProfilesPath } = await import('./acp/peerProfiles.js');
+                const profiles = loadPeerProfiles();
+                return ok([
+                    'Peer delegation (ACP)',
+                    '──────────────────────────────────────────────',
+                    `Profiles file: ${peerProfilesPath()}`,
+                    `Configured:    ${profiles.length === 0 ? 'none' : profiles.map((p) => `${p.id} (${p.policy})`).join(', ')}`,
+                    '',
+                    'The model selects a profile id and writes a prompt. Executable, arguments,',
+                    'working directory, and environment always come from the profile file.'
+                ].join('\n'));
+            }
+            return ok([
+                'Agent Client Protocol (ACP) - Causyne Agent',
+                '──────────────────────────────────────────────',
+                'Version:        ACP v1 (JSON-RPC 2.0 over stdio)',
+                'Server command: causyne acp',
+                'Wire:           newline-delimited JSON-RPC',
+                'Sessions:       session/new, session/prompt, session/cancel, session/update',
+                'Optional:       session/list, session/close, session/set_mode',
+                'Workspace:      one workspace per server process',
+                '',
+                'Run "causyne acp" to connect this agent to any ACP client.'
+            ].join('\n'));
         }
-        return ok(`Current autonomy mode: ${config.autonomyMode || 'B'}\nModes:\n  A: Ask (confirm gated actions)\n  B: Balanced (supervised execution)\n  C: Autonomous (independent execution)`);
-      }
-
-      if (!['A', 'B', 'C'].includes(target)) {
-        return fail(`Invalid mode "${target}". Choose A, B, or C.`);
-      }
-
-      config.autonomyMode = target;
-      saveConfig(config);
-      if (ctx.loop && typeof ctx.loop.setAutonomyMode === 'function') {
-        ctx.loop.setAutonomyMode(target);
-      }
-      if (ctx.prompt) {
-        ctx.prompt.renderer?.status?.setSession?.({ autonomyMode: target });
-        ctx.prompt.surface?.setSessionInfo?.({ autonomyMode: target });
-        ctx.prompt.notice = `Mode ${target} active`;
-        if (ctx.prompt.scheduleDraw) ctx.prompt.scheduleDraw();
-        return ok(`Autonomy mode switched to ${target}.`, { effect: 'inline' });
-      }
-      return ok(`Autonomy mode switched to ${target}.`);
+    },
+    {
+        name: 'init',
+        aliases: ['initialize'],
+        scope: 'local',
+        usage: '/init',
+        description: 'Inspect active workspace architecture and generate or update AGENTS.md instructions',
+        dialogTitle: 'Workspace Init',
+        run: async (argv, ctx = {}) => {
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const files = fs.existsSync(ws) ? fs.readdirSync(ws) : [];
+            const hasPkg = files.includes('package.json');
+            const hasCargo = files.includes('Cargo.toml');
+            const hasPy = files.includes('pyproject.toml') || files.includes('requirements.txt');
+            const hasGo = files.includes('go.mod');
+            const hasAgents = files.includes('AGENTS.md');
+            const detected = [];
+            if (hasPkg)
+                detected.push('Node.js / JavaScript / TypeScript');
+            if (hasCargo)
+                detected.push('Rust / Cargo');
+            if (hasPy)
+                detected.push('Python');
+            if (hasGo)
+                detected.push('Go');
+            if (detected.length === 0)
+                detected.push('Generic workspace');
+            const summary = [
+                `Workspace Initializer: ${ws}`,
+                `Ecosystem: ${detected.join(', ')}`,
+                `AGENTS.md: ${hasAgents ? 'Present (ready for refresh)' : 'Not found (needs creation)'}`,
+                '',
+                'To have Causyne Agent inspect and establish conventions for this project,',
+                'run this turn or press Enter to prompt the agent:'
+            ].join('\n');
+            if (ctx.prompt) {
+                ctx.prompt.editor.setText('Analyze this project architecture, testing setup, and style conventions, then create or update AGENTS.md for this workspace.');
+                ctx.prompt.scheduleDraw();
+                return ok(summary, { effect: 'inline' });
+            }
+            return ok(summary);
+        }
+    },
+    {
+        name: 'review',
+        aliases: ['code-review', 'pr-review'],
+        scope: 'local',
+        usage: '/review [target]',
+        description: 'Run an immediate code review on working tree changes or a file',
+        dialogTitle: 'Code Review',
+        run: async (argv, ctx = {}) => {
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const target = argv.join(' ').trim();
+            let promptText = '';
+            if (target) {
+                promptText = `Please review ${target} for security vulnerabilities, logic correctness, performance, and best practices.`;
+            }
+            else {
+                try {
+                    const status = execFileSync('git', ['status', '--short'], { cwd: ws, encoding: 'utf8' }).trim();
+                    if (!status) {
+                        return ok('Working tree is clean. To review a specific file, run: /review <path>');
+                    }
+                    promptText = `Please review current uncommitted workspace changes (git diff) for correctness, edge cases, regression risk, and code quality.`;
+                }
+                catch {
+                    promptText = `Please review the files in this workspace for code quality, architectural consistency, and potential bugs.`;
+                }
+            }
+            if (ctx.prompt) {
+                ctx.prompt.editor.setText(promptText);
+                ctx.prompt.scheduleDraw();
+                return ok(`Ready to review: "${promptText}"`, { effect: 'inline' });
+            }
+            return ok(`Code review target: ${promptText}`);
+        }
+    },
+    {
+        name: 'retry',
+        aliases: ['again', 'redo'],
+        scope: 'local',
+        usage: '/retry',
+        description: 'Re-send the last user prompt in this session',
+        run: async (argv, ctx = {}) => {
+            const messages = ctx.loop?.messages || [];
+            const lastUser = [...messages].reverse().find(m => m.role === 'user' && typeof m.content === 'string');
+            if (!lastUser || !lastUser.content) {
+                return fail('No previous user prompt found in this session to retry.');
+            }
+            const promptText = lastUser.content;
+            if (ctx.prompt) {
+                ctx.prompt.editor.setText(promptText);
+                ctx.prompt.scheduleDraw();
+                return ok(`Re-loaded last prompt: "${promptText.slice(0, 80)}"`, { effect: 'inline' });
+            }
+            return ok(`Last prompt: ${promptText}`);
+        }
+    },
+    {
+        name: 'title',
+        aliases: ['rename'],
+        scope: 'local',
+        usage: '/title [new title]',
+        description: 'View or rename the active chat session title',
+        dialogTitle: 'Session Title',
+        run: async (argv, ctx = {}) => {
+            const activeId = getActiveSessionId();
+            if (!activeId)
+                return fail('No active session.');
+            const session = getSession(activeId);
+            const currentTitle = session ? session.title : 'Untitled';
+            const newTitle = argv.join(' ').trim();
+            if (!newTitle) {
+                return ok(`Active session ID: ${activeId}\nCurrent title: "${currentTitle}"\n\nTo rename, run: /title <new name>`);
+            }
+            const renamed = renameSession(activeId, newTitle);
+            if (!renamed)
+                return fail(`Could not rename session "${activeId}".`);
+            if (ctx.loop?.memoryManager?.session) {
+                ctx.loop.memoryManager.session.title = newTitle;
+            }
+            if (ctx.prompt?.renderer?.status) {
+                ctx.prompt.renderer.status.setSession({ title: newTitle });
+            }
+            if (ctx.prompt?.surface?.stage) {
+                ctx.prompt.scheduleDraw();
+            }
+            return ok(`Session renamed to: "${newTitle}"`, { effect: 'inline' });
+        }
+    },
+    {
+        name: 'mode',
+        aliases: ['autonomy'],
+        scope: 'local',
+        usage: '/mode [A | B | C]',
+        description: 'View or switch autonomy mode (A: Ask, B: Balanced, C: Autonomous)',
+        dialogTitle: 'Autonomy Mode',
+        complete: () => [
+            { value: 'A', label: 'A', description: 'Ask — review actions before execution' },
+            { value: 'B', label: 'B', description: 'Balanced — normal supervised autonomy' },
+            { value: 'C', label: 'C', description: 'Autonomous — maximum runway within policy' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const config = loadConfig();
+            const target = (argv[0] || '').toUpperCase().trim();
+            if (!target) {
+                if (ctx.prompt) {
+                    const { openModeControl } = await import('./tui/composerControls.js');
+                    if (ctx.loop) {
+                        openModeControl(ctx.prompt, ctx.loop);
+                        return ok('Opened mode selector.', { effect: 'silent' });
+                    }
+                }
+                return ok(`Current autonomy mode: ${config.autonomyMode || 'B'}\nModes:\n  A: Ask (confirm gated actions)\n  B: Balanced (supervised execution)\n  C: Autonomous (independent execution)`);
+            }
+            if (!['A', 'B', 'C'].includes(target)) {
+                return fail(`Invalid mode "${target}". Choose A, B, or C.`);
+            }
+            config.autonomyMode = target;
+            saveConfig(config);
+            if (ctx.loop && typeof ctx.loop.setAutonomyMode === 'function') {
+                ctx.loop.setAutonomyMode(target);
+            }
+            if (ctx.prompt) {
+                ctx.prompt.renderer?.status?.setSession?.({ autonomyMode: target });
+                ctx.prompt.surface?.setSessionInfo?.({ autonomyMode: target });
+                ctx.prompt.notice = `Mode ${target} active`;
+                if (ctx.prompt.scheduleDraw)
+                    ctx.prompt.scheduleDraw();
+                return ok(`Autonomy mode switched to ${target}.`, { effect: 'inline' });
+            }
+            return ok(`Autonomy mode switched to ${target}.`);
+        }
+    },
+    {
+        name: 'doctor',
+        aliases: ['health', 'diagnostics'],
+        scope: 'local',
+        usage: '/doctor',
+        description: 'Run environment, provider, and tool health diagnostics',
+        dialogTitle: 'Doctor',
+        run: async (_argv, ctx = {}) => {
+            const config = loadConfig();
+            const lines = ['Causyne Health & Diagnostics', ''];
+            const nodeVer = process.version;
+            const nodeOk = parseInt(nodeVer.slice(1).split('.')[0] || '0', 10) >= 24;
+            lines.push(`  ${nodeOk ? '✓' : '△'} Node.js version    : ${nodeVer} ${nodeOk ? '(supported)' : '(Node >= 24 required)'}`);
+            lines.push(`  • Platform          : ${process.platform} (${process.arch})`);
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            let isGit = false;
+            try {
+                execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
+                isGit = true;
+            }
+            catch { }
+            lines.push(`  ✓ Workspace root    : ${ws}`);
+            lines.push(`  ${isGit ? '✓' : '•'} Git repository    : ${isGit ? 'active' : 'not a git repo'}`);
+            const provider = config.provider || 'not configured';
+            const model = config.model || 'default';
+            lines.push(`  • Provider / Model  : ${provider} / ${model}`);
+            const servers = serverStatus();
+            const grantedCount = servers.filter(s => s.granted).length;
+            lines.push(`  • MCP Servers       : ${servers.length} configured (${grantedCount} granted)`);
+            const peers = listAllPeers();
+            lines.push(`  • ACP Peers         : ${peers.length} available`);
+            lines.push('');
+            lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');
+            return ok(lines.join('\n'));
+        }
+    },
+    {
+        name: 'export',
+        aliases: ['share', 'save'],
+        scope: 'local',
+        usage: '/export [filename.md]',
+        description: 'Export conversation transcript to a Markdown document in the workspace',
+        dialogTitle: 'Export Conversation',
+        run: async (argv, ctx = {}) => {
+            const activeId = getActiveSessionId();
+            if (!activeId)
+                return fail('No active session to export.');
+            const session = getSession(activeId);
+            if (!session || !session.messages || session.messages.length === 0) {
+                return fail('Session has no messages to export.');
+            }
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const defaultFilename = `causyne-session-${activeId}.md`;
+            const filename = argv.join(' ').trim() || defaultFilename;
+            const targetPath = path.resolve(ws, filename);
+            const header = `# Causyne Agent Conversation Export\n\n- **Session ID**: \`${session.id}\`\n- **Title**: ${session.title}\n- **Date**: ${new Date(session.createdAt).toISOString()}\n- **Workspace**: \`${session.workspace}\`\n- **Total Messages**: ${session.messages.length}\n\n---\n\n`;
+            const body = session.messages
+                .filter((m) => m.role !== 'system')
+                .map((m) => {
+                const roleLabel = m.role === 'user' ? '### User' : '### Causyne Agent';
+                return `${roleLabel}\n\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}\n`;
+            })
+                .join('\n---\n\n');
+            try {
+                fs.writeFileSync(targetPath, header + body, { encoding: 'utf8', mode: 0o644 });
+                return ok(`Exported conversation to: ${targetPath}`);
+            }
+            catch (err) {
+                return fail(`Could not export conversation: ${errMsg(err)}`);
+            }
+        }
+    },
+    {
+        name: 'version',
+        aliases: ['v', 'about'],
+        scope: 'local',
+        usage: '/version',
+        description: 'Display Causyne Agent version and runtime environment',
+        dialogTitle: 'Version',
+        run: async () => {
+            const version = getPackageVersion();
+            const config = loadConfig();
+            return ok([
+                `Causyne Agent v${version}`,
+                `  Runtime  : Node.js ${process.version} (${process.platform} ${process.arch})`,
+                `  Provider : ${config.provider || 'default'}`,
+                `  Model    : ${config.model || 'default'}`,
+                `  License  : Business Source License 1.1 (BUSL-1.1)`,
+                `  Website  : https://causyne.com`
+            ].join('\n'));
+        }
+    },
+    {
+        name: 'exit',
+        aliases: ['quit'],
+        scope: 'local',
+        usage: '/exit',
+        description: 'Leave the chat',
+        run: () => ok('Goodbye.', { effect: 'exit' })
     }
-  },
-
-  {
-    name: 'doctor',
-    aliases: ['health', 'diagnostics'],
-    scope: 'local',
-    usage: '/doctor',
-    description: 'Run environment, provider, and tool health diagnostics',
-    dialogTitle: 'Doctor',
-    run: async (_argv, ctx = {}) => {
-      const config = loadConfig();
-      const lines = ['Causyne Health & Diagnostics', ''];
-
-      const nodeVer = process.version;
-      const nodeOk = parseInt(nodeVer.slice(1).split('.')[0], 10) >= 24;
-      lines.push(`  ${nodeOk ? '✓' : '△'} Node.js version    : ${nodeVer} ${nodeOk ? '(supported)' : '(Node >= 24 required)'}`);
-      lines.push(`  • Platform          : ${process.platform} (${process.arch})`);
-
-      const ws = ctx.loop?.workspaceRoot || process.cwd();
-      let isGit = false;
-      try {
-        execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ws, stdio: 'pipe' });
-        isGit = true;
-      } catch {}
-      lines.push(`  ✓ Workspace root    : ${ws}`);
-      lines.push(`  ${isGit ? '✓' : '•'} Git repository    : ${isGit ? 'active' : 'not a git repo'}`);
-
-      const provider = config.provider || 'not configured';
-      const model = config.model || 'default';
-      lines.push(`  • Provider / Model  : ${provider} / ${model}`);
-
-      const servers = serverStatus();
-      const grantedCount = servers.filter(s => s.granted).length;
-      lines.push(`  • MCP Servers       : ${servers.length} configured (${grantedCount} granted)`);
-
-      const peers = listAllPeers();
-      lines.push(`  • ACP Peers         : ${peers.length} available`);
-
-      lines.push('');
-      lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');
-      return ok(lines.join('\n'));
-    }
-  },
-
-  {
-    name: 'export',
-    aliases: ['share', 'save'],
-    scope: 'local',
-    usage: '/export [filename.md]',
-    description: 'Export conversation transcript to a Markdown document in the workspace',
-    dialogTitle: 'Export Conversation',
-    run: async (argv, ctx = {}) => {
-      const activeId = getActiveSessionId();
-      if (!activeId) return fail('No active session to export.');
-      const session = getSession(activeId);
-      if (!session || !session.messages || session.messages.length === 0) {
-        return fail('Session has no messages to export.');
-      }
-
-      const ws = ctx.loop?.workspaceRoot || process.cwd();
-      const defaultFilename = `causyne-session-${activeId}.md`;
-      const filename = argv.join(' ').trim() || defaultFilename;
-      const targetPath = path.resolve(ws, filename);
-
-      const header = `# Causyne Agent Conversation Export\n\n- **Session ID**: \`${session.id}\`\n- **Title**: ${session.title}\n- **Date**: ${new Date(session.createdAt).toISOString()}\n- **Workspace**: \`${session.workspace}\`\n- **Total Messages**: ${session.messages.length}\n\n---\n\n`;
-
-      const body = session.messages
-        .filter(m => m.role !== 'system')
-        .map(m => {
-          const roleLabel = m.role === 'user' ? '### User' : '### Causyne Agent';
-          return `${roleLabel}\n\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}\n`;
-        })
-        .join('\n---\n\n');
-
-      try {
-        fs.writeFileSync(targetPath, header + body, { encoding: 'utf8', mode: 0o644 });
-        return ok(`Exported conversation to: ${targetPath}`);
-      } catch (err) {
-        return fail(`Could not export conversation: ${err.message}`);
-      }
-    }
-  },
-
-  {
-    name: 'version',
-    aliases: ['v', 'about'],
-    scope: 'local',
-    usage: '/version',
-    description: 'Display Causyne Agent version and runtime environment',
-    dialogTitle: 'Version',
-    run: async () => {
-      const version = getPackageVersion();
-      const config = loadConfig();
-      return ok([
-        `Causyne Agent v${version}`,
-        `  Runtime  : Node.js ${process.version} (${process.platform} ${process.arch})`,
-        `  Provider : ${config.provider || 'default'}`,
-        `  Model    : ${config.model || 'default'}`,
-        `  License  : Business Source License 1.1 (BUSL-1.1)`,
-        `  Website  : https://causyne.com`
-      ].join('\n'));
-    }
-  },
-
-  {
-    name: 'exit',
-    aliases: ['quit'],
-    scope: 'local',
-    usage: '/exit',
-    description: 'Leave the chat',
-    run: () => ok('Goodbye.', { effect: 'exit' })
-  }
 ];
-
 // ---------------------------------------------------------------------------
 // Lookup and parsing
 // ---------------------------------------------------------------------------
-
 export function resolveCommand(name) {
-  const normalized = String(name || '').replace(/^\//, '').trim().toLowerCase();
-  if (!normalized) return null;
-  return COMMANDS.find(c => c.name === normalized || (c.aliases || []).includes(normalized)) || null;
+    const normalized = String(name || '').replace(/^\//, '').trim().toLowerCase();
+    if (!normalized)
+        return null;
+    return COMMANDS.find(c => c.name === normalized || (c.aliases || []).includes(normalized)) || null;
 }
-
 /** Commands visible on the local terminal surface. */
 /**
  * Drop the YAML frontmatter before showing a skill to a human.
@@ -2542,13 +2411,11 @@ export function resolveCommand(name) {
  * a file dump rather than a procedure.
  */
 function stripFrontmatter(content) {
-  return String(content == null ? '' : content).replace(/^---\n[\s\S]*?\n---\n*/, '');
+    return String(content == null ? '' : content).replace(/^---\n[\s\S]*?\n---\n*/, '');
 }
-
 export function listCommands(surface = 'terminal') {
-  return surface === 'terminal' ? COMMANDS.slice() : [];
+    return surface === 'terminal' ? COMMANDS.slice() : [];
 }
-
 /**
  * Split a raw input line into a command and its arguments.
  *
@@ -2558,27 +2425,25 @@ export function listCommands(surface = 'terminal') {
  * immediately after the slash keeps absolute paths out of the command namespace.
  */
 export function parseCommand(input) {
-  if (typeof input !== 'string') return null;
-  const trimmed = input.trim();
-  if (!trimmed.startsWith('/')) return null;
-
-  const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
-  const name = (parts.shift() || '').toLowerCase();
-
-  // The name must be a single bare word. Requiring that is what keeps absolute
-  // paths out of the command namespace: "/usr/local/bin" has a slash in its
-  // first token, so it is a task for the agent, not a command named
-  // "usr/local/bin". Anchored, not a loose prefix test — see rules.json ZM-09
-  // on why guards must be context-aware.
-  if (!/^[a-z?][a-z0-9_-]*$/.test(name)) return null;
-
-  return { name, argv: parts, raw: trimmed };
+    if (typeof input !== 'string')
+        return null;
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('/'))
+        return null;
+    const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
+    const name = (parts.shift() || '').toLowerCase();
+    // The name must be a single bare word. Requiring that is what keeps absolute
+    // paths out of the command namespace: "/usr/local/bin" has a slash in its
+    // first token, so it is a task for the agent, not a command named
+    // "usr/local/bin". Anchored, not a loose prefix test — see rules.json ZM-09
+    // on why guards must be context-aware.
+    if (!/^[a-z?][a-z0-9_-]*$/.test(name))
+        return null;
+    return { name, argv: parts, raw: trimmed };
 }
-
 export function isCommandInput(input) {
-  return parseCommand(input) !== null;
+    return parseCommand(input) !== null;
 }
-
 /**
  * Execute a parsed command.
  *
@@ -2586,30 +2451,29 @@ export function isCommandInput(input) {
  * render the result into a conversation rather than a stack trace.
  */
 export async function runCommand(name, argv = [], ctx = {}) {
-  const surface = ctx.surface || 'terminal';
-  const command = resolveCommand(name);
-
-  if (!command) {
-    return fail(`Unknown command "/${name}". Try /help.`);
-  }
-  if (surface !== 'terminal') {
-    return fail(`"/${command.name}" is not available on this surface.`);
-  }
-
-  try {
-    const result = await command.run(argv, { ...ctx, surface });
-    if (command.dialogTitle && result && !result.effect) {
-      return { ...result, effect: 'dialog', title: command.dialogTitle };
+    const surface = ctx.surface || 'terminal';
+    const command = resolveCommand(name);
+    if (!command) {
+        return fail(`Unknown command "/${name}". Try /help.`);
     }
-    return result;
-  } catch (e) {
-    return fail(`/${command.name} failed: ${e.message}`);
-  }
+    if (surface !== 'terminal') {
+        return fail(`"/${command.name}" is not available on this surface.`);
+    }
+    try {
+        const result = await command.run(argv, { ...ctx, surface });
+        if (command.dialogTitle && result && !result.effect) {
+            return { ...result, effect: 'dialog', title: command.dialogTitle };
+        }
+        return result;
+    }
+    catch (e) {
+        return fail(`/${command.name} failed: ${errMsg(e)}`);
+    }
 }
-
 /** Convenience for a surface holding a raw line. Returns null if not a command. */
 export async function handleInput(input, ctx = {}) {
-  const parsed = parseCommand(input);
-  if (!parsed) return null;
-  return runCommand(parsed.name, parsed.argv, ctx);
+    const parsed = parseCommand(input);
+    if (!parsed)
+        return null;
+    return runCommand(parsed.name, parsed.argv, ctx);
 }

@@ -72,6 +72,7 @@
     "src/checkpoints.ts",
     "src/contextManager.ts",
     "src/reporting.ts",
+    "src/commands.ts",
     "src/infra/telemetry.ts",
     "src/session/sidechainEvents.ts",
     "src/session/cachePressure.ts",
