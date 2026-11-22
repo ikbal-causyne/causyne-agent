@@ -1,11 +1,33 @@
 // Sanitizer for cross-agent prompt wrappers and verbose tool dumps.
 // Authorship: Strict TypeScript (Causyne Agent).
+function removeLiteralCaseInsensitive(source, token) {
+    const lowerToken = token.toLowerCase();
+    const tokenLen = lowerToken.length;
+    let current = source;
+    for (let pass = 0; pass < 8; pass++) {
+        const lower = current.toLowerCase();
+        let idx = lower.indexOf(lowerToken);
+        if (idx === -1)
+            break;
+        let out = '';
+        let cursor = 0;
+        while (idx !== -1) {
+            out += current.slice(cursor, idx);
+            cursor = idx + tokenLen;
+            idx = lower.indexOf(lowerToken, cursor);
+        }
+        out += current.slice(cursor);
+        current = out;
+    }
+    return current;
+}
 /** Strip bulky system wrapper tags and metadata blocks from user prompt. */
 export function cleanUserText(text) {
     if (!text)
         return '';
     let str = String(text);
-    str = str.replace(/<\/?USER_REQUEST>/gi, '');
+    str = removeLiteralCaseInsensitive(str, '<USER_REQUEST>');
+    str = removeLiteralCaseInsensitive(str, '</USER_REQUEST>');
     if (str.includes('<ADDITIONAL_METADATA>')) {
         str = str.split(/<ADDITIONAL_METADATA>/i)[0] || '';
     }

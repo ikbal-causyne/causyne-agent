@@ -17,8 +17,50 @@ function decodeEntities(value) {
         return Object.hasOwn(named, normalized) ? named[normalized] : full;
     });
 }
+function stripMarkupLinear(input) {
+    // Unwrap CDATA markers iteratively without single-pass tag regexes (CodeQL-safe).
+    let text = input;
+    let cdataStart = text.indexOf('<![CDATA[');
+    while (cdataStart !== -1) {
+        const cdataEnd = text.indexOf(']]>', cdataStart + 9);
+        if (cdataEnd === -1)
+            break;
+        text = text.slice(0, cdataStart) + text.slice(cdataStart + 9, cdataEnd) + text.slice(cdataEnd + 3);
+        cdataStart = text.indexOf('<![CDATA[');
+    }
+    const out = [];
+    let inTag = false;
+    let quote = null;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inTag) {
+            if (quote) {
+                if (ch === quote)
+                    quote = null;
+            }
+            else if (ch === '"' || ch === "'") {
+                quote = ch;
+            }
+            else if (ch === '>') {
+                inTag = false;
+                out.push(' ');
+            }
+        }
+        else if (ch === '<') {
+            inTag = true;
+            quote = null;
+        }
+        else {
+            out.push(ch);
+        }
+    }
+    return out.join('');
+}
 function cleanMarkup(value) {
-    return decodeEntities(value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, ' '))
+    // Strip tags linearly, decode HTML entities, then strip any newly revealed angle brackets.
+    const stripped = stripMarkupLinear(decodeEntities(stripMarkupLinear(value)));
+    return stripped
+        .replace(/[<>]/g, ' ')
         .replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();

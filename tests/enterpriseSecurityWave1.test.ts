@@ -16,6 +16,8 @@ import { stripAnsi, safeDisplay, redactSecrets } from '../src/tui/text.js';
 import { sanitizeMcpInputSchema, sanitizeMcpToolName } from '../src/mcp/mcpSecurity.js';
 import { extractToolCallJsonObjects } from '../src/implementationPlan.js';
 import { canonicalToolArgs } from '../src/stallGuard.js';
+import { parseBingRss } from '../src/browser/searchProviders.js';
+import { cleanUserText } from '../src/continuum/sanitizer.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -137,5 +139,15 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     assert.equal(args.path, 'ok.txt');
     const canonical = canonicalToolArgs(JSON.parse('{"__proto__":{"x":1},"a":2}'));
     assert.equal(canonical.includes('__proto__'), false);
+  });
+
+  test('searchProviders and continuum sanitizer defeat nested multi-character tag bypasses', () => {
+    const rss = '<item><title><![CDATA[<scr<script>ipt>&lt;img onerror=1&gt;Hello]]></title><link>https://example.org/doc</link><description>Safe &amp; clean</description></item>';
+    const res = parseBingRss(rss);
+    assert.equal(res.length, 1);
+    assert.equal(res[0]?.title.includes('<'), false);
+    assert.equal(res[0]?.title.includes('>'), false);
+    assert.ok(res[0]?.title.includes('Hello'));
+    assert.equal(cleanUserText('<USER_<USER_REQUEST>REQUEST>hi</USER_REQUEST>'), 'hi');
   });
 });
