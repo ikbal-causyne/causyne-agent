@@ -29,6 +29,7 @@ function initTempGitRepo(rootDir, name) {
     execFileSync('git', ['init', '-b', 'main'], { cwd: dir, stdio: 'ignore', windowsHide: true });
     execFileSync('git', ['config', 'user.email', 'eval@causyne.local'], { cwd: dir, stdio: 'ignore', windowsHide: true });
     execFileSync('git', ['config', 'user.name', 'Causyne Eval'], { cwd: dir, stdio: 'ignore', windowsHide: true });
+    execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: dir, stdio: 'ignore', windowsHide: true });
     return dir;
 }
 function commitAll(repoDir, message) {
@@ -50,7 +51,8 @@ function runNodeTest(repoDir, testFile) {
     }
 }
 export async function runCodingEvalSuite(options = {}) {
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-eval-')));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-eval-'));
+    const root = typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(tmpDir) : fs.realpathSync(tmpDir);
     const suiteStart = Date.now();
     const results = [];
     try {
