@@ -25,6 +25,7 @@ import { evaluateEnterprisePolicy, loadEnterprisePolicy, clearEnterprisePolicyCa
 import { isWholeFileDeletion, requiresToolApproval } from '../src/approvalPolicy.js';
 import { isMutatingToolCall } from '../src/decisionPolicy.js';
 import { getDynamicTools } from '../src/tools/registry.js';
+import { AgentLoop } from '../src/agentLoop.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -293,5 +294,38 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
       }, loaded);
       assert.equal(symEval.effect, 'deny');
     }
+  });
+
+  test('AgentLoop enforces enterprisePolicy inside prefetchReadOnlyCalls and authorizePeerOperation', async () => {
+    const ws = path.join(TMP, 'loop-policy-ws');
+    fs.mkdirSync(path.join(ws, 'secrets'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'a.txt'), 'ok-a', 'utf8');
+    fs.writeFileSync(path.join(ws, 'b.txt'), 'ok-b', 'utf8');
+    fs.writeFileSync(path.join(ws, 'secrets', 'key.txt'), 'secret', 'utf8');
+    fs.writeFileSync(path.join(ws, 'causyne.policy.json'), JSON.stringify({
+      version: 1,
+      paths: { deny: ['secrets/*'] },
+      commands: { deny: ['curl *'] }
+    }), 'utf8');
+
+    const loop = new AgentLoop(null, 'test-policy', null, { workspaceRoot: ws }) as any;
+    loop.config.autonomyMode = 'C';
+    loop.smartToolsGovernor = { inspectionCapacity: 4 };
+    const prefetched = loop.prefetchReadOnlyCalls([
+      { id: 'c1', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'a.txt' }) } },
+      { id: 'c2', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'secrets/key.txt' }) } },
+      { id: 'c3', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'b.txt' }) } }
+    ]);
+    assert.equal(prefetched.has('c1'), true);
+    assert.equal(prefetched.has('c2'), false, 'denied secret read must never be prefetched');
+    assert.equal(prefetched.has('c3'), true);
+    await Promise.all(prefetched.values());
+
+    const deniedPeerFile = await loop.authorizePeerOperation('fs_read', { path: path.join(ws, 'secrets', 'key.txt') }, 'peer-1');
+    assert.equal(deniedPeerFile, false);
+    const deniedPeerCmd = await loop.authorizePeerOperation('sysRun', { command: 'curl https://evil.example' }, 'peer-2');
+    assert.equal(deniedPeerCmd, false);
+    const allowedPeerFile = await loop.authorizePeerOperation('fs_read', { path: path.join(ws, 'a.txt') }, 'peer-3');
+    assert.equal(allowedPeerFile, true);
   });
 });

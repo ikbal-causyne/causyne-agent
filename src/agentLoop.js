@@ -973,6 +973,18 @@ export class AgentLoop {
             }
             if (!validation || validation.allowed === false || validation.risk !== 'safe')
                 continue;
+            try {
+                const enterpriseDecision = evaluateEnterprisePolicy({
+                    tool: functionName,
+                    args,
+                    workspaceRoot: this.workspaceRoot
+                });
+                if (enterpriseDecision.effect === 'deny' || enterpriseDecision.effect === 'ask')
+                    continue;
+            }
+            catch {
+                continue;
+            }
             const tool = resolveTool(functionName);
             if (!tool || typeof tool.execute !== 'function')
                 continue;
@@ -1054,6 +1066,21 @@ export class AgentLoop {
         const validation = this.sandbox.validate(tool, args);
         if (!validation.allowed)
             return false;
+        const enterpriseDecision = evaluateEnterprisePolicy({
+            tool,
+            args,
+            workspaceRoot: this.workspaceRoot
+        });
+        if (enterpriseDecision.effect === 'deny') {
+            auditLog.log({
+                event: 'peer_operation_policy_denied',
+                taskId: this.taskId,
+                tool,
+                rule: enterpriseDecision.matchedRule,
+                dimension: enterpriseDecision.matchedDimension
+            });
+            return false;
+        }
         const hook = await this.runPreToolUse(tool, args, id);
         if (hook?.denied)
             return false;
@@ -1061,11 +1088,13 @@ export class AgentLoop {
         if (assessment.veto)
             return false;
         const isModeC = (this.config.autonomyMode || 'C') === 'C';
-        const needsApproval = (!isModeC && uncertain) || requiresToolApproval({
-            mode: this.config.autonomyMode || 'C', tool, args,
-            risk: assessment.requiresConfirmation ? 'dangerous' : validation.risk,
-            heavyDownload: false, standingApproval: this.isAlwaysAllowed(tool)
-        });
+        const needsApproval = enterpriseDecision.effect === 'ask'
+            || (!isModeC && uncertain)
+            || requiresToolApproval({
+                mode: this.config.autonomyMode || 'C', tool, args,
+                risk: assessment.requiresConfirmation ? 'dangerous' : validation.risk,
+                heavyDownload: false, standingApproval: this.isAlwaysAllowed(tool)
+            });
         if (needsApproval) {
             this.emitEvent({ type: 'approval_request', toolCallId: id, tool, args, risk: validation.risk });
             if (!await this.waitForApproval(id))
