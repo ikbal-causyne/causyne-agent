@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { AcpProvider } from '../src/providers/acp.js';
 import { AcpClient } from '../src/acp/client.js';
+import { testPeerHandshake, isAuthRequiredHandshakeFailure } from '../src/acp/agentCatalog.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -103,5 +104,37 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
     } finally {
       await client.close();
     }
+  });
+
+  test('testPeerHandshake bounds session/new with shared timeout and classifies Hermes/authMethods as needs_auth', async () => {
+    const ws = path.join(TMP, 'acp-handshake-timeout');
+    fs.mkdirSync(ws, { recursive: true });
+    const slowSessionScript = createFakeAcpServerScript(ws, `
+      import readline from 'node:readline';
+      const rl = readline.createInterface({ input: process.stdin });
+      const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+      rl.on('line', (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === 'initialize') {
+          send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentInfo: { name: 'slow-peer', version: '1.0' }, authMethods: [{ id: 'api-key' }], agentCapabilities: {} } });
+        }
+        // Intentionally never answer session/new to verify shared timeout bounds it
+      });
+    `);
+
+    const start = Date.now();
+    const res = await testPeerHandshake({
+      command: process.execPath,
+      args: [slowSessionScript],
+      cwd: ws,
+      timeoutMs: 1000
+    });
+    const elapsed = Date.now() - start;
+    assert.equal(res.ready, false);
+    assert.ok(elapsed < 4000, `handshake hung ${elapsed}ms instead of timing out at ~1s`);
+    assert.match(res.error || '', /timed out/i);
+    assert.equal(isAuthRequiredHandshakeFailure({ ready: false, error: 'Session creation failed: Unknown provider opencode-free' }), true);
+    assert.equal(isAuthRequiredHandshakeFailure({ ready: false, authMethods: ['oauth'], error: 'Session creation failed: Internal error' }), true);
   });
 });

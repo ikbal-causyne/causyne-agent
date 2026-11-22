@@ -294,9 +294,16 @@ export async function testPeerHandshake(options) {
     const timeoutMs = typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout > 0
         ? Math.max(1_000, Math.min(120_000, Math.round(rawTimeout)))
         : 12_000;
-    const handshakeEnv = { ...process.env, CI: '1', BROWSER: 'false', NO_BROWSER: '1' };
+    const handshakeEnv = {
+        ...process.env,
+        ...(options.env && typeof options.env === 'object' ? options.env : {}),
+        CI: '1',
+        BROWSER: 'false',
+        NO_BROWSER: '1'
+    };
     delete handshakeEnv.CAUSYNE_VAULT_KEY;
     delete handshakeEnv.CAUSYNE_DEV_SECRET;
+    delete handshakeEnv.CAUSYNE_DEV_TOKEN;
     const clientOptions = {
         command: options.command,
         cwd,
@@ -307,26 +314,22 @@ export async function testPeerHandshake(options) {
         clientOptions.args = options.args;
     }
     const client = new AcpClient(clientOptions);
-    let timer;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(new Error(`ACP handshake timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref?.();
     try {
-        const init = await Promise.race([
-            client.start(),
-            new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error(`ACP initialization timed out after ${timeoutMs}ms`)), timeoutMs);
-                timer.unref?.();
-            })
-        ]);
-        if (timer) {
-            clearTimeout(timer);
-            timer = undefined;
-        }
+        const init = await client.start(controller.signal);
         const agentInfo = init.agentInfo ? { name: init.agentInfo.name, version: init.agentInfo.version } : undefined;
         const authMethods = Array.isArray(init.authMethods)
             ? init.authMethods.map((m) => (typeof m === 'object' && m !== null && 'id' in m ? String(m.id) : String(m)))
             : [];
-        // Attempt session/new to ensure agent is fully operational and extract live models
+        // Attempt session/new under the same bounded deadline to ensure full readiness and extract live models
         try {
-            const sessionId = await client.newSession(cwd);
+            const sessionId = await client.newSession(cwd, [], controller.signal);
             const sessionModels = client.getSessionModels(sessionId);
             return {
                 ready: true,
@@ -337,7 +340,10 @@ export async function testPeerHandshake(options) {
             };
         }
         catch (sessionErr) {
-            const msg = redactProviderSecrets(sessionErr instanceof Error ? sessionErr.message : String(sessionErr));
+            const rawMsg = timedOut
+                ? `ACP session/new timed out after ${timeoutMs}ms`
+                : (sessionErr instanceof Error ? sessionErr.message : String(sessionErr));
+            const msg = redactProviderSecrets(rawMsg);
             return {
                 ready: false,
                 ...(agentInfo ? { agentInfo } : {}),
@@ -347,34 +353,46 @@ export async function testPeerHandshake(options) {
         }
     }
     catch (initErr) {
-        const msg = redactProviderSecrets(initErr instanceof Error ? initErr.message : String(initErr));
+        const rawMsg = timedOut
+            ? `ACP initialization timed out after ${timeoutMs}ms`
+            : (initErr instanceof Error ? initErr.message : String(initErr));
+        const msg = redactProviderSecrets(rawMsg);
         return { ready: false, error: msg };
     }
     finally {
-        if (timer)
-            clearTimeout(timer);
+        clearTimeout(timer);
         await client.close().catch(() => { });
     }
+}
+export function isAuthRequiredHandshakeFailure(handshake) {
+    if (handshake.ready)
+        return false;
+    const err = String(handshake.error || '');
+    if (/(?:auth|unauthorized|unauthenticated|api[_ ]?key|credential|login|unknown provider|not configured|token.*(?:missing|invalid|expired))/i.test(err)) {
+        return true;
+    }
+    return Array.isArray(handshake.authMethods) && handshake.authMethods.length > 0;
 }
 /**
  * Detect all built-in ACP presets available on this machine and report their readiness.
  */
 export async function detectAllPeers(cwd = process.cwd()) {
-    const results = [];
-    for (const preset of Object.values(BUILTIN_PEER_PRESETS)) {
-        const hasDirectBinary = isBinaryOnPath(preset.binaryName);
-        const hasRunner = isBinaryOnPath(preset.command);
+    const presets = Object.values(BUILTIN_PEER_PRESETS);
+    const probeOne = async (preset) => {
+        const hasDirectBinary = preset.id === 'cursor'
+            ? (isBinaryOnPath('cursor-agent') || isBinaryOnPath('cursor'))
+            : isBinaryOnPath(preset.binaryName);
+        const hasRunner = preset.command !== 'npx' && isBinaryOnPath(preset.command);
         if (!hasDirectBinary && !hasRunner) {
-            results.push({
+            return {
                 id: preset.id,
                 label: preset.label,
                 status: 'not_installed',
                 command: preset.command,
                 args: preset.args,
-                details: `Binary "${preset.binaryName}" and runner "${preset.command}" not found on PATH.`,
+                details: `Binary "${preset.binaryName}" not found on PATH.`,
                 ...(preset.setupInstruction ? { setupInstruction: preset.setupInstruction } : {})
-            });
-            continue;
+            };
         }
         // Determine actual command to execute
         let activeCommand = preset.command;
@@ -386,7 +404,7 @@ export async function detectAllPeers(cwd = process.cwd()) {
         // Run auth probe
         const auth = await probePresetAuth(preset);
         if (!auth.authenticated) {
-            results.push({
+            return {
                 id: preset.id,
                 label: preset.label,
                 status: 'needs_auth',
@@ -394,12 +412,11 @@ export async function detectAllPeers(cwd = process.cwd()) {
                 args: activeArgs,
                 details: auth.reason || 'Authentication required.',
                 ...(preset.setupInstruction ? { setupInstruction: preset.setupInstruction } : {})
-            });
-            continue;
+            };
         }
         // Antigravity communicates natively via CLI JSON mode
         if (preset.id === 'antigravity') {
-            results.push({
+            return {
                 id: preset.id,
                 label: preset.label,
                 status: 'ready',
@@ -407,8 +424,7 @@ export async function detectAllPeers(cwd = process.cwd()) {
                 args: activeArgs,
                 agentInfo: { name: 'Google Antigravity', version: '2.0' },
                 details: 'Operational via local AGY CLI with Gemini & Claude frontier models.'
-            });
-            continue;
+            };
         }
         // Run zero-token handshake
         const handshake = await testPeerHandshake({
@@ -418,7 +434,7 @@ export async function detectAllPeers(cwd = process.cwd()) {
             timeoutMs: 8000
         });
         if (handshake.ready) {
-            results.push({
+            return {
                 id: preset.id,
                 label: preset.label,
                 status: 'ready',
@@ -429,10 +445,10 @@ export async function detectAllPeers(cwd = process.cwd()) {
                 ...(handshake.availableModels ? { availableModels: handshake.availableModels } : {}),
                 ...(handshake.currentModelId ? { currentModelId: handshake.currentModelId } : {}),
                 details: 'Operational and ready for delegation.'
-            });
+            };
         }
-        else if (handshake.error && /auth/i.test(handshake.error)) {
-            results.push({
+        if (isAuthRequiredHandshakeFailure(handshake)) {
+            return {
                 id: preset.id,
                 label: preset.label,
                 status: 'needs_auth',
@@ -440,22 +456,30 @@ export async function detectAllPeers(cwd = process.cwd()) {
                 args: activeArgs,
                 ...(handshake.agentInfo ? { agentInfo: handshake.agentInfo } : {}),
                 ...(handshake.authMethods ? { authMethods: handshake.authMethods } : {}),
-                details: handshake.error,
+                details: handshake.error || 'Authentication required.',
                 ...(preset.setupInstruction ? { setupInstruction: preset.setupInstruction } : {})
-            });
+            };
         }
-        else {
-            results.push({
-                id: preset.id,
-                label: preset.label,
-                status: hasDirectBinary ? 'error' : 'not_installed',
-                command: activeCommand,
-                args: activeArgs,
-                details: handshake.error || 'ACP handshake did not complete.',
-                ...(preset.setupInstruction ? { setupInstruction: preset.setupInstruction } : {})
-            });
+        return {
+            id: preset.id,
+            label: preset.label,
+            status: hasDirectBinary ? 'error' : 'not_installed',
+            command: activeCommand,
+            args: activeArgs,
+            details: handshake.error || 'ACP handshake did not complete.',
+            ...(preset.setupInstruction ? { setupInstruction: preset.setupInstruction } : {})
+        };
+    };
+    // Run peer detections concurrently with bounded parallelism (4 lanes) while preserving preset order
+    const results = new Array(presets.length);
+    let cursor = 0;
+    const concurrency = Math.min(4, Math.max(1, presets.length));
+    await Promise.all(Array.from({ length: concurrency }, async () => {
+        while (cursor < presets.length) {
+            const idx = cursor++;
+            results[idx] = await probeOne(presets[idx]);
         }
-    }
+    }));
     return results;
 }
 /**
