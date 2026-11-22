@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 import { safeDisplay } from './tui/text.js';
+import { extractPatchTargetPaths } from './tools/applyPatch.js';
 const MAX_POLICY_FILE_BYTES = 256 * 1024;
 const MAX_RULES_PER_BUCKET = 512;
 const MAX_PATTERN_LENGTH = 512;
@@ -305,6 +306,11 @@ function extractPathCandidates(args, workspaceRoot) {
             if (edit && typeof edit === 'object' && 'path' in edit) {
                 addPath(edit.path);
             }
+        }
+    }
+    if (typeof args.patch === 'string') {
+        for (const target of extractPatchTargetPaths(args.patch).paths) {
+            addPath(target);
         }
     }
     return [...out];

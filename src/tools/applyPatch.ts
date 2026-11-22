@@ -54,6 +54,45 @@ const MAX_PATCH_CHARS = 1024 * 1024;
 const MAX_PATCH_OPERATIONS = 64;
 const MAX_SOURCE_FILE_BYTES = 4 * 1024 * 1024;
 
+export interface PatchTargetSummary {
+  paths: string[];
+  hasDelete: boolean;
+}
+
+/**
+ * Lightweight linear scanner extracting every target path and deletion flag
+ * from a V4A patch string for Sandbox, EnterprisePolicy, and Checkpoint guards.
+ */
+export function extractPatchTargetPaths(rawPatch: unknown): PatchTargetSummary {
+  if (typeof rawPatch !== 'string' || !rawPatch) {
+    return { paths: [], hasDelete: false };
+  }
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  let hasDelete = false;
+  const bounded = rawPatch.length > MAX_PATCH_CHARS ? rawPatch.slice(0, MAX_PATCH_CHARS) : rawPatch;
+  const lines = bounded.split(/\r?\n/);
+  for (const line of lines) {
+    if (paths.length >= MAX_PATCH_OPERATIONS * 2) break;
+    let target: string | null = null;
+    if (line.startsWith('*** Add File:')) {
+      target = line.slice('*** Add File:'.length).trim();
+    } else if (line.startsWith('*** Update File:')) {
+      target = line.slice('*** Update File:'.length).trim();
+    } else if (line.startsWith('*** Delete File:')) {
+      hasDelete = true;
+      target = line.slice('*** Delete File:'.length).trim();
+    } else if (line.startsWith('*** Move to:')) {
+      target = line.slice('*** Move to:'.length).trim();
+    }
+    if (target && !target.includes('\0') && !seen.has(target)) {
+      seen.add(target);
+      paths.push(target);
+    }
+  }
+  return { paths, hasDelete };
+}
+
 export function parsePatchText(rawPatch: string): PatchOperation[] {
   if (typeof rawPatch !== 'string' || !rawPatch.trim()) {
     throw new Error('Patch text must be a non-empty string.');

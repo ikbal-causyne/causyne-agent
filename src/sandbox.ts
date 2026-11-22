@@ -5,6 +5,7 @@ import { isIP } from 'node:net';
 import { loadConfig, type CausyneConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { validateBrowserActSandbox } from './browser/causyneBrowser.js';
+import { extractPatchTargetPaths } from './tools/applyPatch.js';
 import { isPhysicalPathAllowed, physicalPath } from './agent/workspaceBoundary.js';
 import {
   isBlockedWorkspaceRoot,
@@ -220,6 +221,12 @@ export class Sandbox {
           if (typeof entry === 'string' && entry.trim()) pathsToCheck.push(entry);
         }
       }
+      if (canonicalToolName === 'apply_patch' && typeof safeArgs.patch === 'string') {
+        const patchSummary = extractPatchTargetPaths(safeArgs.patch);
+        for (const target of patchSummary.paths) {
+          pathsToCheck.push(target);
+        }
+      }
     }
 
     for (const p of pathsToCheck) {
@@ -386,6 +393,10 @@ export class Sandbox {
     }
     if (canonicalToolName === 'ui_forge' || canonicalToolName === 'document_forge') {
       return withCredentialEscalation({ allowed: true, risk: 'safe' });
+    }
+    if (canonicalToolName === 'apply_patch') {
+      const patchSummary = extractPatchTargetPaths(safeArgs.patch);
+      return withCredentialEscalation({ allowed: true, risk: patchSummary.hasDelete ? 'dangerous' : 'moderate' });
     }
     if (canonicalToolName === 'fs_write' || canonicalToolName === 'fs_move' || canonicalToolName === 'fs_edit' || canonicalToolName === 'MultiEdit') {
       return withCredentialEscalation({ allowed: true, risk: 'moderate' });

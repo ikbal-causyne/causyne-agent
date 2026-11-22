@@ -107,6 +107,9 @@ export function requiresToolApproval(input: ToolApprovalInput): boolean {
     // A general shell or git grant must not authorize future deletions.
     return canonical !== 'fs_delete' || !input.standingApproval;
   }
+  if (isWholeFileDeletion(canonical, input.args)) {
+    return canonical !== 'fs_delete' || !input.standingApproval;
+  }
   if (input.standingApproval) return false;
   if (input.mode !== 'A' && isRoutineBrowserVerification(input.tool, input.args)) {
     return false;

@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 import { safeDisplay } from './tui/text.js';
+import { extractPatchTargetPaths } from './tools/applyPatch.js';
 
 export type EnterprisePolicyEffect = 'allow' | 'ask' | 'deny';
 export type EnterprisePolicyDecisionEffect = EnterprisePolicyEffect | 'none';
@@ -350,6 +351,11 @@ function extractPathCandidates(args: Record<string, unknown>, workspaceRoot?: st
       if (edit && typeof edit === 'object' && 'path' in edit) {
         addPath((edit as { path?: unknown }).path);
       }
+    }
+  }
+  if (typeof args.patch === 'string') {
+    for (const target of extractPatchTargetPaths(args.patch).paths) {
+      addPath(target);
     }
   }
   return [...out];

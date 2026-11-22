@@ -21,7 +21,7 @@ import { cleanUserText } from '../src/continuum/sanitizer.js';
 import { isPersistentServerCommand } from '../src/tools/sysRun.js';
 import { Sandbox } from '../src/sandbox.js';
 import { evaluateEnterprisePolicy } from '../src/enterprisePolicy.js';
-import { isWholeFileDeletion } from '../src/approvalPolicy.js';
+import { isWholeFileDeletion, requiresToolApproval } from '../src/approvalPolicy.js';
 import { isMutatingToolCall } from '../src/decisionPolicy.js';
 import { getDynamicTools } from '../src/tools/registry.js';
 
@@ -193,5 +193,35 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
 
     const modeATools = await getDynamicTools('A', true, { grantAllTools: true });
     assert.equal(modeATools.some(t => t.name === 'task_bg' || t.name === 'task.bg'), false);
+  });
+
+  test('apply_patch targets are enforced across sandbox, approvalPolicy (Modes A/B/C), and enterprisePolicy', () => {
+    const ws = path.join(TMP, 'ws-patch-guard');
+    fs.mkdirSync(ws, { recursive: true });
+    const sb = new Sandbox({ workspaceRoot: ws });
+
+    const escapePatch = '*** Begin Patch\n*** Update File: ../../outside.txt\n@@\n-a\n+b\n*** End Patch';
+    assert.equal(sb.validate('apply_patch', { patch: escapePatch }).allowed, false);
+
+    const credPatch = '*** Begin Patch\n*** Update File: .envrc\n@@\n-a\n+b\n*** End Patch';
+    assert.equal(sb.validate('apply_patch', { patch: credPatch }).risk, 'extreme');
+
+    const delPatch = '*** Begin Patch\n*** Delete File: dead.ts\n*** End Patch';
+    assert.equal(sb.validate('apply_patch', { patch: delPatch }).risk, 'dangerous');
+    assert.equal(requiresToolApproval({ mode: 'B', tool: 'apply_patch', args: { patch: delPatch }, risk: 'moderate', heavyDownload: false, standingApproval: true }), true);
+    assert.equal(requiresToolApproval({ mode: 'C', tool: 'apply_patch', args: { patch: delPatch }, risk: 'dangerous', heavyDownload: false, standingApproval: true }), true);
+
+    const policyPath = path.join(ws, 'causyne.policy.json');
+    fs.writeFileSync(policyPath, JSON.stringify({
+      version: 1,
+      paths: { deny: ['secrets/*'] }
+    }), 'utf8');
+    const movePatch = '*** Begin Patch\n*** Update File: a.ts\n*** Move to: secrets/leaked.ts\n@@\n-1\n+2\n*** End Patch';
+    const decision = evaluateEnterprisePolicy({
+      tool: 'apply_patch',
+      args: { patch: movePatch },
+      workspaceRoot: ws
+    });
+    assert.equal(decision.effect, 'deny');
   });
 });
