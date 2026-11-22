@@ -26,6 +26,7 @@ export class AcpClient {
     stderrTail = '';
     pending = new Map();
     openToolCalls = new Map();
+    activePermissionRequests = 0;
     nextId = 1;
     closed = false;
     exitError = null;
@@ -332,7 +333,7 @@ export class AcpClient {
         if (status === 'completed' || status === 'failed' || status === 'cancelled') {
             this.openToolCalls.delete(key);
         }
-        else if (record.sessionUpdate === 'tool_call' || status === 'pending' || status === 'in_progress') {
+        else if (record.sessionUpdate === 'tool_call' || status === 'pending' || status === 'in_progress' || status === 'running') {
             if (!this.openToolCalls.has(key)) {
                 if (this.openToolCalls.size >= MAX_OPEN_TOOL_CALLS) {
                     const oldest = this.openToolCalls.keys().next().value;
@@ -350,12 +351,13 @@ export class AcpClient {
                 this.openToolCalls.delete(key);
         }
     }
-    hasOpenToolCall(sessionId) {
+    hasOpenToolCall(sessionId, maxSilenceMs = 10 * 60 * 1000) {
         if (!sessionId || !this.child || this.child.exitCode !== null || this.closed)
             return false;
         const prefix = `${sessionId}\u0000`;
-        for (const key of this.openToolCalls.keys()) {
-            if (key.startsWith(prefix))
+        const now = Date.now();
+        for (const [key, startedAt] of this.openToolCalls.entries()) {
+            if (key.startsWith(prefix) && now - startedAt < maxSilenceMs)
                 return true;
         }
         return false;
@@ -427,7 +429,7 @@ export class AcpClient {
             // A dead pipe surfaces through the exit handler.
         }
     }
-    async drain() {
+    drain() {
         if (this.draining)
             return;
         this.draining = true;
@@ -437,7 +439,7 @@ export class AcpClient {
                 const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
                 this.buffer = this.buffer.slice(index + 1);
                 if (line)
-                    await this.handleLine(line);
+                    this.handleLine(line);
                 index = this.buffer.indexOf('\n');
             }
         }
@@ -445,7 +447,7 @@ export class AcpClient {
             this.draining = false;
         }
     }
-    async handleLine(line) {
+    handleLine(line) {
         let parsed;
         try {
             parsed = JSON.parse(line);
@@ -458,7 +460,9 @@ export class AcpClient {
             return;
         }
         if (isJsonRpcRequest(parsed)) {
-            await this.handleServerRequest(parsed);
+            // Dispatch server requests concurrently so waiting on HITL permission or
+            // host I/O never head-of-line blocks subsequent updates or responses.
+            void this.handleServerRequest(parsed).catch(() => { });
             return;
         }
         const method = parsed.method;
@@ -495,6 +499,7 @@ export class AcpClient {
                 });
                 return;
             }
+            this.activePermissionRequests++;
             try {
                 const rawOutcome = await handler(request.params);
                 const validOutcome = rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string'
@@ -504,6 +509,10 @@ export class AcpClient {
             }
             catch {
                 this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: { outcome: 'cancelled' } } });
+            }
+            finally {
+                this.activePermissionRequests = Math.max(0, this.activePermissionRequests - 1);
+                this.notifyPendingActivity();
             }
             return;
         }
@@ -858,7 +867,12 @@ export class AcpClient {
                 inactivityTimer = setTimeout(() => {
                     if (settled)
                         return;
-                    if (this.hasOpenToolCall(options?.sessionId) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
+                    if (this.activePermissionRequests > 0) {
+                        resetInactivity();
+                        return;
+                    }
+                    const maxToolSilenceMs = Math.min(10 * 60 * 1000, Math.max(timeoutMsInact * 3, 300_000));
+                    if (this.hasOpenToolCall(options?.sessionId, maxToolSilenceMs) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
                         resetInactivity();
                         return;
                     }

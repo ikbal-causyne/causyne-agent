@@ -89,6 +89,7 @@ export class AcpClient {
   private stderrTail = '';
   private readonly pending = new Map<string | number, PendingRequest>();
   private readonly openToolCalls = new Map<string, number>();
+  private activePermissionRequests = 0;
   private nextId = 1;
   private closed = false;
   private exitError: Error | null = null;
@@ -403,7 +404,7 @@ export class AcpClient {
     const status = typeof record.status === 'string' ? record.status : '';
     if (status === 'completed' || status === 'failed' || status === 'cancelled') {
       this.openToolCalls.delete(key);
-    } else if (record.sessionUpdate === 'tool_call' || status === 'pending' || status === 'in_progress') {
+    } else if (record.sessionUpdate === 'tool_call' || status === 'pending' || status === 'in_progress' || status === 'running') {
       if (!this.openToolCalls.has(key)) {
         if (this.openToolCalls.size >= MAX_OPEN_TOOL_CALLS) {
           const oldest = this.openToolCalls.keys().next().value;
@@ -421,11 +422,12 @@ export class AcpClient {
     }
   }
 
-  private hasOpenToolCall(sessionId?: string): boolean {
+  private hasOpenToolCall(sessionId?: string, maxSilenceMs = 10 * 60 * 1000): boolean {
     if (!sessionId || !this.child || this.child.exitCode !== null || this.closed) return false;
     const prefix = `${sessionId}\u0000`;
-    for (const key of this.openToolCalls.keys()) {
-      if (key.startsWith(prefix)) return true;
+    const now = Date.now();
+    for (const [key, startedAt] of this.openToolCalls.entries()) {
+      if (key.startsWith(prefix) && now - startedAt < maxSilenceMs) return true;
     }
     return false;
   }
@@ -489,7 +491,7 @@ export class AcpClient {
     }
   }
 
-  private async drain(): Promise<void> {
+  private drain(): void {
     if (this.draining) return;
     this.draining = true;
     try {
@@ -497,7 +499,7 @@ export class AcpClient {
       while (index >= 0 && !this.closed) {
         const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
         this.buffer = this.buffer.slice(index + 1);
-        if (line) await this.handleLine(line);
+        if (line) this.handleLine(line);
         index = this.buffer.indexOf('\n');
       }
     } finally {
@@ -505,7 +507,7 @@ export class AcpClient {
     }
   }
 
-  private async handleLine(line: string): Promise<void> {
+  private handleLine(line: string): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -517,7 +519,9 @@ export class AcpClient {
       return;
     }
     if (isJsonRpcRequest(parsed)) {
-      await this.handleServerRequest(parsed);
+      // Dispatch server requests concurrently so waiting on HITL permission or
+      // host I/O never head-of-line blocks subsequent updates or responses.
+      void this.handleServerRequest(parsed).catch(() => {});
       return;
     }
     const method = (parsed as { method?: unknown }).method;
@@ -557,6 +561,7 @@ export class AcpClient {
         });
         return;
       }
+      this.activePermissionRequests++;
       try {
         const rawOutcome = await handler(request.params as unknown as RequestPermissionRequest);
         const validOutcome: RequestPermissionResponse['outcome'] =
@@ -566,6 +571,9 @@ export class AcpClient {
         this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
       } catch {
         this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: { outcome: 'cancelled' } } });
+      } finally {
+        this.activePermissionRequests = Math.max(0, this.activePermissionRequests - 1);
+        this.notifyPendingActivity();
       }
       return;
     }
@@ -900,7 +908,12 @@ export class AcpClient {
         if (inactivityTimer) clearTimeout(inactivityTimer);
         inactivityTimer = setTimeout(() => {
           if (settled) return;
-          if (this.hasOpenToolCall(options?.sessionId) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
+          if (this.activePermissionRequests > 0) {
+            resetInactivity();
+            return;
+          }
+          const maxToolSilenceMs = Math.min(10 * 60 * 1000, Math.max(timeoutMsInact * 3, 300_000));
+          if (this.hasOpenToolCall(options?.sessionId, maxToolSilenceMs) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
             resetInactivity();
             return;
           }

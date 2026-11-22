@@ -165,4 +165,65 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
     // Writing cancel after close/exit must not throw EPIPE
     assert.doesNotThrow(() => client.notifyCancel('s1'));
   });
+
+  test('AcpClient drain dispatches permission requests concurrently without head-of-line blocking or false inactivity stall', async () => {
+    const ws = path.join(TMP, 'acp-no-hol');
+    fs.mkdirSync(ws, { recursive: true });
+    const serverScript = createFakeAcpServerScript(ws, `
+      import readline from 'node:readline';
+      const rl = readline.createInterface({ input: process.stdin });
+      const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+      let promptId = null;
+      rl.on('line', (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === 'initialize') {
+          send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentInfo: { name: 'hol', version: '1.0' }, agentCapabilities: {} } });
+        } else if (msg.method === 'session/new') {
+          send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's1' } });
+        } else if (msg.method === 'session/prompt') {
+          promptId = msg.id;
+          // Emit permission request AND immediately emit a streaming chunk before permission resolves
+          send({ jsonrpc: '2.0', id: 99, method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: 't1', title: 'run', kind: 'execute' }, options: [{ optionId: 'ok', name: 'Allow', kind: 'allow_once' }] } });
+          send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'concurrent-stream ' } } } });
+        } else if (msg.id === 99 && msg.result) {
+          send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after-approval' } } } });
+          send({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+        }
+      });
+    `);
+
+    const chunksDuringPermission: string[] = [];
+    let releaseApproval!: () => void;
+    const approvalGate = new Promise<void>(r => { releaseApproval = r; });
+
+    const client = new AcpClient({
+      command: process.execPath,
+      args: [serverScript],
+      cwd: ws,
+      inactivityTimeoutMs: 120,
+      onUpdate: (_sid, update) => {
+        if (update.sessionUpdate === 'agent_message_chunk' && update.content && typeof update.content === 'object' && 'text' in update.content) {
+          chunksDuringPermission.push(String((update.content as { text: unknown }).text));
+          if (String((update.content as { text: unknown }).text).includes('concurrent-stream')) {
+            // Wait longer than inactivityTimeoutMs (120ms) to verify inactivity timer pauses during approval
+            setTimeout(() => releaseApproval(), 220);
+          }
+        }
+      },
+      permissionHandler: async () => {
+        await approvalGate;
+        return { outcome: 'selected', optionId: 'ok' };
+      }
+    });
+    try {
+      await client.start();
+      const sid = await client.newSession(ws);
+      const res = await client.prompt(sid, 'test');
+      assert.ok(chunksDuringPermission.includes('concurrent-stream '), 'stream chunk must arrive while permission request is pending');
+      assert.equal(res.text, 'concurrent-stream after-approval');
+    } finally {
+      await client.close();
+    }
+  });
 });
