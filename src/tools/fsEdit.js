@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
+import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
 function expandHome(value) {
     const trimmed = value.trim();
     if (trimmed === '~')
@@ -180,7 +181,10 @@ export const fsEdit = {
             }
             // Commit the transaction atomically, preserving original file permissions
             atomicWriteFileSync(target, workingContent, { encoding: 'utf8', mode: originalMode });
-            return { success: true, output: `Transaction Success: ${replacements} replacement(s) safely applied to ${args.path}` };
+            const wsRoot = baseRoot ? path.resolve(expandHome(baseRoot)) : path.dirname(target);
+            const diags = await collectActivePostEditDiagnostics(target, wsRoot, workingContent);
+            const diagNote = diags.length > 0 ? `\n\n[LSP Diagnostics]\n${formatDiagnosticsCompact(diags, wsRoot)}` : '';
+            return { success: true, output: `Transaction Success: ${replacements} replacement(s) safely applied to ${args.path}${diagNote}` };
         }
         catch (e) {
             return { success: false, error: e instanceof Error ? e.message : String(e) };
