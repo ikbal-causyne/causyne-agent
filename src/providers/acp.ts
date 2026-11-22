@@ -642,8 +642,14 @@ export class AcpProvider extends LLMProvider {
       }
     });
 
-    await client.start(signal);
-    const sessionId = await client.newSession(workspaceRoot, this.peerServices?.peerMcpServers || [], signal);
+    let sessionId: string;
+    try {
+      await client.start(signal);
+      sessionId = await client.newSession(workspaceRoot, this.peerServices?.peerMcpServers || [], signal);
+    } catch (err) {
+      await client.close().catch(() => {});
+      throw err;
+    }
 
     const sessionModels = client.getSessionModels(sessionId);
     const liveModels = sessionModels.availableModels;

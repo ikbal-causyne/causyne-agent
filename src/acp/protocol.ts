@@ -130,6 +130,7 @@ export interface ClientCapabilities {
   fs?: FileSystemCapabilities;
   terminal?: boolean;
   session?: SessionClientCapabilities;
+  _meta?: Record<string, unknown>;
 }
 
 export interface InitializeRequest {

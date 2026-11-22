@@ -137,4 +137,32 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
     assert.equal(isAuthRequiredHandshakeFailure({ ready: false, error: 'Session creation failed: Unknown provider opencode-free' }), true);
     assert.equal(isAuthRequiredHandshakeFailure({ ready: false, authMethods: ['oauth'], error: 'Session creation failed: Internal error' }), true);
   });
+
+  test('AcpClient handles stdin EPIPE cleanly, places notices under _meta, and closes child on init failure', async () => {
+    const ws = path.join(TMP, 'acp-init-clean');
+    fs.mkdirSync(ws, { recursive: true });
+    const initPayloadFile = path.join(ws, 'init.json');
+    const serverScript = createFakeAcpServerScript(ws, `
+      import fs from 'node:fs';
+      import readline from 'node:readline';
+      const rl = readline.createInterface({ input: process.stdin });
+      const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+      rl.on('line', (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === 'initialize') {
+          fs.writeFileSync(${JSON.stringify(initPayloadFile)}, JSON.stringify(msg.params));
+          send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Init rejected' } });
+        }
+      });
+    `);
+
+    const client = new AcpClient({ command: process.execPath, args: [serverScript], cwd: ws });
+    await assert.rejects(() => client.start(), /Init rejected/);
+    const initParams = JSON.parse(fs.readFileSync(initPayloadFile, 'utf8'));
+    assert.equal(initParams.clientCapabilities.session, undefined, 'non-standard session capability must live under _meta');
+    assert.equal(initParams.clientCapabilities._meta?.session?.notices, true);
+    // Writing cancel after close/exit must not throw EPIPE
+    assert.doesNotThrow(() => client.notifyCancel('s1'));
+  });
 });

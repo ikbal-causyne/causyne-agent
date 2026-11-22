@@ -194,6 +194,9 @@ export class AcpClient {
       windowsHide: true
     });
     this.child = child;
+    child.stdin.on('error', () => {
+      // Ignore broken-pipe EPIPE writes when peer exits concurrently
+    });
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
@@ -227,14 +230,19 @@ export class AcpClient {
       clientCapabilities: {
         fs: { readTextFile: hasFsRead, writeTextFile: hasFsWrite },
         terminal: false,
-        session: { notices: true }
+        _meta: { session: { notices: true } }
       },
       clientInfo: { name: 'Causyne Agent', version: this.options.clientVersion ?? '0.0.0' }
     };
 
-    const result = await this.request<InitializeResult>(ACP_METHODS.INITIALIZE, params, 30_000, signal);
-    this.initResult = result;
-    return result;
+    try {
+      const result = await this.request<InitializeResult>(ACP_METHODS.INITIALIZE, params, 30_000, signal);
+      this.initResult = result;
+      return result;
+    } catch (err) {
+      await this.close().catch(() => {});
+      throw err;
+    }
   }
 
   async newSession(cwd: string, mcpServers: unknown[] = [], signal?: AbortSignal): Promise<string> {
