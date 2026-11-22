@@ -83,6 +83,9 @@ import {
 import { collectWorkingTreeDiff, renderDiffReview } from './diffReview.js';
 import { fetchFailedCiLogs, formatPrStatusReport, inspectPrStatus, preparePrDraft } from './prWorkflow.js';
 import { formatEvalScorecard, runCodingEvalSuite } from './benchmarks/codingEval.js';
+import { formatProjectRulesReport } from './projectInstructions.js';
+import { buildRepoMap } from './codebase/repoMap.js';
+import { backgroundTaskManager } from './backgroundTasks.js';
 
 export interface CommandCompletionItem {
   value: string;
@@ -2969,6 +2972,86 @@ export const COMMANDS: SlashCommandDefinition[] = [
           return res.ok ? ok(res.output) : fail(res.output);
         }
         return fail(`Unknown pr action "${safeDisplay(sub)}". Try: status, draft, logs.`);
+      } catch (err) {
+        return fail(safeDisplay(errMsg(err)));
+      }
+    }
+  },
+
+  {
+    name: 'rules',
+    scope: 'local',
+    usage: '/rules',
+    description: 'Show hierarchical project instructions loaded from CAUSYNE.md, AGENTS.md, CLAUDE.md, and .causyne/rules/',
+    dialogTitle: 'Project Rules',
+    run: async (_argv, ctx = {}) => {
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      return ok(formatProjectRulesReport(ws));
+    }
+  },
+
+  {
+    name: 'map',
+    aliases: ['repomap'],
+    scope: 'local',
+    usage: '/map [--chars N] [focusFile...]',
+    description: 'Render a PageRank-ranked repository symbol and dependency architecture map',
+    dialogTitle: 'Repository Map',
+    run: async (argv, ctx = {}) => {
+      const ws = ctx.loop?.workspaceRoot || process.cwd();
+      let maxChars = 6000;
+      const focusFiles: string[] = [];
+      for (let i = 0; i < argv.length; i++) {
+        const tok = argv[i] ?? '';
+        if (tok === '--chars') {
+          const parsed = Number.parseInt(argv[++i] || '6000', 10);
+          if (Number.isFinite(parsed) && parsed >= 400) maxChars = Math.min(48_000, parsed);
+        } else if (tok.startsWith('--chars=')) {
+          const parsed = Number.parseInt(tok.slice('--chars='.length), 10);
+          if (Number.isFinite(parsed) && parsed >= 400) maxChars = Math.min(48_000, parsed);
+        } else if (tok && !tok.startsWith('-')) {
+          focusFiles.push(tok);
+        }
+      }
+      const result = buildRepoMap(ws, { maxChars, focusFiles });
+      return ok(result.rendered);
+    }
+  },
+
+  {
+    name: 'tasks',
+    scope: 'local',
+    usage: '/tasks [list|output <id>|stop <id>]',
+    description: 'Inspect or stop managed OS-sandboxed background tasks',
+    dialogTitle: 'Background Tasks',
+    complete: () => [
+      { value: 'list', label: 'list', description: 'list managed background tasks' },
+      { value: 'output', label: 'output <id>', description: 'read buffered output from a task' },
+      { value: 'stop', label: 'stop <id>', description: 'stop a running background task' }
+    ],
+    run: async (argv) => {
+      const sub = (argv[0] || 'list').toLowerCase();
+      if (sub === 'list') {
+        const list = backgroundTaskManager.list();
+        if (list.length === 0) return ok('No managed background tasks recorded.');
+        const lines = [`Background Tasks (${list.length})`, ''];
+        for (const t of list) {
+          lines.push(`  • ${t.taskId} [${t.status}] (${t.sandboxBackend}) ${t.label}`);
+        }
+        return ok(lines.join('\n'));
+      }
+      const id = argv[1];
+      if (!id) return fail(`Usage: /tasks ${sub} <taskId>`);
+      try {
+        if (sub === 'output') {
+          const res = backgroundTaskManager.readOutput(id, 0);
+          return ok(res.output || `(no output yet; status=${res.status.status})`);
+        }
+        if (sub === 'stop') {
+          const snap = backgroundTaskManager.stop(id);
+          return ok(`Stopped background task ${snap.taskId} (status=${snap.status}).`);
+        }
+        return fail(`Unknown tasks action "${safeDisplay(sub)}". Try: list, output, stop.`);
       } catch (err) {
         return fail(safeDisplay(errMsg(err)));
       }

@@ -363,6 +363,26 @@ program
   });
 
 program
+  .command('rules')
+  .description('Show hierarchical project instructions loaded from CAUSYNE.md, AGENTS.md, CLAUDE.md, and .causyne/rules/')
+  .action(async () => {
+    const result = await runCommand('rules', [], { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
+  .command('map [focusFiles...]')
+  .description('Render a PageRank-ranked repository symbol and dependency architecture map')
+  .option('--chars <count>', 'Maximum output length in characters', '6000')
+  .action(async (focusFiles: string[] | undefined, options: Record<string, any>) => {
+    const argv = ['--chars', String(options.chars ?? '6000'), ...(focusFiles || [])];
+    const result = await runCommand('map', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
   .command('eval')
   .description('Run the reproducible Causyne coding & governance benchmark suite')
   .option('--json', 'Emit machine-readable JSON scorecard')
