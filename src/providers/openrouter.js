@@ -87,7 +87,21 @@ export class OpenRouterProvider extends LLMProvider {
         if (!apiKey) {
             throw new Error('OpenRouter API key is required. Run /openrouter connect or /setup to connect your OpenRouter account.');
         }
-        const preparedMessages = this.prepareMessages(messages);
+        const supportsExplicitCacheControl = /^(?:anthropic\/|google\/gemini-)/i.test(this.model);
+        const preparedMessages = this.prepareMessages(messages).map((msg, idx) => {
+            const source = messages[idx];
+            if (supportsExplicitCacheControl
+                && source?.cacheAnchor === true
+                && msg?.role === 'system'
+                && typeof msg.content === 'string'
+                && msg.content.length >= 1024) {
+                return {
+                    ...msg,
+                    content: [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }]
+                };
+            }
+            return msg;
+        });
         const shouldStream = wantsStreaming(options);
         const payload = {
             model: this.model,

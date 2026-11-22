@@ -19,6 +19,15 @@ test('Software Engineering archetype classifies all backend, API, systems, and r
     assert.equal(scope.archetype, 'software_engineering', `Prompt "${prompt}" must resolve to software_engineering`);
     assert.ok(scope.toolScope?.has('fs_write'), 'Must preload fs_write');
     assert.ok(scope.toolScope?.has('fs_edit'), 'Must preload fs_edit');
+    assert.ok(scope.toolScope?.has('apply_patch'), 'Must preload apply_patch for atomic multi-file refactors');
     assert.ok(scope.toolScope?.has('sysRun'), 'Must preload sysRun');
+    assert.equal(scope.toolScope?.has('browser_act'), false, 'Pure backend/CLI SWE prompts must not preload 3.8KB browser_act schema');
   }
+});
+
+test('Software Engineering prompts with explicit web intent still preload browser verification tools', () => {
+  const scope = determineToolScope('Fix the bug in the TypeScript API endpoint and verify the React HTML page in localhost');
+  assert.equal(scope.archetype, 'software_engineering');
+  assert.ok(scope.toolScope?.has('apply_patch'));
+  assert.ok(scope.toolScope?.has('browser_act'));
 });

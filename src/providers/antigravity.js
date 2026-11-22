@@ -806,20 +806,18 @@ export class AntigravityProvider extends LLMProvider {
     formatConversation(messages, tools = []) {
         const lines = [];
         // Host capabilities must be learned from real tool results in this session.
+        const hasPolicyInMessages = messages.some((m) => m?.role === 'system' && typeof m.content === 'string' && m.content.includes(PEER_COLLABORATION_POLICY));
         lines.push('[System Instructions]\n' +
             'You are the execution engine for Causyne Agent, operating inside the user\'s workspace. ' +
-            PEER_COLLABORATION_POLICY + '\n' +
-            'Do not claim a tool action succeeded without evidence. When requesting a Causyne host tool, output an explicit tool call in this exact format:\n' +
-            '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n' +
-            'Causyne Agent will execute the tool in its secure environment and return the results back to you.\n\n' +
+            (hasPolicyInMessages ? '' : `${PEER_COLLABORATION_POLICY}\n`) +
+            'Do not claim a tool action succeeded without evidence. When requesting a Causyne host tool, output:\n' +
+            '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n' +
             '[Action Directive]\n' +
-            'Follow the host task scope and verification requirements. Invoke only tools needed for that task. ' +
-            'Put file contents in executable tool-call arguments rather than repeating whole drafts in reasoning or summaries. ' +
-            'Do not add unrequested subsystems or keep editing completed work to appear productive. ' +
-            'NEVER reply with conversational pleasantries when the user has supplied a task. ' +
-            'Do not present pending tool calls as completed work. Use actual results, and report blockers precisely.\n\n' +
+            'Follow the task scope and execute directly with your native tools (or Causyne host tools when needed). ' +
+            'When target files and verification commands are specified, read those files, apply minimal accurate edits, and verify with the project test/build command — avoid redundant git log, find, or throwaway scratch probes. ' +
+            'Put file contents directly in edit/write arguments, NEVER reply with conversational pleasantries, and report verified outcomes or blockers concisely.\n\n' +
             '[Language & Communication Directive]\n' +
-            'Dynamically reflect and match the exact language used by the user in their prompt. Respond naturally in that same language. Never send conversational pleasantries or canned greetings.');
+            'Communicate concisely and strictly in English with zero canned greetings.');
         if (tools && tools.length > 0) {
             const toolSummaries = formatToolContracts(tools);
             lines.push(`[Available Tools]\nYou may invoke tools when needed by outputting:\n<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n${toolSummaries}`);

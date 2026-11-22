@@ -270,6 +270,7 @@ export function determineToolScope(prompt, _taskShape) {
             'fs_read',
             'fs_write',
             'fs_edit',
+            'apply_patch',
             'fs_list',
             'fs_search',
             'sysRun',
@@ -288,6 +289,7 @@ export function determineToolScope(prompt, _taskShape) {
         const tools = new Set([
             'fs_write',
             'fs_edit',
+            'apply_patch',
             'fs_read',
             'fs_list',
             'sysRun',
@@ -330,6 +332,7 @@ export function determineToolScope(prompt, _taskShape) {
             'creative_apps',
             'fs_write',
             'fs_edit',
+            'apply_patch',
             'fs_read',
             'fs_list',
             'sysRun',
@@ -351,21 +354,24 @@ export function determineToolScope(prompt, _taskShape) {
         const tools = new Set([
             'fs_write',
             'fs_edit',
+            'apply_patch',
             'fs_read',
             'fs_list',
             'fs_search',
             'sysRun',
-            'browser_act',
-            'screenshot',
-            'vision_inspect_ui',
             'update_plan',
             'tool_search'
         ]);
+        if (isWebIntent(effectiveText)) {
+            tools.add('browser_act');
+            tools.add('screenshot');
+            tools.add('vision_inspect_ui');
+        }
         return {
             toolScope: tools,
             archetype: 'software_engineering',
             suppressedPacks: ['media', 'game'],
-            reason: 'Software engineering intent focuses on code authoring, search, terminal execution, and verification; suppresses creative media and game packs.'
+            reason: 'Software engineering intent focuses on code authoring, atomic multi-file patching, search, terminal execution, and verification; suppresses creative media and game packs.'
         };
     }
     // Default: unconstrained (standard progressive disclosure and packs apply)
