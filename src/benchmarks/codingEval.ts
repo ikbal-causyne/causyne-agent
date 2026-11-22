@@ -20,10 +20,23 @@ import { multiEdit } from '../tools/multiEdit.js';
 import { createWorktree, inspectWorktreeDiff, mergeWorktree } from '../worktreeManager.js';
 import { collectWorkingTreeDiff } from '../diffReview.js';
 import { evaluateEnterprisePolicy, loadEnterprisePolicy } from '../enterprisePolicy.js';
+import { applyPatch } from '../tools/applyPatch.js';
+import { buildRepoMap } from '../codebase/repoMap.js';
+import { loadProjectInstructions } from '../projectInstructions.js';
+import { backgroundTaskManager } from '../backgroundTasks.js';
 
 export interface CodingEvalTaskResult {
   id: string;
-  category: 'bugfix' | 'refactor' | 'parallel-worktree' | 'governance' | 'diff-review';
+  category:
+    | 'bugfix'
+    | 'refactor'
+    | 'parallel-worktree'
+    | 'governance'
+    | 'diff-review'
+    | 'multi-file-patch'
+    | 'repo-map'
+    | 'project-rules'
+    | 'background-task';
   passed: boolean;
   elapsedMs: number;
   detail: string;
@@ -270,6 +283,122 @@ export async function runCodingEvalSuite(options: {
         detail: passed
           ? 'Enterprise policy deterministically enforced deny/ask rules.'
           : 'Enterprise policy evaluation mismatch.'
+      });
+    }
+
+    // Task 6: Transactional multi-file apply_patch verified by real node --test
+    {
+      const start = Date.now();
+      const repo = initTempGitRepo(root, 'task6-apply-patch');
+      fs.writeFileSync(path.join(repo, 'core.mjs'), 'export const FACTOR = 2;\n', 'utf8');
+      fs.writeFileSync(path.join(repo, 'calc.mjs'), "import { FACTOR } from './core.mjs';\nexport const scale = (n) => n * FACTOR;\n", 'utf8');
+      fs.writeFileSync(path.join(repo, 'calc.test.mjs'), [
+        "import test from 'node:test';",
+        "import assert from 'node:assert/strict';",
+        "import { scale } from './calc.mjs';",
+        "import { OFFSET } from './offset.mjs';",
+        "test('multi-file patch applied cleanly', () => {",
+        '  assert.equal(scale(5) + OFFSET, 16);',
+        '});',
+        ''
+      ].join('\n'), 'utf8');
+      commitAll(repo, 'init');
+
+      const patchRes = await applyPatch.execute({
+        patch: [
+          '*** Begin Patch',
+          '*** Add File: offset.mjs',
+          '+export const OFFSET = 1;',
+          '*** Update File: core.mjs',
+          '@@',
+          '-export const FACTOR = 2;',
+          '+export const FACTOR = 3;',
+          '*** End Patch'
+        ].join('\n')
+      }, { workspaceRoot: repo });
+      const passed = patchRes.success && runNodeTest(repo, 'calc.test.mjs');
+      results.push({
+        id: 'multi-file-apply-patch',
+        category: 'multi-file-patch',
+        passed,
+        elapsedMs: Date.now() - start,
+        detail: passed
+          ? 'Atomic multi-file patch (add + update) verified by node --test.'
+          : (patchRes.error || 'calc.test.mjs failed.')
+      });
+    }
+
+    // Task 7: PageRank repo map dependency centrality ranking
+    {
+      const start = Date.now();
+      const repo = initTempGitRepo(root, 'task7-repomap');
+      fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(repo, 'src', 'hub.ts'), 'export interface CoreState { id: string; }\nexport function createState(): CoreState { return { id: "1" }; }\n', 'utf8');
+      fs.writeFileSync(path.join(repo, 'src', 'a.ts'), "import { createState } from './hub.js';\nexport const a = () => createState();\n", 'utf8');
+      fs.writeFileSync(path.join(repo, 'src', 'b.ts'), "import { createState } from './hub.js';\nexport const b = () => createState();\n", 'utf8');
+      fs.writeFileSync(path.join(repo, 'src', 'c.ts'), "import { createState } from './hub.js';\nexport const c = () => createState();\n", 'utf8');
+      fs.writeFileSync(path.join(repo, 'src', 'leaf.ts'), 'export const lonely = 1;\n', 'utf8');
+
+      const map = buildRepoMap(repo, { maxChars: 4000 });
+      const passed = map.files.length === 5 && map.files[0]?.relPath === 'src/hub.ts';
+      results.push({
+        id: 'repo-map-centrality',
+        category: 'repo-map',
+        passed,
+        elapsedMs: Date.now() - start,
+        detail: passed
+          ? 'PageRank ranked most-imported hub module #1 above leaf modules.'
+          : `Expected src/hub.ts at rank #1, got ${map.files[0]?.relPath || '(none)'}.`
+      });
+    }
+
+    // Task 8: Hierarchical project instructions precedence (root -> subproject -> rules)
+    {
+      const start = Date.now();
+      const repo = initTempGitRepo(root, 'task8-rules');
+      const sub = path.join(repo, 'packages', 'api');
+      fs.mkdirSync(path.join(sub, '.causyne', 'rules'), { recursive: true });
+      fs.writeFileSync(path.join(repo, 'AGENTS.md'), '# Root Rule\nAlways run strict typecheck.\n', 'utf8');
+      fs.writeFileSync(path.join(sub, 'CAUSYNE.md'), '# API Rule\nKeep handlers pure.\n', 'utf8');
+      fs.writeFileSync(path.join(sub, '.causyne', 'rules', '01-security.md'), 'Validate every payload.\n', 'utf8');
+
+      const loaded = loadProjectInstructions(sub, { CAUSYNE_HOME: path.join(root, 'empty-home') });
+      const passed = loaded.entries.length === 3
+        && loaded.entries[0]!.sourcePath.endsWith('AGENTS.md')
+        && loaded.entries[1]!.sourcePath.endsWith('CAUSYNE.md')
+        && loaded.entries[2]!.sourcePath.endsWith('01-security.md');
+      results.push({
+        id: 'hierarchical-project-rules',
+        category: 'project-rules',
+        passed,
+        elapsedMs: Date.now() - start,
+        detail: passed
+          ? 'Discovered and ordered root AGENTS.md, subproject CAUSYNE.md, and .causyne/rules/*.md.'
+          : `Unexpected instruction entries (${loaded.entries.length}).`
+      });
+    }
+
+    // Task 9: Managed sandboxed background task lifecycle
+    {
+      const start = Date.now();
+      const repo = initTempGitRepo(root, 'task9-bgtask');
+      const started = backgroundTaskManager.start({
+        command: `${JSON.stringify(process.execPath)} -e "console.log('BG_EVAL_OK')"`,
+        cwd: repo,
+        workspaceRoots: [repo],
+        label: 'eval-bg'
+      });
+      const finalSnap = await backgroundTaskManager.wait(started.taskId, 10_000);
+      const out = backgroundTaskManager.readOutput(started.taskId, 0);
+      const passed = finalSnap.status === 'completed' && finalSnap.exitCode === 0 && out.output.includes('BG_EVAL_OK');
+      results.push({
+        id: 'managed-background-task',
+        category: 'background-task',
+        passed,
+        elapsedMs: Date.now() - start,
+        detail: passed
+          ? 'OS-sandboxed background task streamed output and completed with exit 0.'
+          : `Background task status=${finalSnap.status} exit=${String(finalSnap.exitCode)}.`
       });
     }
   } finally {
