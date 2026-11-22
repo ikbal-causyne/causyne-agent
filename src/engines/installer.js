@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { engineInstallDir } from './registry.js';
+import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 const MANIFEST_LIMIT = 1024 * 1024;
 const ASSET_LIMIT = 512 * 1024 * 1024;
 const DEFAULT_MANIFEST = 'https://github.com/ikbal-causyne/causyne-engines/releases/latest/download/engines.json';
@@ -23,23 +24,67 @@ function timeoutSignal(timeoutMs, signal) {
     const timeout = AbortSignal.timeout(timeoutMs);
     return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
+async function fetchHttpsBounded(initialUrl, headers, limit, timeoutMs, signal) {
+    let current = initialUrl;
+    for (let hops = 0; hops < 6; hops++) {
+        const verified = await assertPublicWebUrl(current);
+        if (verified.protocol !== 'https:')
+            throw new Error('Engine download must remain on HTTPS');
+        const response = await fetch(verified.href, {
+            redirect: 'manual',
+            headers,
+            signal: timeoutSignal(timeoutMs, signal)
+        });
+        if (response.status >= 300 && response.status < 400) {
+            const loc = response.headers.get('location');
+            if (!loc)
+                throw new Error(`Engine download redirect missing Location header (HTTP ${response.status})`);
+            current = new URL(loc, verified).href;
+            continue;
+        }
+        if (!response.ok)
+            throw new Error(`Request failed with HTTP ${response.status}`);
+        const declared = Number(response.headers.get('content-length') || 0);
+        if (Number.isFinite(declared) && declared > limit) {
+            throw new Error(`Response exceeds maximum allowed size (${limit} bytes)`);
+        }
+        if (!response.body) {
+            const ab = await response.arrayBuffer();
+            if (ab.byteLength > limit)
+                throw new Error(`Response exceeds maximum allowed size (${limit} bytes)`);
+            return { buffer: Buffer.from(ab), finalUrl: verified.href };
+        }
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done)
+                    break;
+                if (value) {
+                    total += value.byteLength;
+                    if (total > limit) {
+                        await reader.cancel().catch(() => { });
+                        throw new Error(`Response exceeds maximum allowed size (${limit} bytes)`);
+                    }
+                    chunks.push(Buffer.from(value));
+                }
+            }
+        }
+        finally {
+            reader.releaseLock();
+        }
+        return { buffer: Buffer.concat(chunks, total), finalUrl: verified.href };
+    }
+    throw new Error('Engine download exceeded maximum redirect hops');
+}
 async function readLocation(location, limit, signal) {
     if (/^http:/i.test(location))
         throw new Error('Engine manifest must use HTTPS or a local file');
     if (/^https:/i.test(location)) {
-        const response = await fetch(location, {
-            redirect: 'follow',
-            headers: { accept: 'application/json', 'user-agent': 'Causyne-Agent' },
-            signal: timeoutSignal(20_000, signal)
-        });
-        if (!response.ok)
-            throw new Error(`Manifest request failed with HTTP ${response.status}`);
-        if (new URL(response.url || location).protocol !== 'https:')
-            throw new Error('Engine manifest redirect left HTTPS');
-        const text = await response.text();
-        if (Buffer.byteLength(text) > limit)
-            throw new Error('Manifest is larger than 1 MB');
-        return { text, base: response.url || location };
+        const { buffer, finalUrl } = await fetchHttpsBounded(location, { accept: 'application/json', 'user-agent': 'Causyne-Agent' }, limit, 20_000, signal);
+        return { text: buffer.toString('utf8'), base: finalUrl };
     }
     const file = location.startsWith('file:') ? fileURLToPath(location) : path.resolve(location);
     const stat = await fs.stat(file);
@@ -111,22 +156,8 @@ async function assetBytes(url, signal) {
             throw new Error('Engine asset is missing or too large');
         return await fs.readFile(file);
     }
-    const response = await fetch(url, {
-        redirect: 'follow',
-        headers: { accept: 'application/octet-stream', 'user-agent': 'Causyne-Agent' },
-        signal: timeoutSignal(600_000, signal)
-    });
-    if (!response.ok)
-        throw new Error(`Engine download failed with HTTP ${response.status}`);
-    if (new URL(response.url || url).protocol !== 'https:')
-        throw new Error('Engine download redirect left HTTPS');
-    const declared = Number(response.headers.get('content-length') || 0);
-    if (declared > ASSET_LIMIT)
-        throw new Error('Engine asset is larger than 512 MB');
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > ASSET_LIMIT)
-        throw new Error('Engine asset is larger than 512 MB');
-    return bytes;
+    const { buffer } = await fetchHttpsBounded(url, { accept: 'application/octet-stream', 'user-agent': 'Causyne-Agent' }, ASSET_LIMIT, 600_000, signal);
+    return buffer;
 }
 async function currentVersion(adapter) {
     try {

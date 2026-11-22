@@ -1,6 +1,42 @@
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
 import { assertPublicWebUrl } from '../browser/urlPolicy.js';
 import { validateToolArguments } from './argumentValidation.js';
+import { assertSafeWorkspaceOutput } from './toolPathSafety.js';
+const MAX_MEDIA_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+async function readBoundedMediaResponse(response, maxBytes = MAX_MEDIA_DOWNLOAD_BYTES) {
+    const declaredLen = Number(response.headers.get('content-length') ?? '0');
+    if (Number.isFinite(declaredLen) && declaredLen > maxBytes) {
+        throw new Error('Media download exceeds 50 MB limit.');
+    }
+    if (!response.body) {
+        const ab = await response.arrayBuffer();
+        if (ab.byteLength > maxBytes)
+            throw new Error('Media download exceeds 50 MB limit.');
+        return Buffer.from(ab);
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            if (value) {
+                total += value.byteLength;
+                if (total > maxBytes) {
+                    await reader.cancel().catch(() => { });
+                    throw new Error('Media download exceeds 50 MB limit.');
+                }
+                chunks.push(Buffer.from(value));
+            }
+        }
+    }
+    finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
+}
 function resolveApprovalHost(sandbox) {
     if (typeof sandbox?.waitForApproval === 'function')
         return sandbox;
@@ -198,19 +234,14 @@ async function routeMultimediaRequest(args, config, sandbox, tokenTracker) {
         if (verifiedUrl.protocol !== 'https:') {
             return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: `Provider ${provider} returned a non-HTTPS media download URL.` };
         }
-        const mediaResp = await fetch(verifiedUrl, { redirect: 'error', signal: buildMediaSignal(sandbox?.signal) });
+        const mediaResp = await fetch(verifiedUrl, { redirect: 'manual', signal: buildMediaSignal(sandbox?.signal) });
+        if (mediaResp.status >= 300 && mediaResp.status < 400) {
+            return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: 'Unexpected redirect during media download.' };
+        }
         if (!mediaResp.ok) {
             return { success: false, code: 'MEDIA_PROVIDER_ERROR', status: mediaResp.status, error: `Media download returned HTTP ${mediaResp.status}.` };
         }
-        const declaredLen = Number(mediaResp.headers.get('content-length') ?? '0');
-        if (Number.isFinite(declaredLen) && declaredLen > 50 * 1024 * 1024) {
-            return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: 'Media download exceeds 50 MB limit.' };
-        }
-        const ab = await mediaResp.arrayBuffer();
-        if (ab.byteLength > 50 * 1024 * 1024) {
-            return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: 'Media download exceeds 50 MB limit.' };
-        }
-        buffer = Buffer.from(ab);
+        buffer = await readBoundedMediaResponse(mediaResp);
     }
     if (!buffer || !validateMagicNumbers(buffer))
         return { success: false, code: 'INVALID_MEDIA_RESPONSE', error: `Provider ${provider} did not return a supported media file. No artifact was produced.` };
@@ -273,6 +304,9 @@ export const generateMediaViaApi = {
             const outputPath = isHomePath ? resolveUserPath(rawOutputPath) : path.resolve(workspaceRoot, rawOutputPath);
             if (pathPolicy?.isPathAllowed && !pathPolicy.isPathAllowed(outputPath)) {
                 return { success: false, error: `Path outside allowed workspace: ${outputPath}` };
+            }
+            if (sandbox && (sandbox.workspaceRoot || sandbox.workspacePaths?.length || sandbox.parentLoop?.workspaceRoot)) {
+                await assertSafeWorkspaceOutput(outputPath, sandbox);
             }
             try {
                 const existingStat = fs.lstatSync(outputPath);
@@ -347,7 +381,14 @@ export const generateMediaViaApi = {
             let attempts = 0;
             while (attempts < 3) {
                 attempts++;
-                const response = await fetch(targetUrl, { headers: { Authorization: `Bearer ${pollinationsKey}` }, signal: buildMediaSignal(sandbox?.signal) });
+                const response = await fetch(targetUrl, {
+                    redirect: 'manual',
+                    headers: { Authorization: `Bearer ${pollinationsKey}` },
+                    signal: buildMediaSignal(sandbox?.signal)
+                });
+                if (response.status >= 300 && response.status < 400) {
+                    return { success: false, code: 'INVALID_MEDIA_RESPONSE', attempts, error: 'Unexpected redirect from Pollinations media endpoint. No media artifact was produced.' };
+                }
                 if (!response.ok) {
                     const retryable = response.status === 429 || response.status >= 500;
                     if (!retryable || attempts === 3)
@@ -367,7 +408,7 @@ export const generateMediaViaApi = {
                     });
                     continue;
                 }
-                const candidate = Buffer.from(await response.arrayBuffer());
+                const candidate = await readBoundedMediaResponse(response);
                 if (!validateMagicNumbers(candidate))
                     return { success: false, code: 'INVALID_MEDIA_RESPONSE', attempts, error: 'Provider response is not a supported media file. No artifact was produced.' };
                 buffer = candidate;

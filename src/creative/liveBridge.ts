@@ -572,10 +572,12 @@ export function buildAdobeHostInvocationPlan(
     const matchedApp = entries.find(a => a.startsWith(appPrefix) && a.endsWith('.app'));
     if (!matchedApp) return null;
     const appName = matchedApp.replace(/\.app$/, '');
+    const escapeAppleScript = (val: string): string =>
+      '"' + String(val).replace(/[\r\n\0]/g, '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
     const appleScript =
       host === 'after-effects'
-        ? `tell application "${appName}" to DoScriptFile POSIX file ${JSON.stringify(scriptFile)}`
-        : `tell application "${appName}" to do javascript file POSIX file ${JSON.stringify(scriptFile)}`;
+        ? `tell application ${escapeAppleScript(appName)} to DoScriptFile POSIX file ${escapeAppleScript(scriptFile)}`
+        : `tell application ${escapeAppleScript(appName)} to do javascript file POSIX file ${escapeAppleScript(scriptFile)}`;
     return {
       platform,
       host,

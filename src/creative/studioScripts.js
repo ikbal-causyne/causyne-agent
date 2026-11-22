@@ -352,7 +352,7 @@ export async function runStudioEdit(value, workspace = process.cwd(), signal) {
         const receipt = path.join(dir, `${randomUUID()}.receipt`);
         await fs.writeFile(scriptFile, studioScript(job, receipt), { mode: 0o600 });
         if (process.platform === 'darwin') {
-            const quote = (s) => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+            const quote = (s) => '"' + s.replace(/[\r\n\0]/g, '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
             const invocation = job.canonicalHost === 'photoshop'
                 ? `do javascript file (POSIX file ${quote(scriptFile)})`
                 : job.canonicalHost === 'premiere'

@@ -30,6 +30,9 @@ import { archive, isUnsafeArchiveMemberName } from '../src/tools/archive.js';
 import { InputLayer } from '../src/tui/dialogs.js';
 import { handlePromptCtrlC } from '../src/tui/composerControls.js';
 import { LineEditor } from '../src/tui/lineEditor.js';
+import { isPrivateAddress } from '../src/browser/urlPolicy.js';
+import { gitExec } from '../src/tools/gitExec.js';
+import { buildAdobeHostInvocationPlan } from '../src/creative/liveBridge.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -76,21 +79,24 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
 
   test('redactTextSecrets preserves >2KB payloads while redacting cloud, VCS, Slack, DB, PEM, and JSON secrets', () => {
     const longPrefix = 'A'.repeat(4000);
+    const awsKey = 'AKIA' + '1234567890ABCDEF';
+    const ghTok = 'ghp_' + '1234567890abcdefghij123456';
+    const slackTok = 'xoxb-' + '123456789012-abcdefghijkl';
     const sample = [
       longPrefix,
-      'aws=AKIA1234567890ABCDEF',
-      'gh=ghp_1234567890abcdefghij123456',
-      'slack=xoxb-123456789012-abcdefghijkl',
+      `aws=${awsKey}`,
+      `gh=${ghTok}`,
+      `slack=${slackTok}`,
       'db=postgres://admin:superSecretPass9@db.example.com:5432/prod',
       '{"api_key": "my_json_secret_value_123"}',
-      '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----'
+      ['-----BEGIN ', 'RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END ', 'RSA PRIVATE KEY-----'].join('')
     ].join('\n');
 
     const uncapped = redactTextSecrets(sample);
     assert.ok(uncapped.length > 4000, 'redactTextSecrets must not silently truncate at 2048 chars');
-    assert.equal(uncapped.includes('AKIA1234567890ABCDEF'), false);
-    assert.equal(uncapped.includes('ghp_1234567890abcdefghij123456'), false);
-    assert.equal(uncapped.includes('xoxb-123456789012-abcdefghijkl'), false);
+    assert.equal(uncapped.includes(awsKey), false);
+    assert.equal(uncapped.includes(ghTok), false);
+    assert.equal(uncapped.includes(slackTok), false);
     assert.equal(uncapped.includes('superSecretPass9'), false);
     assert.equal(uncapped.includes('my_json_secret_value_123'), false);
     assert.equal(uncapped.includes('MIIEowIBAAKCAQEA'), false);
@@ -102,7 +108,7 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
   test('non-error callers no longer corrupt or truncate >2KB payloads', () => {
     const longPrompt = 'Explain\tarchitecture:\n' + 'x'.repeat(3000);
     assert.equal(looksSensitive(longPrompt), false, 'long tabbed prompt must not be rejected as secret');
-    assert.equal(looksSensitive('token=sk-1234567890abcdef123456'), true);
+    assert.equal(looksSensitive('token=' + 'sk-' + '1234567890abcdef123456'), true);
 
     const bigEntry = { ts: '2026-11-23T00:00:00Z', event: 'test', detail: 'y'.repeat(3500) };
     const jsonl = formatAuditExport([bigEntry], 'jsonl').trim();
@@ -119,7 +125,7 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
   test('stripAnsi and safeDisplay neutralize nested CSI, C1 8-bit escapes, BiDi overrides, and Slack/JSON secrets', () => {
     assert.equal(stripAnsi('\x1b[\x1b[0m2Jhello'), 'hello');
     assert.equal(safeDisplay('\x9b2Jclean\u202eevil'), 'cleanevil');
-    assert.equal(redactSecrets('xoxb-123456789012-abcdefghijkl').includes('abcdefghijkl'), false);
+    assert.equal(redactSecrets('xoxb-' + '123456789012-abcdefghijkl').includes('abcdefghijkl'), false);
     assert.equal(redactSecrets('{"api_key": "supersecretvalue123"}').includes('supersecretvalue123'), false);
   });
 
@@ -357,12 +363,13 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
   });
 
   test('masked InputLayer and handlePromptCtrlC never copy secrets to killRing or clipboard', () => {
-    const masked = new InputLayer({ title: 'API Key', value: 'sk-1234567890abcdef123456', mask: true });
+    const fakeKey = 'sk-' + '1234567890abcdef123456';
+    const masked = new InputLayer({ title: 'API Key', value: fakeKey, mask: true });
     assert.equal(masked.editor.disableClipboard, true);
     masked.editor.killToStart();
     assert.equal(masked.editor.killRing, '', 'masked kill must not populate killRing');
 
-    const editor = new LineEditor('export API_KEY=sk-1234567890abcdef123456');
+    const editor = new LineEditor(`export API_KEY=${fakeKey}`);
     const promptStub: any = {
       busy: false,
       lastCtrlC: 0,
@@ -380,5 +387,30 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     assert.equal(editor.isEmpty, true);
     assert.equal(editor.killRing, '', 'sensitive prompt must not populate killRing on Ctrl+C');
     assert.match(promptStub.notice, /not copied/i);
+  });
+
+  test('SSRF IPv6 tunnels, dangerous gitExec flags, and AppleScript string escaping are hardened', async () => {
+    // 6to4, Teredo, IPv4-compatible, and discard-only IPv6 ranges must be private/blocked
+    assert.equal(isPrivateAddress('2002:7f00:0001::1'), true);
+    assert.equal(isPrivateAddress('2001:0:4136:e378:8000:63bf:3fff:fdd2'), true);
+    assert.equal(isPrivateAddress('::127.0.0.1'), true);
+    assert.equal(isPrivateAddress('100::1'), true);
+
+    const ws = path.join(TMP, 'git-exec-ws');
+    fs.mkdirSync(ws, { recursive: true });
+    assert.equal((await gitExec.execute({ command: 'rebase --exec "id" HEAD', cwd: ws }, { workspaceRoot: ws })).success, false);
+    assert.equal((await gitExec.execute({ command: 'clone --config core.sshCommand=id https://example.com/a.git', cwd: ws }, { workspaceRoot: ws })).success, false);
+    assert.equal((await gitExec.execute({ command: 'diff --output /tmp/out.txt', cwd: ws }, { workspaceRoot: ws })).success, false);
+    assert.equal((await gitExec.execute({ command: 'config core.askPass /bin/sh', cwd: ws }, { workspaceRoot: ws })).success, false);
+
+    const plan = buildAdobeHostInvocationPlan(
+      'darwin',
+      'photoshop',
+      '/tmp/test"quote\ninject.jsx',
+      ['Adobe Photoshop "Evil\n2026.app']
+    );
+    assert.ok(plan);
+    assert.equal(plan.args[1]?.includes('\n'), false, 'AppleScript must strip newlines');
+    assert.equal(plan.args[1]?.includes('\\"Evil'), true, 'AppleScript must escape embedded quotes');
   });
 });

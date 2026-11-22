@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { BaseContinuumAdapter, isSafeIdentifier, readBoundedLines } from './base.js';
 import type { ContinuumSessionSummary, ContinuumSessionDetail, ContinuumMessage } from '../types.js';
@@ -49,7 +50,10 @@ export class AntigravityAdapter extends BaseContinuumAdapter {
           let ws = '';
           try {
             const parsed = JSON.parse(row.workspace_uris);
-            ws = Array.isArray(parsed) && parsed[0] ? String(parsed[0]).replace('file://', '') : '';
+            if (Array.isArray(parsed) && parsed[0]) {
+              const rawUri = String(parsed[0]);
+              ws = rawUri.startsWith('file://') ? fileURLToPath(rawUri) : rawUri;
+            }
           } catch {
             ws = row.workspace_uris || '';
           }
@@ -132,8 +136,9 @@ export class AntigravityAdapter extends BaseContinuumAdapter {
 
     let tpath: string | null = null;
     for (const base of bases) {
-      const candidate = path.join(base, rawId, '.system_generated/logs/transcript.jsonl');
-      if (path.resolve(candidate).startsWith(base) && fs.existsSync(candidate)) {
+      const resolvedBase = path.resolve(base);
+      const candidate = path.resolve(resolvedBase, rawId, '.system_generated/logs/transcript.jsonl');
+      if (candidate.startsWith(resolvedBase + path.sep) && fs.existsSync(candidate)) {
         tpath = candidate;
         break;
       }

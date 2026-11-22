@@ -168,7 +168,11 @@ export async function ${fnName}(args = {}, context = {}) {
     const rel = rawPath.replace(/\\{([^}]+)\\}/g, (_match, key) => encodeURIComponent(String(requestArgs[key])));
     for (const key of pathParamNames) delete requestArgs[key];
     const targetPath = rel.startsWith('/') ? rel.slice(1) : rel;
-    url = new URL(targetPath, base);
+    const baseUrl = new URL(base);
+    url = new URL(targetPath, baseUrl);
+    if (url.origin !== baseUrl.origin) {
+      return { success: false, error: 'Refused cross-origin request path escape.' };
+    }
   } catch (err) {
     return { success: false, error: \`Invalid request URL: \${err instanceof Error ? err.message : String(err)}\` };
   }
@@ -197,19 +201,28 @@ export async function ${fnName}(args = {}, context = {}) {
     const response = await fetch(url.toString(), {
       method: ${JSON.stringify(httpMethod)},
       headers,
+      redirect: 'error',
+      signal: AbortSignal.timeout(25000),
       body: ${httpMethod !== 'GET' ? 'JSON.stringify(requestArgs)' : 'undefined'}
     });
 
+    const maxBytes = 4 * 1024 * 1024;
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = typeof response.text === 'function' ? (await response.text()).slice(0, 500) : '';
       return {
         success: false,
         status: response.status,
-        error: \`HTTP \${response.status}: \${errorText.slice(0, 500)}\`
+        error: \`HTTP \${response.status}: \${errorText}\`
       };
     }
 
-    const data = await response.json().catch(() => ({}));
+    let data = {};
+    if (typeof response.text === 'function') {
+      const rawText = (await response.text()).slice(0, maxBytes);
+      try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = {}; }
+    } else if (typeof response.json === 'function') {
+      data = await response.json().catch(() => ({}));
+    }
     return {
       success: true,
       data

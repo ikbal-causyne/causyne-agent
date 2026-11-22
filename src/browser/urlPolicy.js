@@ -36,8 +36,15 @@ function isPrivateIpv6(address) {
         || canonical.startsWith('fe9') || canonical.startsWith('fea') || canonical.startsWith('feb')
         || canonical.startsWith('fec') || canonical.startsWith('fed') || canonical.startsWith('fee')
         || canonical.startsWith('fef') || canonical.startsWith('ff') || canonical.startsWith('2001:db8:')
-        || canonical === '2001:db8::' || canonical.startsWith('64:ff9b:'))
+        || canonical === '2001:db8::' || canonical.startsWith('64:ff9b:')
+        || canonical.startsWith('2002:') || canonical.startsWith('2001:0:') || canonical === '2001::'
+        || canonical.startsWith('2001::') || canonical.startsWith('100::') || canonical.startsWith('2001:2:'))
         return true;
+    if (canonical.startsWith('::') && !canonical.startsWith('::ffff:')) {
+        const tail = canonical.slice(2);
+        if (isIP(tail) === 4 || /^[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(tail))
+            return true;
+    }
     if (normalized.startsWith('::ffff:')) {
         const mapped = normalized.slice('::ffff:'.length);
         return isIP(mapped) === 4 ? isPrivateIpv4(mapped) : true;

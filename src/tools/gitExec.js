@@ -85,8 +85,8 @@ export const gitExec = {
         catch (error) {
             return { success: false, error: getErrorMessage(error) };
         }
-        const blockedGlobalFlags = new Set(['-c', '-C', '--git-dir', '--work-tree', '--exec-path', '--config-env', '--namespace', '--super-prefix']);
-        const blockedFlagPrefixes = ['--git-dir=', '--work-tree=', '--exec-path=', '--config-env=', '--upload-pack=', '--receive-pack=', '--output=', '-c'];
+        const blockedGlobalFlags = new Set(['-c', '-C', '--git-dir', '--work-tree', '--exec-path', '--config-env', '--namespace', '--super-prefix', '--output', '--config']);
+        const blockedFlagPrefixes = ['--git-dir=', '--work-tree=', '--exec-path=', '--config-env=', '--upload-pack=', '--receive-pack=', '--output=', '--config=', '-c'];
         const subcommand = argv[0];
         if (!subcommand || subcommand.startsWith('-')) {
             return { success: false, error: 'Git command must start with a subcommand rather than global options.' };
@@ -99,11 +99,11 @@ export const gitExec = {
                 return { success: false, error: `Disallowed Git option "${sanitizeToolText(token, 64)}" is blocked for workspace isolation.` };
             }
         }
-        if (subcommand === 'config' && argv.some((token) => /(?:sshcommand|fsmonitor|hookspath|credential\.helper|diff\.external|pager|alias\.)/i.test(token))) {
+        if (subcommand === 'config' && argv.some((token) => /(?:sshcommand|fsmonitor|hookspath|askpass|core\.editor|core\.pager|merge\.tool|credential\.helper|diff\.external|pager\.|alias\.|filter\.[^=]*\.(?:clean|smudge)|protocol\.[^=]*\.allow)/i.test(token))) {
             return { success: false, error: 'Modifying command-executing Git config keys is blocked.' };
         }
-        if (subcommand === 'rebase' && argv.some((arg) => arg === '-i' || arg === '--interactive')) {
-            return { success: false, error: 'Interactive Git rebase is not supported. Use precise non-interactive commands.' };
+        if (subcommand === 'rebase' && argv.some((arg) => arg === '-i' || arg === '--interactive' || arg === '-x' || arg === '--exec' || arg.startsWith('--exec=') || arg.startsWith('-x'))) {
+            return { success: false, error: 'Interactive or command-executing Git rebase is not supported. Use precise non-interactive commands.' };
         }
         const forcingPush = subcommand === 'push' && argv.slice(1).some((arg) => arg === '-f' || arg === '--force' || arg.startsWith('--force-with-lease') || arg.startsWith('+'));
         const forcingBranch = subcommand === 'branch' && (argv.includes('-D') || (argv.includes('--delete') && (argv.includes('--force') || argv.includes('-f'))));
