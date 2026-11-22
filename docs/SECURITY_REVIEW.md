@@ -1,6 +1,6 @@
 # Security review and migration status
 
-Review date: 2026-10-21. This is a scoped source and package review, not a
+Review date: 2026-11-22. This is a scoped source and package review, not a
 claim that Causyne Agent is free from vulnerabilities.
 
 ## OpenSSF records
@@ -49,8 +49,26 @@ The active source takes a different architecture and distribution path:
 - It is a foreground local CLI. Pairing, phone control, relays, WebRTC/P2P,
   background daemon lifecycle, and remote headless command intake are absent.
 - `bytenode`, `werift`, and `ws` are not production dependencies. The package
-  ships readable source and has no install, postinstall, prepare, or automatic
-  update hook.
+  ships readable source compiled from strict TypeScript and has no npm
+  `install`, `postinstall`, or `prepare` lifecycle scripts. For managed global
+  npm / installer distributions, `bin/causyne.js` invokes a background update
+  check against the official npm registry (`@causyne/agent`) that enforces HTTPS
+  on `registry.npmjs.org`, SRI digest validation, Sigstore provenance checks,
+  and `--ignore-scripts`; source checkouts are never rewritten, and automatic
+  checks can be disabled with `CAUSYNE_DISABLE_AUTOUPDATE=1`.
+- Process sandboxing (`src/tools/osSandbox.ts`) defaults to `workspace-write`
+  (macOS Seatbelt / Linux Bubblewrap) for both stateless (`sysRun`) and
+  persistent (`terminal.persistent_shell`) shell execution, with credential-path
+  denials and explicit opt-out via `CAUSYNE_OS_SANDBOX=off`.
+- Credential custody (`src/osKeychain.ts`, `src/configVault.ts`) defaults to
+  `auto` OS keychain protection on interactive desktops (macOS Keychain via
+  stdin, Linux Secret Service via stdin, Windows DPAPI) with mode-`0600`
+  AES-256-GCM encrypted fallback and `off` default in CI/test runners.
+- Enterprise governance (`src/enterprisePolicy.ts`, `src/auditLog.ts`) provides
+  fail-closed declarative `causyne.policy.json` (`allow`/`ask`/`deny` rules for
+  tools, commands, paths, domains, and MCP servers) and JSONL/CSV audit log
+  export (`causyne audit export`) with secret redaction and CSV formula-injection
+  neutralization.
 - Automatic Cortex dependency installation is disabled. Optional capability
   packages use a fixed version allowlist, require an approval-class capability
   grant, install into local Causyne state, and use `npm install --ignore-scripts`.
@@ -82,9 +100,10 @@ The active source takes a different architecture and distribution path:
   tarballs.
 
 At review time, `npm audit --omit=dev` reported zero known vulnerabilities in
-the active locked production graph. npm's audit metadata counted 106 production
-dependencies, and no dependency lifecycle scripts were recorded in the
-lockfile.
+the active locked production graph. The lockfile contains 16 production
+packages, no dependency lifecycle scripts were recorded in the lockfile, all
+hand-authored `src/` modules compile under strict TypeScript, and GitHub CodeQL
+code scanning reports zero open alerts across 3-OS CI validation.
 
 ## Remaining risk
 
