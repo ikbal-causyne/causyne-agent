@@ -8,7 +8,8 @@ import {
   extractTextToolCalls
 } from './wireNormalizer.js';
 import { stripToolCallMarkup } from '../implementationPlan.js';
-import { resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { formatToolContracts } from './toolContracts.js';
+import { ProviderHttpError, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOllamaChat, wantsStreaming } from './byokStream.js';
 
 export interface OllamaModelMeta {
@@ -153,16 +154,36 @@ export class OllamaProvider extends LLMProvider {
     return normalized;
   }
 
+  private injectTextToolContracts(messages: any[], tools: any[]): any[] {
+    if (!Array.isArray(tools) || tools.length === 0) return messages;
+    const contracts = formatToolContracts(tools);
+    const instruction =
+      'Native JSON tool calling is unavailable for this local model. ' +
+      'To invoke a tool, output ONLY a JSON block wrapped in <tool_call> tags:\n' +
+      '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n' +
+      `Available Tools:\n${contracts}`;
+    const cloned = messages.map(m => ({ ...m }));
+    const firstSysIdx = cloned.findIndex(m => m?.role === 'system');
+    if (firstSysIdx !== -1 && typeof cloned[firstSysIdx].content === 'string') {
+      cloned[firstSysIdx].content = `${cloned[firstSysIdx].content}\n\n${instruction}`;
+    } else {
+      cloned.unshift({ role: 'system', content: instruction });
+    }
+    return cloned;
+  }
+
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
     const sanitizedMessages = normalizeMessagesForOllama(this.prepareMessages(messages));
     const endpoint = this.baseUrl || 'http://localhost:11434/api/chat';
+    const origin = ollamaOriginUrl(endpoint);
+    const cacheKey = `${origin}|${this.model}`;
     const trimmedKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (trimmedKey) headers['Authorization'] = `Bearer ${trimmedKey}`;
     const secrets = trimmedKey ? [trimmedKey] : [];
 
     const meta = this.configuredNumCtx
-      ? null
+      ? (ollamaMetaCache.get(cacheKey) ?? null)
       : await this.probeModelMeta(endpoint, headers, secrets, options.signal);
     const effectiveNumCtx = this.configuredNumCtx
       ?? (meta?.contextLength ? Math.min(meta.contextLength, 32_768) : 16_384);
@@ -175,20 +196,28 @@ export class OllamaProvider extends LLMProvider {
     if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
       ollamaOptions['num_predict'] = Math.floor(options.maxTokens);
     }
-    const payload: Record<string, any> = {
-      model: this.model,
-      messages: sanitizedMessages,
-      stream: false,
-      options: ollamaOptions,
-      ...(options.jsonMode ? { format: 'json' } : {})
-    };
+
+    const hasTools = Array.isArray(options.tools) && options.tools.length > 0;
+    const skipNativeTools = meta?.supportsTools === false;
 
     let freeFormPaths = new Map<string, string[][]>();
-    if (options.tools && options.tools.length > 0) {
-      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'ollama');
-      payload['tools'] = scanReport.adaptedTools;
+    let adaptedTools: any[] | undefined;
+    if (hasTools) {
+      const scanReport = scanAndAdaptToolsForProvider(options.tools!, 'ollama');
+      adaptedTools = scanReport.adaptedTools;
       freeFormPaths = scanReport.freeFormPaths;
     }
+
+    const buildPayload = (useNativeTools: boolean): Record<string, any> => ({
+      model: this.model,
+      messages: !useNativeTools && hasTools
+        ? this.injectTextToolContracts(sanitizedMessages, options.tools!)
+        : sanitizedMessages,
+      stream: false,
+      options: ollamaOptions,
+      ...(useNativeTools && adaptedTools ? { tools: adaptedTools } : {}),
+      ...(options.jsonMode ? { format: 'json' } : {})
+    });
 
     const requestOpts = {
       url: endpoint,
@@ -202,17 +231,44 @@ export class OllamaProvider extends LLMProvider {
       allowInsecureHttp: this.allowInsecureHttp
     };
 
-    const data: Record<string, any> = wantsStreaming(options)
-      ? await streamOllamaChat({
-          ...requestOpts,
-          payload,
-          onChunk: options.onChunk,
-          onReasoningChunk: options.onReasoningChunk
-        })
-      : await safeProviderFetchJson({
-          ...requestOpts,
-          body: JSON.stringify(payload)
+    const runRequest = async (payload: Record<string, any>): Promise<Record<string, any>> => (
+      wantsStreaming(options)
+        ? await streamOllamaChat({
+            ...requestOpts,
+            payload,
+            onChunk: options.onChunk,
+            onReasoningChunk: options.onReasoningChunk
+          })
+        : await safeProviderFetchJson({
+            ...requestOpts,
+            body: JSON.stringify(payload)
+          })
+    );
+
+    let data: Record<string, any>;
+    const tryingNativeTools = hasTools && !skipNativeTools;
+    try {
+      data = await runRequest(buildPayload(tryingNativeTools));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const status = err instanceof ProviderHttpError ? err.status : (typeof (err as any)?.status === 'number' ? (err as any).status : null);
+      if (tryingNativeTools && status === 400 && /does not support tools|tool[s ]+not supported|unknown field.*tools/i.test(msg)) {
+        const existing = ollamaMetaCache.get(cacheKey);
+        ollamaMetaCache.set(cacheKey, {
+          ...(existing ?? { fetchedAt: Date.now() }),
+          supportsTools: false,
+          fetchedAt: Date.now()
         });
+        data = await runRequest(buildPayload(false));
+      } else if (status === 404 && /model\b.*not found|pull/i.test(msg)) {
+        throw new ProviderHttpError(
+          `Ollama model "${this.model}" is not installed locally. Run \`ollama pull ${this.model}\` or select an installed model with /model.`,
+          { status: 404 }
+        );
+      } else {
+        throw err;
+      }
+    }
 
     let content = typeof data['message']?.content === 'string' ? data['message'].content : '';
     const reasoningContent = typeof data['message']?.thinking === 'string' ? data['message'].thinking.trim() : '';

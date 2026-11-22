@@ -4,7 +4,8 @@ import { LLMProvider } from './base.js';
 import { scanAndAdaptToolsForProvider } from '../tools/toolScanner.js';
 import { normalizeMessagesForOllama, normalizeOpenAIToolCalls, extractTextToolCalls } from './wireNormalizer.js';
 import { stripToolCallMarkup } from '../implementationPlan.js';
-import { resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
+import { formatToolContracts } from './toolContracts.js';
+import { ProviderHttpError, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOllamaChat, wantsStreaming } from './byokStream.js';
 const OLLAMA_META_TTL_MS = 10 * 60 * 1000;
 const ollamaMetaCache = new Map();
@@ -141,16 +142,36 @@ export class OllamaProvider extends LLMProvider {
             normalized['images'] = images;
         return normalized;
     }
+    injectTextToolContracts(messages, tools) {
+        if (!Array.isArray(tools) || tools.length === 0)
+            return messages;
+        const contracts = formatToolContracts(tools);
+        const instruction = 'Native JSON tool calling is unavailable for this local model. ' +
+            'To invoke a tool, output ONLY a JSON block wrapped in <tool_call> tags:\n' +
+            '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n' +
+            `Available Tools:\n${contracts}`;
+        const cloned = messages.map(m => ({ ...m }));
+        const firstSysIdx = cloned.findIndex(m => m?.role === 'system');
+        if (firstSysIdx !== -1 && typeof cloned[firstSysIdx].content === 'string') {
+            cloned[firstSysIdx].content = `${cloned[firstSysIdx].content}\n\n${instruction}`;
+        }
+        else {
+            cloned.unshift({ role: 'system', content: instruction });
+        }
+        return cloned;
+    }
     async chat(messages, options = {}) {
         const sanitizedMessages = normalizeMessagesForOllama(this.prepareMessages(messages));
         const endpoint = this.baseUrl || 'http://localhost:11434/api/chat';
+        const origin = ollamaOriginUrl(endpoint);
+        const cacheKey = `${origin}|${this.model}`;
         const trimmedKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
         const headers = { 'Content-Type': 'application/json' };
         if (trimmedKey)
             headers['Authorization'] = `Bearer ${trimmedKey}`;
         const secrets = trimmedKey ? [trimmedKey] : [];
         const meta = this.configuredNumCtx
-            ? null
+            ? (ollamaMetaCache.get(cacheKey) ?? null)
             : await this.probeModelMeta(endpoint, headers, secrets, options.signal);
         const effectiveNumCtx = this.configuredNumCtx
             ?? (meta?.contextLength ? Math.min(meta.contextLength, 32_768) : 16_384);
@@ -162,19 +183,25 @@ export class OllamaProvider extends LLMProvider {
         if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
             ollamaOptions['num_predict'] = Math.floor(options.maxTokens);
         }
-        const payload = {
-            model: this.model,
-            messages: sanitizedMessages,
-            stream: false,
-            options: ollamaOptions,
-            ...(options.jsonMode ? { format: 'json' } : {})
-        };
+        const hasTools = Array.isArray(options.tools) && options.tools.length > 0;
+        const skipNativeTools = meta?.supportsTools === false;
         let freeFormPaths = new Map();
-        if (options.tools && options.tools.length > 0) {
+        let adaptedTools;
+        if (hasTools) {
             const scanReport = scanAndAdaptToolsForProvider(options.tools, 'ollama');
-            payload['tools'] = scanReport.adaptedTools;
+            adaptedTools = scanReport.adaptedTools;
             freeFormPaths = scanReport.freeFormPaths;
         }
+        const buildPayload = (useNativeTools) => ({
+            model: this.model,
+            messages: !useNativeTools && hasTools
+                ? this.injectTextToolContracts(sanitizedMessages, options.tools)
+                : sanitizedMessages,
+            stream: false,
+            options: ollamaOptions,
+            ...(useNativeTools && adaptedTools ? { tools: adaptedTools } : {}),
+            ...(options.jsonMode ? { format: 'json' } : {})
+        });
         const requestOpts = {
             url: endpoint,
             method: 'POST',
@@ -186,7 +213,7 @@ export class OllamaProvider extends LLMProvider {
             hasApiKey: Boolean(trimmedKey),
             allowInsecureHttp: this.allowInsecureHttp
         };
-        const data = wantsStreaming(options)
+        const runRequest = async (payload) => (wantsStreaming(options)
             ? await streamOllamaChat({
                 ...requestOpts,
                 payload,
@@ -196,7 +223,31 @@ export class OllamaProvider extends LLMProvider {
             : await safeProviderFetchJson({
                 ...requestOpts,
                 body: JSON.stringify(payload)
-            });
+            }));
+        let data;
+        const tryingNativeTools = hasTools && !skipNativeTools;
+        try {
+            data = await runRequest(buildPayload(tryingNativeTools));
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const status = err instanceof ProviderHttpError ? err.status : (typeof err?.status === 'number' ? err.status : null);
+            if (tryingNativeTools && status === 400 && /does not support tools|tool[s ]+not supported|unknown field.*tools/i.test(msg)) {
+                const existing = ollamaMetaCache.get(cacheKey);
+                ollamaMetaCache.set(cacheKey, {
+                    ...(existing ?? { fetchedAt: Date.now() }),
+                    supportsTools: false,
+                    fetchedAt: Date.now()
+                });
+                data = await runRequest(buildPayload(false));
+            }
+            else if (status === 404 && /model\b.*not found|pull/i.test(msg)) {
+                throw new ProviderHttpError(`Ollama model "${this.model}" is not installed locally. Run \`ollama pull ${this.model}\` or select an installed model with /model.`, { status: 404 });
+            }
+            else {
+                throw err;
+            }
+        }
         let content = typeof data['message']?.content === 'string' ? data['message'].content : '';
         const reasoningContent = typeof data['message']?.thinking === 'string' ? data['message'].thinking.trim() : '';
         let toolCalls = normalizeOpenAIToolCalls(data['message']?.tool_calls, freeFormPaths, 'call_ollama');

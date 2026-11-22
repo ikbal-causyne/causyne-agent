@@ -342,4 +342,65 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       globalThis.fetch = origFetch;
     }
   });
+
+  test('OllamaProvider retries without native tools on HTTP 400 "does not support tools" and formats HTTP 404 pull hint', async () => {
+    clearOllamaModelMetaCache();
+    const origFetch = globalThis.fetch;
+    let chatCalls = 0;
+    const chatPayloads: any[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (url.endsWith('/api/show')) {
+        return { ok: false, status: 404, headers: new Headers(), text: async () => '' } as unknown as Response;
+      }
+      chatCalls++;
+      chatPayloads.push(body);
+      if (body.model === 'missing-model') {
+        return {
+          ok: false,
+          status: 404,
+          headers: new Headers(),
+          text: async () => JSON.stringify({ error: "model 'missing-model' not found" })
+        } as unknown as Response;
+      }
+      if (body.tools) {
+        return {
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          text: async () => JSON.stringify({ error: 'registry.ollama.ai/library/deepseek-r1:latest does not support tools' })
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => JSON.stringify({
+          message: { role: 'assistant', content: '<tool_call>{"name":"fs_read","arguments":{"path":"README.md"}}</tool_call>' },
+          prompt_eval_count: 100,
+          eval_count: 20
+        })
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const ollama = new OllamaProvider({ model: 'deepseek-r1:latest', baseUrl: 'http://127.0.0.1:11434/api/chat' });
+      const tools = [{ name: 'fs_read', description: 'Read file', parameters: { type: 'object', properties: { path: { type: 'string' } } } }];
+      const res1 = await ollama.chat([{ role: 'user', content: 'Read README' }], { tools });
+      assert.equal(res1.toolCalls?.length, 1);
+      assert.equal(res1.toolCalls?.[0]?.function.name, 'fs_read');
+      assert.equal(chatCalls, 2, 'first turn retries once without payload.tools');
+      assert.equal(chatPayloads[1]?.tools, undefined);
+
+      // Second turn skips native tools directly thanks to memoization
+      await ollama.chat([{ role: 'user', content: 'Read again' }], { tools });
+      assert.equal(chatCalls, 3, 'second turn must reuse memoized supportsTools=false without extra 400');
+
+      const missing = new OllamaProvider({ model: 'missing-model', baseUrl: 'http://127.0.0.1:11434/api/chat' });
+      await assert.rejects(() => missing.chat([{ role: 'user', content: 'hi' }]), /ollama pull missing-model/i);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
 });
