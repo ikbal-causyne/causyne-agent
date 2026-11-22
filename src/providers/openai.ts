@@ -27,4 +27,14 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
   override usesMaxCompletionTokens(): boolean {
     return this.rejectsSamplingParameters();
   }
+
+  override supportsPromptCacheKey(): boolean {
+    if (!this.baseUrl) return false;
+    try {
+      const host = new URL(this.baseUrl).hostname.toLowerCase();
+      return host === 'api.openai.com';
+    } catch {
+      return false;
+    }
+  }
 }

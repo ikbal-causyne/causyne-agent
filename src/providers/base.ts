@@ -82,6 +82,7 @@ export interface ChatOptions {
   onNativeAction?: ((action: ChatResponseAction) => void) | undefined;
   onPlanUpdate?: ((plan: unknown) => void) | undefined;
   coreToolCount?: number | undefined;
+  cacheKey?: string | undefined;
   [key: string]: any;
 }
 

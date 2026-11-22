@@ -2541,6 +2541,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 const response = await this.llm.chat(prunedMessages, {
                     taskId: this.taskId,
                     conversationId: this.memoryManager?.sessionId || this.taskId,
+                    cacheKey: `causyne_${createHash('sha256').update(`${this.workspaceRoot}:${this.memoryManager?.sessionId || this.taskId}`).digest('hex').slice(0, 32)}`,
                     taskIntent: isLaunchOnlyPrompt(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '') ? 'launch' : 'general',
                     taskArchetype: determineToolScope(this.taskIntentPrompt || this.currentTaskPrompt || this.userPrompt || '', this.taskShape).archetype,
                     hardBudget: hardBudget,

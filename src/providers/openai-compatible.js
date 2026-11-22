@@ -39,6 +39,9 @@ export class OpenAICompatibleProvider extends LLMProvider {
     usesMaxCompletionTokens() {
         return false;
     }
+    supportsPromptCacheKey() {
+        return false;
+    }
     async chat(messages, options = {}) {
         const opts = options && typeof options === 'object' ? options : {};
         const preparedMessages = this.prepareMessages(messages);
@@ -63,6 +66,12 @@ export class OpenAICompatibleProvider extends LLMProvider {
         }
         if (opts.jsonMode) {
             payload['response_format'] = { type: 'json_object' };
+        }
+        if (this.supportsPromptCacheKey() && typeof opts.cacheKey === 'string') {
+            const safeKey = opts.cacheKey.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+            if (safeKey) {
+                payload['prompt_cache_key'] = safeKey;
+            }
         }
         let freeFormPaths = new Map();
         if (Array.isArray(opts.tools) && opts.tools.length > 0) {
