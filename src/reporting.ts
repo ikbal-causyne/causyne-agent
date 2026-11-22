@@ -12,6 +12,13 @@ import { safeDisplay } from './tui/text.js';
 import { terminalWidth, readableWidth } from './tui/theme.js';
 import { isAcpProvider } from './providers/acp.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
+import { LICENSE_ENFORCEMENT_ENABLED } from './licensing/policy.js';
+
+function resolveDisplayTier(liveConfig?: Record<string, unknown> | null, savedConfig?: Record<string, unknown> | null): string {
+  const configured = liveConfig?.tier ?? savedConfig?.tier;
+  if (typeof configured === 'string' && configured.trim()) return configured.trim();
+  return LICENSE_ENFORCEMENT_ENABLED ? 'free' : 'local preview';
+}
 
 // The same divisor scripts/measure_context.js uses, so the CLI and the dev
 // harness never disagree about what a token costs.
@@ -105,11 +112,12 @@ function schemaTokens(names: readonly string[]): number {
 
 export function buildContextReport(): ContextReport {
   const config = loadConfig() || {};
-  const tier = String(config.tier || 'premium');
+  const poolTier = String(config.tier || 'premium');
+  const tier = resolveDisplayTier(null, config);
   const provider = String(config.provider || 'default');
   const model = String(config.model || 'default');
   const overrideTokens = Number(config.contextTokens || config.maxContextTokens || 0) || undefined;
-  const charPool = resolveCharPool(tier, config.contextCharPool, {
+  const charPool = resolveCharPool(poolTier, config.contextCharPool, {
     provider,
     model,
     overrideTokens
@@ -404,7 +412,7 @@ export function buildStatusText(options?: { loop?: any } | null): string {
   const provider = String(liveConfig.provider || config.provider || 'default');
   const model = String(liveConfig.model || config.model || 'default');
   const autonomyMode = String(liveConfig.autonomyMode || config.autonomyMode || 'C');
-  const tier = String(liveConfig.tier || config.tier || 'premium');
+  const tier = resolveDisplayTier(liveConfig, config);
   const lines = ['Status'];
 
   lines.push('  Runtime          : local desktop');
