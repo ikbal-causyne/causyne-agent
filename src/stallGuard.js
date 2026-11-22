@@ -75,11 +75,13 @@ function stableSortObject(value, seen = new WeakSet()) {
         if (Array.isArray(value)) {
             return value.map((item) => stableSortObject(item, seen));
         }
-        const sorted = {};
+        const sorted = Object.create(null);
         for (const key of Object.keys(value).sort()) {
+            if (key === '__proto__' || key === 'constructor' || key === 'prototype')
+                continue;
             sorted[key] = stableSortObject(value[key], seen);
         }
-        return sorted;
+        return { ...sorted };
     }
     finally {
         seen.delete(value);

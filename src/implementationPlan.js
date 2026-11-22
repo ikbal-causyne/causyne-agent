@@ -128,6 +128,7 @@ const TOOL_CALL_ENVELOPE_KEYS = new Set(['name', 'tool', 'function', 'type', 'id
  * (`{"name":"update_plan","plan":[...]}`). Falling back to `{}` for the flat form
  * discarded every argument and produced false "is required" validation errors.
  */
+const FORBIDDEN_ENVELOPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 export function resolveToolCallEnvelopeArguments(parsed) {
     const fnObj = parsed.function && typeof parsed.function === 'object' && !Array.isArray(parsed.function)
         ? parsed.function
@@ -138,12 +139,12 @@ export function resolveToolCallEnvelopeArguments(parsed) {
     }
     if (fnObj && fnObj.arguments !== undefined && fnObj.arguments !== null)
         return fnObj.arguments;
-    const flat = {};
+    const flat = Object.create(null);
     for (const [key, value] of Object.entries(parsed)) {
-        if (!TOOL_CALL_ENVELOPE_KEYS.has(key))
+        if (!TOOL_CALL_ENVELOPE_KEYS.has(key) && !FORBIDDEN_ENVELOPE_KEYS.has(key))
             flat[key] = value;
     }
-    return flat;
+    return { ...flat };
 }
 export function extractToolCallJsonObjects(text, allowUnclosedHealing = true) {
     const results = [];
@@ -236,13 +237,13 @@ export function extractToolCallJsonObjects(text, allowUnclosedHealing = true) {
             const body = invokeMatch[2] || '';
             if (!name)
                 continue;
-            const args = {};
+            const args = Object.create(null);
             const paramRegex = /<[｜|]DSML[｜|]\s*parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]DSML[｜|]\s*parameter>/gi;
             let paramMatch;
             while ((paramMatch = paramRegex.exec(body)) !== null) {
                 const key = (paramMatch[1] || '').trim();
                 const valRaw = (paramMatch[2] || '').trim();
-                if (!key)
+                if (!key || FORBIDDEN_ENVELOPE_KEYS.has(key))
                     continue;
                 try {
                     args[key] = JSON.parse(valRaw);
@@ -251,7 +252,7 @@ export function extractToolCallJsonObjects(text, allowUnclosedHealing = true) {
                     args[key] = valRaw;
                 }
             }
-            results.push({ name, arguments: args });
+            results.push({ name, arguments: { ...args } });
         }
     }
     if (results.length === 0) {

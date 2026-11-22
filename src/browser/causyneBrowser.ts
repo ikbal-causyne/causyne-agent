@@ -217,8 +217,9 @@ export function extractDeterministic(options: {
   const check = validateExtractSchema(options.schema);
   if (!check.ok) throw new Error(check.error ?? 'Invalid extraction schema');
 
-  const result: Record<string, unknown> = {};
+  const result = Object.create(null) as Record<string, unknown>;
   for (const [prop, def] of Object.entries(options.schema.properties)) {
+    if (prop === '__proto__' || prop === 'constructor' || prop === 'prototype') continue;
     const refId = def['x-ref'];
     let value: unknown = null;
     if (refId) {
@@ -233,7 +234,7 @@ export function extractDeterministic(options: {
     }
     result[prop] = value;
   }
-  return result;
+  return { ...result };
 }
 
 export interface PageStructureField {
@@ -793,12 +794,15 @@ const PAGE_STRUCTURE_EXTRACT_SCRIPT = `(() => {
         .map(c => trunc(c.textContent, MAX_CELL_CHARS));
       if (cells.length === 0 || cells.every(c => c === '')) continue;
       if (headers.length > 0 && headers.some(Boolean)) {
-        const obj = {};
+        const obj = Object.create(null);
         cells.forEach((val, idx) => {
-          const key = headers[idx] || ('col_' + (idx + 1));
+          const rawKey = headers[idx] || ('col_' + (idx + 1));
+          const key = (rawKey === '__proto__' || rawKey === 'constructor' || rawKey === 'prototype')
+            ? ('col_' + (idx + 1))
+            : rawKey;
           obj[key] = val;
         });
-        rows.push(obj);
+        rows.push(Object.assign({}, obj));
       } else {
         rows.push(cells);
       }

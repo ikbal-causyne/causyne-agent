@@ -15,15 +15,18 @@ const connectionEpochs = new Map();
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+const FORBIDDEN_RECORD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 function cloneStringRecord(value) {
     if (!isRecord(value))
         return undefined;
-    const result = {};
+    const result = Object.create(null);
     for (const [key, item] of Object.entries(value)) {
+        if (FORBIDDEN_RECORD_KEYS.has(key))
+            continue;
         if (typeof item === 'string')
             result[key] = item;
     }
-    return Object.keys(result).length > 0 ? result : undefined;
+    return Object.keys(result).length > 0 ? { ...result } : undefined;
 }
 function cloneStringArray(value) {
     if (!Array.isArray(value))
@@ -372,15 +375,17 @@ export function resolveMcpTool(name) {
                 if (parsed.tool === PROMPT_GET_TOOL) {
                     if (typeof args.name !== 'string')
                         return { success: false, error: '`name` must be a string' };
-                    const promptArgs = {};
+                    const promptArgs = Object.create(null);
                     if (isRecord(args.arguments)) {
                         for (const [key, value] of Object.entries(args.arguments)) {
+                            if (FORBIDDEN_RECORD_KEYS.has(key))
+                                continue;
                             if (typeof value !== 'string')
                                 return { success: false, error: '`arguments` values must be strings' };
                             promptArgs[key] = value;
                         }
                     }
-                    return await client.getPrompt(args.name, promptArgs, context.signal);
+                    return await client.getPrompt(args.name, { ...promptArgs }, context.signal);
                 }
                 const tool = client.tools.find(item => item.name === parsed.tool);
                 if (!tool || !toolAllowed(definition, parsed.tool)) {

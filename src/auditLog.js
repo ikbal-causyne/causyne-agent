@@ -50,10 +50,10 @@ export function formatAuditExport(entries, format = 'jsonl') {
     if (format === 'csv') {
         const lines = [CSV_COLUMNS.join(',')];
         for (const entry of entries) {
-            const extras = {};
+            const extras = Object.create(null);
             let hasExtras = false;
             for (const [k, v] of Object.entries(entry)) {
-                if (CSV_FIXED_KEYS.has(k))
+                if (CSV_FIXED_KEYS.has(k) || k === '__proto__' || k === 'constructor' || k === 'prototype')
                     continue;
                 extras[k] = v;
                 hasExtras = true;

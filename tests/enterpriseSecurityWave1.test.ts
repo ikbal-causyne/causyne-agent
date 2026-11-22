@@ -14,6 +14,8 @@ import { formatAuditExport } from '../src/auditLog.js';
 import { loadProjectInstructions } from '../src/projectInstructions.js';
 import { stripAnsi, safeDisplay, redactSecrets } from '../src/tui/text.js';
 import { sanitizeMcpInputSchema, sanitizeMcpToolName } from '../src/mcp/mcpSecurity.js';
+import { extractToolCallJsonObjects } from '../src/implementationPlan.js';
+import { canonicalToolArgs } from '../src/stallGuard.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -123,5 +125,17 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     assert.equal(Object.getPrototypeOf(props), Object.prototype);
     assert.ok(props.safe);
     assert.equal(sanitizeMcpToolName('bad\x9btool'), null);
+  });
+
+  test('DSML parameter extraction and stallGuard canonicalToolArgs block prototype pollution keys', () => {
+    const dsml = '<|DSML|invoke name="fs_read"><|DSML|parameter name="__proto__">{"pwn":1}</|DSML|parameter><|DSML|parameter name="path">ok.txt</|DSML|parameter></|DSML|invoke>';
+    const objs = extractToolCallJsonObjects(dsml);
+    assert.equal(objs.length, 1);
+    const args = objs[0]?.arguments as Record<string, unknown>;
+    assert.equal(Object.getPrototypeOf(args), Object.prototype);
+    assert.equal((args as any).pwn, undefined);
+    assert.equal(args.path, 'ok.txt');
+    const canonical = canonicalToolArgs(JSON.parse('{"__proto__":{"x":1},"a":2}'));
+    assert.equal(canonical.includes('__proto__'), false);
   });
 });

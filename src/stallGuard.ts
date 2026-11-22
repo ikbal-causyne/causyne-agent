@@ -113,11 +113,12 @@ function stableSortObject(value: unknown, seen = new WeakSet<object>()): unknown
     if (Array.isArray(value)) {
       return value.map((item) => stableSortObject(item, seen));
     }
-    const sorted: Record<string, unknown> = {};
+    const sorted = Object.create(null) as Record<string, unknown>;
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
       sorted[key] = stableSortObject((value as Record<string, unknown>)[key], seen);
     }
-    return sorted;
+    return { ...sorted };
   } finally {
     seen.delete(value);
   }

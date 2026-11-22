@@ -137,6 +137,8 @@ const TOOL_CALL_ENVELOPE_KEYS = new Set(['name', 'tool', 'function', 'type', 'id
  * (`{"name":"update_plan","plan":[...]}`). Falling back to `{}` for the flat form
  * discarded every argument and produced false "is required" validation errors.
  */
+const FORBIDDEN_ENVELOPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function resolveToolCallEnvelopeArguments(parsed: Record<string, unknown>): unknown {
   const fnObj = parsed.function && typeof parsed.function === 'object' && !Array.isArray(parsed.function)
     ? (parsed.function as Record<string, unknown>)
@@ -145,11 +147,11 @@ export function resolveToolCallEnvelopeArguments(parsed: Record<string, unknown>
     if (parsed[key] !== undefined && parsed[key] !== null) return parsed[key];
   }
   if (fnObj && fnObj.arguments !== undefined && fnObj.arguments !== null) return fnObj.arguments;
-  const flat: Record<string, unknown> = {};
+  const flat = Object.create(null) as Record<string, unknown>;
   for (const [key, value] of Object.entries(parsed)) {
-    if (!TOOL_CALL_ENVELOPE_KEYS.has(key)) flat[key] = value;
+    if (!TOOL_CALL_ENVELOPE_KEYS.has(key) && !FORBIDDEN_ENVELOPE_KEYS.has(key)) flat[key] = value;
   }
-  return flat;
+  return { ...flat };
 }
 
 export function extractToolCallJsonObjects(text: string, allowUnclosedHealing = true): Array<Record<string, unknown>> {
@@ -237,20 +239,20 @@ export function extractToolCallJsonObjects(text: string, allowUnclosedHealing = 
       const name = (invokeMatch[1] || '').trim();
       const body = invokeMatch[2] || '';
       if (!name) continue;
-      const args: Record<string, unknown> = {};
+      const args = Object.create(null) as Record<string, unknown>;
       const paramRegex = /<[｜|]DSML[｜|]\s*parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]DSML[｜|]\s*parameter>/gi;
       let paramMatch: RegExpExecArray | null;
       while ((paramMatch = paramRegex.exec(body)) !== null) {
         const key = (paramMatch[1] || '').trim();
         const valRaw = (paramMatch[2] || '').trim();
-        if (!key) continue;
+        if (!key || FORBIDDEN_ENVELOPE_KEYS.has(key)) continue;
         try {
           args[key] = JSON.parse(valRaw);
         } catch {
           args[key] = valRaw;
         }
       }
-      results.push({ name, arguments: args });
+      results.push({ name, arguments: { ...args } });
     }
   }
 

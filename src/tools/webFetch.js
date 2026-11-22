@@ -135,14 +135,17 @@ function validatedHeaders(value) {
         return {};
     if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new Error('headers must be an object');
-    const result = {};
+    const result = Object.create(null);
     for (const [key, item] of Object.entries(value)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+            throw new Error('headers contain an invalid name or value');
+        }
         if (typeof item !== 'string' || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n]/.test(item) || FORBIDDEN_REQUEST_HEADERS.has(key.toLowerCase())) {
             throw new Error('headers contain an invalid name or value');
         }
         result[key] = item;
     }
-    return result;
+    return { ...result };
 }
 async function fetchFollowingSafeRedirects(urlValue, options) {
     let url = await assertPublicWebUrl(urlValue);
