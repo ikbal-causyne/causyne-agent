@@ -10,6 +10,7 @@ import { AgentLoop } from '../src/agentLoop.js';
 import { OllamaProvider, clearOllamaModelMetaCache, ollamaOriginUrl } from '../src/providers/ollama.js';
 import { streamOllamaChat } from '../src/providers/byokStream.js';
 import { fetchLiveModels } from '../src/dynamicCatalogue.js';
+import { OpenRouterProvider, parseRateLimitResetMs } from '../src/providers/openrouter.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -453,6 +454,54 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       const calls = (streamed.message as any)?.tool_calls;
       assert.equal(calls.length, 1, 'split delta + duplicate final tool_call must collapse into 1');
       assert.equal(calls[0].function.arguments, '{"path":"a.ts"}');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('OpenRouterProvider enforces require_parameters, parses X-RateLimit-Reset, rotates :free models on 429, and falls back to XML tools', async () => {
+    const now = 1_700_000_000_000;
+    assert.equal(parseRateLimitResetMs(String(now + 12_000), now), 12_000);
+
+    const origFetch = globalThis.fetch;
+    const requestedModels: string[] = [];
+    const seenBodies: any[] = [];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      requestedModels.push(body.model);
+      seenBodies.push(body);
+      if (body.model === 'openrouter/free') {
+        return {
+          ok: false, status: 429,
+          headers: new Headers({ 'x-ratelimit-reset': String(Date.now() + 5000) }),
+          text: async () => JSON.stringify({ error: { message: 'Rate limited' } })
+        } as unknown as Response;
+      }
+      if (body.tools) {
+        return {
+          ok: false, status: 404,
+          headers: new Headers(),
+          text: async () => JSON.stringify({ error: { message: 'No endpoints found that support tool use' } })
+        } as unknown as Response;
+      }
+      return {
+        ok: true, status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => JSON.stringify({
+          choices: [{ message: { role: 'assistant', content: '<tool_call>{"name":"fs_read","arguments":{"path":"x.ts"}}</tool_call>' } }],
+          usage: { prompt_tokens: 50, completion_tokens: 15 }
+        })
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const provider = new OpenRouterProvider({ apiKey: 'or-test-key-123456', model: 'openrouter/free' });
+      const tools = [{ name: 'fs_read', description: 'Read', parameters: { type: 'object', properties: { path: { type: 'string' } } } }];
+      const res = await provider.chat([{ role: 'user', content: 'read x.ts' }], { tools });
+      assert.equal(seenBodies[0]?.provider?.require_parameters, true, 'must set require_parameters when tools attached');
+      assert.equal(requestedModels[0], 'openrouter/free');
+      assert.ok(requestedModels[1]?.endsWith(':free'), 'fallback must strictly use a :free model');
+      assert.equal(res.toolCalls?.[0]?.function.name, 'fs_read');
     } finally {
       globalThis.fetch = origFetch;
     }

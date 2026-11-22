@@ -10,12 +10,32 @@ import { LLMProvider } from './base.js';
 import { canonicalModelId } from '../modelIds.js';
 import { scanAndAdaptToolsForProvider, normalizeToolName } from '../tools/toolScanner.js';
 import { stripToolCallMarkup } from '../implementationPlan.js';
+import { formatToolContracts } from './toolContracts.js';
 import { extractTextToolCalls, normalizeOpenAIChatChoiceResponse, sanitizeProviderToolId, serializeAndDecodeArguments } from './wireNormalizer.js';
 import { MAX_PROVIDER_ERROR_BYTES, MAX_PROVIDER_JSON_BYTES, MAX_SSE_BUFFER_BYTES, ProviderHttpError, parseRetryAfterMs, readBoundedResponseText, redactProviderSecrets, resolveTemperature, safeProviderFetch } from './byokHttp.js';
 import { wantsStreaming } from './byokStream.js';
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 export const OPENROUTER_CHAT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_DEFAULT_FREE_MODEL = 'openrouter/free';
+export const OPENROUTER_FREE_FALLBACK_MODELS = [
+    'openrouter/free',
+    'qwen/qwen3-coder:free',
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'deepseek/deepseek-r1-0528:free'
+];
+export function parseRateLimitResetMs(headerValue, now = Date.now()) {
+    if (typeof headerValue !== 'string')
+        return undefined;
+    const trimmed = headerValue.trim();
+    if (!/^\d+(?:\.\d+)?$/.test(trimmed))
+        return undefined;
+    const raw = Number(trimmed);
+    if (!Number.isFinite(raw) || raw <= 0)
+        return undefined;
+    const targetEpochMs = raw > 1e11 ? raw : (raw > 1e9 ? raw * 1000 : now + raw * 1000);
+    const delta = Math.ceil(targetEpochMs - now);
+    return Math.max(0, Math.min(delta, 300_000));
+}
 export class FreeModeCostGuardError extends Error {
     constructor(message) {
         super(message);
@@ -76,6 +96,24 @@ export class OpenRouterProvider extends LLMProvider {
             throw new FreeModeCostGuardError(`Model '${modelId}' is not an authorized free model. Free mode strictly forbids paid models to prevent unintended charges.`);
         }
     }
+    injectXmlToolContracts(messages, tools) {
+        if (!Array.isArray(tools) || tools.length === 0)
+            return messages;
+        const contracts = formatToolContracts(tools);
+        const instruction = 'Native JSON tool calling is unavailable on this free upstream endpoint. ' +
+            'Invoke tools by outputting ONLY a JSON object wrapped in <tool_call> tags:\n' +
+            '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n' +
+            `Available Tools:\n${contracts}`;
+        const cloned = messages.map(m => ({ ...m }));
+        const sysIdx = cloned.findIndex(m => m?.role === 'system' && typeof m.content === 'string');
+        if (sysIdx !== -1) {
+            cloned[sysIdx].content = `${cloned[sysIdx].content}\n\n${instruction}`;
+        }
+        else {
+            cloned.unshift({ role: 'system', content: instruction });
+        }
+        return cloned;
+    }
     /**
      * Execute chat completion with OpenRouter, supporting streaming, tools, and privacy tags.
      */
@@ -103,27 +141,12 @@ export class OpenRouterProvider extends LLMProvider {
             return msg;
         });
         const shouldStream = wantsStreaming(options);
-        const payload = {
-            model: this.model,
-            messages: preparedMessages,
-            temperature: resolveTemperature(options.temperature, 0.1),
-            stream: shouldStream,
-            ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
-            provider: {
-                data_collection: this.dataCollection
-            }
-        };
-        if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
-            payload['max_tokens'] = Math.floor(options.maxTokens);
-        }
-        if (options['jsonMode']) {
-            payload['response_format'] = { type: 'json_object' };
-        }
+        const hasTools = Boolean(options.tools && Array.isArray(options.tools) && options.tools.length > 0);
+        let adaptedTools;
         let freeFormPaths = new Map();
-        if (options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
+        if (hasTools) {
             const scanReport = scanAndAdaptToolsForProvider(options.tools, 'openai');
-            payload['tools'] = scanReport.adaptedTools;
-            payload['tool_choice'] = 'auto';
+            adaptedTools = scanReport.adaptedTools;
             freeFormPaths = scanReport.freeFormPaths;
         }
         const headers = {
@@ -133,48 +156,121 @@ export class OpenRouterProvider extends LLMProvider {
             'X-Title': 'Causyne Agent'
         };
         const endpoint = this.baseUrl || OPENROUTER_CHAT_ENDPOINT;
-        const { response, cleanup } = await safeProviderFetch({
-            url: endpoint,
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            signal: options.signal,
-            timeoutMs: typeof options['timeoutMs'] === 'number' ? options['timeoutMs'] : undefined,
-            providerLabel: 'OpenRouter',
-            secrets: [apiKey],
-            hasApiKey: true,
-            allowInsecureHttp: this.allowInsecureHttp
-        });
-        try {
-            if (!response.ok) {
-                const rawError = await readBoundedResponseText(response, MAX_PROVIDER_ERROR_BYTES, {
-                    truncate: true,
-                    label: 'OpenRouter'
-                }).catch(() => '');
-                const cleanError = redactProviderSecrets(rawError, [apiKey]);
-                const retryAfterHeader = response.headers?.get?.('retry-after');
-                const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
-                this.handleHttpErrors(response.status, cleanError, retryAfterMs);
+        const executeForModel = async (targetModel, useNativeTools) => {
+            if (this.freeOnly) {
+                this.assertFreeModel(targetModel);
             }
-            const contentType = (response.headers?.get?.('content-type') ?? '')
-                .split(';')[0]?.trim().toLowerCase() ?? '';
-            const isJsonReply = contentType === 'application/json' || contentType.endsWith('+json');
-            if (shouldStream && response.body && !isJsonReply) {
-                return await this.handleStreamingResponse(response, options, freeFormPaths, apiKey);
+            const effectiveMessages = (!useNativeTools && hasTools)
+                ? this.injectXmlToolContracts(preparedMessages, options.tools)
+                : preparedMessages;
+            const providerSpec = {
+                data_collection: this.dataCollection
+            };
+            if (useNativeTools && adaptedTools) {
+                providerSpec['require_parameters'] = true;
             }
-            else {
-                const res = await this.handleJsonResponse(response, freeFormPaths, apiKey);
-                if (shouldStream) {
-                    if (res.reasoningContent)
-                        options.onReasoningChunk?.(res.reasoningContent);
-                    if (res.content)
-                        options.onChunk?.(res.content);
+            const payload = {
+                model: targetModel,
+                messages: effectiveMessages,
+                temperature: resolveTemperature(options.temperature, 0.1),
+                stream: shouldStream,
+                ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
+                provider: providerSpec
+            };
+            if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+                payload['max_tokens'] = Math.floor(options.maxTokens);
+            }
+            if (options['jsonMode']) {
+                payload['response_format'] = { type: 'json_object' };
+            }
+            if (useNativeTools && adaptedTools) {
+                payload['tools'] = adaptedTools;
+                payload['tool_choice'] = 'auto';
+            }
+            const { response, cleanup } = await safeProviderFetch({
+                url: endpoint,
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload),
+                signal: options.signal,
+                timeoutMs: typeof options['timeoutMs'] === 'number' ? options['timeoutMs'] : undefined,
+                providerLabel: 'OpenRouter',
+                secrets: [apiKey],
+                hasApiKey: true,
+                allowInsecureHttp: this.allowInsecureHttp
+            });
+            try {
+                if (!response.ok) {
+                    const rawError = await readBoundedResponseText(response, MAX_PROVIDER_ERROR_BYTES, {
+                        truncate: true,
+                        label: 'OpenRouter'
+                    }).catch(() => '');
+                    const cleanError = redactProviderSecrets(rawError, [apiKey]);
+                    const hdrs = response.headers;
+                    const retryAfterMs = parseRetryAfterMs(hdrs?.get?.('retry-after'))
+                        ?? parseRateLimitResetMs(hdrs?.get?.('x-ratelimit-reset'));
+                    this.handleHttpErrors(response.status, cleanError, retryAfterMs);
                 }
-                return res;
+                const contentType = (response.headers?.get?.('content-type') ?? '')
+                    .split(';')[0]?.trim().toLowerCase() ?? '';
+                const isJsonReply = contentType === 'application/json' || contentType.endsWith('+json');
+                if (shouldStream && response.body && !isJsonReply) {
+                    return await this.handleStreamingResponse(response, options, freeFormPaths, apiKey);
+                }
+                else {
+                    const res = await this.handleJsonResponse(response, freeFormPaths, apiKey);
+                    if (shouldStream) {
+                        if (res.reasoningContent)
+                            options.onReasoningChunk?.(res.reasoningContent);
+                        if (res.content)
+                            options.onChunk?.(res.content);
+                    }
+                    return res;
+                }
             }
+            finally {
+                cleanup();
+            }
+        };
+        const runWithToolFallback = async (targetModel) => {
+            try {
+                return await executeForModel(targetModel, hasTools);
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                const status = err instanceof ProviderHttpError ? err.status : null;
+                if (hasTools
+                    && (status === 400 || status === 404)
+                    && /(?:does not support tool|support tool use|tool[s ]+not supported|no endpoints found.*tool|require_parameters)/i.test(msg)) {
+                    return await executeForModel(targetModel, false);
+                }
+                throw err;
+            }
+        };
+        try {
+            return await runWithToolFallback(this.model);
         }
-        finally {
-            cleanup();
+        catch (primaryErr) {
+            const isTransientFreeFailure = primaryErr instanceof OpenRouterRateLimitError
+                || (primaryErr instanceof ProviderHttpError && (primaryErr.status === 429 || primaryErr.status === 502 || primaryErr.status === 503));
+            const allowRotation = this.freeOnly && options['freeFallback'] !== false;
+            if (!allowRotation || !isTransientFreeFailure || options.signal?.aborted) {
+                throw primaryErr;
+            }
+            const candidates = OPENROUTER_FREE_FALLBACK_MODELS
+                .filter(m => m.toLowerCase() !== this.model.toLowerCase() && this.isFreeModel(m))
+                .slice(0, 2);
+            for (const fallbackModel of candidates) {
+                if (options.signal?.aborted)
+                    break;
+                try {
+                    return await runWithToolFallback(fallbackModel);
+                }
+                catch {
+                    // Try next zero-cost candidate; preserve original primaryErr if all fail
+                }
+            }
+            throw primaryErr;
         }
     }
     /**

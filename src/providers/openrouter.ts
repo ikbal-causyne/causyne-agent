@@ -11,6 +11,7 @@ import { LLMProvider, type ChatOptions, type ChatResponse, type ChatResponseUsag
 import { canonicalModelId } from '../modelIds.js';
 import { scanAndAdaptToolsForProvider, normalizeToolName } from '../tools/toolScanner.js';
 import { stripToolCallMarkup } from '../implementationPlan.js';
+import { formatToolContracts } from './toolContracts.js';
 import {
   extractTextToolCalls,
   normalizeOpenAIChatChoiceResponse,
@@ -33,6 +34,23 @@ import { wantsStreaming } from './byokStream.js';
 export const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 export const OPENROUTER_CHAT_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_DEFAULT_FREE_MODEL = 'openrouter/free';
+export const OPENROUTER_FREE_FALLBACK_MODELS: readonly string[] = [
+  'openrouter/free',
+  'qwen/qwen3-coder:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'deepseek/deepseek-r1-0528:free'
+];
+
+export function parseRateLimitResetMs(headerValue: string | null | undefined, now = Date.now()): number | undefined {
+  if (typeof headerValue !== 'string') return undefined;
+  const trimmed = headerValue.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return undefined;
+  const raw = Number(trimmed);
+  if (!Number.isFinite(raw) || raw <= 0) return undefined;
+  const targetEpochMs = raw > 1e11 ? raw : (raw > 1e9 ? raw * 1000 : now + raw * 1000);
+  const delta = Math.ceil(targetEpochMs - now);
+  return Math.max(0, Math.min(delta, 300_000));
+}
 
 export class FreeModeCostGuardError extends Error {
   constructor(message: string) {
@@ -103,6 +121,24 @@ export class OpenRouterProvider extends LLMProvider {
     }
   }
 
+  private injectXmlToolContracts(messages: any[], tools: any[]): any[] {
+    if (!Array.isArray(tools) || tools.length === 0) return messages;
+    const contracts = formatToolContracts(tools);
+    const instruction =
+      'Native JSON tool calling is unavailable on this free upstream endpoint. ' +
+      'Invoke tools by outputting ONLY a JSON object wrapped in <tool_call> tags:\n' +
+      '<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>\n\n' +
+      `Available Tools:\n${contracts}`;
+    const cloned = messages.map(m => ({ ...m }));
+    const sysIdx = cloned.findIndex(m => m?.role === 'system' && typeof m.content === 'string');
+    if (sysIdx !== -1) {
+      cloned[sysIdx].content = `${cloned[sysIdx].content}\n\n${instruction}`;
+    } else {
+      cloned.unshift({ role: 'system', content: instruction });
+    }
+    return cloned;
+  }
+
   /**
    * Execute chat completion with OpenRouter, supporting streaming, tools, and privacy tags.
    */
@@ -136,31 +172,12 @@ export class OpenRouterProvider extends LLMProvider {
       return msg;
     });
     const shouldStream = wantsStreaming(options);
-
-    const payload: Record<string, any> = {
-      model: this.model,
-      messages: preparedMessages,
-      temperature: resolveTemperature(options.temperature, 0.1),
-      stream: shouldStream,
-      ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
-      provider: {
-        data_collection: this.dataCollection
-      }
-    };
-
-    if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
-      payload['max_tokens'] = Math.floor(options.maxTokens);
-    }
-
-    if (options['jsonMode']) {
-      payload['response_format'] = { type: 'json_object' };
-    }
-
+    const hasTools = Boolean(options.tools && Array.isArray(options.tools) && options.tools.length > 0);
+    let adaptedTools: any[] | undefined;
     let freeFormPaths = new Map<string, string[][]>();
-    if (options.tools && Array.isArray(options.tools) && options.tools.length > 0) {
-      const scanReport = scanAndAdaptToolsForProvider(options.tools, 'openai');
-      payload['tools'] = scanReport.adaptedTools;
-      payload['tool_choice'] = 'auto';
+    if (hasTools) {
+      const scanReport = scanAndAdaptToolsForProvider(options.tools!, 'openai');
+      adaptedTools = scanReport.adaptedTools;
       freeFormPaths = scanReport.freeFormPaths;
     }
 
@@ -170,48 +187,122 @@ export class OpenRouterProvider extends LLMProvider {
       'HTTP-Referer': 'https://causyne.com',
       'X-Title': 'Causyne Agent'
     };
-
     const endpoint = this.baseUrl || OPENROUTER_CHAT_ENDPOINT;
-    const { response, cleanup } = await safeProviderFetch({
-      url: endpoint,
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      signal: options.signal,
-      timeoutMs: typeof options['timeoutMs'] === 'number' ? options['timeoutMs'] : undefined,
-      providerLabel: 'OpenRouter',
-      secrets: [apiKey],
-      hasApiKey: true,
-      allowInsecureHttp: this.allowInsecureHttp
-    });
+
+    const executeForModel = async (targetModel: string, useNativeTools: boolean): Promise<ChatResponse> => {
+      if (this.freeOnly) {
+        this.assertFreeModel(targetModel);
+      }
+      const effectiveMessages = (!useNativeTools && hasTools)
+        ? this.injectXmlToolContracts(preparedMessages, options.tools!)
+        : preparedMessages;
+      const providerSpec: Record<string, unknown> = {
+        data_collection: this.dataCollection
+      };
+      if (useNativeTools && adaptedTools) {
+        providerSpec['require_parameters'] = true;
+      }
+      const payload: Record<string, any> = {
+        model: targetModel,
+        messages: effectiveMessages,
+        temperature: resolveTemperature(options.temperature, 0.1),
+        stream: shouldStream,
+        ...(shouldStream ? { stream_options: { include_usage: true } } : {}),
+        provider: providerSpec
+      };
+      if (typeof options.maxTokens === 'number' && Number.isFinite(options.maxTokens) && options.maxTokens >= 1) {
+        payload['max_tokens'] = Math.floor(options.maxTokens);
+      }
+      if (options['jsonMode']) {
+        payload['response_format'] = { type: 'json_object' };
+      }
+      if (useNativeTools && adaptedTools) {
+        payload['tools'] = adaptedTools;
+        payload['tool_choice'] = 'auto';
+      }
+
+      const { response, cleanup } = await safeProviderFetch({
+        url: endpoint,
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: options.signal,
+        timeoutMs: typeof options['timeoutMs'] === 'number' ? options['timeoutMs'] : undefined,
+        providerLabel: 'OpenRouter',
+        secrets: [apiKey],
+        hasApiKey: true,
+        allowInsecureHttp: this.allowInsecureHttp
+      });
+
+      try {
+        if (!response.ok) {
+          const rawError = await readBoundedResponseText(response, MAX_PROVIDER_ERROR_BYTES, {
+            truncate: true,
+            label: 'OpenRouter'
+          }).catch(() => '');
+          const cleanError = redactProviderSecrets(rawError, [apiKey]);
+          const hdrs = (response as unknown as { headers?: { get?: (k: string) => string | null } }).headers;
+          const retryAfterMs = parseRetryAfterMs(hdrs?.get?.('retry-after'))
+            ?? parseRateLimitResetMs(hdrs?.get?.('x-ratelimit-reset'));
+          this.handleHttpErrors(response.status, cleanError, retryAfterMs);
+        }
+
+        const contentType = ((response as unknown as { headers?: { get?: (k: string) => string | null } }).headers?.get?.('content-type') ?? '')
+          .split(';')[0]?.trim().toLowerCase() ?? '';
+        const isJsonReply = contentType === 'application/json' || contentType.endsWith('+json');
+        if (shouldStream && response.body && !isJsonReply) {
+          return await this.handleStreamingResponse(response, options, freeFormPaths, apiKey);
+        } else {
+          const res = await this.handleJsonResponse(response, freeFormPaths, apiKey);
+          if (shouldStream) {
+            if (res.reasoningContent) options.onReasoningChunk?.(res.reasoningContent);
+            if (res.content) options.onChunk?.(res.content);
+          }
+          return res;
+        }
+      } finally {
+        cleanup();
+      }
+    };
+
+    const runWithToolFallback = async (targetModel: string): Promise<ChatResponse> => {
+      try {
+        return await executeForModel(targetModel, hasTools);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const status = err instanceof ProviderHttpError ? err.status : null;
+        if (
+          hasTools
+          && (status === 400 || status === 404)
+          && /(?:does not support tool|support tool use|tool[s ]+not supported|no endpoints found.*tool|require_parameters)/i.test(msg)
+        ) {
+          return await executeForModel(targetModel, false);
+        }
+        throw err;
+      }
+    };
 
     try {
-      if (!response.ok) {
-        const rawError = await readBoundedResponseText(response, MAX_PROVIDER_ERROR_BYTES, {
-          truncate: true,
-          label: 'OpenRouter'
-        }).catch(() => '');
-        const cleanError = redactProviderSecrets(rawError, [apiKey]);
-        const retryAfterHeader = (response as unknown as { headers?: { get?: (k: string) => string | null } }).headers?.get?.('retry-after');
-        const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
-        this.handleHttpErrors(response.status, cleanError, retryAfterMs);
+      return await runWithToolFallback(this.model);
+    } catch (primaryErr: unknown) {
+      const isTransientFreeFailure = primaryErr instanceof OpenRouterRateLimitError
+        || (primaryErr instanceof ProviderHttpError && (primaryErr.status === 429 || primaryErr.status === 502 || primaryErr.status === 503));
+      const allowRotation = this.freeOnly && options['freeFallback'] !== false;
+      if (!allowRotation || !isTransientFreeFailure || options.signal?.aborted) {
+        throw primaryErr;
       }
-
-      const contentType = ((response as unknown as { headers?: { get?: (k: string) => string | null } }).headers?.get?.('content-type') ?? '')
-        .split(';')[0]?.trim().toLowerCase() ?? '';
-      const isJsonReply = contentType === 'application/json' || contentType.endsWith('+json');
-      if (shouldStream && response.body && !isJsonReply) {
-        return await this.handleStreamingResponse(response, options, freeFormPaths, apiKey);
-      } else {
-        const res = await this.handleJsonResponse(response, freeFormPaths, apiKey);
-        if (shouldStream) {
-          if (res.reasoningContent) options.onReasoningChunk?.(res.reasoningContent);
-          if (res.content) options.onChunk?.(res.content);
+      const candidates = OPENROUTER_FREE_FALLBACK_MODELS
+        .filter(m => m.toLowerCase() !== this.model.toLowerCase() && this.isFreeModel(m))
+        .slice(0, 2);
+      for (const fallbackModel of candidates) {
+        if (options.signal?.aborted) break;
+        try {
+          return await runWithToolFallback(fallbackModel);
+        } catch {
+          // Try next zero-cost candidate; preserve original primaryErr if all fail
         }
-        return res;
       }
-    } finally {
-      cleanup();
+      throw primaryErr;
     }
   }
 
