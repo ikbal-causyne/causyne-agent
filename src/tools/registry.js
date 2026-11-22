@@ -9,6 +9,9 @@ import { openSourceToolProvisioner } from './openSourceToolProvisioner.js';
 import { reverseEngineering } from './reverseEngineering.js';
 import { lspCodeIntel } from './lspCodeIntel.js';
 import { gitWorktree } from './gitWorktree.js';
+import { applyPatch } from './applyPatch.js';
+import { repoMapTool } from './repoMap.js';
+import { backgroundTaskTool } from './backgroundTask.js';
 import { sysRun, sysRunBg } from './sysRun.js';
 import { fsRead } from './fsRead.js';
 import { fsWrite } from './fsWrite.js';
@@ -132,7 +135,8 @@ const TOOL_MODULES = [
     gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
     gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
     computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
-    openSourceToolProvisioner, reverseEngineering, lspCodeIntel, gitWorktree
+    openSourceToolProvisioner, reverseEngineering, lspCodeIntel, gitWorktree,
+    applyPatch, repoMapTool, backgroundTaskTool
 ];
 // Base static definitions (backwards compatible). Order is preserved from the
 // list above because every provider's prompt cache binds on the tool array, and
@@ -282,7 +286,15 @@ const TOOL_ALIASES = Object.assign(Object.create(null), {
     go_to_definition: 'code_lsp',
     find_references: 'code_lsp',
     worktree: 'git_worktree',
-    gitWorktree: 'git_worktree'
+    gitWorktree: 'git_worktree',
+    // Phase C-Core multi-file patch, repo map, and background task aliases
+    applyPatch: 'apply_patch',
+    multi_file_patch: 'apply_patch',
+    repo_map: 'code_repo_map',
+    repoMap: 'code_repo_map',
+    codebase_map: 'code_repo_map',
+    background_task: 'task_bg',
+    bg_task: 'task_bg'
 });
 function stripDelimiters(str) {
     return String(str || '').toLowerCase().replace(/[-_.]/g, '');

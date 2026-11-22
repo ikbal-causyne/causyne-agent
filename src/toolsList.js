@@ -90,6 +90,9 @@ const CATALOGUE = {
         code_search_ast: 'AST definition search',
         code_lsp: 'LSP diagnostics, definition, references, hover, symbols',
         git_worktree: 'isolated git worktrees for conflict-free parallel edits',
+        apply_patch: 'atomic multi-file patch (add, update, move, delete)',
+        code_repo_map: 'PageRank-ranked repository symbol and dependency map',
+        task_bg: 'managed OS-sandboxed background tasks with offset log streaming',
         agent_subagent_orchestrate: 'delegate a bounded sub-task',
         peer_agent_delegate: 'delegate to an external ACP agent'
     },

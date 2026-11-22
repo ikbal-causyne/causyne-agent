@@ -116,6 +116,9 @@ export const PACKS = {
         'code_list_symbols',
         'code_lsp',
         'git_worktree',
+        'apply_patch',
+        'code_repo_map',
+        'task_bg',
         'pdf_read'
     ],
     reverse_engineering: [
