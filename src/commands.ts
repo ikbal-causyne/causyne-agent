@@ -66,7 +66,7 @@ import { isPhysicalPathAllowed } from './agent/workspaceBoundary.js';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { isCredentialPath } from './sandbox.js';
 import { atomicWriteSecretFileSync } from './configVault.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactProviderSecrets, redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
 import { formatEnterprisePolicyReport } from './enterprisePolicy.js';
 import { auditLog, formatAuditExport, type AuditExportFormat } from './auditLog.js';
@@ -2694,12 +2694,12 @@ export const COMMANDS: SlashCommandDefinition[] = [
           } else {
             try { rawContent = JSON.stringify(m.content, null, 2) ?? ''; } catch { rawContent = String(m.content); }
           }
-          return `${roleLabel}\n\n${redactProviderSecrets(rawContent)}\n`;
+          return `${roleLabel}\n\n${redactTextSecrets(rawContent)}\n`;
         })
         .join('\n---\n\n');
 
       try {
-        atomicWriteSecretFileSync(targetPath, redactProviderSecrets(header + body));
+        atomicWriteSecretFileSync(targetPath, redactTextSecrets(header + body));
         return ok(`Exported conversation to: ${safeDisplay(targetPath)}`);
       } catch (err) {
         return fail(`Could not export conversation: ${errMsg(err)}`);

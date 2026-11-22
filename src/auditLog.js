@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactTextSecrets } from './providers/byokHttp.js';
 const AUDIT_FILENAME_RE = /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/;
 const MAX_AUDIT_EXPORT_ENTRIES = 50_000;
 const MAX_AUDIT_EXPORT_FILES = 365;
@@ -31,14 +31,14 @@ function encodeCsvCell(value) {
         raw = String(value);
     }
     else if (typeof value === 'string') {
-        raw = neutralizeCsvFormula(redactProviderSecrets(value));
+        raw = neutralizeCsvFormula(redactTextSecrets(value));
     }
     else {
         try {
-            raw = neutralizeCsvFormula(redactProviderSecrets(JSON.stringify(value) ?? ''));
+            raw = neutralizeCsvFormula(redactTextSecrets(JSON.stringify(value) ?? ''));
         }
         catch {
-            raw = neutralizeCsvFormula(redactProviderSecrets(String(value)));
+            raw = neutralizeCsvFormula(redactTextSecrets(String(value)));
         }
     }
     if (raw.includes(',') || raw.includes('"') || raw.includes('\n') || raw.includes('\r')) {
@@ -75,13 +75,13 @@ export function formatAuditExport(entries, format = 'jsonl') {
     }
     if (entries.length === 0)
         return '';
-    return entries.map((entry) => redactProviderSecrets(JSON.stringify(entry))).join('\n') + '\n';
+    return entries.map((entry) => redactTextSecrets(JSON.stringify(entry))).join('\n') + '\n';
 }
 function sanitizeAuditValue(value, depth = 0, seen = new WeakSet()) {
     if (value === null || value === undefined)
         return value;
     if (typeof value === 'string')
-        return redactProviderSecrets(value);
+        return redactTextSecrets(value);
     if (typeof value === 'number' || typeof value === 'boolean')
         return value;
     if (typeof value === 'bigint')

@@ -9,6 +9,9 @@ import {
   assertSafeWorkspaceInput
 } from '../src/tools/toolPathSafety.js';
 import { redactTextSecrets, redactProviderSecrets } from '../src/providers/byokHttp.js';
+import { looksSensitive } from '../src/tui/history.js';
+import { formatAuditExport } from '../src/auditLog.js';
+import { loadProjectInstructions } from '../src/projectInstructions.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -76,5 +79,22 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
 
     // Provider error helper still caps short error messages cleanly
     assert.ok(redactProviderSecrets(sample).length <= 2049);
+  });
+
+  test('non-error callers no longer corrupt or truncate >2KB payloads', () => {
+    const longPrompt = 'Explain\tarchitecture:\n' + 'x'.repeat(3000);
+    assert.equal(looksSensitive(longPrompt), false, 'long tabbed prompt must not be rejected as secret');
+    assert.equal(looksSensitive('token=sk-1234567890abcdef123456'), true);
+
+    const bigEntry = { ts: '2026-11-23T00:00:00Z', event: 'test', detail: 'y'.repeat(3500) };
+    const jsonl = formatAuditExport([bigEntry], 'jsonl').trim();
+    const parsed = JSON.parse(jsonl);
+    assert.equal(parsed.detail.length, 3500);
+
+    const ws = path.join(TMP, 'ws-long-rules');
+    fs.mkdirSync(ws, { recursive: true });
+    fs.writeFileSync(path.join(ws, 'CAUSYNE.md'), '# Rules\n' + 'rule line '.repeat(400), 'utf8');
+    const loaded = loadProjectInstructions(ws);
+    assert.ok(loaded.totalChars > 3500, 'projectInstructions must not truncate at 2048 chars');
   });
 });

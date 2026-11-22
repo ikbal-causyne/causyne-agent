@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
 import { resolveGitRepoRoot } from './worktreeManager.js';
 
@@ -193,7 +193,7 @@ export function fetchFailedCiLogs(workspaceDir: string, runId?: string): { ok: b
 
   try {
     const rawLogs = execSafeTool('gh', ['run', 'view', targetRunId, '--log-failed'], repoRoot, 25_000);
-    const cleaned = safeDisplay(redactProviderSecrets(rawLogs));
+    const cleaned = safeDisplay(redactTextSecrets(rawLogs));
     const bounded = cleaned.length > MAX_CI_LOG_CHARS
       ? cleaned.slice(-MAX_CI_LOG_CHARS)
       : cleaned;

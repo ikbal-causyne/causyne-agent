@@ -11,7 +11,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import crypto from 'node:crypto';
 import { getEnhancedEnv } from './tools/sysRun.js';
 import { resolveOsSandboxMode, wrapCommandWithOsSandbox, type OsSandboxWrapOptions } from './tools/osSandbox.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
 
 export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
@@ -125,7 +125,7 @@ export class BackgroundTaskManager {
     const record: ManagedTaskRecord = {
       taskId,
       label,
-      command: safeDisplay(redactProviderSecrets(command)).slice(0, 300),
+      command: safeDisplay(redactTextSecrets(command)).slice(0, 300),
       cwd: options.cwd,
       pid: proc.pid ?? null,
       status: 'running',
@@ -142,7 +142,7 @@ export class BackgroundTaskManager {
     };
 
     const append = (chunk: Buffer): void => {
-      const text = redactProviderSecrets(chunk.toString('utf8'));
+      const text = redactTextSecrets(chunk.toString('utf8'));
       record.outputBuffer += text;
       if (record.outputBuffer.length > MAX_TASK_BUFFER_CHARS) {
         record.outputBuffer = record.outputBuffer.slice(-MAX_TASK_BUFFER_CHARS);

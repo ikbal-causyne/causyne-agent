@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isPhysicalPathAllowed, isWithinPhysicalPath, physicalPath } from '../agent/workspaceBoundary.js';
 import { ensureSafeWorkspaceInputPath, ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
-import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { redactProviderSecrets, redactTextSecrets } from '../providers/byokHttp.js';
 import { safeDisplay } from '../tui/text.js';
 import { resolveUserPath } from '../utils/paths.js';
 const WINDOWS_RESERVED_BASENAMES = new Set([
@@ -26,7 +26,7 @@ export function sanitizeToolError(error, maxLen = 600) {
     return safeDisplay(redactProviderSecrets(raw)).replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen);
 }
 export function sanitizeToolText(value, maxLen = 4096) {
-    return safeDisplay(redactProviderSecrets(String(value ?? ''))).slice(0, maxLen);
+    return safeDisplay(redactTextSecrets(String(value ?? ''))).slice(0, maxLen);
 }
 export function resolveToolWorkspaceRoots(context) {
     const safeCtx = context && typeof context === 'object' ? context : null;

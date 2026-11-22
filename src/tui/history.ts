@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { redactSecrets } from './text.js';
-import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { redactTextSecrets } from '../providers/byokHttp.js';
 import { causyneHome } from '../utils/paths.js';
 
 export const MAX_ENTRIES = 500;
@@ -32,7 +32,7 @@ function historyPath(): string {
 /** True when the line carries something that looks like a credential. */
 export function looksSensitive(line: string): boolean {
   if (typeof line !== 'string' || !line) return false;
-  return redactSecrets(line) !== line || redactProviderSecrets(line) !== line;
+  return redactSecrets(line) !== line || redactTextSecrets(line, [], { sanitizeTerminal: false }) !== line;
 }
 
 export class PromptHistory {

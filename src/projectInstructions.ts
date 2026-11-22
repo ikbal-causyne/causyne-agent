@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
 import { resolveGitRepoRoot } from './worktreeManager.js';
 
@@ -48,7 +48,7 @@ function readSafeInstructionFile(filePath: string, remainingBudget: number): { c
     const cap = Math.min(MAX_SINGLE_INSTRUCTION_CHARS, remainingBudget);
     if (cap <= 0) return null;
     const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-    const redacted = redactProviderSecrets(raw).trim();
+    const redacted = redactTextSecrets(raw).trim();
     if (!redacted) return null;
     const truncated = redacted.length > cap;
     const content = truncated ? `${redacted.slice(0, cap)}\n...[truncated]` : redacted;

@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { getEnhancedEnv } from './tools/sysRun.js';
 import { resolveOsSandboxMode, wrapCommandWithOsSandbox } from './tools/osSandbox.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
 const MAX_CONCURRENT_BG_TASKS = 8;
 const MAX_RETAINED_BG_TASKS = 32;
@@ -87,7 +87,7 @@ export class BackgroundTaskManager {
         const record = {
             taskId,
             label,
-            command: safeDisplay(redactProviderSecrets(command)).slice(0, 300),
+            command: safeDisplay(redactTextSecrets(command)).slice(0, 300),
             cwd: options.cwd,
             pid: proc.pid ?? null,
             status: 'running',
@@ -103,7 +103,7 @@ export class BackgroundTaskManager {
             waiters: []
         };
         const append = (chunk) => {
-            const text = redactProviderSecrets(chunk.toString('utf8'));
+            const text = redactTextSecrets(chunk.toString('utf8'));
             record.outputBuffer += text;
             if (record.outputBuffer.length > MAX_TASK_BUFFER_CHARS) {
                 record.outputBuffer = record.outputBuffer.slice(-MAX_TASK_BUFFER_CHARS);

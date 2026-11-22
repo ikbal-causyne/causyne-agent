@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
-import { redactProviderSecrets } from './providers/byokHttp.js';
+import { redactTextSecrets } from './providers/byokHttp.js';
 
 export type AuditLogEvent = Record<string, unknown>;
 
@@ -46,12 +46,12 @@ function encodeCsvCell(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'boolean') {
     raw = String(value);
   } else if (typeof value === 'string') {
-    raw = neutralizeCsvFormula(redactProviderSecrets(value));
+    raw = neutralizeCsvFormula(redactTextSecrets(value));
   } else {
     try {
-      raw = neutralizeCsvFormula(redactProviderSecrets(JSON.stringify(value) ?? ''));
+      raw = neutralizeCsvFormula(redactTextSecrets(JSON.stringify(value) ?? ''));
     } catch {
-      raw = neutralizeCsvFormula(redactProviderSecrets(String(value)));
+      raw = neutralizeCsvFormula(redactTextSecrets(String(value)));
     }
   }
   if (raw.includes(',') || raw.includes('"') || raw.includes('\n') || raw.includes('\r')) {
@@ -90,12 +90,12 @@ export function formatAuditExport(
     return lines.join('\n') + '\n';
   }
   if (entries.length === 0) return '';
-  return entries.map((entry) => redactProviderSecrets(JSON.stringify(entry))).join('\n') + '\n';
+  return entries.map((entry) => redactTextSecrets(JSON.stringify(entry))).join('\n') + '\n';
 }
 
 function sanitizeAuditValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value === null || value === undefined) return value;
-  if (typeof value === 'string') return redactProviderSecrets(value);
+  if (typeof value === 'string') return redactTextSecrets(value);
   if (typeof value === 'number' || typeof value === 'boolean') return value;
   if (typeof value === 'bigint') return value.toString();
   if (depth >= 6 || typeof value !== 'object') return '[omitted]';

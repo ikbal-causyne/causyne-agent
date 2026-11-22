@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isPhysicalPathAllowed, isWithinPhysicalPath, physicalPath } from '../agent/workspaceBoundary.js';
 import { ensureSafeWorkspaceInputPath, ensureSafeWorkspaceOutputPath } from '../browser/workspacePathSafety.js';
-import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { redactProviderSecrets, redactTextSecrets } from '../providers/byokHttp.js';
 import { safeDisplay } from '../tui/text.js';
 import { resolveUserPath } from '../utils/paths.js';
 
@@ -54,7 +54,7 @@ export function sanitizeToolError(error: unknown, maxLen = 600): string {
 }
 
 export function sanitizeToolText(value: unknown, maxLen = 4096): string {
-  return safeDisplay(redactProviderSecrets(String(value ?? ''))).slice(0, maxLen);
+  return safeDisplay(redactTextSecrets(String(value ?? ''))).slice(0, maxLen);
 }
 
 export function resolveToolWorkspaceRoots(context?: ToolWorkspaceContext | null): ResolvedWorkspaceScope {
