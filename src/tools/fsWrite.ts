@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
 
 export interface FsWriteArgs {
   path: string;
@@ -166,9 +167,12 @@ export const fsWrite = {
         const directory = await fs.open(path.dirname(target), 'r');
         try { await directory.sync(); } finally { await directory.close(); }
       } catch { /* Do not claim crash-durable guarantees on unsupported FS. */ }
+      const wsRoot = baseRoot ? path.resolve(expandHome(baseRoot)) : path.dirname(target);
+      const diags = await collectActivePostEditDiagnostics(target, wsRoot, args.content);
+      const diagNote = diags.length > 0 ? `\n\n[LSP Diagnostics]\n${formatDiagnosticsCompact(diags, wsRoot)}` : '';
       return {
         success: true,
-        output: `Wrote ${Buffer.byteLength(args.content, 'utf8')} bytes to ${target}`
+        output: `Wrote ${Buffer.byteLength(args.content, 'utf8')} bytes to ${target}${diagNote}`
       };
     } catch (error: unknown) {
       return { success: false, error: writeError(error, target) };
