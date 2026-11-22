@@ -135,7 +135,8 @@ describe('Phase B3/B4 — Diff Review, PR Workflow & OpenAI Prompt Cache Key Rou
 
     globalThis.fetch = (async (url: any, init: any) => {
       const parsed = JSON.parse(String(init?.body || '{}'));
-      if (String(url).includes('api.openai.com')) {
+      const host = new URL(String(url)).hostname.toLowerCase();
+      if (host === 'api.openai.com') {
         officialPayload = parsed;
       } else {
         compatPayload = parsed;
