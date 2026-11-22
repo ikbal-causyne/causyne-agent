@@ -271,7 +271,7 @@ export class AcpClient {
       const res = await this.request<unknown>(ACP_METHODS.SET_MODEL, {
         sessionId,
         modelId
-      }, 5_000, signal);
+      }, 20_000, signal);
       this.recordSessionModels(sessionId, res);
       const updated = this.sessionModels.get(sessionId);
       if (updated) {
@@ -288,7 +288,7 @@ export class AcpClient {
           sessionId,
           configId: state.configOptionId || 'model',
           value: modelId
-        }, 5_000, signal);
+        }, 20_000, signal);
         this.recordSessionModels(sessionId, res);
         return;
       }
@@ -704,7 +704,30 @@ export class AcpClient {
     pending.cleanup?.();
     this.pending.delete(response.id);
     if (response.error) {
-      const err = new Error(`${pending.method} failed: ${response.error.message}`);
+      let detail = redactProviderSecrets(String(response.error.message || 'Unknown ACP error')).trim();
+      const rawData = response.error.data;
+      if (rawData !== undefined && rawData !== null) {
+        const dataText = typeof rawData === 'string'
+          ? rawData.trim()
+          : (typeof rawData === 'object' && 'details' in rawData && typeof (rawData as { details?: unknown }).details === 'string'
+              ? (rawData as { details: string }).details.trim()
+              : (typeof rawData === 'object' && 'message' in rawData && typeof (rawData as { message?: unknown }).message === 'string'
+                  ? (rawData as { message: string }).message.trim()
+                  : (() => { try { return JSON.stringify(rawData); } catch { return ''; } })()));
+        const cleanData = redactProviderSecrets(dataText).slice(0, 600).trim();
+        if (cleanData && !detail.includes(cleanData)) {
+          detail = `${detail} (${cleanData})`;
+        }
+      }
+      const isGenericInternal = response.error.code === ACP_ERROR_CODES.INTERNAL_ERROR || /^internal error$/i.test(String(response.error.message || '').trim());
+      if (isGenericInternal && this.stderrTail.trim()) {
+        const tailLines = redactProviderSecrets(this.stderrTail).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const stderrSummary = tailLines.slice(-4).join(' | ').slice(0, 500);
+        if (stderrSummary && !detail.includes(stderrSummary)) {
+          detail = `${detail} — stderr: ${stderrSummary}`;
+        }
+      }
+      const err = new Error(`${pending.method} failed: ${detail}`);
       (err as unknown as { code?: number }).code = response.error.code;
       (err as unknown as { data?: unknown }).data = response.error.data;
       pending.reject(err);
