@@ -276,6 +276,43 @@ program
   });
 
 program
+  .command('policy [action]')
+  .description('Inspect or validate enterprise policy rules (causyne.policy.json): status (default), validate')
+  .action(async (action: string | undefined) => {
+    const argv = action ? [action] : [];
+    const result = await runCommand('policy', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
+  .command('audit [action]')
+  .description('Inspect or export local security audit logs: recent (default), export')
+  .option('-f, --format <format>', 'Export format: jsonl or csv', 'jsonl')
+  .option('-n, --limit <count>', 'Maximum audit entries to include')
+  .option('--days <count>', 'Include logs from the last N calendar days')
+  .option('--event <name>', 'Filter entries by exact event name')
+  .option('--tool <name>', 'Filter entries by exact tool name')
+  .option('-o, --output <file>', 'Write exported audit log to a file inside the workspace')
+  .action(async (action: string | undefined, options: Record<string, any>) => {
+    const argv: string[] = [];
+    if (action) argv.push(action);
+    if (options.format) argv.push('--format', String(options.format));
+    if (options.limit !== undefined) argv.push('--limit', String(options.limit));
+    if (options.days !== undefined) argv.push('--days', String(options.days));
+    if (options.event) argv.push('--event', String(options.event));
+    if (options.tool) argv.push('--tool', String(options.tool));
+    if (options.output) argv.push('--output', String(options.output));
+    const result = await runCommand('audit', argv, { surface: 'terminal' });
+    if (result.ok && result.raw) {
+      process.stdout.write(result.output || '');
+    } else {
+      console.log('\n' + (result.output || '') + '\n');
+    }
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
   .command('continuum [action] [args...]')
   .alias('resume')
   .description('Cross-agent session extraction & resumption (Antigravity, OpenCode, Codex, Claude Code)')

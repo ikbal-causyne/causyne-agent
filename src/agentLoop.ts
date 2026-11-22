@@ -64,7 +64,8 @@ import { routedConfig } from './modelRouter.js';
 import { assessStep, isThrashing } from './uncertainty.js';
 import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPlan } from './decisionPolicy.js';
 import { normalizePeerPlanEntries, extractLivePlanFromText, stripToolCallMarkup, stripThinkBlocks, extractToolCallJsonObjects, resolveToolCallEnvelopeArguments } from './implementationPlan.js';
-import { requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
+import { isWholeFileDeletion, requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
+import { evaluateEnterprisePolicy } from './enterprisePolicy.js';
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
@@ -4419,13 +4420,50 @@ You are operating in a text-and-code modality without direct image pixel renderi
             // Cold observer mutation assessment fail-open
           }
 
+          // Declarative enterprise policy (`causyne.policy.json`): deterministic
+          // allow / ask / deny gate outside the model. Runs after Sandbox and Cold
+          // Observer so it can never weaken workspace isolation or observer vetoes.
+          const enterpriseDecision = evaluateEnterprisePolicy({
+            tool: functionName,
+            args,
+            workspaceRoot: this.workspaceRoot
+          });
+          if (enterpriseDecision.effect === 'deny') {
+            this.emitEvent({
+              type: 'status',
+              message: `Enterprise Policy Denied: ${enterpriseDecision.reason}`
+            });
+            auditLog.log({
+              event: 'enterprise_policy_denied',
+              taskId: this.taskId,
+              tool: functionName,
+              dimension: enterpriseDecision.matchedDimension,
+              rule: enterpriseDecision.matchedRule,
+              reason: enterpriseDecision.reason
+            });
+            coldObserver.recordToolOutcome(this.taskId, functionName, args, {
+              success: false,
+              error: `[ENTERPRISE POLICY DENIED]: ${enterpriseDecision.reason}`
+            });
+            this.messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              name: functionName,
+              content: JSON.stringify({
+                success: false,
+                error: `[ENTERPRISE POLICY DENIED]: ${enterpriseDecision.reason}`
+              })
+            });
+            continue;
+          }
+
           // A standing grant can avoid repeat prompts in supervised modes.
           // Mode C is autonomous for in-scope work. Whole-file deletion asks
           // unless this session explicitly granted the fs_delete tool; a broad
           // shell grant cannot authorize deletion. Sandbox denials and observer
           // vetoes have already run and are never lifted by prompt policy.
           const standingApproval = this.isAlwaysAllowed(functionName);
-          const needsToolApproval = requiresToolApproval({
+          let needsToolApproval = requiresToolApproval({
             mode: this.config.autonomyMode || 'C',
             tool: functionName,
             args,
@@ -4433,7 +4471,32 @@ You are operating in a text-and-code modality without direct image pixel renderi
             heavyDownload: isHeavyAiDownload,
             standingApproval
           });
-          if (standingApproval && !needsToolApproval && this.config.autonomyMode !== 'C') {
+          if (enterpriseDecision.effect === 'ask') {
+            needsToolApproval = true;
+            auditLog.log({
+              event: 'enterprise_policy_ask',
+              taskId: this.taskId,
+              tool: functionName,
+              dimension: enterpriseDecision.matchedDimension,
+              rule: enterpriseDecision.matchedRule,
+              reason: enterpriseDecision.reason
+            });
+          } else if (
+            enterpriseDecision.effect === 'allow'
+            && !isWholeFileDeletion(functionName, args)
+            && !isHeavyAiDownload
+          ) {
+            needsToolApproval = false;
+            auditLog.log({
+              event: 'enterprise_policy_allowed',
+              taskId: this.taskId,
+              tool: functionName,
+              dimension: enterpriseDecision.matchedDimension,
+              rule: enterpriseDecision.matchedRule,
+              reason: enterpriseDecision.reason
+            });
+          }
+          if (standingApproval && !needsToolApproval && this.config.autonomyMode !== 'C' && enterpriseDecision.effect !== 'allow') {
             auditLog.log({
               event: 'approval_auto_granted', taskId: this.taskId,
               tool: functionName, risk: validation.risk, reason: 'allow_always'

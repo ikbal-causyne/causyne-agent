@@ -14,6 +14,7 @@ import { causyneHome } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
 import { probeOsSandbox, resolveOsSandboxMode } from './tools/osSandbox.js';
 import { probeOsKeychain, resolveKeychainMode } from './osKeychain.js';
+import { loadEnterprisePolicy } from './enterprisePolicy.js';
 const PACKAGE_NAME = '@causyne/agent';
 const REGISTRY_LATEST = 'https://registry.npmjs.org/@causyne%2fagent/latest';
 const DEFAULT_CHECK_INTERVAL_MS = 0; // A bare 'causyne' checks the published version on every launch
@@ -380,6 +381,12 @@ export function formatDoctorReport(status, runtime = process) {
     const sandboxMode = resolveOsSandboxMode(runtime.env);
     const keychainCap = probeOsKeychain({ env: runtime.env });
     const keychainMode = resolveKeychainMode(runtime.env);
+    const policyState = loadEnterprisePolicy(runtime.cwd(), runtime.env);
+    const policySummary = !policyState.found
+        ? 'not configured'
+        : (policyState.error || !policyState.policy
+            ? `INVALID (fail-closed: ${policyState.error || 'parse error'})`
+            : `active (${policyState.sourcePath})`);
     const rows = [
         `Version       : ${status.current || 'unknown'}`,
         `Latest        : ${status.latest || `unavailable (${status.error || 'unknown error'})`}`,
@@ -391,6 +398,7 @@ export function formatDoctorReport(status, runtime = process) {
         `Platform      : ${runtime.platform} ${runtime.arch}`,
         `OS Sandbox    : ${sandboxMode.mode} (backend: ${sandboxCap.backend}${sandboxCap.available ? ', available' : ', unavailable'})`,
         `OS Keychain   : ${keychainMode} (backend: ${keychainCap.backend}${keychainCap.available ? ', available' : ', unavailable'})`,
+        `Policy        : ${policySummary}`,
         `Auto updates  : ${status.autoUpdates ? 'enabled' : 'disabled'}`,
         `Workspace     : ${runtime.cwd()}`
     ];

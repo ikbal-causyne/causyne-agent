@@ -54,6 +54,7 @@
     "src/planCache.ts",
     "src/decisionPolicy.ts",
     "src/approvalPolicy.ts",
+    "src/enterprisePolicy.ts",
     "src/agentPolicy.ts",
     "src/launchIntent.ts",
     "src/stallGuard.ts",

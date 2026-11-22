@@ -42,6 +42,9 @@ import { isCredentialPath } from './sandbox.js';
 import { atomicWriteSecretFileSync } from './configVault.js';
 import { redactProviderSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
+import { formatEnterprisePolicyReport } from './enterprisePolicy.js';
+import { auditLog, formatAuditExport } from './auditLog.js';
+import { assertSafeWorkspaceOutput, atomicWriteFileSafe } from './tools/toolPathSafety.js';
 export const SCOPES = ['local'];
 function ok(output, extra = {}) {
     return { ok: true, output, ...extra };
@@ -1709,13 +1712,14 @@ export const COMMANDS = [
     {
         name: 'mcp',
         scope: 'local',
-        usage: '/mcp [add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke|connect|disconnect|test|refresh <name>]',
+        usage: '/mcp [list | add <name> <cmd…> | add <name> --url <url> | remove|grant|revoke|connect|disconnect|test|refresh <name>]',
         description: 'Manage and diagnose MCP server connections',
         dialogTitle: 'MCP servers',
         complete: () => {
             try {
                 const servers = serverStatus();
                 const base = [
+                    { value: 'list', label: 'list', description: 'list configured MCP servers' },
                     { value: 'add', label: 'add', description: 'add a new stdio or SSE/HTTP MCP server' }
                 ];
                 for (const s of servers) {
@@ -1802,8 +1806,8 @@ export const COMMANDS = [
                     + `Server: ${client.serverInfo ? `${client.serverInfo.name} ${client.serverInfo.version}` : 'identity not provided'}\n`
                     + `Tools: ${client.tools.length}${client.tools.length ? ` — ${client.tools.map(tool => tool.name).join(', ')}` : ''}`);
             }
-            if (action) {
-                return fail(`Unknown mcp action "${action}". Try: add, remove, grant, revoke, connect, disconnect, test, refresh, or mcp on its own to list.`);
+            if (action && action !== 'list') {
+                return fail(`Unknown mcp action "${action}". Try: list, add, remove, grant, revoke, connect, disconnect, test, refresh.`);
             }
             const servers = serverStatus();
             if (servers.length === 0) {
@@ -1826,13 +1830,14 @@ export const COMMANDS = [
     {
         name: 'peers',
         scope: 'local',
-        usage: '/peers [detect | test <id> | add <id> <command…> | remove <id>]',
+        usage: '/peers [list | detect | test <id> | add <id> <command…> | remove <id>]',
         description: 'Manage, discover, and test external ACP peer agents (Claude Code, OpenCode, Codex, Gemini, Hermes, etc.)',
         dialogTitle: 'ACP peer agents',
         complete: () => {
             try {
                 const peers = listAllPeers();
                 return [
+                    { value: 'list', label: 'list', description: 'list configured and preset ACP peer agents' },
                     { value: 'detect', label: 'detect', description: 'scan system for installed ACP agents' },
                     ...peers.map((p) => ({
                         value: `test ${p.id}`,
@@ -1947,8 +1952,8 @@ export const COMMANDS = [
                     return fail(res.error || `Could not remove peer "${peerId}".`);
                 return ok(`Removed peer profile "${peerId}".`);
             }
-            if (action) {
-                return fail(`Unknown peers action "${action}". Try: detect, test, add, remove, or peers on its own to list.`);
+            if (action && action !== 'list') {
+                return fail(`Unknown peers action "${action}". Try: list, detect, test, add, remove.`);
             }
             // Default: list all configured and discovered peers
             const peers = listAllPeers();
@@ -2533,6 +2538,145 @@ export const COMMANDS = [
             catch (err) {
                 return fail(`Could not export conversation: ${errMsg(err)}`);
             }
+        }
+    },
+    {
+        name: 'policy',
+        scope: 'local',
+        usage: '/policy [status|validate]',
+        description: 'Inspect or validate declarative enterprise policy (causyne.policy.json)',
+        dialogTitle: 'Enterprise Policy',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'show active enterprise policy rules' },
+            { value: 'validate', label: 'validate', description: 'validate enterprise policy syntax and fail-closed status' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const sub = (argv[0] || 'status').toLowerCase();
+            if (sub !== 'status' && sub !== 'validate') {
+                return fail(`Unknown policy action "${safeDisplay(sub)}". Try: status, validate.`);
+            }
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const report = formatEnterprisePolicyReport(ws);
+            return report.ok ? ok(report.text) : fail(report.text);
+        }
+    },
+    {
+        name: 'audit',
+        scope: 'local',
+        usage: '/audit [recent|export] [--format jsonl|csv] [--limit N] [--days N] [--event NAME] [--tool NAME] [--output FILE]',
+        description: 'Inspect or export local security audit logs (JSONL or CSV)',
+        dialogTitle: 'Audit Log',
+        complete: () => [
+            { value: 'recent', label: 'recent', description: 'show recent audit log entries' },
+            { value: 'export --format jsonl', label: 'export --format jsonl', description: 'export audit entries as JSONL' },
+            { value: 'export --format csv', label: 'export --format csv', description: 'export audit entries as CSV (formula-safe)' }
+        ],
+        run: async (argv, ctx = {}) => {
+            let action = '';
+            let formatRaw = 'jsonl';
+            let limitRaw;
+            let daysRaw;
+            let eventFilter;
+            let toolFilter;
+            let outputFile;
+            for (let i = 0; i < argv.length; i++) {
+                const token = argv[i] ?? '';
+                if (!token)
+                    continue;
+                if (token === '--format' || token === '-f') {
+                    formatRaw = argv[++i] ?? '';
+                }
+                else if (token.startsWith('--format=')) {
+                    formatRaw = token.slice('--format='.length);
+                }
+                else if (token === '--limit' || token === '-n') {
+                    limitRaw = argv[++i];
+                }
+                else if (token.startsWith('--limit=')) {
+                    limitRaw = token.slice('--limit='.length);
+                }
+                else if (token === '--days') {
+                    daysRaw = argv[++i];
+                }
+                else if (token.startsWith('--days=')) {
+                    daysRaw = token.slice('--days='.length);
+                }
+                else if (token === '--event') {
+                    eventFilter = argv[++i];
+                }
+                else if (token.startsWith('--event=')) {
+                    eventFilter = token.slice('--event='.length);
+                }
+                else if (token === '--tool') {
+                    toolFilter = argv[++i];
+                }
+                else if (token.startsWith('--tool=')) {
+                    toolFilter = token.slice('--tool='.length);
+                }
+                else if (token === '--output' || token === '-o') {
+                    outputFile = argv[++i];
+                }
+                else if (token.startsWith('--output=')) {
+                    outputFile = token.slice('--output='.length);
+                }
+                else if (!token.startsWith('-') && !action) {
+                    action = token.toLowerCase();
+                }
+                else {
+                    return fail(`Unknown audit option "${safeDisplay(token)}".`);
+                }
+            }
+            const mode = action || 'recent';
+            if (mode !== 'recent' && mode !== 'export') {
+                return fail(`Unknown audit action "${safeDisplay(mode)}". Try: recent, export.`);
+            }
+            const fmtLower = formatRaw.trim().toLowerCase();
+            if (fmtLower !== 'jsonl' && fmtLower !== 'csv') {
+                return fail(`Unsupported audit export format "${safeDisplay(formatRaw)}". Use jsonl or csv.`);
+            }
+            const format = fmtLower;
+            const parsedLimit = limitRaw !== undefined ? Number.parseInt(limitRaw, 10) : (mode === 'export' ? 1000 : 50);
+            const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(50_000, parsedLimit) : (mode === 'export' ? 1000 : 50);
+            const parsedDays = daysRaw !== undefined ? Number.parseInt(daysRaw, 10) : undefined;
+            const days = parsedDays !== undefined && Number.isFinite(parsedDays) && parsedDays > 0 ? Math.min(365, parsedDays) : undefined;
+            const entries = auditLog.readAuditLogs({
+                limit,
+                days,
+                event: eventFilter,
+                tool: toolFilter
+            });
+            if (mode === 'export') {
+                const payload = formatAuditExport(entries, format);
+                if (outputFile) {
+                    if (outputFile.includes('\0'))
+                        return fail('Invalid output file path.');
+                    const ws = ctx.loop?.workspaceRoot || process.cwd();
+                    try {
+                        const safeOut = await assertSafeWorkspaceOutput(outputFile, { workspaceRoot: ws });
+                        if (isCredentialPath(safeOut)) {
+                            return fail(`Refusing to overwrite credential or sensitive file: ${safeDisplay(safeOut)}`);
+                        }
+                        await atomicWriteFileSafe(safeOut, payload, { mode: 0o600 });
+                        return ok(`Exported ${entries.length} audit entry(s) (${format}) to ${safeDisplay(safeOut)}`);
+                    }
+                    catch (err) {
+                        return fail(`Could not write audit export: ${safeDisplay(errMsg(err))}`);
+                    }
+                }
+                return ok(payload, { raw: true });
+            }
+            if (entries.length === 0) {
+                return ok('No matching audit log entries found.');
+            }
+            const lines = [`Recent Audit Events (${entries.length})`, ''];
+            for (const entry of entries) {
+                const ts = safeDisplay(String(entry.ts || ''));
+                const ev = safeDisplay(String(entry.event || 'event'));
+                const tool = entry.tool ? ` tool=${safeDisplay(String(entry.tool))}` : '';
+                const reason = entry.reason ? ` — ${safeDisplay(String(entry.reason)).slice(0, 120)}` : '';
+                lines.push(`  ${ts}  [${ev}]${tool}${reason}`);
+            }
+            return ok(lines.join('\n'));
         }
     },
     {
