@@ -119,13 +119,15 @@ export function sanitizeMcpMetadataText(value: unknown, maxChars: number): strin
  * Validates and sanitizes an MCP tool name. Rejects empty names, names with
  * ASCII control characters / NUL bytes, or names exceeding the length ceiling.
  */
+const FORBIDDEN_SCHEMA_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function sanitizeMcpToolName(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const stripped = stripInvisibleAndBidi(value).trim();
   if (stripped.length === 0 || stripped.length > MAX_MCP_TOOL_NAME_CHARS) return null;
   for (let i = 0; i < stripped.length; i++) {
     const code = stripped.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return null;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return null;
   }
   return stripped;
 }
@@ -145,17 +147,16 @@ function sanitizeSchemaNode(value: unknown, depth: number): unknown {
     return value.slice(0, maxItems).map(item => sanitizeSchemaNode(item, depth + 1));
   }
   if (isRecord(value)) {
-    const out: Record<string, unknown> = {};
+    const out = Object.create(null) as Record<string, unknown>;
     let count = 0;
     for (const [key, item] of Object.entries(value)) {
-      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
       if (count >= 256) break;
-      const safeKey = stripInvisibleAndBidi(safeDisplay(key));
-      if (!safeKey) continue;
+      const safeKey = stripInvisibleAndBidi(safeDisplay(key)).trim();
+      if (!safeKey || FORBIDDEN_SCHEMA_KEYS.has(safeKey) || FORBIDDEN_SCHEMA_KEYS.has(key)) continue;
       out[safeKey] = sanitizeSchemaNode(item, depth + 1);
       count++;
     }
-    return out;
+    return { ...out };
   }
   return undefined;
 }

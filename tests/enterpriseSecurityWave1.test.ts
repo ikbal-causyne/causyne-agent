@@ -13,6 +13,7 @@ import { looksSensitive } from '../src/tui/history.js';
 import { formatAuditExport } from '../src/auditLog.js';
 import { loadProjectInstructions } from '../src/projectInstructions.js';
 import { stripAnsi, safeDisplay, redactSecrets } from '../src/tui/text.js';
+import { sanitizeMcpInputSchema, sanitizeMcpToolName } from '../src/mcp/mcpSecurity.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -104,5 +105,23 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     assert.equal(safeDisplay('\x9b2Jclean\u202eevil'), 'cleanevil');
     assert.equal(redactSecrets('xoxb-123456789012-abcdefghijkl').includes('abcdefghijkl'), false);
     assert.equal(redactSecrets('{"api_key": "supersecretvalue123"}').includes('supersecretvalue123'), false);
+  });
+
+  test('sanitizeMcpInputSchema blocks invisible-char __proto__ bypass and sanitizeMcpToolName rejects C1 controls', () => {
+    const hostile: Record<string, unknown> = {
+      type: 'object',
+      properties: {
+        ['__pro\u200bto__']: { type: 'string', polluted: true },
+        ['const\u200cructor']: { type: 'string' },
+        safe: { type: 'string' }
+      }
+    };
+    const cleaned = sanitizeMcpInputSchema(hostile);
+    const props = cleaned.properties as Record<string, unknown>;
+    assert.equal(Object.hasOwn(props, '__proto__'), false);
+    assert.equal(Object.hasOwn(props, 'constructor'), false);
+    assert.equal(Object.getPrototypeOf(props), Object.prototype);
+    assert.ok(props.safe);
+    assert.equal(sanitizeMcpToolName('bad\x9btool'), null);
   });
 });
