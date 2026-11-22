@@ -17,7 +17,9 @@ import {
 import { gitWorktree } from '../src/tools/gitWorktree.js';
 import { runCommand } from '../src/commands.js';
 
-const TMP_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-phaseb-wt-')));
+const nativeRealpath = (p: string): string =>
+  typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(p) : fs.realpathSync(p);
+const TMP_ROOT = nativeRealpath(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-phaseb-wt-')));
 
 after(() => {
   try {
@@ -31,6 +33,7 @@ function initRepo(name: string): string {
   execFileSync('git', ['init', '-b', 'main'], { cwd: dir, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.email', 'test@causyne.local'], { cwd: dir, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.name', 'Causyne Test'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: dir, stdio: 'ignore' });
   fs.writeFileSync(path.join(dir, 'base.txt'), 'line-1\nline-2\n', 'utf8');
   execFileSync('git', ['add', '--all'], { cwd: dir, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'init'], { cwd: dir, stdio: 'ignore' });
@@ -92,7 +95,10 @@ describe('Phase B2 — Isolated Git Worktree Parallel Agent Engine', () => {
     // Primary repo must NOT be left in MERGING / conflicted state
     const statusAfter = execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }).trim();
     assert.equal(statusAfter, '', 'primary repo must remain clean after aborted conflict merge');
-    assert.equal(fs.readFileSync(path.join(repo, 'base.txt'), 'utf8'), 'change-from-worker-1\nline-2\n');
+    assert.equal(
+      fs.readFileSync(path.join(repo, 'base.txt'), 'utf8').replace(/\r\n/g, '\n'),
+      'change-from-worker-1\nline-2\n'
+    );
 
     const rem = removeWorktree(repo, wt2.id, { deleteBranch: true });
     assert.equal(rem.removed, true);
