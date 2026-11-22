@@ -66,6 +66,9 @@ export function isWholeFileDeletion(tool: string, args: Record<string, unknown>)
   const canonical = canonicalPolicyTool(tool);
   if (canonical === 'fs_delete') return true;
   const safeArgs = args && typeof args === 'object' ? args : {};
+  if (canonical === 'apply_patch') {
+    return typeof safeArgs.patch === 'string' && /(?:^|\r?\n)\*\*\* Delete File:\s*\S/.test(safeArgs.patch);
+  }
   const command = canonical === 'gitOp'
     ? `git ${String(safeArgs.command ?? safeArgs.action ?? '')}`
     : SHELL_TOOLS.has(canonical)
