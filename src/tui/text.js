@@ -11,21 +11,31 @@
 //
 // Pure TypeScript. No dependency, no shell.
 import os from 'node:os';
-// CSI sequences (colour, cursor movement, erase) and OSC sequences (window
-// title, hyperlinks — terminated by BEL or ST).
+// CSI sequences (colour, cursor movement, erase), 8-bit C1 CSI/OSC, and OSC sequences.
 const CSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+const C1_CSI_PATTERN = /\x9b[0-?]*[ -/]*[@-~]/g;
 const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const C1_OSC_PATTERN = /\x9d[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)/g;
 const OTHER_ESCAPE_PATTERN = /\x1b[@-Z\\-_]/g;
 const CSI_STICKY = /\x1b\[[0-?]*[ -/]*[@-~]/y;
 const OSC_STICKY = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/y;
 const OTHER_ESCAPE_STICKY = /\x1b[@-Z\\-_]/y;
 const OSC8_SEQUENCE = /^\x1b\]8;[^;]*;([^\x07\x1b]*)(\x07|\x1b\\)/;
-/** Everything that is an escape sequence rather than visible text. */
+/** Everything that is an escape sequence rather than visible text (multi-pass to defeat nested sequences). */
 export function stripAnsi(text) {
-    return String(text == null ? '' : text)
-        .replace(OSC_PATTERN, '')
-        .replace(CSI_PATTERN, '')
-        .replace(OTHER_ESCAPE_PATTERN, '');
+    let out = String(text == null ? '' : text);
+    for (let pass = 0; pass < 8; pass++) {
+        const next = out
+            .replace(OSC_PATTERN, '')
+            .replace(C1_OSC_PATTERN, '')
+            .replace(CSI_PATTERN, '')
+            .replace(C1_CSI_PATTERN, '')
+            .replace(OTHER_ESCAPE_PATTERN, '');
+        if (next === out)
+            break;
+        out = next;
+    }
+    return out;
 }
 /**
  * Does this code point occupy two terminal columns?
@@ -402,7 +412,7 @@ export function sanitize(text) {
         .replace(/\r/g, '\n');
     return expandTabs(stripAnsi(normalized))
         // eslint-disable-next-line no-control-regex
-        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '');
 }
 /** `/Users/example/Projects/x` → `~/Projects/x`. Long paths dominate a tool row. */
 export function shortenHome(value) {
@@ -420,9 +430,14 @@ export function shortenHome(value) {
 }
 const SECRET_PATTERNS = [
     [/\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}/g, (m) => `${m.slice(0, 5)}…${m.slice(-4)}`],
-    [/\b(gh[pousr]|xox[baprs])_[A-Za-z0-9]{12,}/g, (m) => `${m.slice(0, 7)}…`],
+    [/\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g, (m) => `${m.slice(0, 8)}…`],
+    [/\b(?:gh[pousr]_|github_pat_|npm_)[A-Za-z0-9_]{12,}/g, (m) => `${m.slice(0, 7)}…`],
+    [/\b(?:xox[baprs]|glpat)-[A-Za-z0-9-]{12,}/g, (m) => `${m.slice(0, 6)}…`],
+    [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, (m) => `${m.slice(0, 6)}…`],
     [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}/gi, (m) => `${m.split(/\s+/)[0]} …`],
-    [/\b(api[_-]?key|token|secret|password|passwd)\s*[=:]\s*["']?[^\s"']{6,}/gi,
+    [/("(?:api[_-]?key|token|secret|password|passwd)"\s*:\s*")([^"\r\n]{6,256})(")/gi,
+        (_m) => '"[redacted]": "…"'],
+    [/\b(api[_-]?key|token|secret|password|passwd)\s*[=:]\s*["']?[^\s"',}]{6,}/gi,
         (m) => `${m.split(/[=:]/)[0]}=…`]
 ];
 export function redactSecrets(text) {

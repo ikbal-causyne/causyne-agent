@@ -12,6 +12,7 @@ import { redactTextSecrets, redactProviderSecrets } from '../src/providers/byokH
 import { looksSensitive } from '../src/tui/history.js';
 import { formatAuditExport } from '../src/auditLog.js';
 import { loadProjectInstructions } from '../src/projectInstructions.js';
+import { stripAnsi, safeDisplay, redactSecrets } from '../src/tui/text.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -96,5 +97,12 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     fs.writeFileSync(path.join(ws, 'CAUSYNE.md'), '# Rules\n' + 'rule line '.repeat(400), 'utf8');
     const loaded = loadProjectInstructions(ws);
     assert.ok(loaded.totalChars > 3500, 'projectInstructions must not truncate at 2048 chars');
+  });
+
+  test('stripAnsi and safeDisplay neutralize nested CSI, C1 8-bit escapes, BiDi overrides, and Slack/JSON secrets', () => {
+    assert.equal(stripAnsi('\x1b[\x1b[0m2Jhello'), 'hello');
+    assert.equal(safeDisplay('\x9b2Jclean\u202eevil'), 'cleanevil');
+    assert.equal(redactSecrets('xoxb-123456789012-abcdefghijkl').includes('abcdefghijkl'), false);
+    assert.equal(redactSecrets('{"api_key": "supersecretvalue123"}').includes('supersecretvalue123'), false);
   });
 });
