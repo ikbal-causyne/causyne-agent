@@ -58,8 +58,18 @@ function directoryChain(topDir, leafDir) {
     }
     return chain;
 }
+function nativeRealpath(targetPath) {
+    try {
+        return typeof fs.realpathSync.native === 'function'
+            ? fs.realpathSync.native(targetPath)
+            : fs.realpathSync(targetPath);
+    }
+    catch {
+        return path.resolve(targetPath);
+    }
+}
 export function loadProjectInstructions(workspaceDir = process.cwd(), env = process.env) {
-    const resolvedWs = path.resolve(workspaceDir);
+    const resolvedWs = nativeRealpath(workspaceDir);
     const repoRoot = resolveGitRepoRoot(resolvedWs);
     const entries = [];
     const seenPaths = new Set();

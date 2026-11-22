@@ -73,11 +73,21 @@ function directoryChain(topDir: string, leafDir: string): string[] {
   return chain;
 }
 
+function nativeRealpath(targetPath: string): string {
+  try {
+    return typeof fs.realpathSync.native === 'function'
+      ? fs.realpathSync.native(targetPath)
+      : fs.realpathSync(targetPath);
+  } catch {
+    return path.resolve(targetPath);
+  }
+}
+
 export function loadProjectInstructions(
   workspaceDir: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env
 ): LoadedProjectInstructions {
-  const resolvedWs = path.resolve(workspaceDir);
+  const resolvedWs = nativeRealpath(workspaceDir);
   const repoRoot = resolveGitRepoRoot(resolvedWs);
   const entries: ProjectInstructionEntry[] = [];
   const seenPaths = new Set<string>();
