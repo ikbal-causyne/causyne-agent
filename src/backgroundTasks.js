@@ -56,7 +56,7 @@ export class BackgroundTaskManager {
         }
         const isWin = process.platform === 'win32';
         const shellBin = isWin ? (process.env.ComSpec || 'cmd.exe') : '/bin/sh';
-        const shellArgs = isWin ? ['/d', '/s', '/c', command] : ['-c', command];
+        const shellArgs = isWin ? ['/d', '/s', '/c', `"${command}"`] : ['-c', command];
         const roots = options.workspaceRoots.length > 0 ? options.workspaceRoots : [options.cwd];
         const wrapped = options.osSandbox && typeof options.osSandbox === 'object'
             ? wrapCommandWithOsSandbox(shellBin, shellArgs, {
@@ -81,7 +81,8 @@ export class BackgroundTaskManager {
             env: getEnhancedEnv(),
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: false,
-            windowsHide: true
+            windowsHide: true,
+            ...(isWin && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
         });
         const record = {
             taskId,
