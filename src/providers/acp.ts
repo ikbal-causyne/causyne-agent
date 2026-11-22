@@ -482,12 +482,22 @@ export class AcpProvider extends LLMProvider {
                 || earlier?.parameters?.__invalidTool === true
                 || (typeof input.error === 'string' && input.error.length > 0 && typeof input.tool === 'string');
               if (isInvalidPseudoTool) {
-                const rawRequested = typeof input.tool === 'string' ? input.tool : '';
+                const rawRequested = typeof input.tool === 'string' ? input.tool.trim() : '';
+                const errText = typeof input.error === 'string' ? input.error : '';
+                const isNativeParamError = /(?:invalid\s+(?:argument|param|input|schema)|missing\s+required|required\s+(?:property|parameter|field)|validation\s+(?:error|failed)|expected\s+(?:string|number|boolean|object|array))/i.test(errText);
+                const isPeerNativeAlias = /^(?:bash|sh|shell|terminal|read|write|edit|multiedit|glob|grep|webfetch|websearch|todowrite|todoread|ls|list)$/i.test(rawRequested);
+                const isExplicitUnavailableTool = /(?:unavailable\s+tool|unknown\s+tool|not\s+found|does\s+not\s+exist|unrecognized\s+tool|not\s+supported)/i.test(errText);
                 const canonicalRequested = canonicalizeToolName(rawRequested);
                 const hasDirectMatch = normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === rawRequested);
                 const hasCanonicalMatch = normalizeToolContracts(this.peerServices?.tools || []).some(tool => tool.name === canonicalRequested);
                 const requested = hasDirectMatch ? rawRequested : (hasCanonicalMatch ? canonicalRequested : '');
-                if (!this.toolRoutingError && requested) {
+                const shouldRouteToHost = Boolean(
+                  !this.toolRoutingError
+                  && requested
+                  && !isNativeParamError
+                  && (!isPeerNativeAlias || isExplicitUnavailableTool)
+                );
+                if (shouldRouteToHost) {
                   let rawArgs = (input.args && typeof input.args === 'object') ? input.args
                     : (input.parameters && typeof input.parameters === 'object') ? input.parameters
                     : (earlier?.parameters && typeof earlier.parameters === 'object' && !earlier.parameters.__pendingStub) ? earlier.parameters
@@ -500,7 +510,7 @@ export class AcpProvider extends LLMProvider {
                   }
                   this.toolRoutingError = {
                     tool: requested,
-                    message: typeof input.error === 'string' ? input.error : 'Host tool requested through the peer-native channel',
+                    message: errText || 'Host tool requested through the peer-native channel',
                     parameters: rawArgs
                   };
                   client.notifyCancel(sessionId);
@@ -871,7 +881,14 @@ export class AcpProvider extends LLMProvider {
       if (externalActions.length > 0) {
         response.externalActions = externalActions;
       }
-      if (this.toolRoutingError && toolCalls.length === 0) response.toolRoutingError = this.toolRoutingError;
+      const recoveredWithActionsAndText = Boolean(
+        content.length > 0
+        && externalActions.some(action => action.status === 'completed')
+        && !externalActions.some(action => action.status === 'running')
+      );
+      if (this.toolRoutingError && toolCalls.length === 0 && !recoveredWithActionsAndText) {
+        response.toolRoutingError = this.toolRoutingError;
+      }
       if (this.turnReasoning.trim()) {
         response.reasoningContent = this.turnReasoning;
       }
