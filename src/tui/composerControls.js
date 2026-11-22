@@ -2,6 +2,7 @@ import { loadConfig, saveConfig } from '../config.js';
 import { getAvailableProvidersOverview } from '../dynamicCatalogue.js';
 import { writeClipboardSync } from './clipboardSync.js';
 import { SelectLayer } from './dialogs.js';
+import { looksSensitive } from './history.js';
 export function openModeControl(prompt, loop) {
     const config = loadConfig();
     const current = String(config.autonomyMode || 'B').toUpperCase();
@@ -107,7 +108,8 @@ export function triggerTurnInterrupt(prompt, formatInterruptedRow, options = {})
 export function handlePromptCtrlC(prompt, formatInterruptedRow, windowMs = 2000, now = Date.now()) {
     if (!prompt.editor.isEmpty) {
         const text = prompt.editor.getText();
-        if (text) {
+        const isSecret = Boolean(text && looksSensitive(text));
+        if (text && !isSecret) {
             writeClipboardSync(text);
             if ('killRing' in prompt.editor) {
                 prompt.editor.killRing = text;
@@ -115,7 +117,9 @@ export function handlePromptCtrlC(prompt, formatInterruptedRow, windowMs = 2000,
         }
         prompt.editor.clear();
         prompt.completion = null;
-        prompt.notice = text ? 'cleared and copied to clipboard' : '';
+        prompt.notice = !text
+            ? ''
+            : (isSecret ? 'cleared (secret not copied to clipboard)' : 'cleared and copied to clipboard');
         return;
     }
     if (prompt.busy) {

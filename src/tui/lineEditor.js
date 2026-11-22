@@ -44,12 +44,14 @@ export class LineEditor {
     col;
     killRing;
     selectionAnchor;
-    constructor(initial = '') {
+    disableClipboard;
+    constructor(initial = '', options) {
         this.lines = [[]];
         this.line = 0;
         this.col = 0;
         this.killRing = '';
         this.selectionAnchor = null;
+        this.disableClipboard = options?.disableClipboard === true;
         this.setText(initial);
     }
     // -------------------------------------------------------------------------
@@ -331,7 +333,7 @@ export class LineEditor {
     // memory for. Killed text goes to a ring so Ctrl+Y can put it back.
     // -------------------------------------------------------------------------
     _writeClipboardSafe(value) {
-        if (!value)
+        if (this.disableClipboard || !value)
             return;
         try {
             writeClipboardSync(value);
@@ -339,9 +341,12 @@ export class LineEditor {
         catch { /* clipboard unavailable */ }
     }
     _killSelection() {
-        this.killRing = this.getSelectedText();
+        const killed = this.getSelectedText();
         this.deleteSelection();
-        this._writeClipboardSafe(this.killRing);
+        if (!this.disableClipboard) {
+            this.killRing = killed;
+            this._writeClipboardSafe(this.killRing);
+        }
     }
     killToEnd() {
         if (this.hasSelection) {
@@ -349,9 +354,12 @@ export class LineEditor {
             return;
         }
         const line = this.lines[this.line] ?? [];
-        this.killRing = line.slice(this.col).join('');
+        const killed = line.slice(this.col).join('');
         this.lines[this.line] = line.slice(0, this.col);
-        this._writeClipboardSafe(this.killRing);
+        if (!this.disableClipboard) {
+            this.killRing = killed;
+            this._writeClipboardSafe(this.killRing);
+        }
     }
     killToStart() {
         if (this.hasSelection) {
@@ -359,10 +367,13 @@ export class LineEditor {
             return;
         }
         const line = this.lines[this.line] ?? [];
-        this.killRing = line.slice(0, this.col).join('');
+        const killed = line.slice(0, this.col).join('');
         this.lines[this.line] = line.slice(this.col);
         this.col = 0;
-        this._writeClipboardSafe(this.killRing);
+        if (!this.disableClipboard) {
+            this.killRing = killed;
+            this._writeClipboardSafe(this.killRing);
+        }
     }
     killWordLeft() {
         if (this.hasSelection) {
@@ -371,18 +382,23 @@ export class LineEditor {
         }
         if (this.col === 0) {
             if (this.line > 0) {
-                this.killRing = '\n';
                 this.backspace();
-                this._writeClipboardSafe(this.killRing);
+                if (!this.disableClipboard) {
+                    this.killRing = '\n';
+                    this._writeClipboardSafe(this.killRing);
+                }
             }
             return;
         }
         const start = this.col;
         this.moveWordLeft();
         const line = this.lines[this.line] ?? [];
-        this.killRing = line.slice(this.col, start).join('');
+        const killed = line.slice(this.col, start).join('');
         line.splice(this.col, start - this.col);
-        this._writeClipboardSafe(this.killRing);
+        if (!this.disableClipboard) {
+            this.killRing = killed;
+            this._writeClipboardSafe(this.killRing);
+        }
     }
     yank() {
         if (!this.killRing) {

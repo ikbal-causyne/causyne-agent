@@ -200,9 +200,9 @@ export class InputLayer extends Layer {
   constructor(options: InputLayerOptions = {}) {
     const opts = options && typeof options === 'object' ? options : {};
     super({ width: opts.width || 68, height: opts.height || 10, ...opts });
-    this.editor = new LineEditor(String(opts.value == null ? '' : opts.value));
-    this.lines = Array.isArray(opts.lines) ? [...opts.lines] : [];
     this.mask = opts.mask === true;
+    this.editor = new LineEditor(String(opts.value == null ? '' : opts.value), { disableClipboard: this.mask });
+    this.lines = Array.isArray(opts.lines) ? [...opts.lines] : [];
     this.placeholder = opts.placeholder || '';
     this.onSubmit = opts.onSubmit || null;
     this.onCancel = opts.onCancel || null;

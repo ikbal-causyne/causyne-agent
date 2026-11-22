@@ -2,6 +2,7 @@ import { loadConfig, saveConfig } from '../config.js';
 import { getAvailableProvidersOverview } from '../dynamicCatalogue.js';
 import { writeClipboardSync } from './clipboardSync.js';
 import { SelectLayer } from './dialogs.js';
+import { looksSensitive } from './history.js';
 
 interface ControlPrompt {
   openLayer(layer: unknown): void;
@@ -153,7 +154,8 @@ export function handlePromptCtrlC(
 ): void {
   if (!prompt.editor.isEmpty) {
     const text = prompt.editor.getText();
-    if (text) {
+    const isSecret = Boolean(text && looksSensitive(text));
+    if (text && !isSecret) {
       writeClipboardSync(text);
       if ('killRing' in prompt.editor) {
         (prompt.editor as { killRing?: string }).killRing = text;
@@ -161,7 +163,9 @@ export function handlePromptCtrlC(
     }
     prompt.editor.clear();
     prompt.completion = null;
-    prompt.notice = text ? 'cleared and copied to clipboard' : '';
+    prompt.notice = !text
+      ? ''
+      : (isSecret ? 'cleared (secret not copied to clipboard)' : 'cleared and copied to clipboard');
     return;
   }
   if (prompt.busy) {

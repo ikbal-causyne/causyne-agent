@@ -27,6 +27,9 @@ import { isMutatingToolCall } from '../src/decisionPolicy.js';
 import { getDynamicTools } from '../src/tools/registry.js';
 import { AgentLoop } from '../src/agentLoop.js';
 import { archive, isUnsafeArchiveMemberName } from '../src/tools/archive.js';
+import { InputLayer } from '../src/tui/dialogs.js';
+import { handlePromptCtrlC } from '../src/tui/composerControls.js';
+import { LineEditor } from '../src/tui/lineEditor.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -351,5 +354,31 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
       assert.equal(res.success, false);
       assert.match(res.error || '', /symbolic link|symlink/i);
     }
+  });
+
+  test('masked InputLayer and handlePromptCtrlC never copy secrets to killRing or clipboard', () => {
+    const masked = new InputLayer({ title: 'API Key', value: 'sk-1234567890abcdef123456', mask: true });
+    assert.equal(masked.editor.disableClipboard, true);
+    masked.editor.killToStart();
+    assert.equal(masked.editor.killRing, '', 'masked kill must not populate killRing');
+
+    const editor = new LineEditor('export API_KEY=sk-1234567890abcdef123456');
+    const promptStub: any = {
+      busy: false,
+      lastCtrlC: 0,
+      notice: '',
+      statusMessage: '',
+      completion: null,
+      editor,
+      erase() {},
+      commit() {},
+      onInterrupt() {},
+      onExit() {},
+      scheduleDraw() {}
+    };
+    handlePromptCtrlC(promptStub, () => []);
+    assert.equal(editor.isEmpty, true);
+    assert.equal(editor.killRing, '', 'sensitive prompt must not populate killRing on Ctrl+C');
+    assert.match(promptStub.notice, /not copied/i);
   });
 });
