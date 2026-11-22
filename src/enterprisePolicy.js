@@ -25,7 +25,7 @@ const MAX_RULES_PER_BUCKET = 512;
 const MAX_PATTERN_LENGTH = 512;
 const MAX_MATCH_TEXT_LENGTH = 8192;
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const SHELL_TOOL_NAMES = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'gitOp']);
+const SHELL_TOOL_NAMES = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'task_bg', 'gitOp']);
 const PATH_ARG_KEYS = [
     'path', 'filePath', 'file_path', 'targetFile', 'targetPath',
     'source', 'destination', 'dest', 'outputFile', 'outputPath',

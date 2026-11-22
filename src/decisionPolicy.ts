@@ -49,7 +49,7 @@ const EXPLICIT_CHOICE_PATTERNS = [
 ];
 
 const MUTATING_TOOLS = new Set([
-  'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move', 'sysRun', 'sysRunBg',
+  'fs_write', 'fs_edit', 'MultiEdit', 'fs_delete', 'fs_move', 'sysRun', 'sysRunBg', 'task_bg',
   'gitOp', 'manage_local_dependencies', 'plugin_manage', 'tool_forge', 'plugins_factory', 'create_skill',
   'write_file', 'write_to_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content',
   'write', 'edit', 'multiedit', 'bash', 'terminal', 'execute', 'run_command', 'run'
@@ -333,6 +333,14 @@ export function isMutatingToolCall(toolName: string, args: Record<string, unknow
     if (['sysRun', 'sysRunBg', 'bash', 'terminal', 'execute', 'sh', 'zsh', 'run_command', 'run'].includes(toolName)) {
       const command = String(args.CommandLine ?? args.commandLine ?? args.command ?? args.cmd ?? args.script ?? args.code ?? '');
       return !isReadOnlyShellCommand(command);
+    }
+    if (toolName === 'task_bg') {
+      const action = String(args.action ?? 'list').trim().toLowerCase();
+      if (action === 'start') {
+        const command = String(args.command ?? args.cmd ?? '');
+        return !isReadOnlyShellCommand(command);
+      }
+      return action === 'stop';
     }
     if (toolName === 'gitOp') {
       const action = String(args.action ?? args.command ?? args.operation ?? '');

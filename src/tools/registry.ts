@@ -475,7 +475,7 @@ export async function getDynamicTools(autonomyMode: string | undefined = 'C', su
   // variants that used to pad these sets never matched a schema name and so
   // culled nothing.
   if (autonomyMode === 'A') {
-    const dangerousTools = new Set(['proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'terminal_persistent_shell', 'manage_local_dependencies']);
+    const dangerousTools = new Set(['proc_term', 'gitOp', 'fs_delete', 'sysRun', 'sysRunBg', 'task_bg', 'terminal_persistent_shell', 'manage_local_dependencies']);
     tools = tools.filter(t => !dangerousTools.has(t.name));
   } else if (autonomyMode === 'B') {
     const dangerousTools = new Set(['proc_term', 'manage_local_dependencies']);

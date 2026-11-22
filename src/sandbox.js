@@ -229,6 +229,24 @@ export class Sandbox {
                     : `Touches credential material: ${credentialPathHit}`
             };
         };
+        if (canonicalToolName === 'task_bg') {
+            const action = typeof safeArgs.action === 'string' ? safeArgs.action.trim().toLowerCase() : 'list';
+            const command = safeArgs.command || safeArgs.input || safeArgs.cmd;
+            if (action === 'start' || command) {
+                if (command) {
+                    const risk = this.classifyCommandRisk(command);
+                    if (risk === 'forbidden') {
+                        return { allowed: false, reason: 'Command is permanently blocked for safety', risk: 'forbidden' };
+                    }
+                    return withCredentialEscalation({ allowed: true, risk });
+                }
+                return withCredentialEscalation({ allowed: true, risk: 'moderate' });
+            }
+            if (action === 'stop') {
+                return withCredentialEscalation({ allowed: true, risk: 'moderate' });
+            }
+            return withCredentialEscalation({ allowed: true, risk: 'safe' });
+        }
         if (canonicalToolName === 'sysRun' || canonicalToolName === 'sysRunBg' || canonicalToolName === 'terminal_persistent_shell') {
             const command = safeArgs.command || safeArgs.input || safeArgs.cmd;
             if (command) {

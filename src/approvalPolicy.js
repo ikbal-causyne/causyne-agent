@@ -20,7 +20,7 @@ export function isAutonomousToolContext(context) {
     const mode = config.autonomyMode;
     return mode === 'C' || mode === undefined;
 }
-const SHELL_TOOLS = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell']);
+const SHELL_TOOLS = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'task_bg']);
 const WHOLE_FILE_DELETE = /(?:^|[;&|\n(]\s*)(?:(?:sudo|doas|pkexec|command|env)\s+)*(?:rm|unlink|rmdir|shred|srm|del|erase|Remove-Item)\b|\bgit\s+rm\b/i;
 const DELETE_API_CALL = /\b(?:os\.(?:remove|unlink)|shutil\.rmtree|fs\.(?:rm|unlink)(?:Sync)?|\.unlink|\.rmdir)\s*\(/i;
 const NESTED_SHELL_DELETE = /\b(?:bash|sh|zsh|dash)\s+-c\s+['"]\s*(?:rm|unlink|rmdir|shred|srm)\b|\b(?:powershell|pwsh)\s+(?:-Command|-c)\s+['"]?\s*Remove-Item\b/i;
