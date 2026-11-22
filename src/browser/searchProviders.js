@@ -104,12 +104,47 @@ export function parseBingRss(xml) {
     }
     return results;
 }
+function findResultAnchorsLinear(html) {
+    const hits = [];
+    const lower = html.toLowerCase();
+    let cursor = 0;
+    while (cursor < html.length) {
+        const start = lower.indexOf('<a', cursor);
+        if (start === -1)
+            break;
+        const afterTag = lower[start + 2] ?? '';
+        if (afterTag !== ' ' && afterTag !== '\t' && afterTag !== '\n' && afterTag !== '\r') {
+            cursor = start + 2;
+            continue;
+        }
+        const openEnd = html.indexOf('>', start + 2);
+        if (openEnd === -1)
+            break;
+        const attrs = html.slice(start + 2, openEnd);
+        const closeStart = lower.indexOf('</a>', openEnd + 1);
+        if (closeStart === -1)
+            break;
+        cursor = closeStart + 4;
+        const classMatch = /\bclass\s*=\s*(?:"([^"]{0,512})"|'([^']{0,512})')/i.exec(attrs);
+        const classVal = classMatch?.[1] ?? classMatch?.[2] ?? '';
+        if (!/\bresult__a\b/.test(classVal))
+            continue;
+        const hrefMatch = /\bhref\s*=\s*(?:"([^"]{1,4096})"|'([^']{1,4096})')/i.exec(attrs);
+        const href = hrefMatch?.[1] ?? hrefMatch?.[2] ?? '';
+        if (!href)
+            continue;
+        hits.push({ index: start, href, innerHtml: html.slice(openEnd + 1, closeStart) });
+        if (hits.length >= MAX_RESULTS * 3)
+            break;
+    }
+    return hits;
+}
 export function parseDuckDuckGoHtml(html) {
     const results = [];
     const seen = new Set();
-    const anchors = [...html.matchAll(/<a\b(?=[^>]*\bclass=["'][^"']*\bresult__a\b[^"']*["'])[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+    const anchors = findResultAnchorsLinear(html);
     for (const [index, anchor] of anchors.entries()) {
-        let href = decodeEntities(anchor[1] ?? '');
+        let href = decodeEntities(anchor.href);
         try {
             const candidate = new URL(href, 'https://html.duckduckgo.com/');
             if ((candidate.hostname === 'duckduckgo.com' || candidate.hostname.endsWith('.duckduckgo.com')) && candidate.pathname.startsWith('/l/')) {
@@ -120,9 +155,20 @@ export function parseDuckDuckGoHtml(html) {
             continue;
         }
         const url = publicResultUrl(href);
-        const title = cleanMarkup(anchor[2] ?? '');
-        const tail = html.slice(anchor.index ?? 0, anchors[index + 1]?.index ?? html.length);
-        const snippet = cleanMarkup(tail.match(/class=["'][^"']*result__snippet[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div)>/i)?.[1] ?? '');
+        const title = cleanMarkup(anchor.innerHtml);
+        const tail = html.slice(anchor.index, anchors[index + 1]?.index ?? html.length);
+        const snippetMarker = tail.indexOf('result__snippet');
+        let snippet = '';
+        if (snippetMarker !== -1) {
+            const tagEnd = tail.indexOf('>', snippetMarker);
+            if (tagEnd !== -1) {
+                const endA = tail.indexOf('</a>', tagEnd + 1);
+                const endDiv = tail.indexOf('</div>', tagEnd + 1);
+                const closePos = endA !== -1 && (endDiv === -1 || endA < endDiv) ? endA : endDiv;
+                if (closePos !== -1)
+                    snippet = cleanMarkup(tail.slice(tagEnd + 1, closePos));
+            }
+        }
         if (!title || !url || seen.has(url))
             continue;
         seen.add(url);

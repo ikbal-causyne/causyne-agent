@@ -513,11 +513,17 @@ export class AcpProvider extends LLMProvider {
               const isPeerNativeSkill = rawTitle.toLowerCase() === 'skill'
                 || name.toLowerCase() === 'skill'
                 || earlier?.name === 'skill';
+              const isSkillNotFoundMsg = (val: unknown): boolean => {
+                if (typeof val !== 'string') return false;
+                const lower = val.toLowerCase();
+                const skillIdx = lower.indexOf('skill');
+                return skillIdx !== -1 && lower.indexOf('not found', skillIdx + 5) !== -1;
+              };
               const isFailedSkill = isPeerNativeSkill && (
                 updateObj.status === 'failed'
-                || (typeof input.error === 'string' && /Skill\s+.*not found/i.test(input.error))
-                || (typeof (updateObj as any).error === 'string' && /Skill\s+.*not found/i.test((updateObj as any).error))
-                || (typeof rawOutputObj?.error === 'string' && /Skill\s+.*not found/i.test(rawOutputObj.error))
+                || isSkillNotFoundMsg(input.error)
+                || isSkillNotFoundMsg((updateObj as any).error)
+                || isSkillNotFoundMsg(rawOutputObj?.error)
               );
               if (isFailedSkill) {
                 if (!this.toolRoutingError) {

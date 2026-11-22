@@ -180,8 +180,8 @@ function renderMarkdown(text: unknown, width: number): string[] {
 
 // A bare URL, allowing one level of balanced parentheses so a link to
 // `.../URL_(disambiguation)` is not cut at the first `)`.
-const BARE_URL = /https?:\/\/[^\s<>()\[\]"'`]+(?:\([^\s<>()"'`]*\)[^\s<>()\[\]"'`]*)*/g;
-const MD_LINK = /\[([^\]\n]{1,80})\]\(((?:https?|file):\/\/[^\s)]+(?:\([^\s)]*\)[^\s)]*)*)\)/g;
+const BARE_URL = /https?:\/\/[^\s<>()\[\]"'`]{1,1024}(?:\([^\s<>()\[\]"'`]{0,128}\)[^\s<>()\[\]"'`]{0,256}){0,4}/g;
+const MD_LINK = /\[([^\]\n]{1,80})\]\(((?:https?|file):\/\/[^\s()]{1,1024}(?:\([^\s()]{0,128}\)[^\s()]{0,256}){0,4})\)/g;
 
 const MAX_LINK_LABEL = 48;
 const MAX_INLINE_FORMAT_CHARS = 16384;

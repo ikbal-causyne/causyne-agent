@@ -16,8 +16,9 @@ import { stripAnsi, safeDisplay, redactSecrets } from '../src/tui/text.js';
 import { sanitizeMcpInputSchema, sanitizeMcpToolName } from '../src/mcp/mcpSecurity.js';
 import { extractToolCallJsonObjects } from '../src/implementationPlan.js';
 import { canonicalToolArgs } from '../src/stallGuard.js';
-import { parseBingRss } from '../src/browser/searchProviders.js';
+import { parseBingRss, parseDuckDuckGoHtml } from '../src/browser/searchProviders.js';
 import { cleanUserText } from '../src/continuum/sanitizer.js';
+import { isPersistentServerCommand } from '../src/tools/sysRun.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -149,5 +150,16 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     assert.equal(res[0]?.title.includes('>'), false);
     assert.ok(res[0]?.title.includes('Hello'));
     assert.equal(cleanUserText('<USER_<USER_REQUEST>REQUEST>hi</USER_REQUEST>'), 'hi');
+  });
+
+  test('linear parsers resist adversarial ReDoS inputs in <50ms', () => {
+    const start = Date.now();
+    const adversarialHtml = '<a ' + 'class="x" '.repeat(3000) + 'href="https://example.org">t</a>';
+    const ddg = parseDuckDuckGoHtml(adversarialHtml);
+    assert.equal(Array.isArray(ddg), true);
+    const adversarialCmd = 'python3 ' + 'a '.repeat(12000) + 'foo.txt';
+    assert.equal(isPersistentServerCommand(adversarialCmd), false);
+    assert.equal(isPersistentServerCommand('node server.js'), true);
+    assert.ok(Date.now() - start < 200, 'ReDoS guard exceeded 200ms');
   });
 });

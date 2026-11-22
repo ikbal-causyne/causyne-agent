@@ -275,8 +275,13 @@ export function isPersistentServerCommand(cmd: string): boolean {
   if (/[;&|<>`$\r\n]/.test(trimmed) || /^(?:cat|head|tail|grep|lsof|ps|kill|pkill|pgrep|curl|wget|echo|test)\b/i.test(trimmed)) {
     return false;
   }
+  if (
+    /(?:^|\s)(?:python[0-9.]*|node|deno|bun)\s/i.test(trimmed)
+    && /\b(?:server|app|main)\.(?:py|js|ts|mjs|cjs)\b/i.test(trimmed)
+  ) {
+    return true;
+  }
   const patterns = [
-    /(?:^|[;&|\s])(?:python[0-9.]*|node|deno|bun)\s+.*(?:server|app|main)\.(?:py|js|ts|mjs|cjs)\b/i,
     /(?:^|[;&|\s])python[0-9.]*\s+-m\s+http\.server\b/i,
     /(?:^|[;&|\s])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve)\b/i,
     /(?:^|[;&|\s])(?:npx\s+)?(?:serve|vite|live-server|http-server)\b/i,

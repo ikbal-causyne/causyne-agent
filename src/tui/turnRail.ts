@@ -335,8 +335,20 @@ export function formatPreviewCardMarkdown(raw: string): string {
   // Strip horizontal rules: --- or ***
   text = text.replace(/(?:^|\n)\s*[-*_]{3,}\s*(?=\n|$)/g, '\n');
 
-  // Strip table separator lines: | :--- | :--- |
-  text = text.replace(/(?:^|\n)\s*\|?(\s*:?-+:?\s*\|)+\s*(?=\n|$)/g, '\n');
+  // Strip table separator lines: | :--- | :--- | (linear per-line scan, zero ReDoS)
+  text = text
+    .split('\n')
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed.includes('|') || !trimmed.includes('-')) return line;
+      const stripped = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+      const cells = stripped.split('|');
+      if (cells.length >= 1 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()))) {
+        return '';
+      }
+      return line;
+    })
+    .join('\n');
 
   // Convert table row pipes: | a | b | -> a · b
   text = text.replace(/(?:^|\n)\s*\|\s*(.+?)\s*\|\s*(?=\n|$)/g, (_m, content) => {

@@ -4105,7 +4105,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           let actionSig = `${functionName}:${JSON.stringify(args || {})}`;
           if (functionName === 'sysRun' || functionName === 'sysRunBg') {
             const rawCmd = String(args?.command || '').trim();
-            if (/python[0-9.]*\s+.*import\s+numpy/i.test(rawCmd)) {
+            if (/\bpython[0-9.]*\s/i.test(rawCmd) && /\bimport\s+numpy\b/i.test(rawCmd)) {
               actionSig = 'sysRun:probe:numpy';
             } else if (/python[0-9.]*\s+(--version|-V|-c\s+['"]print)/i.test(rawCmd)) {
               actionSig = 'sysRun:probe:python';
