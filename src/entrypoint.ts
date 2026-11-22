@@ -313,6 +313,71 @@ program
   });
 
 program
+  .command('lsp [action] [args...]')
+  .description('Language Server Protocol code intelligence: status (default), diagnostics, symbols, hover, definition')
+  .action(async (action: string | undefined, args: string[] | undefined) => {
+    const argv = action ? [action, ...(args || [])] : [];
+    const result = await runCommand('lsp', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
+  .command('worktree [action] [args...]')
+  .description('Manage isolated git worktrees: list (default), create, diff, merge, remove, prune')
+  .allowUnknownOption()
+  .action(async (action: string | undefined, args: string[] | undefined) => {
+    const argv = action ? [action, ...(args || [])] : [];
+    const result = await runCommand('worktree', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
+  .command('diff [file]')
+  .description('Review structured working-tree or staged unified diffs')
+  .option('--staged', 'Show staged index changes')
+  .option('--stat', 'Show file-level diff stats only')
+  .option('--ref <gitRef>', 'Compare working tree against a git ref')
+  .action(async (file: string | undefined, options: Record<string, any>) => {
+    const argv: string[] = [];
+    if (file) argv.push(file);
+    if (options.staged) argv.push('--staged');
+    if (options.stat) argv.push('--stat');
+    if (options.ref) argv.push('--ref', String(options.ref));
+    const result = await runCommand('diff', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
+  .command('pr [action] [arg]')
+  .description('Pull Request & CI helper: status (default), draft [baseBranch], logs [runId]')
+  .action(async (action: string | undefined, arg: string | undefined) => {
+    const argv: string[] = [];
+    if (action) argv.push(action);
+    if (arg) argv.push(arg);
+    const result = await runCommand('pr', argv, { surface: 'terminal' });
+    console.log('\n' + (result.output || '') + '\n');
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
+  .command('eval')
+  .description('Run the reproducible Causyne coding & governance benchmark suite')
+  .option('--json', 'Emit machine-readable JSON scorecard')
+  .action(async (options: Record<string, any>) => {
+    const argv = options.json ? ['--json'] : [];
+    const result = await runCommand('eval', argv, { surface: 'terminal' });
+    if (result.ok && result.raw) {
+      process.stdout.write((result.output || '') + '\n');
+    } else {
+      console.log('\n' + (result.output || '') + '\n');
+    }
+    process.exit(result.ok ? 0 : 1);
+  });
+
+program
   .command('continuum [action] [args...]')
   .alias('resume')
   .description('Cross-agent session extraction & resumption (Antigravity, OpenCode, Codex, Claude Code)')

@@ -45,6 +45,11 @@ import { safeDisplay } from './tui/text.js';
 import { formatEnterprisePolicyReport } from './enterprisePolicy.js';
 import { auditLog, formatAuditExport } from './auditLog.js';
 import { assertSafeWorkspaceOutput, atomicWriteFileSafe } from './tools/toolPathSafety.js';
+import { formatLspStatusReport, lspCodeIntel } from './tools/lspCodeIntel.js';
+import { createWorktree, inspectWorktreeDiff, listWorktrees, mergeWorktree, pruneManagedWorktrees, removeWorktree } from './worktreeManager.js';
+import { collectWorkingTreeDiff, renderDiffReview } from './diffReview.js';
+import { fetchFailedCiLogs, formatPrStatusReport, inspectPrStatus, preparePrDraft } from './prWorkflow.js';
+import { formatEvalScorecard, runCodingEvalSuite } from './benchmarks/codingEval.js';
 export const SCOPES = ['local'];
 function ok(output, extra = {}) {
     return { ok: true, output, ...extra };
@@ -547,48 +552,39 @@ export const COMMANDS = [
         name: 'diff',
         aliases: ['changes', 'git-diff'],
         scope: 'local',
-        usage: '/diff [staged | stat]',
-        description: 'Show working tree or staged diff for the active workspace',
-        dialogTitle: 'Diff',
+        usage: '/diff [file] [--staged|staged] [--stat|stat] [--ref <git-ref>]',
+        description: 'Inspect structured working-tree or staged unified diffs for the active workspace',
+        dialogTitle: 'Diff Review',
         complete: () => [
-            { value: 'staged', label: 'staged', description: 'show staged changes only (--cached)' },
-            { value: 'stat', label: 'stat', description: 'show diff summary statistics' }
+            { value: '--staged', label: '--staged', description: 'show staged changes only (--cached)' },
+            { value: '--stat', label: '--stat', description: 'show changed file summary statistics' }
         ],
         run: (argv, ctx = {}) => {
             const ws = ctx.loop?.workspaceRoot || process.cwd();
-            const sub = (argv[0] || '').toLowerCase();
+            let staged = false;
+            let statOnly = false;
+            let ref;
+            let filePath;
+            for (let i = 0; i < argv.length; i++) {
+                const tok = argv[i] ?? '';
+                const lower = tok.toLowerCase();
+                if (lower === 'staged' || lower === '--staged' || lower === '--cached')
+                    staged = true;
+                else if (lower === 'stat' || lower === '--stat')
+                    statOnly = true;
+                else if (lower === '--ref')
+                    ref = argv[++i];
+                else if (lower.startsWith('--ref='))
+                    ref = tok.slice('--ref='.length);
+                else if (tok && !tok.startsWith('-') && !filePath)
+                    filePath = tok;
+            }
             try {
-                let isGit = fs.existsSync(path.join(ws, '.git'));
-                if (!isGit) {
-                    try {
-                        runGitCommand(['rev-parse', '--is-inside-work-tree'], ws);
-                        isGit = true;
-                    }
-                    catch {
-                        isGit = false;
-                    }
-                }
-                if (!isGit) {
-                    return ok(`Workspace "${safeDisplay(ws)}" is not a git repository.`);
-                }
-                const status = runGitCommand(['status', '--short'], ws).trim();
-                if (!status) {
-                    return ok('Working tree is clean. No uncommitted changes in this workspace.');
-                }
-                let diffArgs = ['diff'];
-                if (sub === 'staged' || sub === '--cached') {
-                    diffArgs = ['diff', '--cached'];
-                }
-                else if (sub === 'stat') {
-                    diffArgs = ['diff', '--stat', 'HEAD'];
-                }
-                const diffCmd = `git ${diffArgs.join(' ')}`;
-                const diffOutput = runGitCommand(diffArgs, ws).trim();
-                const header = `Git Status (${ws}):\n${status}\n\n${'─'.repeat(50)}\n${diffCmd}:\n`;
-                return ok(diffOutput ? `${header}\n${diffOutput}` : `${header}\n(no file diff for ${diffCmd})`);
+                const report = collectWorkingTreeDiff(ws, { staged, ref, filePath });
+                return ok(renderDiffReview(report, { statOnly }));
             }
             catch (err) {
-                return fail(`Could not inspect git diff: ${errMsg(err)}`);
+                return fail(`Could not inspect git diff: ${safeDisplay(errMsg(err))}`);
             }
         }
     },
@@ -2677,6 +2673,161 @@ export const COMMANDS = [
                 lines.push(`  ${ts}  [${ev}]${tool}${reason}`);
             }
             return ok(lines.join('\n'));
+        }
+    },
+    {
+        name: 'lsp',
+        scope: 'local',
+        usage: '/lsp [status|diagnostics <file>|symbols <file>|hover <file> <line> [col]|definition <file> <line> [col]]',
+        description: 'Inspect Language Server Protocol servers or run live semantic code intelligence',
+        dialogTitle: 'LSP Code Intelligence',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'list installed and active language servers' },
+            { value: 'diagnostics', label: 'diagnostics <file>', description: 'run live compiler/type diagnostics on a file' },
+            { value: 'symbols', label: 'symbols <file>', description: 'list semantic symbols in a file' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const sub = (argv[0] || 'status').toLowerCase();
+            if (sub === 'status') {
+                return ok(formatLspStatusReport(ws));
+            }
+            if (sub === 'diagnostics' || sub === 'symbols') {
+                const file = argv[1];
+                if (!file)
+                    return fail(`Usage: /lsp ${sub} <file>`);
+                const res = await lspCodeIntel.execute({ action: sub, path: file }, { workspaceRoot: ws });
+                return res.success ? ok(res.output || '') : fail(res.error || 'LSP query failed.');
+            }
+            if (sub === 'definition' || sub === 'references' || sub === 'hover') {
+                const file = argv[1];
+                const line = Number.parseInt(argv[2] || '', 10);
+                const col = Number.parseInt(argv[3] || '1', 10);
+                if (!file || !Number.isFinite(line) || line < 1) {
+                    return fail(`Usage: /lsp ${sub} <file> <line> [column]`);
+                }
+                const res = await lspCodeIntel.execute({ action: sub, path: file, line, column: Number.isFinite(col) && col >= 1 ? col : 1 }, { workspaceRoot: ws });
+                return res.success ? ok(res.output || '') : fail(res.error || 'LSP query failed.');
+            }
+            return fail(`Unknown lsp action "${safeDisplay(sub)}". Try: status, diagnostics, symbols, definition, references, hover.`);
+        }
+    },
+    {
+        name: 'worktree',
+        aliases: ['wt'],
+        scope: 'local',
+        usage: '/worktree [list|create [name]|diff <id>|merge <id> [--squash] [--cleanup]|remove <id>|prune]',
+        description: 'Manage isolated git worktrees for conflict-free parallel work',
+        dialogTitle: 'Git Worktrees',
+        complete: () => [
+            { value: 'list', label: 'list', description: 'list git worktrees in this repository' },
+            { value: 'create', label: 'create [name]', description: 'create a new isolated git worktree' },
+            { value: 'diff', label: 'diff <id>', description: 'inspect diff for a managed worktree' },
+            { value: 'merge', label: 'merge <id>', description: 'merge a managed worktree cleanly into the current branch' },
+            { value: 'remove', label: 'remove <id>', description: 'remove a managed worktree and its temporary branch' },
+            { value: 'prune', label: 'prune', description: 'clean stale worktree metadata' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const sub = (argv[0] || 'list').toLowerCase();
+            try {
+                if (sub === 'list') {
+                    const list = listWorktrees(ws);
+                    if (list.length === 0)
+                        return ok('No Git worktrees found (workspace is not a Git repository).');
+                    const lines = [`Git Worktrees (${list.length})`, ''];
+                    for (const wt of list) {
+                        const badge = wt.managed ? '[causyne]' : '[primary]';
+                        lines.push(`  • ${wt.id} ${badge} branch=${safeDisplay(wt.branch || '(detached)')}`);
+                        lines.push(`    ${safeDisplay(wt.path)}`);
+                    }
+                    return ok(lines.join('\n'));
+                }
+                if (sub === 'create') {
+                    const created = createWorktree(ws, { name: argv[1] });
+                    return ok(`Created isolated worktree "${created.id}" on branch ${created.branch}\n  Path: ${safeDisplay(created.path)}`);
+                }
+                if (sub === 'diff') {
+                    const id = argv[1];
+                    if (!id)
+                        return fail('Usage: /worktree diff <id>');
+                    const report = inspectWorktreeDiff(ws, id);
+                    const header = `Worktree "${report.id}" (${report.branch || 'detached'}) — ${report.changedFiles.length} changed file(s)`;
+                    return ok([header, report.stat, '', report.diff || '(no diff)'].filter(Boolean).join('\n'));
+                }
+                if (sub === 'merge') {
+                    const id = argv[1];
+                    if (!id)
+                        return fail('Usage: /worktree merge <id> [--squash] [--cleanup]');
+                    const squash = argv.includes('--squash');
+                    const cleanup = argv.includes('--cleanup');
+                    const res = mergeWorktree(ws, id, { squash, cleanup });
+                    return res.merged ? ok(res.summary) : fail(`${res.summary}${res.error ? `\n${res.error}` : ''}`);
+                }
+                if (sub === 'remove') {
+                    const id = argv[1];
+                    if (!id)
+                        return fail('Usage: /worktree remove <id>');
+                    const res = removeWorktree(ws, id, { deleteBranch: !argv.includes('--keep-branch') });
+                    return ok(`Removed worktree "${safeDisplay(id)}" (branch deleted: ${res.branchDeleted ? 'yes' : 'no'}).`);
+                }
+                if (sub === 'prune') {
+                    const res = pruneManagedWorktrees(ws);
+                    return ok(`Pruned ${res.pruned} stale managed worktree directory(s).`);
+                }
+                return fail(`Unknown worktree action "${safeDisplay(sub)}". Try: list, create, diff, merge, remove, prune.`);
+            }
+            catch (err) {
+                return fail(safeDisplay(errMsg(err)));
+            }
+        }
+    },
+    {
+        name: 'pr',
+        scope: 'local',
+        usage: '/pr [status|draft [baseBranch]|logs [runId]]',
+        description: 'Inspect GitHub Pull Request status, draft diff-grounded PR summaries, or fetch failed CI logs',
+        dialogTitle: 'Pull Request & CI',
+        complete: () => [
+            { value: 'status', label: 'status', description: 'show branch & PR check status' },
+            { value: 'draft', label: 'draft [base]', description: 'generate a diff-grounded PR draft' },
+            { value: 'logs', label: 'logs [runId]', description: 'fetch redacted failure logs from the latest failed CI run' }
+        ],
+        run: async (argv, ctx = {}) => {
+            const ws = ctx.loop?.workspaceRoot || process.cwd();
+            const sub = (argv[0] || 'status').toLowerCase();
+            try {
+                if (sub === 'status') {
+                    return ok(formatPrStatusReport(inspectPrStatus(ws)));
+                }
+                if (sub === 'draft') {
+                    const draft = preparePrDraft(ws, argv[1] || 'main');
+                    return ok(`Title: ${draft.title}\n\n${draft.body}`);
+                }
+                if (sub === 'logs') {
+                    const res = fetchFailedCiLogs(ws, argv[1]);
+                    return res.ok ? ok(res.output) : fail(res.output);
+                }
+                return fail(`Unknown pr action "${safeDisplay(sub)}". Try: status, draft, logs.`);
+            }
+            catch (err) {
+                return fail(safeDisplay(errMsg(err)));
+            }
+        }
+    },
+    {
+        name: 'eval',
+        scope: 'local',
+        usage: '/eval [--json]',
+        description: 'Run the reproducible Causyne coding & governance benchmark suite',
+        dialogTitle: 'Coding Eval Scorecard',
+        run: async (argv) => {
+            const asJson = argv.includes('--json');
+            const scorecard = await runCodingEvalSuite();
+            const output = asJson ? JSON.stringify(scorecard, null, 2) : formatEvalScorecard(scorecard);
+            return scorecard.passedTasks === scorecard.totalTasks
+                ? ok(output, asJson ? { raw: true } : {})
+                : fail(output);
         }
     },
     {
