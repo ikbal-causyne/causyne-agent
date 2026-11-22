@@ -126,10 +126,18 @@ export class OpenRouterProvider extends LLMProvider {
             throw new Error('OpenRouter API key is required. Run /openrouter connect or /setup to connect your OpenRouter account.');
         }
         const supportsExplicitCacheControl = /^(?:anthropic\/|google\/gemini-)/i.test(this.model);
-        const preparedMessages = this.prepareMessages(messages).map((msg, idx) => {
-            const source = messages[idx];
+        const cacheAnchorIndices = new Set();
+        for (let i = 0; i < messages.length; i++) {
+            if (messages[i]?.cacheAnchor === true && messages[i]?.role === 'system') {
+                cacheAnchorIndices.add(i);
+            }
+        }
+        const basePrepared = this.prepareMessages(messages);
+        const alignedByIndex = basePrepared.length === messages.length;
+        const preparedMessages = basePrepared.map((msg, idx) => {
             if (supportsExplicitCacheControl
-                && source?.cacheAnchor === true
+                && alignedByIndex
+                && cacheAnchorIndices.has(idx)
                 && msg?.role === 'system'
                 && typeof msg.content === 'string'
                 && msg.content.length >= 1024) {
@@ -321,8 +329,13 @@ export class OpenRouterProvider extends LLMProvider {
         if (data && typeof data === 'object' && data.error && typeof data.error === 'object') {
             const rawErr = typeof data.error.message === 'string' ? data.error.message : JSON.stringify(data.error);
             const cleanErr = redactProviderSecrets(rawErr, [apiKey]);
-            const code = typeof data.error.code === 'number' ? data.error.code : 502;
-            this.handleHttpErrors(code, cleanErr);
+            const rawCode = data.error.code;
+            const numericCode = typeof rawCode === 'number'
+                ? rawCode
+                : (typeof rawCode === 'string' && /^\d{3}$/.test(rawCode.trim())
+                    ? Number(rawCode.trim())
+                    : (typeof rawCode === 'string' && /rate.?limit/i.test(rawCode) ? 429 : 502));
+            this.handleHttpErrors(numericCode, cleanErr);
         }
         const normalized = normalizeOpenAIChatChoiceResponse(data, {
             prefix: 'call_openrouter',
@@ -369,8 +382,13 @@ export class OpenRouterProvider extends LLMProvider {
                 if (parsed.error && typeof parsed.error === 'object') {
                     const rawErr = typeof parsed.error.message === 'string' ? parsed.error.message : JSON.stringify(parsed.error);
                     const cleanErr = redactProviderSecrets(rawErr, [apiKey]);
-                    const code = typeof parsed.error.code === 'number' ? parsed.error.code : 502;
-                    this.handleHttpErrors(code, cleanErr);
+                    const rawCode = parsed.error.code;
+                    const numericCode = typeof rawCode === 'number'
+                        ? rawCode
+                        : (typeof rawCode === 'string' && /^\d{3}$/.test(rawCode.trim())
+                            ? Number(rawCode.trim())
+                            : (typeof rawCode === 'string' && /rate.?limit/i.test(rawCode) ? 429 : 502));
+                    this.handleHttpErrors(numericCode, cleanErr);
                 }
                 if (parsed.usage) {
                     rawUsage = parsed.usage;
@@ -387,22 +405,47 @@ export class OpenRouterProvider extends LLMProvider {
                             options.onChunk(delta.content);
                         }
                     }
-                    // 2. Reasoning chunk
-                    const reasoning = delta.reasoning || delta.reasoning_content;
+                    // 2. Reasoning chunk (supports reasoning, reasoning_content, and OpenRouter reasoning_details[])
+                    let reasoning = '';
+                    if (typeof delta.reasoning === 'string')
+                        reasoning += delta.reasoning;
+                    else if (typeof delta.reasoning_content === 'string')
+                        reasoning += delta.reasoning_content;
+                    if (!reasoning && Array.isArray(delta.reasoning_details)) {
+                        for (const detail of delta.reasoning_details) {
+                            if (detail && typeof detail === 'object' && typeof detail.text === 'string') {
+                                reasoning += detail.text;
+                            }
+                            else if (detail && typeof detail === 'object' && typeof detail.summary === 'string') {
+                                reasoning += detail.summary;
+                            }
+                        }
+                    }
                     if (reasoning) {
                         reasoningContent += reasoning;
                         if (options.onReasoningChunk) {
                             options.onReasoningChunk(reasoning);
                         }
                     }
-                    // 3. Tool calls assembly
+                    // 3. Tool calls assembly (handles providers that omit tc.index on argument continuation chunks)
                     if (Array.isArray(delta.tool_calls)) {
                         for (const tc of delta.tool_calls) {
                             if (!tc || typeof tc !== 'object')
                                 continue;
-                            const idx = typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0
-                                ? tc.index
-                                : Math.max(-1, ...toolCallsMap.keys()) + 1;
+                            let idx;
+                            if (typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0) {
+                                idx = tc.index;
+                            }
+                            else if (typeof tc.id === 'string' && tc.id) {
+                                const matchedEntry = [...toolCallsMap.entries()].find(([, entry]) => entry.id === tc.id);
+                                idx = matchedEntry ? matchedEntry[0] : (Math.max(-1, ...toolCallsMap.keys()) + 1);
+                            }
+                            else if (!tc.function?.name && toolCallsMap.size > 0) {
+                                idx = Math.max(...toolCallsMap.keys());
+                            }
+                            else {
+                                idx = Math.max(-1, ...toolCallsMap.keys()) + 1;
+                            }
                             let existing = toolCallsMap.get(idx);
                             if (!existing) {
                                 existing = { id: sanitizeProviderToolId(tc.id, 'call_openrouter', idx), name: '', arguments: '' };

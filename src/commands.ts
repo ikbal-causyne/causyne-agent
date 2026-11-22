@@ -1791,12 +1791,15 @@ export const COMMANDS: SlashCommandDefinition[] = [
         );
       }
 
-      if (sub === 'privacy' || sub === 'data-collection') {
-        const val = (argv[1] || '').toLowerCase();
+      if (sub === 'privacy' || sub === 'data-collection' || sub === 'allow' || sub === 'deny') {
+        const val = (sub === 'allow' || sub === 'deny') ? sub : (argv[1] || '').toLowerCase();
         if (val !== 'deny' && val !== 'allow') {
           return fail('Usage: /openrouter privacy <deny | allow>');
         }
         setOpenRouterDataCollection(val);
+        if (ctx.loop?.config) {
+          ctx.loop.config.openrouterDataCollection = val;
+        }
         const disclosure = val === 'allow'
           ? '\nNotice: Setting data_collection to "allow" means training-eligible providers are eligible for routing. It does not by itself establish user consent to model training or guarantee training occurs.'
           : '\nNotice: Strict privacy active. Provider data collection for model training is strictly denied.';

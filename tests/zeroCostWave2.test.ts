@@ -11,6 +11,7 @@ import { OllamaProvider, clearOllamaModelMetaCache, ollamaOriginUrl } from '../s
 import { streamOllamaChat } from '../src/providers/byokStream.js';
 import { fetchLiveModels } from '../src/dynamicCatalogue.js';
 import { OpenRouterProvider, parseRateLimitResetMs } from '../src/providers/openrouter.js';
+import { handleInput } from '../src/commands.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -502,6 +503,52 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       assert.equal(requestedModels[0], 'openrouter/free');
       assert.ok(requestedModels[1]?.endsWith(':free'), 'fallback must strictly use a :free model');
       assert.equal(res.toolCalls?.[0]?.function.name, 'fs_read');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('OpenRouter streaming preserves tool arguments without tc.index, extracts reasoning_details, and /openrouter allow/deny shorthand works', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const sse = [
+        'data: ' + JSON.stringify({ choices: [{ delta: { reasoning_details: [{ type: 'reasoning.text', text: 'plan step' }] } }] }),
+        'data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ id: 'tc_or_1', function: { name: 'fs_read', arguments: '{"path":' } }] } }] }),
+        'data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ function: { arguments: '"README.md"}' } }] } }] }),
+        'data: [DONE]'
+      ].join('\n\n') + '\n\n';
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(sse));
+          controller.close();
+        }
+      });
+      return {
+        ok: true, status: 200,
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+        body
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    const reasoningChunks: string[] = [];
+    try {
+      const provider = new OpenRouterProvider({ apiKey: 'or-test-key-123456', model: 'openrouter/free' });
+      const res = await provider.chat([{ role: 'user', content: 'read' }], {
+        onChunk: () => {},
+        onReasoningChunk: (d) => reasoningChunks.push(d)
+      });
+      assert.equal(reasoningChunks.join(''), 'plan step');
+      assert.equal(res.toolCalls?.length, 1);
+      assert.equal(res.toolCalls?.[0]?.function.name, 'fs_read');
+      assert.equal(res.toolCalls?.[0]?.function.arguments, '{"path":"README.md"}');
+
+      const allowCmd = await handleInput('/openrouter allow', {}) as any;
+      assert.equal(allowCmd.ok, true);
+      assert.match(allowCmd.output || '', /"allow"/);
+      const denyCmd = await handleInput('/openrouter deny', {}) as any;
+      assert.equal(denyCmd.ok, true);
+      assert.match(denyCmd.output || '', /"deny"/);
     } finally {
       globalThis.fetch = origFetch;
     }
