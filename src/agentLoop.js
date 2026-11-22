@@ -44,6 +44,7 @@ import { assessDecisionRequirement, isMutatingToolCall, requiresImplementationPl
 import { normalizePeerPlanEntries, extractLivePlanFromText, stripToolCallMarkup, stripThinkBlocks, extractToolCallJsonObjects, resolveToolCallEnvelopeArguments } from './implementationPlan.js';
 import { isWholeFileDeletion, requiresToolApproval, withToolAutonomyMode } from './approvalPolicy.js';
 import { evaluateEnterprisePolicy } from './enterprisePolicy.js';
+import { formatProjectInstructionsPrompt, loadProjectInstructions } from './projectInstructions.js';
 import { AGENT_USER_POLICY } from './agentPolicy.js';
 import { VFETracker } from './vfeTracker.js';
 import { coldObserver } from './observer/coldObserver.js';
@@ -878,7 +879,14 @@ export class AgentLoop {
         catch (e) {
             this.debugLog(`episodic context build skipped: ${e.message}`);
         }
-        return { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext };
+        let projectInstructions = '';
+        try {
+            projectInstructions = formatProjectInstructionsPrompt(loadProjectInstructions(this.workspaceRoot));
+        }
+        catch (e) {
+            this.debugLog(`project instructions load skipped: ${e.message}`);
+        }
+        return { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext, projectInstructions };
     }
     rearmAbortController() {
         this.abortController = new AbortController();
@@ -2270,7 +2278,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                 if (!this.staticContext) {
                     this.staticContext = await this.buildStaticContext();
                 }
-                const { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext } = this.staticContext;
+                const { lessonsLearned, designContext, antiRepeatDirective, universalSkillsContext, planHint, episodicContext, projectInstructions } = this.staticContext;
                 // --- WORKSPACE AWARENESS ---
                 // perception.buildContext() output used to be computed and discarded,
                 // leaving the agent blind and forcing it to rediscover the project with
@@ -2380,7 +2388,7 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     // is byte-identical every step; cached.
                     {
                         role: 'system',
-                        content: `${providerPrompt}${designContext}${workspaceSummary}${lessonsLearned}${episodicContext ? '\n\n' + episodicContext : ''}${planHint ? '\n' + planHint + '\n' : ''}${antiRepeatDirective}\n${universalSkillsContext}`,
+                        content: `${providerPrompt}${designContext}${workspaceSummary}${projectInstructions || ''}${lessonsLearned}${episodicContext ? '\n\n' + episodicContext : ''}${planHint ? '\n' + planHint + '\n' : ''}${antiRepeatDirective}\n${universalSkillsContext}`,
                         cacheAnchor: true
                     },
                     // [4] THE INVOKED SKILL, when the user named one.
