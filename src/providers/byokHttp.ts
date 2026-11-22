@@ -201,14 +201,17 @@ export function parseRetryAfterMs(headerValue: string | null | undefined): numbe
 }
 
 /**
- * Redact API keys, Bearer tokens, and query keys from provider errors and
- * sanitize terminal control/ANSI escape sequences.
+ * Redact explicit secrets, API keys, cloud/VCS/DB credentials, and PEM keys
+ * without truncating valid long payloads (rules, exports, JSONL, logs).
+ * All masks are strictly linear-time (zero ReDoS risk).
  */
-export function redactProviderSecrets(
+export function redactTextSecrets(
   rawText: unknown,
-  secrets: ReadonlyArray<string | undefined | null> = []
+  secrets: ReadonlyArray<string | undefined | null> = [],
+  options: { sanitizeTerminal?: boolean } = {}
 ): string {
-  let text = safeDisplay(typeof rawText === 'string' ? rawText : String(rawText ?? ''));
+  const raw = typeof rawText === 'string' ? rawText : String(rawText ?? '');
+  let text = options.sanitizeTerminal === false ? raw : safeDisplay(raw);
 
   for (const secret of secrets) {
     if (typeof secret === 'string') {
@@ -223,12 +226,38 @@ export function redactProviderSecrets(
     }
   }
 
-  // Linear-time token masks (no nested quantifiers / zero ReDoS risk).
   text = text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{6,}/gi, 'Bearer [REDACTED]');
   text = text.replace(/([?&](?:api_?)?key=)[^&\s"']+/gi, '$1[REDACTED]');
   text = text.replace(/\b(x-(?:goog-)?api-key\s*[:=]\s*)[A-Za-z0-9._~+/=-]{6,}/gi, '$1[REDACTED]');
-  text = text.replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{12,}|gsk_[A-Za-z0-9_-]{12,}|ya29\.[A-Za-z0-9._-]{16,})\b/g, '[REDACTED]');
+  text = text.replace(
+    /\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,}|xai-[A-Za-z0-9_-]{12,}|gsk_[A-Za-z0-9_-]{12,}|ya29\.[A-Za-z0-9._-]{16,}|(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{12,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|npm_[A-Za-z0-9]{20,})\b/g,
+    '[REDACTED]'
+  );
+  text = text.replace(
+    /-----BEGIN [A-Z0-9 ]{1,32}PRIVATE KEY-----[^-]{1,16384}-----END [A-Z0-9 ]{1,32}PRIVATE KEY-----/g,
+    '[REDACTED PRIVATE KEY]'
+  );
+  text = text.replace(
+    /\b(postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/([^:/\s@]{1,64}):([^@\s/"']{4,128})@/gi,
+    '$1://$2:[REDACTED]@'
+  );
+  text = text.replace(
+    /("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|password|passwd|secret)"\s*:\s*")([^"\r\n]{6,256})(")/gi,
+    '$1[REDACTED]$3'
+  );
 
+  return text;
+}
+
+/**
+ * Redact API keys, Bearer tokens, and query keys from provider errors,
+ * sanitize terminal escape sequences, and bound short error strings.
+ */
+export function redactProviderSecrets(
+  rawText: unknown,
+  secrets: ReadonlyArray<string | undefined | null> = []
+): string {
+  const text = redactTextSecrets(rawText, secrets);
   if (text.length > MAX_PROVIDER_ERROR_CHARS) {
     return `${text.slice(0, MAX_PROVIDER_ERROR_CHARS)}…`;
   }

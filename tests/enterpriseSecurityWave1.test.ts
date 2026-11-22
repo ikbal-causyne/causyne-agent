@@ -8,6 +8,7 @@ import {
   assertSafeWorkspaceOutput,
   assertSafeWorkspaceInput
 } from '../src/tools/toolPathSafety.js';
+import { redactTextSecrets, redactProviderSecrets } from '../src/providers/byokHttp.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -50,5 +51,30 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
       () => assertSafeWorkspaceInput(linkFile, { workspaceRoot: ws }),
       /outside|symlink/i
     );
+  });
+
+  test('redactTextSecrets preserves >2KB payloads while redacting cloud, VCS, Slack, DB, PEM, and JSON secrets', () => {
+    const longPrefix = 'A'.repeat(4000);
+    const sample = [
+      longPrefix,
+      'aws=AKIA1234567890ABCDEF',
+      'gh=ghp_1234567890abcdefghij123456',
+      'slack=xoxb-123456789012-abcdefghijkl',
+      'db=postgres://admin:superSecretPass9@db.example.com:5432/prod',
+      '{"api_key": "my_json_secret_value_123"}',
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----'
+    ].join('\n');
+
+    const uncapped = redactTextSecrets(sample);
+    assert.ok(uncapped.length > 4000, 'redactTextSecrets must not silently truncate at 2048 chars');
+    assert.equal(uncapped.includes('AKIA1234567890ABCDEF'), false);
+    assert.equal(uncapped.includes('ghp_1234567890abcdefghij123456'), false);
+    assert.equal(uncapped.includes('xoxb-123456789012-abcdefghijkl'), false);
+    assert.equal(uncapped.includes('superSecretPass9'), false);
+    assert.equal(uncapped.includes('my_json_secret_value_123'), false);
+    assert.equal(uncapped.includes('MIIEowIBAAKCAQEA'), false);
+
+    // Provider error helper still caps short error messages cleanly
+    assert.ok(redactProviderSecrets(sample).length <= 2049);
   });
 });
