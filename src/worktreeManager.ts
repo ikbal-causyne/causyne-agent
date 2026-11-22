@@ -90,6 +90,12 @@ function isInsideDir(parent: string, child: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
 
+function nativeRealpath(targetPath: string): string {
+  return typeof fs.realpathSync.native === 'function'
+    ? fs.realpathSync.native(targetPath)
+    : fs.realpathSync(targetPath);
+}
+
 export function resolveGitRepoRoot(dir: string): string | null {
   if (typeof dir !== 'string' || !dir.trim() || dir.includes('\0')) return null;
   const resolved = path.resolve(dir);
@@ -97,7 +103,7 @@ export function resolveGitRepoRoot(dir: string): string | null {
   try {
     const top = runGit(['rev-parse', '--show-toplevel'], resolved).trim();
     if (!top) return null;
-    const realTop = fs.realpathSync(top);
+    const realTop = nativeRealpath(top);
     if (isBlockedWorkspaceRoot(realTop)) return null;
     return realTop;
   } catch {
@@ -188,7 +194,7 @@ export function listWorktrees(dir: string): WorktreeInfo[] {
     }
     if (!wtPath) continue;
     let resolvedWtPath = path.resolve(wtPath);
-    try { resolvedWtPath = fs.realpathSync(resolvedWtPath); } catch { /* keep resolved */ }
+    try { resolvedWtPath = nativeRealpath(resolvedWtPath); } catch { /* keep resolved */ }
     const managed = isInsideDir(managedContainer, resolvedWtPath);
     const id = managed ? path.basename(resolvedWtPath) : path.basename(resolvedWtPath);
     results.push({ id, path: resolvedWtPath, head, branch, managed, bare, detached });
@@ -248,7 +254,7 @@ export function createWorktree(
   }
 
   let finalPath = targetPath;
-  try { finalPath = fs.realpathSync(targetPath); } catch { /* keep targetPath */ }
+  try { finalPath = nativeRealpath(targetPath); } catch { /* keep targetPath */ }
 
   return {
     id,

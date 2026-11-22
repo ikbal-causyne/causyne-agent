@@ -48,6 +48,11 @@ function isInsideDir(parent, child) {
     const rel = path.relative(path.resolve(parent), path.resolve(child));
     return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
+function nativeRealpath(targetPath) {
+    return typeof fs.realpathSync.native === 'function'
+        ? fs.realpathSync.native(targetPath)
+        : fs.realpathSync(targetPath);
+}
 export function resolveGitRepoRoot(dir) {
     if (typeof dir !== 'string' || !dir.trim() || dir.includes('\0'))
         return null;
@@ -58,7 +63,7 @@ export function resolveGitRepoRoot(dir) {
         const top = runGit(['rev-parse', '--show-toplevel'], resolved).trim();
         if (!top)
             return null;
-        const realTop = fs.realpathSync(top);
+        const realTop = nativeRealpath(top);
         if (isBlockedWorkspaceRoot(realTop))
             return null;
         return realTop;
@@ -160,7 +165,7 @@ export function listWorktrees(dir) {
             continue;
         let resolvedWtPath = path.resolve(wtPath);
         try {
-            resolvedWtPath = fs.realpathSync(resolvedWtPath);
+            resolvedWtPath = nativeRealpath(resolvedWtPath);
         }
         catch { /* keep resolved */ }
         const managed = isInsideDir(managedContainer, resolvedWtPath);
@@ -214,7 +219,7 @@ export function createWorktree(dir, options = {}) {
     }
     let finalPath = targetPath;
     try {
-        finalPath = fs.realpathSync(targetPath);
+        finalPath = nativeRealpath(targetPath);
     }
     catch { /* keep targetPath */ }
     return {
