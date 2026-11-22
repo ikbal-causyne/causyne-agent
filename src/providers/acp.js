@@ -25,6 +25,8 @@ export class AcpProvider extends LLMProvider {
     peerId;
     command;
     args;
+    profileEnv;
+    profileTimeoutSeconds;
     activeClient = null;
     activeSessionId = null;
     currentTurnAborted = false;
@@ -65,6 +67,11 @@ export class AcpProvider extends LLMProvider {
         const modelIsPeerName = !configuredModel || configuredModel === 'acp' || configuredModel === this.peerId;
         this.model = canonicalModelId(modelIsPeerName ? peerDefault : configuredModel);
         const profile = getPeerProfile(this.peerId);
+        const preset = BUILTIN_PEER_PRESETS[this.peerId];
+        this.profileEnv = profile?.env && Object.keys(profile.env).length > 0 ? { ...profile.env } : undefined;
+        this.profileTimeoutSeconds = typeof profile?.timeoutSeconds === 'number' && Number.isFinite(profile.timeoutSeconds)
+            ? profile.timeoutSeconds
+            : (typeof preset?.timeoutSeconds === 'number' ? preset.timeoutSeconds : undefined);
         if (config.command) {
             this.command = config.command;
             this.args = config.args || ['acp'];
@@ -74,7 +81,6 @@ export class AcpProvider extends LLMProvider {
             this.args = profile.args || [];
         }
         else {
-            const preset = BUILTIN_PEER_PRESETS[this.peerId];
             if (preset) {
                 this.command = preset.command;
                 this.args = preset.args || [];
@@ -345,11 +351,18 @@ export class AcpProvider extends LLMProvider {
         if (this.activeClient && this.activeSessionId) {
             return { client: this.activeClient, sessionId: this.activeSessionId };
         }
+        const mergedEnv = this.profileEnv
+            ? { ...process.env, ...this.profileEnv }
+            : undefined;
+        const promptTimeoutMs = this.profileTimeoutSeconds
+            ? Math.max(30_000, Math.min(3_600_000, Math.round(this.profileTimeoutSeconds * 1000)))
+            : 900_000;
         const client = new AcpClient({
             command: this.command,
             args: this.args,
             cwd: workspaceRoot,
-            promptTimeoutMs: 900_000,
+            ...(mergedEnv ? { env: mergedEnv } : {}),
+            promptTimeoutMs,
             inactivityTimeoutMs: 120_000,
             allowHostTools: true,
             permissionHandler: async (req) => {
@@ -651,22 +664,29 @@ export class AcpProvider extends LLMProvider {
             });
         }
         let targetModel = this.model;
-        if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.includes('/')) {
-            targetModel = `opencode/${targetModel}`;
-        }
         if (liveModels.length > 0 && targetModel && !liveModels.includes(targetModel)) {
             const matched = liveModels.find((m) => m.toLowerCase() === targetModel.toLowerCase() || m.endsWith(`/${targetModel}`));
             if (matched) {
                 targetModel = matched;
                 this.model = matched;
             }
-            else {
+            else if (this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.includes('/')) {
+                const prefixed = `opencode/${targetModel}`;
+                if (liveModels.includes(prefixed)) {
+                    targetModel = prefixed;
+                    this.model = prefixed;
+                }
+            }
+            if (!liveModels.includes(targetModel)) {
                 const staticDefault = DEFAULT_MODEL_BY_PROVIDER[`acp/${this.peerId}`];
                 if (targetModel === staticDefault || targetModel === this.peerId || targetModel === 'acp') {
                     targetModel = sessionModels.currentModelId || liveModels[0];
                     this.model = targetModel;
                 }
             }
+        }
+        else if (liveModels.length === 0 && this.peerId === 'opencode' && targetModel !== this.peerId && !targetModel.includes('/')) {
+            targetModel = `opencode/${targetModel}`;
         }
         if (targetModel && targetModel !== 'acp' && targetModel !== this.peerId) {
             try {
@@ -814,8 +834,10 @@ export class AcpProvider extends LLMProvider {
                     throw promptErr;
                 }
                 // Replaying after a peer executed native tools can duplicate mutations
-                // and charges. Restart only before any observed native action.
-                if (this.currentTurnSawAction)
+                // and charges. Also never respawn on deterministic auth/quota failures.
+                const errMsg = String(promptErr?.message || '');
+                const isFatalAuthOrQuota = /(?:free usage limit|insufficient_quota|quota exceeded|rate limit|unauthorized|authentication failed|invalid api key|unknown provider|credit balance)/i.test(errMsg);
+                if (this.currentTurnSawAction || isFatalAuthOrQuota)
                     throw promptErr;
                 // If peer failed before any user abort, try recreating client once in case connection dropped
                 await this.close();

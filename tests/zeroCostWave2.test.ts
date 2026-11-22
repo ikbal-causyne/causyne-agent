@@ -226,4 +226,51 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       await client.close();
     }
   });
+
+  test('AcpClient scrubs CAUSYNE_DEV_TOKEN and AcpProvider does not respawn on fatal quota/auth errors', async () => {
+    const ws = path.join(TMP, 'acp-env-no-respawn');
+    fs.mkdirSync(ws, { recursive: true });
+    const countFile = path.join(ws, 'spawns.txt');
+    const envFile = path.join(ws, 'env.json');
+    const serverScript = createFakeAcpServerScript(ws, `
+      import fs from 'node:fs';
+      import readline from 'node:readline';
+      fs.appendFileSync(${JSON.stringify(countFile)}, '1\\n');
+      fs.writeFileSync(${JSON.stringify(envFile)}, JSON.stringify({
+        vault: process.env.CAUSYNE_VAULT_KEY || null,
+        devSecret: process.env.CAUSYNE_DEV_SECRET || null,
+        devToken: process.env.CAUSYNE_DEV_TOKEN || null
+      }));
+      const rl = readline.createInterface({ input: process.stdin });
+      const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+      rl.on('line', (line) => {
+        if (!line.trim()) return;
+        const msg = JSON.parse(line);
+        if (msg.method === 'initialize') {
+          send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentInfo: { name: 'quota-test', version: '1.0' }, agentCapabilities: {} } });
+        } else if (msg.method === 'session/new') {
+          send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's1' } });
+        } else if (msg.method === 'session/set_model') {
+          send({ jsonrpc: '2.0', id: msg.id, result: {} });
+        } else if (msg.method === 'session/prompt') {
+          send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Free usage limit reached' } });
+        }
+      });
+    `);
+
+    const prevToken = process.env.CAUSYNE_DEV_TOKEN;
+    process.env.CAUSYNE_DEV_TOKEN = 'secret-dev-token-xyz';
+    const provider = new AcpProvider({ peer: 'opencode', command: process.execPath, args: [serverScript] });
+    try {
+      await assert.rejects(() => provider.chat([{ role: 'user', content: 'hi' }], { workspaceRoot: ws }), /Free usage limit reached/);
+      const spawns = fs.readFileSync(countFile, 'utf8').trim().split('\n');
+      assert.equal(spawns.length, 1, 'must not respawn peer on fatal quota error');
+      const capturedEnv = JSON.parse(fs.readFileSync(envFile, 'utf8'));
+      assert.equal(capturedEnv.devToken, null, 'CAUSYNE_DEV_TOKEN must be scrubbed from ACP child env');
+    } finally {
+      if (prevToken === undefined) delete process.env.CAUSYNE_DEV_TOKEN;
+      else process.env.CAUSYNE_DEV_TOKEN = prevToken;
+      await provider.close();
+    }
+  });
 });

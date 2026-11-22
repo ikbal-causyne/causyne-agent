@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
@@ -180,18 +180,16 @@ export class AcpClient {
     if (signal?.aborted) throw createAbortError();
     if (this.child) throw new Error('client already started');
     const args = this.options.args ?? [];
-    let childEnv: NodeJS.ProcessEnv;
-    if (this.options.env) {
-      childEnv = this.options.env;
-    } else {
-      childEnv = { ...process.env };
-      delete childEnv.CAUSYNE_VAULT_KEY;
-      delete childEnv.CAUSYNE_DEV_SECRET;
-    }
+    const childEnv: NodeJS.ProcessEnv = this.options.env ? { ...this.options.env } : { ...process.env };
+    delete childEnv.CAUSYNE_VAULT_KEY;
+    delete childEnv.CAUSYNE_DEV_SECRET;
+    delete childEnv.CAUSYNE_DEV_TOKEN;
+    const isPosix = process.platform !== 'win32';
     const child = spawn(this.options.command, args, {
       cwd: this.options.cwd,
       env: childEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: isPosix,
       windowsHide: true
     });
     this.child = child;
@@ -459,8 +457,23 @@ export class AcpClient {
         clearTimeout(timer);
         resolve();
       };
+      const terminateTree = (sig: 'SIGTERM' | 'SIGKILL'): void => {
+        const pid = child.pid;
+        if (process.platform === 'win32' && pid) {
+          try {
+            spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 2000, windowsHide: true });
+            return;
+          } catch { /* fallback to child.kill */ }
+        } else if (process.platform !== 'win32' && pid) {
+          try {
+            process.kill(-pid, sig);
+            return;
+          } catch { /* fallback to direct child.kill */ }
+        }
+        try { child.kill(sig); } catch { /* ignore */ }
+      };
       const timer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* ignore */ }
+        terminateTree('SIGKILL');
         done();
       }, 250);
       if (typeof timer.unref === 'function') timer.unref();
@@ -473,7 +486,7 @@ export class AcpClient {
         // ignore stream destroy errors
       }
       try {
-        child.kill('SIGTERM');
+        terminateTree('SIGTERM');
       } catch {
         done();
       }
@@ -795,14 +808,24 @@ export class AcpClient {
     return null;
   }
 
+  private lastOpencodeLogSignature = '';
+  private lastOpencodeLogResult: string | null = null;
+
   private inspectOpencodeLog(sessionId?: string, sinceEpochMs?: number): string | null {
     try {
       const home = os.homedir();
       if (!home) return null;
-      const logPath = path.join(home, '.local', 'share', 'opencode', 'log', 'opencode.log');
+      const xdgData = typeof process.env.XDG_DATA_HOME === 'string' && process.env.XDG_DATA_HOME.trim()
+        ? process.env.XDG_DATA_HOME.trim()
+        : path.join(home, '.local', 'share');
+      const logPath = path.join(xdgData, 'opencode', 'log', 'opencode.log');
       if (!fsSync.existsSync(logPath)) return null;
       const stat = fsSync.lstatSync(logPath);
       if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) return null;
+      const sig = `${logPath}|${stat.mtimeMs}|${stat.size}|${sessionId || ''}|${sinceEpochMs ?? ''}`;
+      if (sig === this.lastOpencodeLogSignature) {
+        return this.lastOpencodeLogResult;
+      }
       const readBytes = Math.min(stat.size, 65536);
       const buffer = Buffer.alloc(readBytes);
       const fd = fsSync.openSync(logPath, 'r');
@@ -813,6 +836,7 @@ export class AcpClient {
       }
       const text = buffer.toString('utf8');
       const lines = text.split('\n').filter(Boolean);
+      let found: string | null = null;
       for (let i = lines.length - 1; i >= Math.max(0, lines.length - 60); i--) {
         const line = lines[i];
         if (!line) continue;
@@ -833,11 +857,16 @@ export class AcpClient {
         if (line.includes('level=ERROR') || line.includes('AI_APICallError') || line.includes('Free usage limit reached') || line.includes('AI_RetryError')) {
           const match = line.match(/error\.error="([^"]+)"/) || line.match(/message="([^"]+)"/);
           if (match && match[1]) {
-            return redactProviderSecrets(match[1].replace(/\\n/g, ' ')).trim();
+            found = redactProviderSecrets(match[1].replace(/\\n/g, ' ')).trim();
+          } else {
+            found = redactProviderSecrets(line).trim();
           }
-          return redactProviderSecrets(line).trim();
+          break;
         }
       }
+      this.lastOpencodeLogSignature = sig;
+      this.lastOpencodeLogResult = found;
+      return found;
     } catch {
       // ignore log inspection errors
     }
