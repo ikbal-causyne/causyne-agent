@@ -22,6 +22,8 @@ import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 import { safeDisplay } from './tui/text.js';
 import { extractPatchTargetPaths } from './tools/applyPatch.js';
+import { analyzeShellCommand } from './sandboxPolicy.js';
+import { physicalPath } from './agent/workspaceBoundary.js';
 
 export type EnterprisePolicyEffect = 'allow' | 'ask' | 'deny';
 export type EnterprisePolicyDecisionEffect = EnterprisePolicyEffect | 'none';
@@ -45,6 +47,7 @@ export interface EnterprisePolicyConfig {
 export interface LoadedEnterprisePolicy {
   found: boolean;
   sourcePath: string | null;
+  sourcePaths?: string[] | undefined;
   policy: EnterprisePolicyConfig | null;
   error: string | null;
 }
@@ -72,11 +75,26 @@ const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const SHELL_TOOL_NAMES = new Set(['sysRun', 'sysRunBg', 'terminal_persistent_shell', 'task_bg', 'gitOp']);
 const PATH_ARG_KEYS = [
-  'path', 'filePath', 'file_path', 'targetFile', 'targetPath',
-  'source', 'destination', 'dest', 'outputFile', 'outputPath',
-  'outputFileName', 'outputDir', 'projectDir', 'scenePath', 'cwd', 'dir', 'directory'
+  'path', 'filePath', 'file_path', 'filepath', 'searchPath', 'workdir', 'inputPath',
+  'targetFile', 'targetPath', 'source', 'destination', 'dest', 'outputFile', 'outputPath',
+  'outFile', 'previewFile', 'outputFileName', 'outputDir', 'projectDir', 'scenePath',
+  'cwd', 'dir', 'directory', 'file', 'target', 'root'
 ] as const;
 const URL_ARG_KEYS = ['url', 'href', 'endpoint', 'assetUrl', 'uri'] as const;
+
+interface CachedPolicyFile {
+  mtimeMs: number;
+  ctimeMs: number;
+  size: number;
+  policy: EnterprisePolicyConfig | null;
+  error: string | null;
+}
+
+const policyFileCache = new Map<string, CachedPolicyFile>();
+
+export function clearEnterprisePolicyCache(): void {
+  policyFileCache.clear();
+}
 
 function emptyBucket(): PolicyRuleBucket {
   return { allow: [], ask: [], deny: [] };
@@ -159,115 +177,89 @@ export function matchWildcard(pattern: string, text: string, caseInsensitive = f
   return pi === p.length;
 }
 
+export function systemManagedPolicyPath(env: NodeJS.ProcessEnv = process.env): string {
+  const override = typeof env.CAUSYNE_MANAGED_POLICY_FILE === 'string' ? env.CAUSYNE_MANAGED_POLICY_FILE.trim() : '';
+  if (override && !override.includes('\0')) return path.resolve(override);
+  if (process.platform === 'darwin') {
+    return '/Library/Application Support/Causyne/policy.json';
+  }
+  if (process.platform === 'win32') {
+    const programData = typeof env.ProgramData === 'string' && env.ProgramData.trim()
+      ? env.ProgramData.trim()
+      : 'C:\\ProgramData';
+    return path.join(programData, 'Causyne', 'policy.json');
+  }
+  return '/etc/causyne/policy.json';
+}
+
 export function discoverPolicyPaths(
   workspaceRoot?: string,
   env: NodeJS.ProcessEnv = process.env
 ): string[] {
   const candidates: string[] = [];
-  const envFile = typeof env.CAUSYNE_POLICY_FILE === 'string' ? env.CAUSYNE_POLICY_FILE.trim() : '';
-  if (envFile && !envFile.includes('\0')) {
-    candidates.push(path.resolve(envFile));
-  }
-  if (typeof workspaceRoot === 'string' && workspaceRoot.trim() && !workspaceRoot.includes('\0')) {
-    const resolvedWs = path.resolve(workspaceRoot);
-    candidates.push(path.join(resolvedWs, 'causyne.policy.json'));
-    candidates.push(path.join(resolvedWs, '.causyne', 'policy.json'));
-  }
+  const pushUnique = (candidate: string): void => {
+    const resolved = path.resolve(candidate);
+    if (!candidates.includes(resolved)) candidates.push(resolved);
+  };
+  // Highest-precedence tier first: IT/System Managed -> User Global -> Workspace / Explicit override
+  pushUnique(systemManagedPolicyPath(env));
   const home = env.CAUSYNE_HOME && String(env.CAUSYNE_HOME).trim()
     ? path.resolve(String(env.CAUSYNE_HOME).trim())
     : causyneHome();
-  candidates.push(path.join(home, 'policy.json'));
+  pushUnique(path.join(home, 'policy.json'));
+  if (typeof workspaceRoot === 'string' && workspaceRoot.trim() && !workspaceRoot.includes('\0')) {
+    const resolvedWs = path.resolve(workspaceRoot);
+    pushUnique(path.join(resolvedWs, 'causyne.policy.json'));
+    pushUnique(path.join(resolvedWs, '.causyne', 'policy.json'));
+  }
+  const envFile = typeof env.CAUSYNE_POLICY_FILE === 'string' ? env.CAUSYNE_POLICY_FILE.trim() : '';
+  if (envFile && !envFile.includes('\0')) {
+    pushUnique(envFile);
+  }
   return candidates;
 }
 
-export function loadEnterprisePolicy(
-  workspaceRoot?: string,
-  env: NodeJS.ProcessEnv = process.env
-): LoadedEnterprisePolicy {
-  const envFile = typeof env.CAUSYNE_POLICY_FILE === 'string' ? env.CAUSYNE_POLICY_FILE.trim() : '';
-  const candidates = discoverPolicyPaths(workspaceRoot, env);
-
-  let selectedPath: string | null = null;
-  for (const candidate of candidates) {
-    try {
-      fs.lstatSync(candidate);
-      selectedPath = candidate;
-      break;
-    } catch (err: unknown) {
-      const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
-        if (envFile && candidate === path.resolve(envFile)) {
-          return {
-            found: true,
-            sourcePath: candidate,
-            policy: null,
-            error: `Configured CAUSYNE_POLICY_FILE does not exist: ${safeDisplay(candidate)}`
-          };
-        }
-        continue;
-      }
-      return {
-        found: true,
-        sourcePath: candidate,
-        policy: null,
-        error: `Could not inspect policy file ${safeDisplay(candidate)}: ${err instanceof Error ? err.message : String(err)}`
-      };
-    }
-  }
-
-  if (!selectedPath) {
-    return { found: false, sourcePath: null, policy: null, error: null };
-  }
-
+function readSinglePolicyFile(selectedPath: string): { policy: EnterprisePolicyConfig | null; error: string | null } {
   try {
     const stat = fs.lstatSync(selectedPath);
     if (stat.isSymbolicLink() || !stat.isFile()) {
       return {
-        found: true,
-        sourcePath: selectedPath,
         policy: null,
         error: `Refusing symlink or non-regular enterprise policy file: ${safeDisplay(selectedPath)}`
       };
     }
     if (stat.size > MAX_POLICY_FILE_BYTES) {
       return {
-        found: true,
-        sourcePath: selectedPath,
         policy: null,
         error: `Enterprise policy file exceeds maximum size of ${MAX_POLICY_FILE_BYTES} bytes.`
       };
     }
+    const cached = policyFileCache.get(selectedPath);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.ctimeMs === stat.ctimeMs && cached.size === stat.size) {
+      return { policy: cached.policy, error: cached.error };
+    }
     const rawText = fs.readFileSync(selectedPath, 'utf8').replace(/^\uFEFF/, '');
     const parsedRaw: unknown = JSON.parse(rawText);
     if (!parsedRaw || typeof parsedRaw !== 'object' || Array.isArray(parsedRaw)) {
-      return {
-        found: true,
-        sourcePath: selectedPath,
-        policy: null,
-        error: 'Enterprise policy file must contain a JSON object.'
-      };
+      const error = 'Enterprise policy file must contain a JSON object.';
+      policyFileCache.set(selectedPath, { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, size: stat.size, policy: null, error });
+      return { policy: null, error };
     }
     const clean = stripForbiddenKeys(parsedRaw) as Record<string, unknown>;
     const version = clean.version === undefined ? 1 : Number(clean.version);
     if (version !== 1) {
-      return {
-        found: true,
-        sourcePath: selectedPath,
-        policy: null,
-        error: `Unsupported enterprise policy version "${String(clean.version)}". Expected version 1.`
-      };
+      const error = `Unsupported enterprise policy version "${String(clean.version)}". Expected version 1.`;
+      policyFileCache.set(selectedPath, { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, size: stat.size, policy: null, error });
+      return { policy: null, error };
     }
     let defaultEffect: EnterprisePolicyEffect | undefined;
     if (clean.defaultEffect !== undefined) {
       if (clean.defaultEffect === 'allow' || clean.defaultEffect === 'ask' || clean.defaultEffect === 'deny') {
         defaultEffect = clean.defaultEffect;
       } else {
-        return {
-          found: true,
-          sourcePath: selectedPath,
-          policy: null,
-          error: `Invalid defaultEffect "${String(clean.defaultEffect)}". Expected "allow", "ask", or "deny".`
-        };
+        const error = `Invalid defaultEffect "${String(clean.defaultEffect)}". Expected "allow", "ask", or "deny".`;
+        policyFileCache.set(selectedPath, { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, size: stat.size, policy: null, error });
+        return { policy: null, error };
       }
     }
 
@@ -280,15 +272,152 @@ export function loadEnterprisePolicy(
       domains: parseRuleBucket(clean.domains),
       mcpServers: parseRuleBucket(clean.mcpServers)
     };
-    return { found: true, sourcePath: selectedPath, policy, error: null };
+    policyFileCache.set(selectedPath, { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, size: stat.size, policy, error: null });
+    return { policy, error: null };
   } catch (err: unknown) {
     return {
-      found: true,
-      sourcePath: selectedPath,
       policy: null,
       error: `Invalid enterprise policy file: ${err instanceof Error ? err.message : String(err)}`
     };
   }
+}
+
+function mergePatternLists(a: readonly string[], b: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const list of [a, b]) {
+    for (const item of list) {
+      if (out.length >= MAX_RULES_PER_BUCKET) return out;
+      if (!seen.has(item)) {
+        seen.add(item);
+        out.push(item);
+      }
+    }
+  }
+  return out;
+}
+
+function mergeRuleBuckets(upper: PolicyRuleBucket, lower: PolicyRuleBucket): PolicyRuleBucket {
+  return {
+    allow: mergePatternLists(upper.allow, lower.allow),
+    ask: mergePatternLists(upper.ask, lower.ask),
+    deny: mergePatternLists(upper.deny, lower.deny)
+  };
+}
+
+function stricterDefaultEffect(
+  upper: EnterprisePolicyEffect | undefined,
+  lower: EnterprisePolicyEffect | undefined
+): EnterprisePolicyEffect | undefined {
+  const rank = (effect: EnterprisePolicyEffect | undefined): number => {
+    if (effect === 'deny') return 3;
+    if (effect === 'ask') return 2;
+    if (effect === 'allow') return 1;
+    return 0;
+  };
+  return rank(lower) > rank(upper) ? lower : upper;
+}
+
+export function loadEnterprisePolicy(
+  workspaceRoot?: string,
+  env: NodeJS.ProcessEnv = process.env
+): LoadedEnterprisePolicy {
+  const envFile = typeof env.CAUSYNE_POLICY_FILE === 'string' ? env.CAUSYNE_POLICY_FILE.trim() : '';
+  const resolvedEnvFile = envFile && !envFile.includes('\0') ? path.resolve(envFile) : '';
+  const managedOverride = typeof env.CAUSYNE_MANAGED_POLICY_FILE === 'string' ? env.CAUSYNE_MANAGED_POLICY_FILE.trim() : '';
+  const resolvedManagedOverride = managedOverride && !managedOverride.includes('\0') ? path.resolve(managedOverride) : '';
+  const candidates = discoverPolicyPaths(workspaceRoot, env);
+
+  const existingPaths: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      fs.lstatSync(candidate);
+      existingPaths.push(candidate);
+    } catch (err: unknown) {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? String(err.code) : '';
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        if (resolvedEnvFile && candidate === resolvedEnvFile) {
+          return {
+            found: true,
+            sourcePath: candidate,
+            sourcePaths: [candidate],
+            policy: null,
+            error: `Configured CAUSYNE_POLICY_FILE does not exist: ${safeDisplay(candidate)}`
+          };
+        }
+        if (resolvedManagedOverride && candidate === resolvedManagedOverride) {
+          return {
+            found: true,
+            sourcePath: candidate,
+            sourcePaths: [candidate],
+            policy: null,
+            error: `Configured CAUSYNE_MANAGED_POLICY_FILE does not exist: ${safeDisplay(candidate)}`
+          };
+        }
+        continue;
+      }
+      // Permission-denied on default system managed path is only fatal if explicitly configured
+      if ((code === 'EACCES' || code === 'EPERM') && !resolvedManagedOverride && candidate === systemManagedPolicyPath(env)) {
+        continue;
+      }
+      return {
+        found: true,
+        sourcePath: candidate,
+        sourcePaths: [candidate],
+        policy: null,
+        error: `Could not inspect policy file ${safeDisplay(candidate)}: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  if (existingPaths.length === 0) {
+    return { found: false, sourcePath: null, sourcePaths: [], policy: null, error: null };
+  }
+
+  // Layer additively from highest-precedence tier (system managed -> user -> workspace -> env override).
+  // Lower tiers can only tighten deny/ask/defaultEffect; they can never erase higher-tier restrictions.
+  let merged: EnterprisePolicyConfig | null = null;
+  for (const layerPath of existingPaths) {
+    const parsed = readSinglePolicyFile(layerPath);
+    if (parsed.error || !parsed.policy) {
+      return {
+        found: true,
+        sourcePath: layerPath,
+        sourcePaths: existingPaths,
+        policy: null,
+        error: parsed.error || `Enterprise policy file failed to load: ${safeDisplay(layerPath)}`
+      };
+    }
+    if (!merged) {
+      merged = {
+        version: 1,
+        defaultEffect: parsed.policy.defaultEffect,
+        tools: { ...parsed.policy.tools },
+        commands: { ...parsed.policy.commands },
+        paths: { ...parsed.policy.paths },
+        domains: { ...parsed.policy.domains },
+        mcpServers: { ...parsed.policy.mcpServers }
+      };
+    } else {
+      merged = {
+        version: 1,
+        defaultEffect: stricterDefaultEffect(merged.defaultEffect, parsed.policy.defaultEffect),
+        tools: mergeRuleBuckets(merged.tools, parsed.policy.tools),
+        commands: mergeRuleBuckets(merged.commands, parsed.policy.commands),
+        paths: mergeRuleBuckets(merged.paths, parsed.policy.paths),
+        domains: mergeRuleBuckets(merged.domains, parsed.policy.domains),
+        mcpServers: mergeRuleBuckets(merged.mcpServers, parsed.policy.mcpServers)
+      };
+    }
+  }
+
+  return {
+    found: true,
+    sourcePath: existingPaths[existingPaths.length - 1] ?? null,
+    sourcePaths: existingPaths,
+    policy: merged,
+    error: null
+  };
 }
 
 function canonicalTool(tool: string): string {
@@ -304,10 +433,34 @@ function extractMcpServer(tool: string): string | null {
 
 function extractCommandStrings(tool: string, args: Record<string, unknown>): string[] {
   if (!SHELL_TOOL_NAMES.has(tool)) return [];
+  const out = new Set<string>();
+  const addSegmented = (cmdText: string): void => {
+    const trimmed = cmdText.trim();
+    if (!trimmed) return;
+    out.add(trimmed);
+    try {
+      const analyzed = analyzeShellCommand(trimmed);
+      for (const unit of analyzed.allRawUnits) {
+        if (unit.trim()) out.add(unit.trim());
+      }
+      for (const seg of analyzed.normalizedSegments) {
+        if (seg.normalized.trim()) out.add(seg.normalized.trim());
+      }
+      for (const seg of analyzed.unwrappedRawSegments) {
+        if (seg.normalized.trim()) out.add(seg.normalized.trim());
+      }
+    } catch {
+      // Fallback to raw trimmed command
+    }
+  };
   if (tool === 'gitOp') {
     const raw = typeof args.command === 'string' ? args.command : typeof args.action === 'string' ? args.action : '';
     const trimmed = raw.trim();
-    return trimmed ? [`git ${trimmed}`, trimmed] : [];
+    if (trimmed) {
+      addSegmented(`git ${trimmed}`);
+      out.add(trimmed);
+    }
+    return [...out];
   }
   const cmd = typeof args.command === 'string'
     ? args.command
@@ -316,8 +469,8 @@ function extractCommandStrings(tool: string, args: Record<string, unknown>): str
       : typeof args.input === 'string'
         ? args.input
         : '';
-  const trimmed = cmd.trim();
-  return trimmed ? [trimmed] : [];
+  addSegmented(cmd);
+  return [...out];
 }
 
 function normalizePosixPath(value: string): string {
@@ -327,6 +480,7 @@ function normalizePosixPath(value: string): string {
 function extractPathCandidates(args: Record<string, unknown>, workspaceRoot?: string): string[] {
   const out = new Set<string>();
   const resolvedRoot = workspaceRoot ? path.resolve(workspaceRoot) : null;
+  const physicalRoot = resolvedRoot ? (physicalPath(resolvedRoot) || resolvedRoot) : null;
   const addPath = (raw: unknown): void => {
     if (typeof raw !== 'string') return;
     const trimmed = raw.trim();
@@ -342,9 +496,29 @@ function extractPathCandidates(args: Record<string, unknown>, workspaceRoot?: st
         out.add(normalizePosixPath(rel));
       }
     }
+    const real = physicalPath(abs);
+    if (real) {
+      out.add(normalizePosixPath(real));
+      if (physicalRoot) {
+        const realRel = path.relative(physicalRoot, real);
+        if (realRel && !realRel.startsWith('..') && !path.isAbsolute(realRel)) {
+          out.add(normalizePosixPath(realRel));
+        }
+      }
+    }
   };
   for (const key of PATH_ARG_KEYS) {
     if (Object.hasOwn(args, key)) addPath(args[key]);
+  }
+  if (Array.isArray(args.target_directories)) {
+    for (const dir of args.target_directories.slice(0, 64)) {
+      addPath(dir);
+    }
+  }
+  if (Array.isArray(args.files)) {
+    for (const file of args.files.slice(0, 64)) {
+      addPath(file);
+    }
   }
   if (Array.isArray(args.edits)) {
     for (const edit of args.edits.slice(0, 64)) {

