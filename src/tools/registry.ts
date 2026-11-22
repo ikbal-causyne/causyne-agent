@@ -8,6 +8,8 @@ import { nativeEngineTool } from './nativeEngine.js';
 import { peerAgentTool } from './peerAgent.js';
 import { openSourceToolProvisioner } from './openSourceToolProvisioner.js';
 import { reverseEngineering } from './reverseEngineering.js';
+import { lspCodeIntel } from './lspCodeIntel.js';
+import { gitWorktree } from './gitWorktree.js';
 import { sysRun, sysRunBg } from './sysRun.js';
 import { fsRead } from './fsRead.js';
 import { fsWrite } from './fsWrite.js';
@@ -156,7 +158,7 @@ const TOOL_MODULES: readonly any[] = [
   gameTilemapGenerator, gameUiHudBuilder, gameEconomyBalancer,
   gameDataForge, gameWebRuntimeInspector, gameCanvasAudit, readNativeSkill, createSkill, creativeApps,
   computerUse, uiForge, documentForgeTool, nativeEngineTool, peerAgentTool,
-  openSourceToolProvisioner, reverseEngineering
+  openSourceToolProvisioner, reverseEngineering, lspCodeIntel, gitWorktree
 ];
 
 // Base static definitions (backwards compatible). Order is preserved from the
@@ -306,7 +308,17 @@ const TOOL_ALIASES: Record<string, string> = Object.assign(Object.create(null) a
   take_screenshot: 'screenshot',
   capture_screenshot: 'screenshot',
   open_file: 'desktop_open',
-  open_desktop: 'desktop_open'
+  open_desktop: 'desktop_open',
+
+  // Phase B LSP & Git Worktree aliases
+  lsp: 'code_lsp',
+  codeLsp: 'code_lsp',
+  lsp_diagnostics: 'code_lsp',
+  lsp_definition: 'code_lsp',
+  go_to_definition: 'code_lsp',
+  find_references: 'code_lsp',
+  worktree: 'git_worktree',
+  gitWorktree: 'git_worktree'
 });
 
 function stripDelimiters(str: unknown): string {

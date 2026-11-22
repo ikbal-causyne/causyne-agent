@@ -88,6 +88,8 @@ const CATALOGUE = {
         pdf_read: 'read PDF text',
         code_list_symbols: 'list symbols in a file',
         code_search_ast: 'AST definition search',
+        code_lsp: 'LSP diagnostics, definition, references, hover, symbols',
+        git_worktree: 'isolated git worktrees for conflict-free parallel edits',
         agent_subagent_orchestrate: 'delegate a bounded sub-task',
         peer_agent_delegate: 'delegate to an external ACP agent'
     },

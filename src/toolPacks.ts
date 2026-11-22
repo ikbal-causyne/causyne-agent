@@ -141,6 +141,8 @@ export const PACKS: Record<PackName, string[]> = {
     'peer_agent_delegate',
     'code_search_ast',
     'code_list_symbols',
+    'code_lsp',
+    'git_worktree',
     'pdf_read'
   ],
   reverse_engineering: [
