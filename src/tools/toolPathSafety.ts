@@ -125,7 +125,7 @@ export function findContainingRoot(target: string, roots: readonly string[]): st
   if (!physicalTarget) return null;
   for (const root of roots) {
     const physicalRoot = physicalPath(root);
-    if (physicalRoot && isWithinPhysicalPath(physicalRoot, physicalTarget)) {
+    if (physicalRoot && isWithinPhysicalPath(physicalTarget, physicalRoot)) {
       return root;
     }
   }

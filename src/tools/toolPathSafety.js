@@ -92,7 +92,7 @@ export function findContainingRoot(target, roots) {
         return null;
     for (const root of roots) {
         const physicalRoot = physicalPath(root);
-        if (physicalRoot && isWithinPhysicalPath(physicalRoot, physicalTarget)) {
+        if (physicalRoot && isWithinPhysicalPath(physicalTarget, physicalRoot)) {
             return root;
         }
     }
