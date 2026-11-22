@@ -8,6 +8,8 @@ import { AcpClient } from '../src/acp/client.js';
 import { testPeerHandshake, isAuthRequiredHandshakeFailure } from '../src/acp/agentCatalog.js';
 import { AgentLoop } from '../src/agentLoop.js';
 import { OllamaProvider, clearOllamaModelMetaCache, ollamaOriginUrl } from '../src/providers/ollama.js';
+import { streamOllamaChat } from '../src/providers/byokStream.js';
+import { fetchLiveModels } from '../src/dynamicCatalogue.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -399,6 +401,58 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
 
       const missing = new OllamaProvider({ model: 'missing-model', baseUrl: 'http://127.0.0.1:11434/api/chat' });
       await assert.rejects(() => missing.chat([{ role: 'user', content: 'hi' }]), /ollama pull missing-model/i);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('streamOllamaChat merges/dedups tool deltas and fetchLiveModels normalizes /api/chat + prioritizes warm /api/ps models', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'http://127.0.0.1:11434/api/tags') {
+        return {
+          ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ models: [{ name: 'llama3.1:latest' }, { name: 'qwen2.5:latest' }] })
+        } as unknown as Response;
+      }
+      if (url === 'http://127.0.0.1:11434/api/ps') {
+        return {
+          ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ models: [{ name: 'qwen2.5:latest' }] })
+        } as unknown as Response;
+      }
+      const ndjson = [
+        JSON.stringify({ message: { role: 'assistant', content: '', tool_calls: [{ id: 'tc1', function: { name: 'fs_read', arguments: '{"path":' } }] }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: '', tool_calls: [{ id: 'tc1', function: { name: 'fs_read', arguments: '"a.ts"}' } }] }, done: false }),
+        JSON.stringify({ message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'fs_read', arguments: '{"path":"a.ts"}' } }] }, done: true, prompt_eval_count: 10, eval_count: 5 })
+      ].join('\n') + '\n';
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(ndjson));
+          controller.close();
+        }
+      });
+      return {
+        ok: true, status: 200,
+        headers: new Headers({ 'content-type': 'application/x-ndjson' }),
+        body
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const models = await fetchLiveModels('ollama', { baseUrl: 'http://127.0.0.1:11434/api/chat' });
+      assert.deepEqual(models, ['qwen2.5', 'llama3.1'], 'warm /api/ps model must be ordered first and /api/chat stripped');
+
+      const streamed = await streamOllamaChat({
+        url: 'http://127.0.0.1:11434/api/chat',
+        providerLabel: 'Ollama',
+        payload: { model: 'qwen2.5', messages: [] }
+      });
+      const calls = (streamed.message as any)?.tool_calls;
+      assert.equal(calls.length, 1, 'split delta + duplicate final tool_call must collapse into 1');
+      assert.equal(calls[0].function.arguments, '{"path":"a.ts"}');
     } finally {
       globalThis.fetch = origFetch;
     }

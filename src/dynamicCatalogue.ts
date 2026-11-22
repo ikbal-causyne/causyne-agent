@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 import { causyneHome } from './utils/paths.js';
 import { MODEL_CATALOGUE, PEER_MODEL_CATALOGUE, DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import { validateProviderEndpointUrl, readBoundedResponseText } from './providers/byokHttp.js';
+import { ollamaOriginUrl } from './providers/ollama.js';
 import {
   BASELINE_ANTIGRAVITY_MODELS,
   ANTIGRAVITY_MODELS,
@@ -979,12 +980,21 @@ export async function fetchLiveModels(
 
   try {
     if (norm === 'ollama') {
-      const host = (baseUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-      const data = await fetchDiscoveryJson<{ models?: Array<{ name?: string }> }>(`${host}/api/tags`, {}, false);
-      if (Array.isArray(data?.models)) {
-        return data.models
-          .map((m) => (m.name || '').replace(/:latest$/, ''))
-          .filter(Boolean);
+      const host = ollamaOriginUrl(baseUrl || 'http://127.0.0.1:11434');
+      const [tagsData, psData] = await Promise.all([
+        fetchDiscoveryJson<{ models?: Array<{ name?: string }> }>(`${host}/api/tags`, {}, false).catch(() => null),
+        fetchDiscoveryJson<{ models?: Array<{ name?: string }> }>(`${host}/api/ps`, {}, false).catch(() => null)
+      ]);
+      const normalizeOllamaName = (raw?: string): string => (raw || '').trim().replace(/:latest$/, '');
+      const warmModels = Array.isArray(psData?.models)
+        ? psData.models.map((m) => normalizeOllamaName(m.name)).filter(Boolean)
+        : [];
+      const taggedModels = Array.isArray(tagsData?.models)
+        ? tagsData.models.map((m) => normalizeOllamaName(m.name)).filter(Boolean)
+        : [];
+      const merged = [...new Set([...warmModels, ...taggedModels])];
+      if (merged.length > 0) {
+        return merged;
       }
     }
 

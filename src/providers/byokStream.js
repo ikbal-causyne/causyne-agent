@@ -701,8 +701,69 @@ export async function streamOllamaChat(options) {
     let content = '';
     let thinking = '';
     const toolCalls = [];
+    const toolCallByKey = new Map();
     let promptEvalCount = 0;
     let evalCount = 0;
+    const mergeOllamaToolCall = (rawTc) => {
+        if (!isRecord(rawTc))
+            return;
+        const fn = isRecord(rawTc.function) ? rawTc.function : null;
+        if (!fn)
+            return;
+        const rawId = typeof rawTc.id === 'string' && rawTc.id.trim() ? rawTc.id.trim() : '';
+        const fnIndex = typeof fn.index === 'number' && Number.isInteger(fn.index) && fn.index >= 0
+            ? fn.index
+            : (typeof rawTc.index === 'number' && Number.isInteger(rawTc.index) && rawTc.index >= 0 ? rawTc.index : null);
+        const key = rawId ? `id:${rawId}` : (fnIndex !== null ? `idx:${fnIndex}` : '');
+        if (key && toolCallByKey.has(key)) {
+            const target = toolCallByKey.get(key);
+            const targetFn = isRecord(target.function) ? target.function : {};
+            if (typeof fn.name === 'string' && fn.name) {
+                if (!targetFn.name)
+                    targetFn.name = fn.name;
+            }
+            if (typeof fn.arguments === 'string') {
+                targetFn.arguments = typeof targetFn.arguments === 'string'
+                    ? (targetFn.arguments === fn.arguments ? targetFn.arguments : `${targetFn.arguments}${fn.arguments}`)
+                    : fn.arguments;
+            }
+            else if (isRecord(fn.arguments)) {
+                targetFn.arguments = isRecord(targetFn.arguments)
+                    ? { ...targetFn.arguments, ...fn.arguments }
+                    : fn.arguments;
+            }
+            target.function = targetFn;
+            return;
+        }
+        const serializedSig = (() => {
+            try {
+                return JSON.stringify({ name: fn.name ?? '', arguments: fn.arguments ?? {} });
+            }
+            catch {
+                return '';
+            }
+        })();
+        if (serializedSig && toolCalls.some((existing) => {
+            const efn = isRecord(existing.function) ? existing.function : null;
+            if (!efn)
+                return false;
+            try {
+                return JSON.stringify({ name: efn.name ?? '', arguments: efn.arguments ?? {} }) === serializedSig;
+            }
+            catch {
+                return false;
+            }
+        })) {
+            return;
+        }
+        const entry = {
+            ...rawTc,
+            function: { ...fn }
+        };
+        toolCalls.push(entry);
+        if (key)
+            toolCallByKey.set(key, entry);
+    };
     try {
         await consumeNdjsonStream(opened.response, options.providerLabel, options.maxBytes ?? MAX_PROVIDER_JSON_BYTES, (chunk) => {
             if (typeof chunk.error === 'string' && chunk.error) {
@@ -723,7 +784,8 @@ export async function streamOllamaChat(options) {
                     options.onChunk?.(msg.content);
                 }
                 if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-                    toolCalls.push(...msg.tool_calls);
+                    for (const tc of msg.tool_calls)
+                        mergeOllamaToolCall(tc);
                 }
             }
             if (typeof chunk.prompt_eval_count === 'number' && Number.isFinite(chunk.prompt_eval_count) && chunk.prompt_eval_count >= 0)
