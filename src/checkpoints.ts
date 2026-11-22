@@ -6,6 +6,7 @@ import * as gitBackend from './gitSnapshot.js';
 import { unifiedDiff, looksBinary } from './textDiff.js';
 import { causyneHome } from './utils/paths.js';
 import { isProtectedPhysicalPath, isWithinPhysicalPath, physicalPath } from './agent/workspaceBoundary.js';
+import { extractPatchTargetPaths } from './tools/applyPatch.js';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { getActiveSessionId, restoreSessionFromSnapshot, sessionTranscriptFile } from './sessionStore.js';
 
@@ -347,7 +348,16 @@ export function captureBeforeMutation(
   const fields = Object.hasOwn(MUTATING_TOOL_PATHS, canonicalTool)
     ? MUTATING_TOOL_PATHS[canonicalTool]
     : undefined;
-  if (!fields) return [];
+  const rawTargets: unknown[] = [];
+  if (fields) {
+    for (const field of fields) rawTargets.push(args[field]);
+  } else if (canonicalTool === 'apply_patch' && typeof args.patch === 'string') {
+    for (const target of extractPatchTargetPaths(args.patch).paths) {
+      rawTargets.push(target);
+    }
+  } else {
+    return [];
+  }
 
   const safeMeta = meta && typeof meta === 'object' ? meta : {};
   const taskId = typeof safeMeta.taskId === 'string' && safeMeta.taskId && !safeMeta.taskId.includes('\0')
@@ -356,8 +366,8 @@ export function captureBeforeMutation(
   const ids: string[] = [];
   try {
     ensureStore();
-    for (const field of fields) {
-      const absolutePath = resolveToolPath(args[field]);
+    for (const rawTarget of rawTargets) {
+      const absolutePath = resolveToolPath(rawTarget);
       if (!absolutePath) continue;
 
       const before = snapshotFile(absolutePath);

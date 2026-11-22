@@ -15,7 +15,8 @@ import { loadProjectInstructions } from '../src/projectInstructions.js';
 import { stripAnsi, safeDisplay, redactSecrets } from '../src/tui/text.js';
 import { sanitizeMcpInputSchema, sanitizeMcpToolName } from '../src/mcp/mcpSecurity.js';
 import { extractToolCallJsonObjects } from '../src/implementationPlan.js';
-import { canonicalToolArgs } from '../src/stallGuard.js';
+import { canonicalToolArgs, MUTATING_TOOL_NAMES } from '../src/stallGuard.js';
+import { captureBeforeMutation } from '../src/checkpoints.js';
 import { parseBingRss, parseDuckDuckGoHtml } from '../src/browser/searchProviders.js';
 import { cleanUserText } from '../src/continuum/sanitizer.js';
 import { isPersistentServerCommand } from '../src/tools/sysRun.js';
@@ -223,5 +224,16 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
       workspaceRoot: ws
     });
     assert.equal(decision.effect, 'deny');
+  });
+
+  test('apply_patch is tracked across checkpoints, decisionPolicy, and stallGuard', () => {
+    assert.equal(isMutatingToolCall('apply_patch', { patch: '*** Begin Patch\n*** Update File: a.ts\n@@\n-1\n+2\n*** End Patch' }), true);
+    assert.equal(MUTATING_TOOL_NAMES.has('apply_patch'), true);
+    const targetFile = path.join(TMP, 'checkpoint-patch-target.txt');
+    fs.writeFileSync(targetFile, 'original\n', 'utf8');
+    const ids = captureBeforeMutation('apply_patch', {
+      patch: `*** Begin Patch\n*** Update File: ${targetFile}\n@@\n-original\n+updated\n*** End Patch`
+    }, { taskId: 'test-apply-patch', step: 1 });
+    assert.equal(ids.length, 1);
   });
 });

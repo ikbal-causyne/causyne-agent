@@ -81,6 +81,7 @@ export const MUTATING_TOOL_NAMES = new Set([
   'fs_write',
   'fs_edit',
   'MultiEdit',
+  'apply_patch',
   'fs_delete',
   'fs_move',
   'archive_extract',

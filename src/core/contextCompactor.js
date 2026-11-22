@@ -12,6 +12,7 @@
  */
 import { pruneStaleToolObservations, shortenOversizedToolObservations, pruneExecutedToolArguments, buildRecoverableDroppedSummary } from '../historyPruner.js';
 import { compactInPlace, measureMessages, CHARS_PER_TOKEN } from '../contextManager.js';
+import { extractPatchTargetPaths } from '../tools/applyPatch.js';
 /**
  * Adjusts a candidate compaction split index so compaction NEVER severs a
  * `role: 'tool'` result from its preceding `role: 'assistant'` `tool_calls`
@@ -75,7 +76,12 @@ export function buildCodexStyleSummary(droppedMessages, originalPrompt, extra) {
                         const parsed = JSON.parse(rawArgs);
                         if (parsed && typeof parsed === 'object') {
                             const target = String(parsed.path || parsed.file_path || parsed.target || parsed.destination || '');
-                            if (target) {
+                            if (fnName === 'apply_patch' && typeof parsed.patch === 'string') {
+                                for (const patchPath of extractPatchTargetPaths(parsed.patch).paths) {
+                                    modifiedFiles.add(patchPath);
+                                }
+                            }
+                            else if (target) {
                                 if (['fs_write', 'write_to_file', 'writeFile'].includes(fnName)) {
                                     createdFiles.add(target);
                                 }

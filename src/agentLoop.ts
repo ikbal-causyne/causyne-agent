@@ -116,6 +116,7 @@ import { detectWorkspaceDomains, ensureSkillRepo, getSkillDomainHeader } from '.
 import { spillToolResult, buildDecayPointer, pruneOutputStore } from './outputStore.js';
 import { ToolOutputStore, defaultToolOutputStore, processToolOutputWithStore, renderSpillDocument } from './tools/toolOutputStore.js';
 import { beginTask as beginCheckpointTask, captureBeforeMutation, pruneStore as pruneCheckpointStore, resolveProjectRoot } from './checkpoints.js';
+import { extractPatchTargetPaths } from './tools/applyPatch.js';
 import fsSync from 'fs';
 import os from 'os';
 import path from 'path';
@@ -3850,7 +3851,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             const outcomes = coldObserver.getToolOutcomes(this.taskId);
             const hasCodeOrWorkspaceMutation = this.webArtifacts.size > 0 || outcomes.some((o: any) =>
               o.success !== false && [
-                'fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit', 'multi_edit',
+                'fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit', 'multi_edit', 'apply_patch',
                 'ui_forge', 'write_file', 'write_to_file', 'edit_file', 'replace_file_content',
                 'multi_replace_file_content', 'native_engine', 'update_plan'
               ].includes(String(o.tool || ''))
@@ -4620,8 +4621,14 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
 
           this._networkHostGuard.after(functionName, args, result);
 
-          if (result && result.success !== false && !result.error && ['fs_write', 'fs_edit', 'MultiEdit'].includes(functionName)) {
-            this.recordWebArtifact(args.path || args.file_path);
+          if (result && result.success !== false && !result.error) {
+            if (['fs_write', 'fs_edit', 'MultiEdit'].includes(functionName)) {
+              this.recordWebArtifact(args.path || args.file_path);
+            } else if (functionName === 'apply_patch' && typeof args.patch === 'string') {
+              for (const patchPath of extractPatchTargetPaths(args.patch).paths) {
+                this.recordWebArtifact(patchPath);
+              }
+            }
           }
 
           if (result && result.success !== false && !result.error && ['fs_read', 'view_file', 'read_file'].includes(functionName)) {
@@ -4656,7 +4663,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             }
           }
 
-          if (result?.success === true && ['fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit'].includes(functionName)) clearSysRunCache();
+          if (result?.success === true && ['fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'MultiEdit', 'apply_patch'].includes(functionName)) clearSysRunCache();
 
           // The journal is the observer's own record of what actually ran. It
           // is written only after post-hook review, so a formatter that rejects

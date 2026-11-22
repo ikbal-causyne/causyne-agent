@@ -19,6 +19,7 @@ import {
   type ToolObservation
 } from '../historyPruner.js';
 import { compactInPlace, measureMessages, CHARS_PER_TOKEN } from '../contextManager.js';
+import { extractPatchTargetPaths } from '../tools/applyPatch.js';
 
 export interface CodexCompactedState {
   readonly goal: string;
@@ -130,7 +131,11 @@ export function buildCodexStyleSummary(
             const parsed = JSON.parse(rawArgs);
             if (parsed && typeof parsed === 'object') {
               const target = String(parsed.path || parsed.file_path || parsed.target || parsed.destination || '');
-              if (target) {
+              if (fnName === 'apply_patch' && typeof parsed.patch === 'string') {
+                for (const patchPath of extractPatchTargetPaths(parsed.patch).paths) {
+                  modifiedFiles.add(patchPath);
+                }
+              } else if (target) {
                 if (['fs_write', 'write_to_file', 'writeFile'].includes(fnName)) {
                   createdFiles.add(target);
                 } else if (['fs_edit', 'MultiEdit', 'multi_edit', 'fs_move', 'replace_file_content', 'multi_replace_file_content'].includes(fnName)) {
