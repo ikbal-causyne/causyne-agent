@@ -167,7 +167,9 @@ function workspaceOverlapsPath(workspacePaths: readonly string[], targetPath: st
 
 /**
  * Parses `CAUSYNE_OS_SANDBOX` / `config.osSandbox` into an explicit OS sandbox mode.
- * Defaults to `'off'` unless explicitly enabled so standard workflows never break unexpectedly.
+ * Defaults to `'workspace-write'` (best-effort kernel boundary with workspace and temp writes)
+ * when unset so fresh installs are protected by default; explicit `'off'`/`'0'`/`'false'`/`'disabled'`
+ * disables wrapping.
  */
 export function resolveOsSandboxMode(
   env: NodeJS.ProcessEnv = process.env,
@@ -186,7 +188,10 @@ export function resolveOsSandboxMode(
     : '';
   const allowNetwork = !(networkEnv === '0' || networkEnv === 'false' || networkEnv === 'off' || networkEnv === 'deny');
 
-  if (!lower || lower === 'off' || lower === '0' || lower === 'false' || lower === 'disabled') {
+  if (!lower) {
+    return { mode: 'workspace-write', strict: false, allowNetwork };
+  }
+  if (lower === 'off' || lower === '0' || lower === 'false' || lower === 'disabled') {
     return { mode: 'off', strict: false, allowNetwork };
   }
   if (lower === 'read-only' || lower === 'readonly' || lower === 'ro') {

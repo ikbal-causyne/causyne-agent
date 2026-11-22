@@ -30,11 +30,14 @@ describe('Sector 2B — OS-Level Process Sandboxing Wrapper', () => {
     assert.equal(escapeSeatbeltPath(''), null);
   });
 
-  test('resolveOsSandboxMode parses env/config modes cleanly and defaults to off', () => {
-    assert.deepEqual(resolveOsSandboxMode({}), { mode: 'off', strict: false, allowNetwork: true });
+  test('resolveOsSandboxMode defaults to workspace-write and honors explicit off/strict/read-only overrides', () => {
+    assert.deepEqual(resolveOsSandboxMode({}), { mode: 'workspace-write', strict: false, allowNetwork: true });
+    assert.deepEqual(resolveOsSandboxMode({ CAUSYNE_OS_SANDBOX: 'off' }), { mode: 'off', strict: false, allowNetwork: true });
+    assert.deepEqual(resolveOsSandboxMode({ CAUSYNE_OS_SANDBOX: '0' }), { mode: 'off', strict: false, allowNetwork: true });
     assert.deepEqual(resolveOsSandboxMode({ CAUSYNE_OS_SANDBOX: 'workspace-write' }), { mode: 'workspace-write', strict: false, allowNetwork: true });
     assert.deepEqual(resolveOsSandboxMode({ CAUSYNE_OS_SANDBOX: 'strict', CAUSYNE_OS_SANDBOX_NETWORK: 'deny' }), { mode: 'workspace-write', strict: true, allowNetwork: false });
     assert.deepEqual(resolveOsSandboxMode({ CAUSYNE_OS_SANDBOX: 'read-only' }), { mode: 'read-only', strict: false, allowNetwork: true });
+    assert.deepEqual(resolveOsSandboxMode({}, 'off'), { mode: 'off', strict: false, allowNetwork: true });
     assert.deepEqual(resolveOsSandboxMode({}, 'workspace-write'), { mode: 'workspace-write', strict: false, allowNetwork: true });
   });
 

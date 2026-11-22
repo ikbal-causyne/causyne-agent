@@ -39,11 +39,15 @@ function failSpawn(status = 1): SpawnSyncReturns<string> {
 }
 
 describe('Sector 6C — OS Keychain Master-Key Backend', () => {
-  test('resolveKeychainMode defaults to off and recognizes auto/on/strict', () => {
-    assert.equal(resolveKeychainMode({}), 'off');
+  test('resolveKeychainMode defaults to auto on desktop, off in CI/test, and recognizes explicit overrides', () => {
+    assert.equal(resolveKeychainMode({}), 'auto');
+    assert.equal(resolveKeychainMode({ CI: 'true' }), 'off');
+    assert.equal(resolveKeychainMode({ NODE_TEST_CONTEXT: '1' }), 'off');
+    assert.equal(resolveKeychainMode({ CI: 'true', CAUSYNE_KEYCHAIN: 'on' }), 'on');
     assert.equal(resolveKeychainMode({ CAUSYNE_KEYCHAIN: 'auto' }), 'auto');
     assert.equal(resolveKeychainMode({ CAUSYNE_KEYCHAIN: 'on' }), 'on');
     assert.equal(resolveKeychainMode({ CAUSYNE_KEYCHAIN: 'strict' }), 'strict');
+    assert.equal(resolveKeychainMode({ CAUSYNE_KEYCHAIN: 'off' }), 'off');
     assert.equal(resolveKeychainMode({ CAUSYNE_KEYCHAIN: '0' }), 'off');
   });
 

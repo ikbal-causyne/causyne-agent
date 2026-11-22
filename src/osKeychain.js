@@ -1,14 +1,15 @@
 /**
- * Causyne Agent — Optional OS Keychain Master-Key Backend (Sector 6C)
+ * Causyne Agent — OS Keychain Master-Key Backend (Sector 6C / Phase A)
  *
  * Stores and retrieves the 32-byte AES-256-GCM vault master key in the host
- * operating system's credential store when enabled via `CAUSYNE_KEYCHAIN=on|auto|strict`:
+ * operating system's credential store (`CAUSYNE_KEYCHAIN=auto|on|strict|off`):
  *   - macOS (`darwin`):  Keychain Services (`/usr/bin/security -i` via stdin, never argv)
  *   - Linux (`linux`):   libsecret (`secret-tool` via stdin, never argv)
  *   - Windows (`win32`): DPAPI `CurrentUser` encrypted blob (`.vault_key.dpapi` via stdin)
  *
- * Defaults to `'off'` so headless CI runners, containers, and existing `.vault_key`
- * users experience zero unexpected OS prompts.
+ * Defaults to `'auto'` on interactive desktops (silently falls back to mode-0600
+ * `.vault_key` when unavailable) and `'off'` in CI or Node test runner contexts
+ * (`CI` / `NODE_TEST_CONTEXT`) unless explicitly opted in.
  */
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -19,14 +20,21 @@ const EXPECTED_KEY_BYTES = 32;
 const EXPECTED_KEY_HEX_LEN = EXPECTED_KEY_BYTES * 2;
 const MACOS_SECURITY_BIN = '/usr/bin/security';
 export function resolveKeychainMode(env = process.env) {
-    const raw = typeof env.CAUSYNE_KEYCHAIN === 'string' ? env.CAUSYNE_KEYCHAIN.trim().toLowerCase() : '';
+    const safeEnv = env && typeof env === 'object' ? env : {};
+    const raw = typeof safeEnv.CAUSYNE_KEYCHAIN === 'string' ? safeEnv.CAUSYNE_KEYCHAIN.trim().toLowerCase() : '';
+    if (raw === 'off' || raw === '0' || raw === 'false' || raw === 'disabled')
+        return 'off';
     if (raw === 'strict')
         return 'strict';
     if (raw === 'on' || raw === '1' || raw === 'true')
         return 'on';
     if (raw === 'auto')
         return 'auto';
-    return 'off';
+    if (raw)
+        return 'off';
+    if (Boolean(safeEnv.CI) || Boolean(safeEnv.NODE_TEST_CONTEXT))
+        return 'off';
+    return 'auto';
 }
 export function keychainAccountForVaultDir(vaultDir) {
     const digest = crypto.createHash('sha256').update(path.resolve(vaultDir)).digest('hex').slice(0, 12);

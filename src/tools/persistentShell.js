@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { getEnhancedEnv } from './sysRun.js';
+import { resolveOsSandboxMode, wrapCommandWithOsSandbox } from './osSandbox.js';
 import { getErrorMessage, boundedInteger, resolveScopedPath, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
 const MAX_PERSISTENT_SESSIONS = 8;
 const MAX_BUFFER_CHARS = 256 * 1024;
@@ -66,7 +67,30 @@ export const persistentShell = {
                 const initialCwd = typeof safeArgs.cwd === 'string' && safeArgs.cwd.trim()
                     ? resolveScopedPath(safeArgs.cwd, context)
                     : (scope.primaryRoot || process.cwd());
-                const proc = spawn(shellBin, shellArgs, {
+                const ctxRecord = context;
+                const workspaceRoots = scope.roots.length > 0 ? scope.roots : [initialCwd];
+                let wrapped;
+                if (ctxRecord.osSandbox && typeof ctxRecord.osSandbox === 'object') {
+                    wrapped = wrapCommandWithOsSandbox(shellBin, shellArgs, {
+                        ...ctxRecord.osSandbox,
+                        cwd: ctxRecord.osSandbox.cwd || initialCwd,
+                        workspaceRoots: ctxRecord.osSandbox.workspaceRoots || workspaceRoots
+                    });
+                }
+                else {
+                    const configMode = typeof ctxRecord.osSandbox === 'string'
+                        ? ctxRecord.osSandbox
+                        : ctxRecord.parentLoop?.config?.osSandbox;
+                    const sandboxRes = resolveOsSandboxMode(process.env, configMode);
+                    wrapped = wrapCommandWithOsSandbox(shellBin, shellArgs, {
+                        mode: sandboxRes.mode,
+                        strict: sandboxRes.strict,
+                        allowNetwork: sandboxRes.allowNetwork,
+                        cwd: initialCwd,
+                        workspaceRoots
+                    });
+                }
+                const proc = spawn(wrapped.command, wrapped.args, {
                     cwd: initialCwd,
                     env: { ...getEnhancedEnv(), CAUSYNE_PERSISTENT_SHELL: '1', PS1: '' },
                     stdio: ['pipe', 'pipe', 'pipe'],
