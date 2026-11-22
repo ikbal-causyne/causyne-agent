@@ -1106,7 +1106,21 @@ export class AgentLoop {
         return true;
     }
     async requestPeerPermission(request) {
-        const call = request.toolCall;
+        const options = Array.isArray(request?.options) ? request.options : [];
+        const allowOption = options.find(item => item?.kind === 'allow_once');
+        const rejectOption = options.find(item => item?.kind === 'reject_once')
+            ?? options.find(item => item?.kind === 'reject_always');
+        const denyOutcome = () => {
+            if (this.stopRequested || this.abortController.signal.aborted) {
+                return { outcome: 'cancelled' };
+            }
+            return rejectOption?.optionId
+                ? { outcome: 'selected', optionId: rejectOption.optionId }
+                : { outcome: 'cancelled' };
+        };
+        const call = request?.toolCall;
+        if (!call || typeof call !== 'object')
+            return denyOutcome();
         const raw = call.rawInput && typeof call.rawInput === 'object' && !Array.isArray(call.rawInput)
             ? call.rawInput : {};
         const args = { ...raw };
@@ -1118,7 +1132,7 @@ export class AgentLoop {
                     args[field] = this.resolvePeerFilePath(args[field]);
                 }
                 catch {
-                    return { outcome: 'cancelled' };
+                    return denyOutcome();
                 }
             }
         }
@@ -1130,12 +1144,11 @@ export class AgentLoop {
             args.command = args.cmd;
         const uncertain = !['read', 'search', 'fetch', 'think'].includes(call.kind || '')
             && (tool === 'peer_native' || (tool === 'sysRun' ? !args.command : !args.path));
-        const option = request.options.find(item => item.kind === 'allow_once');
         // Never propagate a standing peer grant across sessions or forks.
-        if (!option || !await this.authorizePeerOperation(tool, { ...args, peerTitle: call.title }, `peer:${call.toolCallId}`, uncertain)) {
-            return { outcome: 'cancelled' };
+        if (!allowOption || !await this.authorizePeerOperation(tool, { ...args, peerTitle: call.title }, `peer:${call.toolCallId}`, uncertain)) {
+            return denyOutcome();
         }
-        return { outcome: 'selected', optionId: option.optionId };
+        return { outcome: 'selected', optionId: allowOption.optionId };
     }
     async executePeerFile(tool, file, content, options) {
         const target = this.resolvePeerFilePath(file);

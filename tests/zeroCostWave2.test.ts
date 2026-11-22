@@ -6,6 +6,7 @@ import path from 'node:path';
 import { AcpProvider } from '../src/providers/acp.js';
 import { AcpClient } from '../src/acp/client.js';
 import { testPeerHandshake, isAuthRequiredHandshakeFailure } from '../src/acp/agentCatalog.js';
+import { AgentLoop } from '../src/agentLoop.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -272,5 +273,28 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       else process.env.CAUSYNE_DEV_TOKEN = prevToken;
       await provider.close();
     }
+  });
+
+  test('AgentLoop.requestPeerPermission returns reject_once instead of cancelling turn on scope denial and guards missing options', async () => {
+    const ws = path.join(TMP, 'acp-reject-once');
+    fs.mkdirSync(ws, { recursive: true });
+    const loop = new AgentLoop(null, 'test-reject-once', null, { workspaceRoot: ws });
+    const denied = await loop.requestPeerPermission({
+      sessionId: 's1',
+      toolCall: { toolCallId: 't1', title: 'read', kind: 'read', rawInput: { path: '/etc/passwd' } },
+      options: [
+        { optionId: 'allow-1', name: 'Allow', kind: 'allow_once' },
+        { optionId: 'reject-1', name: 'Reject', kind: 'reject_once' }
+      ]
+    });
+    assert.deepEqual(denied, { outcome: 'selected', optionId: 'reject-1' });
+
+    // Malformed missing options array must not throw
+    const malformed = await loop.requestPeerPermission({
+      sessionId: 's1',
+      toolCall: { toolCallId: 't2', title: 'read', kind: 'read', rawInput: { path: 'a.txt' } },
+      options: undefined as any
+    });
+    assert.deepEqual(malformed, { outcome: 'cancelled' });
   });
 });

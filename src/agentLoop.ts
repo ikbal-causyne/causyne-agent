@@ -1228,14 +1228,28 @@ export class AgentLoop {
   }
 
   async requestPeerPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse['outcome']> {
-    const call = request.toolCall;
+    const options = Array.isArray(request?.options) ? request.options : [];
+    const allowOption = options.find(item => item?.kind === 'allow_once');
+    const rejectOption = options.find(item => item?.kind === 'reject_once')
+      ?? options.find(item => item?.kind === 'reject_always');
+    const denyOutcome = (): RequestPermissionResponse['outcome'] => {
+      if (this.stopRequested || this.abortController.signal.aborted) {
+        return { outcome: 'cancelled' };
+      }
+      return rejectOption?.optionId
+        ? { outcome: 'selected', optionId: rejectOption.optionId }
+        : { outcome: 'cancelled' };
+    };
+
+    const call = request?.toolCall;
+    if (!call || typeof call !== 'object') return denyOutcome();
     const raw = call.rawInput && typeof call.rawInput === 'object' && !Array.isArray(call.rawInput)
       ? call.rawInput as Record<string, unknown> : {};
     const args = { ...raw };
     if (!args.path && call.locations?.[0]?.path) args.path = call.locations[0].path;
     for (const field of ['path', 'file_path', 'filePath', 'filepath', 'absolutePath', 'cwd', 'source', 'destination', 'directory', 'targetFile', 'outputFile', 'outputPath']) {
       if (typeof args[field] === 'string') {
-        try { args[field] = this.resolvePeerFilePath(args[field] as string); } catch { return { outcome: 'cancelled' }; }
+        try { args[field] = this.resolvePeerFilePath(args[field] as string); } catch { return denyOutcome(); }
       }
     }
     args.path ??= args.file_path ?? args.filePath ?? args.filepath ?? args.absolutePath;
@@ -1245,12 +1259,11 @@ export class AgentLoop {
     if (tool === 'sysRun' && !args.command && typeof args.cmd === 'string') args.command = args.cmd;
     const uncertain = !['read', 'search', 'fetch', 'think'].includes(call.kind || '')
       && (tool === 'peer_native' || (tool === 'sysRun' ? !args.command : !args.path));
-    const option = request.options.find(item => item.kind === 'allow_once');
     // Never propagate a standing peer grant across sessions or forks.
-    if (!option || !await this.authorizePeerOperation(tool, { ...args, peerTitle: call.title }, `peer:${call.toolCallId}`, uncertain)) {
-      return { outcome: 'cancelled' };
+    if (!allowOption || !await this.authorizePeerOperation(tool, { ...args, peerTitle: call.title }, `peer:${call.toolCallId}`, uncertain)) {
+      return denyOutcome();
     }
-    return { outcome: 'selected', optionId: option.optionId };
+    return { outcome: 'selected', optionId: allowOption.optionId };
   }
 
   async executePeerFile(tool: 'fs_read' | 'fs_write', file: string, content?: string, options?: { line?: number; limit?: number }): Promise<string> {
