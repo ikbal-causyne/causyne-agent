@@ -30,6 +30,11 @@ const {
   runHeadlessTask
 } = await import('../src/headlessCli.js');
 
+const {
+  applyProviderOverrides,
+  resolveProviderApiKey
+} = await import('../src/config.js');
+
 const createdSessions: string[] = [];
 
 after(() => {
@@ -301,5 +306,105 @@ describe('Sector 5 — Headless / CI CLI options, stdin piping, and structured o
     });
     assert.equal(badCmd.status, 1);
     assert.match(badCmd.stderr, /Invalid command/);
+  });
+
+  test('applyProviderOverrides hydrates vault providerKeys, prevents cross-provider key leakage, and clears foreign models', () => {
+    // 1. Hydrates stored openrouter key when overriding from antigravity default
+    const cfg1 = applyProviderOverrides(
+      {
+        provider: 'antigravity',
+        model: 'Gemini 4 Neon (XHigh)',
+        apiKey: '',
+        providerKeys: { openrouter: 'sk-or-test-key' }
+      },
+      'openrouter',
+      'openrouter/free'
+    );
+    assert.equal(cfg1.provider, 'openrouter');
+    assert.equal(cfg1.apiKey, 'sk-or-test-key');
+    assert.equal(cfg1.model, 'openrouter/free');
+
+    // 2. Never leaks openai secret to anthropic when overriding to an unconfigured provider, and clears foreign model
+    const cfg2 = applyProviderOverrides(
+      {
+        provider: 'openai',
+        model: 'gpt-4o',
+        apiKey: 'sk-openai-secret',
+        providerKeys: { openai: 'sk-openai-secret' }
+      },
+      'anthropic',
+      null
+    );
+    assert.equal(cfg2.provider, 'anthropic');
+    assert.equal(cfg2.apiKey, '');
+    assert.equal(cfg2.model, '');
+
+    // 3. Clears foreign model when switching to ACP peer without explicit --model
+    const cfg3 = applyProviderOverrides(
+      {
+        provider: 'antigravity',
+        model: 'Gemini 4 Neon (XHigh)',
+        apiKey: '',
+        providerKeys: {}
+      },
+      'opencode',
+      undefined
+    );
+    assert.equal(cfg3.provider, 'opencode');
+    assert.equal(cfg3.model, '');
+
+    // 4. Resolves provider aliases safely and blocks prototype keys
+    assert.equal(resolveProviderApiKey({ provider: 'x', providerKeys: { openrouter: 'sk-or-alias' } }, 'openrouter-free'), 'sk-or-alias');
+    assert.equal(resolveProviderApiKey({ provider: 'x', providerKeys: { openrouter: 'sk-or-alias' } }, '__proto__'), '');
+  });
+
+  test('runHeadlessTask closes provider handles in finally and captures AgentLoop usage_update + peer nativeStep telemetry', async () => {
+    let out = '';
+    let closedCount = 0;
+    const prevExit = process.exitCode;
+    try {
+      const res = await runHeadlessTask('Check peer telemetry', {
+        outputFormat: 'json',
+        provider: 'opencode',
+        stdout: { write: (s: string) => { out += s; } },
+        stderr: { write: () => {} },
+        loopFactory: (sink) => ({
+          config: { provider: 'opencode', model: '' },
+          llm: {
+            model: 'opencode/big-pickle',
+            async close() {
+              closedCount += 1;
+            }
+          },
+          memoryManager: { sessionId: 's_peer_1' },
+          stepsCompleted: 2,
+          _causyneTaskOutcome: 'completed',
+          async run() {
+            sink.send(JSON.stringify({ type: 'notice', nativeStep: true, actionName: 'fs_read', message: 'opencode fs_read' }));
+            sink.send(JSON.stringify({ type: 'warning', nativeStep: true, nativeFailed: true, actionName: 'sysRun', message: 'opencode could not sysRun' }));
+            sink.send(JSON.stringify({ type: 'usage_update', taskTokens: 4200, cachedTokens: 3100, taskCostUsd: 0.012 }));
+            sink.send(JSON.stringify({ type: 'agent_message', content: 'Done.', streaming: false }));
+          }
+        })
+      });
+
+      assert.equal(closedCount, 1, 'runHeadlessTask must close loop.llm on completion');
+      assert.equal(res.ok, true);
+      assert.equal(res.model, 'opencode/big-pickle');
+      assert.deepEqual(res.toolCalls, [
+        { tool: 'fs_read', status: 'completed' },
+        { tool: 'sysRun', status: 'error', error: 'opencode could not sysRun' }
+      ]);
+      assert.deepEqual(res.usage, {
+        totalTokens: 4200,
+        cachedTokens: 3100,
+        estimatedCostUsd: 0.012
+      });
+      const parsed = JSON.parse(out);
+      assert.equal(parsed.model, 'opencode/big-pickle');
+      assert.equal(parsed.usage.totalTokens, 4200);
+    } finally {
+      process.exitCode = prevExit;
+    }
   });
 });

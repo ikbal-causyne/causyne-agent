@@ -9,6 +9,8 @@
 
 import { AgentLoop, type AgentLoopEventSink } from './agentLoop.js';
 import { safeDisplay } from './tui/text.js';
+import { lspSessionManager } from './lsp/lspClient.js';
+import { backgroundTaskManager } from './backgroundTasks.js';
 
 export type HeadlessOutputFormat = 'text' | 'json' | 'stream-json';
 export type AutonomyModeCode = 'A' | 'B' | 'C';
@@ -26,6 +28,7 @@ export interface HeadlessUsageSummary {
   inputTokens?: number | undefined;
   outputTokens?: number | undefined;
   totalTokens?: number | undefined;
+  cachedTokens?: number | undefined;
   estimatedCostUsd?: number | undefined;
 }
 
@@ -46,6 +49,7 @@ export interface HeadlessRunResult {
 
 export interface HeadlessLoopLike {
   config?: { provider?: string; model?: string; autonomyMode?: string };
+  llm?: { model?: string; close?: () => Promise<void> | void } | null | undefined;
   memoryManager?: { sessionId?: string | null };
   stepsCompleted?: number;
   _causyneTaskOutcome?: string;
@@ -253,6 +257,21 @@ export class HeadlessEventSink implements AgentLoopEventSink {
       return;
     }
 
+    if (type === 'notice' && parsed.nativeStep === true && typeof parsed.actionName === 'string') {
+      const tool = safeDisplay(parsed.actionName);
+      this.toolCalls.push({ tool, status: 'completed' });
+      this.emitStreamLine({ type: 'tool_result', tool, ok: true });
+      return;
+    }
+
+    if (type === 'warning' && parsed.nativeStep === true && parsed.nativeFailed === true && typeof parsed.actionName === 'string') {
+      const tool = safeDisplay(parsed.actionName);
+      const errText = typeof parsed.message === 'string' ? safeDisplay(parsed.message) : 'Tool failed';
+      this.toolCalls.push({ tool, status: 'error', error: errText });
+      this.emitStreamLine({ type: 'tool_result', tool, ok: false, error: errText });
+      return;
+    }
+
     if (type === 'error') {
       const message = typeof parsed.message === 'string' ? safeDisplay(parsed.message) : 'Unknown error';
       this.errors.push(message);
@@ -264,8 +283,21 @@ export class HeadlessEventSink implements AgentLoopEventSink {
       const summary: HeadlessUsageSummary = {};
       if (typeof parsed.inputTokens === 'number') summary.inputTokens = parsed.inputTokens;
       if (typeof parsed.outputTokens === 'number') summary.outputTokens = parsed.outputTokens;
-      if (typeof parsed.totalTokens === 'number') summary.totalTokens = parsed.totalTokens;
-      if (typeof parsed.estimatedCostUsd === 'number') summary.estimatedCostUsd = parsed.estimatedCostUsd;
+      if (typeof parsed.totalTokens === 'number') {
+        summary.totalTokens = parsed.totalTokens;
+      } else if (typeof parsed.taskTokens === 'number' && parsed.taskTokens > 0) {
+        summary.totalTokens = parsed.taskTokens;
+      }
+      if (typeof parsed.cachedTokens === 'number' && parsed.cachedTokens > 0) {
+        summary.cachedTokens = parsed.cachedTokens;
+      }
+      if (typeof parsed.estimatedCostUsd === 'number') {
+        summary.estimatedCostUsd = parsed.estimatedCostUsd;
+      } else if (typeof parsed.taskCostUsd === 'number') {
+        summary.estimatedCostUsd = parsed.taskCostUsd;
+      } else if (typeof parsed.costUsd === 'number') {
+        summary.estimatedCostUsd = parsed.costUsd;
+      }
       if (Object.keys(summary).length > 0) {
         this.usage = summary;
         this.emitStreamLine({ type: 'usage', ...summary });
@@ -344,6 +376,22 @@ export async function runHeadlessTask(
     await loop.run();
   } catch (err: unknown) {
     fatalError = safeDisplay(err instanceof Error ? err.message : String(err));
+  } finally {
+    try {
+      await loop.llm?.close?.();
+    } catch {
+      // ignore provider teardown errors on headless exit
+    }
+    try {
+      await lspSessionManager.shutdownAll();
+    } catch {
+      // ignore LSP shutdown errors on headless exit
+    }
+    try {
+      backgroundTaskManager.stopAll();
+    } catch {
+      // ignore background task shutdown errors on headless exit
+    }
   }
 
   const completed = fatalError === null && loop._causyneTaskOutcome === 'completed';
@@ -354,7 +402,7 @@ export async function runHeadlessTask(
     taskId,
     sessionId: loop.memoryManager?.sessionId ?? null,
     provider: String(options.provider || loop.config?.provider || ''),
-    model: String(options.model || loop.config?.model || ''),
+    model: String(options.model || loop.llm?.model || loop.config?.model || ''),
     response: sink.response,
     error: completed ? null : (lastError || 'No verified task completion was recorded.'),
     steps: typeof loop.stepsCompleted === 'number' ? loop.stepsCompleted : 0,

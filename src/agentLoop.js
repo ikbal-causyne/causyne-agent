@@ -27,7 +27,7 @@ import { validateToolArguments } from './tools/argumentValidation.js';
 import { Sandbox } from './sandbox.js';
 import { auditLog } from './auditLog.js';
 import { hasMatchingHook, runConfiguredHooks } from './hooks.js';
-import { loadConfig } from './config.js';
+import { loadConfig, applyProviderOverrides } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { TokenTracker } from './tokenTracker.js';
 import { getMemoryContextString } from './memory.js';
@@ -429,10 +429,7 @@ export class AgentLoop {
             ? options.approvalScope
             : processApprovalScope;
         this.config = loadConfig();
-        if (this.providerOverride)
-            this.config.provider = this.providerOverride;
-        if (this.modelOverride)
-            this.config.model = this.modelOverride;
+        applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
         this.sandbox = new Sandbox({ workspaceRoot: this.workspaceRoot });
         // Retire spilled tool outputs past their retention window. Fire-and-forget
         // at task start rather than on a timer: nothing may run in the background
@@ -1543,10 +1540,7 @@ export class AgentLoop {
         this.config = loadConfig();
         if (this.autonomyOverride)
             this.config.autonomyMode = this.autonomyOverride;
-        if (this.providerOverride)
-            this.config.provider = this.providerOverride;
-        if (this.modelOverride)
-            this.config.model = this.modelOverride;
+        applyProviderOverrides(this.config, this.providerOverride, this.modelOverride);
         if (typeof this.initializeProvider === 'function') {
             const nextProvider = this.initializeProvider();
             if (nextProvider) {
@@ -2125,11 +2119,13 @@ export class AgentLoop {
                     overrideTokens: this.config.contextTokens || this.config.maxContextTokens
                 });
                 // 5-Stage Progressive Compaction (Claude Code Architecture / Research Section E):
-                // Stage 0 (HLCE Ephemeral Decay) + Stage 2 (Snip >15K tokens / 60K chars) +
-                // Stage 1 (Budget Reduction >70%) + Stage 3 (Microcompact) + Stage 4 (Context Collapse >85%)
+                // Under low context pressure (<25% of pool), keep more recent small file reads
+                // verbatim so models do not lose a 1-2 KB source file after four tool calls.
+                const currentMessageChars = measureMessages(this.messages);
+                const lowContextPressure = currentMessageChars < MAX_CHAR_POOL * 0.25;
                 const observationPrune = pruneStaleToolObservations(this.messages, {
-                    keepRecent: this.config.keepRecentToolResults ?? 4,
-                    minChars: 600,
+                    keepRecent: this.config.keepRecentToolResults ?? (lowContextPressure ? 12 : 4),
+                    minChars: lowContextPressure ? 2400 : 600,
                     taskId: this.taskId
                 });
                 const argumentPrune = pruneExecutedToolArguments(this.messages, { taskId: this.taskId });
@@ -2799,7 +2795,14 @@ You are operating in a text-and-code modality without direct image pixel renderi
                         }
                         else if (action.status === 'failed') {
                             this.emitEvent({ type: 'status', message: '' });
-                            this.emitEvent({ type: 'warning', message: `${this.config.provider || 'Provider'} could not ${action.name}${detail}` });
+                            this.emitEvent({
+                                type: 'warning',
+                                nativeStep: true,
+                                nativeFailed: true,
+                                actionName: action.name,
+                                detail: action.detail,
+                                message: `${this.config.provider || 'Provider'} could not ${action.name}${detail}`
+                            });
                         }
                     }
                 }).catch((error) => {
@@ -3354,9 +3357,16 @@ You are operating in a text-and-code modality without direct image pixel renderi
                     if (!hasExternalActions && (isIncompleteTurn || failedExternalActions.length > 0 || !contentText.trim())) {
                         if (this.stepsCompleted > 0 && incompleteTurnContinuations < 2 && failedExternalActions.length === 0) {
                             incompleteTurnContinuations++;
-                            this.emitEvent({ type: 'status', message: 'Requesting the missing final response…' });
-                            this.messages.push({ role: 'system', content: '[FINAL RESPONSE REQUIRED] Report actual completed and incomplete work from tool results. ' +
-                                    'Do not call plan steps or file writes proof of verification.' });
+                            if (isActionable && taskMutationCount === 0 && !isLaunchOnlyPrompt(taskPrompt) && !isPlanningOnlyRequest(taskPrompt)) {
+                                this.emitEvent({ type: 'status', message: 'Continuing execution after reasoning-only turn…' });
+                                this.messages.push({ role: 'system', content: '[CONTINUE EXECUTION] Your previous turn produced reasoning without invoking a tool or applying the requested changes. ' +
+                                        'Continue immediately by calling the appropriate tool (such as fs_edit, apply_patch, fs_write, or sysRun) to implement and verify the task.' });
+                            }
+                            else {
+                                this.emitEvent({ type: 'status', message: 'Requesting the missing final response…' });
+                                this.messages.push({ role: 'system', content: '[FINAL RESPONSE REQUIRED] Report actual completed and incomplete work from tool results. ' +
+                                        'Do not call plan steps or file writes proof of verification.' });
+                            }
                             this.memoryManager.saveHistory(this.messages);
                             continue;
                         }
@@ -4743,23 +4753,28 @@ You are operating in a text-and-code modality without direct image pixel renderi
                                 }
                             }
                         }
-                        // Fold identical bytes without treating them as proof of external state.
+                        // Fold identical bytes only when the earlier full observation is still
+                        // verbatim in active context (never blindfold a re-read of a decayed result).
                         const OBSERVATION_FOLD_FLOOR = 600;
                         if (resultString.length >= OBSERVATION_FOLD_FLOOR) {
                             const digest = originalFingerprint;
-                            const seenAt = this._observationDigests.get(digest);
-                            if (seenAt !== undefined) {
+                            const seenRecord = this._observationDigests.get(digest);
+                            const earlierStillVerbatim = Boolean(seenRecord && this.messages.some((msg) => msg?.role === 'tool'
+                                && msg?.tool_call_id === seenRecord.toolCallId
+                                && typeof msg.content === 'string'
+                                && !msg.content.startsWith('[decayed]')));
+                            if (seenRecord !== undefined && earlierStillVerbatim) {
                                 resultString = JSON.stringify({
                                     ...(result && typeof result.success === 'boolean' ? { success: result.success } : {}),
                                     identicalResult: true,
-                                    output: `The serialized tool response matches step ${seenAt}. This does not prove external state is unchanged. `
+                                    output: `The serialized tool response matches step ${seenRecord.step}. This does not prove external state is unchanged. `
                                         + (spill
                                             ? `Full output is saved at ${spill.path}; read a relevant range if needed.`
-                                            : 'The earlier response may have left the active context; make a targeted read if its details are needed.')
+                                            : 'The earlier response is still present in active context.')
                                 });
                             }
                             else {
-                                this._observationDigests.set(digest, this.stepsCompleted + 1);
+                                this._observationDigests.set(digest, { step: this.stepsCompleted + 1, toolCallId: toolCall.id });
                             }
                         }
                         const isCallFailed = isToolErrorResult(result);

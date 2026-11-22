@@ -23,6 +23,72 @@ export type CausyneConfig = Record<string, any>;
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 const FORBIDDEN_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+const PROVIDER_KEY_ALIASES: Record<string, readonly string[]> = {
+  openrouter: ['openrouter', 'openrouter-free'],
+  'openrouter-free': ['openrouter', 'openrouter-free'],
+  dashscope: ['dashscope-byok', 'dashscope', 'qwen'],
+  'dashscope-byok': ['dashscope-byok', 'dashscope', 'qwen'],
+  qwen: ['qwen', 'dashscope-byok', 'dashscope'],
+  xai: ['xai', 'grok'],
+  grok: ['xai', 'grok'],
+  moonshot: ['moonshot', 'kimi'],
+  kimi: ['moonshot', 'kimi'],
+  muse: ['muse', 'meta'],
+  meta: ['muse', 'meta']
+};
+
+export function resolveProviderApiKey(
+  config: CausyneConfig | null | undefined,
+  targetProvider: string
+): string {
+  if (!config || typeof config !== 'object') return '';
+  const target = String(targetProvider || '').trim().toLowerCase();
+  if (!target || FORBIDDEN_CONFIG_KEYS.has(target)) return '';
+  const savedProvider = typeof config.provider === 'string' ? config.provider.trim().toLowerCase() : '';
+  const aliases = Object.hasOwn(PROVIDER_KEY_ALIASES, target) ? PROVIDER_KEY_ALIASES[target]! : [target];
+  const providerKeys = config.providerKeys && typeof config.providerKeys === 'object' && !Array.isArray(config.providerKeys)
+    ? (config.providerKeys as Record<string, unknown>)
+    : null;
+  if (providerKeys) {
+    for (const candidate of aliases) {
+      if (!FORBIDDEN_CONFIG_KEYS.has(candidate) && Object.hasOwn(providerKeys, candidate)) {
+        const val = providerKeys[candidate];
+        if (typeof val === 'string' && val.trim()) return val.trim();
+      }
+    }
+  }
+  if (savedProvider && aliases.includes(savedProvider) && typeof config.apiKey === 'string' && config.apiKey.trim()) {
+    return config.apiKey.trim();
+  }
+  return '';
+}
+
+export function applyProviderOverrides(
+  config: CausyneConfig,
+  providerOverride?: string | null,
+  modelOverride?: string | null
+): CausyneConfig {
+  const nextProvider = typeof providerOverride === 'string' ? providerOverride.trim() : '';
+  const nextModel = typeof modelOverride === 'string' ? modelOverride.trim() : '';
+  if (nextProvider) {
+    const prevNorm = typeof config.provider === 'string' ? config.provider.trim().toLowerCase() : '';
+    const nextNorm = nextProvider.toLowerCase();
+    const prevAliases = prevNorm
+      ? (Object.hasOwn(PROVIDER_KEY_ALIASES, prevNorm) ? PROVIDER_KEY_ALIASES[prevNorm]! : [prevNorm])
+      : [];
+    const sameFamily = Boolean(prevNorm && (prevNorm === nextNorm || prevAliases.includes(nextNorm)));
+    config.apiKey = resolveProviderApiKey(config, nextProvider);
+    config.provider = nextProvider;
+    if (!sameFamily && !nextModel) {
+      config.model = '';
+    }
+  }
+  if (nextModel) {
+    config.model = nextModel;
+  }
+  return config;
+}
+
 function configDir(): string {
   return causyneHome();
 }

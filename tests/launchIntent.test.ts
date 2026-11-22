@@ -380,3 +380,95 @@ test('prohibiting test execution does not revoke authorization to edit requested
   assert.equal(isNoExecutionPrompt('Do not run tests and do not modify any files'), true);
   assert.equal(isNoExecutionPrompt('do not run the tests'), false);
 });
+
+test('scoped file or artifact exclusions do not trigger blanket read-only execution lockouts', () => {
+  const allowedActionPrompts = [
+    'Inspect `src/cache.mjs` and `test/cache.test.mjs`. Fix ALL bugs in `src/cache.mjs` (do NOT modify `test/cache.test.mjs`). Run `node --test`.',
+    'Fix all TypeScript compilation errors in `src/dag.ts` (do NOT modify `tsconfig.json` or `test/dag.test.ts`).',
+    'Refactor src/billing.mjs without changing existing tests or public exports.',
+    'Fix src/app.ts, do not touch package.json or lockfiles.',
+    'Harden src/security.mjs without modifying test/security.test.mjs.'
+  ];
+  for (const prompt of allowedActionPrompts) {
+    assert.equal(isNoExecutionPrompt(prompt), false, prompt);
+    assert.equal(isReadOnlyOrExplanatoryPrompt(prompt), false, prompt);
+    assert.equal(readOnlyScopeError('fs_edit', { path: 'src/cache.mjs' }, prompt), null, prompt);
+    assert.equal(readOnlyScopeError('sysRun', { command: 'node --test' }, prompt), null, prompt);
+  }
+
+  const stillBlockedPrompts = [
+    'Explain this architecture, do not modify any files.',
+    'Audit src/auth.ts in read-only mode without editing code.',
+    'Do not touch files, just explain why the test fails.'
+  ];
+  for (const prompt of stillBlockedPrompts) {
+    assert.equal(isNoExecutionPrompt(prompt), true, prompt);
+    assert.ok(readOnlyScopeError('fs_edit', { path: 'src/auth.ts' }, prompt), prompt);
+    assert.ok(readOnlyScopeError('apply_patch', {}, prompt), prompt);
+  }
+});
+
+test('reasoning-only empty turn after file reads nudges continuation instead of forcing early final summary', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-reasoning-continue-'));
+  fs.writeFileSync(path.join(workspace, 'target.txt'), 'before\n');
+  const seenSystemPrompts: string[] = [];
+  const events: Array<{ type: string; message?: string }> = [];
+
+  try {
+    const loop = new AgentLoop(
+      { readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) },
+      'reasoning-continue-e2e',
+      'Inspect `target.txt` and fix its content (do NOT modify `README.md`).',
+      { workspaceRoot: workspace }
+    );
+    let turn = 0;
+    const model = {
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async (messages: Array<{ role: string; content?: string }>) => {
+        turn++;
+        for (const m of messages) {
+          if (m.role === 'system' && typeof m.content === 'string') seenSystemPrompts.push(m.content);
+        }
+        if (turn === 1) {
+          return {
+            content: '',
+            toolCalls: [{ id: 'tc1', type: 'function', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'target.txt' }) } }],
+            usage: { promptTokens: 20, completionTokens: 10 }
+          };
+        }
+        if (turn === 2) {
+          // Reasoning-only turn with empty content & no tool calls
+          return {
+            content: '',
+            reasoningContent: 'I see target.txt has "before". I should update it to "after".',
+            toolCalls: [],
+            usage: { promptTokens: 30, completionTokens: 15 }
+          };
+        }
+        if (turn === 3) {
+          return {
+            content: '',
+            toolCalls: [{ id: 'tc2', type: 'function', function: { name: 'fs_write', arguments: JSON.stringify({ path: 'target.txt', content: 'after\n' }) } }],
+            usage: { promptTokens: 40, completionTokens: 15 }
+          };
+        }
+        return {
+          content: 'Updated target.txt to after.',
+          usage: { promptTokens: 50, completionTokens: 10 }
+        };
+      }
+    };
+    loop.initializeProvider = () => model as never;
+    loop.llm = model as never;
+
+    await loop.run();
+
+    assert.equal(fs.readFileSync(path.join(workspace, 'target.txt'), 'utf8'), 'after\n');
+    assert.ok(seenSystemPrompts.some((s) => s.includes('[CONTINUE EXECUTION]')), 'must inject [CONTINUE EXECUTION] after reasoning-only turn');
+    assert.equal(seenSystemPrompts.some((s) => s.includes('[FINAL RESPONSE REQUIRED]')), false, 'must not tell model to quit before any edit');
+    assert.equal(events.some((e) => e.type === 'task_complete'), true);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});

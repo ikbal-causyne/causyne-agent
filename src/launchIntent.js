@@ -13,17 +13,28 @@ const MUTATING_INSPECTION_OPTIONS = /(?:^|\s)(?:-delete|-exec(?:dir)?|-ok(?:dir)
 const OPEN_COMMAND = /^\s*(?:open|xdg-open|start)\s+\S+/i;
 const LOCAL_HEALTH_CHECK = /^\s*curl\b[^;&|><`$()]*https?:\/\/(?:localhost|127\.0\.0\.1):\d+(?:\/\S*)?\s*$/i;
 export const MUTATION_TOOLS = new Set([
-    'fs_write', 'fs_edit', 'fs_delete', 'fs_move',
+    'fs_write', 'fs_edit', 'fs_delete', 'fs_move', 'apply_patch',
     'multi_edit', 'MultiEdit', 'edit_file', 'write_to_file', 'delete_file',
     'create_skill', 'manage_local_dependencies', 'skill_create', 'memory_write', 'archive', 'tool.forge', 'proc.term'
 ]);
 const NO_EXECUTION_PHRASES = /\b(?:don'?t|do\s+not|never|without)\s+(?:execute|run|modify|mutate|apply|touch|write|change|edit|delete)\b|\b(?:no|without)\s+(?:execution|tools?|actions?)\b|\bjust\s+explain\b|\bread[\s-]only\b/i;
 // 'Do not run tests' is a scoped restriction, not a prohibition on editing code.
 const SCOPED_TEST_PROHIBITION = /\b(?:don'?t|do\s+not|never|without)\s+(?:run|execute)\s+(?:the\s+)?(?:unit\s+|integration\s+|e2e\s+)?(?:tests?|checks?|lint(?:ing|ers?)?|benchmarks?|test\s+suite)\b/gi;
+// Scoped target exclusions (e.g. "do NOT modify `test/cache.test.mjs`",
+// "don't touch package.json", "without changing existing tests") constrain which
+// files/symbols stay untouched without revoking execution for the requested fix.
+const SCOPED_BACKTICK_EXCLUSION = /\b(?:don'?t|do\s+not|never|without)\s+(?:modify|modifying|mutate|mutating|touch|touching|write|writing|change|changing|edit|editing|delete|deleting|alter|altering|update|updating)\s+`[^`\r\n]{1,160}`(?:\s+(?:or|and)\s+`[^`\r\n]{1,160}`){0,4}/gi;
+const SCOPED_PATH_EXCLUSION = /\b(?:don'?t|do\s+not|never|without)\s+(?:modify|modifying|mutate|mutating|touch|touching|write|writing|change|changing|edit|editing|delete|deleting|alter|altering|update|updating)\s+(?:the\s+)?(?:[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_./-]{1,128}|[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9]{1,10})(?:\s+(?:or|and)\s+(?:the\s+)?(?:[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_./-]{1,128}|[A-Za-z0-9_-]{1,64}\.[A-Za-z0-9]{1,10})){0,4}/gi;
+const SCOPED_ARTIFACT_EXCLUSION = /\b(?:don'?t|do\s+not|never|without)\s+(?:modify|modifying|mutate|mutating|touch|touching|write|writing|change|changing|edit|editing|delete|deleting|alter|altering|update|updating)\s+(?:the\s+|existing\s+|other\s+|unrelated\s+|public\s+|protected\s+|original\s+)?(?:tests?|test\s+files?|specs?|fixtures?|configs?|config\s+files?|lockfiles?|migrations?|schemas?|exports?|public\s+api|signatures?|interfaces?|headers?|comments?|formatting|unrelated\s+files?|protected\s+files?)\b/gi;
 export function isNoExecutionPrompt(prompt) {
     if (!prompt || typeof prompt !== 'string')
         return false;
-    return NO_EXECUTION_PHRASES.test(prompt.replace(SCOPED_TEST_PROHIBITION, ''));
+    const cleaned = prompt
+        .replace(SCOPED_TEST_PROHIBITION, ' ')
+        .replace(SCOPED_BACKTICK_EXCLUSION, ' ')
+        .replace(SCOPED_PATH_EXCLUSION, ' ')
+        .replace(SCOPED_ARTIFACT_EXCLUSION, ' ');
+    return NO_EXECUTION_PHRASES.test(cleaned);
 }
 export function isReadOnlyOrExplanatoryPrompt(prompt) {
     if (!prompt || typeof prompt !== 'string')
