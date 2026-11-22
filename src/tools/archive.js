@@ -1,9 +1,11 @@
 import fs from 'node:fs/promises';
-import { existsSync, lstatSync, realpathSync, statSync, createWriteStream } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveUserPath } from '../utils/paths.js';
 import { loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
+export const MAX_UNCOMPRESSED_ARCHIVE_BYTES = 256 * 1024 * 1024;
+const MAX_ARCHIVE_SCAN_ENTRIES = 50_000;
 function expandArchivePath(raw, baseRoot) {
     const trimmed = raw.trim();
     if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
@@ -119,13 +121,41 @@ export const archive = {
         }
     }
 };
-function isUnsafeArchiveMemberName(member) {
+export function isUnsafeArchiveMemberName(member) {
     const normalized = member.replace(/\\/g, '/').trim();
-    if (!normalized)
+    if (!normalized || normalized.includes('\0'))
         return true;
     if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized))
         return true;
     return normalized.split('/').some(seg => seg === '..');
+}
+function assertNoSymlinksInTree(rootPath) {
+    const rootStat = lstatSync(rootPath);
+    if (rootStat.isSymbolicLink()) {
+        throw new Error(`Refusing to compress symbolic link source: ${rootPath}`);
+    }
+    if (!rootStat.isDirectory())
+        return;
+    const queue = [rootPath];
+    let visited = 0;
+    while (queue.length > 0) {
+        const dir = queue.shift();
+        const entries = readdirSync(dir);
+        for (const entry of entries) {
+            visited++;
+            if (visited > MAX_ARCHIVE_SCAN_ENTRIES) {
+                throw new Error(`Archive source exceeds maximum file count (${MAX_ARCHIVE_SCAN_ENTRIES})`);
+            }
+            const full = path.join(dir, entry);
+            const st = lstatSync(full);
+            if (st.isSymbolicLink()) {
+                throw new Error(`Refusing to compress symbolic link inside source tree: ${full}`);
+            }
+            if (st.isDirectory()) {
+                queue.push(full);
+            }
+        }
+    }
 }
 function precheckNativeZipEntries(source) {
     const listing = execFileSync('unzip', ['-Z', '-s', source], {
@@ -135,14 +165,27 @@ function precheckNativeZipEntries(source) {
         maxBuffer: 10 * 1024 * 1024,
         windowsHide: true
     });
+    let totalUncompressed = 0;
+    let entryCount = 0;
     for (const line of listing.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('Archive:') || trimmed.startsWith('Zip file size:') || /^\d+\s+files?,/.test(trimmed))
             continue;
+        entryCount++;
+        if (entryCount > MAX_ARCHIVE_SCAN_ENTRIES) {
+            throw new Error(`Refusing zip archive with more than ${MAX_ARCHIVE_SCAN_ENTRIES} entries.`);
+        }
         if (/^l/.test(trimmed)) {
             throw new Error(`Refusing symlink entry inside zip archive: ${trimmed}`);
         }
         const parts = trimmed.split(/\s+/);
+        const size = Number(parts[3]);
+        if (Number.isFinite(size) && size > 0) {
+            totalUncompressed += size;
+            if (totalUncompressed > MAX_UNCOMPRESSED_ARCHIVE_BYTES) {
+                throw new Error('Refusing zip archive exceeding 256 MB uncompressed safety limit.');
+            }
+        }
         const name = parts.slice(8).join(' ');
         if (name && isUnsafeArchiveMemberName(name)) {
             throw new Error(`Refusing unsafe zip archive path traversal entry: ${name}`);
@@ -157,12 +200,29 @@ function precheckNativeTarEntries(source) {
         maxBuffer: 10 * 1024 * 1024,
         windowsHide: true
     });
+    let totalUncompressed = 0;
+    let entryCount = 0;
     for (const line of listing.split('\n')) {
         const trimmed = line.trim();
         if (!trimmed)
             continue;
+        entryCount++;
+        if (entryCount > MAX_ARCHIVE_SCAN_ENTRIES) {
+            throw new Error(`Refusing tar archive with more than ${MAX_ARCHIVE_SCAN_ENTRIES} entries.`);
+        }
         if (/^[lhbcp]/.test(trimmed) || trimmed.includes(' -> ')) {
             throw new Error(`Refusing symlink or special device entry inside tar archive: ${trimmed}`);
+        }
+        // Extract numeric size field from standard BSD/GNU tar -tvf output
+        const parts = trimmed.split(/\s+/);
+        const sizeCandidate = parts.length >= 5 && /^\d+$/.test(parts[4] || '')
+            ? Number(parts[4])
+            : (parts.length >= 3 && /^\d+$/.test(parts[2] || '') ? Number(parts[2]) : 0);
+        if (Number.isFinite(sizeCandidate) && sizeCandidate > 0) {
+            totalUncompressed += sizeCandidate;
+            if (totalUncompressed > MAX_UNCOMPRESSED_ARCHIVE_BYTES) {
+                throw new Error('Refusing tar archive exceeding 256 MB uncompressed safety limit.');
+            }
         }
     }
     const names = execFileSync('tar', ['-tf', source], {
@@ -180,19 +240,47 @@ function precheckNativeTarEntries(source) {
 }
 async function extractArchive(source, dest) {
     await fs.mkdir(dest, { recursive: true });
-    // 1. Try capability package extract-zip if already available in environment
-    try {
-        const extract = await loadCapabilityPackage('extract-zip');
-        if (typeof extract === 'function') {
-            await extract(source, { dir: dest });
-            return { success: true, output: `Extracted successfully to ${dest}` };
-        }
-    }
-    catch {
-        // Fall through to native zero-dependency extractors
-    }
     const isZip = source.toLowerCase().endsWith('.zip') || source.toLowerCase().endsWith('.jar');
     const isTar = /\.(tar|tar\.gz|tgz|tar\.bz2|tar\.xz)$/i.test(source);
+    // 1. Try capability package extract-zip if already available in environment (with Zip-Slip, symlink, and size guard)
+    if (isZip) {
+        try {
+            const extract = await loadCapabilityPackage('extract-zip');
+            if (typeof extract === 'function') {
+                let totalBytes = 0;
+                let entriesSeen = 0;
+                await extract(source, {
+                    dir: dest,
+                    onEntry(entry) {
+                        entriesSeen++;
+                        if (entriesSeen > MAX_ARCHIVE_SCAN_ENTRIES) {
+                            throw new Error(`Refusing zip archive with more than ${MAX_ARCHIVE_SCAN_ENTRIES} entries.`);
+                        }
+                        const name = String(entry?.fileName || '');
+                        if (isUnsafeArchiveMemberName(name)) {
+                            throw new Error(`Refusing unsafe zip archive path traversal entry: ${name}`);
+                        }
+                        const unixMode = ((Number(entry?.externalFileAttributes || 0) >>> 16) & 0o170000);
+                        if (unixMode === 0o120000) {
+                            throw new Error(`Refusing symlink entry inside zip archive: ${name}`);
+                        }
+                        totalBytes += Math.max(0, Number(entry?.uncompressedSize || 0));
+                        if (totalBytes > MAX_UNCOMPRESSED_ARCHIVE_BYTES) {
+                            throw new Error('Refusing zip archive exceeding 256 MB uncompressed safety limit.');
+                        }
+                    }
+                });
+                return { success: true, output: `Extracted successfully to ${dest}` };
+            }
+        }
+        catch (extErr) {
+            const msg = String(extErr?.message || '');
+            if (msg.startsWith('Refusing ')) {
+                return { success: false, error: msg };
+            }
+            // Fall through to native zero-dependency extractors
+        }
+    }
     // 2. Native unzip on macOS / Linux (pre-checked against Zip-Slip and symlinks)
     if (isZip) {
         try {
@@ -284,15 +372,35 @@ async function extractArchive(source, dest) {
         }
         // Fall through
     }
-    // 5. Windows PowerShell fallback
+    // 5. Windows PowerShell fallback (env-passed paths + Zip-Slip and size precheck)
     if (process.platform === 'win32') {
         try {
-            const psScript = `Expand-Archive -LiteralPath '${source.replace(/'/g, "''")}' -DestinationPath '${dest.replace(/'/g, "''")}' -Force`;
+            const psScript = [
+                '$ErrorActionPreference = "Stop"',
+                'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+                '$src = $env:CAUSYNE_ARCHIVE_SRC',
+                '$dst = [System.IO.Path]::GetFullPath($env:CAUSYNE_ARCHIVE_DST)',
+                'if (-not $dst.EndsWith([System.IO.Path]::DirectorySeparatorChar)) { $dst += [System.IO.Path]::DirectorySeparatorChar }',
+                '$zip = [System.IO.Compression.ZipFile]::OpenRead($src)',
+                'try {',
+                '  [long]$total = 0',
+                '  foreach ($e in $zip.Entries) {',
+                '    $norm = $e.FullName -replace "\\\\", "/"',
+                '    if ($norm.StartsWith("/") -or $norm -match "^[A-Za-z]:" -or ($norm.Split("/") -contains "..")) { throw "Refusing unsafe zip entry: $($e.FullName)" }',
+                '    $outPath = [System.IO.Path]::GetFullPath((Join-Path $dst $e.FullName))',
+                '    if (-not $outPath.StartsWith($dst, [System.StringComparison]::OrdinalIgnoreCase)) { throw "Refusing zip traversal entry: $($e.FullName)" }',
+                '    $total += [long]$e.Length',
+                '    if ($total -gt 268435456) { throw "Refusing zip archive exceeding 256 MB uncompressed safety limit." }',
+                '  }',
+                '} finally { $zip.Dispose() }',
+                'Expand-Archive -LiteralPath $src -DestinationPath $env:CAUSYNE_ARCHIVE_DST -Force'
+            ].join('\n');
             execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
                 stdio: 'pipe',
                 timeout: 60_000,
                 maxBuffer: 10 * 1024 * 1024,
-                windowsHide: true
+                windowsHide: true,
+                env: { ...process.env, CAUSYNE_ARCHIVE_SRC: source, CAUSYNE_ARCHIVE_DST: dest }
             });
             return { success: true, output: `Extracted successfully to ${dest} (via PowerShell)` };
         }
@@ -303,6 +411,7 @@ async function extractArchive(source, dest) {
     return { success: false, error: `Could not extract ${source}: no supported extractor found on system.` };
 }
 async function compressArchive(source, dest) {
+    assertNoSymlinksInTree(source);
     const destDir = path.dirname(dest);
     await fs.mkdir(destDir, { recursive: true });
     // 1. Try capability package archiver if available
@@ -353,14 +462,14 @@ async function compressArchive(source, dest) {
     const isTarGz = /\.(tar\.gz|tgz)$/i.test(dest);
     const stat = statSync(source);
     const execOpts = { stdio: 'pipe', timeout: 60_000, maxBuffer: 10 * 1024 * 1024, windowsHide: true };
-    // 2. Native zip on macOS / Linux
+    // 2. Native zip on macOS / Linux (never dereference symlinks)
     if (isZip) {
         try {
             if (stat.isDirectory()) {
-                execFileSync('zip', ['-q', '-r', dest, '.'], { cwd: source, ...execOpts });
+                execFileSync('zip', ['-q', '-r', '-y', dest, '.'], { cwd: source, ...execOpts });
             }
             else {
-                execFileSync('zip', ['-q', dest, '--', path.basename(source)], { cwd: path.dirname(source), ...execOpts });
+                execFileSync('zip', ['-q', '-y', dest, '--', path.basename(source)], { cwd: path.dirname(source), ...execOpts });
             }
             return { success: true, output: `Compressed successfully to ${dest} (via zip)` };
         }
@@ -392,12 +501,17 @@ async function compressArchive(source, dest) {
                 'src, dst = sys.argv[1], sys.argv[2]\n' +
                 'with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as z:\n' +
                 '    if os.path.isdir(src):\n' +
-                '        for root, dirs, files in os.walk(src):\n' +
+                '        for root, dirs, files in os.walk(src, followlinks=False):\n' +
+                '            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]\n' +
                 '            for file in files:\n' +
                 '                full = os.path.join(root, file)\n' +
+                '                if os.path.islink(full):\n' +
+                '                    raise ValueError(f"Refusing symlink inside archive source: {full}")\n' +
                 '                rel = os.path.relpath(full, src)\n' +
                 '                z.write(full, rel)\n' +
                 '    else:\n' +
+                '        if os.path.islink(src):\n' +
+                '            raise ValueError(f"Refusing symlink source: {src}")\n' +
                 '        z.write(src, os.path.basename(src))\n',
             source,
             dest

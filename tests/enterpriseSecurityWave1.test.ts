@@ -26,6 +26,7 @@ import { isWholeFileDeletion, requiresToolApproval } from '../src/approvalPolicy
 import { isMutatingToolCall } from '../src/decisionPolicy.js';
 import { getDynamicTools } from '../src/tools/registry.js';
 import { AgentLoop } from '../src/agentLoop.js';
+import { archive, isUnsafeArchiveMemberName } from '../src/tools/archive.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-sec-w1-')));
 
@@ -327,5 +328,28 @@ describe('Wave 1 Security Hardening — Path Boundary & Symlink Integrity', () =
     assert.equal(deniedPeerCmd, false);
     const allowedPeerFile = await loop.authorizePeerOperation('fs_read', { path: path.join(ws, 'a.txt') }, 'peer-3');
     assert.equal(allowedPeerFile, true);
+  });
+
+  test('archive rejects traversal members and refuses compressing symlink trees', async () => {
+    assert.equal(isUnsafeArchiveMemberName('../escape.txt'), true);
+    assert.equal(isUnsafeArchiveMemberName('C:\\Windows\\evil.dll'), true);
+    assert.equal(isUnsafeArchiveMemberName('safe/nested/file.txt'), false);
+
+    if (process.platform !== 'win32') {
+      const ws = path.join(TMP, 'archive-sym-ws');
+      const srcDir = path.join(ws, 'pack');
+      const outside = path.join(TMP, 'archive-outside.txt');
+      fs.mkdirSync(srcDir, { recursive: true });
+      fs.writeFileSync(outside, 'secret-data', 'utf8');
+      fs.symlinkSync(outside, path.join(srcDir, 'leak.txt'));
+
+      const res = await archive.execute({
+        action: 'compress',
+        source: srcDir,
+        destination: path.join(ws, 'out.zip')
+      }, { workspaceRoot: ws });
+      assert.equal(res.success, false);
+      assert.match(res.error || '', /symbolic link|symlink/i);
+    }
   });
 });
