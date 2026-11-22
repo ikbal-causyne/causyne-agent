@@ -7,6 +7,7 @@ import { AcpProvider } from '../src/providers/acp.js';
 import { AcpClient } from '../src/acp/client.js';
 import { testPeerHandshake, isAuthRequiredHandshakeFailure } from '../src/acp/agentCatalog.js';
 import { AgentLoop } from '../src/agentLoop.js';
+import { OllamaProvider, clearOllamaModelMetaCache, ollamaOriginUrl } from '../src/providers/ollama.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -296,5 +297,49 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       options: undefined as any
     });
     assert.deepEqual(malformed, { outcome: 'cancelled' });
+  });
+
+  test('OllamaProvider probes /api/show, injects num_ctx, and marks provider_reported usage', async () => {
+    clearOllamaModelMetaCache();
+    assert.equal(ollamaOriginUrl('http://127.0.0.1:11434/api/chat'), 'http://127.0.0.1:11434');
+    assert.equal(ollamaOriginUrl('http://127.0.0.1:11434/v1/chat/completions'), 'http://127.0.0.1:11434');
+
+    const origFetch = globalThis.fetch;
+    const seenPayloads: Array<{ url: string; body: any }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      seenPayloads.push({ url, body });
+      if (url.endsWith('/api/show')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({ model_info: { 'qwen2.context_length': 32768 }, capabilities: ['completion', 'tools'] })
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => JSON.stringify({
+          message: { role: 'assistant', content: 'ready' },
+          prompt_eval_count: 412,
+          eval_count: 19
+        })
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const ollama = new OllamaProvider({ model: 'qwen2.5:latest', baseUrl: 'http://127.0.0.1:11434/api/chat' });
+      const res = await ollama.chat([{ role: 'user', content: 'hi' }]);
+      assert.equal(res.content, 'ready');
+      assert.equal(res.usage.measurement, 'provider_reported');
+      assert.equal(res.usage.promptTokens, 412);
+      const chatReq = seenPayloads.find(p => p.url.endsWith('/api/chat'));
+      assert.equal(chatReq?.body?.options?.num_ctx, 32768);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });
