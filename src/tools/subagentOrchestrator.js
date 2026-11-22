@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { TokenTracker } from '../tokenTracker.js';
 import { listAgentProfiles, loadAgentProfile } from '../agentProfiles.js';
 import { completeSubagentJournal, failSubagentJournal, startSubagentJournal } from '../subagentJournal.js';
-import { getErrorMessage, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
+import { createWorktree, inspectWorktreeDiff } from '../worktreeManager.js';
+import { getErrorMessage, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
 const activeSubagents = new Map();
 const MAX_CONCURRENT_SUBAGENTS = 4;
 const SUBAGENT_TOOL_NAME = 'agent.subagent_orchestrate';
@@ -33,7 +34,9 @@ function childTransport(parentLoop, subagentId, name) {
 async function executeSubagent(record, parentLoop) {
     const { AgentLoop } = await import('../agentLoop.js');
     const transport = childTransport(parentLoop, record.subagentId, record.name);
-    const child = new AgentLoop(transport, record.subagentId, record.prompt);
+    const child = new AgentLoop(transport, record.subagentId, record.prompt, record.worktreePath
+        ? { workspaceRoot: record.worktreePath }
+        : (record.workspaceRoot ? { workspaceRoot: record.workspaceRoot } : {}));
     child.maxStepsCeiling = record.maxSteps;
     child.taskTokenLimit = record.maxTokens;
     child.maxSteps = Math.min(child.maxSteps || 25, record.maxSteps);
@@ -66,6 +69,26 @@ async function executeSubagent(record, parentLoop) {
             return false;
         }
     });
+    let worktreeSummary;
+    if (record.worktreeId && record.workspaceRoot) {
+        try {
+            const diff = inspectWorktreeDiff(record.workspaceRoot, record.worktreeId);
+            worktreeSummary = {
+                id: diff.id,
+                branch: diff.branch,
+                path: diff.path,
+                changedFiles: diff.changedFiles
+            };
+        }
+        catch {
+            worktreeSummary = {
+                id: record.worktreeId,
+                branch: record.worktreeBranch ?? null,
+                path: record.worktreePath ?? '',
+                changedFiles: []
+            };
+        }
+    }
     const result = {
         subagentId: record.subagentId,
         name: record.name,
@@ -74,7 +97,8 @@ async function executeSubagent(record, parentLoop) {
         toolFailures: failures.length,
         elapsedMs: Date.now() - (record.startedAtMs ?? Date.now()),
         summary: finalAssistant && typeof finalAssistant.content === 'string' ? finalAssistant.content : null,
-        stoppedEarly: child.stepsCompleted >= child.maxSteps
+        stoppedEarly: child.stepsCompleted >= child.maxSteps,
+        ...(worktreeSummary ? { worktree: worktreeSummary } : {})
     };
     if (record.journalStarted)
         completeSubagentJournal(record.subagentId, messages, result);
@@ -99,7 +123,8 @@ export const subagentOrchestrator = {
                 toolScope: { type: 'array', items: { type: 'string' }, description: 'Catalogue tool names the subagent may use. Defaults to read-only inspection tools. It can never receive the delegation tool itself.' },
                 maxSteps: { type: 'integer', description: 'Hard step ceiling for the subagent. Defaults to 25.' },
                 maxTokens: { type: 'integer', description: 'Hard per-task token ceiling for the subagent. Defaults to 50000.' },
-                depth: { type: 'integer', description: 'Hierarchy depth. 0 = master, 1 = worker. Subagents cannot spawn subagents.' }
+                depth: { type: 'integer', description: 'Hierarchy depth. 0 = master, 1 = worker. Subagents cannot spawn subagents.' },
+                isolateWorktree: { type: 'boolean', description: 'When true, run the subagent inside an isolated git worktree so parallel edits cannot collide with the primary workspace.' }
             },
             required: ['action']
         }
@@ -230,6 +255,17 @@ export const subagentOrchestrator = {
             const requestedMaxTokens = typeof args.maxTokens === 'number' && Number.isInteger(args.maxTokens)
                 ? Math.max(1_000, Math.min(args.maxTokens, 200_000))
                 : profile?.maxTokens || 50_000;
+            const scope = resolveToolWorkspaceRoots(context);
+            const workspaceRoot = scope.primaryRoot || process.cwd();
+            let worktreeId;
+            let worktreeBranch;
+            let worktreePath;
+            if (args.isolateWorktree === true) {
+                const wt = createWorktree(workspaceRoot, { name });
+                worktreeId = wt.id;
+                worktreeBranch = wt.branch;
+                worktreePath = wt.path;
+            }
             const record = {
                 subagentId,
                 name,
@@ -241,6 +277,10 @@ export const subagentOrchestrator = {
                 profile: profile?.name || null,
                 status: 'running',
                 startTime: new Date().toISOString(),
+                workspaceRoot,
+                worktreeId,
+                worktreeBranch,
+                worktreePath,
                 summary: null,
                 error: null,
                 loop: null

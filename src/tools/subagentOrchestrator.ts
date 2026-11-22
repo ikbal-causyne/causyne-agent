@@ -6,7 +6,8 @@ import {
   failSubagentJournal,
   startSubagentJournal
 } from '../subagentJournal.js';
-import { getErrorMessage, sanitizeToolError, sanitizeToolText, type ToolWorkspaceContext } from './toolPathSafety.js';
+import { createWorktree, inspectWorktreeDiff } from '../worktreeManager.js';
+import { getErrorMessage, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText, type ToolWorkspaceContext } from './toolPathSafety.js';
 
 interface SubagentRecord {
   subagentId: string;
@@ -21,6 +22,10 @@ interface SubagentRecord {
   startTime: string;
   startedAtMs?: number | undefined;
   journalStarted?: boolean | undefined;
+  workspaceRoot?: string | undefined;
+  worktreeId?: string | undefined;
+  worktreeBranch?: string | undefined;
+  worktreePath?: string | undefined;
   summary: string | null;
   error: string | null;
   loop: any;
@@ -36,6 +41,7 @@ export interface SubagentOrchestratorArgs {
   maxSteps?: number | undefined;
   maxTokens?: number | undefined;
   depth?: number | undefined;
+  isolateWorktree?: boolean | undefined;
 }
 
 const activeSubagents = new Map<string, SubagentRecord>();
@@ -65,7 +71,14 @@ async function executeSubagent(record: SubagentRecord, parentLoop: any) {
   const { AgentLoop } = await import('../agentLoop.js');
 
   const transport = childTransport(parentLoop, record.subagentId, record.name);
-  const child: any = new AgentLoop(transport as any, record.subagentId, record.prompt);
+  const child: any = new AgentLoop(
+    transport as any,
+    record.subagentId,
+    record.prompt,
+    record.worktreePath
+      ? { workspaceRoot: record.worktreePath }
+      : (record.workspaceRoot ? { workspaceRoot: record.workspaceRoot } : {})
+  );
 
   child.maxStepsCeiling = record.maxSteps;
   child.taskTokenLimit = record.maxTokens;
@@ -97,6 +110,26 @@ async function executeSubagent(record: SubagentRecord, parentLoop: any) {
     try { return JSON.parse(String(m.content)).success === false; } catch { return false; }
   });
 
+  let worktreeSummary: { id: string; branch: string | null; path: string; changedFiles: string[] } | undefined;
+  if (record.worktreeId && record.workspaceRoot) {
+    try {
+      const diff = inspectWorktreeDiff(record.workspaceRoot, record.worktreeId);
+      worktreeSummary = {
+        id: diff.id,
+        branch: diff.branch,
+        path: diff.path,
+        changedFiles: diff.changedFiles
+      };
+    } catch {
+      worktreeSummary = {
+        id: record.worktreeId,
+        branch: record.worktreeBranch ?? null,
+        path: record.worktreePath ?? '',
+        changedFiles: []
+      };
+    }
+  }
+
   const result = {
     subagentId: record.subagentId,
     name: record.name,
@@ -105,7 +138,8 @@ async function executeSubagent(record: SubagentRecord, parentLoop: any) {
     toolFailures: failures.length,
     elapsedMs: Date.now() - (record.startedAtMs ?? Date.now()),
     summary: finalAssistant && typeof finalAssistant.content === 'string' ? finalAssistant.content : null,
-    stoppedEarly: child.stepsCompleted >= child.maxSteps
+    stoppedEarly: child.stepsCompleted >= child.maxSteps,
+    ...(worktreeSummary ? { worktree: worktreeSummary } : {})
   };
   if (record.journalStarted) completeSubagentJournal(record.subagentId, messages as any, result);
   return result;
@@ -130,7 +164,8 @@ export const subagentOrchestrator = {
         toolScope: { type: 'array', items: { type: 'string' }, description: 'Catalogue tool names the subagent may use. Defaults to read-only inspection tools. It can never receive the delegation tool itself.' },
         maxSteps: { type: 'integer', description: 'Hard step ceiling for the subagent. Defaults to 25.' },
         maxTokens: { type: 'integer', description: 'Hard per-task token ceiling for the subagent. Defaults to 50000.' },
-        depth: { type: 'integer', description: 'Hierarchy depth. 0 = master, 1 = worker. Subagents cannot spawn subagents.' }
+        depth: { type: 'integer', description: 'Hierarchy depth. 0 = master, 1 = worker. Subagents cannot spawn subagents.' },
+        isolateWorktree: { type: 'boolean', description: 'When true, run the subagent inside an isolated git worktree so parallel edits cannot collide with the primary workspace.' }
       },
       required: ['action']
     }
@@ -262,6 +297,18 @@ export const subagentOrchestrator = {
       const requestedMaxTokens = typeof args.maxTokens === 'number' && Number.isInteger(args.maxTokens)
         ? Math.max(1_000, Math.min(args.maxTokens, 200_000))
         : profile?.maxTokens || 50_000;
+      const scope = resolveToolWorkspaceRoots(context);
+      const workspaceRoot = scope.primaryRoot || process.cwd();
+      let worktreeId: string | undefined;
+      let worktreeBranch: string | undefined;
+      let worktreePath: string | undefined;
+      if (args.isolateWorktree === true) {
+        const wt = createWorktree(workspaceRoot, { name });
+        worktreeId = wt.id;
+        worktreeBranch = wt.branch;
+        worktreePath = wt.path;
+      }
+
       const record: SubagentRecord = {
         subagentId,
         name,
@@ -273,6 +320,10 @@ export const subagentOrchestrator = {
         profile: profile?.name || null,
         status: 'running',
         startTime: new Date().toISOString(),
+        workspaceRoot,
+        worktreeId,
+        worktreeBranch,
+        worktreePath,
         summary: null,
         error: null,
         loop: null
