@@ -397,6 +397,20 @@ export async function detectZeroCostProviders(
     });
   }
 
+  const mistralKey = (typeof env.MISTRAL_API_KEY === 'string' && env.MISTRAL_API_KEY.trim())
+    || resolveProviderApiKey(config, 'mistral');
+  if (mistralKey) {
+    results.push({
+      id: 'mistral',
+      label: 'Mistral (Free Experiment / Codestral)',
+      provider: 'mistral',
+      model: 'devstral-small-latest',
+      costTier: 'cloud_free',
+      readiness: 'ready',
+      reason: 'MISTRAL_API_KEY configured (Devstral / Codestral free tier).'
+    });
+  }
+
   return results;
 }
 
@@ -412,11 +426,12 @@ export function pickBestZeroCostProvider(
     'openrouter-free': 1,
     'groq': 2,
     'cerebras': 3,
-    'ollama': 4,
-    'antigravity': 5,
-    'acp/opencode': 6,
-    'gemini': 7,
-    'acp/cursor': 8
+    'mistral': 4,
+    'ollama': 5,
+    'antigravity': 6,
+    'acp/opencode': 7,
+    'gemini': 8,
+    'acp/cursor': 9
   };
   return [...ready].sort((a, b) => (order[a.id] ?? 99) - (order[b.id] ?? 99))[0] ?? null;
 }

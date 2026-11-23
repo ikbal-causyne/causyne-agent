@@ -38,7 +38,7 @@ export function normalizeProviderKey(provider) {
         return 'openai';
     if (p === 'anthropic' || p === 'claude')
         return 'anthropic';
-    if (p === 'gemini' || p === 'google')
+    if (p === 'gemini' || p === 'google' || p === 'gemini-free')
         return 'gemini';
     if (p === 'deepseek')
         return 'deepseek';
@@ -54,6 +54,8 @@ export function normalizeProviderKey(provider) {
         return 'groq';
     if (p === 'cerebras' || p === 'cerebras-free')
         return 'cerebras';
+    if (p === 'mistral' || p === 'mistral-free' || p === 'codestral')
+        return 'mistral';
     if (p === 'openai-compatible' || p === 'custom')
         return 'openai-compatible';
     if (p === 'antigravity' || p === 'agy')
@@ -108,7 +110,8 @@ export function getCuratedModels(provider) {
         'moonshot': 'Moonshot (Kimi)',
         'xai': 'xAI (Grok)',
         'groq': 'Groq (Free Tier)',
-        'cerebras': 'Cerebras (Free Tier)'
+        'cerebras': 'Cerebras (Free Tier)',
+        'mistral': 'Mistral (Free Tier)'
     };
     const key = mapping[norm];
     if (key && MODEL_CATALOGUE[key]) {
@@ -285,6 +288,13 @@ export function getAvailableProvidersOverview(config = {}) {
             envVar: 'CEREBRAS_API_KEY',
             defaultModel: DEFAULT_MODEL_BY_PROVIDER['cerebras'] || 'qwen-3-32b',
             models: MODEL_CATALOGUE['Cerebras (Free Tier)'] ? [...MODEL_CATALOGUE['Cerebras (Free Tier)']] : []
+        },
+        {
+            id: 'mistral',
+            label: 'Mistral (Free Tier)',
+            envVar: 'MISTRAL_API_KEY',
+            defaultModel: DEFAULT_MODEL_BY_PROVIDER['mistral'] || 'devstral-small-latest',
+            models: MODEL_CATALOGUE['Mistral (Free Tier)'] ? [...MODEL_CATALOGUE['Mistral (Free Tier)']] : []
         },
         {
             id: 'xai',
@@ -1038,6 +1048,14 @@ export async function fetchLiveModels(provider, config = {}) {
                 return data.data.map((m) => m.id || '').filter(Boolean).sort();
             }
         }
+        if (norm === 'mistral') {
+            if (!apiKey)
+                return [];
+            const data = await fetchDiscoveryJson('https://api.mistral.ai/v1/models', { Authorization: `Bearer ${apiKey}` }, true);
+            if (Array.isArray(data?.data)) {
+                return data.data.map((m) => m.id || '').filter(Boolean).sort();
+            }
+        }
         if (norm === 'openai-compatible') {
             if (!baseUrl)
                 return [];
@@ -1078,7 +1096,8 @@ function resolveEffectiveApiKey(norm, config = {}) {
         xai: 'XAI_API_KEY',
         moonshot: 'MOONSHOT_API_KEY',
         groq: 'GROQ_API_KEY',
-        cerebras: 'CEREBRAS_API_KEY'
+        cerebras: 'CEREBRAS_API_KEY',
+        mistral: 'MISTRAL_API_KEY'
     };
     const envVar = envMap[norm];
     if (envVar && process.env[envVar]) {

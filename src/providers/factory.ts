@@ -18,6 +18,7 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 
 const GROQ_CHAT_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
 const CEREBRAS_CHAT_ENDPOINT = 'https://api.cerebras.ai/v1/chat/completions';
+const MISTRAL_CHAT_ENDPOINT = 'https://api.mistral.ai/v1/chat/completions';
 
 export function createProvider(config: ProviderConfig | null | undefined): LLMProvider {
   if (!config || typeof config !== 'object') {
@@ -27,6 +28,13 @@ export function createProvider(config: ProviderConfig | null | undefined): LLMPr
   if (p === 'openai') return new OpenAIProvider(config);
   if (p === 'anthropic') return new AnthropicProvider(config);
   if (p === 'gemini') return new GeminiProvider(config);
+  if (p === 'gemini-free') {
+    return new GeminiProvider({
+      ...config,
+      apiKey: config.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+      model: config.model || DEFAULT_MODEL_BY_PROVIDER['gemini-free']
+    });
+  }
   if (p === 'ollama') return new OllamaProvider(config);
   if (p === 'deepseek') return new DeepSeekProvider(config);
   if (p === 'dashscope-byok' || p === 'dashscope') return new DashscopeByokProvider(config);
@@ -49,6 +57,16 @@ export function createProvider(config: ProviderConfig | null | undefined): LLMPr
       model: config.model || DEFAULT_MODEL_BY_PROVIDER.cerebras
     });
     prov.providerLabel = 'Cerebras';
+    return prov;
+  }
+  if (p === 'mistral' || p === 'mistral-free' || p === 'codestral') {
+    const prov = new OpenAICompatibleProvider({
+      ...config,
+      apiKey: config.apiKey || process.env.MISTRAL_API_KEY || '',
+      baseUrl: config.baseUrl || MISTRAL_CHAT_ENDPOINT,
+      model: config.model || DEFAULT_MODEL_BY_PROVIDER.mistral
+    });
+    prov.providerLabel = 'Mistral';
     return prov;
   }
   if (p === 'openai-compatible') return new OpenAICompatibleProvider(config);

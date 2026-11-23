@@ -201,7 +201,7 @@ export function isZeroCostRoute(provider: unknown, model: unknown): boolean {
   const p = String(provider || '').trim().toLowerCase();
   const m = String(model || '').trim().toLowerCase();
   if (!p) return false;
-  if (p === 'ollama' || p === 'openrouter-free' || p === 'groq' || p === 'groq-free' || p === 'cerebras' || p === 'cerebras-free' || p === 'antigravity' || p.startsWith('acp/')) return true;
+  if (p === 'ollama' || p === 'openrouter-free' || p === 'groq' || p === 'groq-free' || p === 'cerebras' || p === 'cerebras-free' || p === 'mistral' || p === 'mistral-free' || p === 'gemini-free' || p === 'antigravity' || p.startsWith('acp/')) return true;
   if (m === 'openrouter/free' || m.endsWith(':free')) return true;
   return false;
 }

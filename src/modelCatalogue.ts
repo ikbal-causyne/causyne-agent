@@ -62,6 +62,7 @@ export const MODEL_CATALOGUE: Record<string, string[]> = {
   'Gemini': [
     'gemini-2.5-pro',
     'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
     'gemini-2.0-flash',
     'gemini-1.5-pro',
     'gemini-1.5-flash',
@@ -117,6 +118,12 @@ export const MODEL_CATALOGUE: Record<string, string[]> = {
     'llama-3.3-70b',
     'gpt-oss-120b',
     'llama3.1-8b'
+  ],
+  'Mistral (Free Tier)': [
+    'devstral-small-latest',
+    'codestral-latest',
+    'mistral-small-latest',
+    'mistral-large-latest'
   ]
 };
 
@@ -132,6 +139,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   anthropic: 'claude-3-7-sonnet',
   openai: 'gpt-4o',
   gemini: 'gemini-2.5-pro',
+  'gemini-free': 'gemini-2.5-flash',
   moonshot: 'kimi-k3',
   xai: 'grok-3',
   ollama: 'llama3.3',
@@ -150,6 +158,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   openrouter: 'openrouter/free',
   groq: 'openai/gpt-oss-120b',
   cerebras: 'qwen-3-32b',
+  mistral: 'devstral-small-latest',
   pi: 'default',
   'openai-compatible': ''
 };
@@ -162,9 +171,11 @@ export const UTILITY_MODEL_BY_PROVIDER: Record<string, string> = {
   anthropic: 'claude-haiku-4-5',
   openai: 'gpt-5.4-mini',
   gemini: 'gemini-3.1-flash-lite',
+  'gemini-free': 'gemini-2.5-flash-lite',
   openrouter: 'openrouter/free',
   groq: 'llama-3.1-8b-instant',
-  cerebras: 'llama3.1-8b'
+  cerebras: 'llama3.1-8b',
+  mistral: 'mistral-small-latest'
 };
 
 export function allCatalogueModels(): string[] {

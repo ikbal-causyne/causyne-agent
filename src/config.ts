@@ -31,6 +31,11 @@ const PROVIDER_KEY_ALIASES: Record<string, readonly string[]> = {
   'groq-free': ['groq', 'groq-free'],
   cerebras: ['cerebras', 'cerebras-free'],
   'cerebras-free': ['cerebras', 'cerebras-free'],
+  mistral: ['mistral', 'mistral-free', 'codestral'],
+  'mistral-free': ['mistral', 'mistral-free', 'codestral'],
+  codestral: ['mistral', 'mistral-free', 'codestral'],
+  gemini: ['gemini', 'gemini-free'],
+  'gemini-free': ['gemini', 'gemini-free'],
   dashscope: ['dashscope-byok', 'dashscope', 'qwen'],
   'dashscope-byok': ['dashscope-byok', 'dashscope', 'qwen'],
   qwen: ['qwen', 'dashscope-byok', 'dashscope'],
@@ -315,6 +320,14 @@ export function detectEnvironmentProvider(): DetectedProviderConfig | null {
       provider: 'cerebras',
       apiKey: cerebrasKey,
       model: DEFAULT_MODEL_BY_PROVIDER.cerebras || 'qwen-3-32b'
+    };
+  }
+  const mistralKey = readEnvSecret(env.MISTRAL_API_KEY);
+  if (mistralKey) {
+    return {
+      provider: 'mistral',
+      apiKey: mistralKey,
+      model: DEFAULT_MODEL_BY_PROVIDER.mistral || 'devstral-small-latest'
     };
   }
 

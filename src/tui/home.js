@@ -152,6 +152,8 @@ const RAW_PROVIDERS = [
     { id: 'openrouter', label: 'OpenRouter (Free Models)', hint: 'free inference router · openrouter/free (no card)', category: 'Free Cloud Models' },
     { id: 'groq', label: 'Groq (Free Tier)', hint: 'free API key · fast Llama/Qwen/GPT-OSS (no card)', category: 'Free Cloud Models' },
     { id: 'cerebras', label: 'Cerebras (Free Tier)', hint: 'free API key · ultra-fast Qwen/Llama (no card)', category: 'Free Cloud Models' },
+    { id: 'gemini-free', label: 'Google AI Studio (Free Tier)', hint: 'free API key · Gemini 2.5 Flash (no card)', category: 'Free Cloud Models' },
+    { id: 'mistral', label: 'Mistral (Free Tier)', hint: 'free API key · Devstral / Codestral (no card)', category: 'Free Cloud Models' },
     { id: 'ollama', label: 'Ollama', hint: 'local / offline', category: 'BYOK (Local Server)' },
     { id: 'antigravity', label: 'Google Antigravity (AGY)', hint: (() => { const bin = resolveAgyBinary(); return bin && (path.isAbsolute(bin) ? fs.existsSync(bin) : isBinaryOnPath(bin)); })() ? 'local AGY · Gemini & Claude (ready)' : 'local AGY · (not installed)', category: 'ACP (Peer Agent)' },
     PI_SETUP_PROVIDER,

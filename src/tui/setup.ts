@@ -22,6 +22,19 @@ const defaults: Record<string, string> = {
   'dashscope-byok': 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'
 };
 
+const FREE_KEY_SIGNUP_HINTS: Record<string, string> = {
+  openrouter: 'Free API key (no credit card for :free models): https://openrouter.ai/keys',
+  'openrouter-free': 'Free API key (no credit card for :free models): https://openrouter.ai/keys',
+  groq: 'Free API key (no credit card required): https://console.groq.com/keys',
+  cerebras: 'Free API key (no credit card required): https://cloud.cerebras.ai',
+  'gemini-free': 'Free API key (no credit card required): https://aistudio.google.com/apikey',
+  mistral: 'Free Experiment / Codestral API key (no credit card): https://console.mistral.ai'
+};
+
+export function freeKeySignupHint(providerId: string): string {
+  return Object.hasOwn(FREE_KEY_SIGNUP_HINTS, providerId) ? FREE_KEY_SIGNUP_HINTS[providerId]! : '';
+}
+
 export function validateEndpoint(value: string): string | null {
   if (typeof value !== 'string' || !value || /[\x00-\x1f\x7f-\x9f\s]/.test(value)) {
     return 'Use a single-line endpoint URL without whitespace or control characters.';
@@ -107,9 +120,10 @@ export async function runSetup(ui: SetupUI, providers: SetupProvider[], store: {
     let apiKey = '';
     if (provider.id !== 'ollama' && !isLocalAgent(provider.id)) {
       const oldKey = keepKey ? string(draft.apiKey) : '';
+      const freeHint = freeKeySignupHint(provider.id);
       const answer = await text('Setup 3/5 · credentials', ['Stored encrypted locally; used to authenticate with your selected provider.',
         oldKey ? 'Blank keeps the key for this same provider and endpoint.' : 'Enter a key for this provider.',
-        provider.id === 'openai-compatible' ? 'Blank is allowed for an endpoint that needs no authentication.' : ''], '', true,
+        freeHint || (provider.id === 'openai-compatible' ? 'Blank is allowed for an endpoint that needs no authentication.' : '')], '', true,
       value => value || oldKey || provider.id === 'openai-compatible' ? null : 'An API key is required.');
       if (answer === null) return null;
       apiKey = answer || oldKey;
