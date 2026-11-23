@@ -16,13 +16,10 @@ import {
 import { streamAnthropicMessages, wantsStreaming } from './byokStream.js';
 
 const TOOL_SEARCH_MODELS: readonly string[] = [
-  'claude-3-7-sonnet',
-  'claude-3-5-sonnet',
-  'claude-3-5-haiku',
-  'claude-3-opus',
   'claude-fable-5',
   'claude-mythos-5',
   'claude-opus-5',
+  'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
@@ -101,7 +98,7 @@ export class AnthropicProvider extends LLMProvider {
     this.preserveReasoningContent = false;
     this.enableToolSearch = config.enableToolSearch !== false;
     this.enableCaching = config.enablePromptCaching !== false;
-    this.cacheTtl = config.promptCacheTtl === '5m' ? '5m' : '1h';
+    this.cacheTtl = config.promptCacheTtl === '1h' ? '1h' : '5m';
     this.reasoningEffort = config.reasoningEffort || null;
     this.showReasoning = config.showReasoning === true;
     this.reasoningBudgetTokens = typeof config.reasoningBudgetTokens === 'number' ? config.reasoningBudgetTokens : null;
@@ -167,8 +164,24 @@ export class AnthropicProvider extends LLMProvider {
     const systemBlocks: Array<Record<string, any>> = [];
     const anthropicMessages: Array<Record<string, any>> = [];
 
-    const MAX_SYSTEM_CACHE_BREAKPOINTS = 3;
-    let systemCacheBreakpoints = 0;
+    const MAX_SYSTEM_CACHE_BREAKPOINTS = 2;
+    let totalCacheBreakpoints = 0;
+
+    const toContentBlocks = (val: unknown): Array<Record<string, any>> => {
+      if (Array.isArray(val)) return val.map((item) => (item && typeof item === 'object' ? { ...item } : { type: 'text', text: String(item ?? '') }));
+      if (typeof val === 'string' && val.length > 0) return [{ type: 'text', text: val }];
+      return [];
+    };
+
+    const pushAnthropicMessage = (role: string, content: unknown): void => {
+      const prev = anthropicMessages[anthropicMessages.length - 1];
+      if (prev && prev['role'] === role && (role === 'user' || role === 'assistant')) {
+        const merged = [...toContentBlocks(prev['content']), ...toContentBlocks(content)];
+        prev['content'] = merged.length > 0 ? merged : '';
+      } else {
+        anthropicMessages.push({ role, content });
+      }
+    };
 
     const allowInlineSystem = this.supportsMidConversationSystem();
 
@@ -184,9 +197,9 @@ export class AnthropicProvider extends LLMProvider {
         const sysText = String(msg.content ?? '');
         if (!sysText.trim()) continue;
         const block: Record<string, any> = { type: 'text', text: sysText };
-        if (msg.cacheAnchor && this.enableCaching && systemCacheBreakpoints < MAX_SYSTEM_CACHE_BREAKPOINTS) {
+        if (msg.cacheAnchor && this.enableCaching && totalCacheBreakpoints < MAX_SYSTEM_CACHE_BREAKPOINTS) {
           block['cache_control'] = this.cacheControl();
-          systemCacheBreakpoints++;
+          totalCacheBreakpoints++;
         }
         systemBlocks.push(block);
       } else if (msg.role === 'tool') {
@@ -207,7 +220,7 @@ export class AnthropicProvider extends LLMProvider {
         if (lastMsg && lastMsg['role'] === 'user' && Array.isArray(lastMsg['content']) && lastMsg['content'][0]?.type === 'tool_result') {
           lastMsg['content'].push(toolResultBlock);
         } else {
-          anthropicMessages.push({ role: 'user', content: [toolResultBlock] });
+          pushAnthropicMessage('user', [toolResultBlock]);
         }
       } else if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
         const contentBlocks: Array<Record<string, any>> = [];
@@ -230,20 +243,16 @@ export class AnthropicProvider extends LLMProvider {
           });
         }
         if (contentBlocks.length > 0) {
-          anthropicMessages.push({ role: 'assistant', content: contentBlocks });
+          pushAnthropicMessage('assistant', contentBlocks);
         }
       } else {
-        const { cacheAnchor: _c, thinking_blocks: _tb, reasoning_content: _rc, spillPath: _sp, ...clean } = msg;
+        const { cacheAnchor: _c, thinking_blocks: rawThinking, reasoning_content: _rc, spillPath: _sp, ...clean } = msg;
         const nextContent = clean.content ?? '';
-        const prev = anthropicMessages[anthropicMessages.length - 1];
-        if (clean.role === 'user' && prev && prev['role'] === 'user') {
-          const prevBlocks = Array.isArray(prev['content'])
-            ? prev['content']
-            : (typeof prev['content'] === 'string' && prev['content'] ? [{ type: 'text', text: prev['content'] }] : []);
-          const nextBlocks = Array.isArray(nextContent)
-            ? nextContent
-            : (typeof nextContent === 'string' && nextContent ? [{ type: 'text', text: nextContent }] : []);
-          prev['content'] = [...prevBlocks, ...nextBlocks];
+        if (clean.role === 'assistant' && Array.isArray(rawThinking) && rawThinking.length > 0) {
+          const blocks: Array<Record<string, any>> = [...rawThinking, ...toContentBlocks(nextContent)];
+          pushAnthropicMessage('assistant', blocks);
+        } else if (clean.role === 'user' || clean.role === 'assistant') {
+          pushAnthropicMessage(clean.role, nextContent);
         } else {
           anthropicMessages.push({ ...clean, content: nextContent });
         }
@@ -278,6 +287,7 @@ export class AnthropicProvider extends LLMProvider {
     if (effort) payload['output_config'] = { ...(payload['output_config'] || {}), effort };
 
     let freeFormPaths = new Map<string, string[][]>();
+    let toolSearchUsed = false;
     if (options.tools && options.tools.length > 0) {
       const useToolSearch = this.supportsToolSearch();
       const coreToolCount = Number.isInteger(options.coreToolCount) ? (options.coreToolCount as number) : options.tools.length;
@@ -290,6 +300,7 @@ export class AnthropicProvider extends LLMProvider {
       freeFormPaths = scanReport.freeFormPaths;
 
       if (useToolSearch) {
+        toolSearchUsed = true;
         payload['tools'] = [
           { type: 'tool_search_tool_regex_20251119', name: 'tool_search_tool_regex' },
           ...converted
@@ -298,26 +309,52 @@ export class AnthropicProvider extends LLMProvider {
         payload['tools'] = converted;
       }
 
-      if (this.enableCaching) {
+      if (this.enableCaching && totalCacheBreakpoints < 4) {
         const anchorIndex = useToolSearch
           ? Math.min(coreToolCount, payload['tools'].length - 1)
           : payload['tools'].length - 1;
         const anchor = payload['tools'][anchorIndex];
         if (anchor && !anchor.defer_loading && !anchor.type) {
           anchor.cache_control = this.cacheControl();
+          totalCacheBreakpoints++;
+        }
+      }
+    }
+
+    // Rolling conversation-history cache breakpoint on the latest user turn (within 4-breakpoint limit)
+    if (this.enableCaching && totalCacheBreakpoints < 4 && anthropicMessages.length >= 2) {
+      for (let i = anthropicMessages.length - 1; i >= 0; i--) {
+        const candidate = anthropicMessages[i]!;
+        if (candidate['role'] !== 'user') continue;
+        if (typeof candidate['content'] === 'string' && candidate['content'].trim().length > 0) {
+          candidate['content'] = [{ type: 'text', text: candidate['content'], cache_control: this.cacheControl() }];
+          totalCacheBreakpoints++;
+          break;
+        }
+        if (Array.isArray(candidate['content']) && candidate['content'].length > 0) {
+          const lastBlock = candidate['content'][candidate['content'].length - 1];
+          if (lastBlock && typeof lastBlock === 'object' && !lastBlock.cache_control) {
+            lastBlock.cache_control = this.cacheControl();
+            totalCacheBreakpoints++;
+            break;
+          }
         }
       }
     }
 
     const endpoint = this.baseUrl || 'https://api.anthropic.com/v1/messages';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    };
+    if (toolSearchUsed) {
+      headers['anthropic-beta'] = 'advanced-tool-use-2025-11-20';
+    }
     const requestOpts = {
       url: endpoint,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
+      headers,
       signal: options.signal,
       timeoutMs: options.timeoutMs,
       providerLabel: 'Anthropic',
@@ -370,17 +407,19 @@ export class AnthropicProvider extends LLMProvider {
     const cacheReadTokens = nonNeg(rawUsage?.cache_read_input_tokens);
     const cacheCreateTokens = nonNeg(rawUsage?.cache_creation_input_tokens);
     const outputTokens = nonNeg(rawUsage?.output_tokens);
+    const totalPromptTokens = inputTokens + cacheReadTokens + cacheCreateTokens;
     return {
       content: content.trim(),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       thinkingBlocks: thinkingBlocks.length > 0 ? thinkingBlocks : undefined,
       reasoningContent: reasoningContent.trim() || undefined,
       usage: {
-        promptTokens: inputTokens + cacheReadTokens + cacheCreateTokens,
+        promptTokens: totalPromptTokens,
         completionTokens: outputTokens,
         cachedPromptTokens: cacheReadTokens,
         cacheWriteMultiplier: this.cacheTtl === '5m' ? 1.25 : 2.0,
-        cacheWriteTokens: cacheCreateTokens
+        cacheWriteTokens: cacheCreateTokens,
+        ...(totalPromptTokens > 0 || outputTokens > 0 ? { measurement: 'provider_reported' as const } : {})
       }
     };
   }
