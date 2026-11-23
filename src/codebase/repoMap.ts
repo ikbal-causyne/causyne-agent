@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINARY_EXTENSIONS_RE, HEAVY_DEV_EXCLUDES } from '../tools/walkerSafety.js';
+import { loadWorkspaceIgnoreMatcher } from '../ignoreRules.js';
 import { safeDisplay } from '../tui/text.js';
 
 export interface RepoMapSymbol {
@@ -488,7 +489,7 @@ export function buildRepoMap(workspaceRoot: string, options: RepoMapOptions = {}
   );
 
   // Bounded BFS walk (maps shallower root modules across the full tree before deep leaves; skips symlinks & ignored paths)
-  const ignoreRules = loadSimpleIgnorePatterns(root);
+  const ignoreMatcher = loadWorkspaceIgnoreMatcher(root, { includeGitIgnore: true });
   const discovered: Array<{ absPath: string; relPath: string; language: string }> = [];
   const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
   let queueHead = 0;
@@ -513,7 +514,7 @@ export function buildRepoMap(workspaceRoot: string, options: RepoMapOptions = {}
           HEAVY_DEV_EXCLUDES.has(entry.name)
           || entry.name === '.causyne-worktrees'
           || entry.name.startsWith('.')
-          || isIgnoredByRules(relEntry, entry.name, true, ignoreRules)
+          || ignoreMatcher.isIgnored(absEntry, true)
         ) {
           continue;
         }
@@ -522,7 +523,7 @@ export function buildRepoMap(workspaceRoot: string, options: RepoMapOptions = {}
       }
       if (!entry.isFile()) continue;
       if (BINARY_EXTENSIONS_RE.test(entry.name)) continue;
-      if (isIgnoredByRules(relEntry, entry.name, false, ignoreRules)) continue;
+      if (ignoreMatcher.isIgnored(absEntry, false)) continue;
       const ext = path.extname(entry.name).toLowerCase();
       const language = SOURCE_EXTENSIONS[ext];
       if (!language) continue;

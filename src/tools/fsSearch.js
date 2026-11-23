@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { loadWorkspaceIgnoreMatcher } from '../ignoreRules.js';
 import { MAX_FILE_BYTES, checkSearchScope, compileSafeSearchRegex, createTraversalGuard, isSafeSymlinkTarget, loadGitIgnoreNames, looksBinaryFile, resolveSearchRoot, shouldExcludeChild } from './walkerSafety.js';
 const DEFAULT_MAX_RESULTS = 100;
 async function* walk(dir, rootReal, ignorePatterns, seen, guard, depth, context) {
@@ -110,8 +111,12 @@ export const fsSearch = {
             let filesScanned = 0;
             let filesSkipped = 0;
             let truncated = false;
+            const ignoreRoot = context?.parentLoop?.workspaceRoot?.trim() || context?.workspaceRoot?.trim() || rootReal;
+            const causyneIgnore = loadWorkspaceIgnoreMatcher(ignoreRoot, { includeGitIgnore: false });
             const scanOneFile = async (file) => {
                 if (!guard.countFile())
+                    return;
+                if (causyneIgnore.isIgnored(file, false))
                     return;
                 let stat;
                 try {

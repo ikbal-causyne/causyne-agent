@@ -11,6 +11,7 @@ import {
 
 export interface SearchExecutionContext {
   signal?: AbortSignal | undefined;
+  workspaceRoot?: string | undefined;
   workspacePaths?: readonly string[] | undefined;
   grantAllAccess?: boolean | undefined;
   parentLoop?: {

@@ -22,6 +22,8 @@ import { lspCodeIntel } from '../src/tools/lspCodeIntel.js';
 import { buildRepoMap, clearRepoMapCache } from '../src/codebase/repoMap.js';
 import { codeSearchAst } from '../src/tools/codeSearchAst.js';
 import { codeSearcher } from '../src/tools/codeSearcher.js';
+import { loadWorkspaceIgnoreMatcher, clearIgnoreRulesCache } from '../src/ignoreRules.js';
+import { fsSearch } from '../src/tools/fsSearch.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -612,5 +614,53 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     const astRegexRes = await codeSearcher.execute({ query: 'compute(Total|Sum)', searchPath: ws, isRegex: true, astMode: true }, { workspaceRoot: ws });
     const astRegexData = JSON.parse(astRegexRes.output || '{}');
     assert.equal(astRegexData.total_matches, 2);
+  });
+
+  test('.causyneignore engine supports globs, directories, and !negations and blocks fsRead, fsSearch, codeSearcher, and repoMap', async () => {
+    clearIgnoreRulesCache();
+    clearRepoMapCache();
+    const ws = path.join(TMP, 'causyneignore-ws');
+    fs.mkdirSync(path.join(ws, 'private'), { recursive: true });
+    fs.writeFileSync(path.join(ws, '.causyneignore'), [
+      '# Ignore secrets except public example',
+      'private/',
+      '*.secret.ts',
+      '!keep.secret.ts',
+      ''
+    ].join('\n'), 'utf8');
+    const blocked1 = path.join(ws, 'private', 'vault.ts');
+    const blocked2 = path.join(ws, 'prod.secret.ts');
+    const allowed = path.join(ws, 'keep.secret.ts');
+    fs.writeFileSync(blocked1, 'export const SECRET_NEEDLE = "hidden1";\n', 'utf8');
+    fs.writeFileSync(blocked2, 'export const SECRET_NEEDLE = "hidden2";\n', 'utf8');
+    fs.writeFileSync(allowed, 'export const SECRET_NEEDLE = "visible";\n', 'utf8');
+
+    const matcher = loadWorkspaceIgnoreMatcher(ws);
+    assert.equal(matcher.isIgnored(blocked1), true);
+    assert.equal(matcher.isIgnored(blocked2), true);
+    assert.equal(matcher.isIgnored(allowed), false, '!keep.secret.ts negation must un-ignore');
+
+    const readBlocked = await fsRead.execute({ path: blocked1 }, { workspaceRoot: ws });
+    assert.equal(readBlocked.success, false);
+    assert.match(readBlocked.error || '', /\.causyneignore/i);
+
+    const readAllowed = await fsRead.execute({ path: allowed }, { workspaceRoot: ws });
+    assert.equal(readAllowed.success, true);
+
+    const searchRes = await fsSearch.execute({ query: 'SECRET_NEEDLE', path: ws }, { workspaceRoot: ws });
+    assert.equal(searchRes.success, true);
+    assert.match(searchRes.output || '', /keep\.secret\.ts/);
+    assert.doesNotMatch(searchRes.output || '', /vault\.ts|prod\.secret\.ts/);
+
+    const rgRes = await codeSearcher.execute({ query: 'SECRET_NEEDLE', searchPath: ws }, { workspaceRoot: ws });
+    assert.equal(rgRes.success, true);
+    assert.match(rgRes.output || '', /keep\.secret\.ts/);
+    assert.doesNotMatch(rgRes.output || '', /vault\.ts|prod\.secret\.ts/);
+
+    const map = buildRepoMap(ws);
+    const rels = map.files.map((f) => f.relPath);
+    assert.ok(rels.includes('keep.secret.ts'));
+    assert.equal(rels.includes('private/vault.ts'), false);
+    assert.equal(rels.includes('prod.secret.ts'), false);
   });
 });

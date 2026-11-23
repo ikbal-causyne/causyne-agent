@@ -40,6 +40,7 @@
     "src/tools/readNativeSkill.ts",
     "src/tools/createSkill.ts",
     "src/tools/walkerSafety.ts",
+    "src/ignoreRules.ts",
     "src/tools/fsSearch.ts",
     "src/tools/fsFind.ts",
     "src/tools/fsList.ts",

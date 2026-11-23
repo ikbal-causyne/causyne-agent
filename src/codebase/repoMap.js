@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BINARY_EXTENSIONS_RE, HEAVY_DEV_EXCLUDES } from '../tools/walkerSafety.js';
+import { loadWorkspaceIgnoreMatcher } from '../ignoreRules.js';
 import { safeDisplay } from '../tui/text.js';
 const SOURCE_EXTENSIONS = Object.freeze({
     '.ts': 'ts', '.tsx': 'ts', '.mts': 'ts', '.cts': 'ts',
@@ -475,7 +476,7 @@ export function buildRepoMap(workspaceRoot, options = {}) {
         .filter((f) => typeof f === 'string' && f.trim().length > 0)
         .map((f) => path.relative(root, path.resolve(root, f.trim())).replace(/\\/g, '/')));
     // Bounded BFS walk (maps shallower root modules across the full tree before deep leaves; skips symlinks & ignored paths)
-    const ignoreRules = loadSimpleIgnorePatterns(root);
+    const ignoreMatcher = loadWorkspaceIgnoreMatcher(root, { includeGitIgnore: true });
     const discovered = [];
     const queue = [{ dir: root, depth: 0 }];
     let queueHead = 0;
@@ -501,7 +502,7 @@ export function buildRepoMap(workspaceRoot, options = {}) {
                 if (HEAVY_DEV_EXCLUDES.has(entry.name)
                     || entry.name === '.causyne-worktrees'
                     || entry.name.startsWith('.')
-                    || isIgnoredByRules(relEntry, entry.name, true, ignoreRules)) {
+                    || ignoreMatcher.isIgnored(absEntry, true)) {
                     continue;
                 }
                 queue.push({ dir: absEntry, depth: depth + 1 });
@@ -511,7 +512,7 @@ export function buildRepoMap(workspaceRoot, options = {}) {
                 continue;
             if (BINARY_EXTENSIONS_RE.test(entry.name))
                 continue;
-            if (isIgnoredByRules(relEntry, entry.name, false, ignoreRules))
+            if (ignoreMatcher.isIgnored(absEntry, false))
                 continue;
             const ext = path.extname(entry.name).toLowerCase();
             const language = SOURCE_EXTENSIONS[ext];

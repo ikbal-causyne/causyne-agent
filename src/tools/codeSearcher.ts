@@ -3,6 +3,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { loadWorkspaceIgnoreMatcher } from '../ignoreRules.js';
 import {
   DEFAULT_TIMEOUT_MS,
   MAX_FILE_BYTES,
@@ -270,6 +271,8 @@ export const codeSearcher = {
       }
 
       const matches: CodeSearchMatch[] = [];
+      const ignoreRoot = context?.parentLoop?.workspaceRoot?.trim() || context?.workspaceRoot?.trim() || realTargetDir;
+      const causyneIgnore = loadWorkspaceIgnoreMatcher(ignoreRoot, { includeGitIgnore: false });
       const rgBin = getRipgrepBinary();
       let engineLabel = rgBin ? `Ripgrep Binary (${rgBin})` : 'Node Async Stream Engine';
       let useNodeFallback = !rgBin;
@@ -297,6 +300,9 @@ export const codeSearcher = {
           rgArgs.push('-g', glob);
         }
         for (const glob of buildTopLevelHomeExcludes(realTargetDir)) {
+          rgArgs.push('-g', glob);
+        }
+        for (const glob of causyneIgnore.toRipgrepGlobs()) {
           rgArgs.push('-g', glob);
         }
 
@@ -364,6 +370,7 @@ export const codeSearcher = {
 
         const scanFile = async (filePath: string): Promise<void> => {
           if (matches.length >= MAX_MATCHES || guard.checkStopped()) return;
+          if (causyneIgnore.isIgnored(filePath, false)) return;
           if (extFilter && !filePath.toLowerCase().endsWith(extFilter)) return;
           if (!guard.countFile()) return;
 

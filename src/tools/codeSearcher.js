@@ -3,6 +3,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { loadWorkspaceIgnoreMatcher } from '../ignoreRules.js';
 import { DEFAULT_TIMEOUT_MS, MAX_FILE_BYTES, buildHomeGlobExcludes, buildTopLevelHomeExcludes, checkSearchScope, compileSafeSearchRegex, createTraversalGuard, isSafeSymlinkTarget, looksBinaryFile, resolveSearchRoot, shouldExcludeChild, validateRegexSafety } from './walkerSafety.js';
 const execFileAsync = promisify(execFile);
 const MAX_MATCHES = 100;
@@ -217,6 +218,8 @@ export const codeSearcher = {
                 return { success: false, error: `Search path does not exist: ${targetDir}` };
             }
             const matches = [];
+            const ignoreRoot = context?.parentLoop?.workspaceRoot?.trim() || context?.workspaceRoot?.trim() || realTargetDir;
+            const causyneIgnore = loadWorkspaceIgnoreMatcher(ignoreRoot, { includeGitIgnore: false });
             const rgBin = getRipgrepBinary();
             let engineLabel = rgBin ? `Ripgrep Binary (${rgBin})` : 'Node Async Stream Engine';
             let useNodeFallback = !rgBin;
@@ -247,6 +250,9 @@ export const codeSearcher = {
                     rgArgs.push('-g', glob);
                 }
                 for (const glob of buildTopLevelHomeExcludes(realTargetDir)) {
+                    rgArgs.push('-g', glob);
+                }
+                for (const glob of causyneIgnore.toRipgrepGlobs()) {
                     rgArgs.push('-g', glob);
                 }
                 const effectiveQuery = astMode ? effectiveAstPattern : query;
@@ -311,6 +317,8 @@ export const codeSearcher = {
                 const seen = new Set();
                 const scanFile = async (filePath) => {
                     if (matches.length >= MAX_MATCHES || guard.checkStopped())
+                        return;
+                    if (causyneIgnore.isIgnored(filePath, false))
                         return;
                     if (extFilter && !filePath.toLowerCase().endsWith(extFilter))
                         return;

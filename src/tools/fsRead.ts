@@ -3,6 +3,7 @@ import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
 import { isOutputRecoveryRead } from '../outputRecovery.js';
+import { isIgnoredByCausyneIgnore } from '../ignoreRules.js';
 import { recordFileObserved } from './fileTracker.js';
 
 export interface FsReadArgs {
@@ -146,6 +147,10 @@ export const fsRead = {
       const scopeErr = checkReadScope(target, context);
       if (scopeErr) {
         return { success: false, error: scopeErr };
+      }
+      const ignoreRoot = baseRoot ? path.resolve(expandHomePath(baseRoot)) : process.cwd();
+      if (isIgnoredByCausyneIgnore(target, ignoreRoot, false)) {
+        return { success: false, error: `Refusing to read "${args.path}": path is excluded by .causyneignore.` };
       }
 
       const targetStat = fs.statSync(target);
