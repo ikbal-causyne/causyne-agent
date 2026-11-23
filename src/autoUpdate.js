@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { UI } from './utils/cli_ui.js';
 import { causyneHome } from './utils/paths.js';
+import { reconcileWindowsPathEnv, resolveWindowsSpawnTarget } from './utils/winSpawn.js';
 import { getPackageVersion } from './version.js';
 import { probeOsSandbox, resolveOsSandboxMode } from './tools/osSandbox.js';
 import { probeOsKeychain, resolveKeychainMode } from './osKeychain.js';
@@ -266,18 +267,19 @@ function installLatest(info, options = {}) {
         `${PACKAGE_NAME}@${targetVersion}`, '--ignore-scripts', '--no-audit', '--no-fund'
     ];
     // Prepend the directory containing node and npm to PATH so child npm executes smoothly
-    const env = { ...(options.env || process.env) };
     const extraPaths = [path.dirname(process.execPath)];
     if (info.npmCommand.includes('/') || info.npmCommand.includes('\\')) {
         extraPaths.push(path.dirname(info.npmCommand));
     }
-    const delimiter = process.platform === 'win32' ? ';' : ':';
-    const currentPath = env.PATH || env.Path || '';
-    env.PATH = [...extraPaths, currentPath].filter(Boolean).join(delimiter);
-    const result = runner(info.npmCommand, args, {
+    const env = reconcileWindowsPathEnv(options.env || process.env, extraPaths);
+    const target = options.spawnSyncImpl
+        ? { command: info.npmCommand, args }
+        : resolveWindowsSpawnTarget(info.npmCommand, args, { env });
+    const result = runner(target.command, target.args, {
         shell: false,
         stdio: options.verbose ? 'inherit' : 'pipe',
         encoding: 'utf8',
+        windowsHide: true,
         env
     });
     if (result.error)

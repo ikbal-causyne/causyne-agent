@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { safeDisplay } from '../tui/text.js';
+import { reconcileWindowsPathEnv, resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
 /** Install optional capabilities without writing over the active terminal UI. */
 export function installCapabilityManifest(directory) {
     if (typeof directory !== 'string' || !directory.trim() || directory.includes('\0')) {
@@ -20,20 +21,22 @@ export function installCapabilityManifest(directory) {
         throw new Error('Refusing missing, symlinked, or non-regular capability package.json');
     }
     const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const childEnv = reconcileWindowsPathEnv({
+        ...sanitizeSubprocessEnv(process.env),
+        npm_config_ignore_scripts: 'true',
+        npm_config_fund: 'false',
+        npm_config_audit: 'false'
+    }, [path.dirname(process.execPath)]);
+    const target = resolveWindowsSpawnTarget(npm, ['install', '--ignore-scripts', '--no-fund'], { env: childEnv });
     try {
-        execFileSync(npm, ['install', '--ignore-scripts', '--no-fund'], {
+        execFileSync(target.command, target.args, {
             cwd: resolvedDir,
             stdio: 'pipe',
             encoding: 'utf8',
             maxBuffer: 2 * 1024 * 1024,
             timeout: 120_000,
             windowsHide: true,
-            env: {
-                ...sanitizeSubprocessEnv(process.env),
-                npm_config_ignore_scripts: 'true',
-                npm_config_fund: 'false',
-                npm_config_audit: 'false'
-            }
+            env: childEnv
         });
     }
     catch (error) {

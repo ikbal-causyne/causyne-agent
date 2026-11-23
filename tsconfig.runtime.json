@@ -214,6 +214,7 @@
     "src/promptMentions.ts",
     "src/perception.ts",
     "src/utils/paths.ts",
+    "src/utils/winSpawn.ts",
     "src/uncertainty.ts",
     "src/modelRouter.ts",
     "src/textDiff.ts",
