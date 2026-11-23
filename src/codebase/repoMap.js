@@ -106,26 +106,71 @@ function isIgnoredByRules(relPosix, basename, isDir, rules) {
     }
     return false;
 }
+function extractQuotedSpecifiers(line, keyword) {
+    const out = [];
+    let searchFrom = 0;
+    while (searchFrom < line.length) {
+        const idx = line.indexOf(keyword, searchFrom);
+        if (idx === -1)
+            break;
+        let cursor = idx + keyword.length;
+        while (cursor < line.length && (line[cursor] === ' ' || line[cursor] === '\t'))
+            cursor++;
+        const quote = line[cursor];
+        if (quote === "'" || quote === '"') {
+            const endQuote = line.indexOf(quote, cursor + 1);
+            if (endQuote > cursor + 1) {
+                out.push(line.slice(cursor + 1, endQuote));
+                searchFrom = endQuote + 1;
+                continue;
+            }
+        }
+        searchFrom = idx + keyword.length;
+    }
+    return out;
+}
 function extractJsTsSymbolsAndImports(lines) {
     const symbols = [];
     const imports = [];
+    let inMultilineImportOrExport = false;
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
         const trimmed = raw.trim();
         if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*'))
             continue;
-        // Import target extraction
+        // Single-line and multi-line ESM import/export extraction
         if (trimmed.startsWith('import ') || trimmed.startsWith('export ')) {
-            const fromIdx = trimmed.indexOf(' from ');
-            if (fromIdx !== -1) {
-                const tail = trimmed.slice(fromIdx + 6).trim();
-                const quote = tail[0];
-                if (quote === "'" || quote === '"') {
-                    const endQuote = tail.indexOf(quote, 1);
-                    if (endQuote > 1)
-                        imports.push(tail.slice(1, endQuote));
-                }
+            const fromSpecs = extractQuotedSpecifiers(trimmed, ' from ');
+            if (fromSpecs.length > 0) {
+                imports.push(...fromSpecs);
+                inMultilineImportOrExport = false;
             }
+            else if (trimmed.startsWith('import ') && (trimmed.includes("'") || trimmed.includes('"')) && !trimmed.includes('{')) {
+                // Side-effect import: import './polyfill.js'
+                const sideEffect = extractQuotedSpecifiers(trimmed, 'import ');
+                imports.push(...sideEffect);
+                inMultilineImportOrExport = false;
+            }
+            else if (trimmed.includes('{') && !trimmed.includes('}')) {
+                inMultilineImportOrExport = true;
+            }
+        }
+        else if (inMultilineImportOrExport) {
+            const fromSpecs = extractQuotedSpecifiers(trimmed, ' from ');
+            if (fromSpecs.length > 0) {
+                imports.push(...fromSpecs);
+                inMultilineImportOrExport = false;
+            }
+            else if (trimmed.includes(';')) {
+                inMultilineImportOrExport = false;
+            }
+        }
+        // CommonJS require('...') and dynamic import('...')
+        if (trimmed.includes('require(')) {
+            imports.push(...extractQuotedSpecifiers(trimmed, 'require('));
+        }
+        if (trimmed.includes('import(')) {
+            imports.push(...extractQuotedSpecifiers(trimmed, 'import('));
         }
         if (symbols.length >= MAX_SYMBOLS_PER_FILE)
             continue;
@@ -216,11 +261,63 @@ function extractPythonSymbolsAndImports(lines) {
 function extractGenericSymbols(lines, lang) {
     const symbols = [];
     const imports = [];
+    let inGoImportBlock = false;
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
         const trimmed = raw.trim();
         if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*'))
             continue;
+        // Multi-language import extraction
+        if (lang === 'go') {
+            if (trimmed === 'import (' || trimmed.startsWith('import (')) {
+                inGoImportBlock = true;
+                continue;
+            }
+            if (inGoImportBlock) {
+                if (trimmed.startsWith(')')) {
+                    inGoImportBlock = false;
+                    continue;
+                }
+                const q1 = trimmed.indexOf('"');
+                const q2 = q1 !== -1 ? trimmed.indexOf('"', q1 + 1) : -1;
+                if (q1 !== -1 && q2 > q1 + 1)
+                    imports.push(trimmed.slice(q1 + 1, q2));
+                continue;
+            }
+            if (trimmed.startsWith('import ')) {
+                const q1 = trimmed.indexOf('"');
+                const q2 = q1 !== -1 ? trimmed.indexOf('"', q1 + 1) : -1;
+                if (q1 !== -1 && q2 > q1 + 1)
+                    imports.push(trimmed.slice(q1 + 1, q2));
+            }
+        }
+        else if (lang === 'rs') {
+            if (trimmed.startsWith('use crate::') || trimmed.startsWith('use super::') || trimmed.startsWith('use self::')) {
+                const spec = trimmed.slice(4).split(/[;{\s]/)[0] || '';
+                if (spec)
+                    imports.push(spec);
+            }
+            else if (trimmed.startsWith('mod ') || trimmed.startsWith('pub mod ')) {
+                const afterMod = trimmed.startsWith('pub mod ') ? trimmed.slice(8) : trimmed.slice(4);
+                const modName = afterMod.split(/[;{\s]/)[0] || '';
+                if (IDENT_RE.test(modName))
+                    imports.push(`self::${modName}`);
+            }
+        }
+        else if (lang === 'c' || lang === 'cpp') {
+            if (trimmed.startsWith('#include "')) {
+                const endQ = trimmed.indexOf('"', 10);
+                if (endQ > 10)
+                    imports.push(`./${trimmed.slice(10, endQ)}`);
+            }
+        }
+        else if (lang === 'java' || lang === 'kt') {
+            if (trimmed.startsWith('import ')) {
+                const spec = trimmed.slice(7).replace(/^static\s+/, '').replace(/;$/, '').trim();
+                if (spec)
+                    imports.push(spec);
+            }
+        }
         if (symbols.length >= MAX_SYMBOLS_PER_FILE)
             continue;
         const indent = raw.length - raw.trimStart().length;
@@ -234,11 +331,29 @@ function extractGenericSymbols(lines, lang) {
             if (rest.startsWith('async '))
                 rest = rest.slice(6).trim();
         }
+        else if ((lang === 'java' || lang === 'kt' || lang === 'swift') && rest.startsWith('public ')) {
+            exported = true;
+            rest = rest.slice(7).trim();
+            for (const mod of ['static ', 'final ', 'abstract ', 'sealed ', 'data ', 'open ']) {
+                if (rest.startsWith(mod))
+                    rest = rest.slice(mod.length).trim();
+            }
+        }
+        else if (lang === 'kt') {
+            for (const mod of ['data ', 'sealed ', 'open ', 'suspend ']) {
+                if (rest.startsWith(mod))
+                    rest = rest.slice(mod.length).trim();
+            }
+        }
         const prefixes = lang === 'go'
             ? [['func ', 'func'], ['type ', 'type']]
             : lang === 'rs'
                 ? [['fn ', 'fn'], ['struct ', 'struct'], ['enum ', 'enum'], ['trait ', 'trait'], ['impl ', 'impl']]
-                : [['class ', 'class'], ['struct ', 'struct'], ['enum ', 'enum'], ['fn ', 'fn']];
+                : lang === 'java'
+                    ? [['class ', 'class'], ['interface ', 'interface'], ['record ', 'record'], ['enum ', 'enum']]
+                    : lang === 'kt'
+                        ? [['class ', 'class'], ['interface ', 'interface'], ['object ', 'object'], ['fun ', 'fun'], ['enum class ', 'enum']]
+                        : [['class ', 'class'], ['struct ', 'struct'], ['enum ', 'enum'], ['fn ', 'fn'], ['func ', 'func']];
         for (const [prefix, kind] of prefixes) {
             if (!rest.startsWith(prefix))
                 continue;
@@ -261,19 +376,94 @@ function extractGenericSymbols(lines, lang) {
     }
     return { symbols, imports };
 }
-function resolveImportTarget(fromRelPath, importSpec, knownFiles) {
-    if (!importSpec || !importSpec.startsWith('.'))
+function resolveImportTarget(fromRelPath, importSpec, lang, knownFiles) {
+    if (!importSpec)
         return null;
     const baseDir = path.posix.dirname(fromRelPath);
-    const joined = path.posix.normalize(path.posix.join(baseDir, importSpec));
-    if (knownFiles.has(joined))
-        return joined;
-    const stem = joined.replace(/\.(js|mjs|cjs|jsx)$/, '');
-    const tryExts = ['.ts', '.tsx', '.mts', '.js', '.jsx', '.mjs', '.py', '/index.ts', '/index.js'];
-    for (const ext of tryExts) {
-        const candidate = `${stem}${ext}`;
-        if (knownFiles.has(candidate))
-            return candidate;
+    // Relative POSIX imports (JS/TS, C/C++ #include "./foo.h")
+    if (importSpec.startsWith('./') || importSpec.startsWith('../')) {
+        const joined = path.posix.normalize(path.posix.join(baseDir, importSpec));
+        if (knownFiles.has(joined))
+            return joined;
+        const stem = joined.replace(/\.(js|mjs|cjs|jsx)$/, '');
+        const tryExts = ['.ts', '.tsx', '.mts', '.js', '.jsx', '.mjs', '.py', '.h', '.hpp', '/index.ts', '/index.js'];
+        for (const ext of tryExts) {
+            const candidate = `${stem}${ext}`;
+            if (knownFiles.has(candidate))
+                return candidate;
+        }
+        return null;
+    }
+    // Python relative (.foo / ..bar.baz) and dotted intra-repo imports (pkg.mod)
+    if (lang === 'py') {
+        let dots = 0;
+        while (dots < importSpec.length && importSpec[dots] === '.')
+            dots++;
+        const remainder = importSpec.slice(dots).replace(/\./g, '/');
+        let anchor = baseDir === '.' ? '' : baseDir;
+        if (dots > 1) {
+            for (let up = 1; up < dots; up++) {
+                anchor = path.posix.dirname(anchor);
+            }
+        }
+        const candidates = [];
+        if (dots > 0) {
+            const joined = path.posix.normalize(path.posix.join(anchor || '.', remainder));
+            candidates.push(`${joined}.py`, `${joined}/__init__.py`);
+        }
+        else if (remainder) {
+            candidates.push(`${remainder}.py`, `${remainder}/__init__.py`, `src/${remainder}.py`, `src/${remainder}/__init__.py`);
+        }
+        for (const c of candidates) {
+            const clean = c.replace(/^\.\//, '');
+            if (knownFiles.has(clean))
+                return clean;
+        }
+        return null;
+    }
+    // Rust intra-crate imports (crate::foo::bar, self::foo, super::foo)
+    if (lang === 'rs' && (importSpec.startsWith('crate::') || importSpec.startsWith('self::') || importSpec.startsWith('super::'))) {
+        const parts = importSpec.split('::').filter(Boolean);
+        const kind = parts.shift();
+        const firstSeg = parts[0] || '';
+        if (!firstSeg)
+            return null;
+        const targetDir = kind === 'crate'
+            ? (baseDir.startsWith('src') ? 'src' : '.')
+            : (kind === 'super' ? path.posix.dirname(baseDir) : baseDir);
+        const joined = path.posix.normalize(path.posix.join(targetDir, ...parts));
+        const singleJoined = path.posix.normalize(path.posix.join(targetDir, firstSeg));
+        for (const stem of [joined, singleJoined]) {
+            for (const suffix of ['.rs', '/mod.rs']) {
+                const clean = `${stem}${suffix}`.replace(/^\.\//, '');
+                if (knownFiles.has(clean))
+                    return clean;
+            }
+        }
+        return null;
+    }
+    // Java / Kotlin / Go intra-repo suffix match (e.g. com.acme.Core -> .../Core.java or pkg/sub -> .../sub/*.go)
+    if (lang === 'java' || lang === 'kt') {
+        const asPath = importSpec.replace(/\./g, '/');
+        const ext = lang === 'java' ? '.java' : '.kt';
+        const tail = `${asPath}${ext}`;
+        for (const known of knownFiles) {
+            if (known === tail || known.endsWith(`/${tail}`))
+                return known;
+        }
+        return null;
+    }
+    if (lang === 'go') {
+        const segments = importSpec.split('/').filter(Boolean);
+        const pkgTail = segments.slice(-2).join('/');
+        if (!pkgTail)
+            return null;
+        for (const known of knownFiles) {
+            if (known.endsWith('.go') && (known.includes(`/${pkgTail}/`) || known.startsWith(`${pkgTail}/`))) {
+                return known;
+            }
+        }
+        return null;
     }
     return null;
 }
@@ -394,7 +584,7 @@ export function buildRepoMap(workspaceRoot, options = {}) {
     for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
         for (const spec of node.imports) {
-            const resolved = resolveImportTarget(node.relPath, spec, knownRelSet);
+            const resolved = resolveImportTarget(node.relPath, spec, node.language, knownRelSet);
             if (!resolved)
                 continue;
             const targetIdx = indexByRel.get(resolved);
@@ -411,6 +601,7 @@ export function buildRepoMap(workspaceRoot, options = {}) {
         for (let iter = 0; iter < 6; iter++) {
             const next = new Float64Array(n);
             const baseTeleport = (1 - damping) / n;
+            let totalScore = 0;
             for (let i = 0; i < n; i++) {
                 let sum = 0;
                 for (const src of incoming[i]) {
@@ -418,14 +609,19 @@ export function buildRepoMap(workspaceRoot, options = {}) {
                     if (deg > 0)
                         sum += scores[src] / deg;
                 }
-                const focusBoost = focusSet.has(nodes[i].relPath) ? 0.5 : 0;
-                const exportBoost = Math.min(0.1, nodes[i].symbols.filter((s) => s.exported).length * 0.005);
-                next[i] = baseTeleport + damping * sum + focusBoost + exportBoost;
+                next[i] = baseTeleport + damping * sum;
+                totalScore += next[i];
+            }
+            if (totalScore > 0) {
+                for (let i = 0; i < n; i++)
+                    next[i] = next[i] / totalScore;
             }
             scores = next;
         }
         for (let i = 0; i < n; i++) {
-            nodes[i].rank = Number(scores[i].toFixed(5));
+            const focusBoost = focusSet.has(nodes[i].relPath) ? 1.0 : 0;
+            const exportBoost = Math.min(0.05, nodes[i].symbols.filter((s) => s.exported).length * 0.004);
+            nodes[i].rank = Number((scores[i] + focusBoost + exportBoost).toFixed(5));
         }
     }
     nodes.sort((a, b) => b.rank - a.rank || a.relPath.localeCompare(b.relPath));

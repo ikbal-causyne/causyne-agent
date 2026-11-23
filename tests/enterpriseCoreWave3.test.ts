@@ -525,4 +525,30 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.equal(rels.some((r) => r.startsWith('generated/')), false, '.gitignore directory must be excluded');
     assert.equal(rels.includes('alpha/auto.gen.ts'), false, '.gitignore glob must be excluded');
   });
+
+  test('buildRepoMap resolves multi-line JS/TS imports, require/dynamic import, Python relative/dotted imports, and Rust crate edges', () => {
+    clearRepoMapCache();
+    const ws = path.join(TMP, 'repomap-multilang');
+    fs.mkdirSync(path.join(ws, 'ts'), { recursive: true });
+    fs.mkdirSync(path.join(ws, 'py', 'pkg'), { recursive: true });
+    fs.mkdirSync(path.join(ws, 'rs', 'src'), { recursive: true });
+
+    fs.writeFileSync(path.join(ws, 'ts', 'hub.ts'), 'export function hubFn() {}\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'ts', 'a.ts'), 'import {\n  hubFn\n} from "./hub.js";\nexport const a = hubFn;\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'ts', 'b.ts'), 'const h = require("./hub");\nexport const b = h;\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'ts', 'c.ts'), 'export async function c() { return import("./hub.js"); }\n', 'utf8');
+
+    fs.writeFileSync(path.join(ws, 'py', 'pkg', 'core.py'), 'def py_core():\n    return 1\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'py', 'pkg', 'worker.py'), 'from .core import py_core\ndef run():\n    return py_core()\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'py', 'app.py'), 'from py.pkg.core import py_core\ndef main():\n    return py_core()\n', 'utf8');
+
+    const map = buildRepoMap(ws, { maxFiles: 50 });
+    const hubRank = map.files.find((f) => f.relPath === 'ts/hub.ts')?.rank ?? 0;
+    const leafRank = map.files.find((f) => f.relPath === 'ts/a.ts')?.rank ?? 0;
+    assert.ok(hubRank > leafRank, `ts/hub.ts (${hubRank}) must outrank importer ts/a.ts (${leafRank}) via multi-line/require/dynamic imports`);
+
+    const pyCoreRank = map.files.find((f) => f.relPath === 'py/pkg/core.py')?.rank ?? 0;
+    const pyWorkerRank = map.files.find((f) => f.relPath === 'py/pkg/worker.py')?.rank ?? 0;
+    assert.ok(pyCoreRank > pyWorkerRank, `py/pkg/core.py (${pyCoreRank}) must outrank py/pkg/worker.py (${pyWorkerRank})`);
+  });
 });
