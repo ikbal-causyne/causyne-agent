@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { OpenAIProvider } from '../src/providers/openai.js';
 import { AnthropicProvider } from '../src/providers/anthropic.js';
+import { GeminiProvider } from '../src/providers/gemini.js';
+import { DeepSeekProvider } from '../src/providers/deepseek.js';
+import { OpenAICompatibleProvider } from '../src/providers/openai-compatible.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -94,6 +97,75 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
       assert.equal(capturedBody.messages[2].content[0]?.cache_control?.type, 'ephemeral', 'rolling user history cache breakpoint must be set');
       assert.equal(capturedBody.messages[2].content[0]?.cache_control?.ttl, undefined, 'default 5m cache omits 1h ttl');
       assert.equal(res.usage.measurement, 'provider_reported');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test('Gemini merges same-role turns & deduplicates JSON-fallback thought text; DeepSeek backfills reasoner reasoning_content; OpenAICompatible normalizes bare local root URLs', async () => {
+    const localCompat = new OpenAICompatibleProvider({ baseUrl: 'http://127.0.0.1:1234', model: 'qwen-local' });
+    assert.equal(localCompat.baseUrl, 'http://127.0.0.1:1234/v1/chat/completions');
+
+    const origFetch = globalThis.fetch;
+    let geminiBody: any = null;
+    let deepseekBody: any = null;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (url.includes('generativelanguage.googleapis.com')) {
+        geminiBody = body;
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({
+            candidates: [{
+              content: {
+                role: 'model',
+                parts: [
+                  { thought: true, text: 'Single thought.' },
+                  { text: 'Final answer.' }
+                ]
+              }
+            }],
+            usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 8, totalTokenCount: 20 }
+          })
+        } as unknown as Response;
+      }
+      deepseekBody = body;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => JSON.stringify({
+          choices: [{ message: { role: 'assistant', content: 'done' } }],
+          usage: { prompt_tokens: 15, completion_tokens: 5 }
+        })
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const gemini = new GeminiProvider({ apiKey: 'gem-test-key-1234', model: 'gemini-2.5-flash' });
+      const gemRes = await gemini.chat([
+        { role: 'user', content: 'part 1' },
+        { role: 'user', content: 'part 2' },
+        { role: 'assistant', content: 'reply 1' },
+        { role: 'assistant', content: 'reply 2' },
+        { role: 'user', content: 'final question' }
+      ], { onChunk: () => {} });
+      assert.equal(geminiBody.contents.length, 3, 'consecutive same-role Gemini contents must merge');
+      assert.equal(geminiBody.contents[0].parts.length, 2);
+      assert.equal(geminiBody.contents[1].parts.length, 2);
+      assert.equal(gemRes.reasoningContent, 'Single thought.', 'JSON-fallback thought must not double-append');
+
+      const ds = new DeepSeekProvider({ apiKey: 'ds-test-key-1234', model: 'deepseek-reasoner' });
+      await ds.chat([
+        { role: 'user', content: 'run tool' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'tc1', type: 'function', function: { name: 'fs_read', arguments: '{}' } }] },
+        { role: 'tool', tool_call_id: 'tc1', content: 'ok' }
+      ]);
+      assert.equal(deepseekBody.messages[1].reasoning_content, '', 'deepseek-reasoner must backfill missing reasoning_content on historical tool turns');
+      assert.equal(deepseekBody.temperature, undefined);
     } finally {
       globalThis.fetch = origFetch;
     }

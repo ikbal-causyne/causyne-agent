@@ -31,13 +31,22 @@ export class DeepSeekProvider extends LLMProvider {
 
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
     const apiKey = requireApiKey(this.apiKey, 'DeepSeek');
-    const sanitizedMessages = this.prepareMessages(messages);
+    const isReasoner = this.isReasonerModel();
+    const rawPrepared = this.prepareMessages(messages);
+    const sanitizedMessages = isReasoner
+      ? rawPrepared.map((msg) => {
+          if (msg?.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0 && typeof msg.reasoning_content !== 'string') {
+            return { ...msg, reasoning_content: '' };
+          }
+          return msg;
+        })
+      : rawPrepared;
 
     const payload: Record<string, any> = {
       model: this.model,
       messages: sanitizedMessages
     };
-    if (!this.isReasonerModel()) {
+    if (!isReasoner) {
       payload['temperature'] = resolveTemperature(options.temperature, 0.1);
     }
 

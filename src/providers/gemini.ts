@@ -73,6 +73,15 @@ export class GeminiProvider extends LLMProvider {
     const systemParts: Array<{ text: string }> = [];
     const contents: Array<{ role: string; parts: Array<Record<string, any>> }> = [];
     const toolNameById = new Map<string, string>();
+    const pushContent = (role: string, parts: Array<Record<string, any>>): void => {
+      if (parts.length === 0) return;
+      const last = contents[contents.length - 1];
+      if (last && last.role === role) {
+        last.parts.push(...parts);
+      } else {
+        contents.push({ role, parts });
+      }
+    };
 
     for (const msg of messages) {
       if (msg.role === 'system') {
@@ -103,7 +112,7 @@ export class GeminiProvider extends LLMProvider {
           if (sig) fcPart['thoughtSignature'] = sig;
           parts.push(fcPart);
         }
-        if (parts.length > 0) contents.push({ role, parts });
+        pushContent(role, parts);
       } else if (msg.role === 'tool') {
         const resolvedName = normalizeToolName(msg.name || (typeof msg.tool_call_id === 'string' ? toolNameById.get(msg.tool_call_id) : '') || 'tool');
         const responsePart = {
@@ -112,15 +121,7 @@ export class GeminiProvider extends LLMProvider {
             response: { result: msg.content ?? '' }
           }
         };
-        const lastEntry = contents[contents.length - 1];
-        if (lastEntry && lastEntry.role === 'user' && Array.isArray(lastEntry.parts) && lastEntry.parts[0]?.['functionResponse']) {
-          lastEntry.parts.push(responsePart);
-        } else {
-          contents.push({
-            role: 'user',
-            parts: [responsePart]
-          });
-        }
+        pushContent('user', [responsePart]);
       } else {
         if (Array.isArray(msg.content)) {
           const rawMapped = msg.content.map((part: any) => {
@@ -151,10 +152,10 @@ export class GeminiProvider extends LLMProvider {
             return null;
           }).filter((p: any): p is Record<string, any> => p !== null);
           const mappedParts = rawMapped.length > 0 ? rawMapped : [{ text: '' }];
-          contents.push({ role, parts: mappedParts });
+          pushContent(role, mappedParts);
         } else {
           const scalar = typeof msg.content === 'string' ? msg.content : (msg.content == null ? '' : JSON.stringify(msg.content));
-          contents.push({ role, parts: [{ text: scalar }] });
+          pushContent(role, [{ text: scalar }]);
         }
       }
     }
@@ -223,7 +224,8 @@ export class GeminiProvider extends LLMProvider {
     }
 
     let content = '';
-    let reasoningContent = typeof data['reasoningContent'] === 'string' ? data['reasoningContent'] : '';
+    const streamReasoning = typeof data['reasoningContent'] === 'string' ? data['reasoningContent'] : '';
+    let partReasoning = '';
     const toolCalls: ChatResponseToolCall[] = [];
     const candidateParts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
 
@@ -231,7 +233,7 @@ export class GeminiProvider extends LLMProvider {
       if (!part || typeof part !== 'object') continue;
       if (typeof part.text === 'string' && part.text) {
         if (part.thought === true) {
-          reasoningContent += part.text;
+          partReasoning += part.text;
         } else {
           content += part.text;
         }
@@ -252,10 +254,11 @@ export class GeminiProvider extends LLMProvider {
       }
     }
 
+    const reasoningContent = (partReasoning || streamReasoning).trim();
     return {
       content: content.trim(),
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      ...(reasoningContent.trim() ? { reasoningContent: reasoningContent.trim() } : {}),
+      ...(reasoningContent ? { reasoningContent } : {}),
       usage: this.normalizeUsage(geminiUsageToOpenAIShape(data['usageMetadata']))
     };
   }

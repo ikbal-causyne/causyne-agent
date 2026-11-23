@@ -19,7 +19,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
         if (rawUrl) {
             try {
                 const parsed = new URL(rawUrl);
-                if (parsed.pathname === '/v1' || parsed.pathname === '/v1/') {
+                if (parsed.pathname === '' || parsed.pathname === '/' || parsed.pathname === '/v1' || parsed.pathname === '/v1/') {
                     parsed.pathname = '/v1/chat/completions';
                     resolvedUrl = parsed.toString();
                 }
