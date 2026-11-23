@@ -144,6 +144,17 @@ export function printContextReport() {
 // ---------------------------------------------------------------------------
 // Token usage
 // ---------------------------------------------------------------------------
+export function isZeroCostRoute(provider, model) {
+    const p = String(provider || '').trim().toLowerCase();
+    const m = String(model || '').trim().toLowerCase();
+    if (!p)
+        return false;
+    if (p === 'ollama' || p === 'openrouter-free' || p === 'antigravity' || p.startsWith('acp/'))
+        return true;
+    if (m === 'openrouter/free' || m.endsWith(':free'))
+        return true;
+    return false;
+}
 export async function buildUsageText() {
     const tracker = new TokenTracker();
     const usage = (await tracker.getReportedUsage()) || {
@@ -162,13 +173,18 @@ export async function buildUsageText() {
     const budget = (config.tokenBudget || {});
     const lines = [];
     const provider = String(config.provider || 'default');
+    const model = String(config.model || 'default');
     const isAgy = isAntigravityProvider(provider);
     const isAcp = isAcpProvider(provider);
+    const zeroCost = isZeroCostRoute(provider, model);
     const billingNote = (isAgy || isAcp)
-        ? '(Local CLI / ACP peer)'
-        : '(BYOK — billed by your provider, not by Causyne)';
+        ? '(Local CLI / ACP peer — $0 API cost)'
+        : zeroCost
+            ? '(Zero-Cost Local / Free Tier — $0 API cost)'
+            : '(BYOK — billed by your provider, not by Causyne)';
     lines.push(`Token usage ${billingNote}`);
-    lines.push(`  Provider / model : ${safeDisplay(config.provider || 'default')} / ${safeDisplay(config.model || 'default')}`);
+    lines.push(`  Provider / model : ${safeDisplay(provider)} / ${safeDisplay(model)}`);
+    lines.push(`  Route billing    : ${zeroCost ? '$0.00 (free / local)' : 'metered BYOK'}`);
     lines.push(`  This task        : ${formatNumber(usage.taskTokens)} tokens   $${safeUsd(usage.taskCostUsd, 4)}`);
     lines.push(`  Today            : ${formatNumber(usage.dailyTokens)} tokens   $${safeUsd(usage.costUsd, 4)}`);
     lines.push(`  Lifetime         : ${formatNumber(usage.lifetimeTokens)} tokens   $${safeUsd(usage.lifetimeCostUsd, 4)}`);

@@ -18,6 +18,7 @@ import { getPackageVersion } from './version.js';
 import { probeOsSandbox, resolveOsSandboxMode } from './tools/osSandbox.js';
 import { probeOsKeychain, resolveKeychainMode } from './osKeychain.js';
 import { loadEnterprisePolicy } from './enterprisePolicy.js';
+import { listLocalOllamaDiskModels } from './zeroCostRouting.js';
 
 const PACKAGE_NAME = '@causyne/agent';
 const REGISTRY_LATEST = 'https://registry.npmjs.org/@causyne%2fagent/latest';
@@ -489,6 +490,16 @@ export function formatDoctorReport(status: DiagnosisResult, runtime: typeof proc
     : (policyState.error || !policyState.policy
       ? `INVALID (fail-closed: ${policyState.error || 'parse error'})`
       : `active (${policyState.sourcePath})`);
+  const ollamaDiskModels = listLocalOllamaDiskModels(undefined, runtime.env);
+  const zeroCostHints: string[] = [];
+  if (ollamaDiskModels.length > 0) zeroCostHints.push(`ollama (${ollamaDiskModels.length} local model(s))`);
+  if (runtime.env.OPENROUTER_API_KEY) zeroCostHints.push('openrouter-free');
+  if (runtime.env.GEMINI_API_KEY || runtime.env.GOOGLE_API_KEY) zeroCostHints.push('gemini-free');
+  if (runtime.env.GROQ_API_KEY) zeroCostHints.push('groq-free');
+  if (runtime.env.CEREBRAS_API_KEY) zeroCostHints.push('cerebras-free');
+  const zeroCostSummary = zeroCostHints.length > 0
+    ? zeroCostHints.join(', ')
+    : 'install Ollama or run /openrouter connect for $0 usage';
   const rows = [
     `Version       : ${status.current || 'unknown'}`,
     `Latest        : ${status.latest || `unavailable (${status.error || 'unknown error'})`}`,
@@ -501,6 +512,7 @@ export function formatDoctorReport(status: DiagnosisResult, runtime: typeof proc
     `OS Sandbox    : ${sandboxMode.mode} (backend: ${sandboxCap.backend}${sandboxCap.available ? ', available' : ', unavailable'})`,
     `OS Keychain   : ${keychainMode} (backend: ${keychainCap.backend}${keychainCap.available ? ', available' : ', unavailable'})`,
     `Policy        : ${policySummary}`,
+    `Zero-Cost $0  : ${zeroCostSummary}`,
     `Auto updates  : ${status.autoUpdates ? 'enabled' : 'disabled'}`,
     `Workspace     : ${runtime.cwd()}`
   ];

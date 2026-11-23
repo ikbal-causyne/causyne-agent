@@ -68,8 +68,11 @@ import { isCredentialPath } from './sandbox.js';
 import { atomicWriteSecretFileSync } from './configVault.js';
 import { redactProviderSecrets, redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
-import { formatEnterprisePolicyReport } from './enterprisePolicy.js';
+import { formatEnterprisePolicyReport, loadEnterprisePolicy } from './enterprisePolicy.js';
 import { auditLog, formatAuditExport, type AuditExportFormat } from './auditLog.js';
+import { probeOsSandbox, resolveOsSandboxMode } from './tools/osSandbox.js';
+import { probeOsKeychain, resolveKeychainMode } from './osKeychain.js';
+import { detectZeroCostProviders } from './zeroCostRouting.js';
 import { assertSafeWorkspaceOutput, atomicWriteFileSafe } from './tools/toolPathSafety.js';
 import { sanitizeSubprocessEnv } from './tools/subprocessEnv.js';
 import { formatLspStatusReport, lspCodeIntel } from './tools/lspCodeIntel.js';
@@ -2660,7 +2663,18 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
       const provider = config.provider || 'not configured';
       const model = config.model || 'default';
-      lines.push(`  • Provider / Model  : ${provider} / ${model}`);
+      lines.push(`  • Provider / Model  : ${safeDisplay(provider)} / ${safeDisplay(model)}`);
+
+      const sandboxCap = probeOsSandbox();
+      const sandboxMode = resolveOsSandboxMode(process.env);
+      const keychainCap = probeOsKeychain({ env: process.env });
+      const keychainMode = resolveKeychainMode(process.env);
+      const policyState = loadEnterprisePolicy(ws, process.env);
+      const auditCheck = auditLog.verifyAuditChain({ days: 7 });
+      lines.push(`  • OS Sandbox        : ${sandboxMode.mode} (${sandboxCap.backend}${sandboxCap.available ? ', available' : ', unavailable'})`);
+      lines.push(`  • OS Keychain       : ${keychainMode} (${keychainCap.backend}${keychainCap.available ? ', available' : ', unavailable'})`);
+      lines.push(`  • Enterprise Policy : ${!policyState.found ? 'not configured' : (policyState.error ? `INVALID (${safeDisplay(policyState.error)})` : `active (${safeDisplay(policyState.sourcePath)})`)}`);
+      lines.push(`  ${auditCheck.ok ? '✓' : '✕'} Audit Chain       : ${auditCheck.ok ? `verified (${auditCheck.entriesVerified} hashed entries)` : `${auditCheck.errors.length} integrity error(s)`}`);
 
       const servers = serverStatus();
       const grantedCount = servers.filter(s => s.granted).length;
@@ -2668,6 +2682,19 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
       const peers = listAllPeers();
       lines.push(`  • ACP Peers         : ${peers.length} available`);
+
+      const zeroCost = await detectZeroCostProviders({ config, probeOllama: true, timeoutMs: 700 });
+      const readyZeroCost = zeroCost.filter((z) => z.readiness === 'ready');
+      lines.push('');
+      lines.push(`Zero-Cost ($0 API) Routes (${readyZeroCost.length} ready)`);
+      if (zeroCost.length === 0) {
+        lines.push('  • None detected yet — install Ollama (`ollama pull qwen2.5-coder`) or run `/openrouter connect`.');
+      } else {
+        for (const z of zeroCost) {
+          const icon = z.readiness === 'ready' ? '✓' : '△';
+          lines.push(`  ${icon} ${safeDisplay(z.label)} [${safeDisplay(z.provider)}${z.model ? ` / ${safeDisplay(z.model)}` : ''}] — ${safeDisplay(z.readiness)}`);
+        }
+      }
 
       lines.push('');
       lines.push('All diagnostic invariants passed. Run /peers detect or /model list for component details.');
