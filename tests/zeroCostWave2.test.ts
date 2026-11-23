@@ -7,7 +7,12 @@ import { AcpProvider } from '../src/providers/acp.js';
 import { AcpClient } from '../src/acp/client.js';
 import { testPeerHandshake, isAuthRequiredHandshakeFailure } from '../src/acp/agentCatalog.js';
 import { AgentLoop } from '../src/agentLoop.js';
-import { OllamaProvider, clearOllamaModelMetaCache, ollamaOriginUrl } from '../src/providers/ollama.js';
+import {
+  OllamaProvider,
+  clearOllamaModelMetaCache,
+  computeAdaptiveOllamaNumCtx,
+  ollamaOriginUrl
+} from '../src/providers/ollama.js';
 import { streamOllamaChat, streamOpenAICompatibleChat } from '../src/providers/byokStream.js';
 import { ProviderHttpError } from '../src/providers/byokHttp.js';
 import { fetchLiveModels } from '../src/dynamicCatalogue.js';
@@ -356,6 +361,36 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       assert.equal(res.usage.promptTokens, 412);
       const chatReq = seenPayloads.find(p => p.url.endsWith('/api/chat'));
       assert.equal(chatReq?.body?.options?.num_ctx, 32768);
+      assert.equal(chatReq?.body?.keep_alive, '10m');
+
+      // VRAM-adaptive sizing prevents 14B Q4_K_M layer spill on 16 GiB unified-memory hosts
+      assert.equal(computeAdaptiveOllamaNumCtx({
+        modelContextLength: 32768,
+        parameterCount: 14.8e9,
+        totalMemoryBytes: 16 * (1024 ** 3),
+        estimatedPromptTokens: 2000
+      }), 8192);
+      // Scales up automatically if prompt actually exceeds 75% of 8K cap
+      assert.equal(computeAdaptiveOllamaNumCtx({
+        modelContextLength: 32768,
+        parameterCount: 14.8e9,
+        totalMemoryBytes: 16 * (1024 ** 3),
+        estimatedPromptTokens: 7000
+      }), 10240);
+      // Plenty of RAM (64 GiB) keeps full 32K context window
+      assert.equal(computeAdaptiveOllamaNumCtx({
+        modelContextLength: 32768,
+        parameterCount: 14.8e9,
+        totalMemoryBytes: 64 * (1024 ** 3),
+        estimatedPromptTokens: 2000
+      }), 32768);
+      // Explicit OLLAMA_NUM_CTX / config.numCtx always wins
+      assert.equal(computeAdaptiveOllamaNumCtx({
+        configuredNumCtx: 24576,
+        modelContextLength: 32768,
+        parameterCount: 14.8e9,
+        totalMemoryBytes: 16 * (1024 ** 3)
+      }), 24576);
     } finally {
       globalThis.fetch = origFetch;
     }

@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { canonicalModelId } from '../modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { LLMProvider } from './base.js';
@@ -7,6 +8,69 @@ import { stripToolCallMarkup } from '../implementationPlan.js';
 import { formatToolContracts } from './toolContracts.js';
 import { ProviderHttpError, resolveTemperature, safeProviderFetchJson } from './byokHttp.js';
 import { streamOllamaChat, wantsStreaming } from './byokStream.js';
+/**
+ * Computes a VRAM-safe `num_ctx` for local Ollama inference so large local models
+ * (e.g. 14B Q4_K_M on a 16 GiB unified-memory laptop) fit inside GPU VRAM without
+ * layer spill or swap thrashing, while still honoring explicit `OLLAMA_NUM_CTX`
+ * and scaling smoothly when the conversation grows.
+ */
+export function computeAdaptiveOllamaNumCtx(input) {
+    if (typeof input.configuredNumCtx === 'number' && Number.isFinite(input.configuredNumCtx) && input.configuredNumCtx >= 512) {
+        return Math.min(262_144, Math.floor(input.configuredNumCtx));
+    }
+    const modelCap = typeof input.modelContextLength === 'number' && Number.isFinite(input.modelContextLength) && input.modelContextLength >= 512
+        ? Math.min(32_768, Math.floor(input.modelContextLength))
+        : 16_384;
+    const totalMemGiB = (input.totalMemoryBytes ?? os.totalmem()) / (1024 ** 3);
+    const paramCount = typeof input.parameterCount === 'number' && Number.isFinite(input.parameterCount) && input.parameterCount > 0
+        ? input.parameterCount
+        : 0;
+    const estPrompt = typeof input.estimatedPromptTokens === 'number' && Number.isFinite(input.estimatedPromptTokens) && input.estimatedPromptTokens > 0
+        ? input.estimatedPromptTokens
+        : 0;
+    if (paramCount > 0 && totalMemGiB > 0) {
+        // Q4_K_M weights use ~0.62 GiB per billion parameters plus runtime overhead.
+        const estWeightsGiB = (paramCount / 1e9) * 0.62;
+        const pressureRatio = estWeightsGiB / totalMemGiB;
+        let ramSafeCap = modelCap;
+        if (pressureRatio >= 0.45) {
+            // Heavy model relative to host RAM (e.g. 14B on 16 GiB): keep KV cache compact so layers stay in VRAM.
+            ramSafeCap = Math.min(modelCap, 8_192);
+        }
+        else if (pressureRatio >= 0.25 && totalMemGiB <= 18) {
+            // Mid-sized 7B-8B model on 16 GiB host: 16K stays fast and resident in GPU memory.
+            ramSafeCap = Math.min(modelCap, 16_384);
+        }
+        if (estPrompt > ramSafeCap * 0.75) {
+            const needed = Math.ceil((estPrompt * 1.4) / 2048) * 2048;
+            return Math.min(modelCap, Math.max(ramSafeCap, needed));
+        }
+        return ramSafeCap;
+    }
+    return modelCap;
+}
+function parseParameterCount(data) {
+    const modelInfo = data && typeof data['model_info'] === 'object' && data['model_info'] !== null
+        ? data['model_info']
+        : null;
+    if (modelInfo) {
+        const rawCount = Number(modelInfo['general.parameter_count']);
+        if (Number.isFinite(rawCount) && rawCount > 0)
+            return rawCount;
+    }
+    const sizeStr = typeof data?.['details']?.['parameter_size'] === 'string'
+        ? data['details']['parameter_size'].trim().toUpperCase()
+        : '';
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)\s*([BM])$/);
+    if (match) {
+        const value = Number(match[1]);
+        const unit = match[2];
+        if (Number.isFinite(value) && value > 0) {
+            return unit === 'B' ? value * 1e9 : value * 1e6;
+        }
+    }
+    return undefined;
+}
 const OLLAMA_META_TTL_MS = 10 * 60 * 1000;
 const ollamaMetaCache = new Map();
 export function clearOllamaModelMetaCache() {
@@ -105,6 +169,7 @@ export class OllamaProvider extends LLMProvider {
                 : [];
             const meta = {
                 contextLength,
+                parameterCount: parseParameterCount(data),
                 supportsTools: caps.length > 0 ? caps.includes('tools') : undefined,
                 supportsVision: caps.length > 0 ? caps.includes('vision') : undefined,
                 fetchedAt: Date.now()
@@ -174,8 +239,13 @@ export class OllamaProvider extends LLMProvider {
         const meta = this.configuredNumCtx
             ? (ollamaMetaCache.get(cacheKey) ?? null)
             : await this.probeModelMeta(endpoint, headers, secrets, options.signal);
-        const effectiveNumCtx = this.configuredNumCtx
-            ?? (meta?.contextLength ? Math.min(meta.contextLength, 32_768) : 16_384);
+        const estPromptChars = sanitizedMessages.reduce((acc, m) => acc + String(m?.content ?? '').length, 0);
+        const effectiveNumCtx = computeAdaptiveOllamaNumCtx({
+            configuredNumCtx: this.configuredNumCtx,
+            modelContextLength: meta?.contextLength,
+            parameterCount: meta?.parameterCount,
+            estimatedPromptTokens: Math.ceil(estPromptChars / 4)
+        });
         this.contextWindow = effectiveNumCtx;
         const ollamaOptions = {
             temperature: resolveTemperature(options.temperature, 0.1),
@@ -199,6 +269,7 @@ export class OllamaProvider extends LLMProvider {
                 ? this.injectTextToolContracts(sanitizedMessages, options.tools)
                 : sanitizedMessages,
             stream: false,
+            keep_alive: '10m',
             options: ollamaOptions,
             ...(useNativeTools && adaptedTools ? { tools: adaptedTools } : {}),
             ...(options.jsonMode ? { format: 'json' } : {})
