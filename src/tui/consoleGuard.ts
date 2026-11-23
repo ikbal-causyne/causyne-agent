@@ -13,6 +13,25 @@ export interface TransientNoticeHost {
 const activeStageHosts = new Set<ConsoleGuardStageHost>();
 let stageMouseSessionDepth = 0;
 let guardInstalled = false;
+const MAX_CAPTURED_STAGE_DIAGNOSTICS = 64;
+const suppressedStageDiagnostics: string[] = [];
+
+function recordSuppressedDiagnostic(source: string, rawText: string): void {
+  const clean = safeDisplay(rawText).replace(/\s+/g, ' ').trim();
+  if (!clean) return;
+  suppressedStageDiagnostics.push(`[${source}] ${clean.slice(0, 400)}`);
+  if (suppressedStageDiagnostics.length > MAX_CAPTURED_STAGE_DIAGNOSTICS) {
+    suppressedStageDiagnostics.splice(0, suppressedStageDiagnostics.length - MAX_CAPTURED_STAGE_DIAGNOSTICS);
+  }
+}
+
+export function peekSuppressedStageDiagnostics(): string[] {
+  return [...suppressedStageDiagnostics];
+}
+
+export function drainSuppressedStageDiagnostics(): string[] {
+  return suppressedStageDiagnostics.splice(0, suppressedStageDiagnostics.length);
+}
 
 const originalConsole = {
   log: console.log.bind(console),
@@ -76,24 +95,26 @@ function ensureConsoleGuardInstalled(): void {
   if (guardInstalled) return;
   guardInstalled = true;
 
-  const wrap = (fn: (...args: unknown[]) => void) => (...args: unknown[]): void => {
+  const wrap = (label: string, fn: (...args: unknown[]) => void) => (...args: unknown[]): void => {
     if (isAnyStageReservedOnStdout()) {
       // Never write raw console output while the full-screen TUI Stage owns stdout,
       // because the terminal cursor rests inside the composer input box and raw
       // writes corrupt the composer rows and shift the physical cursor.
+      recordSuppressedDiagnostic(label, args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
       return;
     }
     fn(...args);
   };
 
-  console.log = wrap(originalConsole.log);
-  console.info = wrap(originalConsole.info);
-  console.warn = wrap(originalConsole.warn);
-  console.error = wrap(originalConsole.error);
+  console.log = wrap('console.log', originalConsole.log);
+  console.info = wrap('console.info', originalConsole.info);
+  console.warn = wrap('console.warn', originalConsole.warn);
+  console.error = wrap('console.error', originalConsole.error);
 
   if (originalStderrWrite && process.stderr) {
     process.stderr.write = ((chunk: unknown, encodingOrCb?: unknown, cb?: unknown): boolean => {
       if (isAnyStageReservedOnStdout()) {
+        recordSuppressedDiagnostic('stderr', chunkToText(chunk, encodingOrCb));
         if (typeof encodingOrCb === 'function') (encodingOrCb as () => void)();
         else if (typeof cb === 'function') (cb as () => void)();
         return true;
@@ -105,9 +126,10 @@ function ensureConsoleGuardInstalled(): void {
   if (originalStdoutWrite && process.stdout) {
     process.stdout.write = ((chunk: unknown, encodingOrCb?: unknown, cb?: unknown): boolean => {
       if (isAnyStageReservedOnStdout() && !stageInternalWriting) {
-        // Prevent rogue unmanaged writes from emitting newlines, CRs, or escape codes that corrupt the stage
+        // Prevent any rogue unmanaged stdout writes from corrupting the active Stage rows/cursor
         const text = chunkToText(chunk, encodingOrCb);
-        if (text.includes('\n') || text.includes('\r') || text.includes('\x1b')) {
+        if (text.length > 0) {
+          recordSuppressedDiagnostic('stdout', text);
           if (typeof encodingOrCb === 'function') (encodingOrCb as () => void)();
           else if (typeof cb === 'function') (cb as () => void)();
           return true;

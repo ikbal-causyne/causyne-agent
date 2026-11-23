@@ -171,8 +171,17 @@ export class KeyDecoder {
             if (text.length <= 64 && /^\[<(?:\d{0,6}(?:;\d{0,6}){0,2})$/.test(text))
                 return 0;
         }
-        if (byte === 0x0d || byte === 0x0a) {
-            events.push(makeKey('enter', { sequence: String.fromCharCode(byte) }));
+        if (byte === 0x0d) {
+            // Deduplicate CRLF (\r\n) emitted by Windows ConPTY and piped scripts into one Enter.
+            if (buffer[offset + 1] === 0x0a) {
+                events.push(makeKey('enter', { sequence: '\r\n' }));
+                return 2;
+            }
+            events.push(makeKey('enter', { sequence: '\r' }));
+            return 1;
+        }
+        if (byte === 0x0a) {
+            events.push(makeKey('enter', { sequence: '\n' }));
             return 1;
         }
         if (byte === 0x7f || byte === 0x08) {
@@ -337,28 +346,40 @@ export class KeyDecoder {
         const params = text.slice(2, index);
         const sequence = text.slice(0, index + 1);
         const byteLength = Buffer.byteLength(sequence, 'utf8');
-        const numbers = params.split(/[;:]/).map((part) => parseInt(part, 10));
+        // Parse `;`-separated CSI parameter fields separately from `:` sub-parameters
+        // (Kitty keyboard protocol: `codepoint[:shifted[:base]];modifiers[:eventType]`).
+        const fields = params.split(';');
+        const primarySub = (fields[0] ?? '').split(':').map((part) => parseInt(part, 10));
+        const modifierSub = (fields[1] ?? '').split(':').map((part) => parseInt(part, 10));
+        const primaryCode = primarySub[0];
+        const shiftedCode = primarySub[1];
+        const modifierVal = fields.length > 1 ? modifierSub[0] : undefined;
+        const eventType = fields.length > 1 && Number.isFinite(modifierSub[1]) ? modifierSub[1] : 1;
         // SGR mouse: ESC [ < b ; x ; y M|m. `<` is 0x3C, outside the @..~ final
         // range, so the scan above already found the right final byte.
         if ((final === 'M' || final === 'm') && params.startsWith('<')) {
             return this.emitMouse(params.slice(1).split(';').map((n) => parseInt(n, 10)), final === 'M', sequence, events, byteLength);
         }
+        // Kitty keyboard protocol event type 3 = key release: consume without duplicating press.
+        if (eventType === 3 && (final === 'u' || final === '~' || Object.hasOwn(CSI_FINAL_NAMES, final))) {
+            return byteLength;
+        }
         if (final === '~') {
-            const code = numbers[0];
+            const code = primaryCode;
             const name = code !== undefined && Object.hasOwn(CSI_TILDE_NAMES, code) ? CSI_TILDE_NAMES[code] : undefined;
             if (name) {
-                events.push(applyModifier(makeKey(name, { sequence }), numbers[1]));
+                events.push(applyModifier(makeKey(name, { sequence }), modifierVal));
                 return byteLength;
             }
         }
         else if (final === 'u') {
-            // Kitty keyboard protocol: ESC [ codepoint ; modifiers u
-            const codepoint = numbers[0];
+            // Kitty keyboard protocol: ESC [ codepoint[:shifted] ; modifiers[:eventType] u
+            const codepoint = primaryCode;
             const controlName = codepoint !== undefined && Object.hasOwn(KITTY_CONTROL_NAMES, codepoint)
                 ? KITTY_CONTROL_NAMES[codepoint]
                 : undefined;
             if (controlName) {
-                events.push(applyModifier(makeKey(controlName, { sequence }), numbers[1]));
+                events.push(applyModifier(makeKey(controlName, { sequence }), modifierVal));
                 return byteLength;
             }
             if (codepoint !== undefined &&
@@ -366,20 +387,25 @@ export class KeyDecoder {
                 codepoint >= 32 &&
                 codepoint <= 0x10ffff &&
                 (codepoint < 0xd800 || codepoint > 0xdfff)) {
-                const character = String.fromCodePoint(codepoint);
-                const key = applyModifier(makeKey('char', { sequence, text: character }), numbers[1]);
+                const key = applyModifier(makeKey('char', { sequence, text: '' }), modifierVal);
+                const effectiveCodepoint = (key.shift && !key.ctrl && !key.alt &&
+                    shiftedCode !== undefined && Number.isFinite(shiftedCode) &&
+                    shiftedCode >= 32 && shiftedCode <= 0x10ffff &&
+                    (shiftedCode < 0xd800 || shiftedCode > 0xdfff)) ? shiftedCode : codepoint;
+                const character = String.fromCodePoint(effectiveCodepoint);
+                key.text = character;
                 // Ctrl+char is a command, not text — the caller must not insert it.
                 if (key.ctrl || key.alt)
                     key.text = '';
                 if (key.name === 'char' && !key.text)
-                    key.name = character.toLowerCase();
+                    key.name = String.fromCodePoint(codepoint).toLowerCase();
                 events.push(key);
                 return byteLength;
             }
         }
         else if (Object.hasOwn(CSI_FINAL_NAMES, final)) {
             const finalName = CSI_FINAL_NAMES[final] ?? 'unknown';
-            const key = applyModifier(makeKey(finalName, { sequence }), numbers.length > 1 ? numbers[1] : undefined);
+            const key = applyModifier(makeKey(finalName, { sequence }), modifierVal);
             // ESC [ Z is Shift+Tab and carries no modifier parameter of its own.
             if (final === 'Z')
                 key.shift = true;
