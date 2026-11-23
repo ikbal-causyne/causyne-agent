@@ -1325,7 +1325,13 @@ export const COMMANDS: SlashCommandDefinition[] = [
         const res = runPasteCommand([], ctx);
         return res.ok ? ok(res.output, { effect: 'silent' }) : fail(res.output);
       }
-      const rawPath = argv.join(' ').trim();
+      let rawPath = argv.join(' ').trim();
+      if (
+        (rawPath.startsWith('"') && rawPath.endsWith('"') && rawPath.length >= 2) ||
+        (rawPath.startsWith("'") && rawPath.endsWith("'") && rawPath.length >= 2)
+      ) {
+        rawPath = rawPath.slice(1, -1).trim();
+      }
       if (!rawPath || rawPath.includes('\0')) {
         return fail('Invalid image path.');
       }
@@ -3193,12 +3199,86 @@ export function listCommands(surface = 'terminal'): SlashCommandDefinition[] {
  * command, and neither is a path like "/usr/local/bin" — requiring a letter
  * immediately after the slash keeps absolute paths out of the command namespace.
  */
+/**
+ * Tokenize slash-command arguments in linear O(n) time supporting single quotes,
+ * double quotes, and macOS/POSIX escaped spaces while preserving literal
+ * Windows backslashes before ordinary path characters (e.g. `C:\Users\name`).
+ */
+export function tokenizeCommandArgs(input: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inToken = false;
+  let quote: '"' | "'" | null = null;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!;
+    if (quote === "'") {
+      if (ch === "'") {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (quote === '"') {
+      if (ch === '"') {
+        quote = null;
+      } else if (ch === '\\' && i + 1 < input.length) {
+        const next = input[i + 1]!;
+        if (next === '"' || next === '\\') {
+          current += next;
+          i++;
+        } else {
+          current += ch;
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      inToken = true;
+      continue;
+    }
+
+    if (ch === '\\' && i + 1 < input.length) {
+      const next = input[i + 1]!;
+      if (next === ' ' || next === '\t' || next === '"' || next === "'") {
+        current += next;
+        inToken = true;
+        i++;
+        continue;
+      }
+    }
+
+    if (/\s/.test(ch)) {
+      if (inToken) {
+        tokens.push(current);
+        current = '';
+        inToken = false;
+      }
+      continue;
+    }
+
+    current += ch;
+    inToken = true;
+  }
+
+  if (inToken) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
 export function parseCommand(input: unknown): ParsedCommand | null {
   if (typeof input !== 'string' || input.length > 65_536 || input.includes('\0')) return null;
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
 
-  const parts = trimmed.slice(1).split(/\s+/).filter(Boolean);
+  const parts = tokenizeCommandArgs(trimmed.slice(1));
   const name = (parts.shift() || '').toLowerCase();
 
   // The name must be a single bare word. Requiring that is what keeps absolute
