@@ -75,6 +75,11 @@ const CREDENTIAL_SUBPATHS = [
   '.pypirc',
   '.npmrc',
   '.docker/config.json',
+  '.config/gh',
+  '.config/gcloud',
+  '.azure',
+  '.terraform.d',
+  '.vault-token',
   'Library/Keychains'
 ];
 
@@ -145,6 +150,47 @@ function resolveCanonicalPaths(rawPath: string): string[] {
   }
   out.add(resolved);
   return [...out];
+}
+
+function resolveWorktreeGitDirs(workspacePath: string): string[] {
+  const dirs: string[] = [];
+  try {
+    const dotGit = path.join(path.resolve(workspacePath), '.git');
+    const stat = fs.lstatSync(dotGit);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0 || stat.size > 4096) {
+      return dirs;
+    }
+    const raw = fs.readFileSync(dotGit, 'utf8').trim();
+    if (!raw.toLowerCase().startsWith('gitdir:')) return dirs;
+    const rawTarget = raw.slice('gitdir:'.length).trim();
+    if (!rawTarget || rawTarget.includes('\0')) return dirs;
+    const resolvedGitDir = path.isAbsolute(rawTarget)
+      ? path.resolve(rawTarget)
+      : path.resolve(path.dirname(dotGit), rawTarget);
+    const gitDirStat = fs.lstatSync(resolvedGitDir);
+    if (!gitDirStat.isSymbolicLink() && gitDirStat.isDirectory()) {
+      dirs.push(resolvedGitDir);
+      // Also allow the common parent .git directory when referenced via commondir
+      const commonDirFile = path.join(resolvedGitDir, 'commondir');
+      try {
+        const cStat = fs.lstatSync(commonDirFile);
+        if (!cStat.isSymbolicLink() && cStat.isFile() && cStat.size > 0 && cStat.size <= 4096) {
+          const commonRel = fs.readFileSync(commonDirFile, 'utf8').trim();
+          if (commonRel && !commonRel.includes('\0')) {
+            const commonAbs = path.isAbsolute(commonRel)
+              ? path.resolve(commonRel)
+              : path.resolve(resolvedGitDir, commonRel);
+            if (!fs.lstatSync(commonAbs).isSymbolicLink() && fs.statSync(commonAbs).isDirectory()) {
+              dirs.push(commonAbs);
+            }
+          }
+        }
+      } catch { /* ignore absent commondir */ }
+    }
+  } catch {
+    // Workspace is not a linked git worktree
+  }
+  return dirs;
 }
 
 function isSameOrChildPath(candidate: string, parent: string): boolean {
@@ -295,7 +341,7 @@ export function probeOsSandbox(options?: {
         reason: 'Linux bubblewrap (bwrap) is not installed.'
       };
     } else {
-      const check = spawnSync(bwrapPath, ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '/bin/true'], {
+      const check = spawnSync(bwrapPath, ['--unshare-pid', '--unshare-ipc', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '/bin/true'], {
         stdio: 'ignore',
         timeout: 3000,
         windowsHide: true,
@@ -370,6 +416,8 @@ export function buildSeatbeltProfile(options: OsSandboxWrapOptions): string {
 
   if (options.allowNetwork === false) {
     lines.push('(deny network-outbound (remote ip))');
+    // Preserve loopback access so local dev/test servers and local Ollama remain reachable
+    lines.push('(allow network-outbound (remote ip "localhost:*"))');
   }
 
   lines.push('(deny file-write*)');
@@ -399,6 +447,9 @@ export function buildSeatbeltProfile(options: OsSandboxWrapOptions): string {
 
     for (const ws of workspaces) {
       addWritable(ws);
+      for (const gitDir of resolveWorktreeGitDirs(ws)) {
+        addWritable(gitDir);
+      }
     }
 
     if (options.includeTempDirs !== false) {
@@ -491,6 +542,8 @@ export function buildBubblewrapArgs(
 
   const args: string[] = [
     '--die-with-parent',
+    '--unshare-pid',
+    '--unshare-ipc',
     '--ro-bind', '/', '/',
     '--dev', '/dev',
     '--proc', '/proc'
@@ -516,6 +569,12 @@ export function buildBubblewrapArgs(
 
     for (const ws of workspaces) {
       bindIfExists(ws);
+      for (const variant of resolveCanonicalPaths(ws)) {
+        bindIfExists(variant);
+      }
+      for (const gitDir of resolveWorktreeGitDirs(ws)) {
+        bindIfExists(gitDir);
+      }
     }
     if (options.allowDevCaches !== false && homeDir) {
       for (const rel of DEV_CACHE_SUBPATHS) {

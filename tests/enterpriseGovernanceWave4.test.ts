@@ -11,6 +11,7 @@ import { loadProjectInstructions } from '../src/projectInstructions.js';
 import { MemoryManager } from '../src/memoryManager.js';
 import { getActiveSessionId } from '../src/sessionStore.js';
 import { runHeadlessTask } from '../src/headlessCli.js';
+import { buildSeatbeltProfile, buildBubblewrapArgs } from '../src/tools/osSandbox.js';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -253,5 +254,42 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     } finally {
       process.exitCode = prevExitCode ?? 0;
     }
+  });
+
+  test('osSandbox preserves Seatbelt localhost loopback, expands cloud credentials, auto-allows git worktree gitdir, and isolates Linux pid/ipc', () => {
+    const fakeHome = path.join(TMP, 'sb-wave4-home');
+    const mainGit = path.join(fakeHome, 'repo', '.git');
+    const wtGitDir = path.join(mainGit, 'worktrees', 'wt1');
+    const wtWs = path.join(fakeHome, 'repo', '.causyne-worktrees', 'wt1');
+    fs.mkdirSync(wtGitDir, { recursive: true });
+    fs.mkdirSync(wtWs, { recursive: true });
+    fs.writeFileSync(path.join(wtWs, '.git'), `gitdir: ${wtGitDir}\n`, 'utf8');
+    fs.writeFileSync(path.join(wtGitDir, 'commondir'), '../..\n', 'utf8');
+
+    const profile = buildSeatbeltProfile({
+      mode: 'workspace-write',
+      cwd: wtWs,
+      workspaceRoots: [wtWs],
+      homeDir: fakeHome,
+      allowNetwork: false,
+      includeTempDirs: false
+    });
+    assert.match(profile, /\(allow network-outbound \(remote ip "localhost:\*"\)\)/);
+    assert.ok(profile.includes('.config/gcloud'));
+    assert.ok(profile.includes('.config/gh'));
+    assert.ok(profile.includes('.azure'));
+    assert.ok(profile.includes('.terraform.d'));
+    assert.ok(profile.includes(path.basename(wtGitDir)), 'worktree gitdir must be writable');
+
+    const bwrapArgs = buildBubblewrapArgs('/bin/sh', ['-c', 'true'], {
+      mode: 'workspace-write',
+      cwd: wtWs,
+      workspaceRoots: [wtWs],
+      homeDir: fakeHome,
+      allowNetwork: false
+    });
+    assert.ok(bwrapArgs.includes('--unshare-pid'));
+    assert.ok(bwrapArgs.includes('--unshare-ipc'));
+    assert.ok(bwrapArgs.includes(wtGitDir));
   });
 });
