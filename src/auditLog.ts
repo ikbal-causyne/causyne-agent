@@ -1,15 +1,30 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 import { redactTextSecrets } from './providers/byokHttp.js';
 
 export type AuditLogEvent = Record<string, unknown>;
 
-export interface AuditLogEntry extends AuditLogEvent {
-  ts: string;
+export interface AuditLogContext {
+  actor?: string | undefined;
+  sessionId?: string | undefined;
+  workspace?: string | undefined;
+  provider?: string | undefined;
 }
 
-export type AuditExportFormat = 'jsonl' | 'csv';
+export interface AuditLogEntry extends AuditLogEvent {
+  ts: string;
+  prevHash?: string | undefined;
+  entryHash?: string | undefined;
+  actor?: string | undefined;
+  sessionId?: string | undefined;
+  workspace?: string | undefined;
+  provider?: string | undefined;
+}
+
+export type AuditExportFormat = 'jsonl' | 'csv' | 'ocsf';
 
 export interface AuditExportOptions {
   days?: number | undefined;
@@ -18,11 +33,141 @@ export interface AuditExportOptions {
   tool?: string | undefined;
 }
 
+export interface AuditChainError {
+  file: string;
+  line: number;
+  reason: string;
+}
+
+export interface AuditChainVerificationResult {
+  ok: boolean;
+  filesChecked: number;
+  entriesVerified: number;
+  legacyEntries: number;
+  errors: AuditChainError[];
+}
+
+export interface AuditPruneResult {
+  deleted: string[];
+  kept: number;
+}
+
 const AUDIT_FILENAME_RE = /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/;
+const GENESIS_HASH = 'GENESIS';
 const MAX_AUDIT_EXPORT_ENTRIES = 50_000;
 const MAX_AUDIT_EXPORT_FILES = 365;
 const CSV_COLUMNS = ['ts', 'event', 'taskId', 'tool', 'risk', 'dimension', 'rule', 'reason', 'details'] as const;
 const CSV_FIXED_KEYS = new Set<string>(['ts', 'event', 'taskId', 'tool', 'risk', 'dimension', 'rule', 'reason']);
+
+function canonicalizeValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== 'object') {
+    return typeof value === 'bigint' ? value.toString() : value;
+  }
+  if (seen.has(value)) return '[circular]';
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => canonicalizeValue(item, seen));
+    }
+    const out = Object.create(null) as Record<string, unknown>;
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      const v = (value as Record<string, unknown>)[key];
+      if (v !== undefined) {
+        out[key] = canonicalizeValue(v, seen);
+      }
+    }
+    return { ...out };
+  } finally {
+    seen.delete(value);
+  }
+}
+
+export function computeAuditEntryHash(prevHash: string, entry: Record<string, unknown>): string {
+  const payload = Object.create(null) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(entry)) {
+    if (k === 'entryHash' || k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    if (v !== undefined) payload[k] = v;
+  }
+  payload.prevHash = prevHash;
+  const canonical = JSON.stringify(canonicalizeValue(payload));
+  return crypto.createHash('sha256').update(prevHash).update('\n').update(canonical).digest('hex');
+}
+
+function readTailSafeUtf8(filePath: string, size: number, maxBytes: number): string {
+  if (size <= maxBytes) {
+    return fs.readFileSync(filePath, 'utf8');
+  }
+  const buf = Buffer.alloc(maxBytes);
+  const fd = fs.openSync(filePath, 'r');
+  let bytesRead = 0;
+  try {
+    bytesRead = fs.readSync(fd, buf, 0, maxBytes, size - maxBytes);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const slice = buf.subarray(0, bytesRead);
+  // Drop the partial leading line so we never slice mid-UTF-8 codepoint or mid-JSON object.
+  const firstNewline = slice.indexOf(0x0a);
+  if (firstNewline === -1) return '';
+  return slice.subarray(firstNewline + 1).toString('utf8');
+}
+
+function ocsfSeverityId(entry: AuditLogEntry): number {
+  const risk = String(entry.risk ?? '').toLowerCase();
+  const event = String(entry.event ?? '').toLowerCase();
+  if (risk === 'extreme' || risk === 'critical' || event.includes('blocked') || event.includes('killed') || event.includes('violation')) {
+    return 4; // High
+  }
+  if (risk === 'high' || risk === 'dangerous' || event.includes('denied') || event.includes('error')) {
+    return 3; // Medium
+  }
+  if (risk === 'medium' || event.includes('warn')) {
+    return 2; // Low
+  }
+  return 1; // Informational
+}
+
+function toOcsfEvent(entry: AuditLogEntry): Record<string, unknown> {
+  const parsedTime = Date.parse(String(entry.ts ?? ''));
+  const timeMs = Number.isFinite(parsedTime) ? parsedTime : Date.now();
+  const eventName = typeof entry.event === 'string' && entry.event.trim() ? entry.event.trim() : 'audit_event';
+  const extras = Object.create(null) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(entry)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    extras[k] = v;
+  }
+  return {
+    metadata: {
+      version: '1.1.0',
+      product: { name: 'Causyne Agent', vendor_name: 'Causyne' },
+      ...(typeof entry.entryHash === 'string' ? { uid: entry.entryHash } : {})
+    },
+    category_uid: 6,
+    category_name: 'Application Activity',
+    class_uid: 6003,
+    class_name: 'API Activity',
+    activity_id: 99,
+    activity_name: eventName,
+    severity_id: ocsfSeverityId(entry),
+    time: timeMs,
+    status: String(entry.event ?? '').includes('blocked') || String(entry.event ?? '').includes('denied') ? 'Failure' : 'Success',
+    message: typeof entry.reason === 'string' ? redactTextSecrets(entry.reason) : eventName,
+    actor: {
+      user: {
+        name: typeof entry.actor === 'string' && entry.actor.trim()
+          ? entry.actor.trim()
+          : (os.userInfo().username || 'local')
+      },
+      ...(typeof entry.sessionId === 'string' ? { session: { uid: entry.sessionId } } : {})
+    },
+    api: {
+      operation: typeof entry.tool === 'string' ? entry.tool : eventName,
+      ...(typeof entry.provider === 'string' ? { service: { name: entry.provider } } : {})
+    },
+    unmapped: { ...extras }
+  };
+}
 
 function neutralizeCsvFormula(text: string): string {
   if (!text) return '';
@@ -89,6 +234,10 @@ export function formatAuditExport(
     }
     return lines.join('\n') + '\n';
   }
+  if (format === 'ocsf') {
+    if (entries.length === 0) return '';
+    return entries.map((entry) => redactTextSecrets(JSON.stringify(toOcsfEvent(entry)))).join('\n') + '\n';
+  }
   if (entries.length === 0) return '';
   return entries.map((entry) => redactTextSecrets(JSON.stringify(entry))).join('\n') + '\n';
 }
@@ -124,6 +273,8 @@ function resolveLogDir(): string {
 
 export class AuditLog {
   logFile: string;
+  private lastHashes = new Map<string, string>();
+  private defaultContext: AuditLogContext = {};
 
   private currentLogFile(): string {
     const date = new Date().toISOString().split('T')[0] || 'unknown';
@@ -134,6 +285,50 @@ export class AuditLog {
   constructor() {
     this.logFile = path.join(resolveLogDir(), `audit-${new Date().toISOString().split('T')[0] || 'unknown'}.jsonl`);
     try { this.ensureLogDir(); } catch { /* fail open on init */ }
+  }
+
+  setContext(ctx: AuditLogContext | null | undefined): void {
+    if (!ctx || typeof ctx !== 'object') {
+      this.defaultContext = {};
+      return;
+    }
+    this.defaultContext = {
+      ...(typeof ctx.actor === 'string' && ctx.actor.trim() ? { actor: ctx.actor.trim() } : {}),
+      ...(typeof ctx.sessionId === 'string' && ctx.sessionId.trim() ? { sessionId: ctx.sessionId.trim() } : {}),
+      ...(typeof ctx.workspace === 'string' && ctx.workspace.trim() ? { workspace: ctx.workspace.trim() } : {}),
+      ...(typeof ctx.provider === 'string' && ctx.provider.trim() ? { provider: ctx.provider.trim() } : {})
+    };
+  }
+
+  private resolvePreviousHash(target: string): string {
+    const cached = this.lastHashes.get(target);
+    if (cached) return cached;
+    try {
+      const stat = fs.lstatSync(target);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) {
+        return GENESIS_HASH;
+      }
+      const tail = readTailSafeUtf8(target, stat.size, 65_536);
+      const lines = tail.split('\n').map((l) => l.trim()).filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const parsed: unknown = JSON.parse(lines[i]!);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const hash = (parsed as Record<string, unknown>).entryHash;
+            if (typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash)) {
+              this.lastHashes.set(target, hash);
+              return hash;
+            }
+            return GENESIS_HASH;
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      // File absent or unreadable; start fresh chain
+    }
+    return GENESIS_HASH;
   }
 
   ensureLogDir(): void {
@@ -156,10 +351,19 @@ export class AuditLog {
       ? eventData
       : { message: eventData == null ? '' : String(eventData) };
     const sanitized = sanitizeAuditValue(normalized) as AuditLogEvent;
+    const contextEnvelope: AuditLogEvent = {};
+    if (this.defaultContext.actor && !('actor' in sanitized)) contextEnvelope.actor = this.defaultContext.actor;
+    if (this.defaultContext.sessionId && !('sessionId' in sanitized)) contextEnvelope.sessionId = this.defaultContext.sessionId;
+    if (this.defaultContext.workspace && !('workspace' in sanitized)) contextEnvelope.workspace = this.defaultContext.workspace;
+    if (this.defaultContext.provider && !('provider' in sanitized)) contextEnvelope.provider = this.defaultContext.provider;
+
     const entry: AuditLogEntry = {
       ts: new Date().toISOString(),
+      ...contextEnvelope,
       ...(sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized) ? sanitized : {})
     };
+    delete entry.prevHash;
+    delete entry.entryHash;
 
     try {
       this.ensureLogDir();
@@ -171,15 +375,30 @@ export class AuditLog {
         const code = typeof statErr === 'object' && statErr !== null && 'code' in statErr ? String(statErr.code) : '';
         if (code !== 'ENOENT') return;
       }
-      let serialized = JSON.stringify(entry);
+      const prevHash = this.resolvePreviousHash(target);
+      let chainedEntry: AuditLogEntry = {
+        ...entry,
+        prevHash,
+        entryHash: computeAuditEntryHash(prevHash, entry)
+      };
+      let serialized = JSON.stringify(chainedEntry);
       if (serialized.length > MAX_AUDIT_ENTRY_CHARS) {
-        serialized = JSON.stringify({
+        const truncatedBase: AuditLogEntry = {
           ts: entry.ts,
           truncated: true,
-          preview: serialized.slice(0, MAX_AUDIT_ENTRY_CHARS - 256)
-        });
+          preview: serialized.slice(0, MAX_AUDIT_ENTRY_CHARS - 384)
+        };
+        chainedEntry = {
+          ...truncatedBase,
+          prevHash,
+          entryHash: computeAuditEntryHash(prevHash, truncatedBase)
+        };
+        serialized = JSON.stringify(chainedEntry);
       }
       fs.appendFileSync(target, serialized + '\n', { encoding: 'utf8', mode: 0o600 });
+      if (typeof chainedEntry.entryHash === 'string') {
+        this.lastHashes.set(target, chainedEntry.entryHash);
+      }
       if (process.platform !== 'win32') {
         try { fs.chmodSync(target, 0o600); } catch { /* ignore */ }
       }
@@ -198,19 +417,7 @@ export class AuditLog {
     try {
       const stat = fs.lstatSync(target);
       if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) return [];
-      let content: string;
-      if (stat.size > MAX_AUDIT_READ_BYTES) {
-        const buf = Buffer.alloc(MAX_AUDIT_READ_BYTES);
-        const fd = fs.openSync(target, 'r');
-        try {
-          fs.readSync(fd, buf, 0, MAX_AUDIT_READ_BYTES, stat.size - MAX_AUDIT_READ_BYTES);
-        } finally {
-          fs.closeSync(fd);
-        }
-        content = buf.toString('utf8');
-      } else {
-        content = fs.readFileSync(target, 'utf8');
-      }
+      const content = readTailSafeUtf8(target, stat.size, MAX_AUDIT_READ_BYTES);
       const lines = content.split('\n').filter(l => l.trim().length > 0);
 
       const parsed: AuditLogEntry[] = [];
@@ -276,19 +483,7 @@ export class AuditLog {
       try {
         const stat = fs.lstatSync(fullPath);
         if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0) continue;
-        let content: string;
-        if (stat.size > MAX_AUDIT_READ_BYTES) {
-          const buf = Buffer.alloc(MAX_AUDIT_READ_BYTES);
-          const fd = fs.openSync(fullPath, 'r');
-          try {
-            fs.readSync(fd, buf, 0, MAX_AUDIT_READ_BYTES, stat.size - MAX_AUDIT_READ_BYTES);
-          } finally {
-            fs.closeSync(fd);
-          }
-          content = buf.toString('utf8');
-        } else {
-          content = fs.readFileSync(fullPath, 'utf8');
-        }
+        const content = readTailSafeUtf8(fullPath, stat.size, MAX_AUDIT_READ_BYTES);
         for (const rawLine of content.split('\n')) {
           const line = rawLine.trim();
           if (!line) continue;
@@ -309,6 +504,157 @@ export class AuditLog {
     }
 
     return entries.length > safeLimit ? entries.slice(-safeLimit) : entries;
+  }
+
+  verifyAuditChain(options: { days?: number | undefined; file?: string | undefined } = {}): AuditChainVerificationResult {
+    const errors: AuditChainError[] = [];
+    let filesChecked = 0;
+    let entriesVerified = 0;
+    let legacyEntries = 0;
+
+    const targetFiles: string[] = [];
+    if (typeof options.file === 'string' && options.file.trim()) {
+      targetFiles.push(path.resolve(options.file.trim()));
+    } else {
+      const dir = resolveLogDir();
+      try {
+        const dirStat = fs.lstatSync(dir);
+        if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
+          let files = fs.readdirSync(dir).filter((name) => AUDIT_FILENAME_RE.test(name)).sort();
+          if (typeof options.days === 'number' && Number.isFinite(options.days) && options.days > 0) {
+            const safeDays = Math.max(1, Math.min(MAX_AUDIT_EXPORT_FILES, Math.floor(options.days)));
+            const cutoff = new Date(Date.now() - (safeDays - 1) * 86_400_000).toISOString().slice(0, 10);
+            files = files.filter((name) => name.slice(6, 16) >= cutoff);
+          }
+          for (const f of files) targetFiles.push(path.join(dir, f));
+        }
+      } catch {
+        // No audit directory yet
+      }
+    }
+
+    for (const fullPath of targetFiles) {
+      try {
+        const stat = fs.lstatSync(fullPath);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+          errors.push({ file: path.basename(fullPath), line: 0, reason: 'Refused symlink or non-regular file' });
+          continue;
+        }
+        filesChecked++;
+        const raw = fs.readFileSync(fullPath, 'utf8');
+        const lines = raw.split('\n');
+        let expectedPrev = GENESIS_HASH;
+        let chainStarted = false;
+        for (let i = 0; i < lines.length; i++) {
+          const trimmed = lines[i]!.trim();
+          if (!trimmed) continue;
+          const lineNum = i + 1;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch {
+            errors.push({ file: path.basename(fullPath), line: lineNum, reason: 'Malformed JSON line' });
+            continue;
+          }
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            errors.push({ file: path.basename(fullPath), line: lineNum, reason: 'Non-object audit record' });
+            continue;
+          }
+          const rec = parsed as Record<string, unknown>;
+          const hasHash = typeof rec.entryHash === 'string' && rec.entryHash.length > 0;
+          const hasPrev = typeof rec.prevHash === 'string' && rec.prevHash.length > 0;
+          if (!hasHash && !hasPrev) {
+            if (chainStarted) {
+              errors.push({ file: path.basename(fullPath), line: lineNum, reason: 'Unchained entry inserted after hash chain started' });
+            } else {
+              legacyEntries++;
+            }
+            continue;
+          }
+          chainStarted = true;
+          if (rec.prevHash !== expectedPrev) {
+            errors.push({
+              file: path.basename(fullPath),
+              line: lineNum,
+              reason: `Broken hash chain: expected prevHash ${expectedPrev.slice(0, 12)}..., got ${String(rec.prevHash ?? '').slice(0, 12)}...`
+            });
+          } else {
+            const recomputed = computeAuditEntryHash(expectedPrev, rec);
+            if (rec.entryHash !== recomputed) {
+              errors.push({
+                file: path.basename(fullPath),
+                line: lineNum,
+                reason: 'Tampered audit entry: SHA-256 entryHash mismatch'
+              });
+            } else {
+              entriesVerified++;
+            }
+          }
+          if (typeof rec.entryHash === 'string' && rec.entryHash.length > 0) {
+            expectedPrev = rec.entryHash;
+          }
+        }
+      } catch (err: unknown) {
+        errors.push({
+          file: path.basename(fullPath),
+          line: 0,
+          reason: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+
+    return {
+      ok: errors.length === 0,
+      filesChecked,
+      entriesVerified,
+      legacyEntries,
+      errors
+    };
+  }
+
+  pruneAuditLogs(retentionDays: number): AuditPruneResult {
+    const safeDays = typeof retentionDays === 'number' && Number.isFinite(retentionDays)
+      ? Math.max(1, Math.min(3650, Math.floor(retentionDays)))
+      : 30;
+    const cutoff = new Date(Date.now() - (safeDays - 1) * 86_400_000).toISOString().slice(0, 10);
+    const dir = resolveLogDir();
+    const deleted: string[] = [];
+    let kept = 0;
+
+    let dirStat: fs.Stats;
+    try {
+      dirStat = fs.lstatSync(dir);
+    } catch {
+      return { deleted, kept };
+    }
+    if (dirStat.isSymbolicLink() || !dirStat.isDirectory()) return { deleted, kept };
+
+    let files: string[];
+    try {
+      files = fs.readdirSync(dir).filter((name) => AUDIT_FILENAME_RE.test(name)).sort();
+    } catch {
+      return { deleted, kept };
+    }
+
+    for (const name of files) {
+      const dateStr = name.slice(6, 16);
+      const fullPath = path.join(dir, name);
+      if (dateStr < cutoff) {
+        try {
+          const stat = fs.lstatSync(fullPath);
+          if (!stat.isSymbolicLink() && stat.isFile()) {
+            fs.unlinkSync(fullPath);
+            this.lastHashes.delete(fullPath);
+            deleted.push(name);
+            continue;
+          }
+        } catch {
+          // ignore unlink failures
+        }
+      }
+      kept++;
+    }
+    return { deleted, kept };
   }
 }
 
