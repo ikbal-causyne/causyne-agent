@@ -244,13 +244,30 @@ export class ChatPrompt {
   }
 
   stop(): void {
-    if (!this.active) return;
+    if (!this.active) {
+      if (this.waiter) {
+        const resolve = this.waiter;
+        this.waiter = null;
+        resolve(null);
+      }
+      return;
+    }
     this.active = false;
     if (this.layer) {
       const layer = this.layer;
       this.layer = null;
       if (typeof layer.answer === 'function') layer.answer(false);
     }
+    if (this.waiter) {
+      const resolve = this.waiter;
+      this.waiter = null;
+      resolve(null);
+    }
+    if (typeof this._unsubscribeFileIndex === 'function') {
+      this._unsubscribeFileIndex();
+      this._unsubscribeFileIndex = null;
+    }
+    this.index?.dispose();
     this.stopTick();
     if (this.inputFrameTimer) { clearTimeout(this.inputFrameTimer); this.inputFrameTimer = null; }
     if (this.decoderRecoveryTimer) { clearTimeout(this.decoderRecoveryTimer); this.decoderRecoveryTimer = null; }
@@ -851,17 +868,18 @@ export class ChatPrompt {
     this.history.add(text);
     this.editor.clear();
     this.completion = null;
-    if ((text.trim().toLowerCase() === '/usage' || text.trim().toLowerCase() === '/cost')
+    const trimmedLower = text.trim().toLowerCase();
+    if ((trimmedLower === '/usage' || trimmedLower === '/cost')
         && typeof this.toggleUsageCard === 'function') {
       void this.toggleUsageCard();
       return;
     }
-    if (text.trim().toLowerCase() === '/status' && typeof this.toggleStatusCard === 'function') {
+    if (trimmedLower === '/status' && typeof this.toggleStatusCard === 'function') {
       this.toggleStatusCard();
       return;
     }
 
-    if (text === '/observer' || text === '/observer status') {
+    if (trimmedLower === '/observer' || trimmedLower === '/observer status') {
       import('./observerPicker.js').then(({ runInteractiveObserverPicker }) => {
         void runInteractiveObserverPicker(this);
       }).catch((err: unknown) => {
@@ -871,13 +889,13 @@ export class ChatPrompt {
       return;
     }
 
-    const commandToken = (text.trim().split(/\s+/, 1)[0] ?? '').toLowerCase();
+    const commandToken = (trimmedLower.split(/\s+/, 1)[0] ?? '').toLowerCase();
     const isControlCommand = this.isCommand(text) && new Set([
       '/stop', '/interrupt', '/new', '/model', '/models',
       '/session', '/sessions', '/continuum', '/clear'
     ]).has(commandToken);
 
-    if ((text === '/stop' || text === '/interrupt') && this.busy) {
+    if ((trimmedLower === '/stop' || trimmedLower === '/interrupt') && this.busy) {
       this.interrupt();
       this.notice = 'Interrupted';
       this.scheduleDraw();
@@ -890,7 +908,7 @@ export class ChatPrompt {
 
     if (this.busy) {
       if (this.isCommand(text)) {
-        this.notice = `Command ${text} queued — will execute when current turn completes`;
+        this.notice = `Command ${this.sanitizeSingleLine(text)} queued — will execute when current turn completes`;
       } else {
         this.notice = `queued (${this.queue.length + 1}) — sends when this turn ends`;
       }
