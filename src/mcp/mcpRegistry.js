@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { McpClient, McpConnectionError } from './mcpClient.js';
 import { globMatchesSafe } from './mcpSecurity.js';
 import { loadConfig, saveConfig } from '../config.js';
@@ -8,10 +10,137 @@ const RESOURCE_LIST_TOOL = '_causyne_resources_list';
 const RESOURCE_READ_TOOL = '_causyne_resource_read';
 const PROMPT_LIST_TOOL = '_causyne_prompts_list';
 const PROMPT_GET_TOOL = '_causyne_prompt_get';
+const MAX_PROJECT_MCP_BYTES = 128 * 1024;
+const BLOCKED_ENV_EXPANSIONS = new Set(['CAUSYNE_VAULT_KEY', 'CAUSYNE_DEV_SECRET', 'CAUSYNE_DEV_TOKEN']);
 const connected = new Map();
 const connecting = new Map();
+const pendingClients = new Map();
 const statuses = new Map();
 const connectionEpochs = new Map();
+const failureBackoff = new Map();
+let activeWorkspaceRoot = null;
+export function setActiveWorkspace(workspace) {
+    if (typeof workspace !== 'string' || !workspace.trim() || workspace.includes('\0'))
+        return;
+    const resolved = path.resolve(workspace);
+    activeWorkspaceRoot = resolved;
+    for (const client of connected.values()) {
+        try {
+            client.setWorkspace(resolved);
+        }
+        catch { /* ignore */ }
+    }
+}
+export function getActiveWorkspace() {
+    return activeWorkspaceRoot || process.cwd();
+}
+export function getMcpToolAnnotations(fullToolName) {
+    const parsed = parseToolName(fullToolName);
+    if (!parsed)
+        return null;
+    const client = connected.get(parsed.server);
+    if (!client)
+        return null;
+    const tool = client.tools.find((item) => item.name === parsed.tool);
+    return tool?.annotations ?? null;
+}
+function expandSafeEnvPlaceholders(raw, env) {
+    return raw.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, varName) => {
+        if (BLOCKED_ENV_EXPANSIONS.has(varName))
+            return '';
+        const val = env[varName];
+        return typeof val === 'string' ? val : '';
+    });
+}
+function expandDefinitionEnvVars(rawObj, env) {
+    const out = Object.create(null);
+    for (const [key, val] of Object.entries(rawObj)) {
+        if (FORBIDDEN_RECORD_KEYS.has(key))
+            continue;
+        if (typeof val === 'string') {
+            out[key] = expandSafeEnvPlaceholders(val, env);
+        }
+        else if (Array.isArray(val)) {
+            out[key] = val.map((item) => (typeof item === 'string' ? expandSafeEnvPlaceholders(item, env) : item));
+        }
+        else if (isRecord(val)) {
+            out[key] = expandDefinitionEnvVars(val, env);
+        }
+        else {
+            out[key] = val;
+        }
+    }
+    return { ...out };
+}
+/**
+ * Discover project-scoped `.mcp.json` server definitions inside a workspace.
+ * Security invariant: discovered definitions are NEVER auto-granted; the caller
+ * must explicitly present them for user trust/grant before launching.
+ */
+export function discoverProjectMcpServers(workspaceDir, env = process.env) {
+    if (typeof workspaceDir !== 'string' || !workspaceDir.trim() || workspaceDir.includes('\0')) {
+        return { servers: [], warnings: [], filePath: null };
+    }
+    const candidate = path.join(path.resolve(workspaceDir), '.mcp.json');
+    try {
+        const stat = fs.lstatSync(candidate);
+        if (stat.isSymbolicLink() || !stat.isFile()) {
+            return { servers: [], warnings: ['Refusing symlink or non-regular .mcp.json'], filePath: candidate };
+        }
+        if (stat.size === 0 || stat.size > MAX_PROJECT_MCP_BYTES) {
+            return { servers: [], warnings: ['Project .mcp.json is empty or exceeds 128 KiB'], filePath: candidate };
+        }
+    }
+    catch {
+        return { servers: [], warnings: [], filePath: null };
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+    }
+    catch (err) {
+        return {
+            servers: [],
+            warnings: [`Malformed .mcp.json: ${err instanceof Error ? err.message : String(err)}`],
+            filePath: candidate
+        };
+    }
+    if (!isRecord(parsed)) {
+        return { servers: [], warnings: ['Project .mcp.json must be a JSON object'], filePath: candidate };
+    }
+    const rawEntries = [];
+    const rawServers = parsed.mcpServers;
+    if (Array.isArray(rawServers)) {
+        for (const item of rawServers) {
+            if (isRecord(item))
+                rawEntries.push(item);
+        }
+    }
+    else if (isRecord(rawServers)) {
+        for (const [name, spec] of Object.entries(rawServers)) {
+            if (FORBIDDEN_RECORD_KEYS.has(name) || !isRecord(spec))
+                continue;
+            rawEntries.push({ ...spec, name });
+        }
+    }
+    const servers = [];
+    const warnings = [];
+    const seen = new Set();
+    for (const entry of rawEntries.slice(0, 32)) {
+        const expanded = expandDefinitionEnvVars(entry, env);
+        const problem = McpClient.validateDefinition(expanded);
+        if (problem) {
+            warnings.push(`Skipped invalid .mcp.json server "${String(expanded.name ?? 'unnamed')}": ${problem}`);
+            continue;
+        }
+        const normalized = normalizeDefinition(expanded);
+        if (!normalized || seen.has(normalized.name))
+            continue;
+        seen.add(normalized.name);
+        servers.push(normalized);
+    }
+    return { servers, warnings, filePath: candidate };
+}
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -206,6 +335,7 @@ export function grantServer(name) {
         [name]: { digest, grantedAt: Date.now() }
     };
     saveConfig(current);
+    failureBackoff.delete(name);
     statuses.set(name, definition.enabled === false ? { state: 'disabled' } : { state: 'disconnected' });
     auditLog.log({ event: 'mcp_server_granted', server: name, definitionDigest: digest.slice(0, 12) });
     return { ok: true };
@@ -260,7 +390,7 @@ export async function connectServer(name) {
     let promise;
     promise = (async () => {
         const client = new McpClient(definition, {
-            workspace: process.cwd(),
+            workspace: getActiveWorkspace(),
             onStatus: status => {
                 if (connectionEpoch(name) !== startedAtEpoch)
                     return;
@@ -269,6 +399,7 @@ export async function connectServer(name) {
                     connected.delete(name);
             }
         });
+        pendingClients.set(name, client);
         statuses.set(name, { state: 'connecting' });
         try {
             await client.connect();
@@ -282,10 +413,18 @@ export async function connectServer(name) {
                 throw new Error(`MCP server "${name}" connection was cancelled`);
             }
             connected.set(name, client);
+            failureBackoff.delete(name);
             statuses.set(name, client.status);
             return client;
         }
         catch (error) {
+            if (connectionEpoch(name) !== startedAtEpoch) {
+                throw new Error(`MCP server "${name}" connection was cancelled`);
+            }
+            const prev = failureBackoff.get(name)?.failures ?? 0;
+            const nextFailures = prev + 1;
+            const delayMs = Math.min(60_000, 15_000 * Math.pow(2, Math.min(3, nextFailures - 1)));
+            failureBackoff.set(name, { failures: nextFailures, retryAfter: Date.now() + delayMs });
             const status = error instanceof McpConnectionError
                 ? { state: error.state, error: error.message }
                 : { state: 'failed', error: error instanceof Error ? error.message : String(error) };
@@ -294,6 +433,8 @@ export async function connectServer(name) {
             throw error;
         }
         finally {
+            if (pendingClients.get(name) === client)
+                pendingClients.delete(name);
             if (connecting.get(name) === promise)
                 connecting.delete(name);
         }
@@ -303,21 +444,32 @@ export async function connectServer(name) {
 }
 export async function disconnectServer(name) {
     invalidateConnection(name);
+    failureBackoff.delete(name);
     const client = connected.get(name);
+    const pending = pendingClients.get(name);
     connected.delete(name);
     connecting.delete(name);
+    pendingClients.delete(name);
     if (client)
         await client.close();
+    if (pending && pending !== client)
+        await pending.close();
     if (configuredServers().some(server => server.name === name))
         statuses.set(name, { state: 'disconnected' });
 }
 export async function refreshServer(name) {
+    failureBackoff.delete(name);
     const client = await connectServer(name);
     return client.refreshTools();
 }
 export async function discoverTools() {
     const granted = configuredServers().filter(server => isServerGranted(server.name));
+    const now = Date.now();
     const results = await Promise.all(granted.map(async (server) => {
+        const backoff = failureBackoff.get(server.name);
+        if (backoff && now < backoff.retryAfter && !connected.has(server.name)) {
+            return [];
+        }
         try {
             const client = await connectServer(server.name);
             return client.tools
@@ -417,12 +569,28 @@ export function serverStatus() {
         return status.error ? { ...result, error: status.error } : result;
     });
 }
-export async function closeAll() {
-    for (const name of new Set([...connected.keys(), ...connecting.keys()]))
-        invalidateConnection(name);
-    const clients = [...connected.values()];
+export function closeAllSync() {
+    const all = new Set([...connected.values(), ...pendingClients.values()]);
     connected.clear();
     connecting.clear();
+    pendingClients.clear();
+    failureBackoff.clear();
+    for (const client of all) {
+        try {
+            client.closeSync();
+        }
+        catch { /* ignore */ }
+    }
+}
+process.on('exit', closeAllSync);
+export async function closeAll() {
+    for (const name of new Set([...connected.keys(), ...connecting.keys(), ...pendingClients.keys()]))
+        invalidateConnection(name);
+    const clients = [...new Set([...connected.values(), ...pendingClients.values()])];
+    connected.clear();
+    connecting.clear();
+    pendingClients.clear();
+    failureBackoff.clear();
     await Promise.allSettled(clients.map(client => client.close()));
     statuses.clear();
     connectionEpochs.clear();

@@ -17,6 +17,8 @@ import { createWorktree, inspectWorktreeDiff, mergeWorktree, pruneManagedWorktre
 import { parseUnifiedDiff, collectWorkingTreeDiff } from '../src/diffReview.js';
 import { detectDefaultBranch, preparePrDraft } from '../src/prWorkflow.js';
 import { TokenTracker } from '../src/tokenTracker.js';
+import { McpClient } from '../src/mcp/mcpClient.js';
+import { discoverProjectMcpServers, setActiveWorkspace, getActiveWorkspace } from '../src/mcp/mcpRegistry.js';
 import { execFileSync } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
@@ -400,5 +402,44 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
 
     tracker.config = { provider: 'openrouter', model: 'anthropic/claude-sonnet-4-5' };
     assert.equal(tracker.calculateCost(1000, 500, { costUsd: 0.0042 }), 0.0042);
+  });
+
+  test('MCP enforces HTTPS for credential headers, rejects __ server names, binds active workspace, and discovers .mcp.json without auto-grant', () => {
+    assert.match(McpClient.validateDefinition({ name: 'bad__name', command: 'node' }) || '', /must not contain "__"/);
+    assert.match(
+      McpClient.validateDefinition({
+        name: 'remote-http',
+        url: 'http://mcp.example.com/rpc',
+        headers: { Authorization: 'Bearer secret' }
+      }) || '',
+      /must use https/i
+    );
+    // Loopback HTTP with auth headers remains allowed for local development
+    assert.equal(
+      McpClient.validateDefinition({
+        name: 'local-http',
+        url: 'http://127.0.0.1:8080/rpc',
+        headers: { Authorization: 'Bearer dev' }
+      }),
+      null
+    );
+
+    const mcpWs = path.join(TMP, 'mcp-project-ws');
+    fs.mkdirSync(mcpWs, { recursive: true });
+    setActiveWorkspace(mcpWs);
+    assert.equal(getActiveWorkspace(), path.resolve(mcpWs));
+
+    fs.writeFileSync(path.join(mcpWs, '.mcp.json'), JSON.stringify({
+      mcpServers: {
+        docs: { command: 'node', args: ['server.js'], env: { API_TOKEN: '${TEST_MCP_TOKEN}', LEAK: '${CAUSYNE_VAULT_KEY}' } },
+        'bad__server': { command: 'node' }
+      }
+    }), 'utf8');
+    const discovered = discoverProjectMcpServers(mcpWs, { TEST_MCP_TOKEN: 'tok-123', CAUSYNE_VAULT_KEY: 'must-not-expand' });
+    assert.equal(discovered.servers.length, 1);
+    assert.equal(discovered.servers[0]!.name, 'docs');
+    assert.equal(discovered.servers[0]!.env?.API_TOKEN, 'tok-123');
+    assert.equal(discovered.servers[0]!.env?.LEAK, '', 'vault keys must never expand into .mcp.json');
+    assert.equal(discovered.warnings.length, 1);
   });
 });

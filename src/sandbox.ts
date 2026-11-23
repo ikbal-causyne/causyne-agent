@@ -6,6 +6,7 @@ import { loadConfig, type CausyneConfig } from './config.js';
 import { isDevEmulator } from './devMode.js';
 import { validateBrowserActSandbox } from './browser/causyneBrowser.js';
 import { extractPatchTargetPaths } from './tools/applyPatch.js';
+import { getMcpToolAnnotations } from './mcp/mcpRegistry.js';
 import { isPhysicalPathAllowed, physicalPath } from './agent/workspaceBoundary.js';
 import {
   isBlockedWorkspaceRoot,
@@ -365,6 +366,13 @@ export class Sandbox {
     }
     if (canonicalToolName.startsWith('plugin__')) {
       return withCredentialEscalation({ allowed: true, risk: 'extreme', reason: 'Executes an enabled local plugin' });
+    }
+    if (canonicalToolName.startsWith('mcp__')) {
+      const annotations = getMcpToolAnnotations(canonicalToolName);
+      if (annotations && annotations.destructiveHint === true) {
+        return withCredentialEscalation({ allowed: true, risk: 'dangerous', reason: 'MCP tool declares destructiveHint' });
+      }
+      return withCredentialEscalation({ allowed: true, risk: 'safe' });
     }
 
     if (canonicalToolName === 'fs_delete') {
