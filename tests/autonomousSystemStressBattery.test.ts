@@ -331,7 +331,8 @@ describe('Autonomous Quantitative Stress & Penetration Battery', () => {
       await Promise.all(tasks);
       const dur = performance.now() - t0;
 
-      assert.ok(dur < 5000, `500 concurrent atomic writes took ${dur.toFixed(2)}ms (< 5000ms threshold)`);
+      const maxMs = process.platform === 'win32' ? 20_000 : 5_000;
+      assert.ok(dur < maxMs, `500 concurrent atomic writes took ${dur.toFixed(2)}ms (< ${maxMs}ms threshold)`);
     });
   });
 

@@ -14,6 +14,12 @@ import {
   pickBestZeroCostProvider
 } from '../src/zeroCostRouting.js';
 import { runCompactSlashCommand } from '../src/core/contextCompactor.js';
+import {
+  isZeroCostFailoverEligible,
+  selectNextZeroCostRoute
+} from '../src/zeroCostFailover.js';
+import { createProvider } from '../src/providers/factory.js';
+import { freeKeySignupHint } from '../src/tui/setup.js';
 
 describe('Wave 5 — Zero-Cost Provider Resilience, Compaction & Diagnostics', () => {
   test('isZeroCostRoute classifies local, OpenRouter Free, ACP, and paid BYOK routes accurately', () => {
@@ -151,5 +157,96 @@ describe('Wave 5 — Zero-Cost Provider Resilience, Compaction & Diagnostics', (
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  test('Groq, Cerebras, Mistral, and Gemini Free presets instantiate cleanly and expose zero-card setup hints', () => {
+    const groq = createProvider({ provider: 'groq', apiKey: 'test-groq-key' }) as any;
+    assert.equal(groq.providerLabel, 'Groq');
+    assert.equal(groq.baseUrl, 'https://api.groq.com/openai/v1/chat/completions');
+    assert.equal(groq.model, 'openai/gpt-oss-120b');
+
+    const cerebras = createProvider({ provider: 'cerebras', apiKey: 'test-cerebras-key' }) as any;
+    assert.equal(cerebras.providerLabel, 'Cerebras');
+    assert.equal(cerebras.baseUrl, 'https://api.cerebras.ai/v1/chat/completions');
+    assert.equal(cerebras.model, 'qwen-3-32b');
+
+    const mistral = createProvider({ provider: 'mistral', apiKey: 'test-mistral-key' }) as any;
+    assert.equal(mistral.providerLabel, 'Mistral');
+    assert.equal(mistral.baseUrl, 'https://api.mistral.ai/v1/chat/completions');
+    assert.equal(mistral.model, 'devstral-small-latest');
+
+    const geminiFree = createProvider({ provider: 'gemini-free', apiKey: 'test-gem-key' }) as any;
+    assert.equal(geminiFree.model, 'gemini-2.5-flash');
+
+    assert.match(freeKeySignupHint('groq'), /console\.groq\.com/);
+    assert.match(freeKeySignupHint('cerebras'), /cloud\.cerebras\.ai/);
+    assert.match(freeKeySignupHint('gemini-free'), /aistudio\.google\.com/);
+    assert.match(freeKeySignupHint('mistral'), /console\.mistral\.ai/);
+  });
+
+  test('selectNextZeroCostRoute fails over strictly across $0 tiers, prefers Ollama on network errors, and refuses paid BYOK', async () => {
+    assert.equal(isZeroCostFailoverEligible('openai', 'gpt-4o'), false);
+    assert.equal(isZeroCostFailoverEligible('openrouter', 'anthropic/claude-sonnet-4-6'), false);
+    assert.equal(isZeroCostFailoverEligible('openrouter', 'qwen/qwen3-coder:free'), true);
+    assert.equal(isZeroCostFailoverEligible('groq', 'openai/gpt-oss-120b'), true);
+
+    const candidates = [
+      {
+        id: 'openrouter-free', label: 'OpenRouter Free', provider: 'openrouter-free',
+        model: 'openrouter/free', costTier: 'cloud_free' as const, readiness: 'ready' as const, reason: 'ok'
+      },
+      {
+        id: 'groq', label: 'Groq Free', provider: 'groq',
+        model: 'openai/gpt-oss-120b', costTier: 'cloud_free' as const, readiness: 'ready' as const, reason: 'ok'
+      },
+      {
+        id: 'ollama', label: 'Ollama Local', provider: 'ollama',
+        model: 'qwen2.5-coder:7b', costTier: 'offline_free' as const, readiness: 'ready' as const, reason: 'ok'
+      },
+      {
+        id: 'acp/opencode', label: 'OpenCode ACP', provider: 'acp/opencode',
+        model: 'opencode/big-pickle', costTier: 'peer_free' as const, readiness: 'ready' as const, reason: 'ok'
+      }
+    ];
+
+    // Paid BYOK never enters zero-cost failover
+    const paidRefused = await selectNextZeroCostRoute({
+      currentProvider: 'anthropic',
+      currentModel: 'claude-3-7-sonnet',
+      candidates
+    });
+    assert.equal(paidRefused, null);
+
+    // Rate limit on OpenRouter Free -> Groq Free next, with Groq's own key (never OpenRouter's key)
+    const on429 = await selectNextZeroCostRoute({
+      currentProvider: 'openrouter-free',
+      currentModel: 'openrouter/free',
+      candidates,
+      env: { GROQ_API_KEY: 'groq-free-key' },
+      reason: 'rate_limit'
+    });
+    assert.ok(on429);
+    assert.equal(on429.provider, 'groq');
+    assert.equal(on429.apiKey, 'groq-free-key');
+
+    // Network failure on OpenRouter Free -> prefers offline Ollama immediately
+    const onOffline = await selectNextZeroCostRoute({
+      currentProvider: 'openrouter-free',
+      currentModel: 'openrouter/free',
+      candidates,
+      env: { GROQ_API_KEY: 'groq-free-key' },
+      reason: 'network_error'
+    });
+    assert.ok(onOffline);
+    assert.equal(onOffline.provider, 'ollama');
+    assert.equal(onOffline.apiKey, '');
+
+    // Exhausted set returns null (never loops)
+    const exhausted = await selectNextZeroCostRoute({
+      currentProvider: 'openrouter-free',
+      triedProviders: ['openrouter-free', 'groq', 'ollama', 'acp/opencode'],
+      candidates
+    });
+    assert.equal(exhausted, null);
   });
 });
