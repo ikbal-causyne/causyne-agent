@@ -1,5 +1,5 @@
 const ARCHITECTURE_TERMS = [
-    'architecture', 'arsitektur',
+    'architecture',
     'framework', 'runtime', 'database', 'storage', 'authentication', 'authorization',
     'deployment', 'hosting', 'protocol', 'plugin system', 'sandbox', 'license',
     'typescript', 'javascript', 'python', 'rust', 'kotlin', 'swift'

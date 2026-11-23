@@ -228,8 +228,8 @@ export function titleFrom(text) {
         return 'Untitled';
     return clean.length > 60 ? `${clean.slice(0, 57)}…` : clean;
 }
-const PLACEHOLDER_TITLE = /^(?:untitled|hi|hello|hey|halo|hai|continue|lanjut|open it(?: for me)?|new session\b.*)$/i;
-const NON_TASK_MESSAGE = /^(?:hi|hello|hey|halo|hai|continue|lanjut|open it|open it for me|thanks|thank you)[.!?\s]*$/i;
+const PLACEHOLDER_TITLE = /^(?:untitled|hi|hello|hey|continue|open it(?: for me)?|new session\b.*)$/i;
+const NON_TASK_MESSAGE = /^(?:hi|hello|hey|continue|open it|open it for me|thanks|thank you)[.!?\s]*$/i;
 /** Recover a useful title when a session began with a greeting or placeholder. */
 function sessionTitle(title, messages, createdAt) {
     if (title.trim() && !PLACEHOLDER_TITLE.test(title.trim()))
@@ -370,7 +370,27 @@ export function setActiveSession(id) {
     try {
         ensureDir();
         const safe = safeSessionId(id);
-        fs.writeFileSync(POINTER_FILE, `${JSON.stringify({ id: safe || null, at: Date.now() }, null, 2)}\n`, { mode: 0o600 });
+        const payload = `${JSON.stringify({ id: safe || null, at: Date.now() }, null, 2)}\n`;
+        const temp = `${POINTER_FILE}.tmp_${process.pid}_${crypto.randomBytes(6).toString('hex')}`;
+        try {
+            const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+            try {
+                fs.writeFileSync(fd, payload, 'utf8');
+                fs.fsyncSync(fd);
+            }
+            finally {
+                fs.closeSync(fd);
+            }
+            fs.renameSync(temp, POINTER_FILE);
+        }
+        catch (err) {
+            try {
+                if (fs.existsSync(temp))
+                    fs.unlinkSync(temp);
+            }
+            catch { /* ignore */ }
+            throw err;
+        }
         return true;
     }
     catch {
