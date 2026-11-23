@@ -8,6 +8,8 @@ import { AuditLog, computeAuditEntryHash, formatAuditExport } from '../src/audit
 import { runCommand } from '../src/commands.js';
 import { matchHookToolPattern, runConfiguredHooks } from '../src/hooks.js';
 import { loadProjectInstructions } from '../src/projectInstructions.js';
+import { MemoryManager } from '../src/memoryManager.js';
+import { getActiveSessionId } from '../src/sessionStore.js';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -181,5 +183,23 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
       activeFiles: ['src/core/app.ts']
     });
     assert.equal(withTsActive.entries.some((e) => e.sourcePath.endsWith('ts-only.md')), true);
+  });
+
+  test('MemoryManager ephemeral mode isolates subagent/headless transcripts from parent active session', () => {
+    const ws = path.join(TMP, 'ephemeral-ws');
+    fs.mkdirSync(ws, { recursive: true });
+    const parent = new MemoryManager(ws);
+    parent.saveHistory([{ role: 'user', content: 'parent prompt' }]);
+    const activeBefore = getActiveSessionId();
+
+    const ephemeral = new MemoryManager(ws, 'sub_ephemeral_1', { ephemeral: true });
+    ephemeral.saveHistory([{ role: 'user', content: 'subagent isolated message' }]);
+
+    assert.equal(ephemeral.ephemeral, true);
+    assert.equal(ephemeral.loadHistory().length, 1);
+    assert.equal(getActiveSessionId(), activeBefore, 'ephemeral session must not overwrite active.json');
+    const reloadedParent = new MemoryManager(ws, parent.sessionId);
+    assert.equal(reloadedParent.loadHistory().length, 1);
+    assert.equal(reloadedParent.loadHistory()[0]!.content, 'parent prompt');
   });
 });

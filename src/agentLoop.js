@@ -393,7 +393,9 @@ export class AgentLoop {
         this.taskBuffer = new TaskBuffer();
         this.tokenTracker = new TokenTracker();
         this.llm = this.initializeProvider();
-        this.memoryManager = new MemoryManager(this.workspaceRoot, options.memorySessionId || null);
+        this.memoryManager = new MemoryManager(this.workspaceRoot, options.memorySessionId || null, {
+            ephemeral: options.ephemeralSession === true
+        });
         this.messages = this.memoryManager.loadHistory(); // Persistent context window
         this.stepsCompleted = 0;
         this.consecutiveCommands = 0;

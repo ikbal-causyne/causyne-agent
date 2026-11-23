@@ -31,15 +31,34 @@ function contentLength(content: unknown): number {
   }
 }
 
+export interface MemoryManagerOptions extends ResolveSessionOptions {
+  ephemeral?: boolean | undefined;
+}
+
 export class MemoryManager {
   workspace: string;
   session: SessionRecord | null;
+  ephemeral: boolean;
 
-  constructor(workspace: string = process.cwd(), sessionId: string | null = null, options: ResolveSessionOptions = {}) {
-    this.ensureMemoryDir();
+  constructor(workspace: string = process.cwd(), sessionId: string | null = null, options: MemoryManagerOptions = {}) {
     const safeWorkspace = typeof workspace === 'string' && workspace.trim() ? workspace : process.cwd();
     const safeOptions = options && typeof options === 'object' ? options : {};
     this.workspace = safeWorkspace;
+    this.ephemeral = safeOptions.ephemeral === true;
+    if (this.ephemeral) {
+      const now = Date.now();
+      this.session = {
+        id: typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : `ephemeral_${now.toString(36)}`,
+        workspace: safeWorkspace,
+        workspaceKey: '',
+        title: 'Ephemeral session',
+        createdAt: now,
+        updatedAt: now,
+        messages: []
+      };
+      return;
+    }
+    this.ensureMemoryDir();
     if (typeof sessionId === 'string' && sessionId.trim()) {
       this.session = getSession(sessionId) || createSession(safeWorkspace, 'Untitled', false);
     } else {
@@ -142,12 +161,22 @@ export class MemoryManager {
 
   saveHistory(messages: readonly any[]): void {
     if (!this.session) return;
-    saveSessionMessages(this.session.id, this.boundHistory(messages));
+    const bounded = this.boundHistory(messages);
+    if (this.ephemeral) {
+      this.session.messages = bounded as any;
+      this.session.updatedAt = Date.now();
+      return;
+    }
+    saveSessionMessages(this.session.id, bounded);
   }
 
   clearHistory(): void {
     if (!this.session) return;
     this.session.messages = [];
+    if (this.ephemeral) {
+      this.session.updatedAt = Date.now();
+      return;
+    }
     saveSessionMessages(this.session.id, []);
   }
 }

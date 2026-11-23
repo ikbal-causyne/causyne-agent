@@ -6,7 +6,7 @@ import {
   failSubagentJournal,
   startSubagentJournal
 } from '../subagentJournal.js';
-import { createWorktree, inspectWorktreeDiff } from '../worktreeManager.js';
+import { createWorktree, inspectWorktreeDiff, removeWorktree } from '../worktreeManager.js';
 import { getErrorMessage, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText, type ToolWorkspaceContext } from './toolPathSafety.js';
 
 interface SubagentRecord {
@@ -67,19 +67,31 @@ function childTransport(parentLoop: any, subagentId: string, name: string) {
   };
 }
 
-async function executeSubagent(record: SubagentRecord, parentLoop: any) {
+async function executeSubagent(record: SubagentRecord, parentLoop: any, parentSignal?: AbortSignal) {
   const { AgentLoop } = await import('../agentLoop.js');
 
   const transport = childTransport(parentLoop, record.subagentId, record.name);
+  const childOptions: Record<string, unknown> = {
+    ephemeralSession: true,
+    memorySessionId: record.subagentId,
+    ...(record.worktreePath
+      ? { workspaceRoot: record.worktreePath }
+      : (record.workspaceRoot ? { workspaceRoot: record.workspaceRoot } : {}))
+  };
+  if (parentLoop?.providerOverride) childOptions.provider = parentLoop.providerOverride;
+  if (parentLoop?.modelOverride) childOptions.model = parentLoop.modelOverride;
+
   const child: any = new AgentLoop(
     transport as any,
     record.subagentId,
     record.prompt,
-    record.worktreePath
-      ? { workspaceRoot: record.worktreePath }
-      : (record.workspaceRoot ? { workspaceRoot: record.workspaceRoot } : {})
+    childOptions
   );
 
+  if (parentLoop?.autonomyOverride) child.autonomyOverride = parentLoop.autonomyOverride;
+  // Non-interactive approval boundary: a delegated subagent must never hang waiting for a TTY prompt.
+  child.waitForApproval = async () => false;
+  child.waitForDecision = async () => null;
   child.maxStepsCeiling = record.maxSteps;
   child.taskTokenLimit = record.maxTokens;
   child.maxSteps = Math.min(child.maxSteps || 25, record.maxSteps);
@@ -93,13 +105,34 @@ async function executeSubagent(record: SubagentRecord, parentLoop: any) {
   record.startedAtMs = Date.now();
   record.journalStarted = startSubagentJournal(record);
 
+  const onParentAbort = (): void => {
+    try { child.abort(); } catch { /* ignore */ }
+  };
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      onParentAbort();
+    } else {
+      parentSignal.addEventListener('abort', onParentAbort, { once: true });
+    }
+  }
+
   try {
     await child.run();
   } catch (error: unknown) {
     if (record.journalStarted) {
       failSubagentJournal(record.subagentId, getErrorMessage(error));
     }
+    if (record.worktreeId && record.workspaceRoot) {
+      try {
+        removeWorktree(record.workspaceRoot, record.worktreeId, { force: true, deleteBranch: true });
+      } catch { /* ignore best-effort worktree cleanup */ }
+    }
     throw error;
+  } finally {
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+    }
+    try { await child.llm?.close?.(); } catch { /* ignore */ }
   }
 
   const messages: Array<{ role?: string; content?: unknown }> = Array.isArray(child.messages) ? child.messages : [];
@@ -221,6 +254,11 @@ export const subagentOrchestrator = {
         for (const [key, worker] of activeSubagents.entries()) {
           if (key === id || worker.name === id) {
             try { if (worker.loop) worker.loop.abort(); } catch { /* ignore */ }
+            if (worker.worktreeId && worker.workspaceRoot) {
+              try {
+                removeWorktree(worker.workspaceRoot, worker.worktreeId, { force: true, deleteBranch: true });
+              } catch { /* ignore */ }
+            }
             if (worker.journalStarted) {
               try { failSubagentJournal(worker.subagentId, 'Stopped by kill action'); } catch { /* ignore */ }
             }
@@ -349,7 +387,7 @@ export const subagentOrchestrator = {
         }
       };
 
-      const work = executeSubagent(record, parentLoop)
+      const work = executeSubagent(record, parentLoop, (context as { signal?: AbortSignal })?.signal)
         .then((result) => {
           record.status = 'completed';
           record.summary = result.summary;

@@ -194,6 +194,7 @@ export interface AgentLoopApprovalScope {
 export interface AgentLoopOptions {
   workspaceRoot?: string;
   memorySessionId?: string | null;
+  ephemeralSession?: boolean;
   approvalScope?: AgentLoopApprovalScope;
   provider?: string;
   model?: string;
@@ -516,7 +517,9 @@ export class AgentLoop {
     this.tokenTracker = new TokenTracker();
     
     this.llm = this.initializeProvider();
-    this.memoryManager = new MemoryManager(this.workspaceRoot, options.memorySessionId || null);
+    this.memoryManager = new MemoryManager(this.workspaceRoot, options.memorySessionId || null, {
+      ephemeral: options.ephemeralSession === true
+    });
     this.messages = this.memoryManager.loadHistory(); // Persistent context window
     this.stepsCompleted = 0;
     this.consecutiveCommands = 0;

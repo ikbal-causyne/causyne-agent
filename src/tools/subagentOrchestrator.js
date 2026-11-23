@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { TokenTracker } from '../tokenTracker.js';
 import { listAgentProfiles, loadAgentProfile } from '../agentProfiles.js';
 import { completeSubagentJournal, failSubagentJournal, startSubagentJournal } from '../subagentJournal.js';
-import { createWorktree, inspectWorktreeDiff } from '../worktreeManager.js';
+import { createWorktree, inspectWorktreeDiff, removeWorktree } from '../worktreeManager.js';
 import { getErrorMessage, resolveToolWorkspaceRoots, sanitizeToolError, sanitizeToolText } from './toolPathSafety.js';
 const activeSubagents = new Map();
 const MAX_CONCURRENT_SUBAGENTS = 4;
@@ -31,12 +31,26 @@ function childTransport(parentLoop, subagentId, name) {
         }
     };
 }
-async function executeSubagent(record, parentLoop) {
+async function executeSubagent(record, parentLoop, parentSignal) {
     const { AgentLoop } = await import('../agentLoop.js');
     const transport = childTransport(parentLoop, record.subagentId, record.name);
-    const child = new AgentLoop(transport, record.subagentId, record.prompt, record.worktreePath
-        ? { workspaceRoot: record.worktreePath }
-        : (record.workspaceRoot ? { workspaceRoot: record.workspaceRoot } : {}));
+    const childOptions = {
+        ephemeralSession: true,
+        memorySessionId: record.subagentId,
+        ...(record.worktreePath
+            ? { workspaceRoot: record.worktreePath }
+            : (record.workspaceRoot ? { workspaceRoot: record.workspaceRoot } : {}))
+    };
+    if (parentLoop?.providerOverride)
+        childOptions.provider = parentLoop.providerOverride;
+    if (parentLoop?.modelOverride)
+        childOptions.model = parentLoop.modelOverride;
+    const child = new AgentLoop(transport, record.subagentId, record.prompt, childOptions);
+    if (parentLoop?.autonomyOverride)
+        child.autonomyOverride = parentLoop.autonomyOverride;
+    // Non-interactive approval boundary: a delegated subagent must never hang waiting for a TTY prompt.
+    child.waitForApproval = async () => false;
+    child.waitForDecision = async () => null;
     child.maxStepsCeiling = record.maxSteps;
     child.taskTokenLimit = record.maxTokens;
     child.maxSteps = Math.min(child.maxSteps || 25, record.maxSteps);
@@ -48,6 +62,20 @@ async function executeSubagent(record, parentLoop) {
     record.loop = child;
     record.startedAtMs = Date.now();
     record.journalStarted = startSubagentJournal(record);
+    const onParentAbort = () => {
+        try {
+            child.abort();
+        }
+        catch { /* ignore */ }
+    };
+    if (parentSignal) {
+        if (parentSignal.aborted) {
+            onParentAbort();
+        }
+        else {
+            parentSignal.addEventListener('abort', onParentAbort, { once: true });
+        }
+    }
     try {
         await child.run();
     }
@@ -55,7 +83,22 @@ async function executeSubagent(record, parentLoop) {
         if (record.journalStarted) {
             failSubagentJournal(record.subagentId, getErrorMessage(error));
         }
+        if (record.worktreeId && record.workspaceRoot) {
+            try {
+                removeWorktree(record.workspaceRoot, record.worktreeId, { force: true, deleteBranch: true });
+            }
+            catch { /* ignore best-effort worktree cleanup */ }
+        }
         throw error;
+    }
+    finally {
+        if (parentSignal) {
+            parentSignal.removeEventListener('abort', onParentAbort);
+        }
+        try {
+            await child.llm?.close?.();
+        }
+        catch { /* ignore */ }
     }
     const messages = Array.isArray(child.messages) ? child.messages : [];
     const finalAssistant = [...messages].reverse()
@@ -181,6 +224,12 @@ export const subagentOrchestrator = {
                                 worker.loop.abort();
                         }
                         catch { /* ignore */ }
+                        if (worker.worktreeId && worker.workspaceRoot) {
+                            try {
+                                removeWorktree(worker.workspaceRoot, worker.worktreeId, { force: true, deleteBranch: true });
+                            }
+                            catch { /* ignore */ }
+                        }
                         if (worker.journalStarted) {
                             try {
                                 failSubagentJournal(worker.subagentId, 'Stopped by kill action');
@@ -305,7 +354,7 @@ export const subagentOrchestrator = {
                         activeSubagents.delete(k);
                 }
             };
-            const work = executeSubagent(record, parentLoop)
+            const work = executeSubagent(record, parentLoop, context?.signal)
                 .then((result) => {
                 record.status = 'completed';
                 record.summary = result.summary;

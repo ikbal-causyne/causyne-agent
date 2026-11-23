@@ -24,11 +24,26 @@ function contentLength(content) {
 export class MemoryManager {
     workspace;
     session;
+    ephemeral;
     constructor(workspace = process.cwd(), sessionId = null, options = {}) {
-        this.ensureMemoryDir();
         const safeWorkspace = typeof workspace === 'string' && workspace.trim() ? workspace : process.cwd();
         const safeOptions = options && typeof options === 'object' ? options : {};
         this.workspace = safeWorkspace;
+        this.ephemeral = safeOptions.ephemeral === true;
+        if (this.ephemeral) {
+            const now = Date.now();
+            this.session = {
+                id: typeof sessionId === 'string' && sessionId.trim() ? sessionId.trim() : `ephemeral_${now.toString(36)}`,
+                workspace: safeWorkspace,
+                workspaceKey: '',
+                title: 'Ephemeral session',
+                createdAt: now,
+                updatedAt: now,
+                messages: []
+            };
+            return;
+        }
+        this.ensureMemoryDir();
         if (typeof sessionId === 'string' && sessionId.trim()) {
             this.session = getSession(sessionId) || createSession(safeWorkspace, 'Untitled', false);
         }
@@ -130,12 +145,22 @@ export class MemoryManager {
     saveHistory(messages) {
         if (!this.session)
             return;
-        saveSessionMessages(this.session.id, this.boundHistory(messages));
+        const bounded = this.boundHistory(messages);
+        if (this.ephemeral) {
+            this.session.messages = bounded;
+            this.session.updatedAt = Date.now();
+            return;
+        }
+        saveSessionMessages(this.session.id, bounded);
     }
     clearHistory() {
         if (!this.session)
             return;
         this.session.messages = [];
+        if (this.ephemeral) {
+            this.session.updatedAt = Date.now();
+            return;
+        }
         saveSessionMessages(this.session.id, []);
     }
 }
