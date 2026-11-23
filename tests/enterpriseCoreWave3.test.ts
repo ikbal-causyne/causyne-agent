@@ -20,6 +20,7 @@ import { LspSession } from '../src/lsp/lspClient.js';
 import { loadCustomLspServers, matchingSpecsForFile, findLocalOrPathExecutable } from '../src/lsp/lspCatalog.js';
 import { lspCodeIntel } from '../src/tools/lspCodeIntel.js';
 import { buildRepoMap, clearRepoMapCache } from '../src/codebase/repoMap.js';
+import { codeSearchAst } from '../src/tools/codeSearchAst.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -550,5 +551,36 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     const pyCoreRank = map.files.find((f) => f.relPath === 'py/pkg/core.py')?.rank ?? 0;
     const pyWorkerRank = map.files.find((f) => f.relPath === 'py/pkg/worker.py')?.rank ?? 0;
     assert.ok(pyCoreRank > pyWorkerRank, `py/pkg/core.py (${pyCoreRank}) must outrank py/pkg/worker.py (${pyWorkerRank})`);
+  });
+
+  test('codeSearchAst parses real TypeScript AST (interfaces, types, enums, class methods) and supports multi-file directories', async () => {
+    const ws = path.join(TMP, 'ts-ast-test');
+    fs.mkdirSync(ws, { recursive: true });
+    const tsFile = path.join(ws, 'service.ts');
+    fs.writeFileSync(tsFile, [
+      'export interface UserRecord { id: string; }',
+      'export type UserId = string;',
+      'export enum Role { Admin, Member }',
+      'export class AuthService {',
+      '  verifyToken(token: string): boolean { return token.length > 0; }',
+      '}',
+      'export const hashPin = (pin: string) => pin.trim();',
+      ''
+    ].join('\n'), 'utf8');
+
+    const single = await codeSearchAst.execute({ targetFile: tsFile }, { workspaceRoot: ws });
+    assert.equal(single.success, true, single.error);
+    assert.match(single.output || '', /TypeScript(?:\/JS)? AST/);
+    assert.match(single.output || '', /Interface: UserRecord/);
+    assert.match(single.output || '', /Type: UserId/);
+    assert.match(single.output || '', /Enum: Role/);
+    assert.match(single.output || '', /Class: AuthService/);
+    assert.match(single.output || '', /Method: AuthService\.verifyToken/);
+    assert.match(single.output || '', /Arrow\/Var Function: hashPin/);
+
+    const dirSearch = await codeSearchAst.execute({ targetFile: ws, query: 'verifyToken' }, { workspaceRoot: ws });
+    assert.equal(dirSearch.success, true, dirSearch.error);
+    assert.match(dirSearch.output || '', /service\.ts/);
+    assert.match(dirSearch.output || '', /AuthService\.verifyToken/);
   });
 });
