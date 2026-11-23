@@ -8,6 +8,7 @@ import { AnthropicProvider } from '../src/providers/anthropic.js';
 import { GeminiProvider } from '../src/providers/gemini.js';
 import { DeepSeekProvider } from '../src/providers/deepseek.js';
 import { OpenAICompatibleProvider } from '../src/providers/openai-compatible.js';
+import { applyPatch } from '../src/tools/applyPatch.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -169,5 +170,31 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     } finally {
       globalThis.fetch = origFetch;
     }
+  });
+
+  test('applyPatch preserves CRLF line endings and safely executes case-only renames without data loss', async () => {
+    const ws = path.join(TMP, 'patch-crlf-case');
+    fs.mkdirSync(ws, { recursive: true });
+    const crlfFile = path.join(ws, 'WinFile.ts');
+    fs.writeFileSync(crlfFile, 'export const a = 1;\r\nexport const b = 2;\r\n', 'utf8');
+
+    const res = await applyPatch.execute({
+      patch: [
+        '*** Begin Patch',
+        '*** Update File: WinFile.ts',
+        '*** Move to: winfile.ts',
+        '@@',
+        ' export const a = 1;',
+        '-export const b = 2;',
+        '+export const b = 42;',
+        '*** End Patch'
+      ].join('\n')
+    }, { workspaceRoot: ws });
+
+    assert.equal(res.success, true, res.error);
+    const entries = fs.readdirSync(ws);
+    assert.ok(entries.includes('winfile.ts'), `expected case-only rename target winfile.ts in [${entries.join(', ')}]`);
+    const content = fs.readFileSync(path.join(ws, 'winfile.ts'), 'utf8');
+    assert.equal(content, 'export const a = 1;\r\nexport const b = 42;\r\n', 'CRLF line endings must be preserved');
   });
 });

@@ -220,6 +220,7 @@ function findSequenceIndex(haystack, needle, startIndex, relaxedWhitespace) {
     return -1;
 }
 export function applyHunksToText(originalContent, hunks, label) {
+    const eol = originalContent.includes('\r\n') ? '\r\n' : '\n';
     const hadTrailingNewline = originalContent.endsWith('\n');
     const normalized = originalContent.replace(/\r\n/g, '\n');
     const lines = normalized.length === 0
@@ -260,7 +261,7 @@ export function applyHunksToText(originalContent, hunks, label) {
     }
     if (lines.length === 0)
         return '';
-    return lines.join('\n') + (hadTrailingNewline ? '\n' : '');
+    return lines.join(eol) + (hadTrailingNewline ? eol : '');
 }
 export function patchContainsFileDeletion(rawPatch) {
     if (typeof rawPatch !== 'string')
@@ -394,9 +395,27 @@ export const applyPatch = {
                     }
                     else if (step.kind === 'move') {
                         await fs.mkdir(path.dirname(step.targetPath), { recursive: true });
-                        atomicWriteFileSync(step.targetPath, step.content ?? '', { encoding: 'utf8', mode: step.mode });
-                        if (step.sourcePath && step.sourcePath !== step.targetPath) {
-                            await fs.unlink(step.sourcePath);
+                        const isCaseOnlyRename = Boolean(step.sourcePath
+                            && step.sourcePath !== step.targetPath
+                            && step.sourcePath.toLowerCase() === step.targetPath.toLowerCase());
+                        if (isCaseOnlyRename && step.sourcePath) {
+                            // Two-step temp rename avoids unlinking the newly written target on case-insensitive APFS/NTFS
+                            const tempHop = path.join(path.dirname(step.targetPath), `.causyne-rename-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
+                            await fs.rename(step.sourcePath, tempHop);
+                            try {
+                                atomicWriteFileSync(tempHop, step.content ?? '', { encoding: 'utf8', mode: step.mode });
+                                await fs.rename(tempHop, step.targetPath);
+                            }
+                            catch (hopErr) {
+                                await fs.rename(tempHop, step.sourcePath).catch(() => { });
+                                throw hopErr;
+                            }
+                        }
+                        else {
+                            atomicWriteFileSync(step.targetPath, step.content ?? '', { encoding: 'utf8', mode: step.mode });
+                            if (step.sourcePath && step.sourcePath !== step.targetPath) {
+                                await fs.unlink(step.sourcePath);
+                            }
                         }
                     }
                     else if (step.kind === 'delete') {
