@@ -16,22 +16,46 @@ const restoreTerminal = () => {
 restoreTerminal();
 process.once('exit', restoreTerminal);
 
-try {
-  const { startUpdateChecker } = await import('../src/autoUpdate.js');
-  // A bare "causyne" checks the registry and installs a newer published version.
-  // Never silently hide update errors while showing an old version in the banner.
-  const update = await startUpdateChecker();
-  if (update?.reason === 'failed' && process.stderr.isTTY) {
-    process.stderr.write(`Causyne automatic update unavailable: ${update.error}. Starting installed version.\n`);
+function shouldSkipAutoUpdateCheck(argv) {
+  const tokens = Array.isArray(argv) ? argv.slice(2) : [];
+  for (const raw of tokens) {
+    const token = String(raw);
+    if (token === '--') break;
+    if (
+      token === 'acp'
+      || token === '-p'
+      || token === '--print'
+      || token === '--output-format'
+      || token.startsWith('--output-format=')
+      || token === '-V'
+      || token === '--version'
+      || token === '-h'
+      || token === '--help'
+    ) {
+      return true;
+    }
   }
-  if (update && update.updated) {
-    process.stderr.write(`Causyne Agent updated to ${update.latest}. Restarting...\n`);
-    const { spawnSync } = await import('node:child_process');
-    const child = spawnSync(process.execPath, process.argv.slice(1), {
-      stdio: 'inherit',
-      env: process.env
-    });
-    process.exit(child.status ?? 0);
+  return false;
+}
+
+try {
+  if (!shouldSkipAutoUpdateCheck(process.argv)) {
+    const { startUpdateChecker } = await import('../src/autoUpdate.js');
+    // A bare "causyne" checks the registry and installs a newer published version.
+    // Never silently hide update errors while showing an old version in the banner.
+    const update = await startUpdateChecker();
+    if (update?.reason === 'failed' && process.stderr.isTTY) {
+      process.stderr.write(`Causyne automatic update unavailable: ${update.error}. Starting installed version.\n`);
+    }
+    if (update && update.updated) {
+      process.stderr.write(`Causyne Agent updated to ${update.latest}. Restarting...\n`);
+      const { spawnSync } = await import('node:child_process');
+      const child = spawnSync(process.execPath, process.argv.slice(1), {
+        stdio: 'inherit',
+        env: process.env
+      });
+      process.exit(child.status ?? 0);
+    }
   }
   await import('../src/entrypoint.js');
 } catch (error) {

@@ -22,14 +22,14 @@ import { resolveUserPath } from './utils/paths.js';
 import { getPackageVersion } from './version.js';
 import { redactProviderSecrets } from './providers/byokHttp.js';
 
-function requestedWorkingDirectory(argv: readonly unknown[] = []): string | null {
+export function requestedWorkingDirectory(argv: readonly unknown[] = []): string | null {
   const tokens = Array.isArray(argv) ? argv.slice(2) : [];
   for (let index = 0; index < tokens.length; index++) {
     const token = String(tokens[index]);
     if (token === '--') break;
     if (token === '-C' || token === '--cwd') return String(tokens[index + 1] ?? '');
     if (token.startsWith('--cwd=')) return token.slice('--cwd='.length);
-    if (!token.startsWith('-')) break;
+    if (token.startsWith('-C') && token.length > 2) return token.slice(2);
   }
   return null;
 }
@@ -477,5 +477,5 @@ if (invocation.isBareRoot) {
     process.exit(1);
   });
 } else {
-  program.parse(process.argv);
+  await program.parseAsync(process.argv);
 }

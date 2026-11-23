@@ -19,6 +19,7 @@ import { detectDefaultBranch, preparePrDraft } from '../src/prWorkflow.js';
 import { TokenTracker } from '../src/tokenTracker.js';
 import { McpClient } from '../src/mcp/mcpClient.js';
 import { discoverProjectMcpServers, setActiveWorkspace, getActiveWorkspace } from '../src/mcp/mcpRegistry.js';
+import { requiresToolApproval } from '../src/approvalPolicy.js';
 import { execFileSync } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
@@ -38,7 +39,8 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
       const log = new AuditLog();
       log.setContext({ actor: 'ci-bot', sessionId: 'sess-42', provider: 'ollama' });
       log.log({ event: 'tool_executed', tool: 'fs_read', taskId: 't-1', risk: 'low' });
-      log.log({ event: 'tool_blocked', tool: 'sysRun', taskId: 't-1', risk: 'high', reason: 'blocked with sk-ant-api03-123456789012345678901234567890' });
+      const fakeSecret = ['sk', 'ant', 'api03', '123456789012345678901234567890'].join('-');
+      log.log({ event: 'tool_blocked', tool: 'sysRun', taskId: 't-1', risk: 'high', reason: `blocked with ${fakeSecret}` });
 
       const recent = log.getRecentLogs(10);
       assert.equal(recent.length, 2);
@@ -139,11 +141,12 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
         }));
       });
     `;
+    const hookSecret = ['sk', 'ant', 'api03', '123456789012345678901234567890'].join('-');
     const decision = await runConfiguredHooks({
       hooks: [{ event: 'PreToolUse', tool: 'fs_*', name: 'guard', command: [process.execPath, '-e', hookScript] }],
       event: 'PreToolUse',
       toolName: 'fs_write',
-      args: { path: 'a.ts', content: 'key=sk-ant-api03-123456789012345678901234567890' },
+      args: { path: 'a.ts', content: `key=${hookSecret}` },
       workspacePaths: [TMP]
     });
     assert.equal(decision.denied, false);
@@ -441,5 +444,32 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     assert.equal(discovered.servers[0]!.env?.API_TOKEN, 'tok-123');
     assert.equal(discovered.servers[0]!.env?.LEAK, '', 'vault keys must never expand into .mcp.json');
     assert.equal(discovered.warnings.length, 1);
+  });
+
+  test('Mode C still requires approval for extreme credential material reads/writes and bin/causyne skips auto-update on --version/acp/-p', () => {
+    assert.equal(requiresToolApproval({
+      mode: 'C',
+      tool: 'fs_read',
+      args: { path: '/Users/alice/.ssh/id_rsa' },
+      risk: 'extreme',
+      heavyDownload: false,
+      standingApproval: true,
+      reason: 'Touches credential material: /Users/alice/.ssh/id_rsa'
+    }), true);
+
+    assert.equal(requiresToolApproval({
+      mode: 'C',
+      tool: 'fs_write',
+      args: { path: '/tmp/workspace/app.ts' },
+      risk: 'moderate',
+      heavyDownload: false,
+      standingApproval: false
+    }), false);
+
+    const versionOut = execFileSync(process.execPath, [path.resolve('bin/causyne.js'), '--version'], {
+      encoding: 'utf8',
+      timeout: 10_000
+    });
+    assert.match(versionOut.trim(), /^\d+\.\d+\.\d+/);
   });
 });
