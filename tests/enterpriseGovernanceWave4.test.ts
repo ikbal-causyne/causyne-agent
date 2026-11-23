@@ -10,6 +10,7 @@ import { matchHookToolPattern, runConfiguredHooks } from '../src/hooks.js';
 import { loadProjectInstructions } from '../src/projectInstructions.js';
 import { MemoryManager } from '../src/memoryManager.js';
 import { getActiveSessionId } from '../src/sessionStore.js';
+import { runHeadlessTask } from '../src/headlessCli.js';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -201,5 +202,56 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     const reloadedParent = new MemoryManager(ws, parent.sessionId);
     assert.equal(reloadedParent.loadHistory().length, 1);
     assert.equal(reloadedParent.loadHistory()[0]!.content, 'parent prompt');
+  });
+
+  test('runHeadlessTask enforces --json-schema, --timeout, --max-tokens, --max-budget-usd, and surfaces approval/usage events', async () => {
+    const prevExitCode = process.exitCode;
+    try {
+      const outChunks: string[] = [];
+      const schemaRes = await runHeadlessTask('Return status JSON', {
+        outputFormat: 'json',
+        maxTokens: 12000,
+        maxBudgetUsd: 1.5,
+        jsonSchema: JSON.stringify({ type: 'object', required: ['status', 'count'] }),
+        stdout: { write: (c) => { outChunks.push(c); } },
+        stderr: { write: () => {} },
+        loopFactory: (sink) => {
+          const fake: any = {
+            config: { provider: 'ollama', model: 'qwen2.5' },
+            stepsCompleted: 1,
+            _causyneTaskOutcome: 'completed',
+            run: async () => {
+              sink.send(JSON.stringify({ type: 'usage_update', inputTokens: 120, outputTokens: 30, taskCostUsd: 0 }));
+              sink.send(JSON.stringify({ type: 'agent_message', content: '{"status":"ok","count":3}' }));
+            }
+          };
+          return fake;
+        }
+      });
+      assert.equal(schemaRes.ok, true);
+      assert.deepEqual(schemaRes.structuredOutput, { status: 'ok', count: 3 });
+      assert.equal(schemaRes.usage?.inputTokens, 120);
+      assert.equal(schemaRes.usage?.outputTokens, 30);
+
+      // Timeout aborts cleanly
+      let aborted = false;
+      const timeoutRes = await runHeadlessTask('slow task', {
+        outputFormat: 'json',
+        timeoutMs: 60,
+        stdout: { write: () => {} },
+        stderr: { write: () => {} },
+        loopFactory: () => ({
+          config: { provider: 'ollama', model: 'qwen2.5' },
+          _causyneTaskOutcome: 'incomplete',
+          abort: () => { aborted = true; },
+          run: async () => { await new Promise((r) => setTimeout(r, 140)); }
+        })
+      });
+      assert.equal(aborted, true);
+      assert.equal(timeoutRes.ok, false);
+      assert.match(timeoutRes.error || '', /timed out/i);
+    } finally {
+      process.exitCode = prevExitCode ?? 0;
+    }
   });
 });

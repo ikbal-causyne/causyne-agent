@@ -7,7 +7,10 @@ import {
   readBoundedStdin,
   parseOutputFormat,
   parsePermissionMode,
-  parseMaxTurns
+  parseMaxTurns,
+  parseMaxTokens,
+  parseMaxBudgetUsd,
+  parseTimeoutMs
 } from './headlessCli.js';
 import { runLicenseCommand } from './licensing/entitlements.js';
 import { runSelfUpdate, diagnoseInstallation, formatDoctorReport } from './autoUpdate.js';
@@ -87,6 +90,11 @@ program
   .option('-m, --model <name>', 'Override model for this run without modifying saved config')
   .option('--provider <name>', 'Override provider for this run without modifying saved config')
   .option('--max-turns <count>', 'Maximum agent turns/steps for this run')
+  .option('--max-tokens <count>', 'Maximum token budget for this headless run')
+  .option('--max-budget-usd <usd>', 'Maximum USD spend ceiling for this headless run')
+  .option('--timeout <seconds>', 'Wall-clock timeout in seconds for headless execution')
+  .option('--resume', 'Reuse active workspace session instead of an isolated ephemeral session')
+  .option('--json-schema <schema>', 'Require and validate JSON response matching inline JSON or file path')
   .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
   .version(pkgVersion)
   .action(async (options: Record<string, any>) => {
@@ -102,6 +110,9 @@ program
       parseOutputFormat(options.outputFormat);
       parsePermissionMode(options.permissionMode);
       parseMaxTurns(options.maxTurns);
+      parseMaxTokens(options.maxTokens);
+      parseMaxBudgetUsd(options.maxBudgetUsd);
+      parseTimeoutMs(options.timeout);
       const stdinText = await readBoundedStdin(process.stdin);
       const trailing = program.args.length > 0 && typeof options.print === 'boolean'
         ? program.args.join(' ')
@@ -112,6 +123,11 @@ program
         model: options.model,
         provider: options.provider,
         maxTurns: options.maxTurns,
+        maxTokens: options.maxTokens,
+        maxBudgetUsd: options.maxBudgetUsd,
+        timeoutSeconds: options.timeout,
+        resumeSession: options.resume === true,
+        jsonSchema: options.jsonSchema,
         permissionMode: options.permissionMode
       });
     } catch (err: unknown) {
@@ -159,6 +175,11 @@ program
   .option('-m, --model <name>', 'Override model for this run without modifying saved config')
   .option('--provider <name>', 'Override provider for this run without modifying saved config')
   .option('--max-turns <count>', 'Maximum agent turns/steps for this run')
+  .option('--max-tokens <count>', 'Maximum token budget for this headless run')
+  .option('--max-budget-usd <usd>', 'Maximum USD spend ceiling for this headless run')
+  .option('--timeout <seconds>', 'Wall-clock timeout in seconds for headless execution')
+  .option('--resume', 'Reuse active workspace session instead of an isolated ephemeral session')
+  .option('--json-schema <schema>', 'Require and validate JSON response matching inline JSON or file path')
   .option('--permission-mode <mode>', 'Autonomy mode override for this run (A, B, or C)')
   .action(async (task: string | undefined, options: Record<string, any>) => {
     announceDevEmulator(options.devEmulator);
@@ -166,18 +187,26 @@ program
       if (options.outputFormat) parseOutputFormat(options.outputFormat);
       parsePermissionMode(options.permissionMode);
       parseMaxTurns(options.maxTurns);
+      parseMaxTokens(options.maxTokens);
+      parseMaxBudgetUsd(options.maxBudgetUsd);
+      parseTimeoutMs(options.timeout);
       const stdinText = await readBoundedStdin(process.stdin);
       const prompt = composeHeadlessPrompt(task, stdinText);
       if (!prompt) {
         console.error('No task provided. Pass a task argument or pipe input on stdin.');
         process.exit(2);
       }
-      if (options.outputFormat || task === '-' || !task) {
+      if (options.outputFormat || task === '-' || !task || options.jsonSchema || options.timeout || options.maxBudgetUsd || options.maxTokens) {
         await runHeadlessTask(prompt, {
           outputFormat: options.outputFormat || 'text',
           model: options.model,
           provider: options.provider,
           maxTurns: options.maxTurns,
+          maxTokens: options.maxTokens,
+          maxBudgetUsd: options.maxBudgetUsd,
+          timeoutSeconds: options.timeout,
+          resumeSession: options.resume === true,
+          jsonSchema: options.jsonSchema,
           permissionMode: options.permissionMode
         });
       } else {

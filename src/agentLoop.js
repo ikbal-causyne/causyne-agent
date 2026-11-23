@@ -2885,6 +2885,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                 // the project's own CHAR_POOLS convention, instead of comparing a token
                 // count to a character limit.
                 const reportedPromptTokens = Number(response.usage?.promptTokens || 0);
+                const reportedCompletionTokens = Number(response.usage?.completionTokens || 0);
                 if (response.usage?.measurement === 'provider_reported'
                     && response.usage?.measurementScope !== 'cumulative'
                     && Number.isFinite(reportedPromptTokens)
@@ -2896,6 +2897,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                 }
                 this.emitEvent({
                     type: 'usage_update',
+                    inputTokens: Number.isFinite(reportedPromptTokens) && reportedPromptTokens > 0 ? reportedPromptTokens : 0,
+                    outputTokens: Number.isFinite(reportedCompletionTokens) && reportedCompletionTokens > 0 ? reportedCompletionTokens : 0,
                     usedTokens: tracking.dailyTokens || 0,
                     dailyTokens: tracking.dailyTokens || 0,
                     dailyCostUsd: tracking.dailyCostUsd || 0,
@@ -2910,6 +2913,16 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     contextLimitChars: this._contextLimitChars || 0,
                     cachedTokens
                 });
+                const taskCostCap = typeof this.taskCostLimitUsd === 'number' && Number.isFinite(this.taskCostLimitUsd) && this.taskCostLimitUsd > 0
+                    ? this.taskCostLimitUsd
+                    : null;
+                if (taskCostCap !== null && (tracking.taskCostUsd || 0) >= taskCostCap) {
+                    this.emitEvent({
+                        type: 'error',
+                        message: `Task USD budget limit reached ($${(tracking.taskCostUsd || 0).toFixed(4)} >= $${taskCostCap.toFixed(4)}).`
+                    });
+                    break;
+                }
                 if (!tracking.allowed) {
                     this.emitEvent({ type: 'error', message: tracking.reason });
                     break;
