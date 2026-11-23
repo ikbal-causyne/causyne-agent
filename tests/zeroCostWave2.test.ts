@@ -22,6 +22,7 @@ import {
 } from '../src/zeroCostRouting.js';
 import { detectEnvironmentProvider } from '../src/config.js';
 import { LLMProvider } from '../src/providers/base.js';
+import { OpenAIProvider } from '../src/providers/openai.js';
 import { DeepSeekProvider } from '../src/providers/deepseek.js';
 import { MoonshotProvider } from '../src/providers/moonshot.js';
 import { classifyAgentError } from '../src/agent/errorClassifier.js';
@@ -741,15 +742,19 @@ rl.on('line', (line) => {
     }
   });
 
-  test('LLMProvider strips internal fields & reasoning_content by default, marks provider_reported usage, and errorClassifier handles context_overflow & skill wording', () => {
+  test('LLMProvider strips internal fields, strict providers strip reasoning_content, usage marks provider_reported, and errorClassifier handles context_overflow & skill wording', () => {
     const base = new LLMProvider({});
+    const oai = new OpenAIProvider({});
+    const ollama = new OllamaProvider({});
     const ds = new DeepSeekProvider({});
     const ms = new MoonshotProvider({});
-    assert.equal(base.preserveReasoningContent, false);
+    assert.equal(base.preserveReasoningContent, true);
+    assert.equal(oai.preserveReasoningContent, false);
+    assert.equal(ollama.preserveReasoningContent, false);
     assert.equal(ds.preserveReasoningContent, true);
     assert.equal(ms.preserveReasoningContent, true);
 
-    const stripped = base.stripInternalFields([
+    const stripped = oai.stripInternalFields([
       {
         role: 'assistant',
         content: 'ok',
@@ -764,8 +769,9 @@ rl.on('line', (line) => {
     assert.equal('external_actions' in stripped[0], false);
     assert.equal('cacheAnchor' in stripped[0], false);
 
-    const dsStripped = ds.stripInternalFields([{ role: 'assistant', content: 'ok', reasoning_content: 'keep me' }]);
+    const dsStripped = ds.stripInternalFields([{ role: 'assistant', content: 'ok', reasoning_content: 'keep me', causyne_synthetic_no_final: true }]);
     assert.equal(dsStripped[0].reasoning_content, 'keep me');
+    assert.equal('causyne_synthetic_no_final' in dsStripped[0], false);
 
     const usage = base.normalizeUsage({ prompt_tokens: 120, completion_tokens: 30 });
     assert.equal(usage.measurement, 'provider_reported');

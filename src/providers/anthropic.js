@@ -79,6 +79,7 @@ export class AnthropicProvider extends LLMProvider {
         this.audioModels = [];
         this.imagePayloadFormat = 'anthropic';
         this.preserveThinkingBlocks = true;
+        this.preserveReasoningContent = false;
         this.enableToolSearch = config.enableToolSearch !== false;
         this.enableCaching = config.enablePromptCaching !== false;
         this.cacheTtl = config.promptCacheTtl === '5m' ? '5m' : '1h';

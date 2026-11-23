@@ -53,7 +53,8 @@ export async function callAndCapture(provider, cannedResponse, messages, options
   const capture = captureFetch(cannedResponse);
   try {
     const result = await provider.chat(messages, options);
-    return { payload: capture.requests[0]?.body, request: capture.requests[0], result };
+    const primary = capture.requests.find((r) => !String(r.url || '').endsWith('/api/show')) ?? capture.requests[0];
+    return { payload: primary?.body, request: primary, requests: capture.requests, result };
   } finally {
     capture.restore();
   }

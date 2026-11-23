@@ -5217,7 +5217,10 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           const detail = isNetwork ? explainNetworkError(e, this.config) : e.message;
           auditLog.log({ event: 'loop_error_recovered', taskId: this.taskId, error: e.message, errorType });
 
-          if (this.consecutiveFailures >= maxAttempts) {
+          const exceededCeiling = isRateLimit
+            ? this.consecutiveFailures >= maxAttempts
+            : this.consecutiveFailures >= AgentLoop.MAX_CONSECUTIVE_FAILURES;
+          if (exceededCeiling) {
             // Nothing is changing between attempts. Stop and say why, rather
             // than spinning until the budget is gone.
             this.emitEvent({
@@ -5246,12 +5249,14 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           // Only tell the MODEL about errors the model can act on. It cannot
           // fix DNS, firewalls, or HTTP 429 rate limits, and pushing a system
           // message per retry invalidates provider KV prompt caches.
-          if (!isNetwork && !isRateLimit) {
-            this.messages.push({
-              role: 'system',
-              content: `[SYSTEM ERROR RECOVERED: A ${errorType} error occurred: "${e.message}". `
-                + 'The loop has recovered. You may continue or try a different approach.]'
-            });
+          if (!isNetwork) {
+            if (!isRateLimit) {
+              this.messages.push({
+                role: 'system',
+                content: `[SYSTEM ERROR RECOVERED: A ${errorType} error occurred: "${e.message}". `
+                  + 'The loop has recovered. You may continue or try a different approach.]'
+              });
+            }
           }
         }
       }

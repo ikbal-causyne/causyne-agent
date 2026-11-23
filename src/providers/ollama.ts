@@ -79,6 +79,7 @@ export class OllamaProvider extends LLMProvider {
     this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['ollama']) || '');
     this.visionModels = ['llava', 'vision', 'bakllava', 'moondream', 'minicpm-v', 'gemma3', 'qwen2.5vl', 'qwen3-vl'];
     this.audioModels = [];
+    this.preserveReasoningContent = false;
   }
 
   private async probeModelMeta(endpoint: string, headers: Record<string, string>, secrets: string[], signal?: AbortSignal): Promise<OllamaModelMeta | null> {

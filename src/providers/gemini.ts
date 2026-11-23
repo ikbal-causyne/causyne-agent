@@ -65,6 +65,7 @@ export class GeminiProvider extends LLMProvider {
     this.imagePayloadFormat = 'gemini';
     this.audioModels = ['gemini-'];
     this.audioPayloadFormat = 'gemini';
+    this.preserveReasoningContent = false;
   }
 
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {

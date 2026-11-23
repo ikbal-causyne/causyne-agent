@@ -12,6 +12,7 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
         this.imagePayloadFormat = 'openai';
         this.audioModels = ['gpt-4o-audio', 'gpt-4o-mini-audio', 'gpt-audio', 'gpt-realtime'];
         this.audioPayloadFormat = 'openai';
+        this.preserveReasoningContent = false;
         const allowedEfforts = new Set(['low', 'medium', 'high', 'xhigh', 'minimal', 'none', 'off']);
         if (this.reasoningEffort && !allowedEfforts.has(this.reasoningEffort)) {
             this.reasoningEffort = null;
