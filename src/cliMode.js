@@ -26,6 +26,9 @@ import { isAcpProvider } from './providers/acp.js';
 import { isPiProvider } from './providers/pi.js';
 import { isAntigravityProvider } from './providers/antigravity.js';
 import { runHeadlessTask, parsePermissionMode, parseMaxTurns } from './headlessCli.js';
+import { closeAll as closeAllMcpServers, setActiveWorkspace as setActiveMcpWorkspace } from './mcp/mcpRegistry.js';
+import { lspSessionManager } from './lsp/lspClient.js';
+import { backgroundTaskManager } from './backgroundTasks.js';
 let cliTaskSequence = 0;
 function nextCliTaskId(prefix) {
     cliTaskSequence += 1;
@@ -178,6 +181,13 @@ async function runHomeAction(action, { prompt, conn, finish, loop }) {
                 return 'exit';
             }
             const chosen = await configureInPrompt(prompt, { loadConfig, saveConfig });
+            if (chosen && loop) {
+                loop.config = loadConfig();
+                try {
+                    loop.llm = loop.initializeProvider();
+                }
+                catch { /* ignore until next turn */ }
+            }
             conn.renderer.write('\n' + (chosen
                 ? paint('success', `  Saved. Using ${chosen.provider} / ${chosen.model}. Connection has not been tested.`)
                 : dimNotice('  Cancelled. Nothing was changed.')) + '\n');
@@ -350,10 +360,33 @@ export async function chatMode(options) {
             return prompt.read();
         return askText({ title: 'You' });
     };
+    const cleanupSessionResources = async () => {
+        try {
+            await loop?.llm?.close?.();
+        }
+        catch { /* ignore */ }
+        try {
+            await closeAllMcpServers();
+        }
+        catch { /* ignore */ }
+        try {
+            await lspSessionManager.shutdownAll();
+        }
+        catch { /* ignore */ }
+        try {
+            backgroundTaskManager.stopAll();
+        }
+        catch { /* ignore */ }
+    };
+    setActiveMcpWorkspace(loop.workspaceRoot || process.cwd());
     const finish = () => { if (prompt)
         prompt.stop(); };
     while (true) {
         let task = await readTask();
+        if (task === null || task === undefined) {
+            finish();
+            break;
+        }
         if (task && typeof task === 'object' && task.homeAction) {
             const outcome = await runHomeAction(task.homeAction, { prompt, conn, finish, loop });
             if (outcome === 'exit')
@@ -380,6 +413,7 @@ export async function chatMode(options) {
                     approvalHandler: makeApprovalHandler(conn, prompt),
                     decisionHandler: makeDecisionHandler(conn, prompt)
                 });
+                setActiveMcpWorkspace(nextRoot);
                 conn.renderer.write(`\n  Workspace switched to: ${safeDisplay(String(nextRoot ?? ''))}\n`);
             }
             catch (error) {
@@ -427,44 +461,50 @@ export async function chatMode(options) {
             }
             if (commandResult.effect === 'pick-skill' && prompt) {
                 prompt.browseSkills(commandResult.items, async (skill) => {
-                    if (!skill)
-                        return;
-                    if (skill.isCreateAction || (skill.domain === 'custom' && skill.id === 'create')) {
-                        const { runInteractiveSkillWizard } = await import('./tui/skillAuthoring.js');
-                        const created = await runInteractiveSkillWizard(prompt);
-                        if (created) {
-                            loop.activeSkill = created;
-                            if (surface)
-                                surface.setSessionInfo({ activeSkill: loop.activeSkill });
-                            prompt.notice = `✦ Skill created & activated: ${created.domain}/${created.id}`;
-                            conn.renderer.write('\n' + paint('success', `  Created and activated skill: ${bold(created.domain + '/' + created.id)}`) + '\n');
-                            if (created.path)
-                                conn.renderer.write(dim(`  Stored at: ${created.path}\n`));
-                            if (typeof prompt.draw === 'function')
-                                prompt.draw();
+                    try {
+                        if (!skill)
+                            return;
+                        if (skill.isCreateAction || (skill.domain === 'custom' && skill.id === 'create')) {
+                            const { runInteractiveSkillWizard } = await import('./tui/skillAuthoring.js');
+                            const created = await runInteractiveSkillWizard(prompt);
+                            if (created) {
+                                loop.activeSkill = created;
+                                if (surface)
+                                    surface.setSessionInfo({ activeSkill: loop.activeSkill });
+                                prompt.notice = `✦ Skill created & activated: ${created.domain}/${created.id}`;
+                                conn.renderer.write('\n' + paint('success', `  Created and activated skill: ${bold(created.domain + '/' + created.id)}`) + '\n');
+                                if (created.path)
+                                    conn.renderer.write(dim(`  Stored at: ${created.path}\n`));
+                                if (typeof prompt.draw === 'function')
+                                    prompt.draw();
+                            }
+                            return;
                         }
-                        return;
+                        const { readCompiledSkill } = await import('./skillsManager.js');
+                        const content = readCompiledSkill(skill.domain, skill.id);
+                        loop.activeSkill = {
+                            id: `${skill.domain}/${skill.id}`,
+                            name: skill.name || skill.id,
+                            domain: skill.domain,
+                            description: skill.description || '',
+                            content: typeof content === 'string' ? content : ''
+                        };
+                        if (surface)
+                            surface.setSessionInfo({ activeSkill: loop.activeSkill });
+                        prompt.notice = `✦ Skill active: ${skill.domain}/${skill.id}`;
+                        conn.renderer.write('\n' + paint('success', `  ✦ Activated skill: ${bold(skill.domain + '/' + skill.id)}`) + '\n');
+                        if (skill.description) {
+                            conn.renderer.write(dim(`  ${skill.description}\n`));
+                        }
+                        conn.renderer.write(dim('  Type instructions for this skill, or press Enter to apply to workspace.\n'));
+                        prompt.setText('');
+                        if (typeof prompt.draw === 'function')
+                            prompt.draw();
                     }
-                    const { readCompiledSkill } = await import('./skillsManager.js');
-                    const content = readCompiledSkill(skill.domain, skill.id);
-                    loop.activeSkill = {
-                        id: `${skill.domain}/${skill.id}`,
-                        name: skill.name || skill.id,
-                        domain: skill.domain,
-                        description: skill.description || '',
-                        content: typeof content === 'string' ? content : ''
-                    };
-                    if (surface)
-                        surface.setSessionInfo({ activeSkill: loop.activeSkill });
-                    prompt.notice = `✦ Skill active: ${skill.domain}/${skill.id}`;
-                    conn.renderer.write('\n' + paint('success', `  ✦ Activated skill: ${bold(skill.domain + '/' + skill.id)}`) + '\n');
-                    if (skill.description) {
-                        conn.renderer.write(dim(`  ${skill.description}\n`));
+                    catch (skillErr) {
+                        const safeMsg = safeDisplay(redactProviderSecrets(skillErr instanceof Error ? skillErr.message : String(skillErr)));
+                        conn.renderer.write('\n' + paint('danger', `  Skill selection failed: ${safeMsg}`) + '\n');
                     }
-                    conn.renderer.write(dim('  Type instructions for this skill, or press Enter to apply to workspace.\n'));
-                    prompt.setText('');
-                    if (typeof prompt.draw === 'function')
-                        prompt.draw();
                 });
                 continue;
             }
@@ -532,15 +572,17 @@ export async function chatMode(options) {
             }
         }
         homeTransition.beginTurn(loop);
+        loop.config = loadConfig();
         loop.userPrompt = task;
         loop.currentTaskPrompt = task;
         loop.taskIntentPrompt = task;
-        loop.taskId = `cli_chat_${Date.now()}`;
+        loop.taskId = nextCliTaskId('cli_chat');
         if (prompt && typeof prompt.consumeAttachments === 'function') {
             const atts = prompt.consumeAttachments();
-            if (atts && atts.length > 0) {
-                loop.attachments = atts;
-            }
+            loop.attachments = Array.isArray(atts) && atts.length > 0 ? atts : [];
+        }
+        else {
+            loop.attachments = [];
         }
         conn.renderer.resetTurn();
         const startedAt = Date.now();
@@ -568,6 +610,7 @@ export async function chatMode(options) {
                 prompt.setBusy(false);
         }
     }
+    await cleanupSessionResources();
     process.exit(0);
 }
 export async function execCommand(command) {

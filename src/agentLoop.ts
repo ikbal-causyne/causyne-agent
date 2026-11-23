@@ -3906,6 +3906,15 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           const finalToolOutcomes = coldObserver.getToolOutcomes(this.taskId);
           const finalToolOutcome = finalToolOutcomes[finalToolOutcomes.length - 1];
           if (this.stepsCompleted > 0 && finalToolOutcome && !finalToolOutcome.success) {
+            const blockerExplanation = typeof response.content === 'string'
+              ? response.content
+                .replace(/^Antigravity executed:[^\n]*\n*/i, '')
+                .replace(/^Turn completed by [^\n]+ over ACP\.\s*/i, '')
+                .trim()
+              : '';
+            if (blockerExplanation.length >= 20) {
+              this.emitEvent({ type: 'agent_message', content: blockerExplanation });
+            }
             this.emitEvent({ type: 'error', message:
               `The last observed tool action failed (${finalToolOutcome.tool}). ` +
               'Resolve the error or report partial work; no success has been recorded.' });
@@ -3923,7 +3932,11 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                 'multi_replace_file_content', 'native_engine', 'update_plan'
               ].includes(String(o.tool || ''))
             );
-            if (!hasCodeOrWorkspaceMutation && completedNativeActionIds.size === 0) {
+            const rawReply = typeof response.content === 'string' ? response.content.trim() : '';
+            const hasVerifiedFailureBlocker = outcomes.some((o: any) => o.success === false)
+              && rawReply.length >= 25
+              && /\b(?:blocked|cannot|unable|missing|permission denied|not installed|failed|error)\b/i.test(rawReply);
+            if (!hasCodeOrWorkspaceMutation && completedNativeActionIds.size === 0 && !hasVerifiedFailureBlocker) {
               if (this._nonMutationNudges === undefined) this._nonMutationNudges = 0;
               if (this._nonMutationNudges < 2) {
                 this._nonMutationNudges++;
@@ -4507,7 +4520,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             args,
             risk: validation.risk,
             heavyDownload: isHeavyAiDownload,
-            standingApproval
+            standingApproval,
+            reason: validation.reason
           });
           if (enterpriseDecision.effect === 'ask') {
             needsToolApproval = true;
