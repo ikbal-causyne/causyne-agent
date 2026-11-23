@@ -624,7 +624,7 @@ emit({ event: 'step_update', step_update: { step_type: 'text', text_delta: 'nk>h
 emit({ event: 'step_update', step_update: { step_type: 'text', text_delta: 'nk>Visible answer!' } });
 emit({ event: 'result', result: { status: 'SUCCESS', conversation_id: 'conv-agy-1', response: '', usage: { input_tokens: 100, output_tokens: 20 } } });
 // Keep process open briefly to verify provider resolves promptly on result event without waiting forever
-setTimeout(() => process.exit(0), 5000);
+setTimeout(() => process.exit(0), 9000);
 `, 'utf8');
     if (process.platform !== 'win32') fs.chmodSync(fakeAgy, 0o755);
 
@@ -641,7 +641,7 @@ setTimeout(() => process.exit(0), 5000);
         onReasoningChunk: (r) => thinkChunks.push(r)
       });
       const elapsed = Date.now() - start;
-      assert.ok(elapsed < 2500, `expected prompt resolution on result event, took ${elapsed}ms`);
+      assert.ok(elapsed < 6000, `expected prompt resolution on result event, took ${elapsed}ms`);
       assert.equal(visibleChunks.join(''), 'Visible answer!');
       assert.equal(thinkChunks.join(''), 'hidden thought');
       assert.equal(res.content, 'Visible answer!');

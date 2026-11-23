@@ -112,16 +112,16 @@ async function isBinary(filePath: string): Promise<boolean> {
 export const fsRead = {
   schema: {
     name: 'fs.read',
-    description: 'Read file contents intelligently. Supports startLine/endLine (or offset/limit), optional lineNumbers formatting, and automatic paging to protect the context window.',
+    description: 'Read file (auto-paged).',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string' },
         startLine: { type: 'number' },
         endLine: { type: 'number' },
-        offset: { type: 'number', description: '1-based start line alias for startLine.' },
-        limit: { type: 'number', description: 'Maximum number of lines to read (up to 800).' },
-        lineNumbers: { type: 'boolean', description: 'When true, prefix each output line with its 1-based line number.' }
+        offset: { type: 'number' },
+        limit: { type: 'number' },
+        lineNumbers: { type: 'boolean' }
       },
       required: ['path']
     }

@@ -12,7 +12,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 function anthropicCapabilityIds() {
   const source = fs.readFileSync(path.join(HERE, '..', 'src', 'providers', 'anthropic.js'), 'utf8');
   const ids = new Set();
-  for (const listName of ['TOOL_SEARCH_MODELS', 'NO_SAMPLING_MODELS', 'ADAPTIVE_THINKING_MODELS', 'MID_CONVERSATION_SYSTEM_MODELS']) {
+  for (const listName of ['PROMPT_CACHE_MODELS', 'TOOL_SEARCH_MODELS', 'NO_SAMPLING_MODELS', 'ADAPTIVE_THINKING_MODELS', 'MID_CONVERSATION_SYSTEM_MODELS']) {
     const block = source.match(new RegExp(`const ${listName} = \\[([\\s\\S]*?)\\];`));
     if (!block) continue;
     for (const m of block[1].matchAll(/'([^']+)'/g)) ids.add(m[1]);

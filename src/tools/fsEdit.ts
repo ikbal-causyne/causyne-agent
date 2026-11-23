@@ -253,20 +253,19 @@ export function applyDeterministicEdit(
 export const fsEdit = {
   schema: {
     name: 'fs.edit',
-    description: 'Surgically edit specific lines/blocks in a file atomically with exact, EOL-preserving, and whitespace/indent-preserving unique matching. Rejects ambiguous matches unless replace_all is true.',
+    description: 'Atomic file edits (unique or replace_all).',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string' },
-        replace_all: { type: 'boolean', description: 'When true, replace all matching occurrences instead of requiring a unique match.' },
+        replace_all: { type: 'boolean' },
         edits: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
               searchContent: { type: 'string' },
-              replaceContent: { type: 'string' },
-              replace_all: { type: 'boolean' }
+              replaceContent: { type: 'string' }
             },
             required: ['searchContent', 'replaceContent']
           }

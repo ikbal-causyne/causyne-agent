@@ -420,7 +420,10 @@ export class AgentLoop {
         this.consecutiveBlockedActions = 0; // V8 Transcendence: Circuit Breaker
         this.recentActionSignatures = [];
         this.consecutiveReadOnlySteps = 0;
-        this.stallGuard = new StallGuardController({ hardStopEnabled: true });
+        this.stallGuard = new StallGuardController({
+            hardStopEnabled: true,
+            identicalCallHaltAfter: TIME_MACHINE_MAX_ATTEMPTS + 1
+        });
         this.smartToolsGovernor = new SmartToolsGovernor(4);
         this._smartToolsNudge = null;
         this.activeFreeFormPaths = new Map();
@@ -2096,15 +2099,17 @@ export class AgentLoop {
                     model: this.config.model,
                     overrideTokens: this.config.contextTokens || this.config.maxContextTokens
                 });
-                // Reserve 25% headroom for system prompt, tool definitions, and completion tokens unless explicitly pinned
-                const MAX_CHAR_POOL = this.config.maxCharPool
-                    ? rawCharPool
-                    : Math.max(24_000, Math.floor(rawCharPool * 0.75));
+                // Keep MAX_CHAR_POOL as the true model context ceiling for accurate usage reporting,
+                // while reserving 25% compaction headroom for system prompt, tool schemas, and output tokens.
+                const MAX_CHAR_POOL = rawCharPool;
+                const COMPACTION_CHAR_POOL = this.config.maxCharPool
+                    ? MAX_CHAR_POOL
+                    : Math.max(24_000, Math.floor(MAX_CHAR_POOL * 0.75));
                 // 5-Stage Progressive Compaction (Claude Code Architecture / Research Section E):
                 // Under low context pressure (<25% of pool), keep more recent small file reads
                 // verbatim so models do not lose a 1-2 KB source file after four tool calls.
                 const currentMessageChars = measureMessages(this.messages);
-                const lowContextPressure = currentMessageChars < MAX_CHAR_POOL * 0.25;
+                const lowContextPressure = currentMessageChars < COMPACTION_CHAR_POOL * 0.25;
                 const observationPrune = pruneStaleToolObservations(this.messages, {
                     keepRecent: this.config.keepRecentToolResults ?? (lowContextPressure ? 12 : 4),
                     minChars: lowContextPressure ? 2400 : 600,
@@ -2120,7 +2125,7 @@ export class AgentLoop {
                     if (typeof message.spillPath === 'string')
                         recoveryPaths.add(path.resolve(message.spillPath));
                 }
-                const compaction = applyProgressiveCompaction(this.messages, MAX_CHAR_POOL, {
+                const compaction = applyProgressiveCompaction(this.messages, COMPACTION_CHAR_POOL, {
                     // historyPruner preserves full output before eliding it. The legacy
                     // decay path cannot promise that recovery, so keep it disabled here.
                     enableEphemeralDecay: false,
@@ -2149,7 +2154,7 @@ export class AgentLoop {
                         limitChars: MAX_CHAR_POOL
                     });
                 }
-                const { window: slidingWindow, splitIndex } = buildWindow(this.messages, MAX_CHAR_POOL);
+                const { window: slidingWindow, splitIndex } = buildWindow(this.messages, COMPACTION_CHAR_POOL);
                 // What the context window actually holds right now.
                 //
                 // The footer's context meter was being fed `usedTokens` — the CUMULATIVE
