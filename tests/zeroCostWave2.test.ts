@@ -640,4 +640,44 @@ setTimeout(() => process.exit(0), 5000);
       else process.env.CAUSYNE_VAULT_KEY = prevVault;
     }
   });
+
+  test('AntigravityProvider persistentWorker reuses one warm process across turns and terminates cleanly on close()', { skip: process.platform === 'win32' }, async () => {
+    const ws = path.join(TMP, 'agy-persistent-worker');
+    fs.mkdirSync(ws, { recursive: true });
+    const spawnLog = path.join(ws, 'spawns.txt');
+    const fakeAgy = path.join(ws, 'fake-agy-warm.mjs');
+    fs.writeFileSync(fakeAgy, `#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+fs.appendFileSync(${JSON.stringify(spawnLog)}, String(process.pid) + '\\n');
+const rl = readline.createInterface({ input: process.stdin });
+let turn = 0;
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  turn++;
+  process.stdout.write(JSON.stringify({ event: 'init', conversation_id: 'warm-conv-1' }) + '\\n');
+  process.stdout.write(JSON.stringify({
+    event: 'result',
+    result: { status: 'SUCCESS', conversation_id: 'warm-conv-1', response: 'Reply #' + turn, usage: { input_tokens: 10 * turn, output_tokens: 5 * turn } }
+  }) + '\\n');
+});
+`, 'utf8');
+    fs.chmodSync(fakeAgy, 0o755);
+
+    const provider = new AntigravityProvider({
+      command: fakeAgy,
+      model: 'gemini-3.8-flash-low',
+      persistentWorker: true
+    });
+    try {
+      const r1 = await provider.chat([{ role: 'user', content: 'Turn 1' }], { workspaceRoot: ws });
+      const r2 = await provider.chat([{ role: 'user', content: 'Turn 1' }, { role: 'assistant', content: 'Reply #1' }, { role: 'user', content: 'Turn 2' }], { workspaceRoot: ws });
+      assert.equal(r1.content, 'Reply #1');
+      assert.equal(r2.content, 'Reply #2');
+      const pids = fs.readFileSync(spawnLog, 'utf8').trim().split('\n');
+      assert.equal(pids.length, 1, 'persistentWorker must reuse a single warm agy process across turns');
+    } finally {
+      await provider.close();
+    }
+  });
 });

@@ -739,8 +739,11 @@ export function mapNativeToolToCausyne(name, rawParams, index) {
 export class AntigravityProvider extends LLMProvider {
     command;
     printTimeout;
+    persistentWorkerEnabled;
     currentConversationId = null;
     lastTaskId = null;
+    activeChild = null;
+    persistentWorker = null;
     contextSnapshot = null;
     lastCumulativeUsage = null;
     constructor(config = {}) {
@@ -751,11 +754,58 @@ export class AntigravityProvider extends LLMProvider {
         this.printTimeout = typeof config.printTimeout === 'string' && config.printTimeout.trim()
             ? config.printTimeout.trim()
             : '1800s';
+        this.persistentWorkerEnabled = config['persistentWorker'] === true || process.env.CAUSYNE_AGY_PERSISTENT === '1';
         // This ACP bridge currently sends text-only stream-json messages. Image
         // blocks are reduced to labels in formatDelta/formatConversation, so do
         // not advertise vision or ask for desktop capture as proof of inspection.
         this.visionModels = [];
         this.audioModels = [];
+    }
+    terminateProcessHandle(child) {
+        if (!child)
+            return;
+        try {
+            child.stdin.destroy();
+        }
+        catch { /* ignore */ }
+        try {
+            child.stdout.destroy();
+        }
+        catch { /* ignore */ }
+        try {
+            child.stderr.destroy();
+        }
+        catch { /* ignore */ }
+        if (child.exitCode !== null || child.signalCode !== null)
+            return;
+        try {
+            child.kill('SIGTERM');
+            const timer = setTimeout(() => {
+                if (child.exitCode === null && child.signalCode === null) {
+                    try {
+                        child.kill('SIGKILL');
+                    }
+                    catch { /* ignore */ }
+                }
+            }, 250);
+            timer.unref?.();
+        }
+        catch {
+            // ignore exit race
+        }
+    }
+    abort() {
+        const child = this.activeChild;
+        this.activeChild = null;
+        this.terminateProcessHandle(child);
+        if (this.persistentWorker) {
+            const worker = this.persistentWorker;
+            this.persistentWorker = null;
+            this.terminateProcessHandle(worker.child);
+        }
+    }
+    async close() {
+        this.abort();
     }
     formatDelta(messages) {
         const lines = [];
@@ -1019,16 +1069,40 @@ export class AntigravityProvider extends LLMProvider {
         }
         return new Promise((resolve, reject) => {
             let isSettled = false;
-            const childEnv = { ...process.env };
-            delete childEnv.CAUSYNE_VAULT_KEY;
-            delete childEnv.CAUSYNE_DEV_SECRET;
-            delete childEnv.CAUSYNE_DEV_TOKEN;
-            const child = spawn(this.command, args, {
-                cwd: workspaceRoot,
-                env: childEnv,
-                stdio: ['pipe', 'pipe', 'pipe'],
-                windowsHide: true
-            });
+            const canUsePersistent = this.persistentWorkerEnabled && !launchOnly;
+            const existingWorker = canUsePersistent ? this.persistentWorker : null;
+            const reuseExistingWorker = Boolean(existingWorker
+                && existingWorker.workspaceRoot === workspaceRoot
+                && existingWorker.modelSlug === modelSlug
+                && existingWorker.effort === effort
+                && existingWorker.child.exitCode === null
+                && existingWorker.child.signalCode === null
+                && !existingWorker.child.killed
+                && existingWorker.child.stdin.writable);
+            if (existingWorker && !reuseExistingWorker) {
+                this.persistentWorker = null;
+                this.terminateProcessHandle(existingWorker.child);
+            }
+            let child;
+            if (reuseExistingWorker && existingWorker) {
+                child = existingWorker.child;
+            }
+            else {
+                const childEnv = { ...process.env };
+                delete childEnv.CAUSYNE_VAULT_KEY;
+                delete childEnv.CAUSYNE_DEV_SECRET;
+                delete childEnv.CAUSYNE_DEV_TOKEN;
+                child = spawn(this.command, args, {
+                    cwd: workspaceRoot,
+                    env: childEnv,
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                    windowsHide: true
+                });
+                if (canUsePersistent) {
+                    this.persistentWorker = { child, workspaceRoot, modelSlug, effort };
+                }
+            }
+            this.activeChild = child;
             let stdoutBuffer = '';
             let stderrBuffer = '';
             let streamedResponse = '';
@@ -1043,10 +1117,14 @@ export class AntigravityProvider extends LLMProvider {
             const attemptedNativeTools = [];
             let childClosed = false;
             const terminateChild = () => {
+                if (this.activeChild === child)
+                    this.activeChild = null;
+                if (this.persistentWorker?.child === child)
+                    this.persistentWorker = null;
                 try {
                     child.kill('SIGTERM');
                     setTimeout(() => {
-                        if (!childClosed)
+                        if (!childClosed && child.exitCode === null)
                             child.kill('SIGKILL');
                     }, 1000).unref();
                 }
@@ -1120,6 +1198,7 @@ export class AntigravityProvider extends LLMProvider {
                 inactivityTimer.unref?.();
             };
             resetInactivityWatchdog();
+            let detachStreamListeners = null;
             const cleanup = () => {
                 if (wallTimer)
                     clearTimeout(wallTimer);
@@ -1130,6 +1209,13 @@ export class AntigravityProvider extends LLMProvider {
                 if (postResultTimer) {
                     clearTimeout(postResultTimer);
                     postResultTimer = null;
+                }
+                if (detachStreamListeners) {
+                    detachStreamListeners();
+                    detachStreamListeners = null;
+                }
+                if (this.activeChild === child && !canUsePersistent) {
+                    this.activeChild = null;
                 }
                 if (options.signal) {
                     options.signal.removeEventListener('abort', onAbort);
@@ -1188,13 +1274,19 @@ export class AntigravityProvider extends LLMProvider {
                 terminateChild();
                 return;
             }
-            // Feed prompt directly into child process stdin, then close stdin
+            // Feed prompt directly into child process stdin (keep stdin open for persistent multi-turn worker reuse)
             try {
-                child.stdin.on('error', () => { });
+                if (child.stdin.listenerCount('error') === 0) {
+                    child.stdin.on('error', () => { });
+                }
                 child.stdin.write(JSON.stringify({ event: 'user', message: { content: promptText } }) + '\n', 'utf8');
-                child.stdin.end();
+                if (!canUsePersistent) {
+                    child.stdin.end();
+                }
             }
             catch (err) {
+                if (this.persistentWorker?.child === child)
+                    this.persistentWorker = null;
                 safeReject(new Error(`Failed to pipe prompt to Antigravity CLI: ${err.message}`));
                 return;
             }
@@ -1521,6 +1613,10 @@ export class AntigravityProvider extends LLMProvider {
                         if (event.result?.conversation_id) {
                             this.currentConversationId = event.result.conversation_id;
                         }
+                        if (canUsePersistent) {
+                            finalizeTurn(0);
+                            return true;
+                        }
                         if ((!finalResultObj?.status || finalResultObj.status === 'SUCCESS') && !postResultTimer) {
                             // Resolve promptly after result without blocking on lingering child close handles
                             postResultTimer = setTimeout(() => {
@@ -1725,7 +1821,7 @@ export class AntigravityProvider extends LLMProvider {
                 safeResolve(response);
             };
             child.stdout.setEncoding('utf8');
-            child.stdout.on('data', (chunk) => {
+            const onStdout = (chunk) => {
                 resetInactivityWatchdog();
                 stdoutBuffer += chunk;
                 // Process line-delimited stream-json events
@@ -1735,25 +1831,41 @@ export class AntigravityProvider extends LLMProvider {
                     if (processStreamJsonLine(line.trim()))
                         return;
                 }
-            });
+            };
             child.stderr.setEncoding('utf8');
-            child.stderr.on('data', (chunk) => {
+            const onStderr = (chunk) => {
                 resetInactivityWatchdog();
                 stderrBuffer += chunk;
-            });
-            child.on('error', (err) => {
+            };
+            const onError = (err) => {
+                if (this.persistentWorker?.child === child)
+                    this.persistentWorker = null;
                 if (useConversation)
                     this.currentConversationId = null;
                 safeReject(new Error(`Antigravity Agent (agy) spawn error: ${err.message}. Make sure Antigravity CLI is installed.`));
-            });
-            child.on('close', (code) => {
+            };
+            const onClose = (code) => {
                 childClosed = true;
+                if (this.persistentWorker?.child === child)
+                    this.persistentWorker = null;
+                if (this.activeChild === child)
+                    this.activeChild = null;
                 // A budget or user abort has already settled this call. Do not accept
                 // a late result from the terminated process as a resumable session.
                 if (isSettled)
                     return;
                 finalizeTurn(code);
-            });
+            };
+            detachStreamListeners = () => {
+                child.stdout.off('data', onStdout);
+                child.stderr.off('data', onStderr);
+                child.off('error', onError);
+                child.off('close', onClose);
+            };
+            child.stdout.on('data', onStdout);
+            child.stderr.on('data', onStderr);
+            child.on('error', onError);
+            child.on('close', onClose);
         });
     }
     async chat(messages, options = {}) {
