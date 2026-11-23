@@ -58,13 +58,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function buildMidStreamError(
+  providerLabel: string,
+  errPayload: unknown,
+  secrets?: ReadonlyArray<string | undefined | null>
+): Error {
+  const errObj = isRecord(errPayload) ? errPayload : null;
+  const rawMessage = typeof errPayload === 'string'
+    ? errPayload
+    : (errObj && typeof errObj.message === 'string' ? errObj.message : JSON.stringify(errPayload ?? 'unknown'));
+  const cleanMsg = redactProviderSecrets(rawMessage, secrets);
+  const errType = errObj && typeof errObj.type === 'string' ? errObj.type.toLowerCase() : '';
+  const errCodeRaw = errObj ? (errObj.status ?? errObj.code) : undefined;
+  const numericCode = typeof errCodeRaw === 'number' && Number.isInteger(errCodeRaw) && errCodeRaw >= 400 && errCodeRaw <= 599
+    ? errCodeRaw
+    : (typeof errCodeRaw === 'string' && /^\d{3}$/.test(errCodeRaw) ? Number(errCodeRaw) : null);
+
+  let status: number | null = numericCode;
+  if (status === null) {
+    const combined = `${errType} ${cleanMsg}`.toLowerCase();
+    if (combined.includes('overloaded')) status = 529;
+    else if (combined.includes('rate_limit') || combined.includes('rate limit') || combined.includes('too many requests')) status = 429;
+    else if (combined.includes('authentication_error') || combined.includes('unauthorized')) status = 401;
+    else if (combined.includes('permission_error') || combined.includes('forbidden')) status = 403;
+    else if (combined.includes('invalid_request_error') || combined.includes('context_length_exceeded')) status = 400;
+    else if (combined.includes('api_error') || combined.includes('server_error') || combined.includes('internal_error')) status = 500;
+  }
+
+  if (status !== null) {
+    return new ProviderHttpError(`${providerLabel} stream error (${status}): ${cleanMsg}`, {
+      status,
+      code: errType || undefined
+    });
+  }
+  return new Error(`${providerLabel} stream error: ${cleanMsg}`);
+}
+
 async function openHardenedStream(
   options: StreamFetchOptions
 ): Promise<
   | { mode: 'json'; data: Record<string, unknown> }
-  | { mode: 'stream'; response: Response; cleanup: () => void }
+  | { mode: 'stream'; response: Response; cleanup: () => void; resetTimeout: () => void }
 > {
-  const { response, cleanup } = await safeProviderFetch(options);
+  const { response, cleanup, resetTimeout } = await safeProviderFetch(options);
 
   if (!response.ok) {
     try {
@@ -128,7 +164,7 @@ async function openHardenedStream(
     }
   }
 
-  return { mode: 'stream', response, cleanup };
+  return { mode: 'stream', response, cleanup, resetTimeout };
 }
 
 interface SseEvent {
@@ -141,7 +177,8 @@ async function consumeSseStream(
   providerLabel: string,
   maxBytes: number,
   onEvent: (event: SseEvent) => void,
-  signal?: AbortSignal | undefined
+  signal?: AbortSignal | undefined,
+  onActivity?: (() => void) | undefined
 ): Promise<void> {
   const safeMaxBytes = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 1
     ? Math.floor(maxBytes)
@@ -207,6 +244,7 @@ async function consumeSseStream(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
+      onActivity?.();
 
       totalBytes += value.byteLength;
       if (totalBytes > safeMaxBytes) {
@@ -246,7 +284,8 @@ async function consumeNdjsonStream(
   providerLabel: string,
   maxBytes: number,
   onObject: (obj: Record<string, unknown>) => void,
-  signal?: AbortSignal | undefined
+  signal?: AbortSignal | undefined,
+  onActivity?: (() => void) | undefined
 ): Promise<void> {
   const safeMaxBytes = typeof maxBytes === 'number' && Number.isFinite(maxBytes) && maxBytes >= 1
     ? Math.floor(maxBytes)
@@ -277,6 +316,7 @@ async function consumeNdjsonStream(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value) continue;
+      onActivity?.();
 
       totalBytes += value.byteLength;
       if (totalBytes > safeMaxBytes) {
@@ -322,22 +362,36 @@ export async function streamOpenAICompatibleChat(
     stream_options: { include_usage: true }
   };
 
-  const opened = await openHardenedStream({
-    ...options,
-    headers: {
-      Accept: 'text/event-stream, application/json',
-      ...(options.headers ?? {})
-    },
-    body: JSON.stringify(streamPayload)
-  });
+  let opened: Awaited<ReturnType<typeof openHardenedStream>>;
+  try {
+    opened = await openHardenedStream({
+      ...options,
+      headers: {
+        Accept: 'text/event-stream, application/json',
+        ...(options.headers ?? {})
+      },
+      body: JSON.stringify(streamPayload)
+    });
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message.toLowerCase() : '';
+    const isStreamOpts400 = err instanceof ProviderHttpError
+      && err.status === 400
+      && (errMsg.includes('stream_options') || errMsg.includes('include_usage') || errMsg.includes('unrecognized') || errMsg.includes('extra_forbidden'));
+    if (!isStreamOpts400) throw err;
+    const fallbackPayload: Record<string, unknown> = { ...options.payload, stream: true };
+    opened = await openHardenedStream({
+      ...options,
+      headers: {
+        Accept: 'text/event-stream, application/json',
+        ...(options.headers ?? {})
+      },
+      body: JSON.stringify(fallbackPayload)
+    });
+  }
 
   if (opened.mode === 'json') {
     if (isRecord(opened.data.error)) {
-      const msg = redactProviderSecrets(
-        typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error),
-        options.secrets
-      );
-      throw new Error(`${options.providerLabel} stream error: ${msg}`);
+      throw buildMidStreamError(options.providerLabel, opened.data.error, options.secrets);
     }
     const choices = Array.isArray(opened.data.choices) ? opened.data.choices : [];
     const first = isRecord(choices[0]) ? choices[0] : null;
@@ -377,11 +431,7 @@ export async function streamOpenAICompatibleChat(
         if (!isRecord(parsed)) return;
 
         if (isRecord(parsed.error)) {
-          const msg = redactProviderSecrets(
-            typeof parsed.error.message === 'string' ? parsed.error.message : JSON.stringify(parsed.error),
-            options.secrets
-          );
-          throw new Error(`${options.providerLabel} stream error: ${msg}`);
+          throw buildMidStreamError(options.providerLabel, parsed.error, options.secrets);
         }
 
         if (isRecord(parsed.usage)) {
@@ -452,7 +502,8 @@ export async function streamOpenAICompatibleChat(
           }
         }
       },
-      options.signal
+      options.signal,
+      opened.resetTimeout
     );
   } finally {
     opened.cleanup();
@@ -500,11 +551,7 @@ export async function streamAnthropicMessages(
   if (opened.mode === 'json') {
     if (opened.data.type === 'error' || isRecord(opened.data.error)) {
       const errObj = isRecord(opened.data.error) ? opened.data.error : opened.data;
-      const msg = redactProviderSecrets(
-        typeof errObj.message === 'string' ? errObj.message : JSON.stringify(errObj),
-        options.secrets
-      );
-      throw new Error(`${options.providerLabel} stream error: ${msg}`);
+      throw buildMidStreamError(options.providerLabel, errObj, options.secrets);
     }
     const blocks = Array.isArray(opened.data.content) ? opened.data.content : [];
     for (const block of blocks) {
@@ -557,11 +604,7 @@ export async function streamAnthropicMessages(
 
         if (eventType === 'error') {
           const errObj = isRecord(parsed.error) ? parsed.error : parsed;
-          const msg = redactProviderSecrets(
-            typeof errObj.message === 'string' ? errObj.message : JSON.stringify(errObj),
-            options.secrets
-          );
-          throw new Error(`${options.providerLabel} stream error: ${msg}`);
+          throw buildMidStreamError(options.providerLabel, errObj, options.secrets);
         }
 
         if (eventType === 'message_start' && isRecord(parsed.message) && isRecord(parsed.message.usage)) {
@@ -609,7 +652,8 @@ export async function streamAnthropicMessages(
           }
         }
       },
-      options.signal
+      options.signal,
+      opened.resetTimeout
     );
   } finally {
     opened.cleanup();
@@ -665,11 +709,7 @@ export async function streamGeminiGenerateContent(
 
   if (opened.mode === 'json') {
     if (isRecord(opened.data.error)) {
-      const msg = redactProviderSecrets(
-        typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error),
-        options.secrets
-      );
-      throw new Error(`${options.providerLabel} stream error: ${msg}`);
+      throw buildMidStreamError(options.providerLabel, opened.data.error, options.secrets);
     }
     const candidates = Array.isArray(opened.data.candidates) ? opened.data.candidates : [];
     const first = isRecord(candidates[0]) ? candidates[0] : null;
@@ -713,11 +753,7 @@ export async function streamGeminiGenerateContent(
         if (!isRecord(parsed)) return;
 
         if (isRecord(parsed.error)) {
-          const msg = redactProviderSecrets(
-            typeof parsed.error.message === 'string' ? parsed.error.message : JSON.stringify(parsed.error),
-            options.secrets
-          );
-          throw new Error(`${options.providerLabel} stream error: ${msg}`);
+          throw buildMidStreamError(options.providerLabel, parsed.error, options.secrets);
         }
 
         if (isRecord(parsed.usageMetadata)) {
@@ -753,7 +789,8 @@ export async function streamGeminiGenerateContent(
           }
         }
       },
-      options.signal
+      options.signal,
+      opened.resetTimeout
     );
   } finally {
     opened.cleanup();
@@ -795,11 +832,10 @@ export async function streamOllamaChat(
 
   if (opened.mode === 'json') {
     if (typeof opened.data.error === 'string' && opened.data.error) {
-      throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(opened.data.error, options.secrets)}`);
+      throw buildMidStreamError(options.providerLabel, opened.data.error, options.secrets);
     }
     if (isRecord(opened.data.error)) {
-      const errMsg = typeof opened.data.error.message === 'string' ? opened.data.error.message : JSON.stringify(opened.data.error);
-      throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(errMsg, options.secrets)}`);
+      throw buildMidStreamError(options.providerLabel, opened.data.error, options.secrets);
     }
     const msg = isRecord(opened.data.message) ? opened.data.message : null;
     if (msg) {
@@ -876,11 +912,10 @@ export async function streamOllamaChat(
       options.maxBytes ?? MAX_PROVIDER_JSON_BYTES,
       (chunk) => {
         if (typeof chunk.error === 'string' && chunk.error) {
-          throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(chunk.error, options.secrets)}`);
+          throw buildMidStreamError(options.providerLabel, chunk.error, options.secrets);
         }
         if (isRecord(chunk.error)) {
-          const errMsg = typeof chunk.error.message === 'string' ? chunk.error.message : JSON.stringify(chunk.error);
-          throw new Error(`${options.providerLabel} stream error: ${redactProviderSecrets(errMsg, options.secrets)}`);
+          throw buildMidStreamError(options.providerLabel, chunk.error, options.secrets);
         }
         const msg = isRecord(chunk.message) ? chunk.message : null;
         if (msg) {
@@ -899,7 +934,8 @@ export async function streamOllamaChat(
         if (typeof chunk.prompt_eval_count === 'number' && Number.isFinite(chunk.prompt_eval_count) && chunk.prompt_eval_count >= 0) promptEvalCount = chunk.prompt_eval_count;
         if (typeof chunk.eval_count === 'number' && Number.isFinite(chunk.eval_count) && chunk.eval_count >= 0) evalCount = chunk.eval_count;
       },
-      options.signal
+      options.signal,
+      opened.resetTimeout
     );
   } finally {
     opened.cleanup();

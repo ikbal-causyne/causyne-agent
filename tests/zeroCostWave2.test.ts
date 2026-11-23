@@ -8,7 +8,8 @@ import { AcpClient } from '../src/acp/client.js';
 import { testPeerHandshake, isAuthRequiredHandshakeFailure } from '../src/acp/agentCatalog.js';
 import { AgentLoop } from '../src/agentLoop.js';
 import { OllamaProvider, clearOllamaModelMetaCache, ollamaOriginUrl } from '../src/providers/ollama.js';
-import { streamOllamaChat } from '../src/providers/byokStream.js';
+import { streamOllamaChat, streamOpenAICompatibleChat } from '../src/providers/byokStream.js';
+import { ProviderHttpError } from '../src/providers/byokHttp.js';
 import { fetchLiveModels } from '../src/dynamicCatalogue.js';
 import { OpenRouterProvider, parseRateLimitResetMs } from '../src/providers/openrouter.js';
 import { handleInput } from '../src/commands.js';
@@ -777,5 +778,79 @@ rl.on('line', (line) => {
     assert.equal(classifyAgentError({ name: 'TimeoutError', message: 'timed out' }), 'network_error');
     assert.equal(classifyAgentError(new Error('Failed to parse skill header')), 'unknown_error', '"skill" must never match "kill" as fatal');
     assert.equal(classifyAgentError(new Error('Process killed by SIGKILL')), 'fatal');
+  });
+
+  test('streamOpenAICompatibleChat retries without stream_options on 400 and throws ProviderHttpError on mid-stream overload/rate_limit', async () => {
+    const origFetch = globalThis.fetch;
+    const seenBodies: any[] = [];
+    let callCount = 0;
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      callCount++;
+      const body = JSON.parse(String(init?.body || '{}'));
+      seenBodies.push(body);
+      if (callCount === 1) {
+        return {
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          text: async () => JSON.stringify({ error: { message: 'Unrecognized request argument: stream_options' } })
+        } as unknown as Response;
+      }
+      if (callCount === 2) {
+        const sse = 'data: ' + JSON.stringify({ choices: [{ delta: { content: 'hello local' } }] }) + '\n\ndata: [DONE]\n\n';
+        const enc = new TextEncoder();
+        const stream = new ReadableStream({
+          start(c) {
+            c.enqueue(enc.encode(sse));
+            c.close();
+          }
+        });
+        return {
+          ok: true, status: 200,
+          headers: new Headers({ 'content-type': 'text/event-stream' }),
+          body: stream
+        } as unknown as Response;
+      }
+      const errSse = 'data: ' + JSON.stringify({ error: { type: 'overloaded_error', message: 'Upstream overloaded' } }) + '\n\n';
+      const enc = new TextEncoder();
+      const stream = new ReadableStream({
+        start(c) {
+          c.enqueue(enc.encode(errSse));
+          c.close();
+        }
+      });
+      return {
+        ok: true, status: 200,
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+        body: stream
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const ok = await streamOpenAICompatibleChat({
+        url: 'http://127.0.0.1:1234/v1/chat/completions',
+        providerLabel: 'LocalLLM',
+        payload: { model: 'local', messages: [{ role: 'user', content: 'hi' }] }
+      });
+      assert.equal(seenBodies[0]?.stream_options?.include_usage, true);
+      assert.equal(seenBodies[1]?.stream_options, undefined, 'retry must omit unsupported stream_options');
+      assert.equal((ok.choices as any)?.[0]?.message?.content, 'hello local');
+
+      await assert.rejects(
+        () => streamOpenAICompatibleChat({
+          url: 'http://127.0.0.1:1234/v1/chat/completions',
+          providerLabel: 'LocalLLM',
+          payload: { model: 'local', messages: [{ role: 'user', content: 'hi' }] }
+        }),
+        (err: unknown) => {
+          assert.ok(err instanceof ProviderHttpError, 'mid-stream overloaded_error must throw ProviderHttpError');
+          assert.equal((err as ProviderHttpError).status, 529);
+          assert.equal(classifyAgentError(err), 'network_error');
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });

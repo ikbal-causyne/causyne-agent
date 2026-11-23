@@ -294,6 +294,7 @@ export async function safeProviderFetch(options) {
     const timeoutMs = clampTimeout(options.timeoutMs);
     const controller = new AbortController();
     let timedOut = false;
+    let cleanedUp = false;
     const onCallerAbort = () => {
         controller.abort(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
     };
@@ -305,17 +306,32 @@ export async function safeProviderFetch(options) {
             options.signal.addEventListener('abort', onCallerAbort, { once: true });
         }
     }
-    const timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort(new DOMException(`Timed out after ${timeoutMs}ms`, 'TimeoutError'));
-    }, timeoutMs);
-    if (typeof timer.unref === 'function')
-        timer.unref();
+    let timer = null;
+    const armTimer = () => {
+        if (cleanedUp)
+            return;
+        if (timer)
+            clearTimeout(timer);
+        timer = setTimeout(() => {
+            timedOut = true;
+            controller.abort(new DOMException(`Timed out after ${timeoutMs}ms`, 'TimeoutError'));
+        }, timeoutMs);
+        if (typeof timer.unref === 'function')
+            timer.unref();
+    };
+    armTimer();
     const cleanup = () => {
-        clearTimeout(timer);
+        cleanedUp = true;
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
         if (options.signal) {
             options.signal.removeEventListener('abort', onCallerAbort);
         }
+    };
+    const resetTimeout = () => {
+        armTimer();
     };
     const fetchInit = {
         method: options.method || 'POST',
@@ -335,12 +351,14 @@ export async function safeProviderFetch(options) {
         fetchInit.body = options.body;
     try {
         const response = await fetch(safeUrl, fetchInit);
-        return { response, cleanup };
+        return { response, cleanup, resetTimeout };
     }
     catch (err) {
         cleanup();
         if (options.signal?.aborted) {
-            throw err;
+            if (err instanceof Error)
+                throw err;
+            throw new DOMException(typeof err === 'string' && err ? err : 'Aborted', 'AbortError');
         }
         if (timedOut || (isAbortLikeError(err) && !options.signal?.aborted)) {
             const timeoutErr = new Error(`${options.providerLabel} request timed out after ${timeoutMs}ms (ETIMEDOUT)`);
@@ -348,7 +366,14 @@ export async function safeProviderFetch(options) {
             throw timeoutErr;
         }
         const rawMsg = err instanceof Error ? err.message : String(err);
-        const causeMsg = err instanceof Error && err.cause instanceof Error ? err.cause.message : '';
+        const causeObj = err instanceof Error ? err.cause : undefined;
+        const causeMsg = causeObj instanceof Error ? causeObj.message : '';
+        const rawCode = (err && typeof err === 'object' && typeof err.code === 'string'
+            ? err.code
+            : undefined)
+            ?? (causeObj && typeof causeObj === 'object' && typeof causeObj.code === 'string'
+                ? causeObj.code
+                : undefined);
         const combined = `${rawMsg} ${causeMsg}`.toLowerCase();
         if (combined.includes('redirect')) {
             throw new Error(`${options.providerLabel} refused an HTTP redirect to protect API credentials.`);
@@ -356,7 +381,12 @@ export async function safeProviderFetch(options) {
         const safeMsg = redactProviderSecrets(rawMsg, options.secrets);
         const safeCause = causeMsg ? redactProviderSecrets(causeMsg, options.secrets) : '';
         const detail = safeCause && !safeMsg.includes(safeCause) ? `${safeMsg} (${safeCause})` : safeMsg;
-        throw new Error(`${options.providerLabel} network error: ${detail}`);
+        const netErr = new Error(`${options.providerLabel} network error: ${detail}`, {
+            cause: err instanceof Error ? err : undefined
+        });
+        if (rawCode)
+            netErr.code = rawCode;
+        throw netErr;
     }
 }
 /**
