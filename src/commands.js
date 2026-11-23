@@ -1156,9 +1156,13 @@ export const COMMANDS = [
         name: 'compact',
         aliases: ['compress', 'summarize'],
         scope: 'local',
-        usage: '/compact',
+        usage: '/compact [--preview] [--keep <turns>] [focus instructions]',
         description: 'Condense earlier conversation turns into a structured state checkpoint to reclaim tokens',
         dialogTitle: 'Context Compaction',
+        complete: () => [
+            { value: '--preview', label: '--preview', description: 'estimate token savings without modifying history' },
+            { value: '--keep 6', label: '--keep 6', description: 'preserve 6 recent turns after compaction' }
+        ],
         run: async (argv, ctx) => {
             const { runCompactSlashCommand } = await import('./core/contextCompactor.js');
             const res = await runCompactSlashCommand(argv, ctx);

@@ -20,6 +20,8 @@ import {
 } from '../historyPruner.js';
 import { compactInPlace, measureMessages, CHARS_PER_TOKEN } from '../contextManager.js';
 import { extractPatchTargetPaths } from '../tools/applyPatch.js';
+import { safeDisplay } from '../tui/text.js';
+import { runConfiguredHooks } from '../hooks.js';
 
 export interface CodexCompactedState {
   readonly goal: string;
@@ -44,6 +46,7 @@ export interface CompactionOptions {
   readonly originalPrompt?: string;
   readonly maxCharPool?: number;
   readonly activePlan?: readonly PlanStepAnchor[] | undefined;
+  readonly focusHint?: string | undefined;
 }
 
 export interface CompactionResult {
@@ -108,7 +111,7 @@ export function findSafeCompactionSplitIndex(
 export function buildCodexStyleSummary(
   droppedMessages: readonly ToolObservation[],
   originalPrompt?: string,
-  extra?: { activePlan?: readonly PlanStepAnchor[] | undefined }
+  extra?: { activePlan?: readonly PlanStepAnchor[] | undefined; focusHint?: string | undefined }
 ): string {
   const createdFiles = new Set<string>();
   const modifiedFiles = new Set<string>();
@@ -310,9 +313,13 @@ export function compactSessionMessages(
     : options.originalPrompt;
 
   const structuredSummary = buildCodexStyleSummary(dropped, rootPrompt, {
-    activePlan: options.activePlan
+    activePlan: options.activePlan,
+    focusHint: options.focusHint
   });
-  const fullRecoverableSummary = buildRecoverableDroppedSummary(dropped, structuredSummary);
+  const focusFooter = options.focusHint && options.focusHint.trim()
+    ? `\n\nPreserved Focus Directive: ${safeDisplay(options.focusHint.trim()).slice(0, 400)}`
+    : '';
+  const fullRecoverableSummary = buildRecoverableDroppedSummary(dropped, `${structuredSummary}${focusFooter}`);
 
   const removed = compactInPlace(messages, splitIndex, fullRecoverableSummary);
   const finalChars = measureMessages(messages);
@@ -372,10 +379,10 @@ export function autoCompactIfUnderPressure(
 }
 
 /**
- * Slash command handler for `/compact`.
+ * Slash command handler for `/compact [--preview] [--keep <turns>] [focus instructions]`.
  */
 export async function runCompactSlashCommand(
-  _argv: string[],
+  argv: string[],
   ctx: { loop?: any; prompt?: any }
 ): Promise<{ ok: boolean; output: string }> {
   const loop = ctx.loop;
@@ -386,6 +393,31 @@ export async function runCompactSlashCommand(
     };
   }
 
+  let preview = false;
+  let keepRecentTurns = 4;
+  const focusParts: string[] = [];
+  const safeArgv = Array.isArray(argv) ? argv : [];
+  for (let i = 0; i < safeArgv.length; i++) {
+    const token = String(safeArgv[i] ?? '').trim();
+    if (!token) continue;
+    if (token === '--preview' || token === '--dry-run') {
+      preview = true;
+    } else if (token === '--keep' && i + 1 < safeArgv.length) {
+      const parsed = Number.parseInt(String(safeArgv[++i] ?? ''), 10);
+      if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 24) {
+        keepRecentTurns = parsed;
+      }
+    } else if (token.startsWith('--keep=')) {
+      const parsed = Number.parseInt(token.slice('--keep='.length), 10);
+      if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 24) {
+        keepRecentTurns = parsed;
+      }
+    } else {
+      focusParts.push(token);
+    }
+  }
+  const focusHint = focusParts.join(' ').trim();
+
   if (loop.messages.length <= 3) {
     return {
       ok: true,
@@ -393,11 +425,51 @@ export async function runCompactSlashCommand(
     };
   }
 
+  if (preview) {
+    const initialChars = measureMessages(loop.messages);
+    const rawSplit = loop.messages.length - keepRecentTurns - 1;
+    const splitIndex = rawSplit >= 1 ? findSafeCompactionSplitIndex(loop.messages, rawSplit) : -1;
+    const candidateCount = splitIndex >= 1 ? splitIndex : 0;
+    const estDropChars = splitIndex >= 1 ? measureMessages(loop.messages.slice(1, splitIndex + 1)) : 0;
+    const estTokens = Math.round(estDropChars / CHARS_PER_TOKEN);
+    return {
+      ok: true,
+      output: [
+        'Context Compaction Preview (no changes applied)',
+        '',
+        `  • Total messages        : ${loop.messages.length}`,
+        `  • Current context size  : ${(initialChars / 1024).toFixed(1)} KB (~${Math.round(initialChars / CHARS_PER_TOKEN).toLocaleString()} tokens)`,
+        `  • Eligible to condense  : ${candidateCount} message(s) (keeping ${keepRecentTurns} recent turns)`,
+        `  • Estimated reclamation : ~${(estDropChars / 1024).toFixed(1)} KB (~${estTokens.toLocaleString()} tokens)`,
+        ...(focusHint ? [`  • Focus directive       : ${safeDisplay(focusHint)}`] : []),
+        '',
+        'Run /compact without --preview to apply.'
+      ].join('\n')
+    };
+  }
+
+  try {
+    await runConfiguredHooks({
+      hooks: loop.config?.hooks,
+      event: 'PreCompact',
+      toolName: 'compact',
+      args: {
+        messageCount: loop.messages.length,
+        ...(focusHint ? { focusHint } : {})
+      },
+      taskId: loop.taskId || 'manual-compact',
+      workspacePaths: loop.workspaceRoot ? [loop.workspaceRoot] : [process.cwd()]
+    });
+  } catch {
+    // Lifecycle hooks fail open so manual compaction never crashes
+  }
+
   const result = compactSessionMessages(loop.messages, {
-    keepRecentTurns: 4,
+    keepRecentTurns,
     taskId: loop.taskId || 'manual-compact',
     originalPrompt: loop.currentTaskPrompt || loop.userPrompt,
-    activePlan: Array.isArray(loop._implementationPlan) ? loop._implementationPlan : undefined
+    activePlan: Array.isArray(loop._implementationPlan) ? loop._implementationPlan : undefined,
+    ...(focusHint ? { focusHint } : {})
   });
 
   if (!result.compacted) {
@@ -407,6 +479,7 @@ export async function runCompactSlashCommand(
     };
   }
 
+  loop._contextChars = result.finalChars;
   if (loop.memoryManager && typeof loop.memoryManager.saveHistory === 'function') {
     loop.memoryManager.saveHistory(loop.messages);
   }
@@ -420,6 +493,7 @@ export async function runCompactSlashCommand(
     `  • Earlier messages condensed: ${result.removedCount}`,
     `  • Memory reclaimed: ${reclaimedKb} KB (~${result.reclaimedTokens.toLocaleString()} tokens)`,
     `  • Live active context: ${finalKb} KB`,
+    ...(focusHint ? [`  • Preserved focus directive: ${safeDisplay(focusHint)}`] : []),
     '  • Golden Anchor (original prompt) & recent working turns: Preserved in full',
     '  • Deliverables and source files on disk: 100% intact',
     '',
