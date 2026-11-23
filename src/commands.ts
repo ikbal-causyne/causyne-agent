@@ -71,6 +71,7 @@ import { safeDisplay } from './tui/text.js';
 import { formatEnterprisePolicyReport } from './enterprisePolicy.js';
 import { auditLog, formatAuditExport, type AuditExportFormat } from './auditLog.js';
 import { assertSafeWorkspaceOutput, atomicWriteFileSafe } from './tools/toolPathSafety.js';
+import { sanitizeSubprocessEnv } from './tools/subprocessEnv.js';
 import { formatLspStatusReport, lspCodeIntel } from './tools/lspCodeIntel.js';
 import {
   createWorktree,
@@ -139,12 +140,14 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 function runGitCommand(args: string[], cwd: string): string {
-  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
-  delete env.CAUSYNE_VAULT_KEY;
-  delete env.CAUSYNE_DEV_SECRET;
+  const env: NodeJS.ProcessEnv = {
+    ...sanitizeSubprocessEnv(process.env),
+    GIT_TERMINAL_PROMPT: '0'
+  };
   delete env.GIT_EXTERNAL_DIFF;
   delete env.GIT_PAGER;
   delete env.GIT_EDITOR;
+  delete env.GIT_SSH_COMMAND;
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
@@ -1696,6 +1699,15 @@ export const COMMANDS: SlashCommandDefinition[] = [
         return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
       }
 
+      // 3b. OpenRouter `:free` models (e.g. qwen/qwen3-coder:free, deepseek/deepseek-r1:free)
+      // Must be recognized BEFORE vendor-prefix matching so `qwen/...:free` never switches to Qwen BYOK.
+      if (rawRequested.toLowerCase().endsWith(':free') && rawRequested.includes('/')) {
+        const targetProv = (config.provider === 'openrouter' || config.provider === 'openrouter-free')
+          ? config.provider
+          : 'openrouter';
+        return activateModel(targetProv, rawRequested, `Now using ${targetProv} / ${rawRequested}.`);
+      }
+
       // 4. Known BYOK provider prefix (e.g. gemini/gemini-2.5-flash, anthropic/claude-3-7-sonnet)
       const byokProvider = overview.byok.find(p => p.id === prefix || (p.id === 'qwen' && prefix === 'dashscope-byok'));
       if (byokProvider) {
@@ -1718,12 +1730,21 @@ export const COMMANDS: SlashCommandDefinition[] = [
         }
       }
 
-      // 6. If currently in ACP and model is custom for that peer
+      // 6. If currently in ACP or on a provider whose models contain slashes (e.g. OpenRouter, Ollama, Groq, OpenAI-compatible)
       if (isAcpProvider(config.provider)) {
         return activateModel(config.provider, rawRequested, `Now using ${config.provider} / ${rawRequested}.`);
       }
+      const SLASHED_MODEL_PROVIDERS = new Set([
+        'openrouter', 'openrouter-free', 'openai-compatible', 'ollama', 'groq', 'cerebras', 'together', 'fireworks'
+      ]);
+      if (slashIndex > 0 && config.provider && SLASHED_MODEL_PROVIDERS.has(config.provider.toLowerCase())) {
+        return activateModel(config.provider, rawRequested, `Now using ${config.provider} / ${rawRequested}.`);
+      }
 
-      // 7. Generic provider/model separator or bare model
+      // 7. Bare model name on the active provider (never fabricate an unknown provider from an arbitrary slash)
+      if (slashIndex > 0 && config.provider) {
+        return activateModel(config.provider, rawRequested, `Now using ${config.provider} / ${rawRequested}.`);
+      }
       if (slashIndex > 0) {
         const prov = rawRequested.slice(0, slashIndex).trim();
         const mod = rawRequested.slice(slashIndex + 1).trim();
@@ -1959,15 +1980,15 @@ export const COMMANDS: SlashCommandDefinition[] = [
 
         if (action === 'refresh') {
           const tools = await refreshServer(serverName);
-          return ok(`Refreshed "${serverName}": ${tools.length} tool(s) available${tools.length ? ` — ${tools.map(tool => tool.name).join(', ')}` : ''}.`);
+          return ok(`Refreshed "${safeDisplay(serverName)}": ${tools.length} tool(s) available${tools.length ? ` — ${tools.map(tool => safeDisplay(tool.name)).join(', ')}` : ''}.`);
         }
 
         const client = await connectServer(serverName);
         return ok(
-          `${action === 'test' ? 'MCP test passed' : 'Connected'}: "${serverName}"\n`
-          + `Transport: ${client.status.transport || 'unknown'}\n`
-          + `Server: ${client.serverInfo ? `${client.serverInfo.name} ${client.serverInfo.version}` : 'identity not provided'}\n`
-          + `Tools: ${client.tools.length}${client.tools.length ? ` — ${client.tools.map(tool => tool.name).join(', ')}` : ''}`
+          `${action === 'test' ? 'MCP test passed' : 'Connected'}: "${safeDisplay(serverName)}"\n`
+          + `Transport: ${safeDisplay(client.status.transport || 'unknown')}\n`
+          + `Server: ${client.serverInfo ? `${safeDisplay(client.serverInfo.name)} ${safeDisplay(client.serverInfo.version)}` : 'identity not provided'}\n`
+          + `Tools: ${client.tools.length}${client.tools.length ? ` — ${client.tools.map(tool => safeDisplay(tool.name)).join(', ')}` : ''}`
         );
       }
 
@@ -2027,10 +2048,10 @@ export const COMMANDS: SlashCommandDefinition[] = [
         const lines = ['Discovered ACP Peer Agents', ''];
         for (const item of detected) {
           const statusIcon = item.status === 'ready' ? '✓' : (item.status === 'needs_auth' ? '△ ' : '✕');
-          lines.push(`  ${statusIcon} ${item.id} (${item.label}) — ${item.status.toUpperCase()}`);
-          lines.push(`     Command: ${item.command} ${item.args.join(' ')}`);
-          if (item.details) lines.push(`     Details: ${item.details}`);
-          if (item.setupInstruction) lines.push(`     Setup: ${item.setupInstruction}`);
+          lines.push(`  ${statusIcon} ${safeDisplay(item.id)} (${safeDisplay(item.label)}) — ${safeDisplay(item.status.toUpperCase())}`);
+          lines.push(`     Command: ${safeDisplay(item.command)} ${item.args.map(a => safeDisplay(a)).join(' ')}`);
+          if (item.details) lines.push(`     Details: ${safeDisplay(redactProviderSecrets(item.details))}`);
+          if (item.setupInstruction) lines.push(`     Setup: ${safeDisplay(item.setupInstruction)}`);
         }
         lines.push('');
         lines.push('Use /peers test <id> to test zero-token handshake against a specific peer.');
@@ -2065,17 +2086,20 @@ export const COMMANDS: SlashCommandDefinition[] = [
           command: profile.command,
           args: profile.args,
           cwd: profile.cwd || process.cwd(),
+          ...(profile.env ? { env: profile.env } : {}),
           timeoutMs: 15000
         });
 
         if (handshake.ready) {
-          const name = handshake.agentInfo ? `${handshake.agentInfo.name} ${handshake.agentInfo.version}` : profile.label;
+          const name = handshake.agentInfo
+            ? `${safeDisplay(handshake.agentInfo.name)} ${safeDisplay(handshake.agentInfo.version)}`
+            : safeDisplay(profile.label);
           return ok(
-            `✓ ACP Peer Test Passed: "${peerId}"\n\n`
+            `✓ ACP Peer Test Passed: "${safeDisplay(peerId)}"\n\n`
             + `Agent: ${name}\n`
-            + `Command: ${profile.command} ${profile.args.join(' ')}\n`
-            + `Policy: ${profile.policy}\n`
-            + `Auth Methods: ${handshake.authMethods?.join(', ') || 'none'}\n\n`
+            + `Command: ${safeDisplay(profile.command)} ${profile.args.map(a => safeDisplay(a)).join(' ')}\n`
+            + `Policy: ${safeDisplay(profile.policy)}\n`
+            + `Auth Methods: ${handshake.authMethods?.map(m => safeDisplay(m)).join(', ') || 'none'}\n\n`
             + `Ready to receive delegated tasks via peer_agent_delegate.`
           );
         } else {
@@ -2131,8 +2155,8 @@ export const COMMANDS: SlashCommandDefinition[] = [
       const peers = listAllPeers();
       const lines = ['Configured & Preset ACP Peer Agents', ''];
       for (const peer of peers) {
-        lines.push(`  • ${peer.id} (${peer.label}) [policy: ${peer.policy}, timeout: ${peer.timeoutSeconds}s]`);
-        lines.push(`    Command: ${peer.command} ${peer.args.join(' ')}`);
+        lines.push(`  • ${safeDisplay(peer.id)} (${safeDisplay(peer.label)}) [policy: ${safeDisplay(peer.policy)}, timeout: ${peer.timeoutSeconds}s]`);
+        lines.push(`    Command: ${safeDisplay(peer.command)} ${peer.args.map(a => safeDisplay(a)).join(' ')}`);
       }
       lines.push('');
       lines.push('Commands:');
