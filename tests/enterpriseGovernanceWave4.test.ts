@@ -7,6 +7,7 @@ import path from 'node:path';
 import { AuditLog, computeAuditEntryHash, formatAuditExport } from '../src/auditLog.js';
 import { runCommand } from '../src/commands.js';
 import { matchHookToolPattern, runConfiguredHooks } from '../src/hooks.js';
+import { loadProjectInstructions } from '../src/projectInstructions.js';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -149,5 +150,36 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     });
     assert.equal(stopDecision.denied, true);
     assert.equal(stopDecision.reason, 'tests still failing');
+  });
+
+  test('projectInstructions supports YAML frontmatter paths/globs scoping, same-dir deduplication, and safe @include expansion', () => {
+    const ws = path.join(TMP, 'proj-rules-ws');
+    fs.mkdirSync(path.join(ws, '.causyne', 'rules'), { recursive: true });
+    fs.mkdirSync(path.join(ws, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(ws, 'docs', 'shared.md'), 'Shared architecture rule.', 'utf8');
+    fs.writeFileSync(path.join(ws, 'CAUSYNE.md'), 'Primary rule.\n@include ./docs/shared.md\n@include ../../etc/passwd\n', 'utf8');
+    // Identical mirror in AGENTS.md should be deduplicated
+    fs.writeFileSync(path.join(ws, 'AGENTS.md'), 'Primary rule.\n@include ./docs/shared.md\n@include ../../etc/passwd\n', 'utf8');
+    fs.writeFileSync(
+      path.join(ws, '.causyne', 'rules', 'ts-only.md'),
+      '---\npaths:\n  - src/**/*.ts\n---\nAlways use strict TypeScript.\n',
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(ws, '.causyne', 'rules', 'always.md'),
+      'Global workspace rule.\n',
+      'utf8'
+    );
+
+    const noActive = loadProjectInstructions(ws, { CAUSYNE_HOME: path.join(TMP, 'empty-home') });
+    assert.equal(noActive.entries.filter((e) => e.scope === 'workspace').length, 1, 'identical AGENTS.md must be deduplicated');
+    assert.match(noActive.entries[0]!.content, /Shared architecture rule\./);
+    assert.equal(noActive.entries.some((e) => e.sourcePath.endsWith('ts-only.md')), false, 'scoped rule must not load without matching activeFiles');
+    assert.equal(noActive.entries.some((e) => e.sourcePath.endsWith('always.md')), true);
+
+    const withTsActive = loadProjectInstructions(ws, { CAUSYNE_HOME: path.join(TMP, 'empty-home') }, {
+      activeFiles: ['src/core/app.ts']
+    });
+    assert.equal(withTsActive.entries.some((e) => e.sourcePath.endsWith('ts-only.md')), true);
   });
 });

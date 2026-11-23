@@ -12,17 +12,145 @@
  *   - Enforces strict per-file (`16 KiB`) and total (`32 KiB`) character budgets.
  *   - Redacts accidental provider secrets and sanitizes terminal control escapes.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
 import { redactTextSecrets } from './providers/byokHttp.js';
 import { safeDisplay } from './tui/text.js';
 import { resolveGitRepoRoot } from './worktreeManager.js';
+import { createIgnoreMatcher, parseIgnoreContent } from './ignoreRules.js';
 const MAX_SINGLE_INSTRUCTION_CHARS = 16_384;
 const MAX_TOTAL_INSTRUCTION_CHARS = 32_768;
 const MAX_RULE_FILES = 24;
+const MAX_INCLUDE_DEPTH = 3;
+const MAX_INCLUDES_PER_FILE = 8;
 const INSTRUCTION_FILENAMES = ['CAUSYNE.md', 'AGENTS.md', 'CLAUDE.md'];
-function readSafeInstructionFile(filePath, remainingBudget) {
+function parseRuleFrontmatter(raw) {
+    const normalized = raw.replace(/\r\n/g, '\n');
+    if (!normalized.startsWith('---\n')) {
+        return { globs: [], body: normalized };
+    }
+    const endIdx = normalized.indexOf('\n---', 4);
+    if (endIdx === -1)
+        return { globs: [], body: normalized };
+    const afterEnd = endIdx + 4;
+    if (afterEnd < normalized.length && normalized[afterEnd] !== '\n') {
+        return { globs: [], body: normalized };
+    }
+    const header = normalized.slice(4, endIdx);
+    const body = normalized.slice(afterEnd + (normalized[afterEnd] === '\n' ? 1 : 0));
+    const globs = [];
+    const lines = header.split('\n');
+    let inGlobList = false;
+    const pushClean = (rawItem) => {
+        const cleaned = rawItem.trim().replace(/^['"]|['"]$/g, '').trim();
+        if (cleaned && !cleaned.includes('\0') && cleaned.length <= 256) {
+            globs.push(cleaned);
+        }
+    };
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#'))
+            continue;
+        const keyMatch = trimmed.match(/^(paths|globs)\s*:\s*(.*)$/i);
+        if (keyMatch) {
+            const value = (keyMatch[2] || '').trim();
+            if (!value) {
+                inGlobList = true;
+            }
+            else if (value.startsWith('[') && value.endsWith(']')) {
+                inGlobList = false;
+                for (const item of value.slice(1, -1).split(','))
+                    pushClean(item);
+            }
+            else {
+                inGlobList = false;
+                for (const item of value.split(','))
+                    pushClean(item);
+            }
+            continue;
+        }
+        if (inGlobList) {
+            if (trimmed.startsWith('- ')) {
+                pushClean(trimmed.slice(2));
+            }
+            else if (/^[a-zA-Z0-9_-]+\s*:/.test(trimmed)) {
+                inGlobList = false;
+            }
+        }
+    }
+    return { globs, body };
+}
+function isWithinBoundary(boundaryRoot, targetPath) {
+    const rel = path.relative(boundaryRoot, targetPath);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+function expandSafeIncludes(rawText, filePath, boundaryRoot, visited, depth) {
+    if (!boundaryRoot || depth >= MAX_INCLUDE_DEPTH)
+        return rawText;
+    const baseDir = path.dirname(filePath);
+    const lines = rawText.split('\n');
+    const out = [];
+    let includeCount = 0;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        let relTarget = '';
+        if (trimmed.startsWith('@include ')) {
+            relTarget = trimmed.slice('@include '.length).trim();
+        }
+        else if (/^@\.\.?[\\/]/.test(trimmed) && !/\s/.test(trimmed)) {
+            relTarget = trimmed.slice(1).trim();
+        }
+        if (!relTarget || includeCount >= MAX_INCLUDES_PER_FILE) {
+            out.push(line);
+            continue;
+        }
+        relTarget = relTarget.replace(/^['"`]|['"`]$/g, '').trim();
+        if (!relTarget || relTarget.includes('\0') || path.isAbsolute(relTarget)) {
+            out.push(line);
+            continue;
+        }
+        const resolvedCandidate = path.resolve(baseDir, relTarget);
+        if (!isWithinBoundary(boundaryRoot, resolvedCandidate) || visited.has(resolvedCandidate)) {
+            continue;
+        }
+        try {
+            const stat = fs.lstatSync(resolvedCandidate);
+            if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0 || stat.size > MAX_SINGLE_INSTRUCTION_CHARS * 2) {
+                continue;
+            }
+            const realCandidate = nativeRealpath(resolvedCandidate);
+            if (!isWithinBoundary(boundaryRoot, realCandidate) || visited.has(realCandidate)) {
+                continue;
+            }
+            visited.add(resolvedCandidate);
+            visited.add(realCandidate);
+            includeCount++;
+            const childRaw = fs.readFileSync(realCandidate, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+            const expandedChild = expandSafeIncludes(childRaw, realCandidate, boundaryRoot, visited, depth + 1).trim();
+            if (expandedChild) {
+                out.push(expandedChild);
+            }
+        }
+        catch {
+            // Missing or unreadable include is skipped safely
+        }
+    }
+    return out.join('\n');
+}
+function matchesActiveFiles(globs, workspaceRoot, activeFiles) {
+    if (globs.length === 0)
+        return true;
+    if (!Array.isArray(activeFiles) || activeFiles.length === 0)
+        return false;
+    const rules = parseIgnoreContent(globs.join('\n')).filter((r) => !r.negated);
+    if (rules.length === 0)
+        return false;
+    const matcher = createIgnoreMatcher(workspaceRoot, rules);
+    return activeFiles.some((file) => typeof file === 'string' && file.trim().length > 0 && matcher.isIgnored(file, false));
+}
+function readSafeInstructionFile(filePath, remainingBudget, boundaryRoot, parseFrontmatter) {
     try {
         const stat = fs.lstatSync(filePath);
         if (stat.isSymbolicLink() || !stat.isFile() || stat.size === 0)
@@ -31,12 +159,16 @@ function readSafeInstructionFile(filePath, remainingBudget) {
         if (cap <= 0)
             return null;
         const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
-        const redacted = redactTextSecrets(raw).trim();
+        const parsed = parseFrontmatter ? parseRuleFrontmatter(raw) : { globs: [], body: raw.replace(/\r\n/g, '\n') };
+        const visited = new Set([path.resolve(filePath), nativeRealpath(filePath)]);
+        const expanded = expandSafeIncludes(parsed.body, filePath, boundaryRoot, visited, 0);
+        const redacted = redactTextSecrets(expanded).trim();
         if (!redacted)
             return null;
+        const digest = crypto.createHash('sha256').update(redacted).digest('hex');
         const truncated = redacted.length > cap;
         const content = truncated ? `${redacted.slice(0, cap)}\n...[truncated]` : redacted;
-        return { content, bytes: stat.size, truncated };
+        return { content, bytes: stat.size, truncated, globs: parsed.globs, digest };
     }
     catch {
         return null;
@@ -68,14 +200,16 @@ function nativeRealpath(targetPath) {
         return path.resolve(targetPath);
     }
 }
-export function loadProjectInstructions(workspaceDir = process.cwd(), env = process.env) {
+export function loadProjectInstructions(workspaceDir = process.cwd(), env = process.env, options = {}) {
     const resolvedWs = nativeRealpath(workspaceDir);
     const repoRoot = resolveGitRepoRoot(resolvedWs);
+    const boundaryRoot = repoRoot ? nativeRealpath(repoRoot) : resolvedWs;
     const entries = [];
     const seenPaths = new Set();
+    const seenDigestsByDir = new Map();
     let totalChars = 0;
     let anyTruncated = false;
-    const tryAdd = (candidatePath, scope) => {
+    const tryAdd = (candidatePath, scope, includeBoundary) => {
         const resolved = path.resolve(candidatePath);
         if (seenPaths.has(resolved))
             return;
@@ -85,9 +219,25 @@ export function loadProjectInstructions(workspaceDir = process.cwd(), env = proc
             anyTruncated = true;
             return;
         }
-        const read = readSafeInstructionFile(resolved, remaining);
+        const read = readSafeInstructionFile(resolved, remaining, includeBoundary, scope === 'rule');
         if (!read)
             return;
+        if (scope === 'rule' && read.globs.length > 0) {
+            const matched = matchesActiveFiles(read.globs, resolvedWs, options.activeFiles);
+            if (!matched && options.includeUnmatchedScoped !== true) {
+                return;
+            }
+        }
+        // Deduplicate identical instruction bodies within the same directory (e.g. mirrored CAUSYNE.md & AGENTS.md)
+        const dirKey = path.dirname(resolved);
+        let dirDigests = seenDigestsByDir.get(dirKey);
+        if (!dirDigests) {
+            dirDigests = new Set();
+            seenDigestsByDir.set(dirKey, dirDigests);
+        }
+        if (dirDigests.has(read.digest))
+            return;
+        dirDigests.add(read.digest);
         totalChars += read.content.length;
         if (read.truncated)
             anyTruncated = true;
@@ -96,19 +246,20 @@ export function loadProjectInstructions(workspaceDir = process.cwd(), env = proc
             scope,
             bytes: read.bytes,
             truncated: read.truncated,
-            content: read.content
+            content: read.content,
+            ...(read.globs.length > 0 ? { globs: read.globs } : {})
         });
     };
     // 1. User global instructions
     const homeDir = env.CAUSYNE_HOME && String(env.CAUSYNE_HOME).trim()
         ? path.resolve(String(env.CAUSYNE_HOME).trim())
         : causyneHome();
-    tryAdd(path.join(homeDir, 'CAUSYNE.md'), 'global');
+    tryAdd(path.join(homeDir, 'CAUSYNE.md'), 'global', nativeRealpath(homeDir));
     // 2. Hierarchical repo root -> active workspace directory
     const dirs = repoRoot ? directoryChain(repoRoot, resolvedWs) : [resolvedWs];
     for (const dir of dirs) {
         for (const filename of INSTRUCTION_FILENAMES) {
-            tryAdd(path.join(dir, filename), 'workspace');
+            tryAdd(path.join(dir, filename), 'workspace', boundaryRoot);
         }
         // 3. Scoped `.causyne/rules/*.md` files
         const rulesDir = path.join(dir, '.causyne', 'rules');
@@ -120,7 +271,7 @@ export function loadProjectInstructions(workspaceDir = process.cwd(), env = proc
                     .sort()
                     .slice(0, MAX_RULE_FILES);
                 for (const ruleFile of ruleFiles) {
-                    tryAdd(path.join(rulesDir, ruleFile), 'rule');
+                    tryAdd(path.join(rulesDir, ruleFile), 'rule', boundaryRoot);
                 }
             }
         }
@@ -147,7 +298,7 @@ export function formatProjectInstructionsPrompt(loaded) {
     return `\n\n# WORKSPACE PROJECT INSTRUCTIONS (loaded deterministically from repository rules — safety boundaries and sandbox rules still take precedence)\n\n${blocks.join('\n\n')}`;
 }
 export function formatProjectRulesReport(workspaceDir = process.cwd(), env = process.env) {
-    const loaded = loadProjectInstructions(workspaceDir, env);
+    const loaded = loadProjectInstructions(workspaceDir, env, { includeUnmatchedScoped: true });
     if (loaded.entries.length === 0) {
         return [
             'Project Instructions & Rules',
@@ -161,7 +312,8 @@ export function formatProjectRulesReport(workspaceDir = process.cwd(), env = pro
         ''
     ];
     for (const entry of loaded.entries) {
-        lines.push(`  • [${entry.scope}] ${safeDisplay(entry.sourcePath)} (${entry.bytes} bytes${entry.truncated ? ', truncated' : ''})`);
+        const scopeGlobs = entry.globs && entry.globs.length > 0 ? ` paths=[${entry.globs.map((g) => safeDisplay(g)).join(', ')}]` : '';
+        lines.push(`  • [${entry.scope}] ${safeDisplay(entry.sourcePath)} (${entry.bytes} bytes${entry.truncated ? ', truncated' : ''})${scopeGlobs}`);
     }
     return lines.join('\n');
 }
