@@ -130,5 +130,39 @@ describe('Phase C-Core — Hierarchical Project Rules & Managed Background Tasks
     const slashList = await runCommand('tasks', ['list'], { surface: 'terminal' });
     assert.equal(slashList.ok, true);
     assert.match(slashList.output || '', /Background Tasks/);
+
+    // Verify stopped long-running child actually terminates its entire process tree promptly
+    const afterWait = await backgroundTaskManager.wait(longId, 4_000);
+    assert.equal(afterWait.status, 'stopped');
+    assert.ok(afterWait.endedAt !== null, 'stopped task process group must terminate cleanly');
+  });
+
+  test('backgroundTaskManager preserves monotonic nextOffset across >256KiB ring-buffer rollover', async () => {
+    const ws = path.join(TMP_ROOT, 'bg-rollover');
+    fs.mkdirSync(ws, { recursive: true });
+    const started = backgroundTaskManager.start({
+      label: 'big-output',
+      cwd: ws,
+      workspaceRoots: [ws],
+      command: `${JSON.stringify(process.execPath)} -e "process.stdout.write('A'.repeat(300000) + 'TAIL_MARKER');"`
+    });
+    const done = await backgroundTaskManager.wait(started.taskId, 10_000);
+    assert.equal(done.status, 'completed');
+    assert.ok(done.outputBytes >= 300_011);
+
+    const chunk1 = backgroundTaskManager.readOutput(started.taskId, 0, 32_768);
+    assert.ok(chunk1.droppedChars > 0, 'droppedChars must track trimmed prefix');
+    assert.ok(chunk1.nextOffset > chunk1.droppedChars);
+
+    // Drain to end using monotonic nextOffset without looping forever
+    let cursor = chunk1.nextOffset;
+    let combinedTail = chunk1.output;
+    for (let i = 0; i < 20; i++) {
+      const next = backgroundTaskManager.readOutput(started.taskId, cursor, 32_768);
+      combinedTail += next.output;
+      cursor = next.nextOffset;
+      if (!next.hasMore) break;
+    }
+    assert.match(combinedTail, /TAIL_MARKER/);
   });
 });

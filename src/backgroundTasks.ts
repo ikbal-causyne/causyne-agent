@@ -7,7 +7,7 @@
  * `sysRun` and `persistentShell`.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, execFile, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import crypto from 'node:crypto';
 import { getEnhancedEnv } from './tools/sysRun.js';
 import { resolveOsSandboxMode, wrapCommandWithOsSandbox, type OsSandboxWrapOptions } from './tools/osSandbox.js';
@@ -35,6 +35,8 @@ export interface BackgroundTaskSnapshot {
 interface ManagedTaskRecord extends BackgroundTaskSnapshot {
   proc: ChildProcessWithoutNullStreams | null;
   outputBuffer: string;
+  baseOffset: number;
+  detachedGroup: boolean;
   waiters: Array<() => void>;
 }
 
@@ -68,7 +70,7 @@ export class BackgroundTaskManager {
       sandboxBackend: rec.sandboxBackend,
       startedAt: rec.startedAt,
       endedAt: rec.endedAt,
-      outputBytes: rec.outputBuffer.length
+      outputBytes: rec.baseOffset + rec.outputBuffer.length
     };
   }
 
@@ -113,11 +115,13 @@ export class BackgroundTaskManager {
     const taskId = `bg_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
     const label = safeDisplay(options.label?.trim() || command.slice(0, 60));
 
+    const detachedGroup = !isWin;
     const proc = spawn(wrapped.command, wrapped.args, {
       cwd: options.cwd,
       env: getEnhancedEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      detached: detachedGroup,
       windowsHide: true,
       ...(isWin && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
     });
@@ -138,6 +142,8 @@ export class BackgroundTaskManager {
       outputBytes: 0,
       proc,
       outputBuffer: '',
+      baseOffset: 0,
+      detachedGroup,
       waiters: []
     };
 
@@ -145,9 +151,11 @@ export class BackgroundTaskManager {
       const text = redactTextSecrets(chunk.toString('utf8'));
       record.outputBuffer += text;
       if (record.outputBuffer.length > MAX_TASK_BUFFER_CHARS) {
-        record.outputBuffer = record.outputBuffer.slice(-MAX_TASK_BUFFER_CHARS);
+        const drop = record.outputBuffer.length - MAX_TASK_BUFFER_CHARS;
+        record.outputBuffer = record.outputBuffer.slice(drop);
+        record.baseOffset += drop;
       }
-      record.outputBytes = record.outputBuffer.length;
+      record.outputBytes = record.baseOffset + record.outputBuffer.length;
     };
 
     proc.stdout.on('data', append);
@@ -189,26 +197,31 @@ export class BackgroundTaskManager {
     status: BackgroundTaskSnapshot;
     output: string;
     nextOffset: number;
+    droppedChars: number;
     hasMore: boolean;
   } {
     const rec = this.tasks.get(taskId);
     if (!rec) throw new Error(`Background task "${safeDisplay(taskId)}" not found.`);
-    const safeOffset = Math.max(0, Math.min(rec.outputBuffer.length, Math.floor(offset)));
+    const totalLength = rec.baseOffset + rec.outputBuffer.length;
+    const requested = Math.max(0, Math.floor(offset));
+    const effectiveOffset = Math.max(rec.baseOffset, Math.min(totalLength, requested));
+    const relStart = effectiveOffset - rec.baseOffset;
     const safeMax = Math.max(256, Math.min(MAX_CHUNK_READ_CHARS, Math.floor(maxChars)));
-    const slice = rec.outputBuffer.slice(safeOffset, safeOffset + safeMax);
-    const nextOffset = safeOffset + slice.length;
+    const slice = rec.outputBuffer.slice(relStart, relStart + safeMax);
+    const nextOffset = effectiveOffset + slice.length;
     return {
       status: this.toSnapshot(rec),
       output: safeDisplay(slice),
       nextOffset,
-      hasMore: nextOffset < rec.outputBuffer.length
+      droppedChars: rec.baseOffset,
+      hasMore: nextOffset < totalLength
     };
   }
 
   async wait(taskId: string, timeoutMs = 15_000): Promise<BackgroundTaskSnapshot> {
     const rec = this.tasks.get(taskId);
     if (!rec) throw new Error(`Background task "${safeDisplay(taskId)}" not found.`);
-    if (rec.status !== 'running') return this.toSnapshot(rec);
+    if (rec.status !== 'running' && !rec.proc) return this.toSnapshot(rec);
     const bounded = Math.max(50, Math.min(120_000, Math.floor(timeoutMs)));
     await new Promise<void>((resolve) => {
       let done = false;
@@ -225,26 +238,69 @@ export class BackgroundTaskManager {
     return this.toSnapshot(rec);
   }
 
-  stop(taskId: string): BackgroundTaskSnapshot {
+  private signalProcessTree(rec: ManagedTaskRecord, signal: NodeJS.Signals, sync = false): void {
+    const procRef = rec.proc;
+    const pid = procRef?.pid ?? rec.pid;
+    if (!pid || pid <= 0) return;
+
+    if (process.platform === 'win32') {
+      try {
+        if (sync) {
+          spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+            stdio: 'ignore',
+            windowsHide: true,
+            timeout: 2000
+          });
+        } else {
+          execFile('taskkill', ['/PID', String(pid), '/T', '/F'], {
+            windowsHide: true,
+            timeout: 4000
+          }, () => { /* ignore */ });
+        }
+      } catch { /* ignore */ }
+      try { procRef?.kill(); } catch { /* ignore */ }
+      return;
+    }
+
+    if (rec.detachedGroup) {
+      try {
+        process.kill(-pid, signal);
+        return;
+      } catch {
+        // Fall through to direct child kill when process group already exited
+      }
+    }
+    try { procRef?.kill(signal); } catch { /* ignore */ }
+  }
+
+  stop(taskId: string, options: { force?: boolean | undefined } = {}): BackgroundTaskSnapshot {
     const rec = this.tasks.get(taskId);
     if (!rec) throw new Error(`Background task "${safeDisplay(taskId)}" not found.`);
-    if (rec.status === 'running' && rec.proc) {
+    if (rec.proc) {
       rec.status = 'stopped';
-      try { rec.proc.kill('SIGTERM'); } catch { /* ignore */ }
       const procRef = rec.proc;
-      const killTimer = setTimeout(() => {
-        if (procRef.exitCode === null && !procRef.killed) {
-          try { procRef.kill('SIGKILL'); } catch { /* ignore */ }
-        }
-      }, 2500);
-      killTimer.unref?.();
+      try { procRef.stdin?.end(); } catch { /* ignore */ }
+      if (options.force) {
+        this.signalProcessTree(rec, 'SIGKILL', true);
+      } else {
+        this.signalProcessTree(rec, 'SIGTERM', false);
+        const killTimer = setTimeout(() => {
+          if (procRef.exitCode === null && procRef.signalCode === null) {
+            this.signalProcessTree(rec, 'SIGKILL', false);
+          }
+        }, 1500);
+        killTimer.unref?.();
+      }
+      if (typeof procRef.unref === 'function') {
+        try { procRef.unref(); } catch { /* ignore */ }
+      }
     }
     return this.toSnapshot(rec);
   }
 
-  stopAll(): void {
+  stopAll(force = false): void {
     for (const id of this.tasks.keys()) {
-      try { this.stop(id); } catch { /* ignore */ }
+      try { this.stop(id, { force }); } catch { /* ignore */ }
     }
   }
 }
@@ -252,5 +308,5 @@ export class BackgroundTaskManager {
 export const backgroundTaskManager = new BackgroundTaskManager();
 
 process.on('exit', () => {
-  backgroundTaskManager.stopAll();
+  backgroundTaskManager.stopAll(true);
 });
