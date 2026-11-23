@@ -1,5 +1,3 @@
-const SIGNAL_DISPATCH = 'kill' as const;
-
 /**
  * Deliver a signal to a process id. Throws on failure, exactly like the
  * platform call it wraps, so callers can distinguish ESRCH from EPERM.
@@ -7,7 +5,7 @@ const SIGNAL_DISPATCH = 'kill' as const;
  * @param signal - e.g. 'SIGTERM', or 0 for an existence probe.
  */
 export function sendSignal(pid: number, signal: string | number): true {
-  return process[SIGNAL_DISPATCH](pid, signal as NodeJS.Signals | number);
+  return process.kill(pid, signal as NodeJS.Signals | number);
 }
 
 /**

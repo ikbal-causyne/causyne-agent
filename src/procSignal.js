@@ -1,4 +1,3 @@
-const SIGNAL_DISPATCH = 'kill';
 /**
  * Deliver a signal to a process id. Throws on failure, exactly like the
  * platform call it wraps, so callers can distinguish ESRCH from EPERM.
@@ -6,7 +5,7 @@ const SIGNAL_DISPATCH = 'kill';
  * @param signal - e.g. 'SIGTERM', or 0 for an existence probe.
  */
 export function sendSignal(pid, signal) {
-    return process[SIGNAL_DISPATCH](pid, signal);
+    return process.kill(pid, signal);
 }
 /**
  * Existence probe for a process id.

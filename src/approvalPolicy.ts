@@ -20,6 +20,7 @@ export interface ToolApprovalInput {
   risk: string;
   heavyDownload: boolean;
   standingApproval: boolean;
+  reason?: string | undefined;
 }
 
 /** Read the live session mode from the tool context; never infer it from a tool argument. */
@@ -98,11 +99,31 @@ export function isRoutineBrowserVerification(tool: string, args: Record<string, 
   });
 }
 
+function touchesCredentialMaterial(input: ToolApprovalInput): boolean {
+  if (input.risk !== 'extreme') return false;
+  if (typeof input.reason === 'string' && /credential material/i.test(input.reason)) {
+    return true;
+  }
+  const args = input.args && typeof input.args === 'object' ? input.args : {};
+  const candidates = [args.path, args.file_path, args.source, args.destination, args.target];
+  for (const val of candidates) {
+    if (typeof val !== 'string' || !val) continue;
+    const norm = val.replace(/\\/g, '/');
+    if (/(^|\/)(?:\.ssh|\.aws|\.gnupg|\.kube|\.causyne|\.netrc|\.npmrc|\.git-credentials|\.pypirc|\.envrc|\.pgpass|\.my\.cnf|\.docker\/config\.json|Library\/Keychains)(\/|$)/i.test(norm)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Prompt policy only. Sandbox denial, workspace checks, and observer veto run separately. */
 export function requiresToolApproval(input: ToolApprovalInput): boolean {
   if (!input || typeof input !== 'object') return true;
   const canonical = canonicalPolicyTool(input.tool);
   if (input.mode === 'C') {
+    if (touchesCredentialMaterial(input)) {
+      return true;
+    }
     if (!isWholeFileDeletion(canonical, input.args)) return false;
     // A general shell or git grant must not authorize future deletions.
     return canonical !== 'fs_delete' || !input.standingApproval;
