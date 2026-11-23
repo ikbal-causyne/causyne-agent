@@ -18,6 +18,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { getPackageVersion } from '../version.js';
 import { redactTextSecrets } from '../providers/byokHttp.js';
 import { safeDisplay } from '../tui/text.js';
+import { resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
 import {
   MAX_GLOB_PATTERN_CHARS,
   MAX_MCP_SERVER_INSTRUCTIONS_CHARS,
@@ -570,10 +571,12 @@ export class McpClient {
     const cwd = definition.cwd
       ? path.resolve(this.workspace, definition.cwd)
       : this.workspace;
+    const mergedEnv = { ...getDefaultEnvironment(), ...(definition.env ?? {}) };
+    const spawnTarget = resolveWindowsSpawnTarget(definition.command, definition.args ?? [], { env: mergedEnv });
     const transport = new StdioClientTransport({
-      command: definition.command,
-      args: definition.args ?? [],
-      env: { ...getDefaultEnvironment(), ...(definition.env ?? {}) },
+      command: spawnTarget.command,
+      args: spawnTarget.args,
+      env: mergedEnv,
       cwd,
       stderr: 'pipe'
     });

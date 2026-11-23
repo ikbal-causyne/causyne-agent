@@ -10,6 +10,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { safeDisplay } from '../tui/text.js';
+import { resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
 import { encodeLspMessage, filePathToUri, LspMessageParser, uriToFilePath } from './lspProtocol.js';
 import { findWorkspaceRootForLsp, languageIdForFile, resolveLspServerForFile } from './lspCatalog.js';
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -158,7 +159,8 @@ export class LspSession {
             return this.initPromise;
         this.initPromise = (async () => {
             const sanitizedEnv = sanitizeSubprocessEnv(this.env);
-            const proc = spawn(this.command, [...this.args], {
+            const spawnTarget = resolveWindowsSpawnTarget(this.command, this.args, { env: sanitizedEnv });
+            const proc = spawn(spawnTarget.command, spawnTarget.args, {
                 cwd: this.workspaceRoot,
                 env: sanitizedEnv,
                 stdio: ['pipe', 'pipe', 'pipe'],

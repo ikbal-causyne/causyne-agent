@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sanitizeSubprocessEnv } from '../tools/subprocessEnv.js';
 import { safeDisplay } from '../tui/text.js';
+import { resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
 import {
   encodeLspMessage,
   filePathToUri,
@@ -226,7 +227,8 @@ export class LspSession {
 
     this.initPromise = (async () => {
       const sanitizedEnv = sanitizeSubprocessEnv(this.env);
-      const proc = spawn(this.command, [...this.args], {
+      const spawnTarget = resolveWindowsSpawnTarget(this.command, this.args, { env: sanitizedEnv });
+      const proc = spawn(spawnTarget.command, spawnTarget.args, {
         cwd: this.workspaceRoot,
         env: sanitizedEnv,
         stdio: ['pipe', 'pipe', 'pipe'],

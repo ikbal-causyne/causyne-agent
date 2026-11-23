@@ -6,6 +6,7 @@ import path from 'node:path';
 import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
 import { isCredentialPath } from '../sandbox.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
+import { resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
 import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, extractAcpSessionModels, isJsonRpcRequest, isJsonRpcResponse } from './protocol.js';
 function createAbortError(message = 'ACP operation aborted by user') {
     const err = new Error(message);
@@ -114,7 +115,8 @@ export class AcpClient {
         delete childEnv.CAUSYNE_DEV_SECRET;
         delete childEnv.CAUSYNE_DEV_TOKEN;
         const isPosix = process.platform !== 'win32';
-        const child = spawn(this.options.command, args, {
+        const spawnTarget = resolveWindowsSpawnTarget(this.options.command, args, { env: childEnv });
+        const child = spawn(spawnTarget.command, spawnTarget.args, {
             cwd: this.options.cwd,
             env: childEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
