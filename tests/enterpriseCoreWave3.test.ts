@@ -197,4 +197,76 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     const content = fs.readFileSync(path.join(ws, 'winfile.ts'), 'utf8');
     assert.equal(content, 'export const a = 1;\r\nexport const b = 42;\r\n', 'CRLF line endings must be preserved');
   });
+
+  test('applyPatch honors @@ contextHeader, *** End of File, rejects ambiguous hunks, emits closest-line hints, and allows Delete+Add replacement', async () => {
+    const ws = path.join(TMP, 'patch-anchors');
+    fs.mkdirSync(ws, { recursive: true });
+    const dupFile = path.join(ws, 'dups.ts');
+    fs.writeFileSync(dupFile, [
+      'function alpha() {',
+      '  return 1;',
+      '}',
+      'function beta() {',
+      '  return 1;',
+      '}',
+      ''
+    ].join('\n'), 'utf8');
+
+    // Ambiguous hunk without @@ context header must fail atomically
+    const ambig = await applyPatch.execute({
+      patch: [
+        '*** Begin Patch',
+        '*** Update File: dups.ts',
+        '@@',
+        '-  return 1;',
+        '+  return 2;',
+        '*** End Patch'
+      ].join('\n')
+    }, { workspaceRoot: ws });
+    assert.equal(ambig.success, false);
+    assert.match(ambig.error || '', /ambiguous/i);
+
+    // Disambiguated with @@ function beta() patches ONLY beta()
+    const disambig = await applyPatch.execute({
+      patch: [
+        '*** Begin Patch',
+        '*** Update File: dups.ts',
+        '@@ function beta()',
+        '-  return 1;',
+        '+  return 99;',
+        '*** End Patch'
+      ].join('\n')
+    }, { workspaceRoot: ws });
+    assert.equal(disambig.success, true, disambig.error);
+    const updated = fs.readFileSync(dupFile, 'utf8');
+    assert.match(updated, /alpha\(\) \{\n  return 1;/);
+    assert.match(updated, /beta\(\) \{\n  return 99;/);
+
+    // Mismatch emits closest-line hint
+    const miss = await applyPatch.execute({
+      patch: [
+        '*** Begin Patch',
+        '*** Update File: dups.ts',
+        '@@',
+        '-  return 777;',
+        '+  return 888;',
+        '*** End Patch'
+      ].join('\n')
+    }, { workspaceRoot: ws });
+    assert.equal(miss.success, false);
+    assert.match(miss.error || '', /Closest line/i);
+
+    // Delete + Add of same path in one patch succeeds
+    const replaceRes = await applyPatch.execute({
+      patch: [
+        '*** Begin Patch',
+        '*** Delete File: dups.ts',
+        '*** Add File: dups.ts',
+        '+export const replaced = true;',
+        '*** End Patch'
+      ].join('\n')
+    }, { workspaceRoot: ws });
+    assert.equal(replaceRes.success, true, replaceRes.error);
+    assert.equal(fs.readFileSync(dupFile, 'utf8'), 'export const replaced = true;\n');
+  });
 });

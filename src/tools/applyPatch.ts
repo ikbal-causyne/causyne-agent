@@ -32,6 +32,7 @@ import {
 
 export interface PatchHunk {
   contextHeader: string;
+  endOfFile?: boolean | undefined;
   lines: Array<{ kind: ' ' | '-' | '+'; text: string }>;
 }
 
@@ -182,6 +183,7 @@ export function parsePatchText(rawPatch: string): PatchOperation[] {
         const cur = lines[i]!;
         if (cur.startsWith('*** ')) {
           if (cur.trim() === '*** End of File') {
+            if (currentHunk) currentHunk.endOfFile = true;
             i++;
             continue;
           }
@@ -235,13 +237,14 @@ export function parsePatchText(rawPatch: string): PatchOperation[] {
   return operations;
 }
 
-function findSequenceIndex(
+function findAllSequenceIndices(
   haystack: readonly string[],
   needle: readonly string[],
   startIndex: number,
   relaxedWhitespace: boolean
-): number {
-  if (needle.length === 0) return startIndex;
+): number[] {
+  if (needle.length === 0) return [startIndex];
+  const matches: number[] = [];
   const maxStart = haystack.length - needle.length;
   for (let pos = Math.max(0, startIndex); pos <= maxStart; pos++) {
     let matched = true;
@@ -253,9 +256,57 @@ function findSequenceIndex(
         break;
       }
     }
-    if (matched) return pos;
+    if (matched) matches.push(pos);
+  }
+  return matches;
+}
+
+function findContextHeaderLine(
+  lines: readonly string[],
+  contextHeader: string,
+  startIndex: number
+): number {
+  const header = contextHeader.trim();
+  if (!header) return -1;
+  // Ignore unified diff numeric headers like "-1,5 +1,6 @@"
+  const afterAt = header.includes('@@') ? header.slice(header.indexOf('@@') + 2).trim() : header;
+  const probe = /^-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?$/.test(afterAt) ? '' : afterAt;
+  if (!probe) return -1;
+  for (let i = Math.max(0, startIndex); i < lines.length; i++) {
+    if (lines[i]!.trim() === probe || lines[i]!.includes(probe)) return i;
+  }
+  for (let i = 0; i < Math.min(startIndex, lines.length); i++) {
+    if (lines[i]!.trim() === probe || lines[i]!.includes(probe)) return i;
   }
   return -1;
+}
+
+function buildClosestLineHint(lines: readonly string[], expectedOld: readonly string[]): string {
+  const probe = expectedOld.find((l) => l.trim().length > 0)?.trim() ?? '';
+  if (!probe || lines.length === 0) return '';
+  const probeTokens = new Set(probe.toLowerCase().split(/[^a-z0-9_]+/).filter((t) => t.length >= 2));
+  let bestLine = -1;
+  let bestScore = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const candidate = lines[i]!.trim();
+    if (!candidate) continue;
+    let score = 0;
+    if (candidate.toLowerCase().includes(probe.toLowerCase()) || probe.toLowerCase().includes(candidate.toLowerCase())) {
+      score += 5;
+    }
+    if (probeTokens.size > 0) {
+      const candTokens = candidate.toLowerCase().split(/[^a-z0-9_]+/);
+      for (const tok of candTokens) {
+        if (probeTokens.has(tok)) score++;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestLine = i;
+    }
+  }
+  if (bestLine === -1 || bestScore === 0) return '';
+  return ` Closest line ${bestLine + 1}: ${JSON.stringify(lines[bestLine]!.slice(0, 140))}`;
 }
 
 export function applyHunksToText(originalContent: string, hunks: readonly PatchHunk[], label: string): string {
@@ -277,25 +328,65 @@ export function applyHunksToText(originalContent: string, hunks: readonly PatchH
       if (entry.kind === ' ' || entry.kind === '+') replacement.push(entry.text);
     }
 
+    const headerAnchor = findContextHeaderLine(lines, hunk.contextHeader, searchCursor);
+    const effectiveStart = headerAnchor !== -1 ? headerAnchor + 1 : searchCursor;
+
     if (expectedOld.length === 0) {
       // Pure insertion hunk
-      lines.splice(searchCursor, 0, ...replacement);
-      searchCursor += replacement.length;
+      const insertAt = hunk.endOfFile ? lines.length : effectiveStart;
+      lines.splice(insertAt, 0, ...replacement);
+      searchCursor = insertAt + replacement.length;
       continue;
     }
 
-    let matchIdx = findSequenceIndex(lines, expectedOld, searchCursor, false);
-    if (matchIdx === -1 && searchCursor > 0) {
-      matchIdx = findSequenceIndex(lines, expectedOld, 0, false);
-    }
-    if (matchIdx === -1) {
-      matchIdx = findSequenceIndex(lines, expectedOld, searchCursor, true);
-    }
-    if (matchIdx === -1 && searchCursor > 0) {
-      matchIdx = findSequenceIndex(lines, expectedOld, 0, true);
-    }
-    if (matchIdx === -1) {
-      throw new Error(`Hunk #${hIdx + 1} failed to match in "${label}". No files were modified (atomic abort).`);
+    let matchIdx = -1;
+    if (hunk.endOfFile) {
+      const eofPos = lines.length - expectedOld.length;
+      if (eofPos >= 0) {
+        const exactEof = findAllSequenceIndices(lines, expectedOld, eofPos, false);
+        if (exactEof.includes(eofPos)) {
+          matchIdx = eofPos;
+        } else {
+          const relaxedEof = findAllSequenceIndices(lines, expectedOld, eofPos, true);
+          if (relaxedEof.includes(eofPos)) matchIdx = eofPos;
+        }
+      }
+      if (matchIdx === -1) {
+        const hint = buildClosestLineHint(lines, expectedOld);
+        throw new Error(`Hunk #${hIdx + 1} failed to match at End of File in "${label}".${hint} No files were modified (atomic abort).`);
+      }
+    } else {
+      const resolveCandidate = (relaxed: boolean): number | 'ambiguous' => {
+        const fromAnchor = findAllSequenceIndices(lines, expectedOld, effectiveStart, relaxed);
+        if (fromAnchor.length === 1) return fromAnchor[0]!;
+        if (fromAnchor.length > 1) {
+          // If an explicit @@ context header anchored us, pick the first match after that header
+          if (headerAnchor !== -1) return fromAnchor[0]!;
+          return 'ambiguous';
+        }
+        if (effectiveStart > 0) {
+          const full = findAllSequenceIndices(lines, expectedOld, 0, relaxed);
+          if (full.length === 1) return full[0]!;
+          if (full.length > 1) return 'ambiguous';
+        }
+        return -1;
+      };
+
+      let resolved = resolveCandidate(false);
+      if (resolved === -1) {
+        resolved = resolveCandidate(true);
+      }
+      if (resolved === 'ambiguous') {
+        const all = findAllSequenceIndices(lines, expectedOld, 0, true).map((idx) => idx + 1).slice(0, 6);
+        throw new Error(
+          `Hunk #${hIdx + 1} in "${label}" is ambiguous (matched ${all.length}+ locations at lines ${all.join(', ')}). Include more context lines or an @@ <symbol> header. No files were modified (atomic abort).`
+        );
+      }
+      if (resolved === -1) {
+        const hint = buildClosestLineHint(lines, expectedOld);
+        throw new Error(`Hunk #${hIdx + 1} failed to match in "${label}".${hint} No files were modified (atomic abort).`);
+      }
+      matchIdx = resolved;
     }
 
     lines.splice(matchIdx, expectedOld.length, ...replacement);
@@ -319,6 +410,9 @@ interface PlannedDiskAction {
   mode: number;
   existedBefore: boolean;
   previousContent?: string | undefined;
+  destExistedBefore?: boolean | undefined;
+  destPreviousContent?: string | undefined;
+  destMode?: number | undefined;
   displayPath: string;
 }
 
@@ -348,6 +442,7 @@ export const applyPatch = {
       // Phase 1: Validate every operation and compute all updated contents in memory
       const planned: PlannedDiskAction[] = [];
       const stagedContents = new Map<string, string>();
+      const stagedDeleted = new Set<string>();
 
       for (const op of ops) {
         if (op.type === 'add') {
@@ -355,13 +450,16 @@ export const applyPatch = {
           if (isCredentialPath(target)) {
             return { success: false, error: `Refusing to write protected credential path: ${sanitizeToolText(op.path, 160)}` };
           }
-          const existing = await fs.lstat(target).catch((err: NodeJS.ErrnoException) => {
-            if (err.code === 'ENOENT') return null;
-            throw err;
-          });
+          const existing = stagedDeleted.has(target)
+            ? null
+            : await fs.lstat(target).catch((err: NodeJS.ErrnoException) => {
+                if (err.code === 'ENOENT') return null;
+                throw err;
+              });
           if (existing) {
             return { success: false, error: `Add File target already exists: ${sanitizeToolText(op.path, 160)}. Use *** Update File: instead.` };
           }
+          stagedDeleted.delete(target);
           stagedContents.set(target, op.content);
           planned.push({
             kind: 'write',
@@ -384,6 +482,8 @@ export const applyPatch = {
             return { success: false, error: `Refusing to delete symlink or non-regular file: ${sanitizeToolText(op.path, 160)}` };
           }
           const prev = stat.size <= MAX_SOURCE_FILE_BYTES ? await fs.readFile(target, 'utf8') : undefined;
+          stagedDeleted.add(target);
+          stagedContents.delete(target);
           planned.push({
             kind: 'delete',
             targetPath: target,
@@ -419,6 +519,23 @@ export const applyPatch = {
           if (isCredentialPath(dest)) {
             return { success: false, error: `Refusing to move file into protected credential path: ${sanitizeToolText(op.moveTo, 160)}` };
           }
+          let destExistedBefore = false;
+          let destPreviousContent: string | undefined;
+          let destMode: number | undefined;
+          if (dest.toLowerCase() !== source.toLowerCase()) {
+            const destStat = await fs.lstat(dest).catch((err: NodeJS.ErrnoException) => {
+              if (err.code === 'ENOENT') return null;
+              throw err;
+            });
+            if (destStat && destStat.isFile() && !destStat.isSymbolicLink()) {
+              destExistedBefore = true;
+              destMode = destStat.mode & 0o777;
+              if (destStat.size <= MAX_SOURCE_FILE_BYTES) {
+                destPreviousContent = await fs.readFile(dest, 'utf8');
+              }
+            }
+          }
+          stagedDeleted.delete(dest);
           stagedContents.set(dest, nextContent);
           planned.push({
             kind: 'move',
@@ -428,6 +545,9 @@ export const applyPatch = {
             mode: stat.mode & 0o777,
             existedBefore: true,
             previousContent,
+            destExistedBefore,
+            destPreviousContent,
+            destMode,
             displayPath: `${op.path} -> ${op.moveTo}`
           });
         } else {
@@ -499,7 +619,11 @@ export const applyPatch = {
                 atomicWriteFileSync(done.sourcePath, done.previousContent, { encoding: 'utf8', mode: done.mode });
               }
               if (done.targetPath !== done.sourcePath) {
-                await fs.unlink(done.targetPath).catch(() => {});
+                if (done.destExistedBefore && done.destPreviousContent !== undefined) {
+                  atomicWriteFileSync(done.targetPath, done.destPreviousContent, { encoding: 'utf8', mode: done.destMode ?? done.mode });
+                } else {
+                  await fs.unlink(done.targetPath).catch(() => {});
+                }
               }
             } else if (done.kind === 'delete' && done.previousContent !== undefined) {
               atomicWriteFileSync(done.targetPath, done.previousContent, { encoding: 'utf8', mode: done.mode });
