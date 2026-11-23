@@ -48,27 +48,75 @@ function globToSuffix(filePattern) {
 function escapeLiteralRegex(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-function parseRgLine(line) {
-    let idx = line.indexOf(':');
-    // Skip Windows drive letter prefix like C:\foo:12:bar
-    if (idx === 1 && /^[a-zA-Z]$/.test(line[0] ?? '') && (line[2] === '\\' || line[2] === '/')) {
-        idx = line.indexOf(':', 2);
-    }
-    while (idx > 0) {
-        const nextColon = line.indexOf(':', idx + 1);
-        if (nextColon === -1)
-            return null;
-        const lineNumStr = line.slice(idx + 1, nextColon);
-        if (lineNumStr.length > 0 && /^\d+$/.test(lineNumStr)) {
+function clampContextLines(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value))
+        return 0;
+    return Math.max(0, Math.min(10, Math.floor(value)));
+}
+function parseRgLineWithKind(line) {
+    const clean = line.endsWith('\r') ? line.slice(0, -1) : line;
+    if (!clean || clean === '--')
+        return null;
+    const startOffset = /^[a-zA-Z]:[\\/]/.test(clean) ? 2 : 0;
+    for (let i = startOffset; i < clean.length; i++) {
+        const sep = clean[i];
+        if (sep !== ':' && sep !== '-')
+            continue;
+        let j = i + 1;
+        while (j < clean.length && clean.charCodeAt(j) >= 48 && clean.charCodeAt(j) <= 57)
+            j++;
+        if (j > i + 1 && clean[j] === sep) {
             return {
-                File: line.slice(0, idx),
-                LineNumber: Number.parseInt(lineNumStr, 10) || 0,
-                LineContent: line.slice(nextColon + 1).trim().slice(0, 300)
+                file: clean.slice(0, i),
+                lineNumber: Number.parseInt(clean.slice(i + 1, j), 10) || 0,
+                content: clean.slice(j + 1).trim().slice(0, 300),
+                isContext: sep === '-'
             };
         }
-        idx = nextColon;
     }
     return null;
+}
+function parseRgMatches(stdout, maxMatches, withContext) {
+    const out = [];
+    const pendingBefore = [];
+    let lastMatch = null;
+    for (const rawLine of stdout.split(/\r?\n/)) {
+        if (!rawLine)
+            continue;
+        if (rawLine === '--') {
+            pendingBefore.length = 0;
+            lastMatch = null;
+            continue;
+        }
+        const parsed = parseRgLineWithKind(rawLine);
+        if (!parsed)
+            continue;
+        if (parsed.isContext) {
+            if (!withContext)
+                continue;
+            if (lastMatch && lastMatch.File === parsed.file && parsed.lineNumber > lastMatch.LineNumber) {
+                if (!lastMatch.ContextAfter)
+                    lastMatch.ContextAfter = [];
+                lastMatch.ContextAfter.push(`${parsed.lineNumber}: ${parsed.content}`);
+            }
+            else {
+                pendingBefore.push(`${parsed.lineNumber}: ${parsed.content}`);
+            }
+            continue;
+        }
+        if (out.length >= maxMatches)
+            break;
+        const match = {
+            File: parsed.file,
+            LineNumber: parsed.lineNumber,
+            LineContent: parsed.content,
+            ...(withContext && pendingBefore.length > 0 ? { ContextBefore: [...pendingBefore] } : {})
+        };
+        pendingBefore.length = 0;
+        lastMatch = match;
+        out.push(match);
+    }
+    return out;
 }
 function isInvalidGlob(filePattern) {
     return (filePattern.startsWith('-') ||
@@ -104,6 +152,27 @@ export const codeSearcher = {
                 astMode: {
                     type: 'boolean',
                     description: 'If true, filters results specifically for symbol definitions (classes, functions, interfaces, structs, defs).'
+                },
+                context: {
+                    type: 'integer',
+                    description: 'Number of surrounding context lines before and after each match (-C, 0-10).'
+                },
+                contextBefore: {
+                    type: 'integer',
+                    description: 'Number of context lines before each match (-B, 0-10).'
+                },
+                contextAfter: {
+                    type: 'integer',
+                    description: 'Number of context lines after each match (-A, 0-10).'
+                },
+                outputMode: {
+                    type: 'string',
+                    enum: ['content', 'files_with_matches', 'count'],
+                    description: 'Output mode: matching lines ("content"), matching file paths ("files_with_matches"), or match counts per file ("count").'
+                },
+                multiline: {
+                    type: 'boolean',
+                    description: 'If true, enable multiline matching across line boundaries (-U).'
                 }
             },
             required: ['query']
@@ -119,6 +188,12 @@ export const codeSearcher = {
             const caseInsensitive = args.caseInsensitive !== false;
             const filePattern = typeof args.filePattern === 'string' ? args.filePattern.trim() : '*';
             const astMode = args.astMode === true;
+            const contextBoth = clampContextLines(args.context);
+            const contextBefore = clampContextLines(args.contextBefore) || contextBoth;
+            const contextAfter = clampContextLines(args.contextAfter) || contextBoth;
+            const multiline = args.multiline === true;
+            const rawOutputMode = typeof args.outputMode === 'string' ? args.outputMode.trim().toLowerCase() : 'content';
+            const outputMode = rawOutputMode === 'files_with_matches' || rawOutputMode === 'count' ? rawOutputMode : 'content';
             if (filePattern && filePattern !== '*' && isInvalidGlob(filePattern)) {
                 return { success: false, error: `Invalid filePattern glob: ${filePattern}` };
             }
@@ -146,6 +221,8 @@ export const codeSearcher = {
             let engineLabel = rgBin ? `Ripgrep Binary (${rgBin})` : 'Node Async Stream Engine';
             let useNodeFallback = !rgBin;
             let stoppedNotice = '';
+            const withContext = outputMode === 'content' && (contextBefore > 0 || contextAfter > 0);
+            const effectiveAstPattern = `(?:class|function|def|interface|struct|const|let|var|type|func|module|enum|trait)\\s+[^\\s(]*(?:${isRegex ? query : escapeLiteralRegex(query)})`;
             if (rgBin) {
                 const rgArgs = [
                     '-n',
@@ -158,6 +235,12 @@ export const codeSearcher = {
                     rgArgs.push('-i');
                 if (!isRegex && !astMode)
                     rgArgs.push('-F');
+                if (multiline)
+                    rgArgs.push('-U');
+                if (withContext && contextBefore > 0)
+                    rgArgs.push('-B', String(contextBefore));
+                if (withContext && contextAfter > 0)
+                    rgArgs.push('-A', String(contextAfter));
                 if (filePattern && filePattern !== '*')
                     rgArgs.push('-g', filePattern);
                 for (const glob of buildHomeGlobExcludes()) {
@@ -166,9 +249,7 @@ export const codeSearcher = {
                 for (const glob of buildTopLevelHomeExcludes(realTargetDir)) {
                     rgArgs.push('-g', glob);
                 }
-                const effectiveQuery = astMode && !isRegex
-                    ? `(class|function|def|interface|struct|const|let|var|type|func|module)\\s+[^\\s(]*${escapeLiteralRegex(query)}`
-                    : query;
+                const effectiveQuery = astMode ? effectiveAstPattern : query;
                 rgArgs.push('-e', effectiveQuery, '--', realTargetDir);
                 try {
                     const { stdout } = await execFileAsync(rgBin, rgArgs, {
@@ -176,15 +257,7 @@ export const codeSearcher = {
                         timeout: DEFAULT_TIMEOUT_MS,
                         signal: context?.signal
                     });
-                    for (const line of stdout.split('\n')) {
-                        if (!line)
-                            continue;
-                        if (matches.length >= MAX_MATCHES)
-                            break;
-                        const parsed = parseRgLine(line);
-                        if (parsed)
-                            matches.push(parsed);
-                    }
+                    matches.push(...parseRgMatches(stdout, MAX_MATCHES, withContext));
                 }
                 catch (rgErr) {
                     if (context?.signal?.aborted) {
@@ -192,15 +265,7 @@ export const codeSearcher = {
                     }
                     const errObj = rgErr;
                     if (typeof errObj.stdout === 'string' && errObj.stdout.length > 0) {
-                        for (const line of errObj.stdout.split('\n')) {
-                            if (!line)
-                                continue;
-                            if (matches.length >= MAX_MATCHES)
-                                break;
-                            const parsed = parseRgLine(line);
-                            if (parsed)
-                                matches.push(parsed);
-                        }
+                        matches.push(...parseRgMatches(errObj.stdout, MAX_MATCHES, withContext));
                     }
                     if (errObj.killed) {
                         stoppedNotice = `stopped after ${DEFAULT_TIMEOUT_MS}ms budget`;
@@ -226,16 +291,20 @@ export const codeSearcher = {
             if (useNodeFallback && matches.length === 0) {
                 engineLabel = 'Node Async Stream Engine';
                 let regex;
-                if (astMode && !isRegex) {
-                    const astPat = `(class|function|def|interface|struct|const|let|var|type|func|module)\\s+[^\\s(]*${escapeLiteralRegex(query)}`;
-                    regex = new RegExp(astPat, caseInsensitive ? 'i' : '');
+                if (astMode) {
+                    try {
+                        regex = new RegExp(effectiveAstPattern, `${caseInsensitive ? 'i' : ''}${multiline ? 's' : ''}`);
+                    }
+                    catch (reErr) {
+                        return { success: false, error: `Invalid regex pattern: ${reErr instanceof Error ? reErr.message : String(reErr)}` };
+                    }
                 }
                 else {
                     const compiled = compileSafeSearchRegex(query, { isRegex, caseInsensitive });
                     if (!compiled.regex) {
                         return { success: false, error: compiled.error || 'Invalid regex pattern.' };
                     }
-                    regex = compiled.regex;
+                    regex = multiline ? new RegExp(compiled.regex.source, `${compiled.regex.flags}s`) : compiled.regex;
                 }
                 const extFilter = globToSuffix(filePattern);
                 const guard = createTraversalGuard({ signal: context?.signal });
@@ -265,16 +334,37 @@ export const codeSearcher = {
                     catch {
                         return;
                     }
-                    const lines = content.split('\n');
+                    if (multiline) {
+                        const normalized = content.replace(/\r\n/g, '\n');
+                        const m = regex.exec(normalized);
+                        if (m) {
+                            const lineNum = normalized.slice(0, m.index).split('\n').length;
+                            matches.push({
+                                File: filePath,
+                                LineNumber: lineNum,
+                                LineContent: m[0].replace(/\s+/g, ' ').trim().slice(0, 300)
+                            });
+                        }
+                        return;
+                    }
+                    const lines = content.split(/\r?\n/);
                     for (let i = 0; i < lines.length; i++) {
                         if (matches.length >= MAX_MATCHES || guard.checkStopped())
                             break;
                         const line = lines[i];
                         if (regex.test(line)) {
+                            const beforeLines = withContext && contextBefore > 0
+                                ? lines.slice(Math.max(0, i - contextBefore), i).map((l, idx) => `${Math.max(1, i - contextBefore + 1) + idx}: ${l.trim().slice(0, 200)}`)
+                                : undefined;
+                            const afterLines = withContext && contextAfter > 0
+                                ? lines.slice(i + 1, Math.min(lines.length, i + 1 + contextAfter)).map((l, idx) => `${i + 2 + idx}: ${l.trim().slice(0, 200)}`)
+                                : undefined;
                             matches.push({
                                 File: filePath,
                                 LineNumber: i + 1,
-                                LineContent: line.trim().slice(0, 300)
+                                LineContent: line.trim().slice(0, 300),
+                                ...(beforeLines && beforeLines.length > 0 ? { ContextBefore: beforeLines } : {}),
+                                ...(afterLines && afterLines.length > 0 ? { ContextAfter: afterLines } : {})
                             });
                         }
                     }
@@ -350,6 +440,37 @@ export const codeSearcher = {
                 if (guard.stopReason) {
                     stoppedNotice = guard.stopNotice();
                 }
+            }
+            if (outputMode === 'files_with_matches') {
+                const files = [...new Set(matches.map((m) => m.File))];
+                return {
+                    success: true,
+                    output: JSON.stringify({
+                        engine: engineLabel,
+                        query,
+                        outputMode,
+                        total_files: files.length,
+                        ...(stoppedNotice ? { stopped_reason: stoppedNotice } : {}),
+                        files
+                    }, null, 2)
+                };
+            }
+            if (outputMode === 'count') {
+                const counts = new Map();
+                for (const m of matches) {
+                    counts.set(m.File, (counts.get(m.File) ?? 0) + 1);
+                }
+                return {
+                    success: true,
+                    output: JSON.stringify({
+                        engine: engineLabel,
+                        query,
+                        outputMode,
+                        total_matches: matches.length,
+                        ...(stoppedNotice ? { stopped_reason: stoppedNotice } : {}),
+                        counts: [...counts.entries()].map(([File, Count]) => ({ File, Count }))
+                    }, null, 2)
+                };
             }
             return {
                 success: true,

@@ -21,6 +21,7 @@ import { loadCustomLspServers, matchingSpecsForFile, findLocalOrPathExecutable }
 import { lspCodeIntel } from '../src/tools/lspCodeIntel.js';
 import { buildRepoMap, clearRepoMapCache } from '../src/codebase/repoMap.js';
 import { codeSearchAst } from '../src/tools/codeSearchAst.js';
+import { codeSearcher } from '../src/tools/codeSearcher.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -582,5 +583,34 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.equal(dirSearch.success, true, dirSearch.error);
     assert.match(dirSearch.output || '', /service\.ts/);
     assert.match(dirSearch.output || '', /AuthService\.verifyToken/);
+  });
+
+  test('codeSearcher supports context lines (-A/-B/-C), files_with_matches, count mode, CRLF files, and astMode+isRegex', async () => {
+    const ws = path.join(TMP, 'rg-modes');
+    fs.mkdirSync(ws, { recursive: true });
+    const f1 = path.join(ws, 'a.ts');
+    const f2 = path.join(ws, 'b.ts');
+    fs.writeFileSync(f1, 'const header = 1;\r\nexport function computeTotal() {\r\n  return 42;\r\n}\r\n', 'utf8');
+    fs.writeFileSync(f2, 'export function computeDelta() { return 1; }\nexport function computeSum() { return 2; }\n', 'utf8');
+
+    const ctxRes = await codeSearcher.execute({ query: 'computeTotal', searchPath: ws, context: 1 }, { workspaceRoot: ws });
+    assert.equal(ctxRes.success, true, ctxRes.error);
+    const ctxData = JSON.parse(ctxRes.output || '{}');
+    assert.equal(ctxData.total_matches, 1);
+    assert.ok(Array.isArray(ctxData.matches[0]?.ContextBefore), 'expected ContextBefore lines');
+    assert.ok(Array.isArray(ctxData.matches[0]?.ContextAfter), 'expected ContextAfter lines');
+
+    const filesRes = await codeSearcher.execute({ query: 'compute', searchPath: ws, outputMode: 'files_with_matches' }, { workspaceRoot: ws });
+    const filesData = JSON.parse(filesRes.output || '{}');
+    assert.equal(filesData.total_files, 2);
+
+    const countRes = await codeSearcher.execute({ query: 'compute', searchPath: ws, outputMode: 'count' }, { workspaceRoot: ws });
+    const countData = JSON.parse(countRes.output || '{}');
+    assert.equal(countData.total_matches, 3);
+    assert.equal(countData.counts.length, 2);
+
+    const astRegexRes = await codeSearcher.execute({ query: 'compute(Total|Sum)', searchPath: ws, isRegex: true, astMode: true }, { workspaceRoot: ws });
+    const astRegexData = JSON.parse(astRegexRes.output || '{}');
+    assert.equal(astRegexData.total_matches, 2);
   });
 });
