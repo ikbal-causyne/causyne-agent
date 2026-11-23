@@ -235,10 +235,12 @@ export class InputLayer extends Layer {
 
     // Park the caret after what is displayed — which for a masked field is the
     // dot count, not the character count, or the caret drifts off the value —
-    // and never past the rightmost body column.
+    // using code-point slicing (never UTF-16 `.slice()`) so emoji never shift
+    // the caret off the visible glyph boundary.
+    const beforeCodePoints = Array.from(raw).slice(0, this.editor.col);
     const before = this.mask
-      ? Array.from(raw.slice(0, this.editor.col)).length
-      : visibleWidth(cleanDialogText(raw.slice(0, this.editor.col)));
+      ? beforeCodePoints.length
+      : visibleWidth(cleanDialogText(beforeCodePoints.join('')));
     const maxCol = Math.max(0, safeWidth - 1);
     this.cursor = { x: Math.min(maxCol, 2 + before), y: rows.length - 1 };
     return rows;

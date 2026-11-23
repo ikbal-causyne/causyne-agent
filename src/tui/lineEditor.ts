@@ -61,6 +61,14 @@ export interface LineEditorOptions {
   disableClipboard?: boolean | undefined;
 }
 
+function renderCellGlyph(ch: string): string {
+  if (!ch) return '';
+  if (ch === '\t') return '  ';
+  const code = ch.codePointAt(0) ?? 0;
+  if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return '';
+  return ch;
+}
+
 export class LineEditor {
   lines: string[][];
   line: number;
@@ -488,7 +496,7 @@ export class LineEditor {
         let nextPos = pos;
         let tokenWidth = 0;
         while (nextPos < line.length && (/\s/.test(line[nextPos] ?? '') === isSpace)) {
-          tokenWidth += visibleWidth(line[nextPos] ?? '');
+          tokenWidth += visibleWidth(renderCellGlyph(line[nextPos] ?? ''));
           nextPos++;
         }
 
@@ -500,8 +508,8 @@ export class LineEditor {
         }
 
         while (pos < nextPos) {
-          const char = line[pos] ?? '';
-          const charWidth = visibleWidth(char);
+          const glyph = renderCellGlyph(line[pos] ?? '');
+          const charWidth = visibleWidth(glyph);
 
           if (used + charWidth > budget && used > 0) {
             rows.push(row);
@@ -516,7 +524,7 @@ export class LineEditor {
           }
 
           const isSelected = range ? isInsideRange(index, pos, range) : false;
-          row += isSelected ? `\x1b[7m${char}\x1b[27m` : char;
+          row += isSelected && glyph ? `\x1b[7m${glyph}\x1b[27m` : glyph;
           used += charWidth;
           pos++;
         }

@@ -38,6 +38,16 @@ function isInsideRange(lineIdx, colIdx, { start, end }) {
         return colIdx < end.col;
     return true;
 }
+function renderCellGlyph(ch) {
+    if (!ch)
+        return '';
+    if (ch === '\t')
+        return '  ';
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f))
+        return '';
+    return ch;
+}
 export class LineEditor {
     lines;
     line;
@@ -463,7 +473,7 @@ export class LineEditor {
                 let nextPos = pos;
                 let tokenWidth = 0;
                 while (nextPos < line.length && (/\s/.test(line[nextPos] ?? '') === isSpace)) {
-                    tokenWidth += visibleWidth(line[nextPos] ?? '');
+                    tokenWidth += visibleWidth(renderCellGlyph(line[nextPos] ?? ''));
                     nextPos++;
                 }
                 // If non-whitespace word exceeds remaining space on non-empty line: wrap to next line first!
@@ -473,8 +483,8 @@ export class LineEditor {
                     used = 0;
                 }
                 while (pos < nextPos) {
-                    const char = line[pos] ?? '';
-                    const charWidth = visibleWidth(char);
+                    const glyph = renderCellGlyph(line[pos] ?? '');
+                    const charWidth = visibleWidth(glyph);
                     if (used + charWidth > budget && used > 0) {
                         rows.push(row);
                         row = prefix;
@@ -486,7 +496,7 @@ export class LineEditor {
                         placed = true;
                     }
                     const isSelected = range ? isInsideRange(index, pos, range) : false;
-                    row += isSelected ? `\x1b[7m${char}\x1b[27m` : char;
+                    row += isSelected && glyph ? `\x1b[7m${glyph}\x1b[27m` : glyph;
                     used += charWidth;
                     pos++;
                 }
