@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { AuditLog, computeAuditEntryHash, formatAuditExport } from '../src/auditLog.js';
+import { runCommand } from '../src/commands.js';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -71,6 +72,32 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
       const tampered = log.verifyAuditChain();
       assert.equal(tampered.ok, false);
       assert.ok(tampered.errors.some((e) => e.line === 1 && /Tampered|mismatch/i.test(e.reason)));
+    } finally {
+      if (prevHome === undefined) delete process.env.CAUSYNE_HOME;
+      else process.env.CAUSYNE_HOME = prevHome;
+    }
+  });
+
+  test('/audit verify, /audit prune, and /audit export --format ocsf work via command dispatcher', async () => {
+    const prevHome = process.env.CAUSYNE_HOME;
+    const cmdHome = path.join(TMP, 'audit-cmd-home');
+    fs.mkdirSync(cmdHome, { recursive: true });
+    process.env.CAUSYNE_HOME = cmdHome;
+    try {
+      const log = new AuditLog();
+      log.log({ event: 'tool_executed', tool: 'fs_write', taskId: 'cmd-1' });
+      const verifyOk = await runCommand('audit', ['verify'], { surface: 'terminal' });
+      assert.equal(verifyOk.ok, true);
+      assert.match(verifyOk.output || '', /VERIFIED/);
+
+      const ocsfOut = await runCommand('audit', ['export', '--format', 'ocsf'], { surface: 'terminal' });
+      assert.equal(ocsfOut.ok, true);
+      const parsed = JSON.parse((ocsfOut.output || '').trim().split('\n')[0]!);
+      assert.equal(parsed.class_uid, 6003);
+
+      const pruneOut = await runCommand('audit', ['prune', '--days', '7'], { surface: 'terminal' });
+      assert.equal(pruneOut.ok, true);
+      assert.match(pruneOut.output || '', /kept 1/);
     } finally {
       if (prevHome === undefined) delete process.env.CAUSYNE_HOME;
       else process.env.CAUSYNE_HOME = prevHome;

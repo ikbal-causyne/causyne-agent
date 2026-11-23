@@ -2739,8 +2739,11 @@ export const COMMANDS: SlashCommandDefinition[] = [
     dialogTitle: 'Audit Log',
     complete: () => [
       { value: 'recent', label: 'recent', description: 'show recent audit log entries' },
+      { value: 'verify', label: 'verify', description: 'verify tamper-evident SHA-256 audit hash chain' },
+      { value: 'prune --days 30', label: 'prune --days 30', description: 'delete daily audit logs older than N days' },
       { value: 'export --format jsonl', label: 'export --format jsonl', description: 'export audit entries as JSONL' },
-      { value: 'export --format csv', label: 'export --format csv', description: 'export audit entries as CSV (formula-safe)' }
+      { value: 'export --format csv', label: 'export --format csv', description: 'export audit entries as CSV (formula-safe)' },
+      { value: 'export --format ocsf', label: 'export --format ocsf', description: 'export audit entries as OCSF v1.1.0 SIEM JSONL' }
     ],
     run: async (argv, ctx = {}) => {
       let action = '';
@@ -2786,13 +2789,13 @@ export const COMMANDS: SlashCommandDefinition[] = [
       }
 
       const mode = action || 'recent';
-      if (mode !== 'recent' && mode !== 'export') {
-        return fail(`Unknown audit action "${safeDisplay(mode)}". Try: recent, export.`);
+      if (mode !== 'recent' && mode !== 'export' && mode !== 'verify' && mode !== 'prune') {
+        return fail(`Unknown audit action "${safeDisplay(mode)}". Try: recent, verify, prune, export.`);
       }
 
       const fmtLower = formatRaw.trim().toLowerCase();
-      if (fmtLower !== 'jsonl' && fmtLower !== 'csv') {
-        return fail(`Unsupported audit export format "${safeDisplay(formatRaw)}". Use jsonl or csv.`);
+      if (fmtLower !== 'jsonl' && fmtLower !== 'csv' && fmtLower !== 'ocsf') {
+        return fail(`Unsupported audit export format "${safeDisplay(formatRaw)}". Use jsonl, csv, or ocsf.`);
       }
       const format: AuditExportFormat = fmtLower;
 
@@ -2800,6 +2803,30 @@ export const COMMANDS: SlashCommandDefinition[] = [
       const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(50_000, parsedLimit) : (mode === 'export' ? 1000 : 50);
       const parsedDays = daysRaw !== undefined ? Number.parseInt(daysRaw, 10) : undefined;
       const days = parsedDays !== undefined && Number.isFinite(parsedDays) && parsedDays > 0 ? Math.min(365, parsedDays) : undefined;
+
+      if (mode === 'verify') {
+        const result = auditLog.verifyAuditChain({ days });
+        const summaryLines = [
+          `Audit Chain Verification: ${result.ok ? 'VERIFIED' : 'FAILED'}`,
+          `  Files checked    : ${result.filesChecked}`,
+          `  Entries verified : ${result.entriesVerified}`,
+          ...(result.legacyEntries > 0 ? [`  Legacy entries   : ${result.legacyEntries}`] : [])
+        ];
+        if (!result.ok) {
+          summaryLines.push(`  Integrity errors : ${result.errors.length}`);
+          for (const err of result.errors.slice(0, 10)) {
+            summaryLines.push(`    • ${safeDisplay(err.file)}:${err.line} — ${safeDisplay(err.reason)}`);
+          }
+          return fail(summaryLines.join('\n'));
+        }
+        return ok(summaryLines.join('\n'));
+      }
+
+      if (mode === 'prune') {
+        const retentionDays = days ?? 30;
+        const pruned = auditLog.pruneAuditLogs(retentionDays);
+        return ok(`Pruned ${pruned.deleted.length} audit log file(s) older than ${retentionDays} day(s); kept ${pruned.kept}.`);
+      }
 
       const entries = auditLog.readAuditLogs({
         limit,

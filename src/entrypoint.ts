@@ -287,8 +287,8 @@ program
 
 program
   .command('audit [action]')
-  .description('Inspect or export local security audit logs: recent (default), export')
-  .option('-f, --format <format>', 'Export format: jsonl or csv', 'jsonl')
+  .description('Inspect, verify, prune, or export local security audit logs: recent (default), verify, prune, export')
+  .option('-f, --format <format>', 'Export format: jsonl, csv, or ocsf', 'jsonl')
   .option('-n, --limit <count>', 'Maximum audit entries to include')
   .option('--days <count>', 'Include logs from the last N calendar days')
   .option('--event <name>', 'Filter entries by exact event name')
