@@ -31,3 +31,18 @@ test('verification surface classifications never masquerade as live UI proof', (
     assert.ok(['terminal','agent','browser','plugin','model'].includes(feature.surface));
   }
 });
+
+test('enterprise zero-cost, governance, and cross-platform domains are registered in FEATURE_MAP', () => {
+  const chosen = selectFeatures([
+    'zero-cost-providers',
+    'enterprise-governance',
+    'cross-platform-hardening'
+  ]);
+  assert.deepEqual(
+    chosen.map(x => x.id),
+    ['zero-cost-providers', 'enterprise-governance', 'cross-platform-hardening']
+  );
+  for (const item of chosen) {
+    assert.ok(item.automated.length >= 2);
+  }
+});

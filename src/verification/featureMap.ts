@@ -75,6 +75,30 @@ const RAW_FEATURE_MAP: Record<string, FeatureDefinition> = {
     assertion: 'Counterexamples are reproducible and a bounded pass is not claimed as a proof',
     automated: ['tests/boundedExplorer.test.ts', 'tests/cliProbe.test.ts'],
     liveRequired: 'For unbounded guarantees, run a real external model checker or proof assistant'
+  },
+  'zero-cost-providers': {
+    surface: 'agent',
+    entry: 'Zero-cost ($0) Ollama, OpenRouter Free, Groq, Cerebras, Mistral, Gemini Free, and ACP peer routing',
+    action: 'Discover local and free-tier routes, apply VRAM-adaptive Ollama sizing, and fail over strictly within $0 routes',
+    assertion: 'Paid BYOK providers are never invoked during zero-cost failover and local prompt budgets remain compact',
+    automated: ['tests/zeroCostWave2.test.ts', 'tests/zeroCostProvidersResilience.test.ts'],
+    liveRequired: 'Run a live task against a local Ollama model or configured free-tier / ACP peer endpoint'
+  },
+  'enterprise-governance': {
+    surface: 'agent',
+    entry: 'Enterprise policy enforcement, OS sandbox adapters, tamper-evident audit chain, and headless CI output',
+    action: 'Verify org policy lockouts, Seatbelt/Landlock/Bubblewrap profiles, hash-chained audit logs, and headless JSON schemas',
+    assertion: 'Policy violations fail closed, audit chains detect tampering, and headless CLI sessions remain isolated',
+    automated: ['tests/enterpriseGovernanceWave4.test.ts', 'tests/headlessCiEnterprise.test.ts'],
+    liveRequired: 'Validate live policy loading and OS sandbox invocation on the target macOS, Linux, or Windows host'
+  },
+  'cross-platform-hardening': {
+    surface: 'terminal',
+    entry: 'Cross-platform Windows/POSIX spawn safety, workspace path containment, TUI input hygiene, and coding eval harness',
+    action: 'Exercise Windows .cmd unwrapping, atomic file writes, ANSI/clipboard sanitization, and the 15-task coding eval',
+    assertion: 'Cross-platform boundary checks hold, src/ remains 100% strict TypeScript, and the coding eval scores 15/15',
+    automated: ['tests/enterpriseSecurityHardening.test.ts', 'tests/phaseBCodingEvalAndRegistry.test.ts'],
+    liveRequired: 'Run full CI matrix verification across ubuntu-latest, macos-latest, and windows-latest runners'
   }
 };
 

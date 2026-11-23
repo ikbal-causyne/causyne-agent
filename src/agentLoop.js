@@ -5019,55 +5019,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                         ? this.consecutiveFailures >= maxAttempts
                         : this.consecutiveFailures >= AgentLoop.MAX_CONSECUTIVE_FAILURES;
                     if (exceededCeiling) {
-                        // Strict zero-spend failover: when a $0 route (e.g. OpenRouter Free 429 or
-                        // offline network drop) exhausts its retries, automatically fail over to the
-                        // next verified $0 provider (alternative free cloud -> local Ollama -> free ACP peer)
-                        // without ever spending paid BYOK balance or breaking injected mock LLM tests.
-                        const canAttemptZeroCostFailover = (isRateLimit || isNetwork)
-                            && isZeroCostFailoverEligible(this.config?.provider, this.config?.model)
-                            && (this.config?.zeroCostFailover === true || (this._factoryLlmRef != null && this._factoryLlmRef === this.llm));
-                        if (canAttemptZeroCostFailover) {
-                            const triedSet = (this._zeroCostTriedProviders ||= new Set());
-                            triedSet.add(normalizeZeroCostId(this.config?.provider));
-                            const nextRoute = await selectNextZeroCostRoute({
-                                currentProvider: String(this.config?.provider || ''),
-                                currentModel: String(this.config?.model || ''),
-                                triedProviders: triedSet,
-                                config: this.config,
-                                reason: isNetwork ? 'network_error' : 'rate_limit',
-                                ...(Array.isArray(this.zeroCostFailoverCandidates)
-                                    ? { candidates: this.zeroCostFailoverCandidates }
-                                    : {})
-                            });
-                            if (nextRoute) {
-                                const prevProvider = String(this.config?.provider || '');
-                                triedSet.add(normalizeZeroCostId(nextRoute.provider));
-                                this.config = {
-                                    ...this.config,
-                                    provider: nextRoute.provider,
-                                    model: nextRoute.model,
-                                    apiKey: nextRoute.apiKey
-                                };
-                                delete this.config.baseUrl;
-                                this.llm = this.initializeProvider();
-                                this._utilityLlm = null;
-                                this.consecutiveFailures = 0;
-                                this.lastFailureType = null;
-                                auditLog.log({
-                                    event: 'zero_cost_failover',
-                                    taskId: this.taskId,
-                                    fromProvider: prevProvider,
-                                    toProvider: nextRoute.provider,
-                                    toModel: nextRoute.model,
-                                    costTier: nextRoute.costTier,
-                                    reason: errorType
-                                });
-                                this.notice(`Zero-cost failover ($0): switched from ${prevProvider} to ${nextRoute.provider}`
-                                    + (nextRoute.model ? ` (${nextRoute.model})` : '')
-                                    + ` after ${errorType}.`);
-                                continue;
-                            }
-                        }
+                        if (await this.tryZeroCostFailover(isNetwork, isRateLimit, errorType))
+                            continue;
                         // Nothing is changing between attempts. Stop and say why, rather
                         // than spinning until the budget is gone.
                         this.emitEvent({
@@ -5187,5 +5140,52 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
     // V5: Validate tool call arguments before execution
     validateToolArgs(toolName, args) {
         return validateAndNormalizeToolArgs(toolName, args, this.workspaceRoot || process.cwd());
+    }
+    async tryZeroCostFailover(isNetwork, isRateLimit, errorType) {
+        const canAttemptZeroCostFailover = (isRateLimit || isNetwork)
+            && isZeroCostFailoverEligible(this.config?.provider, this.config?.model)
+            && (this.config?.zeroCostFailover === true || (this._factoryLlmRef != null && this._factoryLlmRef === this.llm));
+        if (!canAttemptZeroCostFailover)
+            return false;
+        const triedSet = (this._zeroCostTriedProviders ||= new Set());
+        triedSet.add(normalizeZeroCostId(this.config?.provider));
+        const nextRoute = await selectNextZeroCostRoute({
+            currentProvider: String(this.config?.provider || ''),
+            currentModel: String(this.config?.model || ''),
+            triedProviders: triedSet,
+            config: this.config,
+            reason: isNetwork ? 'network_error' : 'rate_limit',
+            ...(Array.isArray(this.zeroCostFailoverCandidates)
+                ? { candidates: this.zeroCostFailoverCandidates }
+                : {})
+        });
+        if (!nextRoute)
+            return false;
+        const prevProvider = String(this.config?.provider || '');
+        triedSet.add(normalizeZeroCostId(nextRoute.provider));
+        this.config = {
+            ...this.config,
+            provider: nextRoute.provider,
+            model: nextRoute.model,
+            apiKey: nextRoute.apiKey
+        };
+        delete this.config.baseUrl;
+        this.llm = this.initializeProvider();
+        this._utilityLlm = null;
+        this.consecutiveFailures = 0;
+        this.lastFailureType = null;
+        auditLog.log({
+            event: 'zero_cost_failover',
+            taskId: this.taskId,
+            fromProvider: prevProvider,
+            toProvider: nextRoute.provider,
+            toModel: nextRoute.model,
+            costTier: nextRoute.costTier,
+            reason: errorType
+        });
+        this.notice(`Zero-cost failover ($0): switched from ${prevProvider} to ${nextRoute.provider}`
+            + (nextRoute.model ? ` (${nextRoute.model})` : '')
+            + ` after ${errorType}.`);
+        return true;
     }
 }
