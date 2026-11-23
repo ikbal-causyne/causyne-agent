@@ -103,7 +103,19 @@ export const MODEL_CATALOGUE = {
     'ACP (Peer Agents)': ['opencode', 'claude', 'codex', 'gemini', 'cursor', 'hermes', 'qwen', 'copilot', 'kimi', 'goose'],
     'OpenCode (ACP)': PEER_MODEL_CATALOGUE.opencode ?? [],
     'Claude Code (ACP)': PEER_MODEL_CATALOGUE.claude ?? [],
-    'OpenRouter (Free)': ['openrouter/free']
+    'OpenRouter (Free)': ['openrouter/free'],
+    'Groq (Free Tier)': [
+        'openai/gpt-oss-120b',
+        'qwen/qwen3-32b',
+        'llama-3.3-70b-versatile',
+        'llama-3.1-8b-instant'
+    ],
+    'Cerebras (Free Tier)': [
+        'qwen-3-32b',
+        'llama-3.3-70b',
+        'gpt-oss-120b',
+        'llama3.1-8b'
+    ]
 };
 /** Provider labels in picker order. */
 export const PROVIDER_LABELS = Object.keys(MODEL_CATALOGUE);
@@ -132,6 +144,8 @@ export const DEFAULT_MODEL_BY_PROVIDER = {
     'acp/hermes': 'hermes',
     antigravity: 'Gemini 3.8 Flash (Low)',
     openrouter: 'openrouter/free',
+    groq: 'openai/gpt-oss-120b',
+    cerebras: 'qwen-3-32b',
     pi: 'default',
     'openai-compatible': ''
 };
@@ -143,7 +157,9 @@ export const UTILITY_MODEL_BY_PROVIDER = {
     anthropic: 'claude-haiku-4-5',
     openai: 'gpt-5.4-mini',
     gemini: 'gemini-3.1-flash-lite',
-    openrouter: 'openrouter/free'
+    openrouter: 'openrouter/free',
+    groq: 'llama-3.1-8b-instant',
+    cerebras: 'llama3.1-8b'
 };
 export function allCatalogueModels() {
     return [...new Set(Object.values(MODEL_CATALOGUE).flat())];

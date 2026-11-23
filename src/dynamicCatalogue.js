@@ -50,6 +50,10 @@ export function normalizeProviderKey(provider) {
         return 'muse';
     if (p === 'openrouter' || p === 'openrouter-free' || p === 'openrouter/free')
         return 'openrouter';
+    if (p === 'groq' || p === 'groq-free')
+        return 'groq';
+    if (p === 'cerebras' || p === 'cerebras-free')
+        return 'cerebras';
     if (p === 'openai-compatible' || p === 'custom')
         return 'openai-compatible';
     if (p === 'antigravity' || p === 'agy')
@@ -102,7 +106,9 @@ export function getCuratedModels(provider) {
         'muse': 'Meta (Muse)',
         'ollama': 'Ollama (Local)',
         'moonshot': 'Moonshot (Kimi)',
-        'xai': 'xAI (Grok)'
+        'xai': 'xAI (Grok)',
+        'groq': 'Groq (Free Tier)',
+        'cerebras': 'Cerebras (Free Tier)'
     };
     const key = mapping[norm];
     if (key && MODEL_CATALOGUE[key]) {
@@ -265,6 +271,20 @@ export function getAvailableProvidersOverview(config = {}) {
             envVar: 'OPENROUTER_API_KEY',
             defaultModel: DEFAULT_MODEL_BY_PROVIDER['openrouter'] || 'openrouter/free',
             models: MODEL_CATALOGUE['OpenRouter (Free)'] ? [...MODEL_CATALOGUE['OpenRouter (Free)']] : ['openrouter/free']
+        },
+        {
+            id: 'groq',
+            label: 'Groq (Free Tier)',
+            envVar: 'GROQ_API_KEY',
+            defaultModel: DEFAULT_MODEL_BY_PROVIDER['groq'] || 'openai/gpt-oss-120b',
+            models: MODEL_CATALOGUE['Groq (Free Tier)'] ? [...MODEL_CATALOGUE['Groq (Free Tier)']] : []
+        },
+        {
+            id: 'cerebras',
+            label: 'Cerebras (Free Tier)',
+            envVar: 'CEREBRAS_API_KEY',
+            defaultModel: DEFAULT_MODEL_BY_PROVIDER['cerebras'] || 'qwen-3-32b',
+            models: MODEL_CATALOGUE['Cerebras (Free Tier)'] ? [...MODEL_CATALOGUE['Cerebras (Free Tier)']] : []
         },
         {
             id: 'xai',
@@ -1002,6 +1022,22 @@ export async function fetchLiveModels(provider, config = {}) {
             // keeping ACP and local peer dynamic auto-detection fully active.
             return ['openrouter/free'];
         }
+        if (norm === 'groq') {
+            if (!apiKey)
+                return [];
+            const data = await fetchDiscoveryJson('https://api.groq.com/openai/v1/models', { Authorization: `Bearer ${apiKey}` }, true);
+            if (Array.isArray(data?.data)) {
+                return data.data.map((m) => m.id || '').filter(Boolean).sort();
+            }
+        }
+        if (norm === 'cerebras') {
+            if (!apiKey)
+                return [];
+            const data = await fetchDiscoveryJson('https://api.cerebras.ai/v1/models', { Authorization: `Bearer ${apiKey}` }, true);
+            if (Array.isArray(data?.data)) {
+                return data.data.map((m) => m.id || '').filter(Boolean).sort();
+            }
+        }
         if (norm === 'openai-compatible') {
             if (!baseUrl)
                 return [];
@@ -1040,7 +1076,9 @@ function resolveEffectiveApiKey(norm, config = {}) {
         qwen: 'DASHSCOPE_API_KEY',
         'dashscope-byok': 'DASHSCOPE_API_KEY',
         xai: 'XAI_API_KEY',
-        moonshot: 'MOONSHOT_API_KEY'
+        moonshot: 'MOONSHOT_API_KEY',
+        groq: 'GROQ_API_KEY',
+        cerebras: 'CEREBRAS_API_KEY'
     };
     const envVar = envMap[norm];
     if (envVar && process.env[envVar]) {

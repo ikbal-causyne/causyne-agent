@@ -13,6 +13,9 @@ import { AcpProvider, isAcpProvider } from './acp.js';
 import { PiProvider, isPiProvider } from './pi.js';
 import { AntigravityProvider, isAntigravityProvider } from './antigravity.js';
 import { OpenRouterProvider } from './openrouter.js';
+import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
+const GROQ_CHAT_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const CEREBRAS_CHAT_ENDPOINT = 'https://api.cerebras.ai/v1/chat/completions';
 export function createProvider(config) {
     if (!config || typeof config !== 'object') {
         throw new Error('API Key Required. Causyne is a 100% Sovereign BYOK Engine. Please configure your API Provider and Key in Settings.');
@@ -32,6 +35,26 @@ export function createProvider(config) {
         return new DashscopeByokProvider(config);
     if (p === 'qwen')
         return new QwenByokProvider(config);
+    if (p === 'groq' || p === 'groq-free') {
+        const prov = new OpenAICompatibleProvider({
+            ...config,
+            apiKey: config.apiKey || process.env.GROQ_API_KEY || '',
+            baseUrl: config.baseUrl || GROQ_CHAT_ENDPOINT,
+            model: config.model || DEFAULT_MODEL_BY_PROVIDER.groq
+        });
+        prov.providerLabel = 'Groq';
+        return prov;
+    }
+    if (p === 'cerebras' || p === 'cerebras-free') {
+        const prov = new OpenAICompatibleProvider({
+            ...config,
+            apiKey: config.apiKey || process.env.CEREBRAS_API_KEY || '',
+            baseUrl: config.baseUrl || CEREBRAS_CHAT_ENDPOINT,
+            model: config.model || DEFAULT_MODEL_BY_PROVIDER.cerebras
+        });
+        prov.providerLabel = 'Cerebras';
+        return prov;
+    }
     if (p === 'openai-compatible')
         return new OpenAICompatibleProvider(config);
     if (p === 'xai' || p === 'grok')

@@ -11,6 +11,10 @@ const FORBIDDEN_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 const PROVIDER_KEY_ALIASES = {
     openrouter: ['openrouter', 'openrouter-free'],
     'openrouter-free': ['openrouter', 'openrouter-free'],
+    groq: ['groq', 'groq-free'],
+    'groq-free': ['groq', 'groq-free'],
+    cerebras: ['cerebras', 'cerebras-free'],
+    'cerebras-free': ['cerebras', 'cerebras-free'],
     dashscope: ['dashscope-byok', 'dashscope', 'qwen'],
     'dashscope-byok': ['dashscope-byok', 'dashscope', 'qwen'],
     qwen: ['qwen', 'dashscope-byok', 'dashscope'],
@@ -266,6 +270,22 @@ export function detectEnvironmentProvider() {
             provider: 'openrouter-free',
             apiKey: openrouterKey,
             model: DEFAULT_MODEL_BY_PROVIDER['openrouter-free'] || 'openrouter/free'
+        };
+    }
+    const groqKey = readEnvSecret(env.GROQ_API_KEY);
+    if (groqKey) {
+        return {
+            provider: 'groq',
+            apiKey: groqKey,
+            model: DEFAULT_MODEL_BY_PROVIDER.groq || 'openai/gpt-oss-120b'
+        };
+    }
+    const cerebrasKey = readEnvSecret(env.CEREBRAS_API_KEY);
+    if (cerebrasKey) {
+        return {
+            provider: 'cerebras',
+            apiKey: cerebrasKey,
+            model: DEFAULT_MODEL_BY_PROVIDER.cerebras || 'qwen-3-32b'
         };
     }
     return detectLocalAgentProvider();

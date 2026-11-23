@@ -328,6 +328,32 @@ export async function detectZeroCostProviders(options = {}) {
             reason: 'GEMINI_API_KEY configured (supports Google AI Studio free tier).'
         });
     }
+    const groqKey = (typeof env.GROQ_API_KEY === 'string' && env.GROQ_API_KEY.trim())
+        || resolveProviderApiKey(config, 'groq');
+    if (groqKey) {
+        results.push({
+            id: 'groq',
+            label: 'Groq (Free Tier)',
+            provider: 'groq',
+            model: 'openai/gpt-oss-120b',
+            costTier: 'cloud_free',
+            readiness: 'ready',
+            reason: 'GROQ_API_KEY configured (fast free tier on Groq).'
+        });
+    }
+    const cerebrasKey = (typeof env.CEREBRAS_API_KEY === 'string' && env.CEREBRAS_API_KEY.trim())
+        || resolveProviderApiKey(config, 'cerebras');
+    if (cerebrasKey) {
+        results.push({
+            id: 'cerebras',
+            label: 'Cerebras (Free Tier)',
+            provider: 'cerebras',
+            model: 'qwen-3-32b',
+            costTier: 'cloud_free',
+            readiness: 'ready',
+            reason: 'CEREBRAS_API_KEY configured (ultra-fast free tier on Cerebras).'
+        });
+    }
     return results;
 }
 /**
@@ -339,11 +365,13 @@ export function pickBestZeroCostProvider(candidates) {
         return null;
     const order = {
         'openrouter-free': 1,
-        'ollama': 2,
-        'antigravity': 3,
-        'acp/opencode': 4,
-        'gemini': 5,
-        'acp/cursor': 6
+        'groq': 2,
+        'cerebras': 3,
+        'ollama': 4,
+        'antigravity': 5,
+        'acp/opencode': 6,
+        'gemini': 7,
+        'acp/cursor': 8
     };
     return [...ready].sort((a, b) => (order[a.id] ?? 99) - (order[b.id] ?? 99))[0] ?? null;
 }
