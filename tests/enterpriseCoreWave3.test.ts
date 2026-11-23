@@ -132,7 +132,9 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       const body = JSON.parse(String(init?.body || '{}'));
-      if (url.includes('generativelanguage.googleapis.com')) {
+      let hostname = '';
+      try { hostname = new URL(url).hostname; } catch { hostname = ''; }
+      if (hostname === 'generativelanguage.googleapis.com') {
         geminiBody = body;
         return {
           ok: true,
@@ -414,10 +416,13 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     const ws = path.join(TMP, 'pshell-large');
     fs.mkdirSync(ws, { recursive: true });
     try {
+      const nodePrefix = process.platform === 'win32'
+        ? `& ${JSON.stringify(process.execPath)}`
+        : JSON.stringify(process.execPath);
       const res = await persistentShell.execute({
         sessionId: 'w3-large-test',
         timeoutMs: 8000,
-        command: `${JSON.stringify(process.execPath)} -e "process.stdout.write('Z'.repeat(300000) + '\\n');"`
+        command: `${nodePrefix} -e "process.stdout.write('Z'.repeat(300000) + '\\n');"`
       }, { workspaceRoot: ws });
       assert.equal(res.success, true, res.error);
       const parsed = JSON.parse(res.output || '{}');

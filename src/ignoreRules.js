@@ -148,19 +148,52 @@ function ruleMatchesRelPath(rule, relPosix, isDir) {
     }
     return false;
 }
+function canonicalizeIgnorePath(rawPath) {
+    const resolved = path.resolve(rawPath);
+    try {
+        return typeof fs.realpathSync.native === 'function'
+            ? fs.realpathSync.native(resolved)
+            : fs.realpathSync(resolved);
+    }
+    catch {
+        return resolved;
+    }
+}
+function relativeIgnorePosix(rootPath, targetPath) {
+    let root = rootPath;
+    let target = targetPath;
+    if (process.platform === 'win32') {
+        root = root.replace(/^\\\\\?\\/, '');
+        target = target.replace(/^\\\\\?\\/, '');
+        const rootLower = root.toLowerCase();
+        const targetLower = target.toLowerCase();
+        const relLower = path.relative(rootLower, targetLower).replace(/\\/g, '/');
+        if (!relLower || relLower === '.' || relLower === '..' || relLower.startsWith('../') || /^[a-z]:/i.test(relLower)) {
+            return null;
+        }
+        // Preserve original casing from target suffix while computing containment case-insensitively
+        return target.slice(root.length).replace(/^[\\/]+/, '').replace(/\\/g, '/') || relLower;
+    }
+    const rel = path.relative(root, target).replace(/\\/g, '/');
+    if (!rel || rel === '.' || rel === '..' || rel.startsWith('../'))
+        return null;
+    return rel;
+}
 export function createIgnoreMatcher(workspaceRoot, rules) {
-    const resolvedRoot = path.resolve(workspaceRoot);
+    const resolvedRoot = canonicalizeIgnorePath(workspaceRoot);
+    const hasNegation = rules.some((r) => r.negated);
     return {
         workspaceRoot: resolvedRoot,
         rules,
         isIgnored(targetPath, isDir = false) {
             if (rules.length === 0 || typeof targetPath !== 'string' || !targetPath.trim())
                 return false;
-            const resolvedTarget = path.isAbsolute(targetPath)
+            const rawTarget = path.isAbsolute(targetPath)
                 ? path.resolve(targetPath)
                 : path.resolve(resolvedRoot, targetPath);
-            const rel = path.relative(resolvedRoot, resolvedTarget).replace(/\\/g, '/');
-            if (!rel || rel === '.' || rel === '..' || rel.startsWith('../'))
+            const resolvedTarget = canonicalizeIgnorePath(rawTarget);
+            const rel = relativeIgnorePosix(resolvedRoot, resolvedTarget);
+            if (!rel)
                 return false;
             let ignored = false;
             for (const rule of rules) {
@@ -171,20 +204,20 @@ export function createIgnoreMatcher(workspaceRoot, rules) {
             return ignored;
         },
         toRipgrepGlobs() {
+            // If any `!negation` rule exists, ripgrep's `-g <positive>` flag turns into an
+            // inclusion whitelist that excludes unrelated files. Emit only safe negative globs
+            // when there are no negations, and let callers always post-filter with `isIgnored()`.
+            if (hasNegation)
+                return [];
             const globs = [];
             for (const rule of rules) {
                 if (rule.pattern.startsWith('-') || /[\x00-\x1f\r\n]/.test(rule.pattern))
                     continue;
                 const base = rule.anchored ? `/${rule.pattern}` : rule.pattern;
                 const suffix = rule.dirOnly ? '/**' : '';
-                if (rule.negated) {
-                    globs.push(`${base}${suffix}`);
-                }
-                else {
-                    globs.push(`!${base}${suffix}`);
-                    if (!rule.dirOnly && !rule.pattern.includes('*') && !rule.pattern.includes('.')) {
-                        globs.push(`!${base}/**`);
-                    }
+                globs.push(`!${base}${suffix}`);
+                if (!rule.dirOnly && !rule.pattern.includes('*') && !rule.pattern.includes('.')) {
+                    globs.push(`!${base}/**`);
                 }
             }
             return globs;

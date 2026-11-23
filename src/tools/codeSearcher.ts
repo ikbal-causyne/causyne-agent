@@ -315,7 +315,13 @@ export const codeSearcher = {
             timeout: DEFAULT_TIMEOUT_MS,
             signal: context?.signal
           });
-          matches.push(...parseRgMatches(stdout, MAX_MATCHES, withContext));
+          const parsedMatches = parseRgMatches(stdout, MAX_MATCHES * 2, withContext);
+          for (const m of parsedMatches) {
+            if (matches.length >= MAX_MATCHES) break;
+            if (!causyneIgnore.isIgnored(m.File, false)) {
+              matches.push(m);
+            }
+          }
         } catch (rgErr: unknown) {
           if (context?.signal?.aborted) {
             return { success: false, aborted: true, error: 'Code search aborted.' };
@@ -327,7 +333,12 @@ export const codeSearcher = {
             stderr?: string | undefined;
           };
           if (typeof errObj.stdout === 'string' && errObj.stdout.length > 0) {
-            matches.push(...parseRgMatches(errObj.stdout, MAX_MATCHES, withContext));
+            for (const m of parseRgMatches(errObj.stdout, MAX_MATCHES * 2, withContext)) {
+              if (matches.length >= MAX_MATCHES) break;
+              if (!causyneIgnore.isIgnored(m.File, false)) {
+                matches.push(m);
+              }
+            }
           }
           if (errObj.killed) {
             stoppedNotice = `stopped after ${DEFAULT_TIMEOUT_MS}ms budget`;
