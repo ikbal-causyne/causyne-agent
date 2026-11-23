@@ -342,4 +342,33 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.equal(strictBlocked.success, false);
     assert.match(strictBlocked.error || '', /modified externally/i);
   });
+
+  test('fsRead supports SVG text XML, lineNumbers, offset/limit, validates endLine < startLine, and stops early on huge slices', async () => {
+    const ws = path.join(TMP, 'read-upgrades');
+    fs.mkdirSync(ws, { recursive: true });
+    const svgFile = path.join(ws, 'icon.svg');
+    fs.writeFileSync(svgFile, '<svg viewBox="0 0 24 24">\n  <circle cx="12" cy="12" r="10" />\n</svg>\n', 'utf8');
+
+    const svgRes = await fsRead.execute({ path: svgFile, lineNumbers: true }, { workspaceRoot: ws });
+    assert.equal(svgRes.success, true, svgRes.error);
+    assert.match(svgRes.output || '', /1\| <svg viewBox/);
+    assert.match(svgRes.output || '', /2\|   <circle/);
+
+    const sliceRes = await fsRead.execute({ path: svgFile, offset: 2, limit: 1, lineNumbers: true }, { workspaceRoot: ws });
+    assert.equal(sliceRes.success, true);
+    assert.match(sliceRes.output || '', /2\|   <circle/);
+    assert.doesNotMatch(sliceRes.output || '', /1\| <svg/);
+
+    const badRange = await fsRead.execute({ path: svgFile, startLine: 10, endLine: 2 }, { workspaceRoot: ws });
+    assert.equal(badRange.success, false);
+    assert.match(badRange.error || '', /endLine.*less than startLine/i);
+
+    // >256KiB file early-stop slice
+    const bigFile = path.join(ws, 'big.log');
+    fs.writeFileSync(bigFile, Array.from({ length: 10_000 }, (_, i) => `LOG LINE ${i + 1}: ${'x'.repeat(30)}`).join('\n'), 'utf8');
+    const bigSlice = await fsRead.execute({ path: bigFile, offset: 5, limit: 3 }, { workspaceRoot: ws });
+    assert.equal(bigSlice.success, true);
+    assert.match(bigSlice.output || '', /LOG LINE 5:/);
+    assert.match(bigSlice.output || '', /more lines follow/i);
+  });
 });

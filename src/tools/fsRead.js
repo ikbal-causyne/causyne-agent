@@ -45,8 +45,8 @@ function checkReadScope(target, context) {
     try {
         realTarget = fs.realpathSync(target);
     }
-    catch {
-        return null;
+    catch (err) {
+        return `Unable to resolve target within workspace scope: ${err instanceof Error ? err.message : String(err)}`;
     }
     for (const root of roots) {
         try {
@@ -60,7 +60,7 @@ function checkReadScope(target, context) {
     }
     return `Target resolves outside the selected workspace: ${target}`;
 }
-const BINARY_EXTENSIONS = /\.(png|jpe?g|webp|gif|svg|bmp|ico|blend\d?|glb|gltf|wasm|zip|tar|gz|bz2|xz|7z|rar|mp4|mov|avi|mkv|webm|mp3|wav|ogg|flac|aac|m4a|pdf|exe|dll|dylib|so|bin|iso|dmg)$/i;
+const BINARY_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|ico|blend\d?|glb|gltf|wasm|zip|tar|gz|bz2|xz|7z|rar|mp4|mov|avi|mkv|webm|mp3|wav|ogg|flac|aac|m4a|pdf|exe|dll|dylib|so|bin|iso|dmg)$/i;
 /** Fast Binary Detection: inspect the first 1024 bytes for a null byte. */
 async function isBinary(filePath) {
     let fd = null;
@@ -86,13 +86,16 @@ async function isBinary(filePath) {
 export const fsRead = {
     schema: {
         name: 'fs.read',
-        description: 'Read file contents intelligently. Automatically pages large files to protect Context Window.',
+        description: 'Read file contents intelligently. Supports startLine/endLine (or offset/limit), optional lineNumbers formatting, and automatic paging to protect the context window.',
         parameters: {
             type: 'object',
             properties: {
                 path: { type: 'string' },
                 startLine: { type: 'number' },
-                endLine: { type: 'number' }
+                endLine: { type: 'number' },
+                offset: { type: 'number', description: '1-based start line alias for startLine.' },
+                limit: { type: 'number', description: 'Maximum number of lines to read (up to 800).' },
+                lineNumbers: { type: 'boolean', description: 'When true, prefix each output line with its 1-based line number.' }
             },
             required: ['path']
         }
@@ -135,7 +138,7 @@ export const fsRead = {
                     // ignore stat error
                 }
                 const sizeStr = stat ? `${(stat.size / 1024).toFixed(1)} KB` : 'unknown size';
-                const isImage = /\.(png|jpe?g|webp|gif|svg|bmp|ico)$/i.test(ext);
+                const isImage = /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(ext);
                 return {
                     success: false,
                     isBinary: true,
@@ -144,18 +147,40 @@ export const fsRead = {
                         : `Cannot read binary file '${path.basename(target)}' as plain text. File size: ${sizeStr}.`
                 };
             }
-            const start = typeof args.startLine === 'number' && Number.isFinite(args.startLine) && args.startLine > 0 ? Math.floor(args.startLine) : 1;
-            let end = typeof args.endLine === 'number' && Number.isFinite(args.endLine) && args.endLine >= start ? Math.floor(args.endLine) : start + 799;
+            const rawStart = typeof args.startLine === 'number' && Number.isFinite(args.startLine)
+                ? args.startLine
+                : (typeof args.offset === 'number' && Number.isFinite(args.offset) ? args.offset : 1);
+            const start = rawStart > 0 ? Math.floor(rawStart) : 1;
+            if (typeof args.endLine === 'number' && Number.isFinite(args.endLine) && Math.floor(args.endLine) < start) {
+                return {
+                    success: false,
+                    error: `Invalid line range: endLine (${Math.floor(args.endLine)}) cannot be less than startLine (${start}).`
+                };
+            }
+            let end;
+            if (typeof args.endLine === 'number' && Number.isFinite(args.endLine)) {
+                end = Math.floor(args.endLine);
+            }
+            else if (typeof args.limit === 'number' && Number.isFinite(args.limit) && args.limit > 0) {
+                end = start + Math.min(800, Math.floor(args.limit)) - 1;
+            }
+            else {
+                end = start + 799;
+            }
             // Mandatory Paging Limit: at most 800 lines per read to preserve context
             if (end - start + 1 > 800) {
                 end = start + 799;
             }
             const MAX_READ_OUTPUT_CHARS = 512 * 1024;
+            const EARLY_STOP_BYTES_THRESHOLD = 256 * 1024;
+            const allowEarlyStop = targetStat.size > EARLY_STOP_BYTES_THRESHOLD;
+            const includeLineNumbers = args.lineNumbers === true;
             let currentLine = 1;
             const outputLines = [];
             let collectedChars = 0;
             let charTruncated = false;
             let totalLines = 0;
+            let hasMoreLines = false;
             const stream = fs.createReadStream(target);
             const rl = readline.createInterface({
                 input: stream,
@@ -167,15 +192,21 @@ export const fsRead = {
                         return { success: false, error: 'File read aborted.' };
                     }
                     totalLines++;
-                    if (currentLine >= start && currentLine <= end && !charTruncated) {
+                    if (currentLine > end) {
+                        hasMoreLines = true;
+                        if (allowEarlyStop)
+                            break;
+                    }
+                    else if (currentLine >= start && !charTruncated) {
+                        const formatted = includeLineNumbers ? `${String(currentLine).padStart(4, ' ')}| ${line}` : line;
                         const remaining = MAX_READ_OUTPUT_CHARS - collectedChars;
-                        if (line.length <= remaining) {
-                            outputLines.push(line);
-                            collectedChars += line.length + 1;
+                        if (formatted.length <= remaining) {
+                            outputLines.push(formatted);
+                            collectedChars += formatted.length + 1;
                         }
                         else {
                             if (remaining > 0) {
-                                outputLines.push(line.slice(0, remaining));
+                                outputLines.push(formatted.slice(0, remaining));
                             }
                             collectedChars = MAX_READ_OUTPUT_CHARS;
                             charTruncated = true;
@@ -192,8 +223,9 @@ export const fsRead = {
             if (charTruncated) {
                 finalOutput += `\n\n[WARNING: Output truncated at ${MAX_READ_OUTPUT_CHARS} characters. Narrow the line range or inspect specific sections.]`;
             }
-            else if (totalLines > end) {
-                finalOutput += `\n\n[WARNING: File truncated at line ${end} out of ${totalLines}. Use { startLine: ${end + 1}, endLine: ${end + 800} } to read more.]`;
+            else if (hasMoreLines) {
+                const countSuffix = allowEarlyStop ? ' (more lines follow)' : ` out of ${totalLines}`;
+                finalOutput += `\n\n[WARNING: File truncated at line ${end}${countSuffix}. Use { startLine: ${end + 1}, endLine: ${end + 800} } to read more.]`;
             }
             recordFileObserved(target, targetStat);
             return { success: true, output: finalOutput };
