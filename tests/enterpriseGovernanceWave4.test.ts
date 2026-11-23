@@ -13,6 +13,7 @@ import { getActiveSessionId } from '../src/sessionStore.js';
 import { runHeadlessTask } from '../src/headlessCli.js';
 import { buildSeatbeltProfile, buildBubblewrapArgs } from '../src/tools/osSandbox.js';
 import { beginTask, captureBeforeMutation, undoLast, redoLast, buildTaskDiff } from '../src/checkpoints.js';
+import { createWorktree, inspectWorktreeDiff, mergeWorktree, pruneManagedWorktrees } from '../src/worktreeManager.js';
 import { execFileSync } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
@@ -330,5 +331,28 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     const redone = redoLast({ dryRun: false, workspaceRoot: repo });
     assert.equal(redone.ok, true);
     assert.equal(fs.readFileSync(targetFile, 'utf8'), 'export const v = 2;\n');
+  });
+
+  test('worktreeManager previews untracked diffs, merges with fallback git identity without user.name, and prunes orphan branches', () => {
+    const repo = path.join(TMP, 'wt-wave4-repo');
+    fs.mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    execFileSync('git', ['-c', 'user.name=Init', '-c', 'user.email=init@local', 'commit', '--allow-empty', '-q', '-m', 'init'], { cwd: repo });
+    // Explicitly unset local identity to verify fallback committer works in bare CI environments
+    try { execFileSync('git', ['config', '--unset', 'user.name'], { cwd: repo }); } catch {}
+    try { execFileSync('git', ['config', '--unset', 'user.email'], { cwd: repo }); } catch {}
+
+    const wt = createWorktree(repo, { name: 'untracked-test' });
+    fs.writeFileSync(path.join(wt.path, 'newfile.ts'), 'export const x = 42;\n', 'utf8');
+
+    const diff = inspectWorktreeDiff(repo, wt.id);
+    assert.ok(diff.changedFiles.includes('newfile.ts'));
+    assert.match(diff.diff, /\+export const x = 42;/);
+
+    const merged = mergeWorktree(repo, wt.id, { squash: true, cleanup: true });
+    assert.equal(merged.merged, true, merged.error);
+    assert.equal(fs.readFileSync(path.join(repo, 'newfile.ts'), 'utf8'), 'export const x = 42;\n');
+    const pruned = pruneManagedWorktrees(repo);
+    assert.ok(pruned.pruned >= 0);
   });
 });

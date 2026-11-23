@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { safeDisplay } from './tui/text.js';
+import { loadWorkspaceIgnoreMatcher } from './ignoreRules.js';
 const WORKTREE_CONTAINER_DIR = '.causyne-worktrees';
 const BRANCH_PREFIX = 'causyne/wt-';
 const WORKTREE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -32,6 +33,25 @@ function runGit(args, cwd) {
         timeout: 30_000,
         windowsHide: true
     });
+}
+function hasGitConfigKey(cwd, key) {
+    try {
+        return runGit(['config', '--get', key], cwd).trim().length > 0;
+    }
+    catch {
+        return false;
+    }
+}
+function runGitCommitSafe(cwd, message) {
+    const args = [];
+    if (!hasGitConfigKey(cwd, 'user.name')) {
+        args.push('-c', 'user.name=Causyne Agent');
+    }
+    if (!hasGitConfigKey(cwd, 'user.email')) {
+        args.push('-c', 'user.email=agent@causyne.local');
+    }
+    args.push('commit', '-m', message);
+    runGit(args, cwd);
 }
 function gitErrorDetail(err) {
     if (err && typeof err === 'object') {
@@ -245,10 +265,16 @@ export function inspectWorktreeDiff(dir, worktreeId) {
     if (!repoRoot)
         throw new Error('Target workspace is not inside a valid Git repository.');
     const wt = findManagedWorktree(repoRoot, worktreeId);
-    const porcelain = runGit(['status', '--porcelain'], wt.path).trim();
-    const uncommittedFiles = porcelain
-        ? porcelain.split(/\r?\n/).map((line) => line.slice(3).trim()).filter(Boolean)
-        : [];
+    const porcelainRaw = runGit(['status', '--porcelain'], wt.path).replace(/[\r\n]+$/, '');
+    const porcelainLines = porcelainRaw ? porcelainRaw.split(/\r?\n/).filter((line) => line.length >= 4) : [];
+    const uncommittedFiles = porcelainLines
+        .map((line) => {
+        const rest = line.slice(3).trim();
+        const renameArrow = rest.indexOf(' -> ');
+        const pathPart = renameArrow !== -1 ? rest.slice(renameArrow + 4).trim() : rest;
+        return pathPart.replace(/^"(.*)"$/, '$1');
+    })
+        .filter(Boolean);
     let baseCommit = '';
     try {
         baseCommit = runGit(['merge-base', 'HEAD', wt.head || 'HEAD'], repoRoot).trim();
@@ -278,10 +304,34 @@ export function inspectWorktreeDiff(dir, worktreeId) {
         }
         catch { /* ignore */ }
     }
-    const truncated = committedDiff.length > MAX_DIFF_CHARS;
+    const untrackedFiles = [];
+    for (const line of porcelainLines) {
+        if (line.startsWith('?? ')) {
+            const rel = line.slice(3).trim().replace(/^"(.*)"$/, '$1');
+            if (rel)
+                untrackedFiles.push(rel);
+        }
+    }
+    let untrackedPatch = '';
+    for (const rel of untrackedFiles.slice(0, 20)) {
+        const abs = path.join(wt.path, rel);
+        try {
+            const st = fs.lstatSync(abs);
+            if (st.isSymbolicLink() || !st.isFile() || st.size > 64 * 1024)
+                continue;
+            const buf = fs.readFileSync(abs);
+            if (buf.includes(0))
+                continue;
+            const textLines = buf.toString('utf8').split(/\r?\n/);
+            untrackedPatch += `\ndiff --git a/${rel} b/${rel}\nnew file mode 100644\n--- /dev/null\n+++ b/${rel}\n@@ -0,0 +1,${textLines.length} @@\n${textLines.map((l) => `+${l}`).join('\n')}\n`;
+        }
+        catch { /* skip unreadable untracked file */ }
+    }
+    const combinedDiff = [committedDiff, untrackedPatch].filter(Boolean).join('\n').trim();
+    const truncated = combinedDiff.length > MAX_DIFF_CHARS;
     const boundedDiff = truncated
-        ? committedDiff.slice(0, MAX_DIFF_CHARS) + '\n... [diff truncated]'
-        : committedDiff;
+        ? combinedDiff.slice(0, MAX_DIFF_CHARS) + '\n... [diff truncated]'
+        : combinedDiff;
     return {
         id: wt.id,
         path: wt.path,
@@ -302,13 +352,31 @@ export function mergeWorktree(dir, worktreeId, options = {}) {
         throw new Error(`Worktree "${wt.id}" is detached and has no branch to merge.`);
     }
     // Commit any uncommitted changes inside the isolated worktree first
-    const wtStatus = runGit(['status', '--porcelain'], wt.path).trim();
-    if (wtStatus && options.autoCommit !== false) {
-        runGit(['add', '--all'], wt.path);
-        const msg = typeof options.commitMessage === 'string' && options.commitMessage.trim()
-            ? options.commitMessage.trim().slice(0, 120)
-            : `worktree:${wt.id}`;
-        runGit(['commit', '-m', msg], wt.path);
+    const wtStatusRaw = runGit(['status', '--porcelain'], wt.path).replace(/[\r\n]+$/, '');
+    if (wtStatusRaw.trim() && options.autoCommit !== false) {
+        const causyneIgnore = loadWorkspaceIgnoreMatcher(wt.path, { includeGitIgnore: false });
+        const statusLines = wtStatusRaw.split(/\r?\n/).filter((line) => line.length >= 4);
+        const stageable = [];
+        for (const line of statusLines) {
+            const rest = line.slice(3).trim();
+            const renameArrow = rest.indexOf(' -> ');
+            const rawPath = (renameArrow !== -1 ? rest.slice(renameArrow + 4).trim() : rest).replace(/^"(.*)"$/, '$1');
+            if (!rawPath)
+                continue;
+            if (causyneIgnore.isIgnored(path.join(wt.path, rawPath), false))
+                continue;
+            stageable.push(rawPath);
+        }
+        if (stageable.length > 0) {
+            runGit(['add', '--', ...stageable], wt.path);
+            const stagedCheck = runGit(['diff', '--cached', '--name-only'], wt.path).trim();
+            if (stagedCheck) {
+                const msg = typeof options.commitMessage === 'string' && options.commitMessage.trim()
+                    ? options.commitMessage.trim().slice(0, 120)
+                    : `worktree:${wt.id}`;
+                runGitCommitSafe(wt.path, msg);
+            }
+        }
     }
     // Refuse to merge into a dirty parent working tree
     const parentDirty = runGit(['status', '--porcelain'], repoRoot).trim();
@@ -329,7 +397,7 @@ export function mergeWorktree(dir, worktreeId, options = {}) {
                 const msg = typeof options.commitMessage === 'string' && options.commitMessage.trim()
                     ? options.commitMessage.trim().slice(0, 120)
                     : `merge:${wt.id}`;
-                runGit(['commit', '-m', msg], repoRoot);
+                runGitCommitSafe(repoRoot, msg);
             }
         }
         else {
@@ -406,7 +474,9 @@ export function pruneManagedWorktrees(dir) {
     const container = path.join(repoRoot, WORKTREE_CONTAINER_DIR);
     if (!fs.existsSync(container))
         return { pruned: 0 };
-    const activePaths = new Set(listWorktrees(repoRoot).map((w) => path.resolve(w.path)));
+    const activeWorktrees = listWorktrees(repoRoot);
+    const activePaths = new Set(activeWorktrees.map((w) => path.resolve(w.path)));
+    const activeBranches = new Set(activeWorktrees.map((w) => w.branch).filter((b) => Boolean(b)));
     let pruned = 0;
     try {
         const entries = fs.readdirSync(container, { withFileTypes: true });
@@ -417,6 +487,20 @@ export function pruneManagedWorktrees(dir) {
             if (!activePaths.has(full)) {
                 fs.rmSync(full, { recursive: true, force: true });
                 pruned++;
+            }
+        }
+    }
+    catch { /* ignore */ }
+    // Clean up orphaned causyne/wt-* branches no longer attached to any active worktree
+    try {
+        const branchList = runGit(['branch', '--list', `${BRANCH_PREFIX}*`, '--format=%(refname:short)'], repoRoot).trim();
+        for (const branch of branchList.split(/\r?\n/).map((b) => b.trim()).filter(Boolean)) {
+            if (branch.startsWith(BRANCH_PREFIX) && !activeBranches.has(branch)) {
+                try {
+                    runGit(['branch', '-D', branch], repoRoot);
+                    pruned++;
+                }
+                catch { /* keep checked-out or protected branch */ }
             }
         }
     }
