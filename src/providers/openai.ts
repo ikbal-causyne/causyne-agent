@@ -22,11 +22,16 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
 
   override rejectsSamplingParameters(): boolean {
     const lowered = (this.model || '').trim().toLowerCase();
-    return /^o[134](?:$|[-.])/.test(lowered);
+    if (/^o[134](?:$|[-.])/.test(lowered)) return true;
+    if (/^gpt-[56](?:$|[-.])/.test(lowered) && !lowered.includes('-chat')) {
+      return this.reasoningEffort !== 'none' && this.reasoningEffort !== 'off';
+    }
+    return false;
   }
 
   override usesMaxCompletionTokens(): boolean {
-    return this.rejectsSamplingParameters();
+    const lowered = (this.model || '').trim().toLowerCase();
+    return /^o[134](?:$|[-.])/.test(lowered) || /^gpt-[56](?:$|[-.])/.test(lowered);
   }
 
   override supportsPromptCacheKey(): boolean {
