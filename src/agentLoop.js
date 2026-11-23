@@ -4950,9 +4950,11 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     this.consecutiveFailures = repeated ? this.consecutiveFailures + 1 : 1;
                     this.lastFailureType = errorType;
                     const isNetwork = errorType === NETWORK_ERROR_TYPE;
+                    const isRateLimit = errorType === 'rate_limit';
+                    const maxAttempts = isRateLimit ? 5 : AgentLoop.MAX_CONSECUTIVE_FAILURES;
                     const detail = isNetwork ? explainNetworkError(e, this.config) : e.message;
                     auditLog.log({ event: 'loop_error_recovered', taskId: this.taskId, error: e.message, errorType });
-                    if (this.consecutiveFailures >= AgentLoop.MAX_CONSECUTIVE_FAILURES) {
+                    if (this.consecutiveFailures >= maxAttempts) {
                         // Nothing is changing between attempts. Stop and say why, rather
                         // than spinning until the budget is gone.
                         this.emitEvent({
@@ -4966,16 +4968,18 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                         type: 'step_error',
                         tool: 'agent_loop',
                         error: `${detail}\n  retrying (${this.consecutiveFailures} of `
-                            + `${AgentLoop.MAX_CONSECUTIVE_FAILURES})`
+                            + `${maxAttempts})`
                     });
-                    // Back off before trying again. Hammering a failing endpoint as fast
-                    // as the loop can spin turns a one-second blip into a burst of
-                    // failures and gives the endpoint no chance to recover.
-                    await this.backoff(this.consecutiveFailures);
+                    // Back off before trying again. Honor provider Retry-After / X-RateLimit-Reset
+                    // when present so free-tier 429 limits recover cleanly without hammering.
+                    const retryAfterMs = typeof e?.retryAfterMs === 'number' && Number.isFinite(e.retryAfterMs)
+                        ? e.retryAfterMs
+                        : undefined;
+                    await this.backoff(this.consecutiveFailures, retryAfterMs);
                     // Only tell the MODEL about errors the model can act on. It cannot
-                    // fix DNS or a firewall, and a system message per attempt grows the
-                    // context — and the bill — for nothing.
-                    if (!isNetwork) {
+                    // fix DNS, firewalls, or HTTP 429 rate limits, and pushing a system
+                    // message per retry invalidates provider KV prompt caches.
+                    if (!isNetwork && !isRateLimit) {
                         this.messages.push({
                             role: 'system',
                             content: `[SYSTEM ERROR RECOVERED: A ${errorType} error occurred: "${e.message}". `
@@ -5025,8 +5029,15 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
      * Exponential, capped. Without the abort check a user pressing esc during a
      * backoff would wait out the full delay before anything responded.
      */
-    async backoff(attempt) {
-        const delay = Math.min(8000, 500 * Math.pow(2, Math.max(0, attempt - 1)));
+    async backoff(attempt, retryAfterMs) {
+        let delay;
+        if (typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+            const jitter = Math.min(250, Math.floor(retryAfterMs * 0.1));
+            delay = Math.min(60_000, Math.max(50, Math.round(retryAfterMs) + jitter));
+        }
+        else {
+            delay = Math.min(8000, 500 * Math.pow(2, Math.max(0, attempt - 1)));
+        }
         await waitForAbortableDelay(delay, this.abortController?.signal);
     }
     // V5: Classify errors for intelligent retry decisions

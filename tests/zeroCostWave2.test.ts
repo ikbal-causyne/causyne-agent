@@ -553,4 +553,41 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       globalThis.fetch = origFetch;
     }
   });
+
+  test('AgentLoop honors retryAfterMs on 429 rate_limit retries up to 5 attempts without polluting KV cache messages', async () => {
+    const ws = path.join(TMP, 'loop-429-retry');
+    fs.mkdirSync(ws, { recursive: true });
+    const loop = new AgentLoop(null, 'test-429', 'Say hello briefly.', { workspaceRoot: ws }) as any;
+    const seenDelays: number[] = [];
+    loop.backoff = async (_attempt: number, retryAfterMs?: number) => {
+      seenDelays.push(retryAfterMs ?? -1);
+    };
+    let attempts = 0;
+    const model = {
+      model: 'openrouter/free',
+      supportsVision: false,
+      chat: async () => {
+        attempts++;
+        if (attempts < 4) {
+          const err: any = new Error('Rate limited 429');
+          err.status = 429;
+          err.retryAfterMs = 2500;
+          throw err;
+        }
+        return {
+          content: 'Recovered cleanly after three 429 rate limits.',
+          usage: { promptTokens: 20, completionTokens: 10, measurement: 'provider_reported' }
+        };
+      }
+    };
+    loop.initializeProvider = () => model;
+    loop.llm = model;
+    await loop.run();
+    assert.equal(attempts, 4, 'must allow >3 attempts on rate_limit (up to 5)');
+    assert.deepEqual(seenDelays, [2500, 2500, 2500], 'must pass retryAfterMs to backoff');
+    const injectedRecovered = (loop.messages || []).some(
+      (m: any) => m?.role === 'system' && String(m.content || '').includes('SYSTEM ERROR RECOVERED')
+    );
+    assert.equal(injectedRecovered, false, '429 retries must not push SYSTEM ERROR RECOVERED into messages');
+  });
 });
