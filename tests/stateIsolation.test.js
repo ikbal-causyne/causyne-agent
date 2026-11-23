@@ -128,7 +128,7 @@ test('tasks: one user request is one task', () => {
   const src = sourceWithoutComments(fileURLToPath(new URL('../src/cliMode.js', import.meta.url)));
   const turn = src.slice(src.indexOf('loop.userPrompt = task;'));
 
-  assert.match(turn.slice(0, 400), /loop\.taskId = `cli_chat_\$\{Date\.now\(\)\}`/,
+  assert.match(turn.slice(0, 400), /loop\.taskId = (?:`cli_chat_\$\{Date\.now\(\)\}`|nextCliTaskId\('cli_chat'\))/,
     'the taskId is not rotated at the start of a turn');
 });
 

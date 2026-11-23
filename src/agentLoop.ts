@@ -3022,8 +3022,6 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
         }
         this.emitEvent({
           type: 'usage_update',
-          inputTokens: Number.isFinite(reportedPromptTokens) && reportedPromptTokens > 0 ? reportedPromptTokens : 0,
-          outputTokens: Number.isFinite(reportedCompletionTokens) && reportedCompletionTokens > 0 ? reportedCompletionTokens : 0,
           usedTokens: tracking.dailyTokens || 0,
           dailyTokens: tracking.dailyTokens || 0,
           dailyCostUsd: tracking.dailyCostUsd || 0,
@@ -3036,7 +3034,9 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           lifetimeCostUsd: tracking.lifetimeCostUsd || 0,
           contextChars: this._contextChars || 0,
           contextLimitChars: this._contextLimitChars || 0,
-          cachedTokens
+          cachedTokens,
+          inputTokens: Number.isFinite(reportedPromptTokens) && reportedPromptTokens > 0 ? reportedPromptTokens : 0,
+          outputTokens: Number.isFinite(reportedCompletionTokens) && reportedCompletionTokens > 0 ? reportedCompletionTokens : 0
         });
 
         const taskCostCap = typeof (this as any).taskCostLimitUsd === 'number' && Number.isFinite((this as any).taskCostLimitUsd) && (this as any).taskCostLimitUsd > 0
@@ -4520,8 +4520,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
             args,
             risk: validation.risk,
             heavyDownload: isHeavyAiDownload,
-            standingApproval,
-            reason: validation.reason
+            reason: validation.reason,
+            standingApproval
           });
           if (enterpriseDecision.effect === 'ask') {
             needsToolApproval = true;
