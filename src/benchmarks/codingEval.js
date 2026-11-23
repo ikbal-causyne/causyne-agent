@@ -23,6 +23,8 @@ import { applyPatch } from '../tools/applyPatch.js';
 import { buildRepoMap } from '../codebase/repoMap.js';
 import { loadProjectInstructions } from '../projectInstructions.js';
 import { backgroundTaskManager } from '../backgroundTasks.js';
+import { AuditLog } from '../auditLog.js';
+import { codeSearcher } from '../tools/codeSearcher.js';
 function initTempGitRepo(rootDir, name) {
     const dir = path.join(rootDir, name);
     fs.mkdirSync(dir, { recursive: true });
@@ -339,6 +341,190 @@ export async function runCodingEvalSuite(options = {}) {
                 detail: passed
                     ? 'OS-sandboxed background task streamed output and completed with exit 0.'
                     : `Background task status=${finalSnap.status} exit=${String(finalSnap.exitCode)}.`
+            });
+        }
+        // Task 10: apply_patch CRLF preservation and case-only file rename safety
+        {
+            const start = Date.now();
+            const repo = initTempGitRepo(root, 'task10-crlf-case');
+            fs.writeFileSync(path.join(repo, 'widget.mjs'), 'export const a = 1;\r\nexport const b = 2;\r\n', 'utf8');
+            commitAll(repo, 'init');
+            const patchRes = await applyPatch.execute({
+                patch: [
+                    '*** Begin Patch',
+                    '*** Update File: widget.mjs',
+                    '*** Move to: Widget.mjs',
+                    '@@',
+                    '-export const a = 1;',
+                    '+export const a = 10;',
+                    ' export const b = 2;',
+                    '*** End Patch'
+                ].join('\n')
+            }, { workspaceRoot: repo });
+            const entries = fs.readdirSync(repo);
+            const renamedContent = entries.includes('Widget.mjs')
+                ? fs.readFileSync(path.join(repo, 'Widget.mjs'), 'utf8')
+                : '';
+            const passed = patchRes.success
+                && entries.includes('Widget.mjs')
+                && renamedContent === 'export const a = 10;\r\nexport const b = 2;\r\n';
+            results.push({
+                id: 'apply-patch-crlf-case-rename',
+                category: 'multi-file-patch',
+                passed,
+                elapsedMs: Date.now() - start,
+                detail: passed
+                    ? 'apply_patch preserved CRLF line endings and safely executed case-only rename.'
+                    : (patchRes.error || `Entries=${entries.join(',')} content=${JSON.stringify(renamedContent)}`)
+            });
+        }
+        // Task 11: fs_edit uniqueness guard + deterministic replace_all
+        {
+            const start = Date.now();
+            const repo = initTempGitRepo(root, 'task11-fs-edit-unique');
+            const target = path.join(repo, 'dup.ts');
+            fs.writeFileSync(target, 'const x = OLD_VAL;\nconst y = OLD_VAL;\n', 'utf8');
+            const ambiguous = await fsEdit.execute({
+                path: target,
+                edits: [{ searchContent: 'OLD_VAL', replaceContent: 'NEW_VAL' }]
+            }, { workspaceRoot: repo });
+            const allReplaced = await fsEdit.execute({
+                path: target,
+                edits: [{ searchContent: 'OLD_VAL', replaceContent: 'NEW_VAL', replace_all: true }]
+            }, { workspaceRoot: repo });
+            const finalText = fs.readFileSync(target, 'utf8');
+            const passed = !ambiguous.success
+                && /2|multiple|unique|replace_all/i.test(String(ambiguous.error || ''))
+                && allReplaced.success
+                && finalText === 'const x = NEW_VAL;\nconst y = NEW_VAL;\n';
+            results.push({
+                id: 'fs-edit-uniqueness-and-replace-all',
+                category: 'refactor',
+                passed,
+                elapsedMs: Date.now() - start,
+                detail: passed
+                    ? 'fs_edit rejected ambiguous multi-match edit and applied explicit replace_all cleanly.'
+                    : `ambiguous=${String(ambiguous.success)} allReplaced=${String(allReplaced.success)}`
+            });
+        }
+        // Task 12: .causyneignore enforcement with !negation across fs_read, code_search, and repo_map
+        {
+            const start = Date.now();
+            const repo = initTempGitRepo(root, 'task12-causyneignore');
+            fs.mkdirSync(path.join(repo, 'secrets'), { recursive: true });
+            fs.writeFileSync(path.join(repo, '.causyneignore'), 'secrets/**\n!secrets/public.ts\n', 'utf8');
+            fs.writeFileSync(path.join(repo, 'secrets', 'hidden.ts'), 'export const TOKEN = "EVAL_HIDDEN_SECRET";\n', 'utf8');
+            fs.writeFileSync(path.join(repo, 'secrets', 'public.ts'), 'export const LABEL = "EVAL_PUBLIC_VISIBLE";\n', 'utf8');
+            const blockedRead = await fsRead.execute({ path: path.join(repo, 'secrets', 'hidden.ts') }, { workspaceRoot: repo });
+            const allowedRead = await fsRead.execute({ path: path.join(repo, 'secrets', 'public.ts') }, { workspaceRoot: repo });
+            const searchRes = await codeSearcher.execute({ query: 'EVAL_HIDDEN_SECRET', searchPath: repo }, { workspaceRoot: repo });
+            const map = buildRepoMap(repo, { maxChars: 4000 });
+            const mapPaths = map.files.map((f) => f.relPath);
+            const passed = !blockedRead.success
+                && allowedRead.success
+                && !String(searchRes.output || '').includes('hidden.ts')
+                && !mapPaths.some((p) => p.endsWith('hidden.ts'))
+                && mapPaths.some((p) => p.endsWith('public.ts'));
+            results.push({
+                id: 'causyneignore-enforcement',
+                category: 'security',
+                passed,
+                elapsedMs: Date.now() - start,
+                detail: passed
+                    ? '.causyneignore blocked ignored files while honoring !negation across read, search, and repo map.'
+                    : `blocked=${String(blockedRead.success)} allowed=${String(allowedRead.success)} map=${mapPaths.join(',')}`
+            });
+        }
+        // Task 13: Tamper-evident SHA-256 audit log hash-chain verification
+        {
+            const start = Date.now();
+            const prevHome = process.env.CAUSYNE_HOME;
+            const auditHome = path.join(root, 'task13-audit-home');
+            fs.mkdirSync(auditHome, { recursive: true });
+            process.env.CAUSYNE_HOME = auditHome;
+            let passed = false;
+            let detail = '';
+            try {
+                const audit = new AuditLog();
+                audit.setContext({ actor: 'eval-runner', sessionId: 'sess-eval' });
+                audit.log({ event: 'eval_step_1', tool: 'fs_read', status: 'ok' });
+                audit.log({ event: 'eval_step_2', tool: 'fs_edit', status: 'ok' });
+                const intact = audit.verifyAuditChain({ file: audit.logFile });
+                const tamperedText = fs.readFileSync(audit.logFile, 'utf8').replace('eval_step_2', 'eval_step_X');
+                fs.writeFileSync(audit.logFile, tamperedText, 'utf8');
+                const tampered = audit.verifyAuditChain({ file: audit.logFile });
+                passed = intact.ok === true && intact.entriesVerified >= 2 && tampered.ok === false;
+                detail = passed
+                    ? 'Tamper-evident SHA-256 audit chain verified clean and detected single-byte log modification.'
+                    : `intact=${String(intact.ok)} entries=${intact.entriesVerified} tampered=${String(tampered.ok)}`;
+            }
+            finally {
+                if (prevHome === undefined)
+                    delete process.env.CAUSYNE_HOME;
+                else
+                    process.env.CAUSYNE_HOME = prevHome;
+            }
+            results.push({
+                id: 'audit-hash-chain-tamper-detection',
+                category: 'governance',
+                passed,
+                elapsedMs: Date.now() - start,
+                detail
+            });
+        }
+        // Task 14: Additive hierarchical enterprise policy layering (managed deny overrides workspace allow)
+        {
+            const start = Date.now();
+            const repo = initTempGitRepo(root, 'task14-policy-layers');
+            const managedFile = path.join(root, 'managed-policy.json');
+            fs.writeFileSync(managedFile, JSON.stringify({
+                version: 1,
+                commands: { deny: ['curl*'] }
+            }), 'utf8');
+            fs.writeFileSync(path.join(repo, 'causyne.policy.json'), JSON.stringify({
+                version: 1,
+                commands: { allow: ['curl*'] }
+            }), 'utf8');
+            const loaded = loadEnterprisePolicy(repo, {
+                CAUSYNE_MANAGED_POLICY_FILE: managedFile,
+                CAUSYNE_HOME: path.join(root, 'task14-home')
+            });
+            const verdict = evaluateEnterprisePolicy({
+                tool: 'sysRun',
+                args: { command: 'curl https://example.com' },
+                workspaceRoot: repo
+            }, loaded);
+            const passed = verdict.effect === 'deny';
+            results.push({
+                id: 'hierarchical-enterprise-policy-layering',
+                category: 'governance',
+                passed,
+                elapsedMs: Date.now() - start,
+                detail: passed
+                    ? 'Managed enterprise deny policy held firm against workspace-level allow override.'
+                    : `Expected deny, got ${verdict.effect}`
+            });
+        }
+        // Task 15: Multi-language Python relative import graph centrality in repo map
+        {
+            const start = Date.now();
+            const repo = initTempGitRepo(root, 'task15-py-repomap');
+            fs.mkdirSync(path.join(repo, 'pkg'), { recursive: true });
+            fs.writeFileSync(path.join(repo, 'pkg', 'core.py'), 'class Engine:\n    def run(self):\n        return 1\n', 'utf8');
+            fs.writeFileSync(path.join(repo, 'pkg', 'a.py'), 'from .core import Engine\ndef run_a():\n    return Engine().run()\n', 'utf8');
+            fs.writeFileSync(path.join(repo, 'pkg', 'b.py'), 'from .core import Engine\ndef run_b():\n    return Engine().run()\n', 'utf8');
+            fs.writeFileSync(path.join(repo, 'pkg', 'c.py'), 'from .core import Engine\ndef run_c():\n    return Engine().run()\n', 'utf8');
+            fs.writeFileSync(path.join(repo, 'pkg', 'leaf.py'), 'def standalone():\n    return 0\n', 'utf8');
+            const map = buildRepoMap(repo, { maxChars: 4000 });
+            const passed = map.files.length === 5 && map.files[0]?.relPath === 'pkg/core.py';
+            results.push({
+                id: 'multi-language-repomap-edges',
+                category: 'repo-map',
+                passed,
+                elapsedMs: Date.now() - start,
+                detail: passed
+                    ? 'PageRank resolved Python relative imports and ranked pkg/core.py #1.'
+                    : `Expected pkg/core.py at rank #1, got ${map.files[0]?.relPath || '(none)'}.`
             });
         }
     }

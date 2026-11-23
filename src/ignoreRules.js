@@ -179,6 +179,25 @@ function relativeIgnorePosix(rootPath, targetPath) {
         return null;
     return rel;
 }
+function hasNegatedDescendantRule(dirRelPosix, rules) {
+    const dirSegs = dirRelPosix.split('/').filter(Boolean);
+    if (dirSegs.length === 0)
+        return false;
+    for (const rule of rules) {
+        if (!rule.negated)
+            continue;
+        // Unanchored single-segment negation (e.g. `!public.ts`) or `**` prefix can un-ignore inside any dir
+        if ((!rule.anchored && rule.segments.length === 1) || rule.segments[0] === '**') {
+            return true;
+        }
+        if (rule.segments.length > dirSegs.length) {
+            if (matchSegments(dirSegs, rule.segments.slice(0, dirSegs.length))) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 export function createIgnoreMatcher(workspaceRoot, rules) {
     const resolvedRoot = canonicalizeIgnorePath(workspaceRoot);
     const hasNegation = rules.some((r) => r.negated);
@@ -200,6 +219,11 @@ export function createIgnoreMatcher(workspaceRoot, rules) {
                 if (ruleMatchesRelPath(rule, rel, isDir)) {
                     ignored = !rule.negated;
                 }
+            }
+            // Do not prune a directory during traversal when a later `!negation` rule
+            // can un-ignore a descendant file inside it.
+            if (ignored && isDir && hasNegation && hasNegatedDescendantRule(rel, rules)) {
+                return false;
             }
             return ignored;
         },

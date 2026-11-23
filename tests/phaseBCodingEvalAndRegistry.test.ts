@@ -12,13 +12,13 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const BIN_PATH = path.join(REPO_ROOT, 'bin', 'causyne.js');
 
 describe('Phase B3/B5 — Reproducible Coding Eval Suite & Cross-Provider Registry Compatibility', () => {
-  test('runCodingEvalSuite passes all 9 isolated real-repository engineering benchmarks', async () => {
+  test('runCodingEvalSuite passes all 15 isolated real-repository engineering benchmarks', async () => {
     const scorecard = await runCodingEvalSuite();
-    assert.equal(scorecard.totalTasks, 9);
-    assert.equal(scorecard.passedTasks, 9, formatEvalScorecard(scorecard));
+    assert.equal(scorecard.totalTasks, 15);
+    assert.equal(scorecard.passedTasks, 15, formatEvalScorecard(scorecard));
     assert.equal(scorecard.passRate, 1);
     const rendered = formatEvalScorecard(scorecard);
-    assert.match(rendered, /9\/9 \(100\.0%\)/);
+    assert.match(rendered, /15\/15 \(100\.0%\)/);
   });
 
   test('code_lsp and git_worktree are registered, aliased, intent-routed, and 100% cross-provider compatible', async () => {
@@ -64,6 +64,6 @@ describe('Phase B3/B5 — Reproducible Coding Eval Suite & Cross-Provider Regist
     });
     const parsed = JSON.parse(evalRaw);
     assert.equal(parsed.passedTasks, parsed.totalTasks);
-    assert.equal(parsed.totalTasks, 9);
+    assert.equal(parsed.totalTasks, 15);
   });
 });
