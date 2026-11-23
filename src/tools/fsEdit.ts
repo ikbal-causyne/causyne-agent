@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
+import { normalizePathForCompare, stripWindowsExtendedPrefix } from '../agent/workspaceBoundary.js';
 import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
 import { checkFileStaleness, recordFileObserved } from './fileTracker.js';
 
@@ -42,7 +43,7 @@ function expandHome(value: string): string {
 }
 
 function insideRoot(root: string, target: string): boolean {
-  const rel = path.relative(root, target);
+  const rel = path.relative(normalizePathForCompare(root), normalizePathForCompare(target));
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
@@ -57,10 +58,10 @@ async function assertWithinEditScope(target: string, context?: FsEditContext): P
       .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
       .map(p => p.trim());
   if (roots.length === 0) return;
-  const realTarget = await fs.realpath(target);
+  const realTarget = stripWindowsExtendedPrefix(await fs.realpath(target));
   for (const root of roots) {
     try {
-      const realRoot = await fs.realpath(path.resolve(expandHome(root)));
+      const realRoot = stripWindowsExtendedPrefix(await fs.realpath(path.resolve(expandHome(root))));
       if (insideRoot(realRoot, realTarget)) return;
     } catch {
       continue;

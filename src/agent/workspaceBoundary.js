@@ -17,10 +17,23 @@ function errorCode(value) {
     return typeof value === 'object' && value !== null && 'code' in value
         ? String(value.code) : undefined;
 }
+export function stripWindowsExtendedPrefix(value) {
+    if (value.startsWith('\\\\?\\UNC\\')) {
+        return `\\\\${value.slice(8)}`;
+    }
+    if (value.startsWith('\\\\?\\')) {
+        return value.slice(4);
+    }
+    return value;
+}
+export function normalizePathForCompare(value, platform = process.platform) {
+    const stripped = stripWindowsExtendedPrefix(value);
+    return platform === 'win32' ? stripped.toLowerCase() : stripped;
+}
 export function physicalPath(target) {
     if (typeof target !== 'string' || target.length === 0)
         return null;
-    let candidate = path.resolve(target);
+    let candidate = path.resolve(stripWindowsExtendedPrefix(target));
     const missing = [];
     for (let depth = 0; depth < 1024; depth++) {
         try {
@@ -37,7 +50,7 @@ export function physicalPath(target) {
             continue;
         }
         try {
-            const resolved = fs.realpathSync.native(candidate);
+            const resolved = stripWindowsExtendedPrefix(fs.realpathSync.native(candidate));
             return path.resolve(resolved, ...missing);
         }
         catch {
@@ -47,7 +60,7 @@ export function physicalPath(target) {
     return null;
 }
 function normalizeCompare(value) {
-    return process.platform === 'win32' ? value.toLowerCase() : value;
+    return normalizePathForCompare(value);
 }
 export function isWithinPhysicalPath(child, parent) {
     const relative = path.relative(normalizeCompare(parent), normalizeCompare(child));
@@ -60,8 +73,21 @@ export function isProtectedPhysicalPath(target) {
             return false;
         }
     }
+    const winSystemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';
+    const winProgramFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const winProgramFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const winProgramData = process.env.ProgramData || 'C:\\ProgramData';
     const blocked = process.platform === 'win32'
-        ? ['C:\\Windows', 'C:\\Program Files', 'C:\\ProgramData']
+        ? [
+            'C:\\Windows',
+            'C:\\Program Files',
+            'C:\\Program Files (x86)',
+            'C:\\ProgramData',
+            winSystemRoot,
+            winProgramFiles,
+            winProgramFilesX86,
+            winProgramData
+        ]
         : ['/etc', '/private/etc', '/usr/bin', '/usr/sbin', '/sbin', '/bin', '/System', '/private/var'];
     return blocked.some(root => isWithinPhysicalPath(target, root));
 }

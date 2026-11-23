@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { ensureCapability, loadCapabilityPackage } from '../provisioning/capabilityProvisioner.js';
 import { isBlockedWorkspaceRoot } from '../sandboxPolicy.js';
+import { normalizePathForCompare } from '../agent/workspaceBoundary.js';
 import {
   getErrorMessage,
   resolveScopedPath,
@@ -43,7 +44,8 @@ export const fsDelete = {
         return { success: false, error: 'Refusing to delete a protected system root directory.' };
       }
       const scope = resolveToolWorkspaceRoots(context);
-      if (scope.roots.some((root) => path.resolve(root) === target)) {
+      const normalizedTarget = normalizePathForCompare(target);
+      if (scope.roots.some((root) => normalizePathForCompare(path.resolve(root)) === normalizedTarget)) {
         return { success: false, error: 'Refusing to delete the workspace root directory itself.' };
       }
 

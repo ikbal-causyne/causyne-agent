@@ -1,3 +1,5 @@
+import { normalizePathForCompare } from '../agent/workspaceBoundary.js';
+
 export interface SwitchChatWorkspaceOptions<TLoop = any> {
   workspaceRoot: string;
   createLoop: (workspaceRoot: string) => TLoop;
@@ -41,12 +43,13 @@ export function switchChatWorkspace<TLoop extends {
   // Build the replacement before updating any displayed state. If construction
   // fails, the previous loop and prompt remain intact for caller rollback.
   const replacement = createLoop(workspaceRoot);
-  if (!replacement || replacement.workspaceRoot !== workspaceRoot) {
+  const expectedRoot = normalizePathForCompare(workspaceRoot);
+  if (!replacement || !replacement.workspaceRoot || normalizePathForCompare(replacement.workspaceRoot) !== expectedRoot) {
     throw new Error('New agent loop did not adopt the requested workspace root');
   }
   const paths = replacement.sandbox?.workspacePaths;
   if (!replacement.sandbox?.grantAllAccess &&
-      (!Array.isArray(paths) || !paths.includes(workspaceRoot))) {
+      (!Array.isArray(paths) || !paths.some((p) => normalizePathForCompare(p) === expectedRoot))) {
     throw new Error('New agent sandbox did not adopt the requested workspace root');
   }
 

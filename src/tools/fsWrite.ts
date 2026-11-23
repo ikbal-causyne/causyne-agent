@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
+import { normalizePathForCompare, stripWindowsExtendedPrefix } from '../agent/workspaceBoundary.js';
 import { recordFileObserved } from './fileTracker.js';
 
 export interface FsWriteArgs {
@@ -32,7 +33,7 @@ function expandHome(value: string): string {
 }
 
 function inside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
+  const relative = path.relative(normalizePathForCompare(root), normalizePathForCompare(target));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`)
     && !path.isAbsolute(relative));
 }
@@ -40,11 +41,11 @@ function inside(root: string, target: string): boolean {
 async function physicalTarget(target: string): Promise<string> {
   // Resolves symlinks in the longest existing ancestor, including a symlinked
   // parent of a new file. It is not a substitute for OS-level isolation.
-  let current = target;
+  let current = stripWindowsExtendedPrefix(target);
   const missing: string[] = [];
   while (true) {
     try {
-      const resolved = await fs.realpath(current);
+      const resolved = stripWindowsExtendedPrefix(await fs.realpath(current));
       return path.join(resolved, ...missing.reverse());
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;

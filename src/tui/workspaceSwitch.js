@@ -1,3 +1,4 @@
+import { normalizePathForCompare } from '../agent/workspaceBoundary.js';
 /**
  * Rebind a chat session to a different workspace without mutating the previous
  * agent's sandbox or mixing old workspace memory into the new session.
@@ -15,12 +16,13 @@ export function switchChatWorkspace({ workspaceRoot, createLoop, prompt = null, 
     // Build the replacement before updating any displayed state. If construction
     // fails, the previous loop and prompt remain intact for caller rollback.
     const replacement = createLoop(workspaceRoot);
-    if (!replacement || replacement.workspaceRoot !== workspaceRoot) {
+    const expectedRoot = normalizePathForCompare(workspaceRoot);
+    if (!replacement || !replacement.workspaceRoot || normalizePathForCompare(replacement.workspaceRoot) !== expectedRoot) {
         throw new Error('New agent loop did not adopt the requested workspace root');
     }
     const paths = replacement.sandbox?.workspacePaths;
     if (!replacement.sandbox?.grantAllAccess &&
-        (!Array.isArray(paths) || !paths.includes(workspaceRoot))) {
+        (!Array.isArray(paths) || !paths.some((p) => normalizePathForCompare(p) === expectedRoot))) {
         throw new Error('New agent sandbox did not adopt the requested workspace root');
     }
     replacement.waitForApproval = approvalHandler;

@@ -19,6 +19,7 @@ import path from 'node:path';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { safeDisplay } from './tui/text.js';
 import { loadWorkspaceIgnoreMatcher } from './ignoreRules.js';
+import { normalizePathForCompare, stripWindowsExtendedPrefix } from './agent/workspaceBoundary.js';
 
 export interface WorktreeInfo {
   id: string;
@@ -107,14 +108,18 @@ function gitErrorDetail(err: unknown): string {
 }
 
 function isInsideDir(parent: string, child: string): boolean {
-  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  const rel = path.relative(
+    normalizePathForCompare(path.resolve(parent)),
+    normalizePathForCompare(path.resolve(child))
+  );
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
 
 function nativeRealpath(targetPath: string): string {
-  return typeof fs.realpathSync.native === 'function'
+  const resolved = typeof fs.realpathSync.native === 'function'
     ? fs.realpathSync.native(targetPath)
     : fs.realpathSync(targetPath);
+  return stripWindowsExtendedPrefix(resolved);
 }
 
 export function resolveGitRepoRoot(dir: string): string | null {

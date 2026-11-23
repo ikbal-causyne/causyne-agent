@@ -1,15 +1,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { normalizePathForCompare, stripWindowsExtendedPrefix } from '../agent/workspaceBoundary.js';
 
 function within(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
+  const relative = path.relative(normalizePathForCompare(root), normalizePathForCompare(target));
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function scopedTarget(workspace: string, target: string): { root: string; resolved: string } {
-  const root = path.resolve(workspace);
-  const resolved = path.resolve(target);
-  if (root === resolved || !within(root, resolved)) throw new Error('File target must stay inside the selected workspace');
+  const root = path.resolve(stripWindowsExtendedPrefix(workspace));
+  const resolved = path.resolve(stripWindowsExtendedPrefix(target));
+  if (normalizePathForCompare(root) === normalizePathForCompare(resolved) || !within(root, resolved)) {
+    throw new Error('File target must stay inside the selected workspace');
+  }
   return { root, resolved };
 }
 
