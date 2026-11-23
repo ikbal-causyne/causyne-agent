@@ -81,7 +81,19 @@ export const lspCodeIntel = {
       properties: {
         action: {
           type: 'string',
-          enum: ['status', 'diagnostics', 'definition', 'references', 'hover', 'symbols', 'workspace_symbols'],
+          enum: [
+            'status',
+            'diagnostics',
+            'definition',
+            'type_definition',
+            'implementation',
+            'references',
+            'hover',
+            'symbols',
+            'workspace_symbols',
+            'incoming_calls',
+            'outgoing_calls'
+          ],
           description: 'LSP query action to perform.'
         },
         path: {
@@ -206,6 +218,28 @@ export const lspCodeIntel = {
       if (action === 'definition') {
         const locs = await session.definition(targetFile, line, column);
         return { success: true, output: formatLocationList(locs, workspaceRoot) };
+      }
+
+      if (action === 'type_definition') {
+        const locs = await session.typeDefinition(targetFile, line, column);
+        return { success: true, output: formatLocationList(locs, workspaceRoot) };
+      }
+
+      if (action === 'implementation') {
+        const locs = await session.implementation(targetFile, line, column);
+        return { success: true, output: formatLocationList(locs, workspaceRoot) };
+      }
+
+      if (action === 'incoming_calls' || action === 'outgoing_calls') {
+        const direction = action === 'incoming_calls' ? 'incoming' : 'outgoing';
+        const calls = await session.callHierarchy(targetFile, line, column, direction);
+        if (calls.length === 0) return { success: true, output: `No ${direction} calls found.` };
+        const formatted = calls.map((c) => {
+          const rel = path.relative(workspaceRoot, c.file);
+          const shown = rel && !rel.startsWith('..') ? rel : c.file;
+          return `  [${c.kind}] ${c.name} — ${sanitizeToolText(shown, 220)}:${c.line}:${c.column}`;
+        }).join('\n');
+        return { success: true, output: formatted };
       }
 
       if (action === 'references') {

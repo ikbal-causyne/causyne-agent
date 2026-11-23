@@ -17,6 +17,8 @@ import { checkFileStaleness, clearFileTracker } from '../src/tools/fileTracker.j
 import { sysRun, isFinalCommandSearch, cleanSubprocessOutput, resolvePortableShell } from '../src/tools/sysRun.js';
 import { persistentShell, cleanupPersistentShells } from '../src/tools/persistentShell.js';
 import { LspSession } from '../src/lsp/lspClient.js';
+import { loadCustomLspServers, matchingSpecsForFile, findLocalOrPathExecutable } from '../src/lsp/lspCatalog.js';
+import { lspCodeIntel } from '../src/tools/lspCodeIntel.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -476,5 +478,29 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
       session.killSync();
       assert.equal(session.isAlive(), false);
     }
+  });
+
+  test('lspCatalog supports .causyne/lsp.json overrides, .venv probing, expanded languages, and lspCodeIntel exposes call hierarchy actions', () => {
+    const ws = path.join(TMP, 'lsp-catalog-custom');
+    const venvBin = path.join(ws, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin');
+    fs.mkdirSync(path.join(ws, '.causyne'), { recursive: true });
+    fs.mkdirSync(venvBin, { recursive: true });
+
+    const fakePyBin = path.join(venvBin, process.platform === 'win32' ? 'basedpyright-langserver.cmd' : 'basedpyright-langserver');
+    fs.writeFileSync(fakePyBin, '#!/bin/sh\nexit 0\n', 'utf8');
+    if (process.platform !== 'win32') fs.chmodSync(fakePyBin, 0o755);
+
+    assert.equal(findLocalOrPathExecutable('basedpyright-langserver', ws, { PATH: '' }), fakePyBin);
+
+    fs.writeFileSync(path.join(ws, '.causyne', 'lsp.json'), JSON.stringify({
+      servers: [{ id: 'custom-dsl', command: 'dsl-ls', args: ['--stdio'], extensions: ['.dsl'], rootMarkers: ['dsl.toml'] }]
+    }), 'utf8');
+    const custom = loadCustomLspServers(ws);
+    assert.equal(custom.length, 1);
+    assert.equal(matchingSpecsForFile('app.dsl', ws)[0]?.id, 'custom-dsl');
+    assert.ok(matchingSpecsForFile('Main.java').some((s) => s.id === 'jdtls'));
+    assert.ok(matchingSpecsForFile('App.vue').some((s) => s.id === 'vue-ls'));
+    assert.ok(lspCodeIntel.schema.parameters.properties.action.enum.includes('incoming_calls'));
+    assert.ok(lspCodeIntel.schema.parameters.properties.action.enum.includes('type_definition'));
   });
 });

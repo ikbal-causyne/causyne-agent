@@ -6,6 +6,7 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 export interface LspServerSpec {
@@ -51,7 +52,16 @@ const EXTENSION_TO_LANGUAGE_ID: Readonly<Record<string, string>> = Object.freeze
   '.hpp': 'cpp',
   '.hh': 'cpp',
   '.lua': 'lua',
-  '.zig': 'zig'
+  '.zig': 'zig',
+  '.java': 'java',
+  '.kt': 'kotlin',
+  '.kts': 'kotlin',
+  '.cs': 'csharp',
+  '.rb': 'ruby',
+  '.php': 'php',
+  '.swift': 'swift',
+  '.vue': 'vue',
+  '.svelte': 'svelte'
 });
 
 export const BUILTIN_LSP_SERVERS: readonly LspServerSpec[] = Object.freeze([
@@ -135,6 +145,78 @@ export const BUILTIN_LSP_SERVERS: readonly LspServerSpec[] = Object.freeze([
     extensions: ['.lua'],
     rootMarkers: ['.luarc.json', '.luarc.jsonc'],
     installHint: 'Install lua-language-server via Homebrew or GitHub releases'
+  },
+  {
+    id: 'jdtls',
+    label: 'Eclipse JDT.LS (Java)',
+    command: 'jdtls',
+    args: [],
+    extensions: ['.java'],
+    rootMarkers: ['pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle'],
+    installHint: 'Install jdtls via Homebrew or Eclipse JDT Language Server'
+  },
+  {
+    id: 'kotlin-ls',
+    label: 'Kotlin Language Server',
+    command: 'kotlin-language-server',
+    args: [],
+    extensions: ['.kt', '.kts'],
+    rootMarkers: ['build.gradle.kts', 'build.gradle', 'settings.gradle.kts', 'pom.xml'],
+    installHint: 'Install kotlin-language-server via Homebrew or GitHub releases'
+  },
+  {
+    id: 'csharp-ls',
+    label: 'csharp-ls (C# / .NET)',
+    command: 'csharp-ls',
+    args: [],
+    extensions: ['.cs'],
+    rootMarkers: ['global.json', 'Directory.Build.props'],
+    installHint: 'dotnet tool install --global csharp-ls'
+  },
+  {
+    id: 'solargraph',
+    label: 'Solargraph (Ruby)',
+    command: 'solargraph',
+    args: ['stdio'],
+    extensions: ['.rb'],
+    rootMarkers: ['Gemfile', '.rubocop.yml'],
+    installHint: 'gem install solargraph'
+  },
+  {
+    id: 'intelephense',
+    label: 'Intelephense (PHP)',
+    command: 'intelephense',
+    args: ['--stdio'],
+    extensions: ['.php'],
+    rootMarkers: ['composer.json'],
+    installHint: 'npm install -g intelephense'
+  },
+  {
+    id: 'sourcekit-lsp',
+    label: 'SourceKit-LSP (Swift)',
+    command: 'sourcekit-lsp',
+    args: [],
+    extensions: ['.swift'],
+    rootMarkers: ['Package.swift'],
+    installHint: 'Install Xcode Command Line Tools or Swift toolchain'
+  },
+  {
+    id: 'vue-ls',
+    label: 'Vue Language Server (Volar)',
+    command: 'vue-language-server',
+    args: ['--stdio'],
+    extensions: ['.vue'],
+    rootMarkers: ['tsconfig.json', 'vite.config.ts', 'package.json'],
+    installHint: 'npm install -g @vue/language-server'
+  },
+  {
+    id: 'svelte-ls',
+    label: 'Svelte Language Server',
+    command: 'svelteserver',
+    args: ['--stdio'],
+    extensions: ['.svelte'],
+    rootMarkers: ['svelte.config.js', 'svelte.config.ts', 'package.json'],
+    installHint: 'npm install -g svelte-language-server'
   }
 ]);
 
@@ -192,8 +274,55 @@ export function findExecutableOnPath(
   return null;
 }
 
+const MAX_CUSTOM_LSP_CONFIG_BYTES = 64 * 1024;
+
 /**
- * Also checks workspace-local `node_modules/.bin/<command>` when inside a Node project.
+ * Loads optional workspace-scoped LSP overrides from `.causyne/lsp.json`.
+ * Rejects symlinks, invalid executables, and NUL/control characters cleanly.
+ */
+export function loadCustomLspServers(workspaceRoot?: string): LspServerSpec[] {
+  if (!workspaceRoot || typeof workspaceRoot !== 'string' || workspaceRoot.includes('\0')) return [];
+  const cfgPath = path.join(path.resolve(workspaceRoot), '.causyne', 'lsp.json');
+  try {
+    const stat = fs.lstatSync(cfgPath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_CUSTOM_LSP_CONFIG_BYTES) return [];
+    const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as { servers?: unknown };
+    const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.servers) ? parsed.servers : []);
+    const specs: LspServerSpec[] = [];
+    for (const entry of rawList.slice(0, 32)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const rec = entry as Record<string, unknown>;
+      const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+      const command = typeof rec.command === 'string' ? rec.command.trim() : '';
+      const extensions = Array.isArray(rec.extensions)
+        ? rec.extensions.filter((e): e is string => typeof e === 'string' && e.startsWith('.') && e.length <= 16).map((e) => e.toLowerCase())
+        : [];
+      if (!id || !command || command.includes('\0') || /[\r\n]/.test(command) || extensions.length === 0) continue;
+      const args = Array.isArray(rec.args)
+        ? rec.args.filter((a): a is string => typeof a === 'string' && !a.includes('\0'))
+        : [];
+      const rootMarkers = Array.isArray(rec.rootMarkers)
+        ? rec.rootMarkers.filter((m): m is string => typeof m === 'string' && m.trim().length > 0 && !m.includes('\0'))
+        : [];
+      specs.push({
+        id,
+        label: typeof rec.label === 'string' && rec.label.trim() ? rec.label.trim() : id,
+        command,
+        args,
+        extensions,
+        rootMarkers,
+        installHint: typeof rec.installHint === 'string' ? rec.installHint.trim() : `Install ${command}`
+      });
+    }
+    return specs;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Checks workspace-local `.venv`, `venv`, `node_modules/.bin`, user toolchain dirs
+ * (`~/go/bin`, `~/.cargo/bin`, `~/.local/bin`), and host PATH without invoking a shell.
  */
 export function findLocalOrPathExecutable(
   binaryName: string,
@@ -201,24 +330,54 @@ export function findLocalOrPathExecutable(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): string | null {
+  if (typeof binaryName !== 'string' || !binaryName.trim() || binaryName.includes('\0')) return null;
+  const trimmed = binaryName.trim();
+  const isWin = platform === 'win32';
+  const checkCandidateFile = (candidate: string): string | null => {
+    try {
+      const stat = fs.statSync(candidate);
+      if (!stat.isFile()) return null;
+      if (!isWin) fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      return null;
+    }
+  };
+
+  if (path.isAbsolute(trimmed)) {
+    return checkCandidateFile(trimmed);
+  }
+
+  const probeDirs: string[] = [];
   if (workspaceRoot && typeof workspaceRoot === 'string' && !workspaceRoot.includes('\0')) {
-    const binDir = path.join(path.resolve(workspaceRoot), 'node_modules', '.bin');
-    const isWin = platform === 'win32';
-    const candidates = isWin
-      ? [path.join(binDir, `${binaryName}.cmd`), path.join(binDir, `${binaryName}.exe`), path.join(binDir, binaryName)]
-      : [path.join(binDir, binaryName)];
-    for (const candidate of candidates) {
-      try {
-        const stat = fs.statSync(candidate);
-        if (!stat.isFile()) continue;
-        if (!isWin) fs.accessSync(candidate, fs.constants.X_OK);
-        return candidate;
-      } catch {
-        continue;
-      }
+    const resolvedWs = path.resolve(workspaceRoot);
+    const venvSub = isWin ? 'Scripts' : 'bin';
+    probeDirs.push(
+      path.join(resolvedWs, 'node_modules', '.bin'),
+      path.join(resolvedWs, '.venv', venvSub),
+      path.join(resolvedWs, 'venv', venvSub)
+    );
+  }
+  const home = env === process.env
+    ? (env.HOME || env.USERPROFILE || os.homedir())
+    : (env.HOME || env.USERPROFILE || '');
+  if (home && path.isAbsolute(home)) {
+    probeDirs.push(
+      path.join(home, '.local', 'bin'),
+      path.join(home, 'go', 'bin'),
+      path.join(home, '.cargo', 'bin')
+    );
+  }
+
+  const exts = isWin ? ['.cmd', '.exe', '.bat', ''] : [''];
+  for (const dir of probeDirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, ext && !trimmed.toLowerCase().endsWith(ext) ? `${trimmed}${ext}` : trimmed);
+      const hit = checkCandidateFile(candidate);
+      if (hit) return hit;
     }
   }
-  return findExecutableOnPath(binaryName, env, platform);
+  return findExecutableOnPath(trimmed, env, platform);
 }
 
 export function detectInstalledLspServers(
@@ -226,7 +385,10 @@ export function detectInstalledLspServers(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): DetectedLspServer[] {
-  return BUILTIN_LSP_SERVERS.map((spec) => {
+  const custom = loadCustomLspServers(workspaceRoot);
+  const seenIds = new Set(custom.map((s) => s.id));
+  const combined = [...custom, ...BUILTIN_LSP_SERVERS.filter((s) => !seenIds.has(s.id))];
+  return combined.map((spec) => {
     const executablePath = findLocalOrPathExecutable(spec.command, workspaceRoot, env, platform);
     return {
       spec,
@@ -236,10 +398,13 @@ export function detectInstalledLspServers(
   });
 }
 
-export function matchingSpecsForFile(filePath: string): LspServerSpec[] {
+export function matchingSpecsForFile(filePath: string, workspaceRoot?: string): LspServerSpec[] {
   const ext = path.extname(String(filePath || '')).toLowerCase();
   if (!ext) return [];
-  return BUILTIN_LSP_SERVERS.filter((spec) => spec.extensions.includes(ext));
+  const custom = loadCustomLspServers(workspaceRoot);
+  const seenIds = new Set(custom.map((s) => s.id));
+  const combined = [...custom, ...BUILTIN_LSP_SERVERS.filter((s) => !seenIds.has(s.id))];
+  return combined.filter((spec) => spec.extensions.includes(ext));
 }
 
 export function resolveLspServerForFile(
@@ -248,7 +413,7 @@ export function resolveLspServerForFile(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): ResolvedLspServer | null {
-  const specs = matchingSpecsForFile(filePath);
+  const specs = matchingSpecsForFile(filePath, workspaceRoot);
   const languageId = languageIdForFile(filePath);
   for (const spec of specs) {
     const executablePath = findLocalOrPathExecutable(spec.command, workspaceRoot, env, platform);
