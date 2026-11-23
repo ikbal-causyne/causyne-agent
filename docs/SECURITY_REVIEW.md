@@ -1,6 +1,6 @@
 # Security review and migration status
 
-Review date: 2026-11-22. This is a scoped source and package review, not a
+Review date: 2026-11-23. This is a scoped source and package review, not a
 claim that Causyne Agent is free from vulnerabilities.
 
 ## OpenSSF records
@@ -64,11 +64,26 @@ The active source takes a different architecture and distribution path:
   `auto` OS keychain protection on interactive desktops (macOS Keychain via
   stdin, Linux Secret Service via stdin, Windows DPAPI) with mode-`0600`
   AES-256-GCM encrypted fallback and `off` default in CI/test runners.
-- Enterprise governance (`src/enterprisePolicy.ts`, `src/auditLog.ts`) provides
-  fail-closed declarative `causyne.policy.json` (`allow`/`ask`/`deny` rules for
-  tools, commands, paths, domains, and MCP servers) and JSONL/CSV audit log
-  export (`causyne audit export`) with secret redaction and CSV formula-injection
+- Enterprise governance (`src/enterprisePolicy.ts`, `src/auditLog.ts`,
+  `src/ignoreRules.ts`, `src/hooks.ts`) provides fail-closed hierarchical
+  additive `managed -> user -> workspace` `causyne.policy.json` enforcement
+  (`allow`/`ask`/`deny` rules for tools, commands, paths, domains, and MCP
+  servers across direct tool calls, read-only prefetch, `apply_patch`, `task_bg`,
+  and peer operations), `.causyneignore` workspace file exclusion with
+  `!negation` support, linear-time secret-redacted lifecycle hooks, and a
+  tamper-evident SHA-256 hash-chained audit log (`causyne audit verify`,
+  `causyne audit prune`, `causyne audit export --format jsonl|csv|ocsf`) with
+  OCSF v1.1.0 SIEM output, secret redaction, and CSV formula-injection
   neutralization.
+- Cross-platform path and process hardening (`src/utils/winSpawn.ts`,
+  `src/agent/workspaceBoundary.ts`, `src/infra/atomicWriter.ts`,
+  `src/tools/archive.ts`, `src/mcp/mcpClient.ts`, `src/mcp/mcpRegistry.ts`)
+  eliminates `shell: true` on Windows `.cmd`/`.bat` shims by unwrapping Node
+  shims directly, strips Windows `\\?\` extended-length prefixes with
+  case-insensitive containment checks, uses `O_EXCL` + `fsync` + retry-backoff
+  atomic writes, blocks Zip-Slip and symlink compression in archives, enforces
+  HTTPS on non-loopback MCP servers with credential headers, and preserves full
+  ACP peer capabilities without injecting restrictive profiles.
 - Automatic Cortex dependency installation is disabled. Optional capability
   packages use a fixed version allowlist, require an approval-class capability
   grant, install into local Causyne state, and use `npm install --ignore-scripts`.
@@ -101,9 +116,11 @@ The active source takes a different architecture and distribution path:
 
 At review time, `npm audit --omit=dev` reported zero known vulnerabilities in
 the active locked production graph. The lockfile contains 16 production
-packages, no dependency lifecycle scripts were recorded in the lockfile, all
-hand-authored `src/` modules compile under strict TypeScript, and GitHub CodeQL
-code scanning reports zero open alerts across 3-OS CI validation.
+packages, no dependency lifecycle scripts were recorded in the lockfile, 100%
+of `src/` modules (including generated product skills) are authored in and
+compiled from strict TypeScript (`npm run typecheck:strict`) with zero unbacked
+`.js` files, and GitHub CodeQL code scanning reports zero open alerts across
+3-OS CI validation.
 
 ## Remaining risk
 
