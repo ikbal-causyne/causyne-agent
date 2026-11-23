@@ -285,12 +285,13 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
       allowNetwork: false,
       includeTempDirs: false
     });
+    const normalizedProfile = profile.replace(/\\\\/g, '/');
     assert.match(profile, /\(allow network-outbound \(remote ip "localhost:\*"\)\)/);
-    assert.ok(profile.includes('.config/gcloud'));
-    assert.ok(profile.includes('.config/gh'));
-    assert.ok(profile.includes('.azure'));
-    assert.ok(profile.includes('.terraform.d'));
-    assert.ok(profile.includes(path.basename(wtGitDir)), 'worktree gitdir must be writable');
+    assert.ok(normalizedProfile.includes('.config/gcloud'));
+    assert.ok(normalizedProfile.includes('.config/gh'));
+    assert.ok(normalizedProfile.includes('.azure'));
+    assert.ok(normalizedProfile.includes('.terraform.d'));
+    assert.ok(normalizedProfile.includes(path.basename(wtGitDir)), 'worktree gitdir must be writable');
 
     const bwrapArgs = buildBubblewrapArgs('/bin/sh', ['-c', 'true'], {
       mode: 'workspace-write',
@@ -359,7 +360,7 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
 
     const merged = mergeWorktree(repo, wt.id, { squash: true, cleanup: true });
     assert.equal(merged.merged, true, merged.error);
-    assert.equal(fs.readFileSync(path.join(repo, 'newfile.ts'), 'utf8'), 'export const x = 42;\n');
+    assert.equal(fs.readFileSync(path.join(repo, 'newfile.ts'), 'utf8').replace(/\r\n/g, '\n'), 'export const x = 42;\n');
     const pruned = pruneManagedWorktrees(repo);
     assert.ok(pruned.pruned >= 0);
   });

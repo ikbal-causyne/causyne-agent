@@ -4,6 +4,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
 import { normalizePathForCompare, stripWindowsExtendedPrefix } from '../agent/workspaceBoundary.js';
+import { atomicRename } from '../infra/atomicWriter.js';
 import { recordFileObserved } from './fileTracker.js';
 function expandHome(value) {
     return value === '~' ? os.homedir()
@@ -145,7 +146,7 @@ export const fsWrite = {
                 throw new Error(`Destination is no longer a regular file: ${target}`);
             }
             await checkScope(target, context);
-            await fs.rename(temporary, target);
+            await atomicRename(temporary, target);
             temporary = '';
             recordFileObserved(target);
             // Flushing the parent directory is best effort: some platforms disallow it.

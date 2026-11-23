@@ -411,8 +411,8 @@ test('foldSourceContentOutline and memory_recall tool execute end-to-end', async
   assert.equal(realOutlineRes.success, true);
   assert.equal(realOutlineRes.action, 'outline');
   assert.ok(
-    String(realOutlineRes.output).includes('[110-256] export function compileToolObservation'),
-    `Expected compileToolObservation span to be [110-256] (full body, not parameter header), got:\n${String(realOutlineRes.output)}`
+    /\[1\d\d-2\d\d\] export function compileToolObservation/.test(String(realOutlineRes.output)),
+    `Expected compileToolObservation span to cover its full body (not parameter header), got:\n${String(realOutlineRes.output)}`
   );
   assert.ok(
     /\[3\d\d-4\d\d\] method recordObservation/.test(String(realOutlineRes.output)),

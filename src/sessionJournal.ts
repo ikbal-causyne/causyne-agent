@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from './utils/paths.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 
 export interface SessionMessage extends Record<string, unknown> {
   role: string;
@@ -416,7 +417,7 @@ export function setActiveSession(id: unknown): boolean {
       } finally {
         fs.closeSync(fd);
       }
-      fs.renameSync(temp, POINTER_FILE);
+      atomicRenameSync(temp, POINTER_FILE);
     } catch (err: unknown) {
       try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
       throw err;

@@ -18,6 +18,7 @@ import {
   saveVaultKeyToKeychain,
   type KeychainSpawnOptions
 } from './osKeychain.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 
 export const VAULT_KEY_BYTES = 32;
 export const VAULT_GCM_IV_BYTES = 12;
@@ -93,7 +94,7 @@ export function atomicWriteSecretFileSync(targetPath: string, content: string | 
         // Ignore chmod errors on non-POSIX mounts
       }
     }
-    fs.renameSync(tempPath, resolved);
+    atomicRenameSync(tempPath, resolved);
     if (process.platform !== 'win32') {
       try {
         fs.chmodSync(resolved, 0o600);

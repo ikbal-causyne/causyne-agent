@@ -12,6 +12,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadVaultKeyFromKeychain, resolveKeychainMode, saveVaultKeyToKeychain } from './osKeychain.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 export const VAULT_KEY_BYTES = 32;
 export const VAULT_GCM_IV_BYTES = 12;
 export const VAULT_LEGACY_GCM_IV_BYTES = 16;
@@ -87,7 +88,7 @@ export function atomicWriteSecretFileSync(targetPath, content) {
                 // Ignore chmod errors on non-POSIX mounts
             }
         }
-        fs.renameSync(tempPath, resolved);
+        atomicRenameSync(tempPath, resolved);
         if (process.platform !== 'win32') {
             try {
                 fs.chmodSync(resolved, 0o600);

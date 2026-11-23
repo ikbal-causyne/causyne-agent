@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { causyneHome } from './utils/paths.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 import { redactProviderSecrets } from './providers/byokHttp.js';
 import {
   formatMemoryContext,
@@ -55,7 +56,7 @@ function writeMemoryAtomic(filePath: string, payload: unknown): void {
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temporary, filePath);
+    atomicRenameSync(temporary, filePath);
   } catch (err: unknown) {
     try { fs.unlinkSync(temporary); } catch { /* ignore cleanup error */ }
     throw err;

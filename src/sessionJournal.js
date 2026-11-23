@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { causyneHome } from './utils/paths.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 export const SESSION_DIR = path.join(causyneHome(), 'sessions');
 const LEGACY_HISTORY = path.join(causyneHome(), 'memory', 'chat_history.json');
 const POINTER_FILE = path.join(SESSION_DIR, 'active.json');
@@ -381,7 +382,7 @@ export function setActiveSession(id) {
             finally {
                 fs.closeSync(fd);
             }
-            fs.renameSync(temp, POINTER_FILE);
+            atomicRenameSync(temp, POINTER_FILE);
         }
         catch (err) {
             try {

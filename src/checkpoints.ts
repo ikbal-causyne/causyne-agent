@@ -10,6 +10,7 @@ import { extractPatchTargetPaths } from './tools/applyPatch.js';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { getActiveSessionId, restoreSessionFromSnapshot, sessionTranscriptFile } from './sessionStore.js';
 import { loadWorkspaceIgnoreMatcher } from './ignoreRules.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 
 export type SnapshotRecord =
   | { kind: 'symlink'; target: string; mode?: number | undefined }
@@ -200,7 +201,7 @@ function writeObject(buffer: Buffer): string {
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temp, target);
+    atomicRenameSync(temp, target);
   } catch (err: unknown) {
     try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
     throw err;
@@ -301,7 +302,7 @@ function rewriteJournal(entries: CheckpointJournalEntry[]): void {
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temp, jf);
+    atomicRenameSync(temp, jf);
   } catch (err: unknown) {
     try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
     throw err;
@@ -445,7 +446,7 @@ function saveStatCache(cache: Record<string, StatCacheRecord>): void {
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temp, cf);
+    atomicRenameSync(temp, cf);
   } catch {
     try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
   }
@@ -799,7 +800,7 @@ function restoreFileState(absolutePath: string, before: SnapshotRecord | null | 
     } finally {
       fs.closeSync(fd);
     }
-    fs.renameSync(temp, absolutePath);
+    atomicRenameSync(temp, absolutePath);
   } catch (err: unknown) {
     try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
     throw err;
@@ -999,7 +1000,7 @@ export function undoTask(taskId: string, options: UndoOptions = {}): any {
           } finally {
             fs.closeSync(fd);
           }
-          fs.renameSync(temp, resolved);
+          atomicRenameSync(temp, resolved);
         } catch (writeErr: unknown) {
           try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch { /* ignore */ }
           throw writeErr;

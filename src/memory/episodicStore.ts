@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { causyneHome } from '../utils/paths.js';
+import { atomicWriteFileSync } from '../infra/atomicWriter.js';
 import { computeObservationStrength, rankObservationsByStrength } from './actrRanker.js';
 import { DEFAULT_EPISODIC_BUDGET_CHARS, fitEpisodicContextToBudget } from './contextBudget.js';
 import { buildCorpusIdfMap, decideNearDuplicate, tokenizeForDedup } from './nearDuplicate.js';
@@ -323,11 +324,7 @@ export class EpisodicMemoryStore {
   private save(): void {
     if (!this.data) return;
     try {
-      const dir = path.dirname(this.storePath);
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const tmpPath = `${this.storePath}.tmp.${process.pid}`;
-      fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(tmpPath, this.storePath);
+      atomicWriteFileSync(this.storePath, JSON.stringify(this.data, null, 2), { mode: 0o600 });
     } catch {
       // Fail-open so memory persistence never crashes an active task
     }

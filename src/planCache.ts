@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { causyneHome } from './utils/paths.js';
+import { atomicWriteFileSync } from './infra/atomicWriter.js';
 import type {
   APCColdStartPoint,
   APCCostBreakdown,
@@ -343,9 +344,7 @@ function readAll(): PlanTemplate[] {
 function writeAll(plans: PlanTemplate[]): boolean {
   try {
     ensureDir();
-    const temp = `${PLAN_FILE}.tmp_${process.pid}`;
-    fs.writeFileSync(temp, JSON.stringify(plans, null, 2), { mode: 0o600 });
-    fs.renameSync(temp, PLAN_FILE); // atomic: a torn write would erase the cache
+    atomicWriteFileSync(PLAN_FILE, JSON.stringify(plans, null, 2), { mode: 0o600 });
     plansCache = plans;
     plansMtimeMs = fs.statSync(PLAN_FILE).mtimeMs;
     rebuildIndex(plans);
@@ -477,9 +476,7 @@ function writeMetrics(force = false): boolean {
   if (!metricsCache || (!force && dirtyMetricEvents < METRICS_FLUSH_INTERVAL)) return false;
   try {
     ensureDir();
-    const temp = `${METRICS_FILE}.tmp_${process.pid}`;
-    fs.writeFileSync(temp, JSON.stringify(metricsCache, null, 2), { mode: 0o600 });
-    fs.renameSync(temp, METRICS_FILE);
+    atomicWriteFileSync(METRICS_FILE, JSON.stringify(metricsCache, null, 2), { mode: 0o600 });
     dirtyMetricEvents = 0;
     return true;
   } catch (e) {

@@ -10,6 +10,7 @@ import { extractPatchTargetPaths } from './tools/applyPatch.js';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { getActiveSessionId, restoreSessionFromSnapshot, sessionTranscriptFile } from './sessionStore.js';
 import { loadWorkspaceIgnoreMatcher } from './ignoreRules.js';
+import { atomicRenameSync } from './infra/atomicWriter.js';
 function debugLog(message) {
     if (process.env.CAUSYNE_DEBUG !== '1')
         return;
@@ -134,7 +135,7 @@ function writeObject(buffer) {
         finally {
             fs.closeSync(fd);
         }
-        fs.renameSync(temp, target);
+        atomicRenameSync(temp, target);
     }
     catch (err) {
         try {
@@ -245,7 +246,7 @@ function rewriteJournal(entries) {
         finally {
             fs.closeSync(fd);
         }
-        fs.renameSync(temp, jf);
+        atomicRenameSync(temp, jf);
     }
     catch (err) {
         try {
@@ -389,7 +390,7 @@ function saveStatCache(cache) {
         finally {
             fs.closeSync(fd);
         }
-        fs.renameSync(temp, cf);
+        atomicRenameSync(temp, cf);
     }
     catch {
         try {
@@ -753,7 +754,7 @@ function restoreFileState(absolutePath, before) {
         finally {
             fs.closeSync(fd);
         }
-        fs.renameSync(temp, absolutePath);
+        atomicRenameSync(temp, absolutePath);
     }
     catch (err) {
         try {
@@ -952,7 +953,7 @@ export function undoTask(taskId, options = {}) {
                     finally {
                         fs.closeSync(fd);
                     }
-                    fs.renameSync(temp, resolved);
+                    atomicRenameSync(temp, resolved);
                 }
                 catch (writeErr) {
                     try {
