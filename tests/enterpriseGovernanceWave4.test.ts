@@ -14,6 +14,8 @@ import { runHeadlessTask } from '../src/headlessCli.js';
 import { buildSeatbeltProfile, buildBubblewrapArgs } from '../src/tools/osSandbox.js';
 import { beginTask, captureBeforeMutation, undoLast, redoLast, buildTaskDiff } from '../src/checkpoints.js';
 import { createWorktree, inspectWorktreeDiff, mergeWorktree, pruneManagedWorktrees } from '../src/worktreeManager.js';
+import { parseUnifiedDiff, collectWorkingTreeDiff } from '../src/diffReview.js';
+import { detectDefaultBranch, preparePrDraft } from '../src/prWorkflow.js';
 import { execFileSync } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
@@ -354,5 +356,32 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     assert.equal(fs.readFileSync(path.join(repo, 'newfile.ts'), 'utf8'), 'export const x = 42;\n');
     const pruned = pruneManagedWorktrees(repo);
     assert.ok(pruned.pruned >= 0);
+  });
+
+  test('diffReview parses quoted/spaced filenames and untracked files; prWorkflow auto-detects default branch', () => {
+    const quotedDiff = [
+      'diff --git "a/src/my file.ts" "b/src/my file.ts"',
+      '--- "a/src/my file.ts"',
+      '+++ "b/src/my file.ts"',
+      '@@ -1,1 +1,2 @@',
+      ' export const a = 1;',
+      '+export const b = 2;'
+    ].join('\n');
+    const parsed = parseUnifiedDiff(quotedDiff);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]!.displayPath, 'src/my file.ts');
+    assert.equal(parsed[0]!.additions, 1);
+
+    const repo = path.join(TMP, 'diff-untracked-repo');
+    fs.mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-b', 'master', '-q'], { cwd: repo });
+    execFileSync('git', ['-c', 'user.name=Init', '-c', 'user.email=init@local', 'commit', '--allow-empty', '-q', '-m', 'init'], { cwd: repo });
+    fs.writeFileSync(path.join(repo, 'brand_new.ts'), 'export const fresh = true;\n', 'utf8');
+
+    const report = collectWorkingTreeDiff(repo);
+    assert.equal(report.files.some((f) => f.displayPath === 'brand_new.ts' && f.status === 'added' && f.additions === 1), true);
+    assert.equal(detectDefaultBranch(repo), 'master');
+    const draft = preparePrDraft(repo);
+    assert.equal(draft.baseBranch, 'master');
   });
 });

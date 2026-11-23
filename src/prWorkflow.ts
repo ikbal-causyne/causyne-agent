@@ -18,6 +18,8 @@ export interface PrStatusSummary {
   ahead: number;
   behind: number;
   ghAvailable: boolean;
+  glabAvailable?: boolean | undefined;
+  forge?: 'github' | 'gitlab' | 'none' | undefined;
   pr: {
     number: number;
     title: string;
@@ -56,6 +58,21 @@ function execSafeTool(bin: string, args: readonly string[], cwd: string, timeout
   });
 }
 
+export function detectDefaultBranch(repoRoot: string): string {
+  try {
+    const sym = execSafeTool('git', ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoRoot, 5_000).trim();
+    const cleaned = sym.startsWith('origin/') ? sym.slice('origin/'.length) : sym;
+    if (cleaned && SAFE_BRANCH_RE.test(cleaned)) return cleaned;
+  } catch { /* origin/HEAD not set */ }
+  for (const candidate of ['main', 'master']) {
+    try {
+      execSafeTool('git', ['rev-parse', '--verify', `refs/heads/${candidate}`], repoRoot, 5_000);
+      return candidate;
+    } catch { /* try next */ }
+  }
+  return 'main';
+}
+
 export function inspectPrStatus(workspaceDir: string): PrStatusSummary {
   const repoRoot = resolveGitRepoRoot(workspaceDir);
   if (!repoRoot) {
@@ -90,7 +107,15 @@ export function inspectPrStatus(workspaceDir: string): PrStatusSummary {
     ghAvailable = false;
   }
 
-  if (!ghAvailable) {
+  let glabAvailable = false;
+  try {
+    execSafeTool('glab', ['--version'], repoRoot, 5_000);
+    glabAvailable = true;
+  } catch {
+    glabAvailable = false;
+  }
+
+  if (!ghAvailable && !glabAvailable) {
     return {
       repoRoot,
       branch,
@@ -98,9 +123,52 @@ export function inspectPrStatus(workspaceDir: string): PrStatusSummary {
       ahead,
       behind,
       ghAvailable: false,
+      glabAvailable: false,
+      forge: 'none',
       pr: null,
-      note: 'GitHub CLI (`gh`) is not installed on PATH.'
+      note: 'Neither GitHub CLI (`gh`) nor GitLab CLI (`glab`) is installed on PATH.'
     };
+  }
+
+  if (!ghAvailable && glabAvailable) {
+    try {
+      const raw = execSafeTool('glab', ['mr', 'view', '--output', 'json'], repoRoot, 15_000);
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return {
+        repoRoot,
+        branch,
+        dirtyCount,
+        ahead,
+        behind,
+        ghAvailable: false,
+        glabAvailable: true,
+        forge: 'gitlab',
+        pr: {
+          number: Number(parsed.iid ?? parsed.id) || 0,
+          title: safeDisplay(String(parsed.title || '')),
+          state: safeDisplay(String(parsed.state || 'OPEN').toUpperCase()),
+          url: safeDisplay(String(parsed.web_url || '')),
+          baseRefName: safeDisplay(String(parsed.target_branch || '')),
+          headRefName: safeDisplay(String(parsed.source_branch || branch)),
+          checksPassed: 0,
+          checksFailed: 0,
+          checksPending: 0
+        }
+      };
+    } catch {
+      return {
+        repoRoot,
+        branch,
+        dirtyCount,
+        ahead,
+        behind,
+        ghAvailable: false,
+        glabAvailable: true,
+        forge: 'gitlab',
+        pr: null,
+        note: `No open GitLab merge request found for branch "${safeDisplay(branch)}".`
+      };
+    }
   }
 
   try {
@@ -211,12 +279,14 @@ export function fetchFailedCiLogs(workspaceDir: string, runId?: string): { ok: b
   }
 }
 
-export function preparePrDraft(workspaceDir: string, baseBranch = 'main'): PrDraft {
+export function preparePrDraft(workspaceDir: string, baseBranch?: string): PrDraft {
   const repoRoot = resolveGitRepoRoot(workspaceDir);
   if (!repoRoot) {
     throw new Error('Current workspace is not inside a Git repository.');
   }
-  const safeBase = typeof baseBranch === 'string' && baseBranch.trim() ? baseBranch.trim() : 'main';
+  const safeBase = typeof baseBranch === 'string' && baseBranch.trim()
+    ? baseBranch.trim()
+    : detectDefaultBranch(repoRoot);
   if (safeBase.startsWith('-') || !SAFE_BRANCH_RE.test(safeBase)) {
     throw new Error(`Invalid base branch "${safeDisplay(safeBase)}".`);
   }
@@ -269,6 +339,23 @@ export function preparePrDraft(workspaceDir: string, baseBranch = 'main'): PrDra
     commitCount: commitSubjects.length,
     changedFiles
   };
+}
+
+export function postPrComment(workspaceDir: string, body: string): { ok: boolean; output: string } {
+  const repoRoot = resolveGitRepoRoot(workspaceDir);
+  if (!repoRoot) {
+    return { ok: false, output: 'Current workspace is not inside a Git repository.' };
+  }
+  const cleaned = redactTextSecrets(String(body ?? '')).trim();
+  if (!cleaned) {
+    return { ok: false, output: 'PR comment body cannot be empty.' };
+  }
+  try {
+    const out = execSafeTool('gh', ['pr', 'comment', '--body', cleaned], repoRoot, 20_000);
+    return { ok: true, output: safeDisplay(out.trim() || 'Posted PR comment.') };
+  } catch (err: unknown) {
+    return { ok: false, output: `Failed to post PR comment: ${safeDisplay(err instanceof Error ? err.message : String(err))}` };
+  }
 }
 
 export function formatPrStatusReport(status: PrStatusSummary): string {

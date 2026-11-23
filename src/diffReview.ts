@@ -6,6 +6,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { safeDisplay } from './tui/text.js';
 import { resolveGitRepoRoot } from './worktreeManager.js';
@@ -74,10 +75,53 @@ function parseHunkHeader(line: string): { oldStart: number; oldCount: number; ne
   };
 }
 
-function stripDiffPrefix(rawPath: string): string {
-  const trimmed = rawPath.trim();
-  if (trimmed.startsWith('a/') || trimmed.startsWith('b/')) return trimmed.slice(2);
+function unquoteGitPath(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed
+      .slice(1, -1)
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
   return trimmed;
+}
+
+function stripDiffPrefix(rawPath: string): string {
+  const unquoted = unquoteGitPath(rawPath);
+  if (unquoted.startsWith('a/') || unquoted.startsWith('b/')) return unquoted.slice(2);
+  return unquoted;
+}
+
+function parseDiffGitPaths(rest: string): { oldPath: string; newPath: string } {
+  const trimmed = rest.trim();
+  if (trimmed.startsWith('"')) {
+    // Parse two quoted tokens: "a/old path" "b/new path" (or mixed quoted/unquoted)
+    let i = 1;
+    while (i < trimmed.length) {
+      if (trimmed[i] === '\\') { i += 2; continue; }
+      if (trimmed[i] === '"') { i++; break; }
+      i++;
+    }
+    const left = trimmed.slice(0, i);
+    const right = trimmed.slice(i).trim();
+    return { oldPath: stripDiffPrefix(left), newPath: stripDiffPrefix(right) };
+  }
+  const quotedBIdx = trimmed.indexOf(' "b/');
+  if (quotedBIdx > 0) {
+    return {
+      oldPath: stripDiffPrefix(trimmed.slice(0, quotedBIdx)),
+      newPath: stripDiffPrefix(trimmed.slice(quotedBIdx + 1))
+    };
+  }
+  // Find the split between `a/<path>` and `b/<path>`; prefer last ` b/` when symmetric
+  const bIdx = trimmed.lastIndexOf(' b/');
+  if (bIdx > 0) {
+    return {
+      oldPath: stripDiffPrefix(trimmed.slice(0, bIdx)),
+      newPath: stripDiffPrefix(trimmed.slice(bIdx + 1))
+    };
+  }
+  return { oldPath: '', newPath: '' };
 }
 
 export function parseUnifiedDiff(diffText: string): DiffFileSummary[] {
@@ -91,9 +135,7 @@ export function parseUnifiedDiff(diffText: string): DiffFileSummary[] {
     if (rawLine.startsWith('diff --git ')) {
       currentHunk = null;
       const rest = rawLine.slice('diff --git '.length);
-      const bIdx = rest.indexOf(' b/');
-      const oldPath = bIdx > 0 ? stripDiffPrefix(rest.slice(0, bIdx)) : '';
-      const newPath = bIdx > 0 ? stripDiffPrefix(rest.slice(bIdx + 1)) : '';
+      const { oldPath, newPath } = parseDiffGitPaths(rest);
       current = {
         oldPath,
         newPath,
@@ -214,6 +256,73 @@ export function collectWorkingTreeDiff(
 
   const truncated = Buffer.byteLength(rawDiff, 'utf8') >= MAX_DIFF_BYTES - 1024;
   const files = parseUnifiedDiff(rawDiff);
+
+  // Also include untracked non-ignored working-tree files so newly created files appear in /diff
+  if (!options.staged && !options.ref) {
+    try {
+      const lsArgs = ['ls-files', '--others', '--exclude-standard', '-z'];
+      if (typeof options.filePath === 'string' && options.filePath.trim()) {
+        const rawTarget = options.filePath.trim();
+        const resolved = path.isAbsolute(rawTarget) ? path.resolve(rawTarget) : path.resolve(repoRoot, rawTarget);
+        const rel = path.relative(repoRoot, resolved);
+        if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+          lsArgs.push('--', rel);
+        }
+      }
+      const untrackedRaw = execFileSync('git', lsArgs, {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 2 * 1024 * 1024,
+        timeout: 10_000,
+        windowsHide: true
+      });
+      const existing = new Set(files.map((f) => f.displayPath));
+      const untracked = untrackedRaw.split('\0').filter(Boolean).slice(0, 30);
+      for (const relPath of untracked) {
+        if (existing.has(relPath)) continue;
+        const absPath = path.join(repoRoot, relPath);
+        try {
+          const stat = fs.lstatSync(absPath);
+          if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 64 * 1024) continue;
+          const buf = fs.readFileSync(absPath);
+          if (buf.includes(0)) {
+            files.push({
+              oldPath: relPath,
+              newPath: relPath,
+              displayPath: relPath,
+              status: 'added',
+              additions: 0,
+              deletions: 0,
+              hunks: []
+            });
+            continue;
+          }
+          const contentLines = buf.toString('utf8').split(/\r?\n/);
+          if (contentLines.length > 0 && contentLines[contentLines.length - 1] === '') {
+            contentLines.pop();
+          }
+          files.push({
+            oldPath: relPath,
+            newPath: relPath,
+            displayPath: relPath,
+            status: 'added',
+            additions: contentLines.length,
+            deletions: 0,
+            hunks: contentLines.length > 0 ? [{
+              header: `@@ -0,0 +1,${contentLines.length} @@`,
+              oldStart: 0,
+              oldCount: 0,
+              newStart: 1,
+              newCount: contentLines.length,
+              lines: contentLines.map((line) => `+${line}`)
+            }] : []
+          });
+        } catch { /* skip unreadable untracked file */ }
+      }
+    } catch { /* best-effort untracked discovery */ }
+  }
+
   let totalAdditions = 0;
   let totalDeletions = 0;
   for (const f of files) {
