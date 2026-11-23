@@ -130,7 +130,7 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
-export type HookEvent = 'PreToolUse' | 'PostToolUse';
+export type HookEvent = 'PreToolUse' | 'PostToolUse' | 'SessionStart' | 'PreCompact' | 'Stop';
 
 export interface HookRule {
   event: HookEvent;
@@ -146,6 +146,9 @@ export interface HookDecision {
   denied: boolean;
   messages: string[];
   reason?: string;
+  updatedInput?: Record<string, unknown>;
+  additionalContext?: string[];
+  permissionDecision?: 'allow' | 'deny' | 'ask';
 }
 
 export type PlanFailureClass =

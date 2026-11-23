@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { AuditLog, computeAuditEntryHash, formatAuditExport } from '../src/auditLog.js';
 import { runCommand } from '../src/commands.js';
+import { matchHookToolPattern, runConfiguredHooks } from '../src/hooks.js';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -102,5 +103,51 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
       if (prevHome === undefined) delete process.env.CAUSYNE_HOME;
       else process.env.CAUSYNE_HOME = prevHome;
     }
+  });
+
+  test('hooks support wildcard matchers, secret-redacted stdin, structured JSON decisions, and lifecycle events', async () => {
+    assert.equal(matchHookToolPattern('fs_*', 'fs_write'), true);
+    assert.equal(matchHookToolPattern('fs_*', 'sysRun'), false);
+    assert.equal(matchHookToolPattern('mcp__*', 'mcp__github__search'), true);
+
+    const hookScript = `
+      let data = '';
+      process.stdin.on('data', (c) => data += c);
+      process.stdin.on('end', () => {
+        const payload = JSON.parse(data);
+        if (JSON.stringify(payload).includes('sk-ant-api03-')) {
+          process.stderr.write('SECRET_LEAKED');
+          process.exit(2);
+        }
+        process.stdout.write(JSON.stringify({
+          permissionDecision: 'allow',
+          updatedInput: { path: 'patched.ts' },
+          additionalContext: 'validated by hook'
+        }));
+      });
+    `;
+    const decision = await runConfiguredHooks({
+      hooks: [{ event: 'PreToolUse', tool: 'fs_*', name: 'guard', command: [process.execPath, '-e', hookScript] }],
+      event: 'PreToolUse',
+      toolName: 'fs_write',
+      args: { path: 'a.ts', content: 'key=sk-ant-api03-123456789012345678901234567890' },
+      workspacePaths: [TMP]
+    });
+    assert.equal(decision.denied, false);
+    assert.equal(decision.permissionDecision, 'allow');
+    assert.equal(decision.updatedInput?.path, 'patched.ts');
+    assert.deepEqual(decision.additionalContext, ['validated by hook']);
+
+    const stopDecision = await runConfiguredHooks({
+      hooks: [{
+        event: 'Stop',
+        name: 'stop-check',
+        command: [process.execPath, '-e', 'process.stdout.write(JSON.stringify({ permissionDecision: "deny", reason: "tests still failing" }))']
+      }],
+      event: 'Stop',
+      workspacePaths: [TMP]
+    });
+    assert.equal(stopDecision.denied, true);
+    assert.equal(stopDecision.reason, 'tests still failing');
   });
 });
