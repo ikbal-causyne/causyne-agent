@@ -3,6 +3,7 @@ import readline from 'node:readline';
 import path from 'node:path';
 import os from 'node:os';
 import { isOutputRecoveryRead } from '../outputRecovery.js';
+import { recordFileObserved } from './fileTracker.js';
 function expandHomePath(raw) {
     const trimmed = raw.trim();
     if (trimmed === '~')
@@ -194,6 +195,7 @@ export const fsRead = {
             else if (totalLines > end) {
                 finalOutput += `\n\n[WARNING: File truncated at line ${end} out of ${totalLines}. Use { startLine: ${end + 1}, endLine: ${end + 800} } to read more.]`;
             }
+            recordFileObserved(target, targetStat);
             return { success: true, output: finalOutput };
         }
         catch (e) {

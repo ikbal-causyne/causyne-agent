@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
+import { recordFileObserved } from './fileTracker.js';
 
 export interface FsWriteArgs {
   path: string;
@@ -144,7 +145,7 @@ export const fsWrite = {
       // Re-check after creating parents: an existing parent might be a symlink.
       await checkScope(target, context);
       temporary = path.join(path.dirname(target), `.${path.basename(target)}.causyne-${randomUUID()}.tmp`);
-      const file = await fs.open(temporary, 'wx', originalMode ?? 0o600);
+      const file = await fs.open(temporary, 'wx', originalMode ?? 0o644);
       try {
         await file.writeFile(args.content, { encoding: 'utf8' });
         await file.sync();
@@ -162,6 +163,7 @@ export const fsWrite = {
       await checkScope(target, context);
       await fs.rename(temporary, target);
       temporary = '';
+      recordFileObserved(target);
       // Flushing the parent directory is best effort: some platforms disallow it.
       try {
         const directory = await fs.open(path.dirname(target), 'r');

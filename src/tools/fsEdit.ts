@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
 import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
+import { checkFileStaleness, recordFileObserved } from './fileTracker.js';
 
 export interface FsEditItem {
   searchContent: string;
@@ -303,6 +304,10 @@ export const fsEdit = {
         return { success: false, error: `Target is not a regular file: ${target}` };
       }
       await assertWithinEditScope(target, context);
+      const staleness = checkFileStaleness(target, stat);
+      if (staleness.stale && (context as { strictFreshness?: boolean } | undefined)?.strictFreshness === true) {
+        return { success: false, error: staleness.warning || `File modified externally: ${args.path}` };
+      }
       const originalMode = stat.mode & 0o777;
       const originalContent = await fs.readFile(target, 'utf8');
       let workingContent = originalContent;
@@ -328,10 +333,12 @@ export const fsEdit = {
 
       // Commit the transaction atomically, preserving original file permissions
       atomicWriteFileSync(target, workingContent, { encoding: 'utf8', mode: originalMode });
+      recordFileObserved(target);
       const wsRoot = baseRoot ? path.resolve(expandHome(baseRoot)) : path.dirname(target);
       const diags = await collectActivePostEditDiagnostics(target, wsRoot, workingContent);
       const diagNote = diags.length > 0 ? `\n\n[LSP Diagnostics]\n${formatDiagnosticsCompact(diags, wsRoot)}` : '';
-      return { success: true, output: `Transaction Success: ${replacements} replacement(s) safely applied to ${args.path}${diagNote}` };
+      const staleNote = staleness.stale && staleness.warning ? `\n[Notice: ${staleness.warning}]` : '';
+      return { success: true, output: `Transaction Success: ${replacements} replacement(s) safely applied to ${args.path}${staleNote}${diagNote}` };
     } catch (e: unknown) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }

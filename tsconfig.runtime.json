@@ -134,6 +134,7 @@
     "src/tools/screenshot.ts",
     "src/tools/visionInspector.ts",
     "src/tools/fsRead.ts",
+    "src/tools/fileTracker.ts",
     "src/tools/fsWrite.ts",
     "src/tools/fsEdit.ts",
     "src/tools/multiEdit.ts",

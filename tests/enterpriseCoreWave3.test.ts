@@ -11,6 +11,9 @@ import { OpenAICompatibleProvider } from '../src/providers/openai-compatible.js'
 import { applyPatch } from '../src/tools/applyPatch.js';
 import { fsEdit } from '../src/tools/fsEdit.js';
 import { multiEdit } from '../src/tools/multiEdit.js';
+import { fsWrite } from '../src/tools/fsWrite.js';
+import { fsRead } from '../src/tools/fsRead.js';
+import { checkFileStaleness, clearFileTracker } from '../src/tools/fileTracker.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -308,5 +311,35 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
       fs.readFileSync(target, 'utf8'),
       'const port = 8080;\r\nconst backupPort = 8080;\r\n  if (count === 1) return false;\r\n'
     );
+  });
+
+  test('fsWrite defaults new workspace files to readable 0o644 and fileTracker detects external edits after read', async () => {
+    clearFileTracker();
+    const ws = path.join(TMP, 'write-mode-tracker');
+    fs.mkdirSync(ws, { recursive: true });
+    const file = path.join(ws, 'hello.ts');
+    const writeRes = await fsWrite.execute({ path: file, content: 'export const x = 1;\n' }, { workspaceRoot: ws });
+    assert.equal(writeRes.success, true, writeRes.error);
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(file).mode & 0o777;
+      assert.equal(mode & 0o444, 0o444, `expected world-readable 0o644 workspace file, got 0o${mode.toString(8)}`);
+    }
+
+    const readRes = await fsRead.execute({ path: file }, { workspaceRoot: ws });
+    assert.equal(readRes.success, true);
+    assert.equal(checkFileStaleness(file).stale, false);
+
+    // Simulate external edit changing size & mtime
+    fs.writeFileSync(file, 'export const x = 1;\nexport const y = 2;\n', 'utf8');
+    const stale = checkFileStaleness(file);
+    assert.equal(stale.stale, true);
+    assert.match(stale.warning || '', /modified externally/i);
+
+    const strictBlocked = await fsEdit.execute(
+      { path: file, edits: [{ searchContent: 'x = 1', replaceContent: 'x = 9' }] },
+      { workspaceRoot: ws, strictFreshness: true } as any
+    );
+    assert.equal(strictBlocked.success, false);
+    assert.match(strictBlocked.error || '', /modified externally/i);
   });
 });
