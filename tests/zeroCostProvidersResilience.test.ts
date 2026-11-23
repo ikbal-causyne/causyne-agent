@@ -20,6 +20,7 @@ import {
 } from '../src/zeroCostFailover.js';
 import { createProvider } from '../src/providers/factory.js';
 import { freeKeySignupHint } from '../src/tui/setup.js';
+import { resolveToolsCatalogPromptBlock } from '../src/agentLoop.js';
 
 describe('Wave 5 — Zero-Cost Provider Resilience, Compaction & Diagnostics', () => {
   test('isZeroCostRoute classifies local, OpenRouter Free, ACP, and paid BYOK routes accurately', () => {
@@ -248,5 +249,14 @@ describe('Wave 5 — Zero-Cost Provider Resilience, Compaction & Diagnostics', (
       candidates
     });
     assert.equal(exhausted, null);
+  });
+
+  test('resolveToolsCatalogPromptBlock compacts verbose catalog prose for local Ollama while preserving full catalog for cloud and ACP providers', () => {
+    const bulkyCatalog = 'x'.repeat(4500);
+    const ollamaBlock = resolveToolsCatalogPromptBlock('ollama', bulkyCatalog);
+    assert.ok(ollamaBlock.length < 120, 'local Ollama should receive compact tool_search pointer to accelerate prompt eval');
+    assert.match(ollamaBlock, /tool_search/);
+    assert.equal(resolveToolsCatalogPromptBlock('anthropic', bulkyCatalog), bulkyCatalog);
+    assert.equal(resolveToolsCatalogPromptBlock('acp/opencode', bulkyCatalog), bulkyCatalog);
   });
 });

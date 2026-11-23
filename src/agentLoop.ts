@@ -466,6 +466,17 @@ class RetryConsentCheckpoint extends Error {
   constructor() { super('Peer paused after three failed attempts; explicit retry approval is required.'); }
 }
 
+export function resolveToolsCatalogPromptBlock(
+  provider: unknown,
+  fullToolsListText: string
+): string {
+  const norm = String(provider || '').trim().toLowerCase();
+  if (norm === 'ollama') {
+    return 'Additional specialized tools are available on demand via tool_search(query).';
+  }
+  return fullToolsListText;
+}
+
 export class AgentLoop {
   // Task state is assembled across the constructor and helpers below. This
   // signature keeps those reads and writes explicitly dynamic while each field
@@ -2480,6 +2491,11 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           this.debugLog(`uncertainty gate skipped: ${e.message}`);
         }
 
+        const isLocalOllama = String(this.config?.provider || '').trim().toLowerCase() === 'ollama';
+        const effectiveToolsListText = resolveToolsCatalogPromptBlock(
+          this.config?.provider,
+          this.toolsListText || renderToolsList(buildToolsList())
+        );
         const systemMessages = [
           // [1] stable for the entire task — the primary cache anchor.
           { role: 'system', content: SYSTEM_PROMPT, cacheAnchor: true },
@@ -2487,7 +2503,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           // is stable within a task and gets its own breakpoint.
           {
             role: 'system',
-            content: `${taskBrief ? taskBrief + '\n\n' : ''}${this.toolsListText || renderToolsList(buildToolsList())}${activePlaybooks ? '\n\n' + activePlaybooks : ''}`,
+            content: `${taskBrief ? taskBrief + '\n\n' : ''}${effectiveToolsListText}${activePlaybooks ? '\n\n' + activePlaybooks : ''}`,
             cacheAnchor: true
           },
           // [3] per-task STATIC context — provider activation, detected design,
@@ -2496,7 +2512,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           // is byte-identical every step; cached.
           {
             role: 'system',
-            content: `${providerPrompt}${designContext}${workspaceSummary}${projectInstructions || ''}${lessonsLearned}${episodicContext ? '\n\n' + episodicContext : ''}${planHint ? '\n' + planHint + '\n' : ''}${antiRepeatDirective}\n${universalSkillsContext}`,
+            content: `${providerPrompt}${designContext}${workspaceSummary}${projectInstructions || ''}${lessonsLearned}${!isLocalOllama && episodicContext ? '\n\n' + episodicContext : ''}${planHint ? '\n' + planHint + '\n' : ''}${antiRepeatDirective}${!isLocalOllama && universalSkillsContext ? '\n' + universalSkillsContext : ''}`,
             cacheAnchor: true
           },
           // [4] THE INVOKED SKILL, when the user named one.
