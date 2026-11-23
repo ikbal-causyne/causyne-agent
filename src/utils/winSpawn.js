@@ -232,27 +232,17 @@ export function resolveWindowsSpawnTarget(command, args, options = {}) {
     if (npmCli) {
         return { command: execPath, args: [npmCli, ...args], resolvedFromShim: true };
     }
-    // 2. Resolve bare command name on PATH/PATHEXT when needed
-    const resolved = CMD_SHIM_EXT_RE.test(command)
+    // 2. Locate `.cmd` shim on PATH/PATHEXT when needed so it can be unwrapped to `node <entry.js>`
+    const shimCandidate = CMD_SHIM_EXT_RE.test(command)
         ? command
-        : (resolveCommandOnWindowsPath(command, env) ?? command);
-    if (!CMD_SHIM_EXT_RE.test(resolved)) {
-        return { command: resolved, args: [...args], resolvedFromShim: false };
+        : resolveCommandOnWindowsPath(command, env);
+    if (shimCandidate && CMD_SHIM_EXT_RE.test(shimCandidate)) {
+        // 3. Unwrap npm/yarn/pnpm `.cmd` shims straight to `node <entry.js>` (zero cmd.exe shell)
+        const unwrapped = unwrapNodeCmdShim(shimCandidate);
+        if (unwrapped) {
+            return { command: execPath, args: [unwrapped, ...args], resolvedFromShim: true };
+        }
+        throw new Error(`Refusing to execute non-Node Windows batch script (${path.basename(shimCandidate)}) via cmd.exe shell.`);
     }
-    // 3. Unwrap npm/yarn/pnpm `.cmd` shims straight to `node <entry.js>`
-    const unwrapped = unwrapNodeCmdShim(resolved);
-    if (unwrapped) {
-        return { command: execPath, args: [unwrapped, ...args], resolvedFromShim: true };
-    }
-    // 4. Safe fallback for arbitrary non-Node `.cmd`/`.bat` scripts via `cmd.exe /d /s /c`
-    if (/[\0\r\n]/.test(resolved)) {
-        throw new Error('Refusing Windows batch command containing NUL or newline characters.');
-    }
-    const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe';
-    const cmdLine = [quoteWindowsCmdArg(resolved), ...args.map(quoteWindowsCmdArg)].join(' ');
-    return {
-        command: comspec,
-        args: ['/d', '/s', '/c', `"${cmdLine}"`],
-        resolvedFromShim: true
-    };
+    return { command, args: [...args], resolvedFromShim: false };
 }

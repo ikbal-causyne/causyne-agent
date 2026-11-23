@@ -62,15 +62,13 @@ describe('Wave 5 — Cross-Platform Reliability, TUI Polish & 100% Pure TypeScri
       assert.equal(resolved.command, '/fake/node.exe');
       assert.deepEqual(resolved.args, [cliEntry, '--stdio']);
 
-      // Arbitrary non-Node .bat falls back to cmd.exe /d /s /c with safe escaping
+      // Arbitrary non-Node .bat is refused rather than invoking cmd.exe /c shell
       const batPath = path.join(tmpDir, 'tool.bat');
       fs.writeFileSync(batPath, '@echo hi\r\n', 'utf8');
-      const batResolved = resolveWindowsSpawnTarget(batPath, ['hello world', 'a&b'], {
-        platform: 'win32',
-        env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }
-      });
-      assert.equal(batResolved.command, 'C:\\Windows\\System32\\cmd.exe');
-      assert.deepEqual(batResolved.args.slice(0, 3), ['/d', '/s', '/c']);
+      assert.throws(
+        () => resolveWindowsSpawnTarget(batPath, ['hello world', 'a&b'], { platform: 'win32' }),
+        /Refusing to execute non-Node Windows batch script/
+      );
 
       // Linear-time adversarial backslash test (zero ReDoS) + newline/NUL rejection
       const t0 = performance.now();
