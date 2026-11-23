@@ -12,6 +12,8 @@ import { MemoryManager } from '../src/memoryManager.js';
 import { getActiveSessionId } from '../src/sessionStore.js';
 import { runHeadlessTask } from '../src/headlessCli.js';
 import { buildSeatbeltProfile, buildBubblewrapArgs } from '../src/tools/osSandbox.js';
+import { beginTask, captureBeforeMutation, undoLast, redoLast, buildTaskDiff } from '../src/checkpoints.js';
+import { execFileSync } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
 
@@ -291,5 +293,42 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     assert.ok(bwrapArgs.includes('--unshare-pid'));
     assert.ok(bwrapArgs.includes('--unshare-ipc'));
     assert.ok(bwrapArgs.includes(wtGitDir));
+  });
+
+  test('checkpoints undoLast consumes undone tasks, redoLast reapplies them, and buildTaskDiff emits forward +/- patches', async () => {
+    const repo = path.join(TMP, 'ckpt-redo-repo');
+    fs.mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'test@causyne.local'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+    const targetFile = path.join(repo, 'app.ts');
+    fs.writeFileSync(targetFile, 'export const v = 1;\n', 'utf8');
+    execFileSync('git', ['add', '.'], { cwd: repo });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo });
+
+    await beginTask({ taskId: 't-ck-1', prompt: 'update v to 2', workspaceRoots: [repo] });
+    captureBeforeMutation('fs_write', { path: targetFile }, { taskId: 't-ck-1', step: 1 });
+    fs.writeFileSync(targetFile, 'export const v = 2;\n', 'utf8');
+
+    // Forward diff should show -1 and +2 (not inverted)
+    const diff = buildTaskDiff('t-ck-1');
+    assert.equal(diff.ok, true);
+    assert.equal(diff.files.length, 1);
+    assert.match(diff.files[0].patch, /-export const v = 1;/);
+    assert.match(diff.files[0].patch, /\+export const v = 2;/);
+
+    // Undo restores v = 1
+    const undone = undoLast({ dryRun: false, workspaceRoot: repo });
+    assert.equal(undone.ok, true);
+    assert.equal(fs.readFileSync(targetFile, 'utf8'), 'export const v = 1;\n');
+
+    // Second undoLast has nothing left in this workspace
+    const secondUndo = undoLast({ dryRun: false, workspaceRoot: repo });
+    assert.equal(secondUndo.ok, false);
+
+    // Redo reapplies v = 2
+    const redone = redoLast({ dryRun: false, workspaceRoot: repo });
+    assert.equal(redone.ok, true);
+    assert.equal(fs.readFileSync(targetFile, 'utf8'), 'export const v = 2;\n');
   });
 });

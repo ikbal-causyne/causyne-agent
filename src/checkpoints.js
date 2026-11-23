@@ -9,6 +9,7 @@ import { isProtectedPhysicalPath, isWithinPhysicalPath, physicalPath } from './a
 import { extractPatchTargetPaths } from './tools/applyPatch.js';
 import { isBlockedWorkspaceRoot } from './sandboxPolicy.js';
 import { getActiveSessionId, restoreSessionFromSnapshot, sessionTranscriptFile } from './sessionStore.js';
+import { loadWorkspaceIgnoreMatcher } from './ignoreRules.js';
 function debugLog(message) {
     if (process.env.CAUSYNE_DEBUG !== '1')
         return;
@@ -29,9 +30,11 @@ function statCacheFile() {
 function legacyHistoryFile() {
     return path.join(causyneHome(), 'memory', 'chat_history.json');
 }
-function activeHistoryFile() {
+function activeHistoryFile(explicitSessionId) {
     try {
-        const id = getActiveSessionId();
+        const id = (typeof explicitSessionId === 'string' && explicitSessionId.trim())
+            ? explicitSessionId.trim()
+            : getActiveSessionId();
         if (id) {
             const safe = String(id).replace(/[^a-zA-Z0-9_-]/g, '');
             if (safe)
@@ -398,6 +401,7 @@ function saveStatCache(cache) {
 }
 function snapshotTree(root) {
     const cache = loadStatCache();
+    const causyneIgnore = loadWorkspaceIgnoreMatcher(root, { includeGitIgnore: false });
     const files = {};
     let fileCount = 0;
     let totalBytes = 0;
@@ -414,11 +418,13 @@ function snapshotTree(root) {
         for (const entry of entries) {
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) {
-                if (IGNORED_DIRECTORIES.has(entry.name))
+                if (IGNORED_DIRECTORIES.has(entry.name) || causyneIgnore.isIgnored(full, true))
                     continue;
                 stack.push(full);
                 continue;
             }
+            if (causyneIgnore.isIgnored(full, false))
+                continue;
             if (entry.isSymbolicLink()) {
                 try {
                     files[full] = { kind: 'symlink', target: fs.readlinkSync(full) };
@@ -585,7 +591,7 @@ export async function beginTask(meta = {}) {
     try {
         ensureStore();
         let history = null;
-        const historyFile = activeHistoryFile();
+        const historyFile = activeHistoryFile(meta.sessionId);
         if (fs.existsSync(historyFile)) {
             const buffer = fs.readFileSync(historyFile);
             history = { hash: writeObject(buffer), size: buffer.length, file: historyFile };
@@ -991,9 +997,23 @@ export function undoTask(taskId, options = {}) {
         if (untracked.length > 0)
             drift.push({ root: tree.root, files: untracked });
     }
+    if (!dryRun) {
+        try {
+            appendJournal({
+                id: newId(),
+                ts: Date.now(),
+                type: 'undo_marker',
+                taskId: undoTaskId,
+                targetTaskId: taskId,
+                undoTaskId
+            });
+        }
+        catch { /* best-effort marker */ }
+    }
     return {
         ok: true,
         taskId,
+        undoTaskId: dryRun ? null : undoTaskId,
         dryRun,
         full: options.full === true,
         results: [...results, ...treeResults],
@@ -1004,11 +1024,56 @@ export function undoTask(taskId, options = {}) {
         skippedTrees: group.trees.filter(t => t.skipped).map(t => ({ root: t.root, reason: t.skipped }))
     };
 }
+function collectUndoneTaskIds() {
+    const undone = new Set();
+    const redoStack = [];
+    for (const entry of readJournal()) {
+        if (entry.type === 'undo_marker' && entry.targetTaskId && entry.undoTaskId) {
+            undone.add(entry.targetTaskId);
+            redoStack.push({ targetTaskId: entry.targetTaskId, undoTaskId: entry.undoTaskId });
+        }
+        else if (entry.type === 'redo_marker' && entry.targetTaskId) {
+            undone.delete(entry.targetTaskId);
+            const idx = redoStack.findLastIndex((item) => item.targetTaskId === entry.targetTaskId);
+            if (idx !== -1)
+                redoStack.splice(idx, 1);
+        }
+    }
+    return { undone, redoStack };
+}
+export function redoLast(options) {
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    const dryRun = safeOptions.dryRun !== false;
+    const { redoStack } = collectUndoneTaskIds();
+    const top = redoStack.at(-1);
+    if (!top) {
+        return { ok: false, error: 'nothing to redo — no undone checkpoint is pending' };
+    }
+    const applied = undoTask(top.undoTaskId, { ...safeOptions, dryRun });
+    if (applied.ok && !dryRun) {
+        try {
+            appendJournal({
+                id: newId(),
+                ts: Date.now(),
+                type: 'redo_marker',
+                taskId: `redo_${Date.now().toString(36)}`,
+                targetTaskId: top.targetTaskId,
+                undoTaskId: top.undoTaskId
+            });
+        }
+        catch { /* best-effort marker */ }
+    }
+    return { ...applied, redoneTaskId: top.targetTaskId };
+}
 export function undoLast(options) {
     const safeOptions = options && typeof options === 'object' ? options : {};
     const hasExplicitWorkspace = typeof safeOptions.workspaceRoot === 'string' && safeOptions.workspaceRoot.trim().length > 0;
     const ws = hasExplicitWorkspace ? path.resolve(safeOptions.workspaceRoot) : path.resolve(process.cwd());
-    const allCandidates = listGroups(200).filter((group) => !group.taskId.startsWith('undo_') && isUndoable(group));
+    const { undone } = collectUndoneTaskIds();
+    const allCandidates = listGroups(200).filter((group) => !group.taskId.startsWith('undo_')
+        && !group.taskId.startsWith('redo_')
+        && !undone.has(group.taskId)
+        && isUndoable(group));
     const validCandidates = allCandidates.filter((group) => {
         const allPaths = [
             ...group.trees.map((t) => t.root).filter((p) => Boolean(p)),
@@ -1205,14 +1270,12 @@ export function buildTaskDiff(taskId) {
         if (tree.backend !== 'git' || !tree.gitTree || !tree.root)
             continue;
         try {
-            for (const change of gitBackend.previewRestore(tree.root, tree.gitTree)) {
+            for (const change of gitBackend.previewForwardDiff(tree.root, tree.gitTree)) {
                 files.push({
                     path: change.path,
-                    status: change.status === 'deleted' ? 'created'
-                        : change.status === 'added' ? 'deleted'
-                            : change.status,
-                    additions: change.deletions,
-                    deletions: change.additions,
+                    status: change.status === 'added' ? 'created' : change.status,
+                    additions: change.additions,
+                    deletions: change.deletions,
                     patch: change.patch || '',
                     truncated: false
                 });

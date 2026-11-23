@@ -67,19 +67,70 @@ async function runGitAsync(args, options = {}) {
     });
     return String(stdout ?? '');
 }
+function resolveActualGitDirs(worktree) {
+    const dotGit = path.join(worktree, '.git');
+    try {
+        const stat = fs.lstatSync(dotGit);
+        if (stat.isDirectory()) {
+            return { gitDir: dotGit, commonDir: dotGit };
+        }
+        if (!stat.isSymbolicLink() && stat.isFile() && stat.size > 0 && stat.size <= 4096) {
+            const raw = fs.readFileSync(dotGit, 'utf8').trim();
+            if (raw.toLowerCase().startsWith('gitdir:')) {
+                const target = raw.slice('gitdir:'.length).trim();
+                if (target && !target.includes('\0')) {
+                    const resolvedGitDir = path.isAbsolute(target) ? path.resolve(target) : path.resolve(worktree, target);
+                    let commonDir = resolvedGitDir;
+                    const commonFile = path.join(resolvedGitDir, 'commondir');
+                    try {
+                        const cStat = fs.lstatSync(commonFile);
+                        if (!cStat.isSymbolicLink() && cStat.isFile() && cStat.size > 0 && cStat.size <= 4096) {
+                            const rel = fs.readFileSync(commonFile, 'utf8').trim();
+                            if (rel && !rel.includes('\0')) {
+                                commonDir = path.isAbsolute(rel) ? path.resolve(rel) : path.resolve(resolvedGitDir, rel);
+                            }
+                        }
+                    }
+                    catch { /* single-dir worktree */ }
+                    return { gitDir: resolvedGitDir, commonDir };
+                }
+            }
+        }
+    }
+    catch {
+        // not a git worktree
+    }
+    return { gitDir: null, commonDir: null };
+}
 /**
  * Capture without blocking — the form the task hot path must use.
+ * Uses a per-capture temp GIT_INDEX_FILE so concurrent tasks never hit index.lock contention.
  */
 export async function captureTreeAsync(worktree) {
+    const gitDir = initShadow(worktree);
+    const tempIndex = path.join(gitDir, `capture-${crypto.randomUUID()}.index`);
+    const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
     try {
-        const gitDir = initShadow(worktree);
         excludeOversizedUntracked(gitDir, worktree);
-        await runGitAsync(['--git-dir', gitDir, '--work-tree', worktree, 'add', '--all'], { cwd: worktree });
-        const sha = (await runGitAsync(['--git-dir', gitDir, 'write-tree'])).trim();
+        const baseIndex = path.join(gitDir, 'index');
+        try {
+            const st = fs.lstatSync(baseIndex);
+            if (!st.isSymbolicLink() && st.isFile())
+                fs.copyFileSync(baseIndex, tempIndex);
+        }
+        catch { /* fresh index */ }
+        await runGitAsync(['--git-dir', gitDir, '--work-tree', worktree, 'add', '--all'], { cwd: worktree, env });
+        const sha = (await runGitAsync(['--git-dir', gitDir, 'write-tree'], { env })).trim();
         return isValidGitSha(sha) ? sha : null;
     }
     catch {
         return null;
+    }
+    finally {
+        try {
+            fs.rmSync(tempIndex, { force: true });
+        }
+        catch { /* ignore */ }
     }
 }
 /** Is a usable git binary on PATH? Cached — the answer cannot change mid-run. */
@@ -155,7 +206,8 @@ export function initShadow(worktree) {
         }
     }
     runGit(['--git-dir', gitDir, 'config', 'core.autocrlf', 'false']);
-    const sourceObjects = path.join(worktree, '.git', 'objects');
+    const { gitDir: actualGitDir, commonDir: actualCommonDir } = resolveActualGitDirs(worktree);
+    const sourceObjects = actualCommonDir ? path.join(actualCommonDir, 'objects') : path.join(worktree, '.git', 'objects');
     try {
         const objStat = fs.lstatSync(sourceObjects);
         if (!objStat.isSymbolicLink() && objStat.isDirectory()) {
@@ -171,7 +223,7 @@ export function initShadow(worktree) {
         // best-effort alternates setup
     }
     if (!alreadyInitialised) {
-        const sourceIndex = path.join(worktree, '.git', 'index');
+        const sourceIndex = actualGitDir ? path.join(actualGitDir, 'index') : path.join(worktree, '.git', 'index');
         try {
             const idxStat = fs.lstatSync(sourceIndex);
             if (!idxStat.isSymbolicLink() && idxStat.isFile()) {
@@ -228,32 +280,44 @@ function excludeOversizedUntracked(gitDir, worktree) {
  * Capture the worktree's current state.
  */
 export function captureTree(worktree) {
+    let tempIndex = '';
     try {
         const gitDir = initShadow(worktree);
+        tempIndex = path.join(gitDir, `capture-${crypto.randomUUID()}.index`);
+        const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
+        const baseIndex = path.join(gitDir, 'index');
+        try {
+            const st = fs.lstatSync(baseIndex);
+            if (!st.isSymbolicLink() && st.isFile())
+                fs.copyFileSync(baseIndex, tempIndex);
+        }
+        catch { /* fresh index */ }
         excludeOversizedUntracked(gitDir, worktree);
-        runGit(['--git-dir', gitDir, '--work-tree', worktree, 'add', '--all'], { cwd: worktree });
-        const sha = (runGit(['--git-dir', gitDir, 'write-tree'])).trim();
+        runGit(['--git-dir', gitDir, '--work-tree', worktree, 'add', '--all'], { cwd: worktree, env });
+        const sha = (runGit(['--git-dir', gitDir, 'write-tree'], { env })).trim();
         return isValidGitSha(sha) ? sha : null;
     }
     catch {
         return null;
     }
+    finally {
+        if (tempIndex) {
+            try {
+                fs.rmSync(tempIndex, { force: true });
+            }
+            catch { /* ignore */ }
+        }
+    }
 }
-/**
- * What restoring `files` would change — WITHOUT touching the worktree.
- */
-export function previewRestore(worktree, fromTree) {
-    if (!isValidGitSha(fromTree))
+function diffTrees(worktree, leftTree, rightTree) {
+    if (!isValidGitSha(leftTree) || !isValidGitSha(rightTree))
         return [];
     const gitDir = initShadow(worktree);
     const tempIndex = path.join(gitDir, `preview-${crypto.randomUUID()}.index`);
     const env = { ...process.env, GIT_INDEX_FILE: tempIndex };
     try {
-        const current = captureTree(worktree);
-        if (!current)
-            return [];
-        runGit(['--git-dir', gitDir, 'read-tree', current], { env });
-        const raw = runGit(['--git-dir', gitDir, 'diff', '--numstat', '--find-renames', '-z', current, fromTree], { env });
+        runGit(['--git-dir', gitDir, 'read-tree', leftTree], { env });
+        const raw = runGit(['--git-dir', gitDir, 'diff', '--numstat', '--find-renames', '-z', leftTree, rightTree], { env });
         const changes = [];
         const tokens = raw.split('\0');
         let idx = 0;
@@ -275,7 +339,7 @@ export function previewRestore(worktree, fromTree) {
                 continue;
             let patch = '';
             try {
-                const rawPatch = runGit(['--git-dir', gitDir, 'diff', '--unified=3', current, fromTree, '--', file], { env });
+                const rawPatch = runGit(['--git-dir', gitDir, 'diff', '--unified=3', leftTree, rightTree, '--', file], { env });
                 patch = rawPatch.length > MAX_PATCH_CHARS
                     ? `${rawPatch.slice(0, MAX_PATCH_CHARS)}\n[... patch truncated ...]\n`
                     : rawPatch;
@@ -299,6 +363,28 @@ export function previewRestore(worktree, fromTree) {
         }
         catch { /* ignore cleanup error */ }
     }
+}
+/**
+ * What restoring `files` would change — WITHOUT touching the worktree.
+ */
+export function previewRestore(worktree, fromTree) {
+    if (!isValidGitSha(fromTree))
+        return [];
+    const current = captureTree(worktree);
+    if (!current)
+        return [];
+    return diffTrees(worktree, current, fromTree);
+}
+/**
+ * Forward diff from `fromTree` (checkpoint baseline) to current worktree state.
+ */
+export function previewForwardDiff(worktree, fromTree) {
+    if (!isValidGitSha(fromTree))
+        return [];
+    const current = captureTree(worktree);
+    if (!current)
+        return [];
+    return diffTrees(worktree, fromTree, current);
 }
 function classify(added, removed) {
     const a = Number(added) || 0;
@@ -384,7 +470,7 @@ export function pruneShadow(worktree) {
         const cutoff = Date.now() - 60 * 60 * 1000;
         try {
             for (const name of fs.readdirSync(gitDir)) {
-                if (!name.startsWith('preview-') || !name.endsWith('.index'))
+                if (!(name.startsWith('preview-') || name.startsWith('capture-')) || !name.endsWith('.index'))
                     continue;
                 const full = path.join(gitDir, name);
                 const stat = fs.lstatSync(full);
