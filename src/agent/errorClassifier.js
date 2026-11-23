@@ -43,17 +43,34 @@ export function classifyAgentError(error) {
     }
     // Honor structured HTTP status codes and transport error codes directly
     const status = typeof errObj?.status === 'number' ? errObj.status : null;
+    const isContextOverflowMsg = msg.includes('context_length_exceeded') ||
+        msg.includes('maximum context length') ||
+        msg.includes('prompt is too long') ||
+        msg.includes('input is too long') ||
+        msg.includes('too many tokens') ||
+        msg.includes('exceeds the context window') ||
+        msg.includes('request too large') ||
+        msg.includes('payload too large');
+    if (status === 413 || isContextOverflowMsg)
+        return 'context_overflow';
     if (status === 429)
         return 'rate_limit';
     if (status === 401 || status === 403)
         return 'auth_error';
-    if (status === 400)
+    if (status === 400 || status === 404 || status === 422)
         return 'invalid_request_error';
-    if (status !== null && status >= 500 && status <= 599)
+    if (status === 408 || status === 529 || (status !== null && status >= 500 && status <= 599))
         return 'network_error';
-    if (errObj?.code === 'ETIMEDOUT' ||
+    if (errObj?.name === 'TimeoutError' ||
+        errObj?.code === 'ETIMEDOUT' ||
         errObj?.code === 'ECONNREFUSED' ||
-        errObj?.code === 'ECONNRESET') {
+        errObj?.code === 'ECONNRESET' ||
+        errObj?.code === 'EPIPE' ||
+        errObj?.code === 'ENOTFOUND' ||
+        errObj?.code === 'EAI_AGAIN' ||
+        errObj?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+        errObj?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
+        errObj?.code === 'UND_ERR_BODY_TIMEOUT') {
         return 'network_error';
     }
     if (msg.includes('syntax') || msg.includes('unexpected token') || msg.includes('invalid json')) {
@@ -69,6 +86,10 @@ export function classifyAgentError(error) {
         msg.includes('econnreset') ||
         msg.includes('etimedout') ||
         msg.includes('fetch failed') ||
+        msg.includes('overloaded_error') ||
+        msg.includes('service unavailable') ||
+        msg.includes('bad gateway') ||
+        msg.includes('gateway timeout') ||
         msg.includes('network')) {
         return 'network_error';
     }
@@ -94,7 +115,10 @@ export function classifyAgentError(error) {
         msg.includes('bad request')) {
         return 'invalid_request_error';
     }
-    if (msg.includes('kill') || msg.includes('abort') || msg.includes('signal') || msg.includes('fatal')) {
+    if (/\b(?:kill|killed|sigkill|sigterm|sigint)\b/.test(msg) ||
+        msg.includes('abort') ||
+        msg.includes('signal') ||
+        msg.includes('fatal')) {
         return 'fatal';
     }
     if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) {
@@ -107,6 +131,7 @@ const RETRY_HINTS = {
     path_not_found: 'The file or directory does not exist. Use fs.list to verify the path first, or create it with fs.write/mkdir.',
     network_error: 'Network connectivity issue. Wait a moment and retry. If persistent, check if the URL is correct.',
     rate_limit: 'API rate limit hit. Wait 5-10 seconds before retrying.',
+    context_overflow: 'Conversation exceeded the model context window. Compact older tool outputs and retry.',
     permission_denied: 'Permission denied. Check if the path is within allowed workspace paths. Try a different directory.',
     auth_error: 'Authentication failed. Do NOT retry — the API key may be invalid.',
     invalid_request_error: 'API request format error (400 Bad Request). Do NOT retry — check model parameter compliance.',

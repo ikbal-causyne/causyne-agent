@@ -88,7 +88,12 @@ export interface ChatOptions {
 
 // Fields the agent loop attaches to messages for its own bookkeeping. They must
 // never reach a provider API, which rejects unknown message properties.
-const INTERNAL_MESSAGE_FIELDS: readonly string[] = ['cacheAnchor', 'spillPath'];
+const INTERNAL_MESSAGE_FIELDS: readonly string[] = [
+  'cacheAnchor',
+  'spillPath',
+  'causyne_synthetic_no_final',
+  'external_actions'
+];
 
 // Container formats each vendor accepts for audio input.
 const AUDIO_MIME_BY_FORMAT: Record<string, string> = {
@@ -163,7 +168,7 @@ export class LLMProvider {
       ? cfg.supportsAudio
       : null;
     this.preserveThinkingBlocks = false;
-    this.preserveReasoningContent = true;
+    this.preserveReasoningContent = false;
   }
 
   get supportsVision(): boolean {
@@ -331,11 +336,13 @@ export class LLMProvider {
       rawUsage?.cache_read_input_tokens ??
       0;
     const cachedPromptTokens = Math.min(nonNeg(rawCached), promptTokens);
+    const hasProviderTokens = promptTokens > 0 || completionTokens > 0;
 
     return {
       promptTokens,
       completionTokens,
-      cachedPromptTokens
+      cachedPromptTokens,
+      ...(hasProviderTokens ? { measurement: 'provider_reported' as const } : {})
     };
   }
 }

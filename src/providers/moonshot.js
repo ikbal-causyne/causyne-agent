@@ -15,6 +15,7 @@ export class MoonshotProvider extends LLMProvider {
         this.model = String(canonicalModelId(config.model || DEFAULT_MODEL_BY_PROVIDER['moonshot']) || '');
         this.visionModels = ['kimi-k3', 'kimi-k2.5', 'vision'];
         this.audioModels = [];
+        this.preserveReasoningContent = true;
     }
     async chat(messages, options = {}) {
         const apiKey = requireApiKey(this.apiKey, 'Moonshot AI (Kimi)');

@@ -20,6 +20,10 @@ import {
   pickBestZeroCostProvider
 } from '../src/zeroCostRouting.js';
 import { detectEnvironmentProvider } from '../src/config.js';
+import { LLMProvider } from '../src/providers/base.js';
+import { DeepSeekProvider } from '../src/providers/deepseek.js';
+import { MoonshotProvider } from '../src/providers/moonshot.js';
+import { classifyAgentError } from '../src/agent/errorClassifier.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -734,5 +738,44 @@ rl.on('line', (line) => {
         else process.env[k] = v;
       }
     }
+  });
+
+  test('LLMProvider strips internal fields & reasoning_content by default, marks provider_reported usage, and errorClassifier handles context_overflow & skill wording', () => {
+    const base = new LLMProvider({});
+    const ds = new DeepSeekProvider({});
+    const ms = new MoonshotProvider({});
+    assert.equal(base.preserveReasoningContent, false);
+    assert.equal(ds.preserveReasoningContent, true);
+    assert.equal(ms.preserveReasoningContent, true);
+
+    const stripped = base.stripInternalFields([
+      {
+        role: 'assistant',
+        content: 'ok',
+        reasoning_content: 'hidden',
+        causyne_synthetic_no_final: true,
+        external_actions: [{ name: 'x' }],
+        cacheAnchor: true
+      }
+    ]);
+    assert.equal('reasoning_content' in stripped[0], false);
+    assert.equal('causyne_synthetic_no_final' in stripped[0], false);
+    assert.equal('external_actions' in stripped[0], false);
+    assert.equal('cacheAnchor' in stripped[0], false);
+
+    const dsStripped = ds.stripInternalFields([{ role: 'assistant', content: 'ok', reasoning_content: 'keep me' }]);
+    assert.equal(dsStripped[0].reasoning_content, 'keep me');
+
+    const usage = base.normalizeUsage({ prompt_tokens: 120, completion_tokens: 30 });
+    assert.equal(usage.measurement, 'provider_reported');
+
+    assert.equal(classifyAgentError({ status: 413, message: 'Payload too large' }), 'context_overflow');
+    assert.equal(classifyAgentError({ status: 400, message: 'maximum context length exceeded' }), 'context_overflow');
+    assert.equal(classifyAgentError({ status: 404, message: 'model not found' }), 'invalid_request_error');
+    assert.equal(classifyAgentError({ status: 422, message: 'unprocessable entity' }), 'invalid_request_error');
+    assert.equal(classifyAgentError({ status: 529, message: 'overloaded_error' }), 'network_error');
+    assert.equal(classifyAgentError({ name: 'TimeoutError', message: 'timed out' }), 'network_error');
+    assert.equal(classifyAgentError(new Error('Failed to parse skill header')), 'unknown_error', '"skill" must never match "kill" as fatal');
+    assert.equal(classifyAgentError(new Error('Process killed by SIGKILL')), 'fatal');
   });
 });
