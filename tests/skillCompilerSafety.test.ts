@@ -21,8 +21,8 @@ function runWith(names: string[]) {
     }
     const run = spawnSync(process.execPath, [path.join(root, 'scripts', 'compile_skills.js')],
       { cwd: root, encoding: 'utf8', timeout: 5000 });
-    const generated = fs.existsSync(path.join(root, 'src', 'compiledSkills.js'))
-      ? fs.readFileSync(path.join(root, 'src', 'compiledSkills.js'), 'utf8') : '';
+    const generated = fs.existsSync(path.join(root, 'src', 'compiledSkills.ts'))
+      ? fs.readFileSync(path.join(root, 'src', 'compiledSkills.ts'), 'utf8') : '';
     return { status: run.status, output: run.stdout + run.stderr, generated };
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

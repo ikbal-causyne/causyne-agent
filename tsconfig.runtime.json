@@ -37,6 +37,7 @@
     "src/skills/skillResourceSafety.ts",
     "src/skills/skillSearchSafety.ts",
     "src/userSkills.ts",
+    "src/compiledSkills.ts",
     "src/skillsManager.ts",
     "src/tools/readNativeSkill.ts",
     "src/tools/createSkill.ts",
