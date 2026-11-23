@@ -16,6 +16,7 @@ import { beginTask, captureBeforeMutation, undoLast, redoLast, buildTaskDiff } f
 import { createWorktree, inspectWorktreeDiff, mergeWorktree, pruneManagedWorktrees } from '../src/worktreeManager.js';
 import { parseUnifiedDiff, collectWorkingTreeDiff } from '../src/diffReview.js';
 import { detectDefaultBranch, preparePrDraft } from '../src/prWorkflow.js';
+import { TokenTracker } from '../src/tokenTracker.js';
 import { execFileSync } from 'node:child_process';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-wave4-'));
@@ -383,5 +384,21 @@ describe('Wave 4 — Enterprise Governance, Audit, Hooks, Sessions & Checkpoints
     assert.equal(detectDefaultBranch(repo), 'master');
     const draft = preparePrDraft(repo);
     assert.equal(draft.baseBranch, 'master');
+  });
+
+  test('TokenTracker bills $0 for free/local/ACP routes and honors provider-reported costUsd', () => {
+    const tracker = new TokenTracker();
+    tracker.config = { provider: 'openrouter', model: 'qwen/qwen3-coder:free' };
+    assert.deepEqual(tracker.getPricing(), [0, 0]);
+    assert.equal(tracker.calculateCost(500_000, 100_000), 0);
+
+    tracker.config = { provider: 'openrouter-free', model: 'openrouter/free' };
+    assert.deepEqual(tracker.getPricing(), [0, 0]);
+
+    tracker.config = { provider: 'groq', model: 'openai/gpt-oss-120b' };
+    assert.deepEqual(tracker.getPricing(), [0, 0]);
+
+    tracker.config = { provider: 'openrouter', model: 'anthropic/claude-sonnet-4-5' };
+    assert.equal(tracker.calculateCost(1000, 500, { costUsd: 0.0042 }), 0.0042);
   });
 });

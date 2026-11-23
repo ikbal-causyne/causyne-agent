@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
@@ -12,9 +13,26 @@ function withUsageLock(fn) {
 let usageTempCounter = 0;
 function writeUsageFile(file, payload) {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const temp = `${file}.tmp_${process.pid}_${++usageTempCounter}`;
-    fs.writeFileSync(temp, JSON.stringify(payload, null, 2), { encoding: 'utf8', mode: 0o600 });
-    fs.renameSync(temp, file);
+    const temp = `${file}.tmp_${process.pid}_${++usageTempCounter}_${crypto.randomBytes(4).toString('hex')}`;
+    try {
+        const fd = fs.openSync(temp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+        try {
+            fs.writeFileSync(fd, JSON.stringify(payload, null, 2), 'utf8');
+            fs.fsyncSync(fd);
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(temp, file);
+    }
+    catch (err) {
+        try {
+            if (fs.existsSync(temp))
+                fs.unlinkSync(temp);
+        }
+        catch { /* ignore */ }
+        throw err;
+    }
 }
 function localDateKey(when = new Date()) {
     const pad = (n) => String(n).padStart(2, '0');
@@ -44,12 +62,28 @@ export class TokenTracker {
         this.ensureUsageDir();
     }
     getPricing(promptTokens = 0) {
-        const provider = this.config.provider?.toLowerCase();
+        const provider = this.config.provider?.toLowerCase() || '';
         const model = this.config.model?.toLowerCase() || '';
+        // Strictly zero-cost routes: local Ollama, :free models, OpenRouter free router, ACP peers, Antigravity
+        if (provider === 'ollama'
+            || provider === 'openrouter-free'
+            || provider === 'acp'
+            || provider.startsWith('acp/')
+            || provider === 'antigravity'
+            || provider === 'agy'
+            || model === 'openrouter/free'
+            || model.endsWith(':free')) {
+            return [0.00, 0.00];
+        }
+        if (provider === 'groq' || provider === 'cerebras') {
+            return [0.00, 0.00];
+        }
         if (provider === 'deepseek') {
             if (model.includes('pro'))
                 return [0.435, 0.87];
-            if (model.includes('flash'))
+            if (model.includes('reasoner'))
+                return [0.55, 2.19];
+            if (model.includes('flash') || model.includes('chat'))
                 return [0.14, 0.28];
             return [0.14, 0.28];
         }
@@ -63,7 +97,7 @@ export class TokenTracker {
                 return [1.25, 3.75];
             if (model.includes('plus'))
                 return [0.32, 1.28];
-            if (model.includes('flash'))
+            if (model.includes('flash') || model.includes('turbo'))
                 return [0.19, 1.13];
             return [0.32, 1.28];
         }
@@ -77,6 +111,11 @@ export class TokenTracker {
                 return [2.50, 15.00];
             if (model.includes('luna'))
                 return [1.00, 1.00];
+            if (model.includes('gpt-4o-mini') || model.includes('gpt-4.1-mini') || model.includes('o3-mini') || model.includes('o4-mini')) {
+                return [0.75, 4.50];
+            }
+            if (model.includes('gpt-4o') || model.includes('gpt-4.1'))
+                return [2.50, 10.00];
             if (model.includes('mini'))
                 return [0.75, 4.50];
             return [5.00, 30.00];
@@ -86,8 +125,9 @@ export class TokenTracker {
                 return [10.00, 50.00];
             if (model.includes('opus'))
                 return [5.00, 25.00];
-            if (model.includes('sonnet-4-6'))
+            if (model.includes('sonnet-4-6') || model.includes('sonnet-4-5') || model.includes('3-7-sonnet') || model.includes('3-5-sonnet')) {
                 return [3.00, 15.00];
+            }
             if (model.includes('sonnet'))
                 return [2.00, 10.00];
             if (model.includes('haiku'))
@@ -99,17 +139,41 @@ export class TokenTracker {
                 return [2.00, 12.00];
             if (model.includes('flash-lite'))
                 return [0.25, 1.50];
+            if (model.includes('2.5-flash') || model.includes('2.0-flash') || model.includes('1.5-flash'))
+                return [0.15, 0.60];
             if (model.includes('3.6-flash') || model.includes('3-6-flash'))
                 return [1.50, 7.50];
             if (model.includes('flash'))
                 return [1.50, 9.00];
             return [1.50, 9.00];
         }
-        if (provider === 'ollama') {
-            return [0.00, 0.00];
+        if (provider === 'mistral') {
+            if (model.includes('codestral') || model.includes('devstral'))
+                return [0.30, 0.90];
+            if (model.includes('large'))
+                return [2.00, 6.00];
+            return [0.20, 0.60];
         }
-        if (provider === 'acp' || provider?.startsWith('acp/') || provider === 'antigravity' || provider === 'agy') {
-            return [0.00, 0.00];
+        if (provider === 'xai') {
+            if (model.includes('mini'))
+                return [0.30, 0.50];
+            return [3.00, 15.00];
+        }
+        if (provider === 'moonshot') {
+            return [0.60, 2.50];
+        }
+        if (provider === 'openrouter') {
+            if (model.includes('deepseek'))
+                return [0.28, 0.56];
+            if (model.includes('qwen') || model.includes('llama') || model.includes('mistral'))
+                return [0.20, 0.60];
+            if (model.includes('haiku') || model.includes('mini') || model.includes('flash'))
+                return [0.50, 2.00];
+            if (model.includes('sonnet'))
+                return [3.00, 15.00];
+            if (model.includes('opus'))
+                return [5.00, 25.00];
+            return [1.00, 3.00];
         }
         return [5.00, 15.00];
     }
@@ -135,6 +199,9 @@ export class TokenTracker {
         return 0.5;
     }
     calculateCost(promptTokens, completionTokens, usageDetail = null) {
+        if (usageDetail && typeof usageDetail.costUsd === 'number' && Number.isFinite(usageDetail.costUsd) && usageDetail.costUsd >= 0) {
+            return usageDetail.costUsd;
+        }
         const safePrompt = Number.isFinite(promptTokens) ? Math.max(0, Number(promptTokens)) : 0;
         const safeCompletion = Number.isFinite(completionTokens) ? Math.max(0, Number(completionTokens)) : 0;
         const [promptPrice, completionPrice] = this.getPricing(safePrompt);
