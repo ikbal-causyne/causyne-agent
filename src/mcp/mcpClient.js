@@ -3,7 +3,21 @@ import { pathToFileURL } from 'node:url';
 import { Client, SSEClientTransport, SdkError, SdkErrorCode, SdkHttpError, StreamableHTTPClientTransport, UnauthorizedError } from '@modelcontextprotocol/client';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { getPackageVersion } from '../version.js';
+import { redactTextSecrets } from '../providers/byokHttp.js';
+import { safeDisplay } from '../tui/text.js';
 import { MAX_GLOB_PATTERN_CHARS, MAX_MCP_SERVER_INSTRUCTIONS_CHARS, MAX_MCP_TOOL_DESCRIPTION_CHARS, MAX_TOOLS_PER_MCP_SERVER, sanitizeMcpInputSchema, sanitizeMcpMetadataText, sanitizeMcpToolName } from './mcpSecurity.js';
+const SENSITIVE_HEADER_RE = /^(?:authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)$/i;
+function isLoopbackHost(hostname) {
+    const lower = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return lower === 'localhost' || lower === '127.0.0.1' || lower === '::1';
+}
+function sanitizeMcpTextPreservingLines(raw) {
+    const redacted = redactTextSecrets(raw);
+    return redacted
+        .split('\n')
+        .map((line) => safeDisplay(line))
+        .join('\n');
+}
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
 const STDERR_LIMIT_BYTES = 8 * 1024;
@@ -15,7 +29,7 @@ function isStringRecord(value) {
     return isRecord(value) && Object.values(value).every(item => typeof item === 'string');
 }
 function errorMessage(error) {
-    return error instanceof Error ? error.message : String(error);
+    return redactTextSecrets(error instanceof Error ? error.message : String(error));
 }
 function isAuthenticationError(error) {
     if (error instanceof UnauthorizedError)
@@ -85,9 +99,10 @@ function describeContentBlock(block) {
     }
 }
 function boundedOutput(output) {
-    return output.length > TOOL_OUTPUT_LIMIT_CHARS
-        ? `${output.slice(0, TOOL_OUTPUT_LIMIT_CHARS)}\n\n[MCP output truncated at ${TOOL_OUTPUT_LIMIT_CHARS} characters]`
-        : output;
+    const cleaned = sanitizeMcpTextPreservingLines(output);
+    return cleaned.length > TOOL_OUTPUT_LIMIT_CHARS
+        ? `${cleaned.slice(0, TOOL_OUTPUT_LIMIT_CHARS)}\n\n[MCP output truncated at ${TOOL_OUTPUT_LIMIT_CHARS} characters]`
+        : cleaned;
 }
 function formatToolResult(result) {
     const content = Array.isArray(result.content)
@@ -160,6 +175,9 @@ export class McpClient {
         if (typeof definition.name !== 'string' || !/^[a-z0-9_-]{1,48}$/i.test(definition.name)) {
             return 'name must be 1-48 characters of [A-Za-z0-9_-]';
         }
+        if (definition.name.includes('__')) {
+            return 'name must not contain "__" (reserved MCP tool namespace separator)';
+        }
         const hasStdio = typeof definition.command === 'string' && definition.command.trim().length > 0;
         const hasHttp = typeof definition.url === 'string' && definition.url.trim().length > 0;
         if (hasStdio === hasHttp)
@@ -199,6 +217,9 @@ export class McpClient {
                 for (const [key, value] of Object.entries(definition.headers)) {
                     if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || /[\r\n]/.test(value)) {
                         return '`headers` contains an invalid name or value';
+                    }
+                    if (parsed.protocol === 'http:' && !isLoopbackHost(parsed.hostname) && SENSITIVE_HEADER_RE.test(key)) {
+                        return 'remote MCP servers with credential headers must use https://';
                     }
                 }
             }
@@ -403,6 +424,37 @@ export class McpClient {
             return { success: false, error: `MCP server "${this.name}": ${errorMessage(error)}` };
         }
     }
+    setWorkspace(workspace) {
+        if (typeof workspace !== 'string' || !workspace.trim() || workspace.includes('\0'))
+            return;
+        this.workspace = path.resolve(workspace);
+        try {
+            const maybeClient = this.client;
+            if (maybeClient && typeof maybeClient.sendRootsListChanged === 'function') {
+                void maybeClient.sendRootsListChanged().catch(() => { });
+            }
+        }
+        catch { /* ignore notification errors */ }
+    }
+    closeSync() {
+        this.closing = true;
+        const transport = this.transport;
+        this.client = null;
+        this.transport = null;
+        const pid = transport?.pid ?? transport?._process?.pid;
+        if (typeof pid === 'number' && pid > 0) {
+            try {
+                process.kill(pid, 'SIGTERM');
+            }
+            catch { /* already exited */ }
+        }
+        else if (transport?._process && typeof transport._process.kill === 'function') {
+            try {
+                transport._process.kill('SIGTERM');
+            }
+            catch { /* ignore */ }
+        }
+    }
     async close() {
         this.closing = true;
         await this.dispose();
@@ -468,6 +520,7 @@ export class McpClient {
             throw new Error('HTTP URL is missing');
         const url = new URL(definition.url);
         const requestInit = definition.headers ? { headers: definition.headers } : undefined;
+        const startedAt = Date.now();
         try {
             const transport = new StreamableHTTPClientTransport(url, requestInit ? { requestInit } : undefined);
             const client = this.makeClient();
@@ -480,11 +533,16 @@ export class McpClient {
             if (isAuthenticationError(error))
                 throw error;
             await this.dispose();
+            const elapsed = Date.now() - startedAt;
+            const remaining = timeout - elapsed;
+            if (remaining < 500) {
+                throw error;
+            }
             const transport = new SSEClientTransport(url, requestInit ? { requestInit } : undefined);
             const client = this.makeClient();
             this.transport = transport;
             this.client = client;
-            await client.connect(transport, { timeout });
+            await client.connect(transport, { timeout: Math.max(1_000, remaining) });
             this.captureServer(client, 'sse');
         }
     }
