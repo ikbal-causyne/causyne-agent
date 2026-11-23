@@ -82,6 +82,9 @@ export const TOOL_NAME_ALIASES: Record<string, string> = {
   rename_file: 'fs_move',
   mv: 'fs_move',
   patch: 'MultiEdit',
+  patch_file: 'apply_patch',
+  applyPatch: 'apply_patch',
+  apply_diff: 'apply_patch',
   multi_edit: 'MultiEdit',
   multiedit: 'MultiEdit',
   diff_edit: 'MultiEdit',
@@ -1362,27 +1365,44 @@ export function selfRepairToolCall(
     allRepairs.push("Unwrapped single-key 'arguments' object envelope");
   }
 
+  // Route `patch` calls carrying V4A patch text (`patch` or `diff` with `*** Begin Patch`) to `apply_patch`
+  let effectiveCanonicalName = canonicalName;
+  if (
+    rawName.trim().toLowerCase() === 'patch'
+    && (
+      typeof decodedInput.patch === 'string'
+      || (typeof decodedInput.diff === 'string' && decodedInput.diff.includes('*** Begin Patch'))
+    )
+  ) {
+    effectiveCanonicalName = 'apply_patch';
+    if (typeof decodedInput.patch !== 'string' && typeof decodedInput.diff === 'string') {
+      decodedInput = { ...decodedInput, patch: decodedInput.diff };
+      delete decodedInput.diff;
+    }
+    allRepairs.push("Routed 'patch' payload with V4A patch text to 'apply_patch'");
+  }
+
   // 2. Resolve parameter aliases & structural transforms
-  const aliasResult = resolveParameterAliases(canonicalName, decodedInput, toolSchema);
+  const aliasResult = resolveParameterAliases(effectiveCanonicalName, decodedInput, toolSchema);
   allRepairs.push(...aliasResult.repairs);
 
   // 3. Coerce argument types
-  const typeResult = coerceArgumentTypes(canonicalName, aliasResult.args, toolSchema);
+  const typeResult = coerceArgumentTypes(effectiveCanonicalName, aliasResult.args, toolSchema);
   allRepairs.push(...typeResult.repairs);
 
   // 4. Normalize filesystem paths (fs_read_skill uses relative skill-bundle paths, never cwd paths)
-  const pathResult = canonicalName === 'fs_read_skill'
+  const pathResult = effectiveCanonicalName === 'fs_read_skill'
     ? { args: typeResult.args, repaired: false, repairs: [] }
     : normalizePaths(typeResult.args, options.cwd || process.cwd(), toolSchema);
   allRepairs.push(...pathResult.repairs);
 
-  const browserResult = canonicalName === 'browser_act'
+  const browserResult = effectiveCanonicalName === 'browser_act'
     ? repairBrowserActions(pathResult.args, options.cwd || process.cwd())
     : pathResult;
-  if (canonicalName === 'browser_act') allRepairs.push(...browserResult.repairs);
+  if (effectiveCanonicalName === 'browser_act') allRepairs.push(...browserResult.repairs);
 
   return {
-    name: canonicalName,
+    name: effectiveCanonicalName,
     args: browserResult.args,
     repaired: allRepairs.length > 0,
     repairs: allRepairs

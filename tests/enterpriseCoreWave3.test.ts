@@ -24,6 +24,10 @@ import { codeSearchAst } from '../src/tools/codeSearchAst.js';
 import { codeSearcher } from '../src/tools/codeSearcher.js';
 import { loadWorkspaceIgnoreMatcher, clearIgnoreRulesCache } from '../src/ignoreRules.js';
 import { fsSearch } from '../src/tools/fsSearch.js';
+import { selfRepairToolCall } from '../src/tools/toolSelfRepair.js';
+import { validateAndNormalizeToolArgs } from '../src/agent/toolArgValidator.js';
+import { fsMove } from '../src/tools/fsMove.js';
+import { AgentLoop } from '../src/agentLoop.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -662,5 +666,53 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.ok(rels.includes('keep.secret.ts'));
     assert.equal(rels.includes('private/vault.ts'), false);
     assert.equal(rels.includes('prod.secret.ts'), false);
+  });
+
+  test('toolSelfRepair routes V4A patch to apply_patch, toolArgValidator validates task_bg/apply_patch/fs_edit, fsMove handles case-only renames, and AgentLoop auto-compacts on context_overflow', async () => {
+    const repaired = selfRepairToolCall({ name: 'patch', arguments: { patch: '*** Begin Patch\n*** End Patch' } });
+    assert.equal(repaired.name, 'apply_patch');
+
+    assert.match(validateAndNormalizeToolArgs('task_bg', { action: 'start' }) || '', /command/);
+    assert.match(validateAndNormalizeToolArgs('task_bg', { action: 'stop' }) || '', /taskId/);
+    assert.match(validateAndNormalizeToolArgs('apply_patch', {}) || '', /patch/);
+    assert.match(validateAndNormalizeToolArgs('fs_edit', { path: 'a.ts', edits: [] }) || '', /edits/);
+
+    const ws = path.join(TMP, 'fsmove-case-overflow');
+    fs.mkdirSync(ws, { recursive: true });
+    const src = path.join(ws, 'MyClass.ts');
+    const dst = path.join(ws, 'myclass.ts');
+    fs.writeFileSync(src, 'export class MyClass {}\n', 'utf8');
+    const mvRes = await fsMove.execute({ source: src, destination: dst }, { workspaceRoot: ws });
+    assert.equal(mvRes.success, true, mvRes.error);
+    assert.ok(fs.readdirSync(ws).includes('myclass.ts'), 'case-only fsMove must produce exact new casing');
+
+    // Verify AgentLoop auto-compacts and recovers from HTTP 413 context_overflow
+    const loop = new AgentLoop(null, 'test-overflow', 'Summarize progress briefly.', { workspaceRoot: ws }) as any;
+    loop.backoff = async () => {};
+    // Seed enough prior turns so compactSessionMessages can reclaim messages
+    for (let i = 0; i < 10; i++) {
+      loop.messages.push({ role: 'user', content: `Prior step ${i}: ` + 'x'.repeat(500) });
+      loop.messages.push({ role: 'assistant', content: `Ack ${i}: ` + 'y'.repeat(500) });
+    }
+    const beforeCount = loop.messages.length;
+    let calls = 0;
+    const model = {
+      model: 'gpt-4o',
+      supportsVision: false,
+      chat: async () => {
+        calls++;
+        if (calls === 1) {
+          const err: any = new Error('maximum context length exceeded');
+          err.status = 413;
+          throw err;
+        }
+        return { content: 'Recovered after auto-compaction.', usage: { promptTokens: 100, completionTokens: 10 } };
+      }
+    };
+    loop.initializeProvider = () => model;
+    loop.llm = model;
+    await loop.run();
+    assert.equal(calls, 2, 'loop must retry once after auto-compacting on context_overflow');
+    assert.ok(loop.messages.length < beforeCount, 'messages array must be compacted on context_overflow');
   });
 });

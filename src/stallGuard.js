@@ -3,7 +3,11 @@ import { isMutatingToolCall } from './decisionPolicy.js';
 export const STALL_GUARD_REPEATABLE_TOOLS = new Set([
     'process_list',
     'sys_run_poll',
-    'proc_term'
+    'proc_term',
+    'task_bg',
+    'task.bg',
+    'code_lsp',
+    'code.lsp'
 ]);
 export const FAILURE_TOLERANT_TOOL_NAMES = new Set([
     'sysRun',

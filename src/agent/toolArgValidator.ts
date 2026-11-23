@@ -108,5 +108,40 @@ export function validateAndNormalizeToolArgs(
     }
   }
 
+  // 7. Managed background task actions require valid action + target args
+  if (toolName === 'task_bg' || toolName === 'task.bg') {
+    const act = typeof record.action === 'string' ? record.action.trim().toLowerCase() : '';
+    if (!act) return 'Missing required "action" argument for task_bg';
+    if (act === 'start' && (typeof record.command !== 'string' || !record.command.trim())) {
+      return 'Missing required "command" argument for task_bg start';
+    }
+    if ((act === 'output' || act === 'wait' || act === 'stop' || act === 'status') && (typeof record.taskId !== 'string' || !record.taskId.trim())) {
+      return `Missing required "taskId" argument for task_bg ${act}`;
+    }
+  }
+
+  // 8. Patch & surgical edit tools require valid patch / edits payloads
+  if (toolName === 'apply_patch') {
+    if (typeof record.patch !== 'string' || !record.patch.trim()) {
+      return 'Missing required "patch" argument for apply_patch';
+    }
+  }
+  if (toolName === 'fs_edit') {
+    if (typeof record.path !== 'string' || !record.path.trim()) {
+      return 'Missing required "path" argument for fs_edit';
+    }
+    if (!Array.isArray(record.edits) || record.edits.length === 0) {
+      return 'Missing required non-empty "edits" array for fs_edit';
+    }
+  }
+  if (toolName === 'MultiEdit') {
+    if (typeof record.file_path !== 'string' || !record.file_path.trim()) {
+      return 'Missing required "file_path" argument for MultiEdit';
+    }
+    if (!Array.isArray(record.edits) || record.edits.length === 0) {
+      return 'Missing required non-empty "edits" array for MultiEdit';
+    }
+  }
+
   return null;
 }

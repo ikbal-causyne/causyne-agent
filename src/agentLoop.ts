@@ -47,7 +47,7 @@ import { MemoryManager } from './memoryManager.js';
 import { cortexDb, isSearchablePrompt } from './cortex/vectorDb.js';
 import { buildStructuralSummary, condenseAndSave } from './cortex/autoCondenser.js';
 import { episodicStore, compileToolObservation } from './memory/episodicStore.js';
-import { buildCodexStyleSummary, compactSessionMessages, autoCompactIfUnderPressure } from './core/contextCompactor.js';
+import { buildCodexStyleSummary, compactSessionMessages, autoCompactIfUnderPressure, findSafeCompactionSplitIndex } from './core/contextCompactor.js';
 import { analyzeTask, buildTaskBrief } from './taskShape.js';
 import {
   lookupPlan,
@@ -545,7 +545,7 @@ export class AgentLoop {
     this.consecutiveBlockedActions = 0; // V8 Transcendence: Circuit Breaker
     this.recentActionSignatures = [];
     this.consecutiveReadOnlySteps = 0;
-    this.stallGuard = new StallGuardController();
+    this.stallGuard = new StallGuardController({ hardStopEnabled: true });
     this.smartToolsGovernor = new SmartToolsGovernor(4);
     this._smartToolsNudge = null;
     this.activeFreeFormPaths = new Map<string, string[][]>();
@@ -2180,11 +2180,15 @@ export class AgentLoop {
         // replaced by a summary, so memory, disk and CPU all stay bounded.
 
         const activeTier = isDevEmulator(this.config) ? 'super_max' : (this.config.tier || 'premium');
-        const MAX_CHAR_POOL = resolveCharPool(activeTier, this.config.maxCharPool, {
+        const rawCharPool = resolveCharPool(activeTier, this.config.maxCharPool, {
           provider: this.config.provider,
           model: this.config.model,
           overrideTokens: this.config.contextTokens || this.config.maxContextTokens
         });
+        // Reserve 25% headroom for system prompt, tool definitions, and completion tokens unless explicitly pinned
+        const MAX_CHAR_POOL = this.config.maxCharPool
+          ? rawCharPool
+          : Math.max(24_000, Math.floor(rawCharPool * 0.75));
 
         // 5-Stage Progressive Compaction (Claude Code Architecture / Research Section E):
         // Under low context pressure (<25% of pool), keep more recent small file reads
@@ -2249,19 +2253,19 @@ export class AgentLoop {
         this._contextChars = measureMessages(slidingWindow);
         this._contextLimitChars = MAX_CHAR_POOL;
 
-        // Real compaction: physically collapse the amputated range so the array
-        // stops growing. Index 0 (the Root Anchor / original user intent) is
-        // never compacted away.
+        // Real compaction: physically collapse the amputated range at a turn-safe
+        // boundary so role=tool results are never orphaned from their tool_calls.
         if (splitIndex >= 1) {
-          const dropped = this.messages.slice(1, splitIndex + 1);
-          if (dropped.length > 0) {
+          const safeSplit = findSafeCompactionSplitIndex(this.messages, splitIndex);
+          const dropped = safeSplit >= 1 ? this.messages.slice(1, safeSplit + 1) : [];
+          if (dropped.length > 0 && safeSplit >= 1) {
             const compactSummary = buildRecoverableDroppedSummary(
               dropped,
               buildCodexStyleSummary(dropped, this.currentTaskPrompt || this.userPrompt)
                 || buildStructuralSummary(dropped)
                 || describeDroppedMessages(dropped)
             );
-            const removed = compactInPlace(this.messages, splitIndex, compactSummary);
+            const removed = compactInPlace(this.messages, safeSplit, compactSummary);
             this._lastCompactionIndex = null;
             this.debugLog(`compacted ${removed} messages out of the live context`);
             auditLog.log({
@@ -5211,6 +5215,18 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           this.consecutiveFailures = repeated ? this.consecutiveFailures + 1 : 1;
           this.lastFailureType = errorType;
 
+          const isContextOverflow = errorType === 'context_overflow';
+          if (isContextOverflow) {
+            const compactRes = compactSessionMessages(this.messages, {
+              keepRecentTurns: Math.max(2, 6 - this.consecutiveFailures * 2),
+              taskId: this.taskId,
+              originalPrompt: this.currentTaskPrompt || this.userPrompt
+            });
+            if (compactRes.compacted) {
+              this.notice(`Context limit exceeded — auto-compacted ${compactRes.removedCount} earlier messages (~${compactRes.reclaimedTokens} tokens reclaimed) and retrying.`);
+            }
+          }
+
           const isNetwork = errorType === NETWORK_ERROR_TYPE;
           const isRateLimit = errorType === 'rate_limit';
           const maxAttempts = isRateLimit ? 5 : AgentLoop.MAX_CONSECUTIVE_FAILURES;
@@ -5247,10 +5263,9 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           await this.backoff(this.consecutiveFailures, retryAfterMs);
 
           // Only tell the MODEL about errors the model can act on. It cannot
-          // fix DNS, firewalls, or HTTP 429 rate limits, and pushing a system
-          // message per retry invalidates provider KV prompt caches.
+          // fix DNS, firewalls, HTTP 429 rate limits, or context overflow (already compacted).
           if (!isNetwork) {
-            if (!isRateLimit) {
+            if (!isRateLimit && !isContextOverflow) {
               this.messages.push({
                 role: 'system',
                 content: `[SYSTEM ERROR RECOVERED: A ${errorType} error occurred: "${e.message}". `

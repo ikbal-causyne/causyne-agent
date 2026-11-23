@@ -45,6 +45,23 @@ export const fsMove = {
         return { success: false, error: 'Source and destination refer to the same path.' };
       }
       const srcStat = await fs.lstat(src);
+      const isCaseOnlyRename = src.toLowerCase() === dest.toLowerCase();
+
+      if (isCaseOnlyRename) {
+        // Two-step temp rename handles case-only renames on case-insensitive APFS/NTFS
+        const tempHop = path.join(
+          path.dirname(dest),
+          `.causyne-mv-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`
+        );
+        await fs.rename(src, tempHop);
+        try {
+          await fs.rename(tempHop, dest);
+        } catch (hopErr) {
+          await fs.rename(tempHop, src).catch(() => {});
+          throw hopErr;
+        }
+        return { success: true, output: `Atomically moved ${sanitizeToolText(path.basename(src), 120)} to ${sanitizeToolText(path.basename(dest), 120)}` };
+      }
 
       const destStat = await fs.lstat(dest).catch((err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') return null;
