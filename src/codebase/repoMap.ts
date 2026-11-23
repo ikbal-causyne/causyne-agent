@@ -58,7 +58,92 @@ const SOURCE_EXTENSIONS: Readonly<Record<string, string>> = Object.freeze({
 const MAX_SCAN_FILES = 1500;
 const MAX_SINGLE_FILE_BYTES = 256 * 1024;
 const MAX_SYMBOLS_PER_FILE = 40;
+const MAX_PARSE_CACHE_ENTRIES = 4000;
 const IDENT_RE = /^[A-Za-z_$][A-Za-z0-9_$]{0,80}$/;
+
+interface CachedParsedFile {
+  mtimeMs: number;
+  size: number;
+  symbols: RepoMapSymbol[];
+  imports: string[];
+}
+
+const repoMapParseCache = new Map<string, CachedParsedFile>();
+
+export function clearRepoMapCache(): void {
+  repoMapParseCache.clear();
+}
+
+interface IgnoreEntry {
+  raw: string;
+  dirOnly: boolean;
+  anchored: boolean;
+}
+
+function loadSimpleIgnorePatterns(root: string): IgnoreEntry[] {
+  const entries: IgnoreEntry[] = [];
+  for (const filename of ['.gitignore', '.causyneignore']) {
+    const filePath = path.join(root, filename);
+    try {
+      const stat = fs.lstatSync(filePath);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 128 * 1024) continue;
+      const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+      for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('!')) continue;
+        const dirOnly = trimmed.endsWith('/');
+        let pattern = dirOnly ? trimmed.slice(0, -1) : trimmed;
+        const anchored = pattern.startsWith('/');
+        if (anchored) pattern = pattern.slice(1);
+        if (!pattern) continue;
+        entries.push({ raw: pattern.replace(/\\/g, '/'), dirOnly, anchored });
+        if (entries.length >= 256) break;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return entries;
+}
+
+function matchesSimpleGlob(text: string, pattern: string): boolean {
+  if (pattern === text) return true;
+  if (!pattern.includes('*')) return false;
+  // Linear single-wildcard / prefix-suffix check (zero ReDoS)
+  const parts = pattern.split('*');
+  if (parts.length === 2) {
+    const [prefix, suffix] = parts as [string, string];
+    return text.length >= prefix.length + suffix.length && text.startsWith(prefix) && text.endsWith(suffix);
+  }
+  let pos = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    if (!part) continue;
+    const found = text.indexOf(part, pos);
+    if (found === -1) return false;
+    if (i === 0 && !pattern.startsWith('*') && found !== 0) return false;
+    pos = found + part.length;
+  }
+  if (!pattern.endsWith('*')) {
+    const last = parts[parts.length - 1]!;
+    if (last && !text.endsWith(last)) return false;
+  }
+  return true;
+}
+
+function isIgnoredByRules(relPosix: string, basename: string, isDir: boolean, rules: readonly IgnoreEntry[]): boolean {
+  for (const rule of rules) {
+    if (rule.dirOnly && !isDir) continue;
+    if (rule.anchored || rule.raw.includes('/')) {
+      if (relPosix === rule.raw || relPosix.startsWith(`${rule.raw}/`) || matchesSimpleGlob(relPosix, rule.raw)) {
+        return true;
+      }
+    } else if (matchesSimpleGlob(basename, rule.raw)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function extractJsTsSymbolsAndImports(lines: readonly string[]): { symbols: RepoMapSymbol[]; imports: string[] } {
   const symbols: RepoMapSymbol[] = [];
@@ -224,13 +309,15 @@ export function buildRepoMap(workspaceRoot: string, options: RepoMapOptions = {}
       .map((f) => path.relative(root, path.resolve(root, f.trim())).replace(/\\/g, '/'))
   );
 
-  // Bounded iterative walk (no recursion overflow, no symlink escape)
+  // Bounded BFS walk (maps shallower root modules across the full tree before deep leaves; skips symlinks & ignored paths)
+  const ignoreRules = loadSimpleIgnorePatterns(root);
   const discovered: Array<{ absPath: string; relPath: string; language: string }> = [];
-  const stack: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  let queueHead = 0;
   let totalSourceFiles = 0;
 
-  while (stack.length > 0) {
-    const { dir, depth } = stack.pop()!;
+  while (queueHead < queue.length) {
+    const { dir, depth } = queue[queueHead++]!;
     if (depth > 12) continue;
     let entries: fs.Dirent[];
     try {
@@ -241,43 +328,71 @@ export function buildRepoMap(workspaceRoot: string, options: RepoMapOptions = {}
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
+      const absEntry = path.join(dir, entry.name);
+      const relEntry = path.relative(root, absEntry).replace(/\\/g, '/');
       if (entry.isDirectory()) {
-        if (HEAVY_DEV_EXCLUDES.has(entry.name) || entry.name === '.causyne-worktrees' || entry.name.startsWith('.')) {
+        if (
+          HEAVY_DEV_EXCLUDES.has(entry.name)
+          || entry.name === '.causyne-worktrees'
+          || entry.name.startsWith('.')
+          || isIgnoredByRules(relEntry, entry.name, true, ignoreRules)
+        ) {
           continue;
         }
-        stack.push({ dir: path.join(dir, entry.name), depth: depth + 1 });
+        queue.push({ dir: absEntry, depth: depth + 1 });
         continue;
       }
       if (!entry.isFile()) continue;
       if (BINARY_EXTENSIONS_RE.test(entry.name)) continue;
+      if (isIgnoredByRules(relEntry, entry.name, false, ignoreRules)) continue;
       const ext = path.extname(entry.name).toLowerCase();
       const language = SOURCE_EXTENSIONS[ext];
       if (!language) continue;
       totalSourceFiles++;
       if (discovered.length >= maxFiles) continue;
-      const absPath = path.join(dir, entry.name);
-      const relPath = path.relative(root, absPath).replace(/\\/g, '/');
-      discovered.push({ absPath, relPath, language });
+      discovered.push({ absPath: absEntry, relPath: relEntry, language });
     }
   }
 
   const knownRelSet = new Set(discovered.map((d) => d.relPath));
   const nodes: RepoMapFileNode[] = [];
   for (const item of discovered) {
-    let text = '';
+    let stat: fs.Stats;
     try {
-      const stat = fs.lstatSync(item.absPath);
+      stat = fs.lstatSync(item.absPath);
       if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_SINGLE_FILE_BYTES) continue;
-      text = fs.readFileSync(item.absPath, 'utf8');
     } catch {
       continue;
     }
-    const lines = text.split(/\r?\n/);
-    const extracted = (item.language === 'ts' || item.language === 'js')
-      ? extractJsTsSymbolsAndImports(lines)
-      : item.language === 'py'
-        ? extractPythonSymbolsAndImports(lines)
-        : extractGenericSymbols(lines, item.language);
+    const cacheKey = `${item.absPath}::${item.language}`;
+    const cached = repoMapParseCache.get(cacheKey);
+    let extracted: { symbols: RepoMapSymbol[]; imports: string[] };
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+      extracted = { symbols: cached.symbols, imports: cached.imports };
+    } else {
+      let text = '';
+      try {
+        text = fs.readFileSync(item.absPath, 'utf8');
+      } catch {
+        continue;
+      }
+      const lines = text.split(/\r?\n/);
+      extracted = (item.language === 'ts' || item.language === 'js')
+        ? extractJsTsSymbolsAndImports(lines)
+        : item.language === 'py'
+          ? extractPythonSymbolsAndImports(lines)
+          : extractGenericSymbols(lines, item.language);
+      if (repoMapParseCache.size >= MAX_PARSE_CACHE_ENTRIES && !repoMapParseCache.has(cacheKey)) {
+        const oldest = repoMapParseCache.keys().next().value;
+        if (oldest !== undefined) repoMapParseCache.delete(oldest);
+      }
+      repoMapParseCache.set(cacheKey, {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        symbols: extracted.symbols,
+        imports: extracted.imports
+      });
+    }
     nodes.push({
       relPath: item.relPath,
       absPath: item.absPath,

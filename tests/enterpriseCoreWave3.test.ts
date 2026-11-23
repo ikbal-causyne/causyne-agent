@@ -19,6 +19,7 @@ import { persistentShell, cleanupPersistentShells } from '../src/tools/persisten
 import { LspSession } from '../src/lsp/lspClient.js';
 import { loadCustomLspServers, matchingSpecsForFile, findLocalOrPathExecutable } from '../src/lsp/lspCatalog.js';
 import { lspCodeIntel } from '../src/tools/lspCodeIntel.js';
+import { buildRepoMap, clearRepoMapCache } from '../src/codebase/repoMap.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -502,5 +503,26 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.ok(matchingSpecsForFile('App.vue').some((s) => s.id === 'vue-ls'));
     assert.ok(lspCodeIntel.schema.parameters.properties.action.enum.includes('incoming_calls'));
     assert.ok(lspCodeIntel.schema.parameters.properties.action.enum.includes('type_definition'));
+  });
+
+  test('buildRepoMap uses BFS traversal (never drops shallow a* files), respects .gitignore/.causyneignore, and caches parsed files', () => {
+    clearRepoMapCache();
+    const ws = path.join(TMP, 'repomap-bfs');
+    fs.mkdirSync(path.join(ws, 'alpha'), { recursive: true });
+    fs.mkdirSync(path.join(ws, 'zeta', 'deep', 'nested'), { recursive: true });
+    fs.mkdirSync(path.join(ws, 'generated'), { recursive: true });
+    fs.writeFileSync(path.join(ws, '.gitignore'), 'generated/\n*.gen.ts\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'alpha', 'core.ts'), 'export function coreAlpha() { return 1; }\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'generated', 'skip.ts'), 'export const ignoredDir = true;\n', 'utf8');
+    fs.writeFileSync(path.join(ws, 'alpha', 'auto.gen.ts'), 'export const ignoredGlob = true;\n', 'utf8');
+    for (let i = 0; i < 15; i++) {
+      fs.writeFileSync(path.join(ws, 'zeta', 'deep', 'nested', `leaf${i}.ts`), `export const leaf${i} = ${i};\n`, 'utf8');
+    }
+
+    const mapped = buildRepoMap(ws, { maxFiles: 10 });
+    const rels = mapped.files.map((f) => f.relPath);
+    assert.ok(rels.includes('alpha/core.ts'), `BFS must include shallow alpha/core.ts, got: ${rels.join(', ')}`);
+    assert.equal(rels.some((r) => r.startsWith('generated/')), false, '.gitignore directory must be excluded');
+    assert.equal(rels.includes('alpha/auto.gen.ts'), false, '.gitignore glob must be excluded');
   });
 });
