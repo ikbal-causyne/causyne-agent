@@ -9,11 +9,15 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { causyneHome, resolveUserPath } from '../utils/paths.js';
+import { atomicWriteFileSync } from '../infra/atomicWriter.js';
+import { isWslEnvironment } from './clipboardSync.js';
 import { stripAnsi } from './text.js';
+
+export type SupportedImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'image/bmp' | 'image/tiff';
 
 export interface ClipboardImageAttachment {
   type: 'image';
-  mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  mimeType: SupportedImageMimeType;
   base64: string;
   name: string;
   path: string;
@@ -33,10 +37,10 @@ export function formatByteSize(bytes: number): string {
 /**
  * Detect image mime type from binary magic bytes.
  */
-export function detectImageMimeType(buffer: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | null {
-  if (!buffer || buffer.length < 8) return null;
+export function detectImageMimeType(buffer: Buffer): SupportedImageMimeType | null {
+  if (!buffer || buffer.length < 4) return null;
   // PNG: 89 50 4E 47 0D 0A 1A 0A
-  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+  if (buffer.length >= 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
     return 'image/png';
   }
   // JPEG: FF D8 FF
@@ -53,7 +57,34 @@ export function detectImageMimeType(buffer: Buffer): 'image/png' | 'image/jpeg' 
       buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
     return 'image/webp';
   }
+  // BMP: 42 4D
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return 'image/bmp';
+  }
+  // TIFF: 49 49 2A 00 (little-endian) or 4D 4D 00 2A (big-endian)
+  if ((buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2a && buffer[3] === 0x00) ||
+      (buffer[0] === 0x4d && buffer[1] === 0x4d && buffer[2] === 0x00 && buffer[3] === 0x2a)) {
+    return 'image/tiff';
+  }
   return null;
+}
+
+const WINDOWS_RESERVED_FILENAME_RE = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
+
+export function sanitizeAttachmentFilename(rawName: string | undefined, fallback: string): string {
+  if (!rawName) return fallback;
+  let cleaned = stripAnsi(rawName)
+    .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .trim();
+  while (cleaned.endsWith('.') || cleaned.endsWith(' ')) {
+    cleaned = cleaned.slice(0, -1);
+  }
+  const base = cleaned ? path.basename(cleaned) : '';
+  if (!base || base === '.' || base === '..' || WINDOWS_RESERVED_FILENAME_RE.test(base)) {
+    return fallback;
+  }
+  return base.slice(0, 128);
 }
 
 /**
@@ -80,21 +111,17 @@ export function persistImageBuffer(
   const ext = mimeType === 'image/jpeg' ? 'jpg'
     : mimeType === 'image/webp' ? 'webp'
     : mimeType === 'image/gif' ? 'gif'
+    : mimeType === 'image/bmp' ? 'bmp'
+    : mimeType === 'image/tiff' ? 'tiff'
     : 'png';
 
   const timestamp = Date.now();
-  const cleanedPreferred = preferredName
-    ? stripAnsi(preferredName).replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim()
-    : '';
-  const basePreferred = cleanedPreferred ? path.basename(cleanedPreferred) : '';
-  const filename = basePreferred && basePreferred !== '.' && basePreferred !== '..'
-    ? basePreferred
-    : `screenshot_${timestamp}.${ext}`;
+  const filename = sanitizeAttachmentFilename(preferredName, `screenshot_${timestamp}.${ext}`);
 
   const attachmentsDir = getAttachmentsDirectory();
   const filePath = path.join(attachmentsDir, filename);
 
-  fs.writeFileSync(filePath, buffer, { mode: 0o600 });
+  atomicWriteFileSync(filePath, buffer, { mode: 0o600 });
 
   return {
     type: 'image',
@@ -237,7 +264,7 @@ export function readClipboardImageSync(): ClipboardImageAttachment | null {
     let buf: Buffer | null = null;
     if (process.platform === 'darwin') {
       buf = readDarwinClipboardImageSync();
-    } else if (process.platform === 'win32' || (os.release().toLowerCase().includes('wsl'))) {
+    } else if (process.platform === 'win32' || isWslEnvironment()) {
       buf = readWindowsClipboardImageSync();
     } else if (process.platform === 'linux') {
       buf = readLinuxClipboardImageSync();

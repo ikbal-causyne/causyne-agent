@@ -2,7 +2,20 @@
 // Supports macOS (pbpaste), Windows (powershell Get-Clipboard), Linux (wl-paste, xclip, xsel),
 // and terminal emulator OSC 52 escape sequences across SSH and local sessions.
 import { execFileSync, spawnSync } from 'node:child_process';
+import os from 'node:os';
 import { runWithStageWrite } from './consoleGuard.js';
+export function isWslEnvironment(platform = process.platform, release = os.release(), env = process.env) {
+    if (platform !== 'linux')
+        return false;
+    if (typeof env.WSL_DISTRO_NAME === 'string' && env.WSL_DISTRO_NAME.trim().length > 0)
+        return true;
+    if (typeof env.WSL_INTEROP === 'string' && env.WSL_INTEROP.trim().length > 0)
+        return true;
+    const lower = String(release || '').toLowerCase();
+    return lower.includes('microsoft') || lower.includes('wsl');
+}
+const PS_READ_UTF8_CLIPBOARD = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $v = Get-Clipboard -Raw; if ($null -ne $v) { [Console]::Out.Write($v) }';
+const PS_WRITE_UTF8_CLIPBOARD = '[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())';
 /**
  * Emit OSC 52 escape sequence to synchronize terminal emulator clipboard.
  * Allows copy/paste even across SSH sessions, tmux, and container boundaries.
@@ -39,11 +52,11 @@ export function readClipboardSync() {
             return execFileSync('pbpaste', { encoding: 'utf8', timeout: 500 });
         }
         if (process.platform === 'win32') {
-            return execFileSync('powershell.exe', ['-NoProfile', '-Command', 'Get-Clipboard'], {
+            return execFileSync('powershell.exe', ['-NonInteractive', '-NoProfile', '-Command', PS_READ_UTF8_CLIPBOARD], {
                 encoding: 'utf8',
-                timeout: 1000,
+                timeout: 1500,
                 windowsHide: true
-            });
+            }).replace(/\r\n$/, '');
         }
         if (process.platform === 'linux') {
             try {
@@ -57,10 +70,21 @@ export function readClipboardSync() {
                     });
                 }
                 catch {
-                    return execFileSync('xsel', ['--clipboard', '--output'], {
-                        encoding: 'utf8',
-                        timeout: 500
-                    });
+                    try {
+                        return execFileSync('xsel', ['--clipboard', '--output'], {
+                            encoding: 'utf8',
+                            timeout: 500
+                        });
+                    }
+                    catch {
+                        if (isWslEnvironment()) {
+                            return execFileSync('powershell.exe', ['-NonInteractive', '-NoProfile', '-Command', PS_READ_UTF8_CLIPBOARD], {
+                                encoding: 'utf8',
+                                timeout: 1500,
+                                windowsHide: true
+                            }).replace(/\r\n$/, '');
+                        }
+                    }
                 }
             }
         }
@@ -79,12 +103,13 @@ export function writeClipboardSync(value) {
     const candidates = process.platform === 'darwin'
         ? [['pbcopy', []]]
         : process.platform === 'win32'
-            ? [['powershell.exe', ['-NoProfile', '-Command', 'Set-Clipboard -Value ([Console]::In.ReadToEnd())']]]
+            ? [['powershell.exe', ['-NonInteractive', '-NoProfile', '-Command', PS_WRITE_UTF8_CLIPBOARD]]]
             : process.platform === 'linux'
                 ? [
                     ['wl-copy', []],
                     ['xclip', ['-selection', 'clipboard', '-i']],
-                    ['xsel', ['--clipboard', '--input']]
+                    ['xsel', ['--clipboard', '--input']],
+                    ...(isWslEnvironment() ? [['powershell.exe', ['-NonInteractive', '-NoProfile', '-Command', PS_WRITE_UTF8_CLIPBOARD]]] : [])
                 ]
                 : [];
     for (const [command, args] of candidates) {
