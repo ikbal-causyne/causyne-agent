@@ -15,6 +15,7 @@ import { fsWrite } from '../src/tools/fsWrite.js';
 import { fsRead } from '../src/tools/fsRead.js';
 import { checkFileStaleness, clearFileTracker } from '../src/tools/fileTracker.js';
 import { sysRun, isFinalCommandSearch, cleanSubprocessOutput, resolvePortableShell } from '../src/tools/sysRun.js';
+import { persistentShell, cleanupPersistentShells } from '../src/tools/persistentShell.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -395,5 +396,22 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.match(bigRes.output, /HEAD_START_MARKER/);
     assert.match(bigRes.output, /OUTPUT TRUNCATED/);
     assert.match(bigRes.output, /TAIL_END_MARKER/);
+  });
+
+  test('persistentShell completes cleanly on >256KiB stdout without dropping markerToken', async () => {
+    const ws = path.join(TMP, 'pshell-large');
+    fs.mkdirSync(ws, { recursive: true });
+    try {
+      const res = await persistentShell.execute({
+        sessionId: 'w3-large-test',
+        timeoutMs: 8000,
+        command: `${JSON.stringify(process.execPath)} -e "process.stdout.write('Z'.repeat(300000) + '\\n');"`
+      }, { workspaceRoot: ws });
+      assert.equal(res.success, true, res.error);
+      const parsed = JSON.parse(res.output || '{}');
+      assert.match(parsed.stdout || '', /truncated at 256 KiB/i);
+    } finally {
+      cleanupPersistentShells();
+    }
   });
 });

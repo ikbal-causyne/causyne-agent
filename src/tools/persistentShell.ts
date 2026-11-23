@@ -1,6 +1,7 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, spawnSync, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import crypto from 'node:crypto';
 import { getEnhancedEnv } from './sysRun.js';
+import { redactTextSecrets } from '../providers/byokHttp.js';
 import {
   resolveOsSandboxMode,
   wrapCommandWithOsSandbox,
@@ -23,6 +24,7 @@ const ALLOWED_POSIX_SHELLS = new Set(['/bin/sh', '/bin/bash', '/bin/zsh', '/usr/
 interface PersistentShellSession {
   process: ChildProcessWithoutNullStreams;
   currentCwd: string;
+  detachedGroup: boolean;
   queue: Promise<void>;
 }
 
@@ -42,11 +44,35 @@ export interface PersistentShellResult {
 
 const sessions = new Map<string, PersistentShellSession>();
 
+function terminateShellProcess(session: PersistentShellSession, force = false): void {
+  const proc = session.process;
+  const pid = proc.pid;
+  try { proc.stdin?.end(); } catch { /* ignore */ }
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      if (force) {
+        spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 2000 });
+      } else {
+        execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 4000 }, () => {});
+      }
+    } catch { /* ignore */ }
+    try { proc.kill(); } catch { /* ignore */ }
+    return;
+  }
+  const sig: NodeJS.Signals = force ? 'SIGKILL' : 'SIGTERM';
+  if (session.detachedGroup) {
+    try {
+      process.kill(-pid, sig);
+      return;
+    } catch { /* fall back to direct child */ }
+  }
+  try { proc.kill(sig); } catch { /* ignore */ }
+}
+
 export function cleanupPersistentShells(): void {
   for (const [, session] of sessions.entries()) {
-    try {
-      session.process.kill('SIGTERM');
-    } catch { /* ignore */ }
+    terminateShellProcess(session, true);
   }
   sessions.clear();
 }
@@ -83,7 +109,8 @@ export const persistentShell = {
       const timeoutMs = boundedInteger(safeArgs.timeoutMs, 30000, 1000, 120_000);
 
       if (reset && sessions.has(sessionId)) {
-        try { sessions.get(sessionId)?.process.kill('SIGTERM'); } catch { /* ignore */ }
+        const prevSession = sessions.get(sessionId);
+        if (prevSession) terminateShellProcess(prevSession, false);
         sessions.delete(sessionId);
       }
 
@@ -130,10 +157,12 @@ export const persistentShell = {
           });
         }
 
+        const detachedGroup = !isWin;
         const proc = spawn(wrapped.command, wrapped.args, {
           cwd: initialCwd,
           env: { ...getEnhancedEnv(), CAUSYNE_PERSISTENT_SHELL: '1', PS1: '' },
           stdio: ['pipe', 'pipe', 'pipe'],
+          detached: detachedGroup,
           windowsHide: true
         });
 
@@ -144,6 +173,7 @@ export const persistentShell = {
         session = {
           process: proc,
           currentCwd: initialCwd,
+          detachedGroup,
           queue: Promise.resolve()
         };
         sessions.set(sessionId, session);
@@ -152,15 +182,32 @@ export const persistentShell = {
       const activeSession = session;
       const runCommand = (): Promise<PersistentShellResult> => new Promise<PersistentShellResult>((resolve) => {
         const markerToken = `__CAUSYNE_PTY_DONE_${Date.now()}_${crypto.randomBytes(8).toString('hex')}__`;
+        const markerWindowMax = Math.max(4096, markerToken.length * 4);
         let outputBuffer = '';
+        let markerTailWindow = '';
+        let stdoutTruncated = false;
         let errorBuffer = '';
         let isDone = false;
 
         const onData = (data: Buffer): void => {
+          const text = data.toString('utf8');
           if (outputBuffer.length < MAX_BUFFER_CHARS) {
-            outputBuffer += data.toString('utf8').slice(0, MAX_BUFFER_CHARS - outputBuffer.length);
+            const room = MAX_BUFFER_CHARS - outputBuffer.length;
+            if (text.length <= room) {
+              outputBuffer += text;
+            } else {
+              outputBuffer += text.slice(0, room);
+              stdoutTruncated = true;
+            }
+          } else {
+            stdoutTruncated = true;
           }
-          if (outputBuffer.includes(markerToken)) {
+          // Always track rolling tail window so markerToken is NEVER lost after >256KiB output
+          markerTailWindow += text;
+          if (markerTailWindow.length > markerWindowMax) {
+            markerTailWindow = markerTailWindow.slice(-markerWindowMax);
+          }
+          if (markerTailWindow.includes(markerToken)) {
             finish();
           }
         };
@@ -177,7 +224,7 @@ export const persistentShell = {
             cleanupListeners();
             resolve({
               success: false,
-              error: `Persistent shell exited before completing command. Output captured:\n${outputBuffer}\n${errorBuffer}`
+              error: `Persistent shell exited before completing command. Output captured:\n${redactTextSecrets(outputBuffer)}\n${redactTextSecrets(errorBuffer)}`
             });
           }
         };
@@ -186,10 +233,22 @@ export const persistentShell = {
           if (!isDone) {
             isDone = true;
             cleanupListeners();
-            try { activeSession.process.kill('SIGINT'); } catch { /* ignore */ }
+            if (process.platform === 'win32') {
+              // On Windows, child.kill('SIGINT') terminates the whole PowerShell process; recycle cleanly.
+              terminateShellProcess(activeSession, false);
+              sessions.delete(sessionId);
+            } else {
+              try {
+                if (activeSession.detachedGroup && activeSession.process.pid) {
+                  process.kill(-activeSession.process.pid, 'SIGINT');
+                } else {
+                  activeSession.process.kill('SIGINT');
+                }
+              } catch { /* ignore */ }
+            }
             resolve({
               success: false,
-              error: `Command timed out after ${timeoutMs}ms. Output captured so far:\n${sanitizeToolText(outputBuffer, 4096)}\n${sanitizeToolText(errorBuffer, 2048)}`
+              error: `Command timed out after ${timeoutMs}ms. Output captured so far:\n${sanitizeToolText(redactTextSecrets(outputBuffer), 4096)}\n${sanitizeToolText(redactTextSecrets(errorBuffer), 2048)}`
             });
           }
         }, timeoutMs);
@@ -212,15 +271,21 @@ export const persistentShell = {
           while (cleanOutput.includes(markerEchoLine)) {
             cleanOutput = cleanOutput.split(markerEchoLine).join('');
           }
-          cleanOutput = cleanOutput.trim();
+          cleanOutput = redactTextSecrets(cleanOutput.trim(), [], { sanitizeTerminal: false });
+          const cleanErr = redactTextSecrets(errorBuffer.trim(), [], { sanitizeTerminal: false });
+          const sanitizedStdout = sanitizeToolText(cleanOutput || (cleanErr ? '' : '[No output]'), stdoutTruncated ? 65000 : 65536);
+          const finalStdout = stdoutTruncated
+            ? `${sanitizedStdout}\n...[stdout truncated at 256 KiB; command completed]`
+            : sanitizedStdout;
 
           resolve({
             success: true,
             output: JSON.stringify({
               sessionId,
               status: 'Executed cleanly in stateful session',
-              stdout: sanitizeToolText(cleanOutput || (errorBuffer ? '' : '[No output]'), 65536),
-              stderr: errorBuffer.trim() ? sanitizeToolText(errorBuffer.trim(), 16384) : undefined
+              ...(stdoutTruncated ? { truncated: true } : {}),
+              stdout: finalStdout,
+              stderr: cleanErr ? sanitizeToolText(cleanErr, 16384) : undefined
             }, null, 2)
           });
         };
