@@ -16,6 +16,7 @@ import { fsRead } from '../src/tools/fsRead.js';
 import { checkFileStaleness, clearFileTracker } from '../src/tools/fileTracker.js';
 import { sysRun, isFinalCommandSearch, cleanSubprocessOutput, resolvePortableShell } from '../src/tools/sysRun.js';
 import { persistentShell, cleanupPersistentShells } from '../src/tools/persistentShell.js';
+import { LspSession } from '../src/lsp/lspClient.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -412,6 +413,68 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
       assert.match(parsed.stdout || '', /truncated at 256 KiB/i);
     } finally {
       cleanupPersistentShells();
+    }
+  });
+
+  test('LspSession answers workspace/configuration arrays, supports LSP 3.17 pull diagnostics, typeDefinition/implementation/callHierarchy, and killSync', async () => {
+    const ws = path.join(TMP, 'lsp-317');
+    fs.mkdirSync(ws, { recursive: true });
+    const sampleFile = path.join(ws, 'mod.ts');
+    fs.writeFileSync(sampleFile, 'export function greet() { return 1; }\n', 'utf8');
+    const cfgReplyFile = path.join(ws, 'cfg-reply.json');
+    const mockLsp = path.join(ws, 'mock-lsp.mjs');
+    fs.writeFileSync(mockLsp, `
+      import fs from 'node:fs';
+      const encode = (obj) => {
+        const body = Buffer.from(JSON.stringify(obj), 'utf8');
+        return Buffer.concat([Buffer.from('Content-Length: ' + body.length + '\\r\\n\\r\\n', 'utf8'), body]);
+      };
+      let buf = Buffer.alloc(0);
+      process.stdin.on('data', (chunk) => {
+        buf = Buffer.concat([buf, chunk]);
+        while (true) {
+          const sep = buf.indexOf('\\r\\n\\r\\n');
+          if (sep === -1) break;
+          const m = /Content-Length:\\s*(\\d+)/i.exec(buf.slice(0, sep).toString('utf8'));
+          if (!m) break;
+          const len = Number(m[1]);
+          if (buf.length < sep + 4 + len) break;
+          const msg = JSON.parse(buf.slice(sep + 4, sep + 4 + len).toString('utf8'));
+          buf = buf.slice(sep + 4 + len);
+          if (msg.method === 'initialize') {
+            process.stdout.write(encode({ jsonrpc: '2.0', id: msg.id, result: { capabilities: { diagnosticProvider: true } } }));
+            process.stdout.write(encode({ jsonrpc: '2.0', id: 900, method: 'workspace/configuration', params: { items: [{ section: 'a' }, { section: 'b' }] } }));
+          } else if (msg.id === 900) {
+            fs.writeFileSync(${JSON.stringify(cfgReplyFile)}, JSON.stringify(msg.result));
+          } else if (msg.method === 'textDocument/diagnostic') {
+            process.stdout.write(encode({ jsonrpc: '2.0', id: msg.id, result: { kind: 'full', items: [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } }, severity: 1, code: 'TS2322', message: 'Pulled type error' }] } }));
+          } else if (msg.method === 'textDocument/typeDefinition') {
+            process.stdout.write(encode({ jsonrpc: '2.0', id: msg.id, result: [{ uri: msg.params.textDocument.uri, range: { start: { line: 0, character: 7 }, end: { line: 0, character: 12 } } }] }));
+          } else if (msg.method === 'textDocument/prepareCallHierarchy') {
+            process.stdout.write(encode({ jsonrpc: '2.0', id: msg.id, result: [{ name: 'greet', kind: 12, uri: msg.params.textDocument.uri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 20 } }, selectionRange: { start: { line: 0, character: 16 }, end: { line: 0, character: 21 } } }] }));
+          } else if (msg.method === 'callHierarchy/incomingCalls') {
+            process.stdout.write(encode({ jsonrpc: '2.0', id: msg.id, result: [{ from: { name: 'main', kind: 12, uri: msg.params.item.uri, range: { start: { line: 5, character: 0 }, end: { line: 5, character: 10 } }, selectionRange: { start: { line: 5, character: 0 }, end: { line: 5, character: 4 } } } }] }));
+          } else if (msg.method === 'shutdown') {
+            process.stdout.write(encode({ jsonrpc: '2.0', id: msg.id, result: null }));
+          }
+        }
+      });
+    `, 'utf8');
+
+    const session = new LspSession({ serverId: 'mock', command: process.execPath, args: [mockLsp], workspaceRoot: ws });
+    try {
+      const diags = await session.getDiagnostics(sampleFile, 200);
+      assert.equal(diags.length, 1);
+      assert.equal(diags[0]?.message, 'Pulled type error');
+      const typeDefs = await session.typeDefinition(sampleFile, 1, 1);
+      assert.equal(typeDefs[0]?.line, 1);
+      const callers = await session.callHierarchy(sampleFile, 1, 17, 'incoming');
+      assert.equal(callers[0]?.name, 'main');
+      assert.equal(callers[0]?.line, 6);
+      assert.deepEqual(JSON.parse(fs.readFileSync(cfgReplyFile, 'utf8')), [null, null], 'workspace/configuration must reply with matching-length array');
+    } finally {
+      session.killSync();
+      assert.equal(session.isAlive(), false);
     }
   });
 });

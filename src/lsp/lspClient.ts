@@ -200,6 +200,7 @@ export class LspSession {
   private pending = new Map<number, PendingRequest>();
   private openDocs = new Map<string, { version: number; text: string }>();
   private diagnostics = new Map<string, LspDiagnostic[]>();
+  private diagnosticsSeq = new Map<string, number>();
   private diagnosticWaiters = new Map<string, Array<() => void>>();
   private initPromise: Promise<void> | null = null;
   private closed = false;
@@ -271,13 +272,18 @@ export class LspSession {
           textDocument: {
             synchronization: { didSave: true },
             definition: { linkSupport: true },
+            typeDefinition: { linkSupport: true },
+            implementation: { linkSupport: true },
+            callHierarchy: { dynamicRegistration: false },
             references: {},
             hover: { contentFormat: ['markdown', 'plaintext'] },
             documentSymbol: { hierarchicalDocumentSymbolSupport: true },
-            publishDiagnostics: { relatedInformation: false }
+            publishDiagnostics: { relatedInformation: false },
+            diagnostic: { dynamicRegistration: false }
           },
           workspace: {
             workspaceFolders: true,
+            configuration: true,
             symbol: {}
           }
         }
@@ -312,10 +318,19 @@ export class LspSession {
       return;
     }
 
-    // Server -> client request (respond with null result to avoid stalling servers)
+    // Server -> client request (answer protocol queries accurately so servers never stall or crash)
     if (msg.id !== undefined && msg.id !== null && typeof msg.method === 'string') {
+      let result: unknown = null;
+      if (msg.method === 'workspace/configuration') {
+        const items = (msg.params && typeof msg.params === 'object' && Array.isArray((msg.params as { items?: unknown }).items))
+          ? (msg.params as { items: unknown[] }).items
+          : [];
+        result = items.map(() => null);
+      } else if (msg.method === 'workspace/workspaceFolders') {
+        result = [{ uri: filePathToUri(this.workspaceRoot), name: path.basename(this.workspaceRoot) }];
+      }
       try {
-        this.writeFrame({ jsonrpc: '2.0', id: msg.id, result: null });
+        this.writeFrame({ jsonrpc: '2.0', id: msg.id, result });
       } catch { /* ignore */ }
       return;
     }
@@ -324,37 +339,43 @@ export class LspSession {
     if (msg.method === 'textDocument/publishDiagnostics' && msg.params && typeof msg.params === 'object') {
       const params = msg.params as { uri?: unknown; diagnostics?: unknown };
       if (typeof params.uri !== 'string') return;
-      const file = uriToFilePath(params.uri);
-      const rawDiags = Array.isArray(params.diagnostics) ? params.diagnostics : [];
-      const mapped: LspDiagnostic[] = [];
-      for (const d of rawDiags.slice(0, MAX_DIAGNOSTICS_PER_FILE)) {
-        if (!d || typeof d !== 'object') continue;
-        const rec = d as {
-          range?: LspRange;
-          severity?: unknown;
-          code?: unknown;
-          source?: unknown;
-          message?: unknown;
-        };
-        const msgText = typeof rec.message === 'string' ? safeDisplay(rec.message).replace(/\s+/g, ' ').trim() : '';
-        if (!msgText) continue;
-        mapped.push({
-          file,
-          line: Math.max(1, Number(rec.range?.start?.line ?? 0) + 1),
-          column: Math.max(1, Number(rec.range?.start?.character ?? 0) + 1),
-          severity: mapSeverity(rec.severity),
-          ...(rec.code !== undefined && rec.code !== null ? { code: safeDisplay(String(rec.code)) } : {}),
-          ...(typeof rec.source === 'string' && rec.source ? { source: safeDisplay(rec.source) } : {}),
-          message: msgText.slice(0, 400)
-        });
-      }
+      const mapped = this.mapRawDiagnostics(params.uri, params.diagnostics);
       this.diagnostics.set(params.uri, mapped);
+      this.diagnosticsSeq.set(params.uri, (this.diagnosticsSeq.get(params.uri) ?? 0) + 1);
       const waiters = this.diagnosticWaiters.get(params.uri);
       if (waiters && waiters.length > 0) {
         this.diagnosticWaiters.delete(params.uri);
         for (const wake of waiters) wake();
       }
     }
+  }
+
+  private mapRawDiagnostics(uri: string, rawInput: unknown): LspDiagnostic[] {
+    const file = uriToFilePath(uri);
+    const rawDiags = Array.isArray(rawInput) ? rawInput : [];
+    const mapped: LspDiagnostic[] = [];
+    for (const d of rawDiags.slice(0, MAX_DIAGNOSTICS_PER_FILE)) {
+      if (!d || typeof d !== 'object') continue;
+      const rec = d as {
+        range?: LspRange;
+        severity?: unknown;
+        code?: unknown;
+        source?: unknown;
+        message?: unknown;
+      };
+      const msgText = typeof rec.message === 'string' ? safeDisplay(rec.message).replace(/\s+/g, ' ').trim() : '';
+      if (!msgText) continue;
+      mapped.push({
+        file,
+        line: Math.max(1, Number(rec.range?.start?.line ?? 0) + 1),
+        column: Math.max(1, Number(rec.range?.start?.character ?? 0) + 1),
+        severity: mapSeverity(rec.severity),
+        ...(rec.code !== undefined && rec.code !== null ? { code: safeDisplay(String(rec.code)) } : {}),
+        ...(typeof rec.source === 'string' && rec.source ? { source: safeDisplay(rec.source) } : {}),
+        message: msgText.slice(0, 400)
+      });
+    }
+    return mapped;
   }
 
   private writeFrame(payload: Record<string, unknown>): void {
@@ -436,10 +457,31 @@ export class LspSession {
     return uri;
   }
 
-  async getDiagnostics(filePath: string, waitMs = 600): Promise<LspDiagnostic[]> {
-    const uri = await this.syncFile(filePath);
-    // Wait briefly for server push diagnostics if none arrived yet or after a change
-    if (waitMs > 0) {
+  async getDiagnostics(filePath: string, waitMs = 600, explicitContent?: string): Promise<LspDiagnostic[]> {
+    const resolved = path.resolve(filePath);
+    const targetUri = filePathToUri(resolved);
+    const seqBefore = this.diagnosticsSeq.get(targetUri) ?? 0;
+    const uri = await this.syncFile(filePath, explicitContent);
+
+    // Support LSP 3.17 pull diagnostics when server advertises `diagnosticProvider`
+    if (this.serverCapabilities['diagnosticProvider']) {
+      try {
+        const pulled = await this.sendRequest('textDocument/diagnostic', {
+          textDocument: { uri }
+        }, Math.min(this.timeoutMs, Math.max(1500, waitMs * 3))) as { items?: unknown } | null;
+        if (pulled && Array.isArray(pulled.items)) {
+          const mapped = this.mapRawDiagnostics(uri, pulled.items);
+          this.diagnostics.set(uri, mapped);
+          this.diagnosticsSeq.set(uri, (this.diagnosticsSeq.get(uri) ?? 0) + 1);
+          return [...mapped];
+        }
+      } catch {
+        // Fall through to push diagnostics
+      }
+    }
+
+    // Only wait if a fresh push did not already arrive during syncFile()
+    if (waitMs > 0 && (this.diagnosticsSeq.get(uri) ?? 0) === seqBefore) {
       await new Promise<void>((resolve) => {
         let done = false;
         const finish = (): void => {
@@ -465,6 +507,63 @@ export class LspSession {
       position: { line: Math.max(0, line1Based - 1), character: Math.max(0, column1Based - 1) }
     });
     return normalizeLocations(res);
+  }
+
+  async typeDefinition(filePath: string, line1Based: number, column1Based = 1): Promise<LspLocationResult[]> {
+    const uri = await this.syncFile(filePath);
+    const res = await this.sendRequest('textDocument/typeDefinition', {
+      textDocument: { uri },
+      position: { line: Math.max(0, line1Based - 1), character: Math.max(0, column1Based - 1) }
+    });
+    return normalizeLocations(res);
+  }
+
+  async implementation(filePath: string, line1Based: number, column1Based = 1): Promise<LspLocationResult[]> {
+    const uri = await this.syncFile(filePath);
+    const res = await this.sendRequest('textDocument/implementation', {
+      textDocument: { uri },
+      position: { line: Math.max(0, line1Based - 1), character: Math.max(0, column1Based - 1) }
+    });
+    return normalizeLocations(res);
+  }
+
+  async callHierarchy(
+    filePath: string,
+    line1Based: number,
+    column1Based = 1,
+    direction: 'incoming' | 'outgoing' = 'incoming'
+  ): Promise<Array<{ name: string; kind: string; file: string; line: number; column: number }>> {
+    const uri = await this.syncFile(filePath);
+    const prepared = await this.sendRequest('textDocument/prepareCallHierarchy', {
+      textDocument: { uri },
+      position: { line: Math.max(0, line1Based - 1), character: Math.max(0, column1Based - 1) }
+    });
+    const items = Array.isArray(prepared) ? prepared : [];
+    const rootItem = items[0];
+    if (!rootItem || typeof rootItem !== 'object') return [];
+    const method = direction === 'incoming' ? 'callHierarchy/incomingCalls' : 'callHierarchy/outgoingCalls';
+    const rawCalls = await this.sendRequest(method, { item: rootItem });
+    const list = Array.isArray(rawCalls) ? rawCalls : [];
+    const out: Array<{ name: string; kind: string; file: string; line: number; column: number }> = [];
+    for (const entry of list.slice(0, 60)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const target = (direction === 'incoming'
+        ? (entry as { from?: unknown }).from
+        : (entry as { to?: unknown }).to) as Record<string, unknown> | undefined;
+      if (!target || typeof target !== 'object') continue;
+      const targetUri = typeof target.uri === 'string' ? target.uri : '';
+      const range = (target.selectionRange ?? target.range) as LspRange | undefined;
+      const name = typeof target.name === 'string' ? safeDisplay(target.name) : '';
+      if (!targetUri || !name) continue;
+      out.push({
+        name,
+        kind: SYMBOL_KIND_NAMES[Number(target.kind)] ?? 'Symbol',
+        file: uriToFilePath(targetUri),
+        line: Math.max(1, Number(range?.start?.line ?? 0) + 1),
+        column: Math.max(1, Number(range?.start?.character ?? 0) + 1)
+      });
+    }
+    return out;
   }
 
   async references(
@@ -513,10 +612,23 @@ export class LspSession {
     this.pending.clear();
   }
 
+  killSync(): void {
+    this.closed = true;
+    const proc = this.proc;
+    this.proc = null;
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+    }
+    this.openDocs.clear();
+    this.diagnostics.clear();
+    this.diagnosticsSeq.clear();
+    this.diagnosticWaiters.clear();
+  }
+
   private killProcess(): void {
     const proc = this.proc;
     this.proc = null;
-    if (proc && proc.exitCode === null && !proc.killed) {
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
       try { proc.kill('SIGTERM'); } catch { /* ignore */ }
     }
   }
@@ -635,12 +747,20 @@ export class LspSessionManager {
     this.sessions.clear();
     await Promise.all(all.map((s) => s.shutdown().catch(() => {})));
   }
+
+  killAllSync(): void {
+    const all = [...this.sessions.values()];
+    this.sessions.clear();
+    for (const sess of all) {
+      try { sess.killSync(); } catch { /* ignore */ }
+    }
+  }
 }
 
 export const lspSessionManager = new LspSessionManager();
 
 process.on('exit', () => {
-  void lspSessionManager.shutdownAll();
+  lspSessionManager.killAllSync();
 });
 
 /**
@@ -657,8 +777,7 @@ export async function collectActivePostEditDiagnostics(
   try {
     const session = lspSessionManager.getExistingSessionForFile(filePath, workspaceRoot);
     if (!session) return [];
-    await session.syncFile(filePath, content);
-    const diags = await session.getDiagnostics(filePath, waitMs);
+    const diags = await session.getDiagnostics(filePath, waitMs, content);
     return diags.filter((d) => d.severity === 'error' || d.severity === 'warning').slice(0, 12);
   } catch {
     return [];
