@@ -1052,9 +1052,13 @@ export class AntigravityProvider extends LLMProvider {
 
     return new Promise<ChatResponse>((resolve, reject) => {
       let isSettled = false;
+      const childEnv: NodeJS.ProcessEnv = { ...process.env };
+      delete childEnv.CAUSYNE_VAULT_KEY;
+      delete childEnv.CAUSYNE_DEV_SECRET;
+      delete childEnv.CAUSYNE_DEV_TOKEN;
       const child = spawn(this.command, args, {
         cwd: workspaceRoot,
-        env: process.env,
+        env: childEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true
       });
@@ -1062,6 +1066,7 @@ export class AntigravityProvider extends LLMProvider {
       let stdoutBuffer = '';
       let stderrBuffer = '';
       let streamedResponse = '';
+      let pendingTagTail = '';
       let finalResultObj: any = null;
       let sawToolAfterLastText = false;
       let sawProviderProgress = false;
@@ -1132,8 +1137,38 @@ export class AntigravityProvider extends LLMProvider {
       }, wallMs) : null;
       wallTimer?.unref();
 
+      const rawInactivityMs = (options as any).inactivityTimeoutMs;
+      const inactivityTimeoutMs = typeof rawInactivityMs === 'number' && Number.isFinite(rawInactivityMs) && rawInactivityMs >= 50
+        ? Math.min(3_600_000, Math.round(rawInactivityMs))
+        : 120_000;
+      let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+      let postResultTimer: ReturnType<typeof setTimeout> | null = null;
+      const resetInactivityWatchdog = () => {
+        if (isSettled) return;
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+          if (isSettled) return;
+          const err = Object.assign(
+            new Error(`Antigravity stalled: no output activity for ${Math.round(inactivityTimeoutMs / 1000)}s.`),
+            { code: sawProviderProgress ? 'AGY_INACTIVITY_TIMEOUT' : 'PROVIDER_NO_PROGRESS' }
+          );
+          safeReject(err);
+          terminateChild();
+        }, inactivityTimeoutMs);
+        inactivityTimer.unref?.();
+      };
+      resetInactivityWatchdog();
+
       const cleanup = () => {
         if (wallTimer) clearTimeout(wallTimer);
+        if (inactivityTimer) {
+          clearTimeout(inactivityTimer);
+          inactivityTimer = null;
+        }
+        if (postResultTimer) {
+          clearTimeout(postResultTimer);
+          postResultTimer = null;
+        }
         if (options.signal) {
           options.signal.removeEventListener('abort', onAbort);
         }
@@ -1203,348 +1238,355 @@ export class AntigravityProvider extends LLMProvider {
         return;
       }
 
-      child.stdout.setEncoding('utf8');
-      child.stdout.on('data', (chunk: string) => {
-        stdoutBuffer += chunk;
+      const INLINE_TAG_NAMES = ['think', 'thought', 'reasoning', 'thinking', 'reasoning_scratchpad'];
+      const splitTrailingPartialTag = (text: string, closing: boolean): { head: string; tail: string } => {
+        const lastLt = text.lastIndexOf('<');
+        if (lastLt === -1 || text.length - lastLt > 24) return { head: text, tail: '' };
+        const candidate = text.slice(lastLt).toLowerCase();
+        if (candidate.includes('>')) return { head: text, tail: '' };
+        const prefixes = INLINE_TAG_NAMES.map(name => (closing ? `</${name}>` : `<${name}>`));
+        if (prefixes.some(tag => tag.startsWith(candidate))) {
+          return { head: text.slice(0, lastLt), tail: text.slice(lastLt) };
+        }
+        return { head: text, tail: '' };
+      };
 
-        // Process line-delimited stream-json events
-        const lines = stdoutBuffer.split('\n');
-        stdoutBuffer = lines.pop() || ''; // Keep incomplete trailing fragment in buffer
+      const flushPendingTagTail = () => {
+        if (!pendingTagTail) return;
+        const leftover = pendingTagTail;
+        pendingTagTail = '';
+        if (inInlineThinkBlock) {
+          reasoningChars += leftover.length;
+          options.onReasoningChunk?.(leftover);
+        } else {
+          streamedResponse += leftover;
+          options.onChunk?.(leftover);
+        }
+      };
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const event = JSON.parse(trimmed);
-            if (event.event === 'init') {
-              if (event.conversation_id) {
-                this.currentConversationId = event.conversation_id;
-              }
-            } else if (event.event === 'step_update') {
-              const stepUpdate = event.step_update;
-              if (typeof stepUpdate?.text_delta === 'string' && stepUpdate.text_delta.trim()) sawProviderProgress = true;
-              if (stepUpdate?.step_type === 'tool' && stepUpdate?.state === 'ACTIVE') sawProviderProgress = true;
-              const usage = stepUpdate?.usage;
-              const usageStepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
-              if (stepUpdate?.state === 'DONE' && usage && Number.isFinite(usageStepIndex)
-                && !completedUsageSteps.has(usageStepIndex)) {
-                const input = Number(usage.input_tokens);
-                const output = Number(usage.output_tokens);
-                if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
-                  completedUsageSteps.add(usageStepIndex);
-                  partialUsage.promptTokens += input;
-                  partialUsage.uncachedPromptTokens = (partialUsage.uncachedPromptTokens || 0) + input;
-                  partialUsage.completionTokens += output;
-                  partialUsage.cachedPromptTokens = (partialUsage.cachedPromptTokens || 0)
-                    + (Number(usage.cache_read_tokens) || 0);
-                  partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
-                    + (Number(usage.thinking_tokens) || 0);
-                  // User task budgets can track all provider-reported tokens.
-                  // The automatic safety floor counts uncached input plus
-                  // output, so a cache hit does not masquerade as fresh spend.
-                  const reportedTotal = partialUsage.promptTokens + partialUsage.completionTokens;
-                  const uncachedTotal = noncachedTokens(partialUsage);
-                  const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
-                  noteSoftUsage(spentAgainstLimit);
-                  if (tokenLimit !== null && spentAgainstLimit >= tokenLimit) {
-                    const error = Object.assign(
-                      createBudgetError('AGY_TOKEN_BUDGET',
-                        `Antigravity reached the ${tokenLimit}-token per-call ceiling. Outcome is unverified.`),
-                      { tokenLimit, partialUsage: { ...partialUsage } }
-                    );
-                    safeReject(error);
-                    terminateChild();
-                    return;
-                  }
+      const emitVisibleText = (textPart: string) => {
+        if (!textPart) return;
+        if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(textPart)) {
+          streamedResponse += '\n';
+          options.onChunk?.('\n');
+        }
+        if (textPart.trim().length > 0) sawToolAfterLastText = false;
+        streamedResponse += textPart;
+        options.onChunk?.(textPart);
+      };
+
+      const processStreamJsonLine = (trimmed: string): boolean => {
+        if (!trimmed) return false;
+        try {
+          const event = JSON.parse(trimmed);
+          if (event.event === 'init') {
+            if (event.conversation_id) {
+              this.currentConversationId = event.conversation_id;
+            }
+          } else if (event.event === 'step_update') {
+            const stepUpdate = event.step_update;
+            if (typeof stepUpdate?.text_delta === 'string' && stepUpdate.text_delta.trim()) sawProviderProgress = true;
+            if (stepUpdate?.step_type === 'tool' && stepUpdate?.state === 'ACTIVE') sawProviderProgress = true;
+            const usage = stepUpdate?.usage;
+            const usageStepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
+            if (stepUpdate?.state === 'DONE' && usage && Number.isFinite(usageStepIndex)
+              && !completedUsageSteps.has(usageStepIndex)) {
+              const input = Number(usage.input_tokens);
+              const output = Number(usage.output_tokens);
+              if (Number.isFinite(input) && input >= 0 && Number.isFinite(output) && output >= 0) {
+                completedUsageSteps.add(usageStepIndex);
+                partialUsage.promptTokens += input;
+                partialUsage.uncachedPromptTokens = (partialUsage.uncachedPromptTokens || 0) + input;
+                partialUsage.completionTokens += output;
+                partialUsage.cachedPromptTokens = (partialUsage.cachedPromptTokens || 0)
+                  + (Number(usage.cache_read_tokens) || 0);
+                partialUsage.thinkingTokens = (partialUsage.thinkingTokens || 0)
+                  + (Number(usage.thinking_tokens) || 0);
+                // User task budgets can track all provider-reported tokens.
+                // The automatic safety floor counts uncached input plus
+                // output, so a cache hit does not masquerade as fresh spend.
+                const reportedTotal = partialUsage.promptTokens + partialUsage.completionTokens;
+                const uncachedTotal = noncachedTokens(partialUsage);
+                const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
+                noteSoftUsage(spentAgainstLimit);
+                if (tokenLimit !== null && spentAgainstLimit >= tokenLimit) {
+                  const error = Object.assign(
+                    createBudgetError('AGY_TOKEN_BUDGET',
+                      `Antigravity reached the ${tokenLimit}-token per-call ceiling. Outcome is unverified.`),
+                    { tokenLimit, partialUsage: { ...partialUsage } }
+                  );
+                  safeReject(error);
+                  terminateChild();
+                  return true;
                 }
               }
-              const delta = stepUpdate?.text_delta
-                ?? stepUpdate?.delta
-                ?? stepUpdate?.thought_delta
-                ?? stepUpdate?.thought
-                ?? (typeof stepUpdate?.content === 'string' ? stepUpdate.content : undefined)
-                ?? event?.text_delta
-                ?? event?.delta;
-              const stepType = stepUpdate?.step_type || event?.step_type || event?.type;
-              if (stepType === 'tool') {
-                const state = stepUpdate?.state;
-                const stepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
-                const newNativeAction = (state === 'ACTIVE' || (state === 'DONE' && Number.isFinite(stepIndex)))
-                  && (!Number.isFinite(stepIndex) || !seenNativeActionSteps.has(stepIndex));
-                if (newNativeAction && Number.isFinite(stepIndex)) seenNativeActionSteps.add(stepIndex);
+            }
+            const delta = stepUpdate?.text_delta
+              ?? stepUpdate?.delta
+              ?? stepUpdate?.thought_delta
+              ?? stepUpdate?.thought
+              ?? (typeof stepUpdate?.content === 'string' ? stepUpdate.content : undefined)
+              ?? event?.text_delta
+              ?? event?.delta;
+            const stepType = stepUpdate?.step_type || event?.step_type || event?.type;
+            if (stepType === 'tool') {
+              const state = stepUpdate?.state;
+              const stepIndex = Number(stepUpdate?.step_index ?? event?.step_index);
+              const newNativeAction = (state === 'ACTIVE' || (state === 'DONE' && Number.isFinite(stepIndex)))
+                && (!Number.isFinite(stepIndex) || !seenNativeActionSteps.has(stepIndex));
+              if (newNativeAction && Number.isFinite(stepIndex)) seenNativeActionSteps.add(stepIndex);
 
-                const toolInfo = stepUpdate?.tool_info || {};
-                const name = stepUpdate?.tool_name || toolInfo?.name;
-                const status = state === 'DONE' || state === 'ERROR'
-                  ? (state === 'ERROR' || toolInfo?.error ? 'failed' : 'completed')
-                  : 'running';
-                const rawParams = (toolInfo && typeof toolInfo === 'object' && toolInfo.parameters) ||
-                  (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
-                  (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
-                  {};
-                const hasParams = Boolean(rawParams && typeof rawParams === 'object' && Object.keys(rawParams).length > 0);
-                const readyForLoopCheck = state === 'DONE'
-                  || (state === 'ACTIVE' && (hasParams || isNativeMutation(name || '', rawParams) || isRepeatableNativeTool(name || '', rawParams)));
-                const shouldCheckLoop = Boolean(name) && readyForLoopCheck
-                  && (!Number.isFinite(stepIndex) || !seenLoopCheckSteps.has(stepIndex));
+              const toolInfo = stepUpdate?.tool_info || {};
+              const name = stepUpdate?.tool_name || toolInfo?.name;
+              const status = state === 'DONE' || state === 'ERROR'
+                ? (state === 'ERROR' || toolInfo?.error ? 'failed' : 'completed')
+                : 'running';
+              const rawParams = (toolInfo && typeof toolInfo === 'object' && toolInfo.parameters) ||
+                (stepUpdate && typeof stepUpdate === 'object' && stepUpdate.parameters) ||
+                (toolInfo && typeof toolInfo === 'object' && toolInfo.input) ||
+                {};
+              const hasParams = Boolean(rawParams && typeof rawParams === 'object' && Object.keys(rawParams).length > 0);
+              const readyForLoopCheck = state === 'DONE'
+                || (state === 'ACTIVE' && (hasParams || isNativeMutation(name || '', rawParams) || isRepeatableNativeTool(name || '', rawParams)));
+              const shouldCheckLoop = Boolean(name) && readyForLoopCheck
+                && (!Number.isFinite(stepIndex) || !seenLoopCheckSteps.has(stepIndex));
 
-                if (name && state === 'DONE' && !toolInfo?.error && isNativeMutation(name, rawParams)) {
-                  if (Number.isFinite(stepIndex)) seenLoopCheckSteps.add(stepIndex);
+              if (name && state === 'DONE' && !toolInfo?.error && isNativeMutation(name, rawParams)) {
+                if (Number.isFinite(stepIndex)) seenLoopCheckSteps.add(stepIndex);
+                lastMutationActionIndex = nativeActionStarts + 1;
+                progressiveActionsCount++;
+                consecutiveIdenticalCount = 0;
+                consecutiveInspections = 0;
+                lastToolSignature = '';
+                recentSignatures.length = 0;
+              } else if (name && shouldCheckLoop) {
+                if (Number.isFinite(stepIndex)) seenLoopCheckSteps.add(stepIndex);
+                const mutating = isNativeMutation(name, rawParams);
+                const repeatable = isRepeatableNativeTool(name, rawParams);
+                if (mutating) {
                   lastMutationActionIndex = nativeActionStarts + 1;
                   progressiveActionsCount++;
                   consecutiveIdenticalCount = 0;
                   consecutiveInspections = 0;
                   lastToolSignature = '';
                   recentSignatures.length = 0;
-                } else if (name && shouldCheckLoop) {
-                  if (Number.isFinite(stepIndex)) seenLoopCheckSteps.add(stepIndex);
-                  const mutating = isNativeMutation(name, rawParams);
-                  const repeatable = isRepeatableNativeTool(name, rawParams);
-                  if (mutating) {
-                    lastMutationActionIndex = nativeActionStarts + 1;
-                    progressiveActionsCount++;
-                    consecutiveIdenticalCount = 0;
-                    consecutiveInspections = 0;
-                    lastToolSignature = '';
-                    recentSignatures.length = 0;
-                  } else if (repeatable) {
-                    // Task/subagent polling, plan updates, and user questions are legitimate
-                    // coordination steps and must not count as aimless read-only loops.
-                    consecutiveIdenticalCount = 0;
-                    lastToolSignature = '';
-                  } else if (!desktopTask && (options as any).taskArchetype !== 'media_3d_generation') {
-                    consecutiveInspections++;
-                    const sig = nativeToolSignature(name, rawParams);
-                    if (sig === lastToolSignature) {
-                      consecutiveIdenticalCount++;
-                    } else {
-                      consecutiveIdenticalCount = 1;
-                      lastToolSignature = sig;
-                    }
-                    recentSignatures.push(sig);
-                    if (recentSignatures.length > 24) recentSignatures.shift();
-
-                    // 1. Aimless identical streak detection: 4 identical consecutive non-mutating calls
-                    if (consecutiveIdenticalCount >= 4) {
-                      const error = Object.assign(
-                        new Error(`Antigravity repeated identical call to '${name}' ${consecutiveIdenticalCount} times without progress. Halting circular loop.`),
-                        { code: 'AGY_EXPLORATION_LOOP', toolName: name, count: consecutiveIdenticalCount }
-                      );
-                      safeReject(error);
-                      terminateChild();
-                      return;
-                    }
-
-                    // 2. Aimless circular cycle detection: period 2-4 repeating 3 laps without mutation
-                    const cycle = detectNativeCycle(recentSignatures);
-                    if (cycle && (nativeActionStarts - lastMutationActionIndex) > (cycle.period * 2)) {
-                      const error = Object.assign(
-                        new Error(`Antigravity repeated circular cycle of ${cycle.period} tool calls without forward progress. Halting circular loop.`),
-                        { code: 'AGY_EXPLORATION_LOOP', period: cycle.period, laps: cycle.laps }
-                      );
-                      safeReject(error);
-                      terminateChild();
-                      return;
-                    }
+                } else if (repeatable) {
+                  // Task/subagent polling, plan updates, and user questions are legitimate
+                  // coordination steps and must not count as aimless read-only loops.
+                  consecutiveIdenticalCount = 0;
+                  lastToolSignature = '';
+                } else if (!desktopTask && (options as any).taskArchetype !== 'media_3d_generation') {
+                  consecutiveInspections++;
+                  const sig = nativeToolSignature(name, rawParams);
+                  if (sig === lastToolSignature) {
+                    consecutiveIdenticalCount++;
+                  } else {
+                    consecutiveIdenticalCount = 1;
+                    lastToolSignature = sig;
                   }
-                }
+                  recentSignatures.push(sig);
+                  if (recentSignatures.length > 24) recentSignatures.shift();
 
-                if (newNativeAction) {
-                  nativeActionStarts++;
-                  if (maxNativeActions !== null && nativeActionStarts > maxNativeActions) {
-                    const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`) as Error & { code: string };
-                    error.code = 'AGY_NATIVE_ACTION_BUDGET';
+                  // 1. Aimless identical streak detection: 4 identical consecutive non-mutating calls
+                  if (consecutiveIdenticalCount >= 4) {
+                    const error = Object.assign(
+                      new Error(`Antigravity repeated identical call to '${name}' ${consecutiveIdenticalCount} times without progress. Halting circular loop.`),
+                      { code: 'AGY_EXPLORATION_LOOP', toolName: name, count: consecutiveIdenticalCount }
+                    );
                     safeReject(error);
                     terminateChild();
-                    return;
+                    return true;
                   }
-                }
 
-                if ((options as any).taskArchetype === 'media_3d_generation' && name) {
-                  if (newNativeAction) {
-                    const target = isReadOnlyNativeInspection(name, rawParams)
-                      ? nativeInspectionTarget(name, rawParams) : null;
-                    if (target) {
-                      const inspectionCount = (mediaInspectionCounts.get(target) || 0) + 1;
-                      mediaInspectionCounts.set(target, inspectionCount);
-                      if (inspectionCount >= 8) {
-                        const error = Object.assign(
-                          new Error('Antigravity repeated read-only inspection of the same Blender scene without an edit. The task remains unfinished.'),
-                          { code: 'AGY_EXPLORATION_LOOP', inspectionCount, inspectionTarget: target }
-                        );
-                        safeReject(error);
-                        terminateChild();
-                        return;
-                      }
-                    } else if (isNativeMutation(name, rawParams) && Number.isFinite(stepIndex)) {
-                      pendingMediaMutations.add(stepIndex);
-                    }
-                  }
-                  if (Number.isFinite(stepIndex) && pendingMediaMutations.has(stepIndex)
-                    && (state === 'DONE' || state === 'ERROR')) {
-                    pendingMediaMutations.delete(stepIndex);
-                    if (state === 'DONE' && !toolInfo?.error) mediaInspectionCounts.clear();
-                  }
-                }
-
-                if (name) {
-                  const actionId = Number.isFinite(stepIndex) ? `agy:${stepIndex}` : undefined;
-                  const existingAttempt = attemptedNativeTools.find(a => actionId
-                    ? a.id === actionId : a.name === name && a.status === 'running');
-                  if (existingAttempt) {
-                    existingAttempt.status = status;
-                    if (rawParams && Object.keys(rawParams).length > 0) {
-                      existingAttempt.parameters = { ...existingAttempt.parameters, ...rawParams };
-                    }
-                    if (toolInfo?.error?.message) existingAttempt.error = toolInfo.error.message;
-                  } else {
-                    attemptedNativeTools.push({
-                      ...(actionId ? { id: actionId } : {}),
-                      name,
-                      parameters: { ...rawParams },
-                      status,
-                      error: toolInfo?.error?.message,
-                      detail: describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams })
-                    });
-                  }
-                }
-
-                if (name && (state === 'ACTIVE' || state === 'DONE' || state === 'ERROR')) {
-                  sawToolAfterLastText = true;
-                  const detail = describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams });
-                  const action: ChatResponseAction = {
-                    ...(Number.isFinite(stepIndex) ? { id: `agy:${stepIndex}` } : {}),
-                    name,
-                    status,
-                    ...(detail ? { detail } : {})
-                  };
-                  if (status !== 'running') {
-                    const existing = nativeActions.find(a => action.id
-                      ? a.id === action.id
-                      : a.name === action.name && a.detail === action.detail);
-                    if (existing) existing.status = status;
-                    else nativeActions.push(action);
-                  }
-                  // Stream the action lifecycle immediately (running, completed, failed)
-                  // so the caller receives real-time progress and does not appear frozen.
-                  if (typeof options.onNativeAction === 'function') {
-                    const parameters = rawParams && typeof rawParams === 'object'
-                      ? rawParams as Record<string, unknown>
-                      : {};
-                    options.onNativeAction({ ...action, status, parameters });
+                  // 2. Aimless circular cycle detection: period 2-4 repeating 3 laps without mutation
+                  const cycle = detectNativeCycle(recentSignatures);
+                  if (cycle && (nativeActionStarts - lastMutationActionIndex) > (cycle.period * 2)) {
+                    const error = Object.assign(
+                      new Error(`Antigravity repeated circular cycle of ${cycle.period} tool calls without forward progress. Halting circular loop.`),
+                      { code: 'AGY_EXPLORATION_LOOP', period: cycle.period, laps: cycle.laps }
+                    );
+                    safeReject(error);
+                    terminateChild();
+                    return true;
                   }
                 }
               }
-              const isExplicitThought = stepType === 'thought'
-                || stepType === 'agent_thought'
-                || stepType === 'thinking'
-                || stepType === 'reasoning'
-                || stepType === 'agent_reasoning'
-                || Boolean(stepUpdate?.thought_delta || stepUpdate?.thought);
 
-              if (delta && typeof delta === 'string') {
-                if (isExplicitThought) {
-                  reasoningChars += delta.length;
-                  if (typeof options.onReasoningChunk === 'function') {
-                    options.onReasoningChunk(delta);
+              if (newNativeAction) {
+                nativeActionStarts++;
+                if (maxNativeActions !== null && nativeActionStarts > maxNativeActions) {
+                  const error = new Error(`Antigravity reached the ${maxNativeActions} native-action turn checkpoint. Work remains unfinished; continue from the saved session.`) as Error & { code: string };
+                  error.code = 'AGY_NATIVE_ACTION_BUDGET';
+                  safeReject(error);
+                  terminateChild();
+                  return true;
+                }
+              }
+
+              if ((options as any).taskArchetype === 'media_3d_generation' && name) {
+                if (newNativeAction) {
+                  const target = isReadOnlyNativeInspection(name, rawParams)
+                    ? nativeInspectionTarget(name, rawParams) : null;
+                  if (target) {
+                    const inspectionCount = (mediaInspectionCounts.get(target) || 0) + 1;
+                    mediaInspectionCounts.set(target, inspectionCount);
+                    if (inspectionCount >= 8) {
+                      const error = Object.assign(
+                        new Error('Antigravity repeated read-only inspection of the same Blender scene without an edit. The task remains unfinished.'),
+                        { code: 'AGY_EXPLORATION_LOOP', inspectionCount, inspectionTarget: target }
+                      );
+                      safeReject(error);
+                      terminateChild();
+                      return true;
+                    }
+                  } else if (isNativeMutation(name, rawParams) && Number.isFinite(stepIndex)) {
+                    pendingMediaMutations.add(stepIndex);
                   }
+                }
+                if (Number.isFinite(stepIndex) && pendingMediaMutations.has(stepIndex)
+                  && (state === 'DONE' || state === 'ERROR')) {
+                  pendingMediaMutations.delete(stepIndex);
+                  if (state === 'DONE' && !toolInfo?.error) mediaInspectionCounts.clear();
+                }
+              }
+
+              if (name) {
+                const actionId = Number.isFinite(stepIndex) ? `agy:${stepIndex}` : undefined;
+                const existingAttempt = attemptedNativeTools.find(a => actionId
+                  ? a.id === actionId : a.name === name && a.status === 'running');
+                if (existingAttempt) {
+                  existingAttempt.status = status;
+                  if (rawParams && Object.keys(rawParams).length > 0) {
+                    existingAttempt.parameters = { ...existingAttempt.parameters, ...rawParams };
+                  }
+                  if (toolInfo?.error?.message) existingAttempt.error = toolInfo.error.message;
                 } else {
-                  // Progressive inline think block filtering (<think>...</think>, <thought>...</thought>, etc.)
-                  let remaining = delta;
-                  while (remaining.length > 0) {
-                    if (inInlineThinkBlock) {
-                      const closeMatch = remaining.match(/<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>/i);
-                      if (closeMatch && closeMatch.index !== undefined) {
-                        const thinkPart = remaining.slice(0, closeMatch.index);
-                        if (thinkPart) {
-                          reasoningChars += thinkPart.length;
-                          options.onReasoningChunk?.(thinkPart);
-                        }
-                        inInlineThinkBlock = false;
-                        remaining = remaining.slice(closeMatch.index + closeMatch[0].length);
-                      } else {
-                        reasoningChars += remaining.length;
-                        options.onReasoningChunk?.(remaining);
-                        remaining = '';
+                  attemptedNativeTools.push({
+                    ...(actionId ? { id: actionId } : {}),
+                    name,
+                    parameters: { ...rawParams },
+                    status,
+                    error: toolInfo?.error?.message,
+                    detail: describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams })
+                  });
+                }
+              }
+
+              if (name && (state === 'ACTIVE' || state === 'DONE' || state === 'ERROR')) {
+                sawToolAfterLastText = true;
+                const detail = describeNativeAction(toolInfo) || describeNativeAction({ parameters: rawParams });
+                const action: ChatResponseAction = {
+                  ...(Number.isFinite(stepIndex) ? { id: `agy:${stepIndex}` } : {}),
+                  name,
+                  status,
+                  ...(detail ? { detail } : {})
+                };
+                if (status !== 'running') {
+                  const existing = nativeActions.find(a => action.id
+                    ? a.id === action.id
+                    : a.name === action.name && a.detail === action.detail);
+                  if (existing) existing.status = status;
+                  else nativeActions.push(action);
+                }
+                // Stream the action lifecycle immediately (running, completed, failed)
+                // so the caller receives real-time progress and does not appear frozen.
+                if (typeof options.onNativeAction === 'function') {
+                  const parameters = rawParams && typeof rawParams === 'object'
+                    ? rawParams as Record<string, unknown>
+                    : {};
+                  options.onNativeAction({ ...action, status, parameters });
+                }
+              }
+            }
+            const isExplicitThought = stepType === 'thought'
+              || stepType === 'agent_thought'
+              || stepType === 'thinking'
+              || stepType === 'reasoning'
+              || stepType === 'agent_reasoning'
+              || Boolean(stepUpdate?.thought_delta || stepUpdate?.thought);
+
+            if (delta && typeof delta === 'string') {
+              if (isExplicitThought) {
+                reasoningChars += delta.length;
+                if (typeof options.onReasoningChunk === 'function') {
+                  options.onReasoningChunk(delta);
+                }
+              } else {
+                // Progressive chunk-boundary-safe inline think block filtering
+                let remaining = pendingTagTail + delta;
+                pendingTagTail = '';
+                while (remaining.length > 0) {
+                  if (inInlineThinkBlock) {
+                    const closeMatch = remaining.match(/<\/(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>/i);
+                    if (closeMatch && closeMatch.index !== undefined) {
+                      const thinkPart = remaining.slice(0, closeMatch.index);
+                      if (thinkPart) {
+                        reasoningChars += thinkPart.length;
+                        options.onReasoningChunk?.(thinkPart);
                       }
+                      inInlineThinkBlock = false;
+                      remaining = remaining.slice(closeMatch.index + closeMatch[0].length);
                     } else {
-                      const openMatch = remaining.match(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>/i);
-                      if (openMatch && openMatch.index !== undefined) {
-                        const textPart = remaining.slice(0, openMatch.index);
-                        if (textPart) {
-                          if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(textPart)) {
-                            streamedResponse += '\n';
-                            options.onChunk?.('\n');
-                          }
-                          if (textPart.trim().length > 0) sawToolAfterLastText = false;
-                          streamedResponse += textPart;
-                          options.onChunk?.(textPart);
-                        }
-                        inInlineThinkBlock = true;
-                        remaining = remaining.slice(openMatch.index + openMatch[0].length);
-                      } else {
-                        if (sawToolAfterLastText && streamedResponse.length > 0 && !/\s$/.test(streamedResponse) && !/^\s/.test(remaining)) {
-                          streamedResponse += '\n';
-                          options.onChunk?.('\n');
-                        }
-                        if (remaining.trim().length > 0) sawToolAfterLastText = false;
-                        streamedResponse += remaining;
-                        options.onChunk?.(remaining);
-                        remaining = '';
+                      const { head, tail } = splitTrailingPartialTag(remaining, true);
+                      if (head) {
+                        reasoningChars += head.length;
+                        options.onReasoningChunk?.(head);
                       }
+                      pendingTagTail = tail;
+                      remaining = '';
+                    }
+                  } else {
+                    const openMatch = remaining.match(/<(?:think|thought|reasoning|thinking|REASONING_SCRATCHPAD)>/i);
+                    if (openMatch && openMatch.index !== undefined) {
+                      const textPart = remaining.slice(0, openMatch.index);
+                      emitVisibleText(textPart);
+                      inInlineThinkBlock = true;
+                      remaining = remaining.slice(openMatch.index + openMatch[0].length);
+                    } else {
+                      const { head, tail } = splitTrailingPartialTag(remaining, false);
+                      emitVisibleText(head);
+                      pendingTagTail = tail;
+                      remaining = '';
                     }
                   }
                 }
               }
-            } else if (event.event === 'result') {
-              finalResultObj = event.result;
-              if (event.result?.conversation_id) {
-                this.currentConversationId = event.result.conversation_id;
-              }
-            } else if (event.status === 'ERROR') {
-              if (useConversation) this.currentConversationId = null;
-              safeReject(new Error(`Antigravity Agent returned error: ${event.error || 'Unknown error'}`));
-              return;
             }
-          } catch {
-            // Non-JSON line (fallback log)
+          } else if (event.event === 'result') {
+            finalResultObj = event.result;
+            if (event.result?.conversation_id) {
+              this.currentConversationId = event.result.conversation_id;
+            }
+            if ((!finalResultObj?.status || finalResultObj.status === 'SUCCESS') && !postResultTimer) {
+              // Resolve promptly after result without blocking on lingering child close handles
+              postResultTimer = setTimeout(() => {
+                if (isSettled) return;
+                finalizeTurn(0);
+                terminateChild();
+              }, 150);
+              postResultTimer.unref?.();
+            }
+          } else if (event.status === 'ERROR') {
+            if (useConversation) this.currentConversationId = null;
+            safeReject(new Error(`Antigravity Agent returned error: ${event.error || 'Unknown error'}`));
+            return true;
           }
+        } catch {
+          // Non-JSON line (fallback log)
         }
-      });
+        return false;
+      };
 
-      child.stderr.setEncoding('utf8');
-      child.stderr.on('data', (chunk: string) => {
-        stderrBuffer += chunk;
-      });
-
-      child.on('error', (err: Error) => {
-        if (useConversation) this.currentConversationId = null;
-        safeReject(new Error(`Antigravity Agent (agy) spawn error: ${err.message}. Make sure Antigravity CLI is installed.`));
-      });
-
-      child.on('close', (code: number | null) => {
-        childClosed = true;
-        // A budget or user abort has already settled this call. Do not accept
-        // a late result from the terminated process as a resumable session.
+      const finalizeTurn = (code: number | null) => {
         if (isSettled) return;
-        // Process any remaining bytes in stdoutBuffer
         if (stdoutBuffer.trim()) {
-          try {
-            const event = JSON.parse(stdoutBuffer.trim());
-            if (event.event === 'result') {
-              finalResultObj = event.result;
-              if (event.result?.conversation_id) {
-                this.currentConversationId = event.result.conversation_id;
-              }
-            } else if (event.status === 'ERROR') {
-              if (useConversation) this.currentConversationId = null;
-              safeReject(new Error(`Antigravity Agent returned error: ${event.error || 'Unknown error'}`));
-              return;
-            }
-          } catch {
-            // ignore
+          const tailLines = stdoutBuffer.split('\n');
+          stdoutBuffer = '';
+          for (const tailLine of tailLines) {
+            if (processStreamJsonLine(tailLine.trim())) return;
           }
         }
+        flushPendingTagTail();
 
         if (code !== 0 || (finalResultObj?.status && finalResultObj.status !== 'SUCCESS')) {
           if (useConversation) this.currentConversationId = null;
@@ -1656,9 +1698,6 @@ export class AntigravityProvider extends LLMProvider {
         const thinkingTokens = prior && usageIsReported ? delta(cumulative.thinking, prior.thinking) : cumulative.thinking;
         const cachedPromptTokens = prior && usageIsReported ? delta(cumulative.cacheRead, prior.cacheRead) : cumulative.cacheRead;
 
-        // AGY reports cache reads separately (they can exceed input_tokens).
-        // Keep the same accounting on terminal and streamed/error paths; do
-        // not conditionally subtract cache reads from an unrelated counter.
         const uncachedPromptTokens = promptTokens;
         if (usageIsReported) Object.assign(partialUsage, { promptTokens, uncachedPromptTokens, completionTokens, thinkingTokens, cachedPromptTokens });
         if (usageIsReported && this.currentConversationId) {
@@ -1685,11 +1724,11 @@ export class AntigravityProvider extends LLMProvider {
 
         const timedOutMidTurn = /print timeout after .* with turn in progress|returning partial output/i.test(stderrBuffer);
         const finalResponseText = typeof finalResultObj?.response === 'string' ? finalResultObj.response.trim() : '';
+        const hasVisibleFinalText = Boolean(finalResponseText || (!sawToolAfterLastText && streamedResponse.trim()));
         const endedAfterToolWithoutFinalResponse =
-          sawToolAfterLastText && !finalResponseText && deniedActions.length === 0 && toolCalls.length === 0;
+          sawToolAfterLastText && !hasVisibleFinalText && deniedActions.length === 0 && toolCalls.length === 0;
         const missingResultEvent =
           finalResultObj === null && deniedActions.length === 0 && toolCalls.length === 0;
-
 
         const response: ChatResponse = {
           content,
@@ -1724,7 +1763,6 @@ export class AntigravityProvider extends LLMProvider {
         if (usageIsReported && this.currentConversationId) {
           this.lastCumulativeUsage = { conversationId: this.currentConversationId, ...cumulative };
         }
-        // A peer may report usage only in its final result.
         const reportedTotal = promptTokens + completionTokens;
         const uncachedTotal = noncachedTokens(response.usage);
         const spentAgainstLimit = countReportedTotal ? reportedTotal : uncachedTotal;
@@ -1737,6 +1775,39 @@ export class AntigravityProvider extends LLMProvider {
           return;
         }
         safeResolve(response);
+      };
+
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        resetInactivityWatchdog();
+        stdoutBuffer += chunk;
+
+        // Process line-delimited stream-json events
+        const lines = stdoutBuffer.split('\n');
+        stdoutBuffer = lines.pop() || ''; // Keep incomplete trailing fragment in buffer
+
+        for (const line of lines) {
+          if (processStreamJsonLine(line.trim())) return;
+        }
+      });
+
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk: string) => {
+        resetInactivityWatchdog();
+        stderrBuffer += chunk;
+      });
+
+      child.on('error', (err: Error) => {
+        if (useConversation) this.currentConversationId = null;
+        safeReject(new Error(`Antigravity Agent (agy) spawn error: ${err.message}. Make sure Antigravity CLI is installed.`));
+      });
+
+      child.on('close', (code: number | null) => {
+        childClosed = true;
+        // A budget or user abort has already settled this call. Do not accept
+        // a late result from the terminated process as a resumable session.
+        if (isSettled) return;
+        finalizeTurn(code);
       });
     });
   }

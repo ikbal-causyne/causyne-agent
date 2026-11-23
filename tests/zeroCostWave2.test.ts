@@ -12,6 +12,7 @@ import { streamOllamaChat } from '../src/providers/byokStream.js';
 import { fetchLiveModels } from '../src/dynamicCatalogue.js';
 import { OpenRouterProvider, parseRateLimitResetMs } from '../src/providers/openrouter.js';
 import { handleInput } from '../src/commands.js';
+import { AntigravityProvider } from '../src/providers/antigravity.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -589,5 +590,54 @@ describe('Wave 2 — Zero-API-Key & Free-Tier Reliability', () => {
       (m: any) => m?.role === 'system' && String(m.content || '').includes('SYSTEM ERROR RECOVERED')
     );
     assert.equal(injectedRecovered, false, '429 retries must not push SYSTEM ERROR RECOVERED into messages');
+  });
+
+  test('AntigravityProvider handles chunk-split <think> tags, scrubs vault env, and resolves promptly on result event', { skip: process.platform === 'win32' }, async () => {
+    const ws = path.join(TMP, 'agy-stream-fixes');
+    fs.mkdirSync(ws, { recursive: true });
+    const envOut = path.join(ws, 'agy-env.json');
+    const fakeAgy = path.join(ws, 'fake-agy.mjs');
+    fs.writeFileSync(fakeAgy, `#!/usr/bin/env node
+import fs from 'node:fs';
+fs.writeFileSync(${JSON.stringify(envOut)}, JSON.stringify({
+  vault: process.env.CAUSYNE_VAULT_KEY || null,
+  dev: process.env.CAUSYNE_DEV_SECRET || null
+}));
+process.stdin.resume();
+const emit = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+emit({ event: 'init', conversation_id: 'conv-agy-1' });
+emit({ event: 'step_update', step_update: { step_type: 'text', text_delta: '<thi' } });
+emit({ event: 'step_update', step_update: { step_type: 'text', text_delta: 'nk>hidden thought</thi' } });
+emit({ event: 'step_update', step_update: { step_type: 'text', text_delta: 'nk>Visible answer!' } });
+emit({ event: 'result', result: { status: 'SUCCESS', conversation_id: 'conv-agy-1', response: '', usage: { input_tokens: 100, output_tokens: 20 } } });
+// Keep process open briefly to verify provider resolves promptly on result event without waiting forever
+setTimeout(() => process.exit(0), 5000);
+`, 'utf8');
+    if (process.platform !== 'win32') fs.chmodSync(fakeAgy, 0o755);
+
+    const prevVault = process.env.CAUSYNE_VAULT_KEY;
+    process.env.CAUSYNE_VAULT_KEY = 'secret-vault-key-test';
+    const visibleChunks: string[] = [];
+    const thinkChunks: string[] = [];
+    const provider = new AntigravityProvider({ command: fakeAgy, model: 'gemini-3.8-flash-low' });
+    const start = Date.now();
+    try {
+      const res = await provider.chat([{ role: 'user', content: 'Say answer' }], {
+        workspaceRoot: ws,
+        onChunk: (c) => visibleChunks.push(c),
+        onReasoningChunk: (r) => thinkChunks.push(r)
+      });
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < 2500, `expected prompt resolution on result event, took ${elapsed}ms`);
+      assert.equal(visibleChunks.join(''), 'Visible answer!');
+      assert.equal(thinkChunks.join(''), 'hidden thought');
+      assert.equal(res.content, 'Visible answer!');
+      assert.equal(res.incompleteTurn, undefined);
+      const envData = JSON.parse(fs.readFileSync(envOut, 'utf8'));
+      assert.equal(envData.vault, null, 'CAUSYNE_VAULT_KEY must be scrubbed from agy child env');
+    } finally {
+      if (prevVault === undefined) delete process.env.CAUSYNE_VAULT_KEY;
+      else process.env.CAUSYNE_VAULT_KEY = prevVault;
+    }
   });
 });
