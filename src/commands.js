@@ -1541,6 +1541,15 @@ export const COMMANDS = [
                     : pickDefaultPeerModel(nextProvider, peerInfo?.models);
                 return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
             }
+            // 2b. OpenRouter `:free` models (e.g. qwen/qwen3-coder:free, deepseek/deepseek-r1:free)
+            // Must be recognized BEFORE ACP peer and BYOK vendor-prefix matching so `qwen/...:free`
+            // never triggers a missing Qwen Code CLI error or switches to Qwen BYOK.
+            if (rawRequested.toLowerCase().endsWith(':free') && rawRequested.includes('/')) {
+                const targetProv = (config.provider === 'openrouter' || config.provider === 'openrouter-free')
+                    ? config.provider
+                    : 'openrouter';
+                return activateModel(targetProv, rawRequested, `Now using ${targetProv} / ${rawRequested}.`);
+            }
             // 3. Known ACP peer directly (e.g. opencode, opencode/deepseek-v4.1-flash-free, claude)
             const slashIndex = rawRequested.indexOf('/');
             const prefix = (slashIndex > 0 ? rawRequested.slice(0, slashIndex) : rawRequested).toLowerCase();
@@ -1566,14 +1575,6 @@ export const COMMANDS = [
                     peerModel = pickDefaultPeerModel(nextProvider, acpPeer.models);
                 }
                 return activateModel(nextProvider, peerModel, `Now using ${nextProvider} / ${peerModel}.`);
-            }
-            // 3b. OpenRouter `:free` models (e.g. qwen/qwen3-coder:free, deepseek/deepseek-r1:free)
-            // Must be recognized BEFORE vendor-prefix matching so `qwen/...:free` never switches to Qwen BYOK.
-            if (rawRequested.toLowerCase().endsWith(':free') && rawRequested.includes('/')) {
-                const targetProv = (config.provider === 'openrouter' || config.provider === 'openrouter-free')
-                    ? config.provider
-                    : 'openrouter';
-                return activateModel(targetProv, rawRequested, `Now using ${targetProv} / ${rawRequested}.`);
             }
             // 4. Known BYOK provider prefix (e.g. gemini/gemini-2.5-flash, anthropic/claude-3-7-sonnet)
             const byokProvider = overview.byok.find(p => p.id === prefix || (p.id === 'qwen' && prefix === 'dashscope-byok'));
