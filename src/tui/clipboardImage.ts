@@ -73,18 +73,17 @@ const WINDOWS_RESERVED_FILENAME_RE = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\
 
 export function sanitizeAttachmentFilename(rawName: string | undefined, fallback: string): string {
   if (!rawName) return fallback;
-  let cleaned = stripAnsi(rawName)
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, '')
-    .replace(/[<>:"/\\|?*]/g, '_')
-    .trim();
+  const stripped = stripAnsi(rawName).replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim();
+  if (!stripped || stripped.endsWith('/') || stripped.endsWith('\\')) return fallback;
+  const rawBase = path.basename(stripped);
+  let cleaned = rawBase.replace(/[<>:"/\\|?*]/g, '_').trim();
   while (cleaned.endsWith('.') || cleaned.endsWith(' ')) {
     cleaned = cleaned.slice(0, -1);
   }
-  const base = cleaned ? path.basename(cleaned) : '';
-  if (!base || base === '.' || base === '..' || WINDOWS_RESERVED_FILENAME_RE.test(base)) {
+  if (!cleaned || cleaned === '.' || cleaned === '..' || WINDOWS_RESERVED_FILENAME_RE.test(cleaned)) {
     return fallback;
   }
-  return base.slice(0, 128);
+  return cleaned.slice(0, 128);
 }
 
 /**
