@@ -9,6 +9,8 @@ import { GeminiProvider } from '../src/providers/gemini.js';
 import { DeepSeekProvider } from '../src/providers/deepseek.js';
 import { OpenAICompatibleProvider } from '../src/providers/openai-compatible.js';
 import { applyPatch } from '../src/tools/applyPatch.js';
+import { fsEdit } from '../src/tools/fsEdit.js';
+import { multiEdit } from '../src/tools/multiEdit.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -268,5 +270,43 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     }, { workspaceRoot: ws });
     assert.equal(replaceRes.success, true, replaceRes.error);
     assert.equal(fs.readFileSync(dupFile, 'utf8'), 'export const replaced = true;\n');
+  });
+
+  test('fsEdit and MultiEdit enforce uniqueness, support replace_all, preserve CRLF/indent, and refuse unsafe fuzzy token mutation', async () => {
+    const ws = path.join(TMP, 'edit-deterministic');
+    fs.mkdirSync(ws, { recursive: true });
+    const target = path.join(ws, 'sample.ts');
+    fs.writeFileSync(target, 'const port = 3000;\r\nconst backupPort = 3000;\r\n  if (count === 1) return true;\r\n', 'utf8');
+
+    // Ambiguous match fails without replace_all
+    const ambig = await fsEdit.execute({
+      path: target,
+      edits: [{ searchContent: '3000', replaceContent: '8080' }]
+    }, { workspaceRoot: ws });
+    assert.equal(ambig.success, false);
+    assert.match(ambig.error || '', /ambiguous/i);
+
+    // Unsafe 90% Levenshtein drift (count === 2 vs count === 1) must FAIL with Closest line hint instead of silently corrupting code
+    const nearMiss = await fsEdit.execute({
+      path: target,
+      edits: [{ searchContent: '  if (count === 2) return true;', replaceContent: '  if (count === 2) return false;' }]
+    }, { workspaceRoot: ws });
+    assert.equal(nearMiss.success, false);
+    assert.match(nearMiss.error || '', /Closest line 3/i);
+
+    // replace_all updates both occurrences and preserves CRLF
+    const allRes = await multiEdit.execute({
+      file_path: target,
+      edits: [
+        { old_string: '3000', new_string: '8080', replace_all: true },
+        // Indent-shifted deterministic trimmed-line match preserves existing 2-space indent
+        { old_string: 'if (count === 1) return true;', new_string: 'if (count === 1) return false;' }
+      ]
+    }, { workspaceRoot: ws });
+    assert.equal(allRes.success, true, allRes.error);
+    assert.equal(
+      fs.readFileSync(target, 'utf8'),
+      'const port = 8080;\r\nconst backupPort = 8080;\r\n  if (count === 1) return false;\r\n'
+    );
   });
 });

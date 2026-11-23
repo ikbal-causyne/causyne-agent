@@ -7,11 +7,15 @@ import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../l
 export interface FsEditItem {
   searchContent: string;
   replaceContent: string;
+  replace_all?: boolean | undefined;
+  replaceAll?: boolean | undefined;
 }
 
 export interface FsEditArgs {
   path: string;
   edits: FsEditItem[];
+  replace_all?: boolean | undefined;
+  replaceAll?: boolean | undefined;
 }
 
 export interface FsEditResult {
@@ -64,65 +68,204 @@ async function assertWithinEditScope(target: string, context?: FsEditContext): P
   throw new Error(`Target resolves outside the selected workspace: ${target}`);
 }
 
-const MAX_FUZZY_CHARS = 8_192;
-
-function getLevenshteinDistance(a: string, b: string): number {
-  let s1 = a;
-  let s2 = b;
-  if (s1.length > s2.length) {
-    const tmp = s1;
-    s1 = s2;
-    s2 = tmp;
+function findExactOffsets(haystack: string, needle: string): number[] {
+  const offsets: number[] = [];
+  if (!needle) return offsets;
+  let pos = 0;
+  while (pos <= haystack.length - needle.length) {
+    const idx = haystack.indexOf(needle, pos);
+    if (idx === -1) break;
+    offsets.push(idx);
+    pos = idx + needle.length;
   }
-  const m = s1.length;
-  const n = s2.length;
-  if (m === 0) return n;
-  let prev = new Int32Array(m + 1);
-  let curr = new Int32Array(m + 1);
-  for (let j = 0; j <= m; j++) prev[j] = j;
-
-  for (let i = 1; i <= n; i++) {
-    curr[0] = i;
-    const ch2 = s2.charCodeAt(i - 1);
-    for (let j = 1; j <= m; j++) {
-      const cost = s1.charCodeAt(j - 1) === ch2 ? 0 : 1;
-      const del = prev[j]! + 1;
-      const ins = curr[j - 1]! + 1;
-      const sub = prev[j - 1]! + cost;
-      curr[j] = del < ins ? (del < sub ? del : sub) : (ins < sub ? ins : sub);
-    }
-    const swap = prev;
-    prev = curr;
-    curr = swap;
-  }
-  return prev[m]!;
+  return offsets;
 }
 
-function calculateConfidence(original: string, match: string): number {
-  const maxLen = Math.max(original.length, match.length);
-  if (maxLen === 0) return 100;
-  if (maxLen > MAX_FUZZY_CHARS) return 0;
-  // Impossible to reach 90% confidence when length difference alone exceeds 10%
-  if (Math.abs(original.length - match.length) / maxLen > 0.1) return 0;
-  const dist = getLevenshteinDistance(original, match);
-  return ((maxLen - dist) / maxLen) * 100;
+function lineNumberAtOffset(text: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) line++;
+  }
+  return line;
+}
+
+function closestLineHint(text: string, needle: string): string {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const firstNonEmpty = needle.replace(/\r\n/g, '\n').split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+  if (!firstNonEmpty || lines.length === 0) return '';
+  const probeTokens = new Set(firstNonEmpty.toLowerCase().split(/[^a-z0-9_]+/).filter((t) => t.length >= 2));
+  let bestLine = -1;
+  let bestScore = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const candidate = lines[i]!.trim();
+    if (!candidate) continue;
+    let score = 0;
+    if (candidate.toLowerCase().includes(firstNonEmpty.toLowerCase()) || firstNonEmpty.toLowerCase().includes(candidate.toLowerCase())) {
+      score += 5;
+    }
+    if (probeTokens.size > 0) {
+      for (const tok of candidate.toLowerCase().split(/[^a-z0-9_]+/)) {
+        if (probeTokens.has(tok)) score++;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestLine = i;
+    }
+  }
+  if (bestLine === -1 || bestScore === 0) return '';
+  return ` Closest line ${bestLine + 1}: ${JSON.stringify(lines[bestLine]!.slice(0, 140))}`;
+}
+
+function reindentReplacement(
+  matchedLines: readonly string[],
+  searchLines: readonly string[],
+  replaceLines: readonly string[]
+): string[] {
+  const firstNonEmptyIdx = searchLines.findIndex((l) => l.trim().length > 0);
+  if (firstNonEmptyIdx === -1 || firstNonEmptyIdx >= matchedLines.length) return [...replaceLines];
+  const fileIndent = (matchedLines[firstNonEmptyIdx]!.match(/^[ \t]*/) ?? [''])[0];
+  const searchIndent = (searchLines[firstNonEmptyIdx]!.match(/^[ \t]*/) ?? [''])[0];
+  if (fileIndent === searchIndent) return [...replaceLines];
+  return replaceLines.map((line) => {
+    if (!line.trim()) return '';
+    if (searchIndent && line.startsWith(searchIndent)) {
+      return `${fileIndent}${line.slice(searchIndent.length)}`;
+    }
+    return `${fileIndent}${line.trimStart()}`;
+  });
+}
+
+export function applyDeterministicEdit(
+  content: string,
+  search: string,
+  replace: string,
+  replaceAll: boolean,
+  editIndex: number
+): { ok: true; nextContent: string; count: number } | { ok: false; error: string } {
+  const fileEol = content.includes('\r\n') ? '\r\n' : '\n';
+
+  // Tier 1: Exact literal match
+  const exactOffsets = findExactOffsets(content, search);
+  if (exactOffsets.length === 1) {
+    const idx = exactOffsets[0]!;
+    return {
+      ok: true,
+      nextContent: content.slice(0, idx) + replace + content.slice(idx + search.length),
+      count: 1
+    };
+  }
+  if (exactOffsets.length > 1) {
+    if (replaceAll) {
+      return {
+        ok: true,
+        nextContent: content.split(search).join(replace),
+        count: exactOffsets.length
+      };
+    }
+    const lines = exactOffsets.slice(0, 6).map((off) => lineNumberAtOffset(content, off));
+    return {
+      ok: false,
+      error: `ATOMIC ROLLBACK: Edit index ${editIndex} is ambiguous — matched ${exactOffsets.length} locations (lines ${lines.join(', ')}). Include more surrounding context or pass replace_all: true.`
+    };
+  }
+
+  // Tier 2: Line-ending normalized match (preserves file CRLF vs LF)
+  const normContent = content.replace(/\r\n/g, '\n');
+  const normSearch = search.replace(/\r\n/g, '\n');
+  const normReplace = replace.replace(/\r\n/g, '\n');
+  const eolOffsets = findExactOffsets(normContent, normSearch);
+  if (eolOffsets.length === 1) {
+    const idx = eolOffsets[0]!;
+    const updated = normContent.slice(0, idx) + normReplace + normContent.slice(idx + normSearch.length);
+    return {
+      ok: true,
+      nextContent: fileEol === '\r\n' ? updated.replace(/\n/g, '\r\n') : updated,
+      count: 1
+    };
+  }
+  if (eolOffsets.length > 1) {
+    if (replaceAll) {
+      const updated = normContent.split(normSearch).join(normReplace);
+      return {
+        ok: true,
+        nextContent: fileEol === '\r\n' ? updated.replace(/\n/g, '\r\n') : updated,
+        count: eolOffsets.length
+      };
+    }
+    const lines = eolOffsets.slice(0, 6).map((off) => lineNumberAtOffset(normContent, off));
+    return {
+      ok: false,
+      error: `ATOMIC ROLLBACK: Edit index ${editIndex} is ambiguous — matched ${eolOffsets.length} locations (lines ${lines.join(', ')}). Include more surrounding context or pass replace_all: true.`
+    };
+  }
+
+  // Tier 3: Deterministic trimmed-line whitespace/indent-preserving match (never silently alters code tokens)
+  const fileLines = normContent.split('\n');
+  const searchLines = normSearch.split('\n');
+  const replaceLines = normReplace.split('\n');
+  const hasContentLine = searchLines.some((l) => l.trim().length > 0);
+  if (hasContentLine && searchLines.length <= fileLines.length) {
+    const lineMatches: number[] = [];
+    for (let j = 0; j <= fileLines.length - searchLines.length; j++) {
+      let allTrimEqual = true;
+      for (let k = 0; k < searchLines.length; k++) {
+        if (fileLines[j + k]!.trim() !== searchLines[k]!.trim()) {
+          allTrimEqual = false;
+          break;
+        }
+      }
+      if (allTrimEqual) lineMatches.push(j);
+    }
+    if (lineMatches.length === 1) {
+      const pos = lineMatches[0]!;
+      const reindented = reindentReplacement(fileLines.slice(pos, pos + searchLines.length), searchLines, replaceLines);
+      fileLines.splice(pos, searchLines.length, ...reindented);
+      const updated = fileLines.join(fileEol);
+      return { ok: true, nextContent: updated, count: 1 };
+    }
+    if (lineMatches.length > 1) {
+      if (replaceAll) {
+        // Apply from bottom to top so earlier line indices remain valid
+        for (let m = lineMatches.length - 1; m >= 0; m--) {
+          const pos = lineMatches[m]!;
+          const reindented = reindentReplacement(fileLines.slice(pos, pos + searchLines.length), searchLines, replaceLines);
+          fileLines.splice(pos, searchLines.length, ...reindented);
+        }
+        return { ok: true, nextContent: fileLines.join(fileEol), count: lineMatches.length };
+      }
+      const lineNums = lineMatches.slice(0, 6).map((idx) => idx + 1);
+      return {
+        ok: false,
+        error: `ATOMIC ROLLBACK: Edit index ${editIndex} is ambiguous across whitespace-trimmed lines (${lineMatches.length} matches at lines ${lineNums.join(', ')}). Include more context or pass replace_all: true.`
+      };
+    }
+  }
+
+  const hint = closestLineHint(normContent, normSearch);
+  return {
+    ok: false,
+    error: `ATOMIC ROLLBACK: Edit index ${editIndex} failed — exact/whitespace-normalized match not found.${hint} Previous edits in this batch were rolled back.`
+  };
 }
 
 export const fsEdit = {
   schema: {
     name: 'fs.edit',
-    description: 'Surgically edit specific lines/blocks in a file. Employs 90% confidence Levenshtein fuzzy matching if exact match fails.',
+    description: 'Surgically edit specific lines/blocks in a file atomically with exact, EOL-preserving, and whitespace/indent-preserving unique matching. Rejects ambiguous matches unless replace_all is true.',
     parameters: {
       type: 'object',
       properties: {
         path: { type: 'string' },
+        replace_all: { type: 'boolean', description: 'When true, replace all matching occurrences instead of requiring a unique match.' },
         edits: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
               searchContent: { type: 'string' },
-              replaceContent: { type: 'string' }
+              replaceContent: { type: 'string' },
+              replace_all: { type: 'boolean' }
             },
             required: ['searchContent', 'replaceContent']
           }
@@ -174,38 +317,13 @@ export const fsEdit = {
           };
         }
 
-        // Try exact match first
-        if (workingContent.includes(edit.searchContent)) {
-          workingContent = workingContent.replace(edit.searchContent, () => edit.replaceContent);
-          replacements++;
-          continue;
+        const replaceAll = edit.replace_all === true || edit.replaceAll === true || args.replace_all === true || args.replaceAll === true;
+        const applied = applyDeterministicEdit(workingContent, edit.searchContent, edit.replaceContent, replaceAll, i);
+        if (!applied.ok) {
+          return { success: false, error: applied.error };
         }
-
-        // Fuzzy Match Fallback
-        const lines = workingContent.split('\n');
-        const oldLines = edit.searchContent.split('\n');
-        let bestIndex = -1;
-        let highestConfidence = 0;
-
-        for (let j = 0; j <= lines.length - oldLines.length; j++) {
-          const chunk = lines.slice(j, j + oldLines.length).join('\n');
-          const conf = calculateConfidence(edit.searchContent, chunk);
-          if (conf > highestConfidence) {
-            highestConfidence = conf;
-            bestIndex = j;
-          }
-        }
-
-        if (highestConfidence >= 90 && bestIndex !== -1) {
-          lines.splice(bestIndex, oldLines.length, edit.replaceContent);
-          workingContent = lines.join('\n');
-          replacements++;
-        } else {
-          return {
-            success: false,
-            error: `ATOMIC ROLLBACK: Edit index ${i} failed. Exact match not found, and fuzzy match confidence was too low (${highestConfidence.toFixed(2)}% < 90%). Previous edits in this batch were rolled back.`
-          };
-        }
+        workingContent = applied.nextContent;
+        replacements += applied.count;
       }
 
       // Commit the transaction atomically, preserving original file permissions

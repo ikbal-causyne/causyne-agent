@@ -3,15 +3,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../infra/atomicWriter.js';
 import { collectActivePostEditDiagnostics, formatDiagnosticsCompact } from '../lsp/lspClient.js';
+import { applyDeterministicEdit } from './fsEdit.js';
 
 export interface MultiEditItem {
   old_string: string;
   new_string: string;
+  replace_all?: boolean | undefined;
+  replaceAll?: boolean | undefined;
 }
 
 export interface MultiEditArgs {
   file_path: string;
   edits: MultiEditItem[];
+  replace_all?: boolean | undefined;
+  replaceAll?: boolean | undefined;
 }
 
 export interface MultiEditResult {
@@ -64,64 +69,23 @@ async function assertWithinScope(target: string, context?: MultiEditContext): Pr
   throw new Error(`Target resolves outside the selected workspace: ${target}`);
 }
 
-const MAX_FUZZY_CHARS = 8_192;
-
-function getLevenshteinDistance(a: string, b: string): number {
-  let s1 = a;
-  let s2 = b;
-  if (s1.length > s2.length) {
-    const tmp = s1;
-    s1 = s2;
-    s2 = tmp;
-  }
-  const m = s1.length;
-  const n = s2.length;
-  if (m === 0) return n;
-  let prev = new Int32Array(m + 1);
-  let curr = new Int32Array(m + 1);
-  for (let j = 0; j <= m; j++) prev[j] = j;
-
-  for (let i = 1; i <= n; i++) {
-    curr[0] = i;
-    const ch2 = s2.charCodeAt(i - 1);
-    for (let j = 1; j <= m; j++) {
-      const cost = s1.charCodeAt(j - 1) === ch2 ? 0 : 1;
-      const del = prev[j]! + 1;
-      const ins = curr[j - 1]! + 1;
-      const sub = prev[j - 1]! + cost;
-      curr[j] = del < ins ? (del < sub ? del : sub) : (ins < sub ? ins : sub);
-    }
-    const swap = prev;
-    prev = curr;
-    curr = swap;
-  }
-  return prev[m]!;
-}
-
-function calculateConfidence(original: string, match: string): number {
-  const maxLen = Math.max(original.length, match.length);
-  if (maxLen === 0) return 100;
-  if (maxLen > MAX_FUZZY_CHARS) return 0;
-  if (Math.abs(original.length - match.length) / maxLen > 0.1) return 0;
-  const dist = getLevenshteinDistance(original, match);
-  return ((maxLen - dist) / maxLen) * 100;
-}
-
 export const multiEdit = {
   schema: {
     name: 'MultiEdit',
-    description: 'Make multiple edits to a single file atomically. Replaces old_string with new_string. If exact match fails, uses fuzzy matching (requires 90% confidence). Includes atomic rollback.',
+    description: 'Make multiple edits to a single file atomically. Replaces old_string with new_string using exact, EOL-preserving, and whitespace/indent-preserving unique matching. Rejects ambiguous matches unless replace_all is true.',
     parameters: {
       type: 'object',
       properties: {
         file_path: { type: 'string' },
+        replace_all: { type: 'boolean', description: 'When true, replace all matching occurrences instead of requiring a unique match.' },
         edits: {
           type: 'array',
           items: {
             type: 'object',
             properties: {
               old_string: { type: 'string' },
-              new_string: { type: 'string' }
+              new_string: { type: 'string' },
+              replace_all: { type: 'boolean' }
             },
             required: ['old_string', 'new_string']
           },
@@ -174,38 +138,13 @@ export const multiEdit = {
           };
         }
 
-        // Try exact match first
-        if (workingContent.includes(edit.old_string)) {
-          workingContent = workingContent.replace(edit.old_string, () => edit.new_string);
-          replacements++;
-          continue;
+        const replaceAll = edit.replace_all === true || edit.replaceAll === true || args.replace_all === true || args.replaceAll === true;
+        const applied = applyDeterministicEdit(workingContent, edit.old_string, edit.new_string, replaceAll, i);
+        if (!applied.ok) {
+          return { success: false, error: applied.error };
         }
-
-        // Fuzzy Match Fallback
-        const lines = workingContent.split('\n');
-        const oldLines = edit.old_string.split('\n');
-        let bestIndex = -1;
-        let highestConfidence = 0;
-
-        for (let j = 0; j <= lines.length - oldLines.length; j++) {
-          const chunk = lines.slice(j, j + oldLines.length).join('\n');
-          const conf = calculateConfidence(edit.old_string, chunk);
-          if (conf > highestConfidence) {
-            highestConfidence = conf;
-            bestIndex = j;
-          }
-        }
-
-        if (highestConfidence >= 90 && bestIndex !== -1) {
-          lines.splice(bestIndex, oldLines.length, edit.new_string);
-          workingContent = lines.join('\n');
-          replacements++;
-        } else {
-          return {
-            success: false,
-            error: `ATOMIC ROLLBACK: Edit index ${i} failed. Exact match not found, and fuzzy match confidence was too low (${highestConfidence.toFixed(2)}% < 90%). Previous edits in this batch were rolled back.`
-          };
-        }
+        workingContent = applied.nextContent;
+        replacements += applied.count;
       }
 
       // Commit the transaction atomically, preserving original file permissions
