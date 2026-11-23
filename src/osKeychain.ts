@@ -160,7 +160,7 @@ export function loadVaultKeyFromKeychain(
       windowsHide: true,
       shell: false
     });
-    if (res.status !== 0 || typeof res.stdout !== 'string') return null;
+    if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string') return null;
     const hex = res.stdout.trim();
     return isValidHexKey(hex) ? Buffer.from(hex, 'hex') : null;
   }
@@ -192,7 +192,7 @@ export function loadVaultKeyFromKeychain(
       windowsHide: true,
       shell: false
     });
-    if (res.status !== 0 || typeof res.stdout !== 'string') return null;
+    if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string') return null;
     const hex = res.stdout.trim();
     return isValidHexKey(hex) ? Buffer.from(hex, 'hex') : null;
   }
@@ -266,7 +266,7 @@ export function saveVaultKeyToKeychain(
       windowsHide: true,
       shell: false
     });
-    if (res.status !== 0 || typeof res.stdout !== 'string' || !res.stdout.trim()) return false;
+    if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string' || !res.stdout.trim()) return false;
     const blobFile = dpapiBlobPath(vaultDir);
     const dir = path.dirname(blobFile);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });

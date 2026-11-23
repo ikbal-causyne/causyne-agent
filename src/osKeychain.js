@@ -136,7 +136,7 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
             windowsHide: true,
             shell: false
         });
-        if (res.status !== 0 || typeof res.stdout !== 'string')
+        if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string')
             return null;
         const hex = res.stdout.trim();
         return isValidHexKey(hex) ? Buffer.from(hex, 'hex') : null;
@@ -172,7 +172,7 @@ export function loadVaultKeyFromKeychain(vaultDir, options = {}) {
             windowsHide: true,
             shell: false
         });
-        if (res.status !== 0 || typeof res.stdout !== 'string')
+        if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string')
             return null;
         const hex = res.stdout.trim();
         return isValidHexKey(hex) ? Buffer.from(hex, 'hex') : null;
@@ -237,7 +237,7 @@ export function saveVaultKeyToKeychain(vaultDir, key, options = {}) {
             windowsHide: true,
             shell: false
         });
-        if (res.status !== 0 || typeof res.stdout !== 'string' || !res.stdout.trim())
+        if (!res || res.error || res.status !== 0 || typeof res.stdout !== 'string' || !res.stdout.trim())
             return false;
         const blobFile = dpapiBlobPath(vaultDir);
         const dir = path.dirname(blobFile);

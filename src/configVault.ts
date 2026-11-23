@@ -140,7 +140,30 @@ export function getOrCreateVaultKey(
       const existingFileKey = fs.readFileSync(resolved);
       if (existingFileKey.length === VAULT_KEY_BYTES) {
         const stored = saveVaultKeyToKeychain(vaultDir, existingFileKey, keychainOptions);
-        if (stored || keychainMode !== 'strict') {
+        if (stored) {
+          // Verify round-trip read from OS Keychain before shredding plaintext .vault_key residue
+          const verified = loadVaultKeyFromKeychain(vaultDir, keychainOptions);
+          if (verified && verified.length === VAULT_KEY_BYTES && crypto.timingSafeEqual(verified, existingFileKey)) {
+            verified.fill(0);
+            try {
+              const zeros = Buffer.alloc(existingFileKey.length, 0);
+              const fd = fs.openSync(resolved, 'r+');
+              try {
+                fs.writeSync(fd, zeros, 0, zeros.length, 0);
+                fs.fsyncSync(fd);
+              } finally {
+                fs.closeSync(fd);
+              }
+              fs.unlinkSync(resolved);
+            } catch {
+              // Best-effort residue cleanup; keychain copy is already verified
+            }
+          } else if (verified) {
+            verified.fill(0);
+          }
+          return existingFileKey;
+        }
+        if (keychainMode !== 'strict') {
           return existingFileKey;
         }
         throw new Error('Strict OS keychain mode requested (CAUSYNE_KEYCHAIN=strict) but storing the vault key failed.');
