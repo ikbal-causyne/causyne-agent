@@ -14,6 +14,7 @@ import { multiEdit } from '../src/tools/multiEdit.js';
 import { fsWrite } from '../src/tools/fsWrite.js';
 import { fsRead } from '../src/tools/fsRead.js';
 import { checkFileStaleness, clearFileTracker } from '../src/tools/fileTracker.js';
+import { sysRun, isFinalCommandSearch, cleanSubprocessOutput, resolvePortableShell } from '../src/tools/sysRun.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w3-')));
 
@@ -370,5 +371,29 @@ describe('Wave 3 — Paid BYOK Parity, Core Editing, Execution & Code Intel', ()
     assert.equal(bigSlice.success, true);
     assert.match(bigSlice.output || '', /LOG LINE 5:/);
     assert.match(bigSlice.output || '', /more lines follow/i);
+  });
+
+  test('sysRun does not mask find exit-1 errors, redacts secrets, resolves portable shell, and preserves head+tail on >50KB output', async () => {
+    assert.equal(isFinalCommandSearch('find /nonexistent -name foo'), false, 'find exit 1 is a real error, not 0 matches');
+    assert.equal(isFinalCommandSearch('grep needle file.txt'), true);
+    const fakeTok = 'ghp_' + 'AbCdEfGhIjKlMnOpQrStUvWxYz123456';
+    assert.equal(cleanSubprocessOutput(`token=${fakeTok}`).includes(fakeTok), false, 'subprocess output must redact secrets');
+
+    const sh = resolvePortableShell('echo ok');
+    assert.ok(sh.shell.length > 0);
+    if (process.platform === 'win32') {
+      assert.deepEqual(sh.shellArgs.slice(0, 3), ['/d', '/s', '/c']);
+    }
+
+    const ws = path.join(TMP, 'sysrun-head-tail');
+    fs.mkdirSync(ws, { recursive: true });
+    const bigRes = await sysRun.execute({
+      command: `${JSON.stringify(process.execPath)} -e "console.log('HEAD_START_MARKER'); console.log('X'.repeat(65000)); console.log('TAIL_END_MARKER');"`,
+      cwd: ws
+    });
+    assert.equal(bigRes.success, true, bigRes.error);
+    assert.match(bigRes.output, /HEAD_START_MARKER/);
+    assert.match(bigRes.output, /OUTPUT TRUNCATED/);
+    assert.match(bigRes.output, /TAIL_END_MARKER/);
   });
 });

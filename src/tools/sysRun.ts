@@ -10,11 +10,12 @@
  * 4. Ring-buffered output truncation (50KB cap) to protect LLM context windows.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isLaunchOnlyPrompt, isServerLaunchCommand } from '../launchIntent.js';
+import { redactTextSecrets } from '../providers/byokHttp.js';
 import { sanitizeSubprocessEnv } from './subprocessEnv.js';
 import {
   resolveOsSandboxMode,
@@ -78,9 +79,19 @@ export function stripAnsi(str: string): string {
   return str.replace(new RegExp(pattern, 'g'), '');
 }
 
+export function resolvePortableShell(command: string): { shell: string; shellArgs: string[]; isWin: boolean } {
+  const isWin = os.platform() === 'win32';
+  if (isWin) {
+    const comspec = process.env.ComSpec || process.env.COMSPEC || 'cmd.exe';
+    return { shell: comspec, shellArgs: ['/d', '/s', '/c', `"${command}"`], isWin: true };
+  }
+  const posixShell = fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh';
+  return { shell: posixShell, shellArgs: ['-c', command], isWin: false };
+}
+
 /**
- * Strips ANSI escape sequences, normalizes carriage returns, and filters
- * transient progress meters (curl, wget) so agent history and split-panes never glitch.
+ * Strips ANSI escape sequences, normalizes carriage returns, redacts leaked secrets,
+ * and filters transient progress meters (curl, wget) so agent history never glitches or leaks keys.
  */
 export function cleanSubprocessOutput(str: string): string {
   const preSplit = str.replace(/\x1b\[(?:[12]K|\d*G)/g, '\n');
@@ -89,17 +100,18 @@ export function cleanSubprocessOutput(str: string): string {
     .replace(/\r/g, '\n')
     .replace(/(https?:\/\/[^\s"'<>]+?\.[a-z]{2,10})([A-Z][a-z]{2,15}:\s)/g, '$1\n$2');
 
-  return normalized
+  const filtered = normalized
     .split('\n')
     .filter(line => !/^\s*(?:%\s+Total\b|Dload\s+Upload\b|\d+\s+\d+(?:\.[0-9kKmM]+)?\s+\d+\s+.*--:--:--)/i.test(line))
     .join('\n');
+  return redactTextSecrets(filtered, [], { sanitizeTerminal: false });
 }
 
 /**
  * Commands whose exit code 1 indicates a normal query result (e.g. no matches found,
  * differences found, or condition evaluated to false) rather than a system error.
  */
-export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test|which|where|cmp|find|pidof|pgrep)(\s|$)/;
+export const SEARCH_COMMAND_PATTERN = /(^|\s|\||&&|;)(grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep)(\s|$)/;
 
 /**
  * Resolves an enriched environment for subprocess execution with full toolchain
@@ -252,7 +264,7 @@ export function isFinalCommandSearch(rawCommand: string): boolean {
   const rawFinalCmd = pipeParts.at(-1)?.trim().replace(/["'\)\s]+$/, '') || '';
   const finalCmd = rawFinalCmd.replace(/^(?:adb\s+(?:-s\s+\S+\s+)?shell|ssh\s+\S+)\s+/i, '');
 
-  return /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:\/(?:usr\/)?bin\/)?(?:grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep|find))(?:\s|$)/.test(finalCmd);
+  return /^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:\/(?:usr\/)?bin\/)?(?:grep|egrep|fgrep|diff|test|which|where|cmp|pidof|pgrep))(?:\s|$)/.test(finalCmd);
 }
 
 /**
@@ -411,8 +423,7 @@ export const sysRun = {
     }
 
     return new Promise<SysRunResult>((resolve) => {
-      const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
-      const shellArgs = os.platform() === 'win32' ? ['/c', executedCommand] : ['-c', executedCommand];
+      const { shell, shellArgs, isWin } = resolvePortableShell(executedCommand);
 
       let child: ReturnType<typeof spawn>;
       try {
@@ -444,7 +455,8 @@ export const sysRun = {
           cwd,
           signal,
           env: getEnhancedEnv(),
-          ...(os.platform() === 'win32' && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
+          windowsHide: true,
+          ...(isWin && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
         });
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -457,17 +469,32 @@ export const sysRun = {
         return;
       }
 
-      // Phase 1 AGI Upgrade: 50KB Ring Buffer (FIFO)
-      const MAX_LENGTH = 50000;
+      // Preserve head (first 12KB) + tail (last 38KB) so error headers at the top survive long builds
+      const MAX_LENGTH = 50_000;
+      const HEAD_KEEP = 12_000;
+      const TAIL_KEEP = MAX_LENGTH - HEAD_KEEP;
       let outputBuffer = '';
+      let headPrefix = '';
+      let truncatedOutput = false;
       let isDetached = false;
 
+      const formatOutputBuffer = (): string => (
+        truncatedOutput
+          ? `${headPrefix}\n...[OUTPUT TRUNCATED — MIDDLE OMITTED]...\n${outputBuffer}`
+          : outputBuffer
+      );
+
       const detachChild = (): void => {
+        // Drain stdout/stderr and unref sockets instead of destroying pipes, so the
+        // detached server does not crash with SIGPIPE on its next log write.
         child.stdout?.removeAllListeners('data');
         child.stderr?.removeAllListeners('data');
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        child.stdin?.destroy();
+        child.stdout?.on('data', () => {});
+        child.stderr?.on('data', () => {});
+        (child.stdout as { unref?: () => void } | null)?.unref?.();
+        (child.stderr as { unref?: () => void } | null)?.unref?.();
+        try { child.stdin?.end(); } catch { /* ignore */ }
+        (child.stdin as { unref?: () => void } | null)?.unref?.();
         child.unref();
       };
 
@@ -481,7 +508,7 @@ export const sysRun = {
             detachChild();
             resolve({
               success: true,
-              output: cleanSubprocessOutput(outputBuffer),
+              output: cleanSubprocessOutput(formatOutputBuffer()),
               exitCode: null, running: true, ...(child.pid ? { pid: child.pid } : {}),
               note: 'The server reported startup. This process is still running; an independent readiness check is required.'
             });
@@ -506,8 +533,12 @@ export const sysRun = {
         }
         lastStream = stream;
         outputBuffer += chunk;
-        if (outputBuffer.length > MAX_LENGTH) {
-          outputBuffer = '...[OUTPUT TRUNCATED]...\n' + outputBuffer.slice(outputBuffer.length - MAX_LENGTH);
+        if (!truncatedOutput && outputBuffer.length > MAX_LENGTH) {
+          headPrefix = outputBuffer.slice(0, HEAD_KEEP);
+          outputBuffer = outputBuffer.slice(outputBuffer.length - TAIL_KEEP);
+          truncatedOutput = true;
+        } else if (truncatedOutput && outputBuffer.length > TAIL_KEEP) {
+          outputBuffer = outputBuffer.slice(outputBuffer.length - TAIL_KEEP);
         }
         checkServerDetach();
       };
@@ -524,7 +555,7 @@ export const sysRun = {
             detachChild();
             resolve({
               success: true,
-              output: cleanSubprocessOutput(outputBuffer) || 'Server process started and running in background.',
+              output: cleanSubprocessOutput(formatOutputBuffer()) || 'Server process started and running in background.',
               exitCode: null, running: true, ...(child.pid ? { pid: child.pid } : {}),
               note: 'The process is still running. No final exit status or readiness check is available.'
             });
@@ -548,7 +579,7 @@ export const sysRun = {
           child.kill('SIGKILL');
           finish({
             success: false,
-            output: cleanSubprocessOutput(outputBuffer),
+            output: cleanSubprocessOutput(formatOutputBuffer()),
             error: `Process timed out after ${timeoutMs}ms`,
             exitCode: 124
           });
@@ -559,7 +590,7 @@ export const sysRun = {
         if (isDetached || settled) return;
         finish({
           success: false,
-          output: cleanSubprocessOutput(outputBuffer),
+          output: cleanSubprocessOutput(formatOutputBuffer()),
           error: err.message,
           exitCode: 1
         });
@@ -567,7 +598,7 @@ export const sysRun = {
 
       child.on('close', (code: number | null) => {
         if (isDetached || settled) return;
-        const cleanOutput = cleanSubprocessOutput(outputBuffer);
+        const cleanOutput = cleanSubprocessOutput(formatOutputBuffer());
         const exitCode = typeof code === 'number' ? code : 1;
 
         if (exitCode === 0) {
@@ -634,8 +665,7 @@ export const sysRunBg = {
   async execute(args: SysRunBgArgs, context: SysRunContext = {}): Promise<SysRunBgResult> {
     try {
       const cwd = resolveSysCwd(args?.cwd, context);
-      const shell = os.platform() === 'win32' ? 'cmd.exe' : '/bin/bash';
-      const shellArgs = os.platform() === 'win32' ? ['/c', args.command] : ['-c', args.command];
+      const { shell, shellArgs, isWin } = resolvePortableShell(args.command);
       const resolvedMode = resolveOsSandboxMode(process.env, context.parentLoop?.config?.osSandbox);
       const wrapped = wrapCommandWithOsSandbox(shell, shellArgs, {
         mode: resolvedMode.mode,
@@ -649,13 +679,32 @@ export const sysRunBg = {
           cwd,
           detached: true,
           stdio: 'ignore',
+          windowsHide: true,
           env: getEnhancedEnv(),
-          ...(os.platform() === 'win32' && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
+          ...(isWin && !wrapped.sandboxed ? { windowsVerbatimArguments: true } : {})
         });
         child.once('error', error => resolve({ success: false, error: error.message }));
         child.once('spawn', () => {
+          const pid = child.pid;
+          if (typeof args.maxDuration === 'number' && Number.isFinite(args.maxDuration) && args.maxDuration > 0 && pid) {
+            const durationMs = Math.max(
+              500,
+              Math.min(24 * 60 * 60 * 1000, args.maxDuration <= 86_400 ? Math.round(args.maxDuration * 1000) : Math.round(args.maxDuration))
+            );
+            const expiryTimer = setTimeout(() => {
+              if (child.exitCode !== null || child.signalCode !== null) return;
+              if (isWin) {
+                execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {});
+              } else {
+                try { process.kill(-pid, 'SIGTERM'); } catch {
+                  try { child.kill('SIGTERM'); } catch { /* ignore */ }
+                }
+              }
+            }, durationMs);
+            expiryTimer.unref?.();
+          }
           child.unref();
-          resolve({ success: true, output: `Background process launched [${args.label}]; readiness not verified.`, pid: child.pid });
+          resolve({ success: true, output: `Background process launched [${args.label}]; readiness not verified.`, pid });
         });
       });
     } catch (e: unknown) {
