@@ -4,6 +4,7 @@ import path from 'node:path';
 import { canonicalModelId } from './modelIds.js';
 import { DEFAULT_MODEL_BY_PROVIDER } from './modelCatalogue.js';
 import { causyneHome } from './utils/paths.js';
+import { listLocalOllamaDiskModels, pickPreferredLocalOllamaModel } from './zeroCostRouting.js';
 import { ensureVaultDir, atomicWriteSecretFileSync, encryptVaultSecret, decryptVaultSecret, isEncryptedVaultSecret } from './configVault.js';
 const MAX_CONFIG_BYTES = 2 * 1024 * 1024;
 const FORBIDDEN_CONFIG_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -259,6 +260,14 @@ export function detectEnvironmentProvider() {
             model: DEFAULT_MODEL_BY_PROVIDER['dashscope-byok'] || ''
         };
     }
+    const openrouterKey = readEnvSecret(env.OPENROUTER_API_KEY);
+    if (openrouterKey) {
+        return {
+            provider: 'openrouter-free',
+            apiKey: openrouterKey,
+            model: DEFAULT_MODEL_BY_PROVIDER['openrouter-free'] || 'openrouter/free'
+        };
+    }
     return detectLocalAgentProvider();
 }
 function checkBinarySync(binaryName) {
@@ -346,9 +355,10 @@ export function detectLocalAgentProvider() {
         };
     }
     if (checkBinarySync('ollama')) {
+        const installedOllamaModel = pickPreferredLocalOllamaModel(listLocalOllamaDiskModels());
         return {
             provider: 'ollama',
-            model: DEFAULT_MODEL_BY_PROVIDER.ollama || 'llama3.3',
+            model: installedOllamaModel || DEFAULT_MODEL_BY_PROVIDER.ollama || 'llama3.3',
             apiKey: ''
         };
     }

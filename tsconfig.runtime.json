@@ -67,6 +67,7 @@
     "src/osKeychain.ts",
     "src/configVault.ts",
     "src/config.ts",
+    "src/zeroCostRouting.ts",
     "src/auditLog.ts",
     "src/outputStore.ts",
     "src/gitSnapshot.ts",

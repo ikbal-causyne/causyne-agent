@@ -13,6 +13,13 @@ import { fetchLiveModels } from '../src/dynamicCatalogue.js';
 import { OpenRouterProvider, parseRateLimitResetMs } from '../src/providers/openrouter.js';
 import { handleInput } from '../src/commands.js';
 import { AntigravityProvider } from '../src/providers/antigravity.js';
+import {
+  listLocalOllamaDiskModels,
+  pickPreferredLocalOllamaModel,
+  detectZeroCostProviders,
+  pickBestZeroCostProvider
+} from '../src/zeroCostRouting.js';
+import { detectEnvironmentProvider } from '../src/config.js';
 
 const TMP = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-w2-')));
 
@@ -678,6 +685,54 @@ rl.on('line', (line) => {
       assert.equal(pids.length, 1, 'persistentWorker must reuse a single warm agy process across turns');
     } finally {
       await provider.close();
+    }
+  });
+
+  test('zeroCostRouting discovers local Ollama disk models, prioritizes coding models, and detects OPENROUTER_API_KEY', async () => {
+    const fakeOllamaDir = path.join(TMP, 'ollama-models');
+    const libDir = path.join(fakeOllamaDir, 'manifests', 'registry.ollama.ai', 'library');
+    fs.mkdirSync(path.join(libDir, 'llama3.1'), { recursive: true });
+    fs.mkdirSync(path.join(libDir, 'qwen2.5-coder'), { recursive: true });
+    fs.writeFileSync(path.join(libDir, 'llama3.1', 'latest'), '{}');
+    fs.writeFileSync(path.join(libDir, 'qwen2.5-coder', '7b'), '{}');
+
+    const diskModels = listLocalOllamaDiskModels(fakeOllamaDir);
+    assert.deepEqual(diskModels, ['qwen2.5-coder:7b', 'llama3.1']);
+    assert.equal(pickPreferredLocalOllamaModel(diskModels), 'qwen2.5-coder:7b');
+
+    const discovered = await detectZeroCostProviders({
+      env: { OPENROUTER_API_KEY: 'or-free-test-key-999999', PATH: '' },
+      ollamaModelsDir: fakeOllamaDir,
+      probeOllama: false
+    });
+    const orEntry = discovered.find((d) => d.id === 'openrouter-free');
+    assert.equal(orEntry?.readiness, 'ready');
+    assert.equal(pickBestZeroCostProvider(discovered)?.id, 'openrouter-free');
+
+    const savedKeys = {
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      GOOGLE_API_KEY: process.env.GOOGLE_API_KEY,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+      XAI_API_KEY: process.env.XAI_API_KEY,
+      GROK_API_KEY: process.env.GROK_API_KEY,
+      MOONSHOT_API_KEY: process.env.MOONSHOT_API_KEY,
+      DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY,
+      QWEN_API_KEY: process.env.QWEN_API_KEY,
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY
+    };
+    try {
+      for (const k of Object.keys(savedKeys)) delete process.env[k];
+      process.env.OPENROUTER_API_KEY = 'or-free-env-key-123456';
+      const envDetected = detectEnvironmentProvider();
+      assert.equal(envDetected?.provider, 'openrouter-free');
+      assert.equal(envDetected?.model, 'openrouter/free');
+    } finally {
+      for (const [k, v] of Object.entries(savedKeys)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 });
