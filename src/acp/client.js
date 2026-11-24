@@ -247,8 +247,11 @@ export class AcpClient {
         }, 30_000, signal);
     }
     async loadSession(sessionId, cwd, signal) {
-        if (typeof sessionId !== 'string' || !sessionId.trim()) {
+        if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.includes('\0')) {
             throw new Error('loadSession requires a non-empty sessionId');
+        }
+        if (cwd !== undefined && (typeof cwd !== 'string' || !cwd.trim() || cwd.includes('\0'))) {
+            throw new Error('loadSession requires a valid cwd');
         }
         const res = await this.request(ACP_METHODS.LOAD, {
             sessionId,

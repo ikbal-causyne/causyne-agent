@@ -443,3 +443,10 @@ test('model and mode selection refuse NUL-containing identifiers before RPC', as
   await assert.rejects(client.setSessionMode('s', 'bad\x00mode'), /requires/);
   await assert.rejects(client.setSessionMode('bad\x00session', 'mode'), /requires/);
 });
+
+test('session load refuses malformed IDs and explicit invalid workspaces', async () => {
+  const { client } = harness();
+  client.request = async () => assert.fail('unexpected RPC');
+  await assert.rejects(client.loadSession('bad\x00session'), /sessionId/);
+  for (const cwd of ['', '  ', 'bad\x00path', 1]) await assert.rejects(client.loadSession('s', cwd), /valid cwd/);
+});
