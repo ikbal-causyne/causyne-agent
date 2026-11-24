@@ -870,7 +870,7 @@ export class AcpProvider extends LLMProvider {
             let content = stripToolCallMarkup(rawContent);
             const externalActions = [...this.turnActions.values()];
             const incompleteFromActions = !content && toolCalls.length === 0 && externalActions.length > 0;
-            const finalContent = content || (toolCalls.length > 0 || incompleteFromActions ? '' : `Turn completed by ${this.peerId} over ACP.`);
+            const finalContent = content;
             this.transportSnapshot = {
                 conversationId,
                 workspaceRoot,
@@ -925,7 +925,7 @@ export class AcpProvider extends LLMProvider {
             if (toolCalls.length > 0) {
                 response.toolCalls = toolCalls;
             }
-            if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || result?.stopReason === 'refusal' || incompleteFromActions
+            if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || result?.stopReason === 'refusal' || incompleteFromActions || (!content && toolCalls.length === 0)
                 || externalActions.some(action => action.status === 'running')
                 || (result?.stopReason === 'cancelled' && toolCalls.length === 0)) {
                 response.incompleteTurn = true;
