@@ -160,3 +160,12 @@ test("valid host write forwards exact content to the registered service", async 
   assert.deepEqual(observed, { file: 'a.txt', content: 'hello\nworld' });
   assert.deepEqual(result.result, {});
 });
+
+test("empty file content remains a legitimate write", async (t) => {
+  const directory = await temporary(t);
+  await fs.writeFile(path.join(directory, 'a.txt'), 'old');
+  const h = harness({ cwd: directory });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: '' });
+  assert.deepEqual(result.result, {});
+  assert.equal(await fs.readFile(path.join(directory, 'a.txt'), 'utf8'), '');
+});
