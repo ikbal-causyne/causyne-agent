@@ -804,7 +804,7 @@ export class AcpClient {
       return this.exitError.message;
     }
     if (this.child && this.child.exitCode !== null) {
-      const detail = this.stderrTail.trim() || `exit code ${this.child.exitCode}`;
+      const detail = redactProviderSecrets(this.stderrTail).trim() || `exit code ${this.child.exitCode}`;
       return `agent process exited: ${detail}`;
     }
     if (this.stderrTail) {
