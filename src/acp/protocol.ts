@@ -516,6 +516,7 @@ export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
     || (typeof record.id === 'number' && Number.isFinite(record.id));
   return record.jsonrpc === '2.0'
     && validId
+    && !('result' in record) && !('error' in record)
     && typeof record.method === 'string'
     && record.method.trim().length > 0;
 }
