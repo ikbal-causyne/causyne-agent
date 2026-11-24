@@ -268,3 +268,19 @@ test("refused peer turns remain incomplete", async () => {
     f.cleanup();
   }
 });
+
+test("foreign session permissions never invoke host approval", async () => {
+  const f = fixture("foreign-permission");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    let approvals = 0;
+    const result = await provider.chat([{ role: 'user', content: 'test' }], {
+      workspaceRoot: f.directory, onPeerPermission: async () => { approvals++; return { outcome: 'selected', optionId: 'allow' }; }
+    });
+    assert.equal(approvals, 0);
+    assert.match(result.content, /"outcome":"cancelled"/);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
