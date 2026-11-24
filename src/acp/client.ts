@@ -644,6 +644,14 @@ export class AcpClient {
         return;
       }
 
+      if ([params?.line, params?.limit].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 1)) || (params?.limit !== undefined && !Number.isSafeInteger((params.line ?? 1) + (params.limit - 1)))) {
+
+        this.write({ jsonrpc: '2.0', id: request.id, error: { code: ACP_ERROR_CODES.INVALID_PARAMS, message: 'Invalid file line range' } });
+
+        return;
+
+      }
+
       try {
         let content: string;
         if (this.options.fsReadHandler) {

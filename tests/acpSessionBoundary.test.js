@@ -355,3 +355,11 @@ test('unknown sessions cannot inherit a different session model catalogue', () =
   assert.deepEqual(client.getSessionModels('unknown'), { availableModels: [], modelLabels: {}, usesConfigOption: false });
   assert.deepEqual(client.getSessionModels('first').availableModels, ['private-model']);
 });
+
+test('invalid and overflowing read ranges never reach the host callback', async () => {
+  const h = harness({ fsReadHandler: async () => assert.fail('must not read') });
+  for (const range of [{ line: 0 }, { line: 1.2 }, { limit: -1 }, { limit: '2' }, { line: Number.MAX_SAFE_INTEGER, limit: 2 }]) {
+    const result = await h.call(READ, { sessionId: 'active', path: 'a.txt', ...range });
+    assert.equal(result.error.code, -32602);
+  }
+});
