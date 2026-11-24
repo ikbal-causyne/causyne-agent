@@ -615,3 +615,14 @@ test("queue accounting returns to zero after an agent constructor failure", asyn
   assert.equal(h.server.sessions.get(sessionId).pendingPrompts, 0);
   assert.equal(h.server.pendingPrompts, 0);
 });
+
+test("decision requests from a retired loop cannot ask for user permission", async () => {
+  let retired;
+  const h = makeHarness(() => ({
+    setAutonomyMode() {}, abort() {}, async run() { retired = this; }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  assert.equal(await retired.waitForDecision({ options: [{ id: 'a', label: 'A' }] }), null);
+  assert.equal(h.find(message => message.method === 'session/request_permission').length, 0);
+});
