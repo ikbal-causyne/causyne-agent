@@ -196,8 +196,8 @@ export class AcpClient {
       windowsHide: true
     });
     this.child = child;
-    child.stdin.on('error', () => {
-      // Ignore broken-pipe EPIPE writes when peer exits concurrently
+    child.stdin.on('error', (error) => {
+      if (!this.closed) this.failAll(error);
     });
 
     child.stdout.setEncoding('utf8');
