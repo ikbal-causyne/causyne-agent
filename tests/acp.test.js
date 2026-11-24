@@ -432,3 +432,19 @@ test("terminal loop errors are not advertised as successful ACP completion", asy
   assert.equal(response.result.stopReason, 'refusal');
   assert.deepEqual(chunks('agent_message_chunk'), ['Connection ended after partial progress.']);
 });
+
+test("nonterminal warning does not convert an otherwise completed turn into refusal", async () => {
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {},
+    abort() {},
+    async run() {
+      for (const event of [{"type":"warning","message":"Temporary tool warning"},{"type":"agent_message","content":"Recovered."}]) sink.send(JSON.stringify(event));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'test' }] } });
+  const response = await h.waitFor(message => message.id === 2);
+  const chunks = kind => h.find(message => message.method === 'session/update' && message.params.update.sessionUpdate === kind).map(message => message.params.update.content.text);
+  assert.equal(response.result.stopReason, 'end_turn');
+  assert.deepEqual(chunks('agent_message_chunk'), ['Temporary tool warning', 'Recovered.']);
+});
