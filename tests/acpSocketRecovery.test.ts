@@ -398,3 +398,18 @@ test("interruption evidence carries observed prose and counts without tool repla
     f.cleanup();
   }
 });
+
+test("flushed final response is retained when the peer exits immediately", async () => {
+  const f = fixture("final-exit");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const response = await client.prompt(session, 'test');
+    assert.equal(response.text, 'Final response.');
+    assert.equal(response.stopReason, 'end_turn');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
