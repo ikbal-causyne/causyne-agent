@@ -25,6 +25,7 @@ const MAX_PROMPT_CHARS = 200_000;
 const MAX_RAW_CHARS = 4000;
 const MAX_JSONRPC_BUFFER_BYTES = 8 * 1024 * 1024;
 const MAX_SESSIONS = 128;
+const MAX_PENDING_PROMPTS_PER_SESSION = 32;
 function textFromPrompt(prompt) {
     const parts = [];
     let length = 0;
@@ -362,6 +363,7 @@ export class AcpServer {
             updatedAt: Date.now(),
             queue: Promise.resolve(),
             generation: 0,
+            pendingPrompts: 0,
             approvalScope: createApprovalScope()
         };
         this.sessions.set(id, session);
@@ -399,11 +401,20 @@ export class AcpServer {
         if (text === null || !text.trim()) {
             return { stopReason: 'refusal' };
         }
+        if (session.pendingPrompts >= MAX_PENDING_PROMPTS_PER_SESSION) {
+            throw this.paramsError('Session prompt queue is full');
+        }
+        session.pendingPrompts++;
         const generation = session.generation;
         const execute = () => generation === session.generation ? this.runTurn(session, text) : Promise.resolve('cancelled');
         session.queue = session.queue.then(execute, execute);
-        const stopReason = await session.queue;
-        return { stopReason };
+        try {
+            const stopReason = await session.queue;
+            return { stopReason };
+        }
+        finally {
+            session.pendingPrompts--;
+        }
     }
     async runTurn(session, text) {
         if (this.closed || !this.sessions.has(session.id)) {
