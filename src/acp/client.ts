@@ -246,6 +246,9 @@ export class AcpClient {
       if (!result || result.protocolVersion !== ACP_PROTOCOL_VERSION) {
         throw new Error('ACP peer negotiated an unsupported protocol version');
       }
+      if (result.agentCapabilities !== undefined && (result.agentCapabilities === null || typeof result.agentCapabilities !== 'object' || Array.isArray(result.agentCapabilities))) {
+        throw new Error('ACP peer returned malformed agent capabilities');
+      }
       this.initResult = result;
       return result;
     } catch (err) {

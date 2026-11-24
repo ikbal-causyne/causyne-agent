@@ -20,3 +20,11 @@ test('initialize accepts the supported protocol version', async () => {
   try { assert.equal((await client.start()).protocolVersion, 1); }
   finally { await client.close(); }
 });
+
+test('initialize refuses malformed negotiated capabilities', async () => {
+  for (const agentCapabilities of [null, [], 'invalid', true]) {
+    const client = peer({ protocolVersion: 1, agentCapabilities });
+    try { await assert.rejects(client.start(), /malformed agent capabilities/); }
+    finally { await client.close(); }
+  }
+});
