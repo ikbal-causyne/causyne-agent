@@ -18,6 +18,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { explainNetworkError, AgentLoop } from '../src/agentLoop.js';
+import { classifyAgentError } from '../src/agent/errorClassifier.js';
+import { normalizeAgentFailure } from '../src/agent/providerFailure.js';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const failure = (code) => Object.assign(new TypeError('fetch failed'), { cause: { code } });
@@ -153,4 +155,9 @@ describe('the transcript is not a telemetry feed', () => {
     assert.match(loop, /this\.notice\(`saved attached document to/,
       'a file written on the user\'s behalf is not telemetry — they must be told');
   });
+});
+
+test("nested socket causes are network failures even without matching top-level text", () => {
+  const error = new Error('request interrupted', { cause: { code: 'UND_ERR_SOCKET' } });
+  assert.equal(classifyAgentError(error), 'network_error');
 });
