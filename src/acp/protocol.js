@@ -80,7 +80,7 @@ export function isJsonRpcNotification(value) {
     return record.jsonrpc === '2.0'
         && typeof record.method === 'string'
         && record.method.trim().length > 0
-        && !('id' in record);
+        && !('id' in record) && !('result' in record) && !('error' in record);
 }
 /**
  * Extract live available models and active model ID from any ACP session/new,

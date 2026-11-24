@@ -548,7 +548,7 @@ export function isJsonRpcNotification(value: unknown): value is JsonRpcNotificat
   return record.jsonrpc === '2.0'
     && typeof record.method === 'string'
     && record.method.trim().length > 0
-    && !('id' in record);
+    && !('id' in record) && !('result' in record) && !('error' in record);
 }
 
 /**
