@@ -1174,9 +1174,10 @@ export class AgentLoop {
             throw new Error('ACP line must be a positive integer');
         if (options?.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1))
             throw new Error('ACP limit must be a positive integer');
+        if (options?.limit !== undefined && !Number.isSafeInteger((options.line || 1) + (options.limit - 1))) throw new Error('ACP line range exceeds the safe integer limit');
         const args = { path: target, ...(tool === 'fs_write' ? { content } : {}),
             ...(options?.line !== undefined ? { startLine: options.line } : {}),
-            ...(options?.limit !== undefined ? { endLine: (options.line || 1) + options.limit - 1 } : {}) };
+            ...(options?.limit !== undefined ? { endLine: (options.line || 1) + (options.limit - 1) } : {}) };
         const id = `peer-file:${randomUUID()}:${tool}`;
         if (!await this.authorizePeerOperation(tool, args, id))
             throw new Error('The requested ACP file operation was not authorized');

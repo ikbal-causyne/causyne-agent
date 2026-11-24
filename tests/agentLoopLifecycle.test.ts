@@ -131,3 +131,11 @@ test('peer permission without a tool-call identifier is cancelled before authori
     assert.deepEqual(result, { outcome: 'cancelled' });
   } finally { cleanup(); }
 });
+
+test('peer file read rejects overflowing line ranges before authorization', async () => {
+  const { loop, cleanup } = newLoop();
+  try {
+    loop.authorizePeerOperation = async () => { assert.fail('unexpected authorization'); };
+    await assert.rejects(loop.executePeerFile('fs_read', 'a.txt', undefined, { line: Number.MAX_SAFE_INTEGER, limit: 2 }), /safe integer/);
+  } finally { cleanup(); }
+});
