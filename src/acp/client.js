@@ -172,6 +172,9 @@ export class AcpClient {
         };
         try {
             const result = await this.request(ACP_METHODS.INITIALIZE, params, 30_000, signal);
+            if (!result || result.protocolVersion !== ACP_PROTOCOL_VERSION) {
+                throw new Error('ACP peer negotiated an unsupported protocol version');
+            }
             this.initResult = result;
             return result;
         }
