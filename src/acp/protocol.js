@@ -190,6 +190,9 @@ export function extractAcpSessionModels(payload) {
             }
         }
     }
+    if (currentModelId && (currentModelId.length > 200 || FORBIDDEN_KEYS.has(currentModelId))) {
+        currentModelId = undefined;
+    }
     if (currentModelId && !availableModels.includes(currentModelId)) {
         availableModels.unshift(currentModelId);
     }

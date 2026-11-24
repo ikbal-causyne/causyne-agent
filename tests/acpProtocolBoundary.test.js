@@ -56,3 +56,14 @@ test("non-finite or boolean identifiers are rejected", () => {
   assert.equal(isJsonRpcResponse({ ...response, result: undefined, error: { code: 1.5, message: 'bad' } }), false);
   assert.equal(isJsonRpcResponse({ jsonrpc: '2.0', id: 1, error: { code: 1.5, message: 'bad' } }), false);
 });
+
+test('invalid active model IDs cannot bypass discovery validation', async () => {
+  const { extractAcpSessionModels } = await import('../src/acp/protocol.js');
+  for (const id of ['__proto__', 'constructor', 'prototype', 'x'.repeat(201)]) {
+    for (const payload of [{ currentModelId: id }, { models: { currentModelId: id } }, { configOptions: [{ id: 'model', currentValue: id }] }]) {
+      const result = extractAcpSessionModels(payload);
+      assert.equal(result.currentModelId, undefined);
+      assert.deepEqual(result.availableModels, []);
+    }
+  }
+});
