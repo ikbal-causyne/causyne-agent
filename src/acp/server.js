@@ -155,6 +155,7 @@ export class AcpServer {
         this.buffer = '';
         for (const session of this.sessions.values()) {
             session.cancelled = true;
+            session.generation++;
             try {
                 session.loop?.abort();
             }
@@ -227,6 +228,7 @@ export class AcpServer {
             const session = sid ? this.sessions.get(sid) : undefined;
             if (session) {
                 session.cancelled = true;
+                session.generation++;
                 this.rejectPendingForSession(session.id, 'session cancelled');
                 try {
                     session.loop?.abort();
@@ -357,6 +359,7 @@ export class AcpServer {
             cancelled: false,
             updatedAt: Date.now(),
             queue: Promise.resolve(),
+            generation: 0,
             approvalScope: createApprovalScope()
         };
         this.sessions.set(id, session);
@@ -394,7 +397,9 @@ export class AcpServer {
         if (text === null || !text.trim()) {
             return { stopReason: 'refusal' };
         }
-        session.queue = session.queue.then(() => this.runTurn(session, text), () => this.runTurn(session, text));
+        const generation = session.generation;
+        const execute = () => generation === session.generation ? this.runTurn(session, text) : Promise.resolve('cancelled');
+        session.queue = session.queue.then(execute, execute);
         const stopReason = await session.queue;
         return { stopReason };
     }
@@ -731,6 +736,7 @@ export class AcpServer {
     closeSession(params) {
         const session = this.requireSession(params?.sessionId);
         session.cancelled = true;
+        session.generation++;
         this.rejectPendingForSession(session.id, 'session closed');
         try {
             session.loop?.abort();
