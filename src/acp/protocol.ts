@@ -536,7 +536,7 @@ export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
     const err = record.error;
     if (err === null || typeof err !== 'object' || Array.isArray(err)) return false;
     const errObj = err as Record<string, unknown>;
-    if (typeof errObj.code !== 'number' || !Number.isFinite(errObj.code)) return false;
+    if (typeof errObj.code !== 'number' || !Number.isInteger(errObj.code)) return false;
     if (typeof errObj.message !== 'string') return false;
   }
   return true;

@@ -66,7 +66,7 @@ export function isJsonRpcResponse(value) {
         if (err === null || typeof err !== 'object' || Array.isArray(err))
             return false;
         const errObj = err;
-        if (typeof errObj.code !== 'number' || !Number.isFinite(errObj.code))
+        if (typeof errObj.code !== 'number' || !Number.isInteger(errObj.code))
             return false;
         if (typeof errObj.message !== 'string')
             return false;
