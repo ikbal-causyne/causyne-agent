@@ -526,7 +526,7 @@ export class AcpClient {
         }
         if (request.method === ACP_METHODS.REQUEST_PERMISSION) {
             const handler = this.options.permissionHandler;
-            if (!handler) {
+            if (!handler || !this.promptActive || request.params?.sessionId !== this.promptActive) {
                 this.write({
                     jsonrpc: '2.0',
                     id: request.id,
