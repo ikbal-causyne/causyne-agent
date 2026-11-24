@@ -448,3 +448,12 @@ test("nonterminal warning does not convert an otherwise completed turn into refu
   assert.equal(response.result.stopReason, 'end_turn');
   assert.deepEqual(chunks('agent_message_chunk'), ['Temporary tool warning', 'Recovered.']);
 });
+
+test("oversized prompt is refused without executing a truncated request", async () => {
+  let runs = 0;
+  const h = makeHarness(() => ({ setAutonomyMode() {}, abort() {}, async run() { runs++; } }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'x'.repeat(200001) }] } });
+  assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'refusal');
+  assert.equal(runs, 0);
+});
