@@ -330,3 +330,16 @@ test("pre-aborted provider calls do not permanently lock the instance", async ()
     f.cleanup();
   }
 });
+
+test("empty peer end-turn cannot be interpreted as successful task completion", async () => {
+  const f = fixture("empty");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory });
+    assert.equal(result.content, '');
+    assert.equal(result.incompleteTurn, true);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
