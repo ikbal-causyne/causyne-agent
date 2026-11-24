@@ -416,8 +416,9 @@ export class AcpProvider extends LLMProvider {
                     throw new Error('ACP turn yielded to the host');
                 if (!this.peerServices?.onPeerFileWrite)
                     throw new Error('The ACP client has no file-write service attached');
-                await this.peerServices.onPeerFileWrite(file, content);
+                // The write may mutate disk before its promise settles or rejects.
                 this.currentTurnSawAction = true;
+                await this.peerServices.onPeerFileWrite(file, content);
                 const hasTrackedWrite = [...this.turnActions.values()].some(a => (a.name === 'fs_write' || a.name === 'fs_edit') && (a.detail === file || a.parameters?.path === file));
                 if (!hasTrackedWrite) {
                     const synthId = `fs_write:${file}`;
@@ -837,7 +838,7 @@ export class AcpProvider extends LLMProvider {
                 // and charges. Also never respawn on deterministic auth/quota failures.
                 const errMsg = String(promptErr?.message || '');
                 const isFatalAuthOrQuota = /(?:free usage limit|insufficient_quota|quota exceeded|rate limit|unauthorized|authentication failed|invalid api key|unknown provider|credit balance)/i.test(errMsg);
-                if (this.currentTurnSawAction || isFatalAuthOrQuota)
+                if (this.currentTurnSawAction || this.turnText || this.turnReasoning || this.hostHandoff.length > 0 || isFatalAuthOrQuota)
                     throw promptErr;
                 // If peer failed before any user abort, try recreating client once in case connection dropped
                 await this.close();
@@ -927,6 +928,13 @@ export class AcpProvider extends LLMProvider {
                 throw abortErr;
             }
             const msg = err instanceof Error ? err.message : String(err);
+            if (this.currentTurnSawAction || this.turnText || this.turnReasoning || this.hostHandoff.length > 0) {
+                // A new peer session cannot safely replay a partially observed turn.
+                throw Object.assign(new Error(`ACP Peer Agent (${this.peerId}) interrupted after partial progress: ${msg}. Existing workspace changes are preserved. Resume the saved task after checking the last completed actions; the interrupted turn was not replayed.`), {
+                    code: 'ACP_PARTIAL_TURN',
+                    completedNativeActions: [...this.turnActions.values()].filter(action => action.status === 'completed').length
+                });
+            }
             if (msg.startsWith('ACP Peer Agent') || msg.includes('Free usage limit reached') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('stalled')) {
                 throw (err instanceof Error ? err : new Error(msg));
             }

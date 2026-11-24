@@ -33,7 +33,7 @@ export function classifyAgentError(error: unknown): AgentErrorClass {
   const errObj: StructuredErrorLike | null =
     typeof error === 'object' && error !== null ? (error as StructuredErrorLike) : null;
 
-  if (errObj?.code === 'PROVIDER_NO_PROGRESS') return 'fatal';
+  if (errObj?.code === 'PROVIDER_NO_PROGRESS' || errObj?.code === 'ACP_PARTIAL_TURN') return 'fatal';
   if (
     errObj?.code === 'AGY_NATIVE_ACTION_DENIED' ||
     errObj?.code === 'AGY_NATIVE_ACTION_BUDGET' ||

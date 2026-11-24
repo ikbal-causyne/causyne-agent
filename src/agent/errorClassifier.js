@@ -7,7 +7,7 @@
  */
 export function classifyAgentError(error) {
     const errObj = typeof error === 'object' && error !== null ? error : null;
-    if (errObj?.code === 'PROVIDER_NO_PROGRESS')
+    if (errObj?.code === 'PROVIDER_NO_PROGRESS' || errObj?.code === 'ACP_PARTIAL_TURN')
         return 'fatal';
     if (errObj?.code === 'AGY_NATIVE_ACTION_DENIED' ||
         errObj?.code === 'AGY_NATIVE_ACTION_BUDGET' ||
