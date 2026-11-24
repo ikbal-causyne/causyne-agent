@@ -576,3 +576,26 @@ test("per-session queue rejects excess prompts without executing them", async ()
   }
   assert.equal(runs, 1);
 });
+
+test("global queue limit rejects work even when another session has room", async () => {
+  let runs = 0;
+  const h = makeHarness(() => {
+    let release;
+    return { setAutonomyMode() {}, abort() { release?.(); }, async run() { runs++; await new Promise(resolve => { release = resolve; }); } };
+  });
+  const ids = [];
+  for (let i = 0; i < 5; i++) ids.push((await newSession(h, i + 1)).result.sessionId);
+  const prompt = (id, sessionId) => h.send({ jsonrpc: '2.0', id, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  const pending = ids.slice(0, 4).flatMap((sessionId, group) => Array.from({ length: 32 }, (_, i) => prompt(10 + group * 32 + i, sessionId)));
+  try {
+    await prompt(200, ids[4]);
+    assert.equal((await h.waitFor(message => message.id === 200)).error.code, -32602);
+    assert.equal(h.server.pendingPrompts, 128);
+  } finally {
+    for (const sessionId of ids) await h.send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
+    await Promise.all(pending);
+    await h.server.stop();
+  }
+  assert.equal(runs, 4);
+  assert.equal(h.server.pendingPrompts, 0);
+});
