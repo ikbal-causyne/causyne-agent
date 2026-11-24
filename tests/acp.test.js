@@ -638,3 +638,15 @@ test("duplicate decision option IDs cannot produce an ambiguous approval request
   assert.equal(decision, null);
   assert.equal(h.find(message => message.method === 'session/request_permission').length, 0);
 });
+
+test("turn completion rejects an outstanding decision and clears its timer", async () => {
+  let decision;
+  const h = makeHarness(() => ({
+    setAutonomyMode() {}, abort() {},
+    async run() { decision = this.waitForDecision({ options: [{ id: 'a', label: 'A' }] }); }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  assert.equal(h.server.pending.size, 0);
+  assert.equal(await decision, null);
+});
