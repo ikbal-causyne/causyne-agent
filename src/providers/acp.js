@@ -403,6 +403,8 @@ export class AcpProvider extends LLMProvider {
                 if (!this.peerServices?.onPeerFileRead)
                     throw new Error('The ACP client has no file-read service attached');
                 const content = await this.peerServices.onPeerFileRead(file, options);
+                if (this.activeClient !== client || !this.peerServices || this.currentTurnAborted || this.peerServices.signal?.aborted)
+                    throw new Error('ACP peer retired during file read');
                 this.currentTurnSawAction = true;
                 const hasTrackedRead = [...this.turnActions.values()].some(a => a.name === 'fs_read' && (a.detail === file || a.parameters?.path === file));
                 if (!hasTrackedRead) {
