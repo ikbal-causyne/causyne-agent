@@ -474,3 +474,15 @@ test("aborted active prompt cannot contaminate a subsequent prompt", async () =>
     f.cleanup();
   }
 });
+
+test("completed native action remains completed after a stale running update", async () => {
+  const f = fixture('action-status');
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory });
+    assert.equal(result.externalActions?.find(action => action.id === 'acp:edit')?.status, 'completed');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
