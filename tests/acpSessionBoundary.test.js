@@ -86,3 +86,9 @@ test("unknown permission option IDs cannot grant a native action", async () => {
   const result = await h.call(PERMISSION, permission());
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("valid offered approval is returned unchanged", async () => {
+  const h = harness({ permissionHandler: async () => ({ outcome: 'selected', optionId: 'allow' }) });
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'selected', optionId: 'allow' });
+});
