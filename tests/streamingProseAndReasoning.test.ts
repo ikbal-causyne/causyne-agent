@@ -7,6 +7,7 @@ import { AntigravityProvider } from '../src/providers/antigravity.js';
 import { AgentLoop } from '../src/agentLoop.js';
 import { stripThinkBlocks } from '../src/implementationPlan.js';
 import { ChatRenderer } from '../src/tui/chatRenderer.js';
+import { Transcript } from '../src/tui/transcript.js';
 
 test('ChatRenderer shows live reasoning tail while streaming and capped head when done', () => {
   const captured: string[] = [];
@@ -120,4 +121,20 @@ test('AgentLoop emits live agent_message prose chunks during response generation
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('interleaved native tools cannot duplicate cumulative assistant snapshots', () => {
+  const transcript = new Transcript();
+  const renderer = new ChatRenderer({ transcript, out: { columns: 80, write: () => true } });
+  const emit = (content: string, streaming: boolean, streamId = 1) =>
+    renderer.onAgentMessage({ taskId: 'acp-task', streamId, content, streaming });
+  const prose = () => transcript.frames.filter(frame => frame.meta?.assistant).map(frame => frame.meta?.messageText);
+  emit('First update.', true);
+  renderer.onNotice({ message: 'Native tool finished.' });
+  emit('First update. Second update.', true);
+  renderer.onNotice({ message: 'Browser verified.' });
+  emit('First update. Second update.', false);
+  assert.deepEqual(prose(), ['First update.', ' Second update.']);
+  emit('First update.', false, 2);
+  assert.deepEqual(prose(), ['First update.', ' Second update.', 'First update.']);
 });
