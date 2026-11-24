@@ -650,3 +650,18 @@ test("turn completion rejects an outstanding decision and clears its timer", asy
   assert.equal(h.server.pending.size, 0);
   assert.equal(await decision, null);
 });
+
+test("valid active-loop decisions still resolve through the peer protocol", async () => {
+  let decision;
+  const h = makeHarness(() => ({
+    setAutonomyMode() {}, abort() {},
+    async run() { decision = await this.waitForDecision({ options: [{ id: 'a', label: 'A' }] }); }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  const running = h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  const request = await h.waitFor(message => message.method === 'session/request_permission');
+  await h.send({ jsonrpc: '2.0', id: request.id, result: { outcome: { outcome: 'selected', optionId: 'a' } } });
+  await running;
+  assert.deepEqual(decision, { optionId: 'a', label: 'A' });
+  assert.equal(h.server.pending.size, 0);
+});
