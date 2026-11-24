@@ -497,6 +497,8 @@ export class AcpServer {
         return stopReason;
     }
     requestDecision(session, loop, request) {
+        if (this.closed || session.cancelled || session.loop !== loop || !this.sessions.has(session.id))
+            return Promise.resolve(null);
         if (request === null || typeof request !== 'object' || Array.isArray(request))
             return Promise.resolve(null);
         const record = request;
@@ -527,7 +529,7 @@ export class AcpServer {
             toolCall,
             options: permissionOptions
         }).then((response) => {
-            if (session.cancelled || !this.sessions.has(session.id))
+            if (this.closed || session.cancelled || session.loop !== loop || !this.sessions.has(session.id))
                 return null;
             const outcome = response && typeof response.outcome === 'object' && response.outcome !== null
                 ? response.outcome

@@ -581,6 +581,7 @@ export class AcpServer {
   }
 
   private requestDecision(session: AcpSession, loop: AgentLoop, request: unknown): Promise<{ optionId: string; label: string } | null> {
+    if (this.closed || session.cancelled || session.loop !== loop || !this.sessions.has(session.id)) return Promise.resolve(null);
     if (request === null || typeof request !== 'object' || Array.isArray(request)) return Promise.resolve(null);
     const record = request as Record<string, unknown>;
     const options = Array.isArray(record.options) ? record.options : [];
@@ -607,7 +608,7 @@ export class AcpServer {
       toolCall,
       options: permissionOptions
     }).then((response) => {
-      if (session.cancelled || !this.sessions.has(session.id)) return null;
+      if (this.closed || session.cancelled || session.loop !== loop || !this.sessions.has(session.id)) return null;
       const outcome = response && typeof response.outcome === 'object' && response.outcome !== null
         ? response.outcome
         : null;
