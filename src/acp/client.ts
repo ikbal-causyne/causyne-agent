@@ -943,6 +943,7 @@ export class AcpClient {
         reject(error);
       };
       const onAbort = (): void => {
+        if (options?.sessionId) this.exitError ??= createAbortError();
         settleReject(createAbortError());
       };
       const timer = setTimeout(() => {
