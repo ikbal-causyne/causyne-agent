@@ -486,6 +486,7 @@ export class AcpServer {
             acceptingEvents = false;
             session.loop = null;
             session.busy = false;
+            this.rejectPendingForSession(session.id, 'turn ended');
             if (this.sessions.has(session.id)) {
                 const record = getSession(session.memorySessionId);
                 if (record)
