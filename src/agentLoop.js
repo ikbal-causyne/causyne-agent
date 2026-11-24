@@ -5081,7 +5081,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
     }
     async waitForApproval(toolCallId) {
         const signal = this.abortController?.signal;
-        if (this.stopRequested || signal?.aborted || this.pendingApprovals.has(toolCallId))
+        if (this.stopRequested || signal?.aborted || typeof toolCallId !== 'string' || !toolCallId.trim() || this.pendingApprovals.has(toolCallId))
             return false;
         this._entitlementGate?.pause();
         try {

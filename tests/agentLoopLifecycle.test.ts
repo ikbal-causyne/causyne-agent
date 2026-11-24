@@ -165,3 +165,11 @@ test('non-boolean approval payload cannot authorize a tool', async () => {
     assert.equal(await pending, false);
   } finally { loop.abort(); cleanup(); }
 });
+
+test('empty or malformed approval identifiers do not create waiters', async () => {
+  const { loop, cleanup } = newLoop();
+  try {
+    for (const id of ['', '   ', undefined, 42]) assert.equal(await loop.waitForApproval(id as any), false);
+    assert.equal(loop.pendingApprovals.size, 0);
+  } finally { loop.abort(); cleanup(); }
+});
