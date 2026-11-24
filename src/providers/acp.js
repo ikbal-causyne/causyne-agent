@@ -4,6 +4,7 @@ import { DEFAULT_MODEL_BY_PROVIDER } from '../modelCatalogue.js';
 import { saveCachedModels } from '../dynamicCatalogue.js';
 import { LLMProvider } from './base.js';
 import { AcpClient } from '../acp/client.js';
+import { redactProviderSecrets } from './byokHttp.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 import { createHash } from 'node:crypto';
@@ -959,7 +960,9 @@ export class AcpProvider extends LLMProvider {
                 // A new peer session cannot safely replay a partially observed turn.
                 throw Object.assign(new Error(`ACP Peer Agent (${this.peerId}) interrupted after partial progress: ${msg}. Existing workspace changes are preserved. Resume the saved task after checking the last completed actions; the interrupted turn was not replayed.`), {
                     code: 'ACP_PARTIAL_TURN',
-                    completedNativeActions: [...this.turnActions.values()].filter(action => action.status === 'completed').length
+                    completedNativeActions: [...this.turnActions.values()].filter(action => action.status === 'completed').length,
+                    unfinishedNativeActions: [...this.turnActions.values()].filter(action => action.status !== 'completed').length,
+                    partialText: redactProviderSecrets(stripToolCallMarkup(this.turnText)).slice(0, 4000)
                 });
             }
             if (msg.startsWith('ACP Peer Agent') || msg.includes('Free usage limit reached') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('stalled')) {
