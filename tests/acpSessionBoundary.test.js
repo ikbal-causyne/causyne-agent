@@ -74,3 +74,9 @@ test("inactive prompt permissions are cancelled", async () => {
   const result = await h.call(PERMISSION, permission());
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("permissions default to cancelled without an approval handler", async () => {
+  const h = harness();
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
