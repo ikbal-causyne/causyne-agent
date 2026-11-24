@@ -626,3 +626,15 @@ test("decision requests from a retired loop cannot ask for user permission", asy
   assert.equal(await retired.waitForDecision({ options: [{ id: 'a', label: 'A' }] }), null);
   assert.equal(h.find(message => message.method === 'session/request_permission').length, 0);
 });
+
+test("duplicate decision option IDs cannot produce an ambiguous approval request", async () => {
+  let decision = 'unset';
+  const h = makeHarness(() => ({
+    setAutonomyMode() {}, abort() {},
+    async run() { decision = await this.waitForDecision({ options: [{ id: 'a', label: 'A' }, { id: 'a', label: 'B' }] }); }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  assert.equal(decision, null);
+  assert.equal(h.find(message => message.method === 'session/request_permission').length, 0);
+});
