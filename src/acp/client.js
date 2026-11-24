@@ -632,6 +632,9 @@ export class AcpClient {
                         content = rawContent;
                     }
                 }
+                if (typeof content !== 'string') {
+                    throw new Error('Host file read returned non-text content');
+                }
                 if (this.closed || this.exitError || this.promptActive !== activePrompt || this.promptGeneration !== generation) {
                     throw new Error('Host file read belongs to a retired prompt');
                 }
