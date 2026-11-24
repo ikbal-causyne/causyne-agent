@@ -255,7 +255,7 @@ export class AcpClient {
             throw createAbortError();
         if (this.promptActive)
             throw new Error('ACP client already has an active prompt');
-        this.promptActive = true;
+        this.promptActive = sessionId;
         // Diagnostic text from an earlier turn must not cancel this prompt.
         this.stderrTail = '';
         const blocks = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
@@ -319,7 +319,7 @@ export class AcpClient {
         finally {
             signal?.removeEventListener('abort', onAbort);
             this.updateListeners.delete(listener);
-            this.promptActive = false;
+            this.promptActive = null;
             this.clearOpenToolCalls(sessionId);
         }
     }
@@ -445,7 +445,7 @@ export class AcpClient {
             }
         });
     }
-    promptActive = false;
+    promptActive = null;
     updateListeners = new Set();
     write(message) {
         if (!this.child || this.closed)
@@ -513,6 +513,11 @@ export class AcpClient {
         }
     }
     async handleServerRequest(request) {
+        if ((request.method === ACP_METHODS.READ_TEXT_FILE || request.method === ACP_METHODS.WRITE_TEXT_FILE)
+            && (!this.promptActive || request.params?.sessionId !== this.promptActive)) {
+            this.write({ jsonrpc: '2.0', id: request.id, error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Host file request does not belong to the active session' } });
+            return;
+        }
         if (this.options.allowHostTools === false
             && (request.method === ACP_METHODS.READ_TEXT_FILE || request.method === ACP_METHODS.WRITE_TEXT_FILE)) {
             this.write({ jsonrpc: '2.0', id: request.id,
