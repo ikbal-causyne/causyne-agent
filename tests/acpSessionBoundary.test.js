@@ -329,3 +329,9 @@ test("late write acknowledgement cannot be attributed to the following prompt", 
   release();
   assert.match((await pending).error.message, /retired prompt/);
 });
+
+test("custom read handler cannot receive NUL-containing paths", async () => {
+  const h = harness({ fsReadHandler: async () => assert.fail('must not read') });
+  const result = await h.call(READ, { sessionId: 'active', path: 'a\0.txt' });
+  assert.equal(result.error.code, -32602);
+});
