@@ -54,3 +54,10 @@ test("host file access is refused outside any prompt", async () => {
   h.client.promptActive = null;
   assert.equal((await h.call(READ, { sessionId: 'active', path: 'a.txt' })).error.code, -32600);
 });
+
+test("host writes are refused when native file tools are disabled", async () => {
+  const h = harness({ allowHostTools: false, fsWriteHandler: async () => assert.fail('must not write') });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: 'x' });
+  assert.equal(result.error.code, -32600);
+  assert.match(result.error.message, /advertised Causyne tools/);
+});
