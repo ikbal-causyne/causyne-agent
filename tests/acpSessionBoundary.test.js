@@ -231,3 +231,11 @@ test("fallback host write rejects oversized content without creating files", asy
   assert.match(result.error.message, /exceeds maximum writable size/);
   await assert.rejects(fs.stat(path.join(directory, 'large.txt')), { code: 'ENOENT' });
 });
+
+test("fallback host refuses directory reads", async (t) => {
+  const directory = await temporary(t);
+  await fs.mkdir(path.join(directory, 'sub'));
+  const h = harness({ cwd: directory });
+  const result = await h.call(READ, { sessionId: 'active', path: 'sub' });
+  assert.match(result.error.message, /non-regular file/);
+});
