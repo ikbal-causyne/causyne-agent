@@ -463,7 +463,7 @@ export class AcpProvider extends LLMProvider {
                             const remaining = Math.max(0, 200_000 - this.turnReasoning.length);
                             const accepted = thought.slice(0, remaining);
                             this.turnReasoning += accepted;
-                            if (this.currentTurnReasoningHandler) {
+                            if (accepted && this.currentTurnReasoningHandler) {
                                 this.currentTurnReasoningHandler(accepted);
                             }
                         }
