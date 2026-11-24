@@ -67,3 +67,11 @@ test('invalid active model IDs cannot bypass discovery validation', async () => 
     }
   }
 });
+
+test('discovery cap includes the active model', async () => {
+  const { extractAcpSessionModels } = await import('../src/acp/protocol.js');
+  const result = extractAcpSessionModels({ currentModelId: 'active', availableModels: Array.from({ length: 501 }, (_, i) => `model-${i}`) });
+  assert.equal(result.availableModels.length, 500);
+  assert.equal(result.availableModels[0], 'active');
+  assert.equal(result.availableModels.includes('model-499'), false);
+});

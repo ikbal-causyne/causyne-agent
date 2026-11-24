@@ -662,6 +662,10 @@ export function extractAcpSessionModels(payload: unknown): AcpDiscoveredSessionM
   }
   if (currentModelId && !availableModels.includes(currentModelId)) {
     availableModels.unshift(currentModelId);
+    if (availableModels.length > MAX_DISCOVERED_MODELS) {
+      const removed = availableModels.pop();
+      if (removed !== undefined) delete modelLabels[removed];
+    }
   }
 
   return {
