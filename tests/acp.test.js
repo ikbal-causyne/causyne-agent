@@ -507,3 +507,11 @@ test("malformed internal event values cannot abort an otherwise successful loop"
   const chunks = h.find(message => message.params?.update?.sessionUpdate === 'agent_message_chunk');
   assert.deepEqual(chunks.map(message => message.params.update.content.text), ['Valid response.']);
 });
+
+test("stopped server cannot allocate new sessions", async () => {
+  const h = makeHarness(() => ({ setAutonomyMode() {}, abort() {}, async run() {} }));
+  await h.server.stop();
+  const count = h.messages.length;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd: process.cwd(), mcpServers: [] } });
+  assert.equal(h.messages.length, count);
+});
