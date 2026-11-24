@@ -332,6 +332,7 @@ export class AcpClient {
     if (signal?.aborted) throw createAbortError();
     if (this.promptActive) throw new Error('ACP client already has an active prompt');
     this.promptActive = sessionId;
+    this.promptGeneration++;
     // Diagnostic text from an earlier turn must not cancel this prompt.
     this.stderrTail = '';
     const blocks: ContentBlock[] = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
@@ -505,6 +506,7 @@ export class AcpClient {
   }
 
   private promptActive: string | null = null;
+  private promptGeneration = 0;
   private readonly updateListeners = new Set<(sessionId: string, update: SessionUpdate) => void>();
 
   private write(message: JsonRpcRequest<unknown> | JsonRpcResponse | JsonRpcNotification<unknown>): void {
@@ -595,10 +597,12 @@ export class AcpClient {
       this.activePermissionRequests++;
       try {
         const permission = request.params as unknown as RequestPermissionRequest;
+        const activePrompt = this.promptActive;
+        const generation = this.promptGeneration;
         const rawOutcome = await handler(permission);
         const options = Array.isArray(permission.options) ? permission.options : [];
         const validOutcome: RequestPermissionResponse['outcome'] =
-          rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && options.some(option => option?.optionId === rawOutcome.optionId)
+          activePrompt !== null && this.promptActive === activePrompt && this.promptGeneration === generation && !this.closed && rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && options.some(option => option?.optionId === rawOutcome.optionId)
             ? { outcome: 'selected', optionId: rawOutcome.optionId }
             : { outcome: 'cancelled' };
         this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
