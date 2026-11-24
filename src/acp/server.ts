@@ -512,7 +512,7 @@ export class AcpServer {
   }
 
   private async runTurn(session: AcpSession, text: string): Promise<StopReason> {
-    if (this.closed || !this.sessions.has(session.id)) {
+    if (this.closed || this.sessions.get(session.id) !== session) {
       return 'cancelled';
     }
     session.updatedAt = Date.now();
@@ -525,7 +525,7 @@ export class AcpServer {
     let acceptingEvents = true;
     const sink = {
       readyState: 1,
-      send: (payload: string) => { if (acceptingEvents) this.onLoopPayload(session, payload); }
+      send: (payload: string) => { if (acceptingEvents && !session.cancelled && this.sessions.get(session.id) === session) this.onLoopPayload(session, payload); }
     };
     const loopOptions = {
       workspaceRoot: session.cwd,
