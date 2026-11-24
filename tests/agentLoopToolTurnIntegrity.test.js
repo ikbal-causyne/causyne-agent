@@ -41,3 +41,12 @@ test('foreign result IDs are reported rather than accepted as current turn evide
   assert.equal(report.unresolved, 1);
   assert.equal(report.repaired, 0);
 });
+
+test('duplicate assistant call IDs remain unresolved and are never given invented replies', () => {
+  const history = [assistant(call('duplicate'), call('duplicate'))];
+  const before = structuredClone(history);
+  const report = repairUnansweredToolCalls(history);
+  assert.equal(report.unresolved, 1);
+  assert.equal(report.repaired, 0);
+  assert.deepEqual(history, before);
+});

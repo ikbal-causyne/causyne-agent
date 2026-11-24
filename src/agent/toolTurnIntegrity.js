@@ -105,6 +105,8 @@ export function repairUnansweredToolCalls(history, maxCallsPerTurn = 256) {
         }
         const missing = [];
         for (const [id, expected] of required) {
+            if (expected.count !== 1)
+                continue;
             const count = Math.max(0, expected.count - (received.get(id) ?? 0));
             for (let n = 0; n < count; n++) {
                 missing.push({ role: 'tool', tool_call_id: id, name: expected.name, content: UNCERTAIN_OUTCOME });
