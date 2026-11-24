@@ -536,8 +536,10 @@ export class AcpClient {
             }
             this.activePermissionRequests++;
             try {
-                const rawOutcome = await handler(request.params);
-                const validOutcome = rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string'
+                const permission = request.params;
+                const rawOutcome = await handler(permission);
+                const options = Array.isArray(permission.options) ? permission.options : [];
+                const validOutcome = rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && options.some(option => option?.optionId === rawOutcome.optionId)
                     ? { outcome: 'selected', optionId: rawOutcome.optionId }
                     : { outcome: 'cancelled' };
                 this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
