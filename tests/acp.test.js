@@ -838,3 +838,11 @@ test('malformed MCP server collections are refused on new and load', async () =>
   }
   await h.server.stop();
 });
+
+test('new session rejects malformed additional directory collections', async () => {
+  const h = makeHarness();
+  await h.send({ jsonrpc: '2.0', id: 1, method: 'session/new', params: { cwd: process.cwd(), mcpServers: [], additionalDirectories: '/tmp' } });
+  assert.equal((await h.waitFor(message => message.id === 1)).error.code, -32602);
+  assert.equal(h.server.sessions.size, 0);
+  await h.server.stop();
+});

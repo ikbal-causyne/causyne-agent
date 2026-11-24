@@ -323,7 +323,7 @@ export class AcpServer {
         if (params.mcpServers !== undefined && (!Array.isArray(params.mcpServers) || params.mcpServers.length > 0)) {
             throw this.paramsError('MCP servers are not supported by this agent');
         }
-        if (Array.isArray(params.additionalDirectories) && params.additionalDirectories.length > 0) {
+        if (params.additionalDirectories !== undefined && (!Array.isArray(params.additionalDirectories) || params.additionalDirectories.length > 0)) {
             throw this.paramsError('additionalDirectories is not supported by this agent');
         }
         const cwd = this.resolveWorkspace(params.cwd);
