@@ -737,3 +737,21 @@ test("approval cleanup denies an abandoned request on its originating loop", asy
   assert.deepEqual(outcomes, [{ id: 'old', approved: false }]);
   assert.equal(h.server.pending.size, 0);
 });
+
+test("mixed RPC envelopes cannot settle an outstanding decision", async () => {
+  let decision;
+  const h = makeHarness(() => ({
+    setAutonomyMode() {}, abort() {},
+    async run() { decision = await this.waitForDecision({ options: [{ id: 'a', label: 'A' }] }); }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  const running = h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  const approval = await h.waitFor(message => message.method === 'session/request_permission');
+  try {
+    await h.send({ jsonrpc: '2.0', id: approval.id, method: 'session/update', result: { outcome: { outcome: 'selected', optionId: 'a' } } });
+    assert.equal(h.server.pending.has(approval.id), true);
+    await h.send({ jsonrpc: '2.0', id: approval.id, result: { outcome: { outcome: 'cancelled' } } });
+    await running;
+    assert.equal(decision, null);
+  } finally { await h.server.stop(); await running; }
+});
