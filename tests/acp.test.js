@@ -515,3 +515,25 @@ test("stopped server cannot allocate new sessions", async () => {
   await h.send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd: process.cwd(), mcpServers: [] } });
   assert.equal(h.messages.length, count);
 });
+
+test("UTF-8 split across incoming transport buffers retains the exact user prompt", async () => {
+  const { PassThrough } = await import('node:stream');
+  const input = new PassThrough();
+  const replies = [];
+  let observed;
+  const server = new AcpServer({ input, output: { write(chunk) { replies.push(...String(chunk).trim().split('\n').filter(Boolean).map(JSON.parse)); return true; } },
+    loopFactory: ({ userPrompt }) => ({ setAutonomyMode() {}, abort() {}, async run() { observed = userPrompt; } }) });
+  try {
+    server.start();
+    await server.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'session/new', params: { cwd: process.cwd(), mcpServers: [] } }));
+    const sessionId = replies.find(reply => reply.id === 1).result.sessionId;
+    const original = '检查文件 🌐 café';
+    const frame = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: original }] } }) + '\n');
+    const split = frame.indexOf(Buffer.from('🌐')) + 1;
+    input.write(frame.subarray(0, split));
+    input.write(frame.subarray(split));
+    for (let i = 0; i < 50 && !replies.some(reply => reply.id === 2); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(observed, original);
+    assert.equal(replies.find(reply => reply.id === 2).result.stopReason, 'end_turn');
+  } finally { await server.stop(); input.destroy(); }
+});
