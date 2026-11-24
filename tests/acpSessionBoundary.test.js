@@ -262,3 +262,11 @@ test("unsupported host RPC methods return structured method-not-found errors", a
   const result = await h.call('unknown/method', { sessionId: 'active' });
   assert.equal(result.error.code, -32601);
 });
+
+test("duplicate permission IDs cannot map approval to an ambiguous choice", async () => {
+  let approvals = 0;
+  const h = harness({ permissionHandler: async () => { approvals++; return { outcome: 'selected', optionId: 'allow' }; } });
+  const result = await h.call(PERMISSION, permission('active', { options: [allowed, { ...denied, optionId: 'allow' }] }));
+  assert.equal(approvals, 0);
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
