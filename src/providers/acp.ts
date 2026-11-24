@@ -296,6 +296,10 @@ export class AcpProvider extends LLMProvider {
   /** Yield a complete host request before the peer starts another native loop. */
   private acceptText(chunk: string, sessionId: string, client: AcpClient): void {
     if (this.hostHandoff.length > 0) return;
+    if (this.turnText.length + chunk.length > 200_000) {
+      this.currentTurnSawAction = true;
+      throw new Error('ACP peer text exceeded the maximum supported turn size');
+    }
     this.turnText += chunk;
     this.currentTurnChunkHandler?.(chunk);
     // Streaming JSON must never be suffix-repaired into an executable call.
