@@ -969,7 +969,7 @@ export class AcpProvider extends LLMProvider {
       if (msg.startsWith('ACP Peer Agent') || msg.includes('Free usage limit reached') || msg.includes('quota') || msg.includes('rate limit') || msg.includes('stalled')) {
         throw (err instanceof Error ? err : new Error(msg));
       }
-      throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}. Make sure "${this.command}" is installed and running.`);
+      throw new Error(`ACP Peer Agent (${this.peerId}) Error: ${msg}`, { cause: err });
     } finally {
       options.signal?.removeEventListener('abort', onAbort);
       this.peerServices = null;
