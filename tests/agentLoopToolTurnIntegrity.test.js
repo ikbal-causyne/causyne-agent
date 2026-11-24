@@ -10,3 +10,7 @@ test('tool batches reject blank and NUL IDs', () => {
   for (const id of ['', '  ', 'bad\x00id']) assert.equal(validateToolCallBatch([call(id)]).valid, false);
   assert.equal(validateToolCallBatch([call('valid-id')]).valid, true);
 });
+
+test('tool batches reject blank or NUL function names', () => {
+  for (const name of ['', '   ', 'bad\x00tool']) assert.equal(validateToolCallBatch([call('id', name)]).valid, false);
+});

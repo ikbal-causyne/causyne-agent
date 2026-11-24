@@ -130,7 +130,7 @@ export function validateToolCallBatch(calls, maxCalls = 256) {
         if (seen.has(id))
             return { valid: false, reason: `duplicate tool-call ID in one assistant turn` };
         const name = call?.function?.name;
-        if (typeof name !== 'string' || name.length === 0) {
+        if (typeof name !== 'string' || name.trim().length === 0 || name.includes('\0')) {
             return { valid: false, reason: `tool call ${index + 1} had no function name` };
         }
         seen.add(id);
