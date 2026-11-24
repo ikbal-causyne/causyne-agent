@@ -454,7 +454,7 @@ export class AcpClient {
     promptGeneration = 0;
     updateListeners = new Set();
     write(message) {
-        if (!this.child || this.closed)
+        if (!this.child || this.closed || this.exitError)
             return;
         try {
             this.child.stdin.write(`${JSON.stringify(message)}\n`);

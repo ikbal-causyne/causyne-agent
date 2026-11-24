@@ -512,7 +512,7 @@ export class AcpClient {
   private readonly updateListeners = new Set<(sessionId: string, update: SessionUpdate) => void>();
 
   private write(message: JsonRpcRequest<unknown> | JsonRpcResponse | JsonRpcNotification<unknown>): void {
-    if (!this.child || this.closed) return;
+    if (!this.child || this.closed || this.exitError) return;
     try {
       this.child.stdin.write(`${JSON.stringify(message)}\n`);
     } catch (error) {
