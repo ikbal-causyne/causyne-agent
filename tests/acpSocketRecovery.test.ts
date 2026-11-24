@@ -256,3 +256,15 @@ test("prompt deadline cancels the active peer operation", async () => {
     f.cleanup();
   }
 });
+
+test("refused peer turns remain incomplete", async () => {
+  const f = fixture("refusal");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory });
+    assert.equal(result.incompleteTurn, true);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
