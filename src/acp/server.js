@@ -523,6 +523,8 @@ export class AcpServer {
         catch {
             return;
         }
+        if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.type !== 'string')
+            return;
         this.onLoopEvent(session, event);
     }
     onLoopEvent(session, event) {
