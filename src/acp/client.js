@@ -252,6 +252,8 @@ export class AcpClient {
     async prompt(sessionId, input, signal) {
         if (signal?.aborted)
             throw createAbortError();
+        // Diagnostic text from an earlier turn must not cancel this prompt.
+        this.stderrTail = '';
         const blocks = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
         let collected = '';
         const collector = (update) => {
@@ -724,7 +726,7 @@ export class AcpClient {
             pending.notifyActivity?.();
         }
     }
-    inspectPeerDiagnostics(sessionId, sinceEpochMs) {
+    inspectPeerDiagnostics(sessionId, sinceEpochMs, terminalOnly = false) {
         if (this.exitError) {
             return this.exitError.message;
         }
@@ -733,25 +735,17 @@ export class AcpClient {
             return `agent process exited: ${detail}`;
         }
         if (this.stderrTail) {
-            const fatalPatterns = [
-                /free usage limit reached/i,
-                /ai_apicallerror/i,
-                /ai_retryerror/i,
-                /rate limit/i,
-                /quota exceeded/i,
-                /insufficient_quota/i,
-                /unauthorized/i,
-                /authentication failed/i,
-                /invalid api key/i
-            ];
-            for (const pat of fatalPatterns) {
-                if (pat.test(this.stderrTail)) {
-                    const match = this.stderrTail.split('\n').find(l => pat.test(l));
-                    if (match)
-                        return redactProviderSecrets(match).trim();
-                }
-            }
+            const terminal = /free usage limit reached|insufficient_quota|quota exceeded|invalid api key|authentication failed|credit balance is too low|unauthorized/i;
+            const diagnostic = /ai_apicallerror|ai_retryerror|rate limit|cannot connect to api|socket connection was closed/i;
+            const lines = this.stderrTail.split('\n').reverse();
+            const match = lines.find(line => terminal.test(line) || (!terminalOnly && diagnostic.test(line)));
+            if (match)
+                return redactProviderSecrets(match).trim();
         }
+        // A shared log may contain recoverable or stale errors. Only inspect it
+        // for diagnostics after the normal prompt deadline, never to cancel live work.
+        if (terminalOnly)
+            return null;
         const cmd = (this.options.command || '').toLowerCase();
         const isOpencode = cmd.includes('opencode')
             || (this.options.args && this.options.args.some(a => String(a).toLowerCase().includes('opencode')));
@@ -905,7 +899,7 @@ export class AcpClient {
                         return;
                     }
                     const maxToolSilenceMs = Math.min(10 * 60 * 1000, Math.max(timeoutMsInact * 3, 300_000));
-                    if (this.hasOpenToolCall(options?.sessionId, maxToolSilenceMs) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs)) {
+                    if (this.hasOpenToolCall(options?.sessionId, maxToolSilenceMs) && !this.inspectPeerDiagnostics(options?.sessionId, requestStartMs, true)) {
                         resetInactivity();
                         return;
                     }
@@ -928,7 +922,7 @@ export class AcpClient {
                 snifferInterval = setInterval(() => {
                     if (settled)
                         return;
-                    const fatalDiag = this.inspectPeerDiagnostics(sid, requestStartMs);
+                    const fatalDiag = this.inspectPeerDiagnostics(sid, requestStartMs, true);
                     if (fatalDiag) {
                         try {
                             this.notifyCancel(sid);
