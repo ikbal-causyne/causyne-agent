@@ -111,3 +111,14 @@ test('duplicate approval identifiers cannot replace an existing waiter', async (
     assert.equal(await first, true);
   } finally { loop.abort(); cleanup(); }
 });
+
+test('abort consumes a rejected asynchronous provider close', async () => {
+  const { loop, cleanup } = newLoop();
+  let closes = 0;
+  try {
+    loop.llm = { close: async () => { closes++; throw new Error('peer already closed'); } } as any;
+    loop.abort();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(closes, 1);
+  } finally { cleanup(); }
+});

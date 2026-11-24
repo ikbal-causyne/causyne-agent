@@ -860,7 +860,7 @@ export class AgentLoop {
         }
         else if (this.llm && typeof this.llm.close === 'function') {
             try {
-                void this.llm.close();
+                void Promise.resolve(this.llm.close()).catch(() => {});
             }
             catch {
                 // ignore provider close errors
