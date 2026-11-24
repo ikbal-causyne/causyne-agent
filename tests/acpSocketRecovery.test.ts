@@ -209,3 +209,19 @@ test("overlapping client prompts cannot steal the active stream", async () => {
     f.cleanup();
   }
 });
+
+test("aborted prompts never dispatch work", async () => {
+  const f = fixture("silent");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const control = new AbortController();
+    control.abort();
+    await assert.rejects(client.prompt(session, 'test', control.signal), { name: 'AbortError' });
+    assert.equal(fs.existsSync(path.join(f.directory, 'prompts.txt')), false);
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
