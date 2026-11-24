@@ -215,3 +215,11 @@ test("fallback host reads enforce one-based bounded line ranges", async (t) => {
   const result = await h.call(READ, { sessionId: 'active', path: 'a.txt', line: 2, limit: 1 });
   assert.equal(result.result.content, 'second');
 });
+
+test("fallback host read rejects oversized files", async (t) => {
+  const directory = await temporary(t);
+  await fs.writeFile(path.join(directory, 'large.txt'), Buffer.alloc(4 * 1024 * 1024 + 1));
+  const h = harness({ cwd: directory });
+  const result = await h.call(READ, { sessionId: 'active', path: 'large.txt' });
+  assert.match(result.error.message, /exceeds maximum readable size/);
+});
