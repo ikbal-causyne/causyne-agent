@@ -73,7 +73,8 @@ export class AcpClient {
                 configOptionId: state.configOptionId
             };
         }
-        if (sessionId !== undefined) return { availableModels: [], modelLabels: {}, usesConfigOption: false };
+        if (sessionId !== undefined)
+            return { availableModels: [], modelLabels: {}, usesConfigOption: false };
         return {
             currentModelId: this.latestSessionModels.currentModelId,
             availableModels: [...this.latestSessionModels.availableModels],
@@ -591,8 +592,8 @@ export class AcpClient {
                 return;
             }
             if ([params?.line, params?.limit].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 1)) || (params?.limit !== undefined && !Number.isSafeInteger((params.line ?? 1) + (params.limit - 1)))) {
-              this.write({ jsonrpc: '2.0', id: request.id, error: { code: ACP_ERROR_CODES.INVALID_PARAMS, message: 'Invalid file line range' } });
-              return;
+                this.write({ jsonrpc: '2.0', id: request.id, error: { code: ACP_ERROR_CODES.INVALID_PARAMS, message: 'Invalid file line range' } });
+                return;
             }
             try {
                 let content;
@@ -641,7 +642,7 @@ export class AcpClient {
                     throw new Error('Host file read returned non-text content');
                 }
                 if (Buffer.byteLength(content, 'utf8') > MAX_HOST_FILE_BYTES) {
-                  throw new Error(`File exceeds maximum readable size (${MAX_HOST_FILE_BYTES} bytes)`);
+                    throw new Error(`File exceeds maximum readable size (${MAX_HOST_FILE_BYTES} bytes)`);
                 }
                 if (this.closed || this.exitError || this.promptActive !== activePrompt || this.promptGeneration !== generation) {
                     throw new Error('Host file read belongs to a retired prompt');
@@ -683,8 +684,8 @@ export class AcpClient {
             }
             try {
                 if (Buffer.byteLength(content, 'utf8') > MAX_HOST_FILE_BYTES) {
-                throw new Error(`File content exceeds maximum writable size (${MAX_HOST_FILE_BYTES} bytes)`);
-              }
+                    throw new Error(`File content exceeds maximum writable size (${MAX_HOST_FILE_BYTES} bytes)`);
+                }
                 if (this.options.fsWriteHandler) {
                     await this.options.fsWriteHandler(targetPath, content);
                 }

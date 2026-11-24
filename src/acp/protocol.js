@@ -197,7 +197,8 @@ export function extractAcpSessionModels(payload) {
         availableModels.unshift(currentModelId);
         if (availableModels.length > MAX_DISCOVERED_MODELS) {
             const removed = availableModels.pop();
-            if (removed !== undefined) delete modelLabels[removed];
+            if (removed !== undefined)
+                delete modelLabels[removed];
         }
     }
     return {

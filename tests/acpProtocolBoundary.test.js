@@ -52,8 +52,7 @@ test("non-finite or boolean identifiers are rejected", () => {
   for (const id of [Infinity, NaN, true, false]) assert.deepEqual(classify({ ...request, id }), [false, false, false]);
 });
 
- test('fractional RPC error codes are invalid', () => {
-  assert.equal(isJsonRpcResponse({ ...response, result: undefined, error: { code: 1.5, message: 'bad' } }), false);
+test('fractional RPC error codes are invalid', () => {
   assert.equal(isJsonRpcResponse({ jsonrpc: '2.0', id: 1, error: { code: 1.5, message: 'bad' } }), false);
 });
 

@@ -860,7 +860,7 @@ export class AgentLoop {
         }
         else if (this.llm && typeof this.llm.close === 'function') {
             try {
-                void Promise.resolve(this.llm.close()).catch(() => {});
+                void Promise.resolve(this.llm.close()).catch(() => { });
             }
             catch {
                 // ignore provider close errors
@@ -1174,7 +1174,8 @@ export class AgentLoop {
             throw new Error('ACP line must be a positive integer');
         if (options?.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1))
             throw new Error('ACP limit must be a positive integer');
-        if (options?.limit !== undefined && !Number.isSafeInteger((options.line || 1) + (options.limit - 1))) throw new Error('ACP line range exceeds the safe integer limit');
+        if (options?.limit !== undefined && !Number.isSafeInteger((options.line || 1) + (options.limit - 1)))
+            throw new Error('ACP line range exceeds the safe integer limit');
         const args = { path: target, ...(tool === 'fs_write' ? { content } : {}),
             ...(options?.line !== undefined ? { startLine: options.line } : {}),
             ...(options?.limit !== undefined ? { endLine: (options.line || 1) + (options.limit - 1) } : {}) };

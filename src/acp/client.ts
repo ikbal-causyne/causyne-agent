@@ -645,11 +645,8 @@ export class AcpClient {
       }
 
       if ([params?.line, params?.limit].some(value => value !== undefined && (!Number.isSafeInteger(value) || value < 1)) || (params?.limit !== undefined && !Number.isSafeInteger((params.line ?? 1) + (params.limit - 1)))) {
-
         this.write({ jsonrpc: '2.0', id: request.id, error: { code: ACP_ERROR_CODES.INVALID_PARAMS, message: 'Invalid file line range' } });
-
         return;
-
       }
 
       try {
@@ -738,9 +735,7 @@ export class AcpClient {
 
       try {
         if (Buffer.byteLength(content, 'utf8') > MAX_HOST_FILE_BYTES) {
-
           throw new Error(`File content exceeds maximum writable size (${MAX_HOST_FILE_BYTES} bytes)`);
-
         }
         if (this.options.fsWriteHandler) {
           await this.options.fsWriteHandler(targetPath, content);
