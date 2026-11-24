@@ -118,6 +118,10 @@ export function repairUnansweredToolCalls(
       if (next?.role !== 'tool') continue;
       insertion = k + 1;
       const id = toolCallId(next.tool_call_id);
+      if (!id || !required.has(id)) {
+        unresolved++;
+        continue;
+      }
       if (id && required.has(id)) {
         const count = (received.get(id) ?? 0) + 1;
         received.set(id, count);

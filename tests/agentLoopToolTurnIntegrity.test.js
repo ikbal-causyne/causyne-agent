@@ -34,3 +34,10 @@ test('malformed historical calls cannot disappear silently during recovery', () 
   assert.equal(report.unresolved, 2);
   assert.equal(report.repaired, 0);
 });
+
+test('foreign result IDs are reported rather than accepted as current turn evidence', () => {
+  const history = [assistant(call('ok')), reply('ok'), reply('foreign')];
+  const report = repairUnansweredToolCalls(history);
+  assert.equal(report.unresolved, 1);
+  assert.equal(report.repaired, 0);
+});
