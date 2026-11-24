@@ -297,3 +297,18 @@ test("overlapping provider chats do not overwrite the original turn", async () =
     f.cleanup();
   }
 });
+
+test("pre-aborted provider calls do not permanently lock the instance", async () => {
+  const f = fixture("refusal");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const control = new AbortController();
+    control.abort();
+    await assert.rejects(provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory, signal: control.signal }), { name: 'AbortError' });
+    const result = await provider.chat([{ role: 'user', content: 'retry' }], { workspaceRoot: f.directory });
+    assert.equal(result.incompleteTurn, true);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
