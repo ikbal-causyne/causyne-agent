@@ -270,3 +270,9 @@ test("duplicate permission IDs cannot map approval to an ambiguous choice", asyn
   assert.equal(approvals, 0);
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("permission choices with unsupported kinds never reach approval UI", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('active', { options: [{ ...allowed, kind: 'unknown' }] }));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
