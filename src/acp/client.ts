@@ -925,6 +925,7 @@ export class AcpClient {
         settleReject(createAbortError());
       };
       const timer = setTimeout(() => {
+        if (options?.sessionId) this.notifyCancel(options.sessionId);
         const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
         if (diag) {
           settleReject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
