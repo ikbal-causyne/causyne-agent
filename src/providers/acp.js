@@ -636,7 +636,7 @@ export class AcpProvider extends LLMProvider {
                                 || '');
                             const status = earlier && earlier.status !== 'running' ? earlier.status
                                 : updateObj.status === 'completed' ? 'completed'
-                                : updateObj.status === 'failed' || updateObj.status === 'cancelled' ? 'failed' : 'running';
+                                    : updateObj.status === 'failed' || updateObj.status === 'cancelled' ? 'failed' : 'running';
                             const isEmptyPendingStub = updateObj.status === 'pending'
                                 && !detail
                                 && Object.keys(input).length === 0
