@@ -48,3 +48,9 @@ test("foreign writes cannot mutate host files", async () => {
   assert.equal(writes, 0);
   assert.equal(result.error.code, -32600);
 });
+
+test("host file access is refused outside any prompt", async () => {
+  const h = harness({ fsReadHandler: async () => assert.fail('must not read') });
+  h.client.promptActive = null;
+  assert.equal((await h.call(READ, { sessionId: 'active', path: 'a.txt' })).error.code, -32600);
+});
