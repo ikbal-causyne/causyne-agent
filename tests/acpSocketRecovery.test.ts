@@ -359,3 +359,15 @@ test("peer text and thought chunks with invalid payload types are ignored", asyn
     f.cleanup();
   }
 });
+
+test("oversized peer text is interrupted without replaying the prompt", async () => {
+  const f = fixture("oversize");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    await assert.rejects(provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory }), { code: 'ACP_PARTIAL_TURN' });
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
