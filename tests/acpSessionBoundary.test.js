@@ -110,3 +110,9 @@ test("empty permission choices cannot trigger approval UI", async () => {
   const result = await h.call(PERMISSION, permission('active', { options: [] }));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("non-array permission choices are rejected", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('active', { options: { optionId: 'allow' } }));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
