@@ -300,6 +300,8 @@ export class AcpProvider extends LLMProvider {
     this.currentTurnChunkHandler?.(chunk);
     // Streaming JSON must never be suffix-repaired into an executable call.
     // Only complete, explicitly delimited envelopes are eligible for handoff.
+    const scanStart = Math.max(0, this.turnText.length - chunk.length - '</tool_call>'.length + 1);
+    if (!/<\/tool_call>/i.test(this.turnText.slice(scanStart))) return;
     const envelopes: string[] = [];
     const opening = /<tool_call>\s*/gi;
     let match: RegExpExecArray | null;
