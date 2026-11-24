@@ -98,3 +98,9 @@ test("valid offered denial is preserved as a denial", async () => {
   const result = await h.call(PERMISSION, permission());
   assert.deepEqual(result.result.outcome, { outcome: 'selected', optionId: 'deny' });
 });
+
+test("missing tool call is cancelled before asking for approval", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('active', { toolCall: null }));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
