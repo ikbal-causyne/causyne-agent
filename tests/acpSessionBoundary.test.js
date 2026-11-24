@@ -177,3 +177,11 @@ test("missing read path is rejected without invoking host service", async (t) =>
   assert.equal(calls, 0);
   assert.equal(result.error.code, -32602);
 });
+
+test("non-string write payload is rejected without filesystem mutation", async (t) => {
+  let calls = 0;
+  const h = harness({ fsWriteHandler: async () => { calls++; } });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: 123 });
+  assert.equal(calls, 0);
+  assert.equal(result.error.code, -32602);
+});
