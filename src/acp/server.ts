@@ -902,7 +902,7 @@ export class AcpServer {
     const source = this.sessions.get(params.sessionId);
     const sourceRecord = getSession(params.sessionId);
     if (!source && !sourceRecord) throw this.notFound(`Unknown session: ${params.sessionId}`);
-    if (source?.busy) throw this.paramsError('session is busy; cancel it before forking');
+    if (source && (source.busy || source.pendingPrompts > 0)) throw this.paramsError('session is busy; cancel it before forking');
     const requested = params.cwd ?? source?.cwd ?? sourceRecord?.workspace;
     const cwd = this.resolveWorkspace(requested);
     if (source && source.cwd !== cwd) throw this.paramsError('fork must stay in the source workspace');
