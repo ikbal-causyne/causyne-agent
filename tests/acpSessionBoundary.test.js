@@ -195,3 +195,15 @@ test("fallback host reads cannot traverse outside the workspace", async (t) => {
   const result = await h.call(READ, { sessionId: 'active', path: '../outside.txt' });
   assert.match(result.error.message, /outside the allowed workspace/);
 });
+
+test("fallback host writes cannot escape the workspace", async (t) => {
+  const directory = await temporary(t);
+  const workspace = path.join(directory, 'workspace');
+  await fs.mkdir(workspace);
+  const outside = path.join(directory, 'outside.txt');
+  await fs.writeFile(outside, 'original');
+  const h = harness({ cwd: workspace });
+  const result = await h.call(WRITE, { sessionId: 'active', path: '../outside.txt', content: 'changed' });
+  assert.match(result.error.message, /outside the allowed workspace/);
+  assert.equal(await fs.readFile(outside, 'utf8'), 'original');
+});
