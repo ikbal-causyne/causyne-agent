@@ -40,3 +40,11 @@ test('foreign read requests never reach the host file handler', async () => {
   assert.equal(reads, 0);
   assert.equal(result.error.code, -32600);
 });
+
+test("foreign writes cannot mutate host files", async () => {
+  let writes = 0;
+  const h = harness({ fsWriteHandler: async () => { writes++; } });
+  const result = await h.call(WRITE, { sessionId: 'foreign', path: 'a.txt', content: 'changed' });
+  assert.equal(writes, 0);
+  assert.equal(result.error.code, -32600);
+});
