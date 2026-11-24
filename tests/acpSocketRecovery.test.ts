@@ -1,0 +1,118 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { AcpClient } from '../src/acp/client.js';
+import { AcpProvider } from '../src/providers/acp.js';
+import { classifyAgentError } from '../src/agent/errorClassifier.js';
+
+const socketFailure = 'AI_APICallError: Cannot connect to API: The socket connection was closed unexpectedly.';
+
+function fixture(mode: string) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-acp-socket-'));
+  const script = path.join(directory, 'peer.cjs');
+  fs.writeFileSync(script, `
+const readline = require('node:readline');
+const fs = require('node:fs');
+const mode = ${JSON.stringify(mode)};
+const error = ${JSON.stringify(socketFailure)};
+const send = v => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...v})+'\\n');
+const update = (sessionId, update) => send({method:'session/update',params:{sessionId,update}});
+let prompt;
+readline.createInterface({input:process.stdin}).on('line', line => {
+  const r = JSON.parse(line);
+  if(r.method === 'initialize') send({id:r.id,result:{protocolVersion:1,agentCapabilities:{}}});
+  if(r.method === 'session/new') send({id:r.id,result:{sessionId:'socket-test'}});
+  if(r.method === 'session/set_model') send({id:r.id,result:{}});
+  if(r.method === 'session/prompt') {
+    prompt = r.id;
+    fs.appendFileSync('prompts.txt', 'prompt\\n');
+    if(mode === 'recover') {
+      process.stderr.write(error+'\\n');
+      setTimeout(() => {
+        update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Recovered successfully.'}});
+        send({id:prompt,result:{stopReason:'end_turn'}});
+      }, 1800);
+    } else if(mode === 'foreign') {
+      update('another-session',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Foreign update'}});
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Correct session'}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
+    } else {
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Partial progress.'}});
+      update('socket-test',{sessionUpdate:'tool_call',toolCallId:'edit-1',kind:'edit',title:'Edit',status:'completed',rawInput:{path:'index.html'}});
+      send({id:prompt,error:{code:-32000,message:error}});
+    }
+  }
+  if(r.method === 'session/cancel') {
+    fs.appendFileSync('cancels.txt','cancel\\n');
+    send({id:prompt,result:{stopReason:'cancelled'}});
+  }
+});
+`);
+  return { directory, script, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
+}
+
+test('socket disconnects are network failures, but partial ACP turns are not replayable', () => {
+  for (const message of [socketFailure, 'socket hang up', 'connection lost']) {
+    assert.equal(classifyAgentError(new Error(message)), 'network_error');
+  }
+  assert.equal(classifyAgentError(Object.assign(new Error(socketFailure), { code: 'ACP_PARTIAL_TURN' })), 'fatal');
+});
+
+test('diagnostic monitor distinguishes recoverable stderr from terminal credentials failures', () => {
+  const client = new AcpClient({ command: 'opencode', cwd: process.cwd() });
+  (client as any).stderrTail = socketFailure;
+  assert.equal(client.inspectPeerDiagnostics('test', Date.now(), true), null);
+  assert.match(client.inspectPeerDiagnostics('test') || '', /socket connection was closed/);
+  (client as any).stderrTail = 'AI_APICallError: invalid api key';
+  assert.match(client.inspectPeerDiagnostics('test', Date.now(), true) || '', /invalid api key/);
+});
+
+test('real ACP subprocess is allowed to recover past the diagnostic poll', async () => {
+  const f = fixture('recover');
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const result = await client.prompt(session, 'Continue the task');
+    assert.equal(result.text, 'Recovered successfully.');
+    assert.equal(fs.existsSync(path.join(f.directory, 'cancels.txt')), false);
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
+
+test('peer failure after progress does not respawn and replay a native edit', async () => {
+  const f = fixture('partial');
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  const chunks: string[] = [];
+  try {
+    await assert.rejects(provider.chat([{ role: 'user', content: 'Edit index.html' }], {
+      workspaceRoot: f.directory, onChunk: chunk => chunks.push(chunk)
+    }), { code: 'ACP_PARTIAL_TURN', completedNativeActions: 1 });
+    assert.equal(chunks.join(''), 'Partial progress.');
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
+
+test('foreign session updates cannot contaminate the active ACP response', async () => {
+  const f = fixture('foreign');
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  const chunks: string[] = [];
+  try {
+    const result = await provider.chat([{ role: 'user', content: 'Inspect' }], {
+      workspaceRoot: f.directory, onChunk: chunk => chunks.push(chunk)
+    });
+    assert.equal(result.content, 'Correct session');
+    assert.equal(chunks.join(''), 'Correct session');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
