@@ -326,3 +326,18 @@ test('unknown methods and malformed lines produce JSON-RPC errors', async () => 
   const parseError = await h.waitFor((message) => message.error && message.error.code === -32700);
   assert.equal(parseError.id, null);
 });
+
+test("assistant snapshot wire deduplication", async () => {
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {},
+    abort() {},
+    async run() {
+      for (const event of [{"type":"agent_message","streamId":1,"content":"First","streaming":true},{"type":"agent_message","streamId":1,"content":"First second","streaming":true},{"type":"agent_message","streamId":1,"content":"First second","streaming":false}]) sink.send(JSON.stringify(event));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'test' }] } });
+  const response = await h.waitFor(message => message.id === 2);
+  const chunks = kind => h.find(message => message.method === 'session/update' && message.params.update.sessionUpdate === kind).map(message => message.params.update.content.text);
+  assert.deepEqual(chunks('agent_message_chunk'), ['First', ' second']);
+});
