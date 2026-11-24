@@ -153,3 +153,17 @@ test("malformed protocol frames cannot terminate a healthy prompt", async () => 
     f.cleanup();
   }
 });
+
+test("fragmented JSON-RPC lines reassemble without lost output", async () => {
+  const f = fixture("fragmented");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const result = await client.prompt(session, 'test');
+    assert.equal(result.text, 'Fragmented response.');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
