@@ -828,3 +828,31 @@ test("alternating network and rate-limit errors cannot reset the consecutive fai
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("partial ACP task checkpoint saves prior prose without claiming completion or replaying the turn", async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-recovery-check-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: Array<{ type: string; message?: string }> = [];
+    let calls = 0;
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) }, 'partial-acp-evidence', 'edit and verify a file', { workspaceRoot: workspace });
+    loop.initializeProvider = () => ({
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls++;
+        throw Object.assign(new Error('peer disconnected'), { code: 'ACP_PARTIAL_TURN', completedNativeActions: 2, unfinishedNativeActions: 1, partialText: 'Updated the file; still need verification.' });
+      }
+    }) as never;
+    await loop.run();
+    assert.equal(calls, 1);
+    assert.equal(events.some(event => event.type === 'task_complete'), false);
+    assert.ok(loop.messages.some((message: any) => message.role === 'assistant' && message.content === 'Updated the file; still need verification.'));
+    assert.ok(loop.messages.some((message: any) => message.role === 'system' && message.content?.includes('non-completed native actions: 1')));
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
