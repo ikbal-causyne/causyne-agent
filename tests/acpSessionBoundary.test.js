@@ -320,3 +320,12 @@ test("file read completed after cancellation is not returned as successful", asy
   release('private file contents');
   assert.match((await pending).error.message, /retired prompt/);
 });
+
+test("late write acknowledgement cannot be attributed to the following prompt", async () => {
+  let release;
+  const h = harness({ fsWriteHandler: () => new Promise(resolve => { release = resolve; }) });
+  const pending = h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: 'change' });
+  h.client.promptGeneration++;
+  release();
+  assert.match((await pending).error.message, /retired prompt/);
+});
