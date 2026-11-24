@@ -86,6 +86,10 @@ export function classifyAgentError(error) {
         msg.includes('econnreset') ||
         msg.includes('etimedout') ||
         msg.includes('fetch failed') ||
+        msg.includes('cannot connect to api') ||
+        msg.includes('socket connection was closed') ||
+        msg.includes('socket hang up') ||
+        msg.includes('connection lost') ||
         msg.includes('overloaded_error') ||
         msg.includes('service unavailable') ||
         msg.includes('bad gateway') ||
