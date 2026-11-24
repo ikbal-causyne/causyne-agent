@@ -194,6 +194,7 @@ export class AcpServer {
   private nextClientRequestId = 1;
   private pendingPrompts = 0;
   private buffer = '';
+  private discardOversizedFrame = false;
   private decoder = new StringDecoder('utf8');
   private closed = false;
   private workspaceRoot: string | null = null;
@@ -216,17 +217,24 @@ export class AcpServer {
   start(): void {
     if (this.closed || !this.input || this.dataListener) return;
     this.dataListener = (chunk: Buffer | string) => {
-      this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
-      if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
+      let text = typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
+      if (this.discardOversizedFrame) {
+        const newline = text.indexOf('\n');
+        if (newline < 0) return;
+        text = text.slice(newline + 1);
+        this.discardOversizedFrame = false;
+      }
+      this.buffer += text;
+      void this.drainBuffer();
+      if (Buffer.byteLength(this.buffer, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) {
         this.buffer = '';
+        this.discardOversizedFrame = true;
         this.write({
           jsonrpc: '2.0',
           id: null,
           error: { code: ACP_ERROR_CODES.INVALID_REQUEST, message: 'Request frame exceeds maximum size' }
         });
-        return;
       }
-      void this.drainBuffer();
     };
     this.endListener = () => { void this.stop(); };
     this.errorListener = () => { void this.stop(); };
@@ -263,9 +271,9 @@ export class AcpServer {
     const lines: string[] = [];
     let index = this.buffer.indexOf('\n');
     while (index >= 0) {
-      const line = this.buffer.slice(0, index).trim();
+      const line = this.buffer.slice(0, index);
       this.buffer = this.buffer.slice(index + 1);
-      if (line) lines.push(line);
+      if (line.trim() || Buffer.byteLength(line, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) lines.push(line);
       index = this.buffer.indexOf('\n');
     }
     for (const line of lines) {
@@ -276,7 +284,7 @@ export class AcpServer {
   async handleLine(line: string): Promise<void> {
     if (this.closed) return;
     const cleaned = line.replace(/^\uFEFF/, '').replace(/\r$/, '');
-    if (cleaned.length > MAX_JSONRPC_BUFFER_BYTES) {
+    if (Buffer.byteLength(line, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) {
       this.write({
         jsonrpc: '2.0',
         id: null,

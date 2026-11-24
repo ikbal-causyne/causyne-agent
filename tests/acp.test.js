@@ -772,3 +772,33 @@ test("late response to a completed turn cannot grant standing permission", async
   assert.deepEqual(outcomes, [{ id: 'one', approved: false }]);
   assert.equal(h.server.pending.size, 0);
 });
+
+
+test('ACP server accepts multiple individually bounded frames in one large chunk', async () => {
+  const { PassThrough } = await import('node:stream');
+  const input = new PassThrough();
+  const messages = [];
+  const server = new AcpServer({ input, output: { write: chunk => { messages.push(JSON.parse(chunk)); return true; } } });
+  server.start();
+  try {
+    const frame = id => JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion: 1, padding: 'x'.repeat(4 * 1024 * 1024) } }) + '\n';
+    input.write(frame(1) + frame(2));
+    assert.deepEqual(messages.map(message => message.id), [1, 2]);
+    assert.ok(messages.every(message => message.result?.protocolVersion === 1));
+  } finally { await server.stop(); input.destroy(); }
+});
+
+test('ACP server discards oversized partial frame tails before resuming at a newline', async () => {
+  const { PassThrough } = await import('node:stream');
+  const input = new PassThrough();
+  const messages = [];
+  const server = new AcpServer({ input, output: { write: chunk => { messages.push(JSON.parse(chunk)); return true; } } });
+  server.start();
+  try {
+    const frame = id => JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion: 1 } }) + '\n';
+    input.write('€'.repeat(3 * 1024 * 1024));
+    input.write(frame(99) + frame(2));
+    assert.equal(messages[0].error.code, -32600);
+    assert.deepEqual(messages.map(message => message.id), [null, 2]);
+  } finally { await server.stop(); input.destroy(); }
+});
