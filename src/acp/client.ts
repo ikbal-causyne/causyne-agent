@@ -552,7 +552,7 @@ export class AcpClient {
     if (!isJsonRpcNotification(parsed)) return;
     const method = parsed.method;
     if (method === ACP_METHODS.UPDATE) {
-      const params = (parsed as { params?: SessionNotification }).params;
+      const params = parsed.params as unknown as SessionNotification | undefined;
       if (
         params &&
         typeof params.sessionId === 'string' &&
