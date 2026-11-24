@@ -343,3 +343,19 @@ test("empty peer end-turn cannot be interpreted as successful task completion", 
     f.cleanup();
   }
 });
+
+test("peer text and thought chunks with invalid payload types are ignored", async () => {
+  const f = fixture("malformed-chunk");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const chunks: string[] = [];
+    const thoughts: string[] = [];
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory, onChunk: chunk => chunks.push(chunk), onReasoningChunk: chunk => thoughts.push(chunk) });
+    assert.equal(result.content, 'Valid text.');
+    assert.deepEqual(chunks, ['Valid text.']);
+    assert.deepEqual(thoughts, []);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
