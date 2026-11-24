@@ -14,7 +14,8 @@ import {
   ACP_PROTOCOL_VERSION,
   extractAcpSessionModels,
   isJsonRpcRequest,
-  isJsonRpcResponse
+  isJsonRpcResponse,
+  isJsonRpcNotification
 } from './protocol.js';
 import type {
   AcpDiscoveredSessionModels,
@@ -541,7 +542,8 @@ export class AcpClient {
       void this.handleServerRequest(parsed).catch(() => {});
       return;
     }
-    const method = (parsed as { method?: unknown }).method;
+    if (!isJsonRpcNotification(parsed)) return;
+    const method = parsed.method;
     if (method === ACP_METHODS.UPDATE) {
       const params = (parsed as { params?: SessionNotification }).params;
       if (

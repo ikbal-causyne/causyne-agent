@@ -7,7 +7,7 @@ import { isPhysicalPathAllowed } from '../agent/workspaceBoundary.js';
 import { isCredentialPath } from '../sandbox.js';
 import { redactProviderSecrets } from '../providers/byokHttp.js';
 import { resolveWindowsSpawnTarget } from '../utils/winSpawn.js';
-import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, extractAcpSessionModels, isJsonRpcRequest, isJsonRpcResponse } from './protocol.js';
+import { ACP_ERROR_CODES, ACP_METHODS, ACP_PROTOCOL_VERSION, extractAcpSessionModels, isJsonRpcRequest, isJsonRpcResponse, isJsonRpcNotification } from './protocol.js';
 function createAbortError(message = 'ACP operation aborted by user') {
     const err = new Error(message);
     err.name = 'AbortError';
@@ -484,6 +484,8 @@ export class AcpClient {
             void this.handleServerRequest(parsed).catch(() => { });
             return;
         }
+        if (!isJsonRpcNotification(parsed))
+            return;
         const method = parsed.method;
         if (method === ACP_METHODS.UPDATE) {
             const params = parsed.params;
