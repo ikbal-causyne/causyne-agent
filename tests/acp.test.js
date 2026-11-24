@@ -466,3 +466,29 @@ test("prompt size accounts for separators between content blocks", async () => {
   assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'refusal');
   assert.equal(runs, 0);
 });
+
+test("cancelled queued prompts cannot execute after the active turn exits", async () => {
+  let release;
+  const prompts = [];
+  const h = makeHarness(({ userPrompt }) => ({
+    setAutonomyMode() {},
+    abort() { release?.(); },
+    async run() {
+      prompts.push(userPrompt);
+      if (userPrompt === 'first') await new Promise(resolve => { release = resolve; });
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  const prompt = (id, text) => h.send({ jsonrpc: '2.0', id, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text }] } });
+  const first = prompt(2, 'first');
+  for (let i = 0; i < 50 && !release; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(typeof release, 'function');
+  const queued = prompt(3, 'queued before cancel');
+  await h.send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
+  await Promise.all([first, queued]);
+  assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'cancelled');
+  assert.equal((await h.waitFor(message => message.id === 3)).result.stopReason, 'cancelled');
+  await prompt(4, 'new after cancel');
+  assert.equal((await h.waitFor(message => message.id === 4)).result.stopReason, 'end_turn');
+  assert.deepEqual(prompts, ['first', 'new after cancel']);
+});
