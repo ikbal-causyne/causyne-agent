@@ -376,3 +376,12 @@ test('oversized custom writes are rejected before host mutation', async () => {
   const result = await h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: 'é'.repeat(2 * 1024 * 1024 + 1) });
   assert.match(result.error.message, /maximum writable size/);
 });
+
+test('permission completion after transport failure is cancelled', async () => {
+  let release;
+  const h = harness({ permissionHandler: () => new Promise(resolve => { release = resolve; }) });
+  const pending = h.call(PERMISSION, permission());
+  h.client.exitError = new Error('broken pipe');
+  release({ outcome: 'selected', optionId: 'allow' });
+  assert.deepEqual((await pending).result.outcome, { outcome: 'cancelled' });
+});

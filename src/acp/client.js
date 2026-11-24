@@ -563,7 +563,7 @@ export class AcpClient {
                     throw new Error('Invalid peer permission choices');
                 }
                 const rawOutcome = await handler(permission);
-                const validOutcome = activePrompt !== null && this.promptActive === activePrompt && this.promptGeneration === generation && !this.closed && rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && optionIds.has(rawOutcome.optionId)
+                const validOutcome = activePrompt !== null && this.promptActive === activePrompt && this.promptGeneration === generation && !this.closed && !this.exitError && rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && optionIds.has(rawOutcome.optionId)
                     ? { outcome: 'selected', optionId: rawOutcome.optionId }
                     : { outcome: 'cancelled' };
                 this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
