@@ -56,3 +56,8 @@ test('terminal command validation refuses non-string, blank and NUL commands', (
 test('file write validation rejects malformed paths before dispatch', () => {
   for (const p of [1, true, [], '   ', 'bad\x00path']) assert.match(validate('fs_write', { path: p, content: 'x' }), /path/);
 });
+
+test('file write validation rejects non-text content while allowing empty text', () => {
+  for (const content of [null, false, 1, {}, []]) assert.match(validate('fs_write', { path: 'a.txt', content }), /content/);
+  assert.equal(validate('fs_write', { path: 'a.txt', content: '' }), null);
+});

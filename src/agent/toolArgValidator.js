@@ -68,7 +68,7 @@ export function validateAndNormalizeToolArgs(toolName, args, workspaceRoot = pro
     if (toolName === 'fs_write' && (typeof record.path !== 'string' || !record.path.trim() || record.path.includes('\0'))) {
         return 'Missing required "path" argument';
     }
-    if (toolName === 'fs_write' && record.content === undefined) {
+    if (toolName === 'fs_write' && typeof record.content !== 'string') {
         return 'Missing required "content" argument';
     }
     // 4. Search must have a query
