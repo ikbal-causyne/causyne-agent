@@ -371,3 +371,18 @@ test("assistant stream continues across native tool events", async () => {
   const chunks = kind => h.find(message => message.method === 'session/update' && message.params.update.sessionUpdate === kind).map(message => message.params.update.content.text);
   assert.deepEqual(chunks('agent_message_chunk'), ['Inspecting.', ' Done.']);
 });
+
+test("legacy cumulative assistant streams remain compatible", async () => {
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {},
+    abort() {},
+    async run() {
+      for (const event of [{"type":"agent_message","content":"One","streaming":true},{"type":"agent_message","content":"One two","streaming":true},{"type":"agent_message","content":"One two","streaming":false},{"type":"agent_message","content":"One two"}]) sink.send(JSON.stringify(event));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'test' }] } });
+  const response = await h.waitFor(message => message.id === 2);
+  const chunks = kind => h.find(message => message.method === 'session/update' && message.params.update.sessionUpdate === kind).map(message => message.params.update.content.text);
+  assert.deepEqual(chunks('agent_message_chunk'), ['One', ' two', 'One two']);
+});
