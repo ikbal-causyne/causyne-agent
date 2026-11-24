@@ -183,3 +183,8 @@ test("direct provider socket failures explain the actual transport problem", () 
   assert.match(text, /upstream socket closed unexpectedly/);
   assert.match(text, /acp\/opencode/);
 });
+
+test("structured body timeouts and aborted connections report distinct diagnoses", () => {
+  assert.match(explainNetworkError({ code: 'UND_ERR_BODY_TIMEOUT' }), /response body stalled/);
+  assert.match(explainNetworkError({ code: 'ECONNABORTED' }), /aborted mid-request/);
+});
