@@ -607,3 +607,11 @@ test("queue accounting returns to zero after a successful turn", async () => {
   assert.equal(h.server.sessions.get(sessionId).pendingPrompts, 0);
   assert.equal(h.server.pendingPrompts, 0);
 });
+
+test("queue accounting returns to zero after an agent constructor failure", async () => {
+  const h = makeHarness(() => { throw new Error('initialization failed'); });
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  assert.equal(h.server.sessions.get(sessionId).pendingPrompts, 0);
+  assert.equal(h.server.pendingPrompts, 0);
+});
