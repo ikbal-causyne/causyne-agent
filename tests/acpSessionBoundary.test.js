@@ -116,3 +116,10 @@ test("non-array permission choices are rejected", async () => {
   const result = await h.call(PERMISSION, permission('active', { options: { optionId: 'allow' } }));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("approval callback errors release the pending permission counter", async () => {
+  const h = harness({ permissionHandler: async () => { throw new Error('UI closed'); } });
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+  assert.equal(h.client.activePermissionRequests, 0);
+});
