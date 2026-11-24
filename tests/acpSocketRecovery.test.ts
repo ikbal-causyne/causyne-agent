@@ -431,3 +431,18 @@ test("inactivity timeout sends cancellation and quarantines the peer", async () 
     f.cleanup();
   }
 });
+
+test("hard deadline cannot be followed by a new prompt on the failed transport", async () => {
+  const f = fixture("silent");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 500 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects(client.prompt(session, 'test'), /timed out/);
+    await assert.rejects(client.prompt(session, 'another prompt'), /timed out; peer must reconnect/);
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
