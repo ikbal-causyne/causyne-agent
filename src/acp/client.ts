@@ -949,7 +949,7 @@ export class AcpClient {
       const timer = setTimeout(() => {
         if (options?.sessionId) this.notifyCancel(options.sessionId);
         const diag = this.inspectPeerDiagnostics(options?.sessionId, requestStartMs);
-        this.exitError ??= new Error(`${method} timed out; peer must reconnect`);
+        if (options?.sessionId) this.exitError ??= new Error(`${method} timed out; peer must reconnect`);
         if (diag) {
           settleReject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${diag}`));
         } else {
