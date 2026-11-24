@@ -446,3 +446,23 @@ test("hard deadline cannot be followed by a new prompt on the failed transport",
     f.cleanup();
   }
 });
+
+test("aborted active prompt cannot contaminate a subsequent prompt", async () => {
+  const f = fixture("silent");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const controller = new AbortController();
+    const first = client.prompt(session, 'test', controller.signal);
+    const promptFile = path.join(f.directory, 'prompts.txt');
+    for (let i = 0; i < 50 && !fs.existsSync(promptFile); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    controller.abort();
+    await assert.rejects(first, { name: 'AbortError' });
+    await assert.rejects(client.prompt(session, 'another prompt'), { name: 'AbortError' });
+    assert.equal(fs.readFileSync(promptFile, 'utf8'), 'prompt\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
