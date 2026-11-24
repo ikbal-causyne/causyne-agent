@@ -866,3 +866,12 @@ test('forking a session with queued prompts is refused', async () => {
   assert.match((await h.waitFor(message => message.id === 2)).error.message, /session is busy/);
   await h.server.stop();
 });
+
+test('a cancellation with a modified session identifier cannot abort another session', async () => {
+  const h = makeHarness();
+  const source = await newSession(h);
+  const sessionId = source.result.sessionId;
+  await h.send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: ' ' + sessionId } });
+  assert.equal(h.server.sessions.get(sessionId).cancelled, false);
+  await h.server.stop();
+});

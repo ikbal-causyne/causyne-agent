@@ -322,7 +322,7 @@ export class AcpServer {
     if (!this.isPlainParams(notification.params)) return;
     if (notification.method === ACP_METHODS.CANCEL) {
       const params = notification.params as CancelNotification | undefined;
-      const sid = params && typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
+      const sid = params && typeof params.sessionId === 'string' ? params.sessionId : '';
       const session = sid ? this.sessions.get(sid) : undefined;
       if (session) {
         session.cancelled = true;
