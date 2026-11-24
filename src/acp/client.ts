@@ -992,7 +992,7 @@ export class AcpClient {
   }
 
   private failAll(error: Error): void {
-    this.exitError = error;
+    this.exitError ??= error;
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       if (pending.inactivityTimer) clearTimeout(pending.inactivityTimer);
