@@ -223,3 +223,11 @@ test("fallback host read rejects oversized files", async (t) => {
   const result = await h.call(READ, { sessionId: 'active', path: 'large.txt' });
   assert.match(result.error.message, /exceeds maximum readable size/);
 });
+
+test("fallback host write rejects oversized content without creating files", async (t) => {
+  const directory = await temporary(t);
+  const h = harness({ cwd: directory });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'large.txt', content: 'x'.repeat(4 * 1024 * 1024 + 1) });
+  assert.match(result.error.message, /exceeds maximum writable size/);
+  await assert.rejects(fs.stat(path.join(directory, 'large.txt')), { code: 'ENOENT' });
+});
