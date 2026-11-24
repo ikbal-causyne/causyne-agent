@@ -456,3 +456,11 @@ test('whitespace-only host file paths never reach custom services', async () => 
   assert.equal((await h.call(READ, { sessionId: 'active', path: '   ' })).error.code, -32602);
   assert.equal((await h.call(WRITE, { sessionId: 'active', path: '   ', content: 'text' })).error.code, -32602);
 });
+
+test('failed transports reject subsequent requests without writing', async () => {
+  const { client } = harness();
+  client.child = {};
+  client.write = () => assert.fail('failed transport must not write');
+  client.failAll(new Error('fatal peer diagnostic'));
+  await assert.rejects(client.newSession(process.cwd()), /fatal peer diagnostic/);
+});

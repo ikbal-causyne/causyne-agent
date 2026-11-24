@@ -1017,7 +1017,7 @@ export class AcpClient {
                             this.notifyCancel(sid);
                         }
                         catch { /* ignore */ }
-                        settleReject(new Error(`ACP Peer Agent (${this.options.command}) Error: ${fatalDiag}`));
+                        this.failAll(new Error(`ACP Peer Agent (${this.options.command}) Error: ${fatalDiag}`));
                     }
                 }, 1500);
                 if (typeof snifferInterval.unref === 'function')
