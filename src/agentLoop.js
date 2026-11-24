@@ -4946,6 +4946,14 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                             : 'The provider continued read-only inspection after a corrective checkpoint. The task remains unfinished; no edit was verified.' });
                     break;
                 }
+                if (e?.code === 'ACP_PARTIAL_TURN') {
+                    const completed = Number.isSafeInteger(e.completedNativeActions) && e.completedNativeActions >= 0 ? e.completedNativeActions : 0;
+                    this.messages.push({ role: 'system', content: `[Unfinished ACP task checkpoint] The peer connection ended after partial progress. Observed completed native actions in the interrupted turn: ${completed}. Workspace effects may already exist. Reinspect affected files and verify outstanding work before any further mutations. Do not replay the interrupted turn or claim completion from this checkpoint.` });
+                    this.memoryManager.saveHistory(this.messages);
+                    this.emitEvent({ type: 'error', message: e.message });
+                    auditLog.log({ event: 'acp_partial_turn_checkpoint', taskId: this.taskId, completedNativeActions: completed, outcome: 'unverified' });
+                    break;
+                }
                 if (e?.code === 'PROVIDER_EMPTY_RESPONSE'
                     || (typeof e?.message === 'string' && e.message.includes('returned no response'))) {
                     if (emptyResponseRecoveries++ < 5) {
