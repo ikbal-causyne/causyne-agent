@@ -15,3 +15,7 @@ test('valid request, response and notification shapes are mutually exclusive', (
   assert.deepEqual(classify(response), [false, true, false]);
   assert.deepEqual(classify(notification), [false, false, true]);
 });
+
+test("request with result cannot impersonate a completed RPC", () => {
+  assert.deepEqual(classify({ ...request, result: {} }), [false, false, false]);
+});
