@@ -84,7 +84,7 @@ export function validateAndNormalizeToolArgs(
   }
 
   // 4. Search must have a query
-  if ((toolName === 'codebase_search' || toolName === 'web_search') && !record.query) {
+  if ((toolName === 'codebase_search' || toolName === 'web_search') && (typeof record.query !== 'string' || !record.query.trim())) {
     return 'Missing required "query" argument';
   }
 

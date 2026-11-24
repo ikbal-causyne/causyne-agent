@@ -72,7 +72,7 @@ export function validateAndNormalizeToolArgs(toolName, args, workspaceRoot = pro
         return 'Missing required "content" argument';
     }
     // 4. Search must have a query
-    if ((toolName === 'codebase_search' || toolName === 'web_search') && !record.query) {
+    if ((toolName === 'codebase_search' || toolName === 'web_search') && (typeof record.query !== 'string' || !record.query.trim())) {
         return 'Missing required "query" argument';
     }
     // 5. Tool search must have a query, pack, or names array

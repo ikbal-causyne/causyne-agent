@@ -61,3 +61,7 @@ test('file write validation rejects non-text content while allowing empty text',
   for (const content of [null, false, 1, {}, []]) assert.match(validate('fs_write', { path: 'a.txt', content }), /content/);
   assert.equal(validate('fs_write', { path: 'a.txt', content: '' }), null);
 });
+
+test('search query validation rejects malformed or blank queries', () => {
+  for (const name of ['web_search', 'codebase_search']) for (const query of [true, {}, [], '   ']) assert.match(validate(name, { query }), /query/);
+});
