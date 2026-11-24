@@ -67,3 +67,10 @@ test("foreign permission requests bypass the user approval UI", async () => {
   const result = await h.call(PERMISSION, permission('foreign'));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("inactive prompt permissions are cancelled", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  h.client.promptActive = null;
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
