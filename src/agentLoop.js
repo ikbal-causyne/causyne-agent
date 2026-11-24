@@ -1181,6 +1181,7 @@ export class AgentLoop {
         const id = `peer-file:${randomUUID()}:${tool}`;
         if (!await this.authorizePeerOperation(tool, args, id))
             throw new Error('The requested ACP file operation was not authorized');
+        this.resolvePeerFilePath(target);
         if (tool === 'fs_write')
             captureBeforeMutation(tool, args, { taskId: this.taskId, step: this.stepsCompleted });
         let result;

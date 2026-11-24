@@ -139,3 +139,20 @@ test('peer file read rejects overflowing line ranges before authorization', asyn
     await assert.rejects(loop.executePeerFile('fs_read', 'a.txt', undefined, { line: Number.MAX_SAFE_INTEGER, limit: 2 }), /safe integer/);
   } finally { cleanup(); }
 });
+
+test('peer file access revalidates a parent symlink changed during authorization', async () => {
+  const { loop, cleanup } = newLoop();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-peer-outside-'));
+  const root = loop.workspaceRoot;
+  try {
+    fs.mkdirSync(path.join(root, 'nested'));
+    fs.writeFileSync(path.join(root, 'nested', 'a.txt'), 'allowed');
+    fs.writeFileSync(path.join(outside, 'a.txt'), 'private');
+    loop.authorizePeerOperation = async () => {
+      fs.renameSync(path.join(root, 'nested'), path.join(root, 'old'));
+      fs.symlinkSync(outside, path.join(root, 'nested'), process.platform === 'win32' ? 'junction' : 'dir');
+      return true;
+    };
+    await assert.rejects(loop.executePeerFile('fs_read', 'nested/a.txt'), /not authorized/);
+  } finally { cleanup(); fs.rmSync(outside, { recursive: true, force: true }); }
+});

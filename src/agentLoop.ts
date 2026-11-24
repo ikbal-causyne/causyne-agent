@@ -1303,6 +1303,7 @@ export class AgentLoop {
       ...(options?.limit !== undefined ? { endLine: (options.line || 1) + (options.limit - 1) } : {}) };
     const id = `peer-file:${randomUUID()}:${tool}`;
     if (!await this.authorizePeerOperation(tool, args, id)) throw new Error('The requested ACP file operation was not authorized');
+    this.resolvePeerFilePath(target);
     if (tool === 'fs_write') captureBeforeMutation(tool, args, { taskId: this.taskId, step: this.stepsCompleted });
     let result: { success: boolean; error?: string; output?: string };
     if (tool === 'fs_read') {
