@@ -123,3 +123,15 @@ test("approval callback errors release the pending permission counter", async ()
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
   assert.equal(h.client.activePermissionRequests, 0);
 });
+
+test("approval from an older prompt generation cannot authorize new work", async () => {
+  let release;
+  const h = harness({ permissionHandler: () => new Promise(resolve => { release = resolve; }) });
+  const pending = h.call(PERMISSION, permission());
+  assert.equal(h.client.activePermissionRequests, 1);
+  h.client.promptGeneration++;
+  release({ outcome: 'selected', optionId: 'allow' });
+  const result = await pending;
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+  assert.equal(h.client.activePermissionRequests, 0);
+});
