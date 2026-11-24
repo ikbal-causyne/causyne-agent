@@ -139,3 +139,17 @@ test('foreign session updates cannot contaminate the active ACP response', async
     f.cleanup();
   }
 });
+
+test("malformed protocol frames cannot terminate a healthy prompt", async () => {
+  const f = fixture("malformed");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const result = await client.prompt(session, 'test');
+    assert.equal(result.text, 'Valid after malformed frames.');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
