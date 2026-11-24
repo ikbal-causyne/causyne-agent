@@ -416,6 +416,9 @@ export class AcpServer {
     }
     const cwd = this.resolveWorkspace(params.cwd);
     this.bindWorkspace(cwd);
+    if (this.sessions.size >= MAX_SESSIONS) {
+      throw this.paramsError(`Maximum concurrent sessions (${MAX_SESSIONS}) exceeded`);
+    }
     const record = createSession(cwd, 'Untitled', false);
     const session = this.addSession(record.id, cwd, record.title, MODES.currentModeId);
     return this.sessionResponse(session);
@@ -902,6 +905,9 @@ export class AcpServer {
     }
     this.bindWorkspace(cwd);
     const title = `Fork of ${source?.title || sourceRecord?.title || 'Untitled'}`;
+    if (this.sessions.size >= MAX_SESSIONS) {
+      throw this.paramsError(`Maximum concurrent sessions (${MAX_SESSIONS}) exceeded`);
+    }
     const forked = forkSession(params.sessionId, { title, makeActive: false, workspace: cwd });
     if (!forked) throw this.paramsError('Failed to fork session journal');
     const session = this.addSession(forked.id, cwd, title, source?.modeId ?? MODES.currentModeId);

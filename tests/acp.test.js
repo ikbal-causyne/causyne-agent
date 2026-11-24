@@ -802,3 +802,18 @@ test('ACP server discards oversized partial frame tails before resuming at a new
     assert.deepEqual(messages.map(message => message.id), [null, 2]);
   } finally { await server.stop(); input.destroy(); }
 });
+
+test('new and forked ACP sessions refuse capacity exhaustion before creating journal entries', async () => {
+  const h = makeHarness();
+  const source = await newSession(h);
+  const sessionId = source.result.sessionId;
+  const existing = h.server.sessions.get(sessionId);
+  for (let i = 0; i < 127; i++) h.server.sessions.set('capacity-' + i, existing);
+  try {
+    const refused = await newSession(h, 2);
+    assert.match(refused.error.message, /Maximum concurrent sessions/);
+    await h.send({ jsonrpc: '2.0', id: 3, method: 'session/fork', params: { sessionId, cwd: process.cwd() } });
+    assert.match((await h.waitFor(message => message.id === 3)).error.message, /Maximum concurrent sessions/);
+    assert.equal(h.server.sessions.size, 128);
+  } finally { h.server.sessions.clear(); await h.server.stop(); }
+});
