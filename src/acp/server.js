@@ -427,17 +427,26 @@ export class AcpServer {
             memorySessionId: session.memorySessionId,
             approvalScope: session.approvalScope
         };
-        const loop = this.loopFactory
-            ? this.loopFactory({
-                sessionId: session.id,
-                memorySessionId: session.memorySessionId,
-                taskId,
-                userPrompt: text,
-                cwd: session.cwd,
-                sink,
-                approvalScope: session.approvalScope
-            })
-            : new AgentLoop(sink, taskId, text, loopOptions);
+        let loop;
+        try {
+            loop = this.loopFactory
+                ? this.loopFactory({
+                    sessionId: session.id,
+                    memorySessionId: session.memorySessionId,
+                    taskId,
+                    userPrompt: text,
+                    cwd: session.cwd,
+                    sink,
+                    approvalScope: session.approvalScope
+                })
+                : new AgentLoop(sink, taskId, text, loopOptions);
+        }
+        catch {
+            acceptingEvents = false;
+            session.busy = false;
+            session.loop = null;
+            return 'refusal';
+        }
         const autonomy = MODE_TO_AUTONOMY[session.modeId];
         if (autonomy) {
             try {
