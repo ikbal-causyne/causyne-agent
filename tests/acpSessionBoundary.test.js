@@ -92,3 +92,9 @@ test("valid offered approval is returned unchanged", async () => {
   const result = await h.call(PERMISSION, permission());
   assert.deepEqual(result.result.outcome, { outcome: 'selected', optionId: 'allow' });
 });
+
+test("valid offered denial is preserved as a denial", async () => {
+  const h = harness({ permissionHandler: async () => ({ outcome: 'selected', optionId: 'deny' }) });
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'selected', optionId: 'deny' });
+});
