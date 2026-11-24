@@ -193,3 +193,19 @@ test("unknown prompt stop reason is rejected", async () => {
     f.cleanup();
   }
 });
+
+test("overlapping client prompts cannot steal the active stream", async () => {
+  const f = fixture("recover");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    const first = client.prompt(session, 'first');
+    await assert.rejects(client.prompt(session, 'second'), /already has an active prompt/);
+    assert.equal((await first).text, 'Recovered successfully.');
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
