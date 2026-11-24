@@ -121,7 +121,7 @@ export class AcpServer {
             : 10 * 60 * 1000;
     }
     start() {
-        if (!this.input || this.dataListener)
+        if (this.closed || !this.input || this.dataListener)
             return;
         this.dataListener = (chunk) => {
             this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
@@ -185,6 +185,8 @@ export class AcpServer {
         }
     }
     async handleLine(line) {
+        if (this.closed)
+            return;
         const cleaned = line.replace(/^\uFEFF/, '').replace(/\r$/, '');
         if (cleaned.length > MAX_JSONRPC_BUFFER_BYTES) {
             this.write({

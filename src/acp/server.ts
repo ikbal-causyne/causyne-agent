@@ -210,7 +210,7 @@ export class AcpServer {
   }
 
   start(): void {
-    if (!this.input || this.dataListener) return;
+    if (this.closed || !this.input || this.dataListener) return;
     this.dataListener = (chunk: Buffer | string) => {
       this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
       if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
@@ -270,6 +270,7 @@ export class AcpServer {
   }
 
   async handleLine(line: string): Promise<void> {
+    if (this.closed) return;
     const cleaned = line.replace(/^\uFEFF/, '').replace(/\r$/, '');
     if (cleaned.length > MAX_JSONRPC_BUFFER_BYTES) {
       this.write({
