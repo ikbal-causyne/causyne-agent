@@ -498,3 +498,16 @@ test("cancelled native action is not reported as still running", async () => {
     f.cleanup();
   }
 });
+
+test("malformed native action ID cannot become an apparent completed action", async () => {
+  const f = fixture('action-status');
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory });
+    assert.equal(result.externalActions?.some(action => action.id === 'acp:123'), false);
+    assert.equal(result.externalActions?.length, 2);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
