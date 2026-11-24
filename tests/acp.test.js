@@ -684,3 +684,40 @@ test("cancelled loops cannot publish late assistant content", async () => {
   assert.equal(h.find(message => message.params?.update?.content?.text === 'late cancelled output').length, 0);
   assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'cancelled');
 });
+
+test("retired session cleanup does not cancel approvals in a reloaded session", async () => {
+  let release, started, decision;
+  const h = makeHarness(({ userPrompt, sink }) => ({
+    setAutonomyMode() {}, abort() {},
+    async run() {
+      if (userPrompt === 'old') {
+        await new Promise(resolve => { release = resolve; started = true; });
+        sink.send(JSON.stringify({ type: 'agent_message', content: 'old retired output' }));
+      } else {
+        decision = await this.waitForDecision({ options: [{ id: 'a', label: 'A' }] });
+      }
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  saveSessionMessages(sessionId, [{ role: 'user', content: 'saved' }]);
+  const prompt = (id, text) => h.send({ jsonrpc: '2.0', id, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text }] } });
+  const old = prompt(2, 'old');
+  while (!started) await Promise.resolve();
+  await h.send({ jsonrpc: '2.0', id: 3, method: 'session/close', params: { sessionId } });
+  await h.send({ jsonrpc: '2.0', id: 4, method: 'session/load', params: { sessionId, cwd: process.cwd() } });
+  const current = prompt(5, 'new');
+  try {
+    const approval = await h.waitFor(message => message.method === 'session/request_permission');
+    release();
+    await old;
+    assert.equal(h.server.pending.has(approval.id), true);
+    assert.equal(h.find(message => message.params?.update?.content?.text === 'old retired output').length, 0);
+    await h.send({ jsonrpc: '2.0', id: approval.id, result: { outcome: { outcome: 'selected', optionId: 'a' } } });
+    await current;
+    assert.deepEqual(decision, { optionId: 'a', label: 'A' });
+  } finally {
+    release();
+    await h.server.stop();
+    await Promise.all([old, current]);
+  }
+});
