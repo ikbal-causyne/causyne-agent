@@ -492,3 +492,18 @@ test("cancelled queued prompts cannot execute after the active turn exits", asyn
   assert.equal((await h.waitFor(message => message.id === 4)).result.stopReason, 'end_turn');
   assert.deepEqual(prompts, ['first', 'new after cancel']);
 });
+
+test("malformed internal event values cannot abort an otherwise successful loop", async () => {
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {}, abort() {},
+    async run() {
+      for (const value of [null, 123, [], {}, 'unexpected']) sink.send(JSON.stringify(value));
+      sink.send(JSON.stringify({ type: 'agent_message', content: 'Valid response.' }));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'test' }] } });
+  assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'end_turn');
+  const chunks = h.find(message => message.params?.update?.sessionUpdate === 'agent_message_chunk');
+  assert.deepEqual(chunks.map(message => message.params.update.content.text), ['Valid response.']);
+});
