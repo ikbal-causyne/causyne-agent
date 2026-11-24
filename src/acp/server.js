@@ -808,6 +808,9 @@ export class AcpServer {
             if (params.cwd !== undefined && this.resolveWorkspace(params.cwd) !== live.cwd) {
                 throw this.paramsError('session workspace does not match cwd');
             }
+            if (live.busy || live.pendingPrompts > 0) {
+                throw this.paramsError('session is busy; cancel it before loading');
+            }
             this.bindWorkspace(live.cwd);
             this.replayTranscript(live, getSession(live.memorySessionId)?.messages ?? []);
             return { modes: this.modesFor(live) };

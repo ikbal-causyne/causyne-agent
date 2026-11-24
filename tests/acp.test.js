@@ -846,3 +846,13 @@ test('new session rejects malformed additional directory collections', async () 
   assert.equal(h.server.sessions.size, 0);
   await h.server.stop();
 });
+
+test('loading a session with queued prompts cannot interleave transcript replay', async () => {
+  const h = makeHarness();
+  const source = await newSession(h);
+  const sessionId = source.result.sessionId;
+  h.server.sessions.get(sessionId).pendingPrompts = 1;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/load', params: { sessionId } });
+  assert.match((await h.waitFor(message => message.id === 2)).error.message, /session is busy/);
+  await h.server.stop();
+});
