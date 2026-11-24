@@ -161,3 +161,9 @@ test("nested socket causes are network failures even without matching top-level 
   const error = new Error('request interrupted', { cause: { code: 'UND_ERR_SOCKET' } });
   assert.equal(classifyAgentError(error), 'network_error');
 });
+
+test("direct transport codes are recognized without relying on error message heuristics", () => {
+  for (const code of ['UND_ERR_SOCKET', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNABORTED']) {
+    assert.equal(classifyAgentError(Object.assign(new Error('request interrupted'), { code })), 'network_error');
+  }
+});
