@@ -49,7 +49,7 @@ function assistantToolCalls(message: RecordedMessage): RecordedToolCall[] {
 }
 
 function toolCallId(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 && value.length <= 256 ? value : null;
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !value.includes('\0') ? value : null;
 }
 
 /**

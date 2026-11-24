@@ -24,7 +24,7 @@ function assistantToolCalls(message) {
     return message.tool_calls.filter((entry) => entry !== null && typeof entry === 'object');
 }
 function toolCallId(value) {
-    return typeof value === 'string' && value.length > 0 && value.length <= 256 ? value : null;
+    return typeof value === 'string' && value.trim().length > 0 && value.length <= 256 && !value.includes('\0') ? value : null;
 }
 /**
  * Mutates only the supplied history array. Returns the number of inserted
