@@ -276,3 +276,11 @@ test("permission choices with unsupported kinds never reach approval UI", async 
   const result = await h.call(PERMISSION, permission('active', { options: [{ ...allowed, kind: 'unknown' }] }));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("permission choices require nonempty string identifiers", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  for (const optionId of ['', '  ', 42, null]) {
+    const result = await h.call(PERMISSION, permission('active', { options: [{ ...allowed, optionId }] }));
+    assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+  }
+});
