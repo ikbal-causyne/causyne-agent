@@ -797,3 +797,34 @@ test('a completed checklist cannot substitute for executable tool evidence', asy
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+test("alternating network and rate-limit errors cannot reset the consecutive failure ceiling", async () => {
+  const previousDirectory = process.cwd();
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-recovery-check-'));
+  fs.writeFileSync(path.join(workspace, 'package.json'), '{}');
+  process.chdir(workspace);
+  try {
+    const events: Array<{ type: string; message?: string }> = [];
+    let calls = 0;
+    const loop = new AgentLoop({ readyState: 1, send: (payload: string) => events.push(JSON.parse(payload)) }, 'alternating-transport-failures', 'inspect this workspace', { workspaceRoot: workspace });
+    loop.backoff = async () => {};
+    (loop as any).tryZeroCostFailover = async () => false;
+    loop.initializeProvider = () => ({
+      supportsVision: false,
+      supportsToolSearch: () => false,
+      chat: async () => {
+        calls++;
+        if (calls > 8) throw Object.assign(new Error('test safety ceiling'), { code: 'PROVIDER_NO_PROGRESS' });
+        if (calls % 2 === 0) throw Object.assign(new Error('rate limit'), { status: 429 });
+        throw Object.assign(new Error('socket closed'), { code: 'ECONNRESET' });
+      }
+    }) as never;
+    await loop.run();
+    assert.equal(calls, AgentLoop.MAX_CONSECUTIVE_FAILURES);
+    assert.equal(events.some(event => event.type === 'task_complete'), false);
+    assert.equal(events.some(event => event.type === 'error' && event.message?.includes('Stopped after')), true);
+  } finally {
+    process.chdir(previousDirectory);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
