@@ -411,7 +411,7 @@ export function skillSystemMessage(skill: any) {
 export function explainNetworkError(error: any, config: any = {}) {
   const safeConfig = config && typeof config === 'object' ? config : {};
   const cause = error && error.cause;
-  const code = String((cause && (cause.code || cause.errno)) || '');
+  const code = String((cause && (cause.code || cause.errno)) || error?.code || error?.errno || '');
 
   let host = '';
   try {

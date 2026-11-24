@@ -283,7 +283,7 @@ export function skillSystemMessage(skill) {
 export function explainNetworkError(error, config = {}) {
     const safeConfig = config && typeof config === 'object' ? config : {};
     const cause = error && error.cause;
-    const code = String((cause && (cause.code || cause.errno)) || '');
+    const code = String((cause && (cause.code || cause.errno)) || error?.code || error?.errno || '');
     let host = '';
     try {
         const raw = safeConfig.baseUrl && String(safeConfig.baseUrl).trim();
