@@ -80,3 +80,9 @@ test("permissions default to cancelled without an approval handler", async () =>
   const result = await h.call(PERMISSION, permission());
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("unknown permission option IDs cannot grant a native action", async () => {
+  const h = harness({ permissionHandler: async () => ({ outcome: 'selected', optionId: 'not-offered' }) });
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
