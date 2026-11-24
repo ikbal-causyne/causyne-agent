@@ -665,3 +665,22 @@ test("valid active-loop decisions still resolve through the peer protocol", asyn
   assert.deepEqual(decision, { optionId: 'a', label: 'A' });
   assert.equal(h.server.pending.size, 0);
 });
+
+test("cancelled loops cannot publish late assistant content", async () => {
+  let release, started;
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {}, abort() {},
+    async run() {
+      await new Promise(resolve => { release = resolve; started = true; });
+      sink.send(JSON.stringify({ type: 'agent_message', content: 'late cancelled output' }));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  const running = h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  while (!started) await Promise.resolve();
+  await h.send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
+  release();
+  await running;
+  assert.equal(h.find(message => message.params?.update?.content?.text === 'late cancelled output').length, 0);
+  assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'cancelled');
+});
