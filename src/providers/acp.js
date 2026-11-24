@@ -448,7 +448,7 @@ export class AcpProvider extends LLMProvider {
                     const updateObj = update;
                     if (updateObj.sessionUpdate === 'agent_thought_chunk') {
                         const thought = updateObj.content?.text || updateObj.thought || (typeof updateObj.content === 'string' ? updateObj.content : '');
-                        if (thought) {
+                        if (typeof thought === 'string' && thought) {
                             this.turnReasoning += thought;
                             if (this.currentTurnReasoningHandler) {
                                 this.currentTurnReasoningHandler(thought);
@@ -457,7 +457,7 @@ export class AcpProvider extends LLMProvider {
                     }
                     else if (updateObj.sessionUpdate === 'agent_message_chunk') {
                         const text = updateObj.content?.type === 'text' ? updateObj.content.text : '';
-                        if (text)
+                        if (typeof text === 'string' && text)
                             this.acceptText(text, sessionId, client);
                     }
                     else if (updateObj.sessionUpdate === 'plan') {
