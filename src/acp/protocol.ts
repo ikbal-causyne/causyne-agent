@@ -524,7 +524,7 @@ export function isJsonRpcRequest(value: unknown): value is JsonRpcRequest {
 export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  if (record.jsonrpc !== '2.0') return false;
+  if (record.jsonrpc !== '2.0' || 'method' in record) return false;
   const validId = typeof record.id === 'string'
     || (typeof record.id === 'number' && Number.isFinite(record.id))
     || record.id === null;

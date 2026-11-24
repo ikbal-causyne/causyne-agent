@@ -50,7 +50,7 @@ export function isJsonRpcResponse(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value))
         return false;
     const record = value;
-    if (record.jsonrpc !== '2.0')
+    if (record.jsonrpc !== '2.0' || 'method' in record)
         return false;
     const validId = typeof record.id === 'string'
         || (typeof record.id === 'number' && Number.isFinite(record.id))
