@@ -408,7 +408,7 @@ export class AcpServer {
     if (!params || typeof params.cwd !== 'string' || !params.cwd.trim()) {
       throw this.paramsError('session/new requires cwd');
     }
-    if (Array.isArray(params.mcpServers) && params.mcpServers.length > 0) {
+    if (params.mcpServers !== undefined && (!Array.isArray(params.mcpServers) || params.mcpServers.length > 0)) {
       throw this.paramsError('MCP servers are not supported by this agent');
     }
     if (Array.isArray(params.additionalDirectories) && params.additionalDirectories.length > 0) {
@@ -862,7 +862,7 @@ export class AcpServer {
     if (!params || typeof params.sessionId !== 'string' || !params.sessionId) {
       throw this.paramsError('session/load requires sessionId');
     }
-    if (Array.isArray(params.mcpServers) && params.mcpServers.length > 0) {
+    if (params.mcpServers !== undefined && (!Array.isArray(params.mcpServers) || params.mcpServers.length > 0)) {
       throw this.paramsError('MCP servers are not supported by this agent');
     }
     const live = this.sessions.get(params.sessionId);

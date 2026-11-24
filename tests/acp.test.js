@@ -828,3 +828,13 @@ test('loading a live ACP session cannot ignore a mismatched requested workspace'
   assert.match(response.error.message, /workspace does not match|blocked system directory/);
   await h.server.stop();
 });
+
+test('malformed MCP server collections are refused on new and load', async () => {
+  const h = makeHarness();
+  const source = await newSession(h);
+  for (const [id, method, params] of [[2, 'session/new', { cwd: process.cwd(), mcpServers: {} }], [3, 'session/load', { sessionId: source.result.sessionId, mcpServers: 'invalid' }]]) {
+    await h.send({ jsonrpc: '2.0', id, method, params });
+    assert.equal((await h.waitFor(message => message.id === id)).error.code, -32602);
+  }
+  await h.server.stop();
+});
