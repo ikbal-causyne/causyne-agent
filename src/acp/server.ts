@@ -179,6 +179,7 @@ export class AcpServer {
   private readonly agentVersion: string;
   private readonly permissionTimeoutMs: number;
   private readonly sessions = new Map<string, AcpSession>();
+  private readonly assistantStreams = new WeakMap<AcpSession, { key: string; text: string }>();
   private readonly pending = new Map<string | number, PendingClientRequest>();
   private nextClientRequestId = 1;
   private buffer = '';
@@ -490,6 +491,7 @@ export class AcpServer {
     }
     session.updatedAt = Date.now();
     session.cancelled = false;
+    this.assistantStreams.delete(session);
     session.busy = true;
     const taskId = `acp-${crypto.randomUUID()}`;
     const sink = {
@@ -591,7 +593,15 @@ export class AcpServer {
   private onLoopEvent(session: AcpSession, event: AgentLoopEvent): void {
     switch (event.type) {
       case 'agent_message': {
-        this.notify(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: String(event.content ?? '') } });
+        const text = String(event.content ?? '');
+        const key = typeof event.streamId === 'number' || typeof event.streamId === 'string' ? String(event.streamId) : '';
+        const previous = this.assistantStreams.get(session);
+        const tracked = Boolean(key) || event.streaming === true || previous?.key === '';
+        const sameStream = tracked && previous?.key === key;
+        const delta = sameStream && text.startsWith(previous.text) ? text.slice(previous.text.length) : text;
+        if (tracked) this.assistantStreams.set(session, { key, text });
+        if (event.streaming !== true && !key) this.assistantStreams.delete(session);
+        if (delta) this.notify(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: delta } });
         return;
       }
       case 'agent_reasoning': {
