@@ -44,6 +44,7 @@ export class AcpProvider extends LLMProvider {
   private readonly profileEnv: Record<string, string> | undefined;
   private readonly profileTimeoutSeconds: number | undefined;
   private activeClient: AcpClient | null = null;
+  private closingClient: Promise<void> | null = null;
   private activeSessionId: string | null = null;
   private currentTurnAborted = false;
   private currentTurnSawAction = false;
@@ -356,6 +357,7 @@ export class AcpProvider extends LLMProvider {
   }
 
   private async getOrCreateClient(signal?: AbortSignal, workspaceRoot = process.cwd()): Promise<{ client: AcpClient; sessionId: string }> {
+    if (this.closingClient) await this.closingClient;
     if (signal?.aborted) {
       const abortErr = new Error('ACP request aborted by user');
       abortErr.name = 'AbortError';
@@ -770,11 +772,12 @@ export class AcpProvider extends LLMProvider {
     this.activeSessionId = null;
     this.transportSnapshot = null;
     if (client) {
-      try {
-        await client.close();
-      } catch {
-        // ignore close error
-      }
+      const closing = client.close().catch(() => {});
+      this.closingClient = closing;
+      await closing;
+      if (this.closingClient === closing) this.closingClient = null;
+    } else if (this.closingClient) {
+      await this.closingClient;
     }
   }
 

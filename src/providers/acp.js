@@ -29,6 +29,7 @@ export class AcpProvider extends LLMProvider {
     profileEnv;
     profileTimeoutSeconds;
     activeClient = null;
+    closingClient = null;
     activeSessionId = null;
     currentTurnAborted = false;
     currentTurnSawAction = false;
@@ -351,6 +352,8 @@ export class AcpProvider extends LLMProvider {
         client.notifyCancel(sessionId);
     }
     async getOrCreateClient(signal, workspaceRoot = process.cwd()) {
+        if (this.closingClient)
+            await this.closingClient;
         if (signal?.aborted) {
             const abortErr = new Error('ACP request aborted by user');
             abortErr.name = 'AbortError';
@@ -765,12 +768,14 @@ export class AcpProvider extends LLMProvider {
         this.activeSessionId = null;
         this.transportSnapshot = null;
         if (client) {
-            try {
-                await client.close();
-            }
-            catch {
-                // ignore close error
-            }
+            const closing = client.close().catch(() => { });
+            this.closingClient = closing;
+            await closing;
+            if (this.closingClient === closing)
+                this.closingClient = null;
+        }
+        else if (this.closingClient) {
+            await this.closingClient;
         }
     }
     async chat(messages, options = {}) {
