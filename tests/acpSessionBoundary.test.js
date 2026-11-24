@@ -284,3 +284,9 @@ test("permission choices require nonempty string identifiers", async () => {
     assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
   }
 });
+
+test("invalid permission option labels cannot reach host approval", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('active', { options: [{ ...allowed, name: {} }] }));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
