@@ -52,3 +52,7 @@ describe('validateToolArgs catches missing arguments on the CANONICAL names', ()
 test('terminal command validation refuses non-string, blank and NUL commands', () => {
   for (const name of ['sysRun', 'sysRunBg']) for (const command of [true, 1, {}, '  ', 'echo\x00bad']) assert.match(validate(name, { command }), /command/);
 });
+
+test('file write validation rejects malformed paths before dispatch', () => {
+  for (const p of [1, true, [], '   ', 'bad\x00path']) assert.match(validate('fs_write', { path: p, content: 'x' }), /path/);
+});

@@ -76,7 +76,7 @@ export function validateAndNormalizeToolArgs(
   }
 
   // 3. File write must have a path AND content
-  if (toolName === 'fs_write' && !record.path) {
+  if (toolName === 'fs_write' && (typeof record.path !== 'string' || !record.path.trim() || record.path.includes('\0'))) {
     return 'Missing required "path" argument';
   }
   if (toolName === 'fs_write' && record.content === undefined) {
