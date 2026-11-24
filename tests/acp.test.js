@@ -755,3 +755,20 @@ test("mixed RPC envelopes cannot settle an outstanding decision", async () => {
     assert.equal(decision, null);
   } finally { await h.server.stop(); await running; }
 });
+
+test("late response to a completed turn cannot grant standing permission", async () => {
+  const outcomes = [];
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {}, abort() {},
+    handleApprovalResponse(id, approved) { outcomes.push({ id, approved }); },
+    async run() {
+      sink.send(JSON.stringify({ type: 'approval_request', toolCallId: 'one', tool: 'sysRun', args: { command: 'echo test' } }));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  const approval = await h.waitFor(message => message.method === 'session/request_permission');
+  await h.send({ jsonrpc: '2.0', id: approval.id, result: { outcome: { outcome: 'selected', optionId: 'allow_always' } } });
+  assert.deepEqual(outcomes, [{ id: 'one', approved: false }]);
+  assert.equal(h.server.pending.size, 0);
+});
