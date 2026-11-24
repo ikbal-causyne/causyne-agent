@@ -414,3 +414,10 @@ test('ACP session creation rejects malformed peer session identifiers', async ()
     await assert.rejects(client.newSession(process.cwd()), /session id/);
   }
 });
+
+test('replacement model catalogues do not retain retired model labels', () => {
+  const { client } = harness();
+  client.recordSessionModels('s', { availableModels: [{ id: 'old', name: 'Old model' }] });
+  client.recordSessionModels('s', { availableModels: [{ id: 'new', name: 'New model' }] });
+  assert.deepEqual(client.getSessionModels('s').modelLabels, { new: 'New model' });
+});

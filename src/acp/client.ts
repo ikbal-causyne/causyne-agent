@@ -171,6 +171,9 @@ export class AcpClient {
       usesConfigOption: extracted.usesConfigOption || Boolean(existing?.usesConfigOption),
       configOptionId: extracted.configOptionId ?? existing?.configOptionId
     };
+    for (const id of Object.keys(merged.modelLabels)) {
+      if (!merged.availableModels.includes(id)) delete merged.modelLabels[id];
+    }
     if (!this.sessionModels.has(sessionId) && this.sessionModels.size >= MAX_TRACKED_SESSIONS) {
       const oldest = this.sessionModels.keys().next().value;
       if (oldest !== undefined) this.sessionModels.delete(oldest);
