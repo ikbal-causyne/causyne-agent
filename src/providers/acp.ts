@@ -8,7 +8,7 @@ import { redactProviderSecrets } from './byokHttp.js';
 import { getPeerProfile } from '../acp/peerProfiles.js';
 import { BUILTIN_PEER_PRESETS } from '../acp/agentCatalog.js';
 import type { RequestPermissionRequest, SessionUpdate, ToolKind } from '../acp/protocol.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { PEER_COLLABORATION_POLICY } from './collaborationPolicy.js';
 import { extractToolCallJsonObjects, stripToolCallMarkup, resolveToolCallEnvelopeArguments } from '../implementationPlan.js';
@@ -275,7 +275,7 @@ export class AcpProvider extends LLMProvider {
   extractToolCalls(text: string): ChatResponseToolCall[] {
     const calls: ChatResponseToolCall[] = [];
     if (!text || typeof text !== 'string') return calls;
-    let index = 0;
+
     for (const parsed of extractToolCallJsonObjects(text)) {
       const fnObj = parsed.function && typeof parsed.function === 'object'
         ? (parsed.function as Record<string, unknown>)
@@ -284,7 +284,7 @@ export class AcpProvider extends LLMProvider {
       if (!name) continue;
       const rawArgs = resolveToolCallEnvelopeArguments(parsed);
       calls.push({
-        id: `acp_call_${Date.now()}_${index++}`,
+        id: `acp_call_${randomUUID()}`,
         type: 'function',
         function: {
           name,

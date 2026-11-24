@@ -98,3 +98,17 @@ Done!`;
     assert.strictEqual(callsFenced[0].function.name, 'dir_list');
   });
 });
+
+test('host tool call identifiers remain unique across independent parses', () => {
+  const provider = new AcpProvider({ provider: 'acp' });
+  const original = Date.now;
+  try {
+    Date.now = () => 123456;
+    const sample = '<tool_call>{"name":"fs_read","arguments":{"path":"a.txt"}}</tool_call>';
+    const first = provider.extractToolCalls(sample);
+    const second = provider.extractToolCalls(sample);
+    assert.equal(first.length, 1);
+    assert.equal(second.length, 1);
+    assert.notEqual(first[0].id, second[0].id);
+  } finally { Date.now = original; }
+});
