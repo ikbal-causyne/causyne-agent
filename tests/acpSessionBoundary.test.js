@@ -450,3 +450,9 @@ test('session load refuses malformed IDs and explicit invalid workspaces', async
   await assert.rejects(client.loadSession('bad\x00session'), /sessionId/);
   for (const cwd of ['', '  ', 'bad\x00path', 1]) await assert.rejects(client.loadSession('s', cwd), /valid cwd/);
 });
+
+test('whitespace-only host file paths never reach custom services', async () => {
+  const h = harness({ fsReadHandler: async () => assert.fail('must not read'), fsWriteHandler: async () => assert.fail('must not write') });
+  assert.equal((await h.call(READ, { sessionId: 'active', path: '   ' })).error.code, -32602);
+  assert.equal((await h.call(WRITE, { sessionId: 'active', path: '   ', content: 'text' })).error.code, -32602);
+});
