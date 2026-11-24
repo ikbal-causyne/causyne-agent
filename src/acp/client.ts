@@ -277,7 +277,7 @@ export class AcpClient {
   }
 
   async setSessionModel(sessionId: string, modelId: string, signal?: AbortSignal): Promise<void> {
-    if (typeof sessionId !== 'string' || !sessionId.trim() || typeof modelId !== 'string' || !modelId.trim()) {
+    if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.includes('\0') || typeof modelId !== 'string' || !modelId.trim() || modelId.includes('\0')) {
       throw new Error('setSessionModel requires non-empty sessionId and modelId');
     }
     const state = this.getSessionModels(sessionId);
@@ -311,7 +311,7 @@ export class AcpClient {
   }
 
   async setSessionMode(sessionId: string, modeId: string, signal?: AbortSignal): Promise<void> {
-    if (typeof sessionId !== 'string' || !sessionId.trim() || typeof modeId !== 'string' || !modeId.trim()) {
+    if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.includes('\0') || typeof modeId !== 'string' || !modeId.trim() || modeId.includes('\0')) {
       throw new Error('setSessionMode requires non-empty sessionId and modeId');
     }
     await this.request<void>(ACP_METHODS.SET_MODE, {

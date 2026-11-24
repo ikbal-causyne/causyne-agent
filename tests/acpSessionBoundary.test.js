@@ -434,3 +434,12 @@ test('whitespace-only peer tool-call IDs do not reach the permission handler', a
   const result = await h.call(PERMISSION, permission('active', { toolCall: { toolCallId: '   ' } }));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test('model and mode selection refuse NUL-containing identifiers before RPC', async () => {
+  const { client } = harness();
+  client.request = async () => assert.fail('unexpected RPC');
+  await assert.rejects(client.setSessionModel('s', 'bad\x00model'), /requires/);
+  await assert.rejects(client.setSessionModel('bad\x00session', 'model'), /requires/);
+  await assert.rejects(client.setSessionMode('s', 'bad\x00mode'), /requires/);
+  await assert.rejects(client.setSessionMode('bad\x00session', 'mode'), /requires/);
+});
