@@ -366,7 +366,7 @@ export class AcpProvider extends LLMProvider {
             inactivityTimeoutMs: 120_000,
             allowHostTools: true,
             permissionHandler: async (req) => {
-                if (this.currentTurnAborted || this.peerServices?.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError)
+                if (this.activeClient !== client || !this.peerServices || this.currentTurnAborted || this.peerServices.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError)
                     return { outcome: 'cancelled' };
                 const toolCallId = req.toolCall?.toolCallId;
                 const earlier = toolCallId ? (this.turnActions.get(toolCallId) || this.liveFileActions.get(toolCallId)) : undefined;
@@ -389,10 +389,16 @@ export class AcpProvider extends LLMProvider {
                         };
                     }
                 }
-                return this.peerServices?.onPeerPermission?.(effectiveReq) ?? { outcome: 'cancelled' };
+                const decision = await this.peerServices.onPeerPermission?.(effectiveReq) ?? { outcome: 'cancelled' };
+                if (this.activeClient !== client || this.currentTurnAborted || this.peerServices?.signal?.aborted || !this.peerServices)
+                    return { outcome: 'cancelled' };
+                // A granted native operation can execute before the first tool update arrives.
+                if (decision.outcome === 'selected')
+                    this.currentTurnSawAction = true;
+                return decision;
             },
             fsReadHandler: async (file, options) => {
-                if (this.hostHandoff.length > 0 || this.toolRoutingError)
+                if (this.activeClient !== client || !this.peerServices || this.currentTurnAborted || this.peerServices.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError)
                     throw new Error('ACP turn yielded to the host');
                 if (!this.peerServices?.onPeerFileRead)
                     throw new Error('The ACP client has no file-read service attached');
@@ -412,7 +418,7 @@ export class AcpProvider extends LLMProvider {
                 return content;
             },
             fsWriteHandler: async (file, content) => {
-                if (this.hostHandoff.length > 0 || this.toolRoutingError)
+                if (this.activeClient !== client || !this.peerServices || this.currentTurnAborted || this.peerServices.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError)
                     throw new Error('ACP turn yielded to the host');
                 if (!this.peerServices?.onPeerFileWrite)
                     throw new Error('The ACP client has no file-write service attached');
@@ -432,7 +438,7 @@ export class AcpProvider extends LLMProvider {
                 }
             },
             onUpdate: (sessionId, update) => {
-                if (this.currentTurnAborted)
+                if (this.activeClient !== client || this.activeSessionId !== sessionId || !this.peerServices || this.currentTurnAborted)
                     return;
                 if (update && typeof update === 'object') {
                     const updateObj = update;
