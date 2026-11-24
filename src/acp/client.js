@@ -255,6 +255,8 @@ export class AcpClient {
     async prompt(sessionId, input, signal) {
         if (signal?.aborted)
             throw createAbortError();
+        if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.includes('\0'))
+            throw new Error('ACP prompt requires a valid session ID');
         if (this.promptActive)
             throw new Error('ACP client already has an active prompt');
         this.promptActive = sessionId;
