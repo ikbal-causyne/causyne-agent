@@ -852,7 +852,7 @@ export class AgentLoop {
         }
         if (this.llm && typeof this.llm.abort === 'function') {
             try {
-                this.llm.abort();
+                void Promise.resolve(this.llm.abort()).catch(() => { });
             }
             catch {
                 // ignore provider abort errors

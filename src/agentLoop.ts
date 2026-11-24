@@ -1001,7 +1001,7 @@ export class AgentLoop {
     }
     if (this.llm && typeof (this.llm as any).abort === 'function') {
       try {
-        (this.llm as any).abort();
+        void Promise.resolve((this.llm as any).abort()).catch(() => {});
       } catch {
         // ignore provider abort errors
       }

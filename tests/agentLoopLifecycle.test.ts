@@ -173,3 +173,13 @@ test('empty or malformed approval identifiers do not create waiters', async () =
     assert.equal(loop.pendingApprovals.size, 0);
   } finally { loop.abort(); cleanup(); }
 });
+
+test('asynchronous provider abort rejection cannot escape loop cancellation', async () => {
+  const { loop, cleanup } = newLoop();
+  try {
+    loop.llm = { abort: async () => { throw new Error('already aborted'); } } as any;
+    loop.abort();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(loop.stopRequested, true);
+  } finally { cleanup(); }
+});
