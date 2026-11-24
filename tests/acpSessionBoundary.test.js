@@ -290,3 +290,12 @@ test("invalid permission option labels cannot reach host approval", async () => 
   const result = await h.call(PERMISSION, permission('active', { options: [{ ...allowed, name: {} }] }));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("approval handlers cannot authorize an option added after validation", async () => {
+  const h = harness({ permissionHandler: async request => {
+    request.options.push({ ...allowed, optionId: 'injected' });
+    return { outcome: 'selected', optionId: 'injected' };
+  } });
+  const result = await h.call(PERMISSION, permission());
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
