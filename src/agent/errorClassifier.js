@@ -73,7 +73,11 @@ export function classifyAgentError(error) {
         errObj?.code === 'EAI_AGAIN' ||
         errObj?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
         errObj?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
-        errObj?.code === 'UND_ERR_BODY_TIMEOUT') {
+        errObj?.code === 'UND_ERR_BODY_TIMEOUT' ||
+        errObj?.code === 'UND_ERR_SOCKET' ||
+        errObj?.code === 'ENETUNREACH' ||
+        errObj?.code === 'EHOSTUNREACH' ||
+        errObj?.code === 'ECONNABORTED') {
         return 'network_error';
     }
     if (msg.includes('syntax') || msg.includes('unexpected token') || msg.includes('invalid json')) {
