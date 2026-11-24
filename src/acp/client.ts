@@ -562,6 +562,7 @@ export class AcpClient {
         typeof params.update === 'object' &&
         !Array.isArray(params.update)
       ) {
+        if (this.promptActive && params.sessionId !== this.promptActive) return;
         this.recordSessionModels(params.sessionId, params.update);
         this.trackToolCall(params.sessionId, params.update);
         for (const listener of [...this.updateListeners]) {
