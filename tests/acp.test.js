@@ -721,3 +721,19 @@ test("retired session cleanup does not cancel approvals in a reloaded session", 
     await Promise.all([old, current]);
   }
 });
+
+test("approval cleanup denies an abandoned request on its originating loop", async () => {
+  const outcomes = [];
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {}, abort() {},
+    handleApprovalResponse(id, approved) { outcomes.push({ id, approved }); },
+    async run() {
+      sink.send(JSON.stringify({ type: 'approval_request', toolCallId: 'old', tool: 'sysRun', args: { command: 'echo test' } }));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  await Promise.resolve();
+  assert.deepEqual(outcomes, [{ id: 'old', approved: false }]);
+  assert.equal(h.server.pending.size, 0);
+});
