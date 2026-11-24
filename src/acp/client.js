@@ -557,8 +557,12 @@ export class AcpClient {
                 if (!permission.toolCall || typeof permission.toolCall.toolCallId !== 'string' || !permission.toolCall.toolCallId || !options.length) {
                     throw new Error('Invalid peer permission request');
                 }
+                const optionIds = new Set(options.map(option => option?.optionId));
+                if (optionIds.size !== options.length || options.some(option => !option || typeof option.optionId !== 'string' || !option.optionId.trim() || typeof option.name !== 'string' || !['allow_once', 'allow_always', 'reject_once', 'reject_always'].includes(option.kind))) {
+                    throw new Error('Invalid peer permission choices');
+                }
                 const rawOutcome = await handler(permission);
-                const validOutcome = activePrompt !== null && this.promptActive === activePrompt && this.promptGeneration === generation && !this.closed && rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && options.some(option => option?.optionId === rawOutcome.optionId)
+                const validOutcome = activePrompt !== null && this.promptActive === activePrompt && this.promptGeneration === generation && !this.closed && rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && optionIds.has(rawOutcome.optionId)
                     ? { outcome: 'selected', optionId: rawOutcome.optionId }
                     : { outcome: 'cancelled' };
                 this.write({ jsonrpc: '2.0', id: request.id, result: { outcome: validOutcome } });
