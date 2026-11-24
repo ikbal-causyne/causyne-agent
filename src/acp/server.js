@@ -26,6 +26,7 @@ const MAX_RAW_CHARS = 4000;
 const MAX_JSONRPC_BUFFER_BYTES = 8 * 1024 * 1024;
 const MAX_SESSIONS = 128;
 const MAX_PENDING_PROMPTS_PER_SESSION = 32;
+const MAX_PENDING_PROMPTS = 128;
 function textFromPrompt(prompt) {
     const parts = [];
     let length = 0;
@@ -103,6 +104,7 @@ export class AcpServer {
     failedTurns = new WeakSet();
     pending = new Map();
     nextClientRequestId = 1;
+    pendingPrompts = 0;
     buffer = '';
     decoder = new StringDecoder('utf8');
     closed = false;
@@ -401,10 +403,11 @@ export class AcpServer {
         if (text === null || !text.trim()) {
             return { stopReason: 'refusal' };
         }
-        if (session.pendingPrompts >= MAX_PENDING_PROMPTS_PER_SESSION) {
+        if (session.pendingPrompts >= MAX_PENDING_PROMPTS_PER_SESSION || this.pendingPrompts >= MAX_PENDING_PROMPTS) {
             throw this.paramsError('Session prompt queue is full');
         }
         session.pendingPrompts++;
+        this.pendingPrompts++;
         const generation = session.generation;
         const execute = () => generation === session.generation ? this.runTurn(session, text) : Promise.resolve('cancelled');
         session.queue = session.queue.then(execute, execute);
@@ -414,6 +417,7 @@ export class AcpServer {
         }
         finally {
             session.pendingPrompts--;
+            this.pendingPrompts--;
         }
     }
     async runTurn(session, text) {
