@@ -61,3 +61,9 @@ test("host writes are refused when native file tools are disabled", async () => 
   assert.equal(result.error.code, -32600);
   assert.match(result.error.message, /advertised Causyne tools/);
 });
+
+test("foreign permission requests bypass the user approval UI", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('foreign'));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
