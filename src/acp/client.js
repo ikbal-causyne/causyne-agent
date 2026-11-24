@@ -565,7 +565,7 @@ export class AcpClient {
                 const activePrompt = this.promptActive;
                 const generation = this.promptGeneration;
                 const options = Array.isArray(permission.options) ? permission.options : [];
-                if (!permission.toolCall || typeof permission.toolCall.toolCallId !== 'string' || !permission.toolCall.toolCallId || !options.length) {
+                if (!permission.toolCall || typeof permission.toolCall.toolCallId !== 'string' || !permission.toolCall.toolCallId.trim() || !options.length) {
                     throw new Error('Invalid peer permission request');
                 }
                 const optionIds = new Set(options.map(option => option?.optionId));

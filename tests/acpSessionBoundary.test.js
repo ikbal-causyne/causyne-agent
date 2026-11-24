@@ -428,3 +428,9 @@ test('empty model config options retain config API capability', () => {
   assert.equal(client.getSessionModels('s').usesConfigOption, true);
   assert.equal(client.getSessionModels('s').configOptionId, 'model');
 });
+
+test('whitespace-only peer tool-call IDs do not reach the permission handler', async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('active', { toolCall: { toolCallId: '   ' } }));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
