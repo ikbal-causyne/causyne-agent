@@ -256,7 +256,7 @@ export class AcpClient {
       cwd,
       mcpServers
     }, 30_000, signal);
-    if (!result || typeof result.sessionId !== 'string' || !result.sessionId) {
+    if (!result || typeof result.sessionId !== 'string' || !result.sessionId.trim() || result.sessionId.includes('\0')) {
       throw new Error('agent did not return a session id');
     }
     this.recordSessionModels(result.sessionId, result);

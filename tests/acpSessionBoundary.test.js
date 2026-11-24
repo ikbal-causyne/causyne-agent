@@ -406,3 +406,11 @@ test('ACP client rejects a single oversized UTF-8 frame before parsing', () => {
   assert.match(client.exitError.message, /maximum size/);
   assert.equal(client.buffer, '');
 });
+
+test('ACP session creation rejects malformed peer session identifiers', async () => {
+  const { client } = harness();
+  for (const sessionId of ['', '   ', 'bad\0id']) {
+    client.request = async () => ({ sessionId });
+    await assert.rejects(client.newSession(process.cwd()), /session id/);
+  }
+});
