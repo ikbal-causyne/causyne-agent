@@ -554,3 +554,25 @@ test('failed agent construction releases the session and does not poison the nex
   assert.equal((await h.waitFor(message => message.id === 3)).result.stopReason, 'end_turn');
   assert.equal(attempts, 2);
 });
+
+test("per-session queue rejects excess prompts without executing them", async () => {
+  let release;
+  let runs = 0;
+  const h = makeHarness(() => ({
+    setAutonomyMode() {}, abort() { release?.(); },
+    async run() { runs++; await new Promise(resolve => { release = resolve; }); }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  const prompt = id => h.send({ jsonrpc: '2.0', id, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  const pending = Array.from({ length: 32 }, (_, i) => prompt(i + 2));
+  try {
+    await prompt(34);
+    assert.equal((await h.waitFor(message => message.id === 34)).error.code, -32602);
+    assert.equal(h.server.sessions.get(sessionId).pendingPrompts, 32);
+  } finally {
+    await h.send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
+    await Promise.all(pending);
+    await h.server.stop();
+  }
+  assert.equal(runs, 1);
+});
