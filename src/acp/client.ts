@@ -694,6 +694,9 @@ export class AcpClient {
         if (typeof content !== 'string') {
           throw new Error('Host file read returned non-text content');
         }
+        if (Buffer.byteLength(content, 'utf8') > MAX_HOST_FILE_BYTES) {
+          throw new Error(`File exceeds maximum readable size (${MAX_HOST_FILE_BYTES} bytes)`);
+        }
         if (this.closed || this.exitError || this.promptActive !== activePrompt || this.promptGeneration !== generation) {
           throw new Error('Host file read belongs to a retired prompt');
         }

@@ -363,3 +363,10 @@ test('invalid and overflowing read ranges never reach the host callback', async 
     assert.equal(result.error.code, -32602);
   }
 });
+
+test('oversized custom read responses are never transmitted', async () => {
+  const h = harness({ fsReadHandler: async () => 'é'.repeat(2 * 1024 * 1024 + 1) });
+  const result = await h.call(READ, { sessionId: 'active', path: 'a.txt' });
+  assert.match(result.error.message, /maximum readable size/);
+  assert.equal(result.result, undefined);
+});
