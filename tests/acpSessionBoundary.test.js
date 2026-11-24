@@ -421,3 +421,10 @@ test('replacement model catalogues do not retain retired model labels', () => {
   client.recordSessionModels('s', { availableModels: [{ id: 'new', name: 'New model' }] });
   assert.deepEqual(client.getSessionModels('s').modelLabels, { new: 'New model' });
 });
+
+test('empty model config options retain config API capability', () => {
+  const { client } = harness();
+  client.recordSessionModels('s', { configOptions: [{ id: 'model', options: [] }] });
+  assert.equal(client.getSessionModels('s').usesConfigOption, true);
+  assert.equal(client.getSessionModels('s').configOptionId, 'model');
+});

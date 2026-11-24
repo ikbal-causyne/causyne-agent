@@ -158,7 +158,7 @@ export class AcpClient {
 
   private recordSessionModels(sessionId: string, payload: unknown): void {
     const extracted = extractAcpSessionModels(payload);
-    if (extracted.availableModels.length === 0 && !extracted.currentModelId) {
+    if (extracted.availableModels.length === 0 && !extracted.currentModelId && !extracted.usesConfigOption) {
       return;
     }
     const existing = this.sessionModels.get(sessionId);
