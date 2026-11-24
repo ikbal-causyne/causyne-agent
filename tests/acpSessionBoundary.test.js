@@ -152,3 +152,11 @@ test("valid host read forwards range options to the registered service", async (
   assert.deepEqual(observed, { file: 'a.txt', options: { line: 2, limit: 1 } });
   assert.equal(result.result.content, 'line');
 });
+
+test("valid host write forwards exact content to the registered service", async (t) => {
+  let observed;
+  const h = harness({ fsWriteHandler: async (file, content) => { observed = { file, content }; } });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: 'hello\nworld' });
+  assert.deepEqual(observed, { file: 'a.txt', content: 'hello\nworld' });
+  assert.deepEqual(result.result, {});
+});
