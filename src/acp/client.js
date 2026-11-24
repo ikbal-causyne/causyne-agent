@@ -455,8 +455,8 @@ export class AcpClient {
         try {
             this.child.stdin.write(`${JSON.stringify(message)}\n`);
         }
-        catch {
-            // A dead pipe surfaces through the exit handler.
+        catch (error) {
+            this.failAll(error instanceof Error ? error : new Error(String(error)));
         }
     }
     drain() {
