@@ -541,8 +541,11 @@ export class AcpClient {
                 const permission = request.params;
                 const activePrompt = this.promptActive;
                 const generation = this.promptGeneration;
-                const rawOutcome = await handler(permission);
                 const options = Array.isArray(permission.options) ? permission.options : [];
+                if (!permission.toolCall || typeof permission.toolCall.toolCallId !== 'string' || !permission.toolCall.toolCallId || !options.length) {
+                    throw new Error('Invalid peer permission request');
+                }
+                const rawOutcome = await handler(permission);
                 const validOutcome = activePrompt !== null && this.promptActive === activePrompt && this.promptGeneration === generation && !this.closed && rawOutcome && typeof rawOutcome === 'object' && rawOutcome.outcome === 'selected' && typeof rawOutcome.optionId === 'string' && options.some(option => option?.optionId === rawOutcome.optionId)
                     ? { outcome: 'selected', optionId: rawOutcome.optionId }
                     : { outcome: 'cancelled' };
