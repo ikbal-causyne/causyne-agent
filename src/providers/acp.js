@@ -921,7 +921,7 @@ export class AcpProvider extends LLMProvider {
             if (toolCalls.length > 0) {
                 response.toolCalls = toolCalls;
             }
-            if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || incompleteFromActions
+            if (result?.stopReason === 'max_tokens' || result?.stopReason === 'max_turn_requests' || result?.stopReason === 'refusal' || incompleteFromActions
                 || externalActions.some(action => action.status === 'running')
                 || (result?.stopReason === 'cancelled' && toolCalls.length === 0)) {
                 response.incompleteTurn = true;
