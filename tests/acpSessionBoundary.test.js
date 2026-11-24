@@ -248,3 +248,11 @@ test("fallback host refuses to overwrite directories", async (t) => {
   assert.match(result.error.message, /non-regular file/);
   assert.equal((await fs.stat(path.join(directory, 'sub'))).isDirectory(), true);
 });
+
+test("fallback host writes create nested folders only inside the workspace", async (t) => {
+  const directory = await temporary(t);
+  const h = harness({ cwd: directory });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'nested/deeper/a.txt', content: 'verified' });
+  assert.deepEqual(result.result, {});
+  assert.equal(await fs.readFile(path.join(directory, 'nested', 'deeper', 'a.txt'), 'utf8'), 'verified');
+});
