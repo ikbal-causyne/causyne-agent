@@ -94,6 +94,7 @@ export class AcpServer {
     sessions = new Map();
     assistantStreams = new WeakMap();
     reasoningStreams = new WeakMap();
+    failedTurns = new WeakSet();
     pending = new Map();
     nextClientRequestId = 1;
     buffer = '';
@@ -399,6 +400,7 @@ export class AcpServer {
         session.cancelled = false;
         this.assistantStreams.delete(session);
         this.reasoningStreams.delete(session);
+        this.failedTurns.delete(session);
         session.busy = true;
         const taskId = `acp-${crypto.randomUUID()}`;
         let acceptingEvents = true;
@@ -437,6 +439,8 @@ export class AcpServer {
         let stopReason = 'end_turn';
         try {
             await loop.run();
+            if (this.failedTurns.has(session))
+                stopReason = 'refusal';
         }
         catch {
             stopReason = 'refusal';
@@ -549,6 +553,8 @@ export class AcpServer {
             case 'warning':
             case 'budget_warning':
             case 'error': {
+                if (event.type === 'error')
+                    this.failedTurns.add(session);
                 const text = String(event.message ?? 'Task error');
                 this.notify(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
                 return;

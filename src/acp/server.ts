@@ -181,6 +181,7 @@ export class AcpServer {
   private readonly sessions = new Map<string, AcpSession>();
   private readonly assistantStreams = new WeakMap<AcpSession, { key: string; text: string }>();
   private readonly reasoningStreams = new WeakMap<AcpSession, string>();
+  private readonly failedTurns = new WeakSet<AcpSession>();
   private readonly pending = new Map<string | number, PendingClientRequest>();
   private nextClientRequestId = 1;
   private buffer = '';
@@ -494,6 +495,7 @@ export class AcpServer {
     session.cancelled = false;
     this.assistantStreams.delete(session);
     this.reasoningStreams.delete(session);
+    this.failedTurns.delete(session);
     session.busy = true;
     const taskId = `acp-${crypto.randomUUID()}`;
     let acceptingEvents = true;
@@ -530,6 +532,7 @@ export class AcpServer {
     let stopReason: StopReason = 'end_turn';
     try {
       await loop.run();
+      if (this.failedTurns.has(session)) stopReason = 'refusal';
     } catch {
       stopReason = 'refusal';
     } finally {
@@ -626,6 +629,7 @@ export class AcpServer {
       case 'warning':
       case 'budget_warning':
       case 'error': {
+        if (event.type === 'error') this.failedTurns.add(session);
         const text = String(event.message ?? 'Task error');
         this.notify(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
         return;
