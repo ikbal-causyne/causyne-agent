@@ -240,3 +240,19 @@ test("a rejected prompt releases the active prompt lock", async () => {
     f.cleanup();
   }
 });
+
+test("prompt deadline cancels the active peer operation", async () => {
+  const f = fixture("silent");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 500 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects(client.prompt(session, 'test'), /timed out/);
+    const cancelFile = path.join(f.directory, 'cancels.txt');
+    for (let i = 0; i < 50 && !fs.existsSync(cancelFile); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(fs.readFileSync(cancelFile, 'utf8'), 'cancel\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
