@@ -47,6 +47,10 @@ export function repairUnansweredToolCalls(history, maxCallsPerTurn = 256) {
         const message = history[i];
         if (!message)
             continue;
+        if (message.role === 'assistant' && message.tool_calls !== undefined && message.tool_calls !== null && !Array.isArray(message.tool_calls)) {
+            unresolved++;
+            continue;
+        }
         const calls = assistantToolCalls(message);
         if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
             unresolved += message.tool_calls.length - calls.length;

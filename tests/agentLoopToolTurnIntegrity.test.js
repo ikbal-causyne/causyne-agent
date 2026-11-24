@@ -50,3 +50,7 @@ test('duplicate assistant call IDs remain unresolved and are never given invente
   assert.equal(report.repaired, 0);
   assert.deepEqual(history, before);
 });
+
+test('a non-array historical tool call collection is not treated as valid history', () => {
+  for (const tool_calls of [{}, 'broken', true]) assert.equal(repairUnansweredToolCalls([{ role: 'assistant', tool_calls }]).unresolved, 1);
+});
