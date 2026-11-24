@@ -31,3 +31,7 @@ test("notification containing result is not dispatched as a session update", () 
 test("notification containing error is not dispatched as a session update", () => {
   assert.deepEqual(classify({ ...notification, error }), [false, false, false]);
 });
+
+test("response cannot contain both result and error", () => {
+  assert.deepEqual(classify({ ...response, error }), [false, false, false]);
+});
