@@ -5286,8 +5286,8 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
           // "Thinking" and the only signal was `network_error: fetch failed`
           // repeated in red. From the outside it is indistinguishable from
           // working, and it burns the user's step budget doing nothing.
-          const repeated = this.lastFailureType === errorType;
-          this.consecutiveFailures = repeated ? this.consecutiveFailures + 1 : 1;
+          // Changing error classes is not successful progress.
+          this.consecutiveFailures++;
           this.lastFailureType = errorType;
 
           const isContextOverflow = errorType === 'context_overflow';
