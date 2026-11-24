@@ -27,3 +27,10 @@ test('duplicate historical replies are reported as ambiguous without modifying t
   assert.equal(report.repaired, 0);
   assert.deepEqual(history, before);
 });
+
+test('malformed historical calls cannot disappear silently during recovery', () => {
+  const history = [assistant(null, 'invalid', call('ok')), reply('ok')];
+  const report = repairUnansweredToolCalls(history);
+  assert.equal(report.unresolved, 2);
+  assert.equal(report.repaired, 0);
+});
