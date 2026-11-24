@@ -156,3 +156,12 @@ test('peer file access revalidates a parent symlink changed during authorization
     await assert.rejects(loop.executePeerFile('fs_read', 'nested/a.txt'), /not authorized/);
   } finally { cleanup(); fs.rmSync(outside, { recursive: true, force: true }); }
 });
+
+test('non-boolean approval payload cannot authorize a tool', async () => {
+  const { loop, cleanup } = newLoop();
+  try {
+    const pending = loop.waitForApproval('strict-approval');
+    loop.handleApprovalResponse('strict-approval', 'false' as any);
+    assert.equal(await pending, false);
+  } finally { loop.abort(); cleanup(); }
+});

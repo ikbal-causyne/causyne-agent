@@ -1398,7 +1398,7 @@ export class AgentLoop {
     if (this.pendingApprovals.has(toolCallId)) {
       const resolve = this.pendingApprovals.get(toolCallId);
       this.pendingApprovals.delete(toolCallId);
-      if (typeof resolve === 'function') resolve(Boolean(approved));
+      if (typeof resolve === 'function') resolve(approved === true);
     }
   }
 
