@@ -35,3 +35,7 @@ test("notification containing error is not dispatched as a session update", () =
 test("response cannot contain both result and error", () => {
   assert.deepEqual(classify({ ...response, error }), [false, false, false]);
 });
+
+test("error response with null identifier remains valid JSON-RPC", () => {
+  assert.deepEqual(classify({ jsonrpc: '2.0', id: null, error }), [false, true, false]);
+});
