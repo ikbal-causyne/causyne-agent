@@ -167,3 +167,16 @@ test("fragmented JSON-RPC lines reassemble without lost output", async () => {
     f.cleanup();
   }
 });
+
+test("missing prompt stop reason is rejected", async () => {
+  const f = fixture("missing-reason");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects(client.prompt(session, 'test'), /invalid prompt stop reason/);
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
