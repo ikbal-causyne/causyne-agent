@@ -104,3 +104,9 @@ test("missing tool call is cancelled before asking for approval", async () => {
   const result = await h.call(PERMISSION, permission('active', { toolCall: null }));
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("empty permission choices cannot trigger approval UI", async () => {
+  const h = harness({ permissionHandler: async () => assert.fail('must not ask') });
+  const result = await h.call(PERMISSION, permission('active', { options: [] }));
+  assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
+});
