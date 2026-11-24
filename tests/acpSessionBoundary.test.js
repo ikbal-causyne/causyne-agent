@@ -169,3 +169,11 @@ test("empty file content remains a legitimate write", async (t) => {
   assert.deepEqual(result.result, {});
   assert.equal(await fs.readFile(path.join(directory, 'a.txt'), 'utf8'), '');
 });
+
+test("missing read path is rejected without invoking host service", async (t) => {
+  let calls = 0;
+  const h = harness({ fsReadHandler: async () => { calls++; return ''; } });
+  const result = await h.call(READ, { sessionId: 'active' });
+  assert.equal(calls, 0);
+  assert.equal(result.error.code, -32602);
+});
