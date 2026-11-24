@@ -528,7 +528,11 @@ export class AcpClient {
       while (index >= 0 && !this.closed && !this.exitError) {
         const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
         this.buffer = this.buffer.slice(index + 1);
-        if (line) this.handleLine(line);
+        if (line) {
+          try { this.handleLine(line); } catch (error) {
+            this.failAll(error instanceof Error ? error : new Error(String(error)));
+          }
+        }
         index = this.buffer.indexOf('\n');
       }
     } finally {
