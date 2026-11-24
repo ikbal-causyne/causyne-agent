@@ -185,3 +185,13 @@ test("non-string write payload is rejected without filesystem mutation", async (
   assert.equal(calls, 0);
   assert.equal(result.error.code, -32602);
 });
+
+test("fallback host reads cannot traverse outside the workspace", async (t) => {
+  const directory = await temporary(t);
+  const workspace = path.join(directory, 'workspace');
+  await fs.mkdir(workspace);
+  await fs.writeFile(path.join(directory, 'outside.txt'), 'private');
+  const h = harness({ cwd: workspace });
+  const result = await h.call(READ, { sessionId: 'active', path: '../outside.txt' });
+  assert.match(result.error.message, /outside the allowed workspace/);
+});
