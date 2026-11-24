@@ -202,7 +202,7 @@ export class AcpClient {
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
-      if (this.closed) return;
+      if (this.closed || this.exitError) return;
       this.buffer += chunk;
       if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
         this.buffer = '';
