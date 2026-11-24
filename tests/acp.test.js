@@ -537,3 +537,20 @@ test("UTF-8 split across incoming transport buffers retains the exact user promp
     assert.equal(replies.find(reply => reply.id === 2).result.stopReason, 'end_turn');
   } finally { await server.stop(); input.destroy(); }
 });
+
+test('failed agent construction releases the session and does not poison the next turn', async () => {
+  let attempts = 0;
+  const h = makeHarness(() => {
+    if (++attempts === 1) throw new Error('simulated construction failure');
+    return { setAutonomyMode() {}, abort() {}, async run() {} };
+  });
+  const sessionId = (await newSession(h)).result.sessionId;
+  const prompt = id => h.send({ jsonrpc: '2.0', id, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'test' }] } });
+  await prompt(2);
+  assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'refusal');
+  assert.equal(h.server.sessions.get(sessionId).busy, false);
+  assert.equal(h.server.sessions.get(sessionId).loop, null);
+  await prompt(3);
+  assert.equal((await h.waitFor(message => message.id === 3)).result.stopReason, 'end_turn');
+  assert.equal(attempts, 2);
+});
