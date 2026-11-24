@@ -135,3 +135,12 @@ test("approval from an older prompt generation cannot authorize new work", async
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
   assert.equal(h.client.activePermissionRequests, 0);
 });
+
+test("approval settling after prompt completion is cancelled", async () => {
+  let release;
+  const h = harness({ permissionHandler: () => new Promise(resolve => { release = resolve; }) });
+  const pending = h.call(PERMISSION, permission());
+  h.client.promptActive = null;
+  release({ outcome: 'selected', optionId: 'allow' });
+  assert.deepEqual((await pending).result.outcome, { outcome: 'cancelled' });
+});
