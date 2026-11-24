@@ -593,6 +593,7 @@ export class AcpServer {
       const id = typeof item.id === 'string' ? item.id : '';
       const label = typeof item.label === 'string' ? item.label : id;
       if (!id) continue;
+      if (labels.has(id)) return Promise.resolve(null);
       labels.set(id, label);
       permissionOptions.push({ optionId: id, name: label, kind: 'allow_once' });
     }
