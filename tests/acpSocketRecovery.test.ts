@@ -386,3 +386,15 @@ test("reasoning accumulation is bounded while valid final text remains available
     f.cleanup();
   }
 });
+
+test("interruption evidence carries observed prose and counts without tool replay", async () => {
+  const f = fixture("partial");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    await assert.rejects(provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory }), { code: 'ACP_PARTIAL_TURN', completedNativeActions: 1, unfinishedNativeActions: 0, partialText: 'Partial progress.' });
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
