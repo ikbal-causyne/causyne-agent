@@ -727,6 +727,12 @@ export class AcpProvider extends LLMProvider {
       }
     }
 
+    if (this.currentTurnAborted || signal?.aborted) {
+      await client.close();
+      const abortErr = new Error('ACP request aborted by user');
+      abortErr.name = 'AbortError';
+      throw abortErr;
+    }
     this.activeClient = client;
     this.activeSessionId = sessionId;
     return { client, sessionId };
