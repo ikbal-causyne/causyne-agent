@@ -225,3 +225,18 @@ test("aborted prompts never dispatch work", async () => {
     f.cleanup();
   }
 });
+
+test("a rejected prompt releases the active prompt lock", async () => {
+  const f = fixture("missing-reason");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 5000, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects(client.prompt(session, 'first'), /invalid prompt stop reason/);
+    await assert.rejects(client.prompt(session, 'second'), /invalid prompt stop reason/);
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\nprompt\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
