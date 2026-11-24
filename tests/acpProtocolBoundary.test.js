@@ -39,3 +39,7 @@ test("response cannot contain both result and error", () => {
 test("error response with null identifier remains valid JSON-RPC", () => {
   assert.deepEqual(classify({ jsonrpc: '2.0', id: null, error }), [false, true, false]);
 });
+
+test("false, zero and null results remain legitimate responses", () => {
+  for (const result of [false, 0, null]) assert.deepEqual(classify({ ...response, result }), [false, true, false]);
+});
