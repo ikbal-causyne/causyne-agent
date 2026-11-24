@@ -89,8 +89,12 @@ export function repairUnansweredToolCalls(history, maxCallsPerTurn = 256) {
                 continue;
             insertion = k + 1;
             const id = toolCallId(next.tool_call_id);
-            if (id && required.has(id))
-                received.set(id, (received.get(id) ?? 0) + 1);
+            if (id && required.has(id)) {
+                const count = (received.get(id) ?? 0) + 1;
+                received.set(id, count);
+                if (count > (required.get(id)?.count ?? 0))
+                    unresolved++;
+            }
         }
         const missing = [];
         for (const [id, expected] of required) {

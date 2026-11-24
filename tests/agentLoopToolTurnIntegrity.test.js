@@ -18,3 +18,12 @@ test('tool batches reject blank or NUL function names', () => {
 test('tool batch limits cannot be bypassed using NaN or Infinity', () => {
   for (const limit of [NaN, Infinity, 0, -1, 1.5]) assert.equal(validateToolCallBatch([call('id')], limit).valid, false);
 });
+
+test('duplicate historical replies are reported as ambiguous without modifying them', () => {
+  const history = [assistant(call('id')), reply('id'), reply('id')];
+  const before = structuredClone(history);
+  const report = repairUnansweredToolCalls(history);
+  assert.equal(report.unresolved, 1);
+  assert.equal(report.repaired, 0);
+  assert.deepEqual(history, before);
+});
