@@ -146,6 +146,7 @@ export class AcpClient {
         configOptionId: state.configOptionId
       };
     }
+    if (sessionId !== undefined) return { availableModels: [], modelLabels: {}, usesConfigOption: false };
     return {
       currentModelId: this.latestSessionModels.currentModelId,
       availableModels: [...this.latestSessionModels.availableModels],
@@ -277,7 +278,7 @@ export class AcpClient {
     if (typeof sessionId !== 'string' || !sessionId.trim() || typeof modelId !== 'string' || !modelId.trim()) {
       throw new Error('setSessionModel requires non-empty sessionId and modelId');
     }
-    const state = this.sessionModels.get(sessionId) ?? this.latestSessionModels;
+    const state = this.getSessionModels(sessionId);
     try {
       const res = await this.request<unknown>(ACP_METHODS.SET_MODEL, {
         sessionId,

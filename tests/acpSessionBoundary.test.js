@@ -348,3 +348,10 @@ test("host read rejects a non-string service result", async () => {
   assert.match(result.error.message, /non-text content/);
   assert.equal(result.result, undefined);
 });
+
+test('unknown sessions cannot inherit a different session model catalogue', () => {
+  const { client } = harness();
+  client.recordSessionModels('first', { availableModels: ['private-model'], currentModelId: 'private-model' });
+  assert.deepEqual(client.getSessionModels('unknown'), { availableModels: [], modelLabels: {}, usesConfigOption: false });
+  assert.deepEqual(client.getSessionModels('first').availableModels, ['private-model']);
+});
