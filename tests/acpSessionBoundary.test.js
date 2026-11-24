@@ -370,3 +370,9 @@ test('oversized custom read responses are never transmitted', async () => {
   assert.match(result.error.message, /maximum readable size/);
   assert.equal(result.result, undefined);
 });
+
+test('oversized custom writes are rejected before host mutation', async () => {
+  const h = harness({ fsWriteHandler: async () => assert.fail('must not write') });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'a.txt', content: 'é'.repeat(2 * 1024 * 1024 + 1) });
+  assert.match(result.error.message, /maximum writable size/);
+});

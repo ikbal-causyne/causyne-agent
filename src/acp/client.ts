@@ -737,14 +737,16 @@ export class AcpClient {
       }
 
       try {
+        if (Buffer.byteLength(content, 'utf8') > MAX_HOST_FILE_BYTES) {
+
+          throw new Error(`File content exceeds maximum writable size (${MAX_HOST_FILE_BYTES} bytes)`);
+
+        }
         if (this.options.fsWriteHandler) {
           await this.options.fsWriteHandler(targetPath, content);
         } else {
           if (targetPath.includes('\0')) {
             throw new Error('File path contains invalid NUL byte');
-          }
-          if (Buffer.byteLength(content, 'utf8') > MAX_HOST_FILE_BYTES) {
-            throw new Error(`File content exceeds maximum writable size (${MAX_HOST_FILE_BYTES} bytes)`);
           }
           const resolved = path.resolve(this.options.cwd, targetPath);
           if (!isPhysicalPathAllowed(resolved, [this.options.cwd], false)) {
