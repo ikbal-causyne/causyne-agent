@@ -2640,6 +2640,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                             if (cleanProse && !cleanProse.startsWith('```')) {
                                 this.emitEvent({
                                     type: 'agent_message',
+                                    streamId: invocation,
                                     content: cleanProse,
                                     delta: _chunk,
                                     streaming: true
@@ -3303,7 +3304,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress) && incompleteTurnContinuations < 3) {
                         incompleteTurnContinuations++;
                         if (response.content) {
-                            this.emitEvent({ type: 'agent_message', content: response.content });
+                            this.emitEvent({ type: 'agent_message', streamId: invocation, content: response.content });
                         }
                         const blockedNote = failedExternalActions.length > 0
                             ? ` Note: ${failedExternalActions.map((a) => `${a.name}${a.detail ? ` (${a.detail})` : ''}`).join(', ')} failed. Use their actual error results to choose the next step; honor user denials and the configured workspace policy without assuming a path-related cause.`
@@ -3322,7 +3323,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     if (hasExternalActions && (isIncompleteTurn || isMidTaskProgress) && incompleteTurnContinuations === 3) {
                         incompleteTurnContinuations++;
                         if (response.content) {
-                            this.emitEvent({ type: 'agent_message', content: response.content });
+                            this.emitEvent({ type: 'agent_message', streamId: invocation, content: response.content });
                         }
                         this.emitEvent({ type: 'status', message: 'Requesting final deliverable and response...' });
                         this.emitEvent({ type: 'agent_activity', activity: 'Synthesizing final deliverable…' });
@@ -3346,7 +3347,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                                 .replace(/^Turn completed by [^\n]+ over ACP\.\s*/i, '')
                                 .trim();
                             if (partial.length >= 20) {
-                                this.emitEvent({ type: 'agent_message', content: partial });
+                                this.emitEvent({ type: 'agent_message', streamId: invocation, content: partial });
                             }
                             this.emitEvent({ type: 'error', message: 'The peer ended with an incomplete or progress-only turn. ' +
                                     'Actions may have changed files, but completion is not established.' });
@@ -3750,7 +3751,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                                 .trim()
                             : '';
                         if (blockerExplanation.length >= 20) {
-                            this.emitEvent({ type: 'agent_message', content: blockerExplanation });
+                            this.emitEvent({ type: 'agent_message', streamId: invocation, content: blockerExplanation });
                         }
                         this.emitEvent({ type: 'error', message: `The last observed tool action failed (${finalToolOutcome.tool}). ` +
                                 'Resolve the error or report partial work; no success has been recorded.' });
@@ -3800,7 +3801,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                     };
                     const substantiveTerminalContent = cleanTerminalContent(response.content);
                     if (substantiveTerminalContent.length >= 20) {
-                        this.emitEvent({ type: 'agent_message', content: substantiveTerminalContent });
+                        this.emitEvent({ type: 'agent_message', streamId: invocation, content: substantiveTerminalContent });
                     }
                     else {
                         const recentSubstantive = [...this.messages].reverse().find(m => m.role === 'assistant'
@@ -3825,7 +3826,7 @@ Verify Web/UI/3D work programmatically via browser_act (DOM snapshot + runtimeEr
                             });
                         }
                         else if (response.content) {
-                            this.emitEvent({ type: 'agent_message', content: response.content });
+                            this.emitEvent({ type: 'agent_message', streamId: invocation, content: response.content });
                         }
                     }
                     if (this.stepsCompleted > 0) {

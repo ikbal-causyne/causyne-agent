@@ -282,6 +282,9 @@ export class ChatRenderer {
   onPlanChange?: ((plan: any[]) => string | void) | undefined;
   dialogWillAsk?: boolean;
   _activeAssistant?: boolean;
+  _assistantStreamId: string | null = null;
+  _assistantSnapshot = '';
+  _assistantSegmentStart = 0;
   _activeReasoning?: boolean;
   lastOutput?: { text: string; spillPath: string | null } | null;
 
@@ -417,6 +420,9 @@ export class ChatRenderer {
     this.stepStartedAt = null;
     this.turnStartedAt = Date.now();
     this._activeAssistant = false;
+    this._assistantStreamId = null;
+    this._assistantSnapshot = '';
+    this._assistantSegmentStart = 0;
     this._activeReasoning = false;
     this.status.reset();
   }
@@ -540,6 +546,9 @@ export class ChatRenderer {
 
   clearTranscript(): void {
     this._activeAssistant = false;
+    this._assistantStreamId = null;
+    this._assistantSnapshot = '';
+    this._assistantSegmentStart = 0;
     this._activeReasoning = false;
     this.lastOutput = null;
     if (this.transcript && typeof this.transcript.clear === 'function') {
@@ -738,7 +747,7 @@ export class ChatRenderer {
 
   onAgentMessage(msg: Record<string, any> | null | undefined): void {
     const safeMsg = msg && typeof msg === 'object' ? msg : {};
-    const content = safeDisplay(safeMsg.content || '');
+    let content = safeDisplay(safeMsg.content || '');
     const isStreaming = Boolean(safeMsg.streaming);
 
     const tailIsAssistant = !this.transcript
@@ -747,21 +756,45 @@ export class ChatRenderer {
       this._activeAssistant = false;
     }
 
+    // Each live event contains a cumulative model snapshot. Native tool frames
+    // may separate assistant segments, so render only the newly observed suffix.
+    if (this.transcript && (typeof safeMsg.streamId === 'number' || typeof safeMsg.streamId === 'string')) {
+      const streamKey = String(safeMsg.taskId ?? '') + ':' + String(safeMsg.streamId);
+      if (streamKey !== this._assistantStreamId) {
+        this._activeAssistant = false;
+        this._assistantStreamId = streamKey;
+        this._assistantSnapshot = '';
+        this._assistantSegmentStart = 0;
+      }
+      if (content.startsWith(this._assistantSnapshot)) {
+        if (!this._activeAssistant) this._assistantSegmentStart = this._assistantSnapshot.length;
+      } else if (this._assistantSegmentStart > content.length || !content.startsWith(this._assistantSnapshot.slice(0, this._assistantSegmentStart))) {
+        this._assistantSegmentStart = 0;
+      }
+      this._assistantSnapshot = content;
+      content = content.slice(this._assistantSegmentStart);
+      if (!content.trim() && !this._activeAssistant) return;
+    } else {
+      this._assistantStreamId = null;
+      this._assistantSnapshot = '';
+      this._assistantSegmentStart = 0;
+    }
+
     if (isStreaming) {
       if (!this._activeAssistant) {
         this._activeAssistant = true;
-        this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(safeMsg.content || '') });
+        this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: content });
       } else {
-        this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: String(safeMsg.content || '') });
+        this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: true }), { assistant: true, messageText: content });
       }
       return;
     }
 
     if (this._activeAssistant) {
       this._activeAssistant = false;
-      this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(safeMsg.content || '') });
+      this.updateTailFrame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: content });
     } else {
-      this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: String(safeMsg.content || '') });
+      this.frame('assistant', () => this.formatAssistantMessage(content, { streaming: false }), { assistant: true, messageText: content });
     }
   }
 
