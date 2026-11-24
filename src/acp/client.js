@@ -579,6 +579,8 @@ export class AcpClient {
         if (request.method === ACP_METHODS.READ_TEXT_FILE) {
             const params = request.params;
             const targetPath = params?.path;
+            const generation = this.promptGeneration;
+            const activePrompt = this.promptActive;
             if (!targetPath || typeof targetPath !== 'string') {
                 this.write({
                     jsonrpc: '2.0',
@@ -629,6 +631,9 @@ export class AcpClient {
                     else {
                         content = rawContent;
                     }
+                }
+                if (this.closed || this.exitError || this.promptActive !== activePrompt || this.promptGeneration !== generation) {
+                    throw new Error('Host file read belongs to a retired prompt');
                 }
                 this.write({
                     jsonrpc: '2.0',
