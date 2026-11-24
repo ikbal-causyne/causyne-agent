@@ -475,7 +475,7 @@ export class AcpProvider extends LLMProvider {
             }
           } else if (updateObj.sessionUpdate === 'tool_call' || updateObj.sessionUpdate === 'tool_call_update') {
             this.currentTurnSawAction = true;
-            const id = String(updateObj.toolCallId || '');
+            const id = typeof updateObj.toolCallId === 'string' ? updateObj.toolCallId : '';
             const earlier = this.liveFileActions.get(id) || this.turnActions.get(id);
             const earlierKind = earlier?.name === 'fs_edit' ? 'edit'
               : earlier?.name === 'fs_delete' ? 'delete'
