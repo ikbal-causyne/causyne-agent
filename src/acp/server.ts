@@ -867,6 +867,9 @@ export class AcpServer {
     }
     const live = this.sessions.get(params.sessionId);
     if (live) {
+      if (params.cwd !== undefined && this.resolveWorkspace(params.cwd) !== live.cwd) {
+        throw this.paramsError('session workspace does not match cwd');
+      }
       this.bindWorkspace(live.cwd);
       this.replayTranscript(live, getSession(live.memorySessionId)?.messages ?? []);
       return { modes: this.modesFor(live) };

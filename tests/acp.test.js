@@ -817,3 +817,14 @@ test('new and forked ACP sessions refuse capacity exhaustion before creating jou
     assert.equal(h.server.sessions.size, 128);
   } finally { h.server.sessions.clear(); await h.server.stop(); }
 });
+
+test('loading a live ACP session cannot ignore a mismatched requested workspace', async () => {
+  const h = makeHarness();
+  const source = await newSession(h);
+  const sessionId = source.result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/load', params: { sessionId, cwd: os.tmpdir() } });
+  const response = await h.waitFor(message => message.id === 2);
+  assert.equal(response.error.code, -32602);
+  assert.match(response.error.message, /workspace does not match|blocked system directory/);
+  await h.server.stop();
+});
