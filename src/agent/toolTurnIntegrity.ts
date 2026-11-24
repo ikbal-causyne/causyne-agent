@@ -98,9 +98,11 @@ export function repairUnansweredToolCalls(
         continue;
       }
       const entry = required.get(id);
-      const name = typeof call.function?.name === 'string' && call.function.name
-        ? call.function.name
-        : 'unknown_tool';
+      const name = call.function?.name;
+      if (typeof name !== 'string' || !name.trim() || name.includes('\0')) {
+        unresolved++;
+        continue;
+      }
       if (entry) {
         // Provider-issued IDs must be unique within one assistant turn.
         // Do not silently relabel an ambiguous call.

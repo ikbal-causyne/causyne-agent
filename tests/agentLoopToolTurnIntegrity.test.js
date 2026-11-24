@@ -54,3 +54,12 @@ test('duplicate assistant call IDs remain unresolved and are never given invente
 test('a non-array historical tool call collection is not treated as valid history', () => {
   for (const tool_calls of [{}, 'broken', true]) assert.equal(repairUnansweredToolCalls([{ role: 'assistant', tool_calls }]).unresolved, 1);
 });
+
+test('history repair does not invent names for malformed historical calls', () => {
+  for (const name of ['', '  ', null, 'bad\x00tool']) {
+    const history = [assistant(call('id', name))];
+    const report = repairUnansweredToolCalls(history);
+    assert.equal(report.unresolved, 1);
+    assert.equal(report.repaired, 0);
+  }
+});
