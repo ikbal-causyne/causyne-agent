@@ -655,6 +655,13 @@ export class AcpClient {
             const params = request.params;
             const targetPath = params?.path;
             const content = params?.content;
+            const generation = this.promptGeneration;
+            const activePrompt = this.promptActive;
+            const assertActive = () => {
+                if (this.closed || this.exitError || this.promptActive !== activePrompt || this.promptGeneration !== generation) {
+                    throw new Error('Host file write belongs to a retired prompt');
+                }
+            };
             if (!targetPath || typeof targetPath !== 'string' || typeof content !== 'string') {
                 this.write({
                     jsonrpc: '2.0',
@@ -692,9 +699,12 @@ export class AcpClient {
                         if (code !== 'ENOENT')
                             throw statErr;
                     }
+                    assertActive();
                     await fs.mkdir(path.dirname(resolved), { recursive: true });
+                    assertActive();
                     await fs.writeFile(resolved, content, 'utf8');
                 }
+                assertActive();
                 this.write({
                     jsonrpc: '2.0',
                     id: request.id,
