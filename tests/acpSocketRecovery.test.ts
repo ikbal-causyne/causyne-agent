@@ -43,6 +43,24 @@ readline.createInterface({input:process.stdin}).on('line', line => {
       send({id:prompt,result:{}});
     } else if(mode === 'unknown-reason') {
       send({id:prompt,result:{stopReason:'unknown'}});
+    } else if(mode === 'empty') {
+      send({id:prompt,result:{stopReason:'end_turn'}});
+    } else if(mode === 'malformed-chunk') {
+      update('socket-test',{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:{bad:true}}});
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:12345}});
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Valid text.'}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
+    } else if(mode === 'final-exit') {
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Final response.'}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
+      process.stdout.write('', () => process.exit(0));
+    } else if(mode === 'oversize') {
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'x'.repeat(200001)}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
+    } else if(mode === 'large-reasoning') {
+      update('socket-test',{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'x'.repeat(210000)}});
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Done.'}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
     } else if(mode === 'refusal') {
       send({id:prompt,result:{stopReason:'refusal'}});
     } else if(mode === 'silent') {
