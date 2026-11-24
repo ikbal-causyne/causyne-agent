@@ -20,7 +20,7 @@ export function normalizeAgentFailure(value) {
         ? value : {};
     const sourceMessage = typeof candidate.message === 'string' ? candidate.message : value;
     const error = new Error(compactMessage(sourceMessage));
-    for (const field of ['code', 'partialUsage', 'status', 'reason']) {
+    for (const field of ['code', 'partialUsage', 'status', 'reason', 'retryAfterMs', 'continuationSafe', 'completedNativeActions', 'cause']) {
         if (Object.hasOwn(candidate, field))
             error[field] = candidate[field];
     }

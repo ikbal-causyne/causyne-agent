@@ -4,6 +4,10 @@ export interface AgentFailure extends Error {
   partialUsage?: unknown;
   status?: unknown;
   reason?: unknown;
+  retryAfterMs?: unknown;
+  continuationSafe?: unknown;
+  completedNativeActions?: unknown;
+  cause?: unknown;
 }
 
 function compactMessage(value: unknown): string {
@@ -25,7 +29,7 @@ export function normalizeAgentFailure(value: unknown): AgentFailure {
     ? value as Record<string, unknown> : {};
   const sourceMessage = typeof candidate.message === 'string' ? candidate.message : value;
   const error = new Error(compactMessage(sourceMessage)) as AgentFailure;
-  for (const field of ['code', 'partialUsage', 'status', 'reason'] as const) {
+  for (const field of ['code', 'partialUsage', 'status', 'reason', 'retryAfterMs', 'continuationSafe', 'completedNativeActions', 'cause'] as const) {
     if (Object.hasOwn(candidate, field)) error[field] = candidate[field];
   }
   if (typeof candidate.name === 'string') error.name = candidate.name;
