@@ -373,7 +373,7 @@ export class AcpProvider extends LLMProvider {
       inactivityTimeoutMs: 120_000,
       allowHostTools: true,
       permissionHandler: async (req: RequestPermissionRequest) => {
-        if (this.activeClient !== client || !this.peerServices || this.currentTurnAborted || this.peerServices.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError) return { outcome: 'cancelled' };
+        if (this.activeClient !== client || req?.sessionId !== this.activeSessionId || !this.peerServices || this.currentTurnAborted || this.peerServices.signal?.aborted || this.hostHandoff.length > 0 || this.toolRoutingError) return { outcome: 'cancelled' };
         const toolCallId = req.toolCall?.toolCallId;
         const earlier = toolCallId ? (this.turnActions.get(toolCallId) || this.liveFileActions.get(toolCallId)) : undefined;
         let effectiveReq = req;
