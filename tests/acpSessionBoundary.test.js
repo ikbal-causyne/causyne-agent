@@ -335,3 +335,9 @@ test("custom read handler cannot receive NUL-containing paths", async () => {
   const result = await h.call(READ, { sessionId: 'active', path: 'a\0.txt' });
   assert.equal(result.error.code, -32602);
 });
+
+test("custom write handler cannot receive NUL-containing paths", async () => {
+  const h = harness({ fsWriteHandler: async () => assert.fail('must not write') });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'a\0.txt', content: 'x' });
+  assert.equal(result.error.code, -32602);
+});
