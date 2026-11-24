@@ -523,7 +523,7 @@ export class AcpClient {
     this.draining = true;
     try {
       let index = this.buffer.indexOf('\n');
-      while (index >= 0 && !this.closed) {
+      while (index >= 0 && !this.closed && !this.exitError) {
         const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
         this.buffer = this.buffer.slice(index + 1);
         if (line) this.handleLine(line);
