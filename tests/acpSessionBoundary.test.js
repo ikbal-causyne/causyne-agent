@@ -207,3 +207,11 @@ test("fallback host writes cannot escape the workspace", async (t) => {
   assert.match(result.error.message, /outside the allowed workspace/);
   assert.equal(await fs.readFile(outside, 'utf8'), 'original');
 });
+
+test("fallback host reads enforce one-based bounded line ranges", async (t) => {
+  const directory = await temporary(t);
+  await fs.writeFile(path.join(directory, 'a.txt'), 'first\r\nsecond\r\nthird');
+  const h = harness({ cwd: directory });
+  const result = await h.call(READ, { sessionId: 'active', path: 'a.txt', line: 2, limit: 1 });
+  assert.equal(result.result.content, 'second');
+});
