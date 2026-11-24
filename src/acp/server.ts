@@ -121,13 +121,16 @@ const MAX_SESSIONS = 128;
 
 function textFromPrompt(prompt: ContentBlock[]): string | null {
   const parts: string[] = [];
+  let length = 0;
   for (const block of prompt) {
     if (!block || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') {
       return null;
     }
+    length += block.text.length + (parts.length ? 1 : 0);
+    if (length > MAX_PROMPT_CHARS) return null;
     parts.push(block.text);
   }
-  return parts.join('\n').slice(0, MAX_PROMPT_CHARS);
+  return parts.join('\n');
 }
 
 function textFromContent(content: unknown): string {

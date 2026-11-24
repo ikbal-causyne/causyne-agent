@@ -27,13 +27,17 @@ const MAX_JSONRPC_BUFFER_BYTES = 8 * 1024 * 1024;
 const MAX_SESSIONS = 128;
 function textFromPrompt(prompt) {
     const parts = [];
+    let length = 0;
     for (const block of prompt) {
         if (!block || typeof block !== 'object' || block.type !== 'text' || typeof block.text !== 'string') {
             return null;
         }
+        length += block.text.length + (parts.length ? 1 : 0);
+        if (length > MAX_PROMPT_CHARS)
+            return null;
         parts.push(block.text);
     }
-    return parts.join('\n').slice(0, MAX_PROMPT_CHARS);
+    return parts.join('\n');
 }
 function textFromContent(content) {
     if (typeof content === 'string')
