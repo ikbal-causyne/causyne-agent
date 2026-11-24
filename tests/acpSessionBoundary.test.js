@@ -385,3 +385,24 @@ test('permission completion after transport failure is cancelled', async () => {
   release({ outcome: 'selected', optionId: 'allow' });
   assert.deepEqual((await pending).result.outcome, { outcome: 'cancelled' });
 });
+
+
+test('ACP client accepts multiple bounded response frames in a large batch', () => {
+  const { client } = harness();
+  const seen = [];
+  client.settle = response => seen.push(response.id);
+  const frame = id => JSON.stringify({ jsonrpc: '2.0', id, result: 'x'.repeat(8 * 1024 * 1024) }) + '\n';
+  client.buffer = frame(1) + frame(2);
+  client.drain();
+  assert.deepEqual(seen, [1, 2]);
+  assert.equal(client.exitError, null);
+});
+
+test('ACP client rejects a single oversized UTF-8 frame before parsing', () => {
+  const { client } = harness();
+  client.settle = () => assert.fail('oversized frame must not be parsed');
+  client.buffer = JSON.stringify({ jsonrpc: '2.0', id: 1, result: '€'.repeat(6 * 1024 * 1024) }) + '\n';
+  client.drain();
+  assert.match(client.exitError.message, /maximum size/);
+  assert.equal(client.buffer, '');
+});

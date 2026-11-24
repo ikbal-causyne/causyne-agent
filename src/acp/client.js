@@ -137,13 +137,12 @@ export class AcpClient {
             if (this.closed || this.exitError)
                 return;
             this.buffer += chunk;
-            if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
-                this.buffer = '';
-                this.failAll(new Error('agent output frame exceeded maximum size'));
-                return;
-            }
             this.notifyPendingActivity();
             void this.drain();
+            if (Buffer.byteLength(this.buffer, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) {
+                this.buffer = '';
+                this.failAll(new Error('agent output frame exceeded maximum size'));
+            }
         });
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', (chunk) => {
@@ -472,7 +471,13 @@ export class AcpClient {
         try {
             let index = this.buffer.indexOf('\n');
             while (index >= 0 && !this.closed && !this.exitError) {
-                const line = this.buffer.slice(0, index).replace(/^\uFEFF/, '').trim();
+                const rawLine = this.buffer.slice(0, index);
+            if (Buffer.byteLength(rawLine, 'utf8') > MAX_JSONRPC_BUFFER_BYTES) {
+                this.buffer = '';
+                this.failAll(new Error('agent output frame exceeded maximum size'));
+                break;
+            }
+            const line = rawLine.replace(/^\uFEFF/, '').trim();
                 this.buffer = this.buffer.slice(index + 1);
                 if (line) {
                     try {
