@@ -634,7 +634,7 @@ export class AcpClient {
       const targetPath = params?.path;
       const generation = this.promptGeneration;
       const activePrompt = this.promptActive;
-      if (!targetPath || typeof targetPath !== 'string') {
+      if (!targetPath || typeof targetPath !== 'string' || targetPath.includes('\0')) {
         this.write({
           jsonrpc: '2.0',
           id: request.id,
@@ -712,7 +712,7 @@ export class AcpClient {
           throw new Error('Host file write belongs to a retired prompt');
         }
       };
-      if (!targetPath || typeof targetPath !== 'string' || typeof content !== 'string') {
+      if (!targetPath || typeof targetPath !== 'string' || targetPath.includes('\0') || typeof content !== 'string') {
         this.write({
           jsonrpc: '2.0',
           id: request.id,
