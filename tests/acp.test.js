@@ -599,3 +599,11 @@ test("global queue limit rejects work even when another session has room", async
   assert.equal(runs, 4);
   assert.equal(h.server.pendingPrompts, 0);
 });
+
+test("queue accounting returns to zero after a successful turn", async () => {
+  const h = makeHarness(() => ({ setAutonomyMode() {}, abort() {}, async run() {} }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'work' }] } });
+  assert.equal(h.server.sessions.get(sessionId).pendingPrompts, 0);
+  assert.equal(h.server.pendingPrompts, 0);
+});
