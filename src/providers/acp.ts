@@ -456,9 +456,11 @@ export class AcpProvider extends LLMProvider {
           if (updateObj.sessionUpdate === 'agent_thought_chunk') {
             const thought = updateObj.content?.text || updateObj.thought || (typeof updateObj.content === 'string' ? updateObj.content : '');
             if (typeof thought === 'string' && thought) {
-              this.turnReasoning += thought;
+              const remaining = Math.max(0, 200_000 - this.turnReasoning.length);
+              const accepted = thought.slice(0, remaining);
+              this.turnReasoning += accepted;
               if (this.currentTurnReasoningHandler) {
-                this.currentTurnReasoningHandler(thought);
+                this.currentTurnReasoningHandler(accepted);
               }
             }
           } else if (updateObj.sessionUpdate === 'agent_message_chunk') {
