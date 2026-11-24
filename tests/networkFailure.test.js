@@ -177,3 +177,9 @@ test("normalized provider failures retain structured recovery metadata", () => {
   assert.deepEqual(error.cause, { code: 'UND_ERR_SOCKET' });
   assert.equal(classifyAgentError(error), 'fatal');
 });
+
+test("direct provider socket failures explain the actual transport problem", () => {
+  const text = explainNetworkError(Object.assign(new Error('interrupted'), { code: 'UND_ERR_SOCKET' }), { provider: 'acp/opencode' });
+  assert.match(text, /upstream socket closed unexpectedly/);
+  assert.match(text, /acp\/opencode/);
+});
