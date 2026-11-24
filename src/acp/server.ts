@@ -180,6 +180,7 @@ export class AcpServer {
   private readonly permissionTimeoutMs: number;
   private readonly sessions = new Map<string, AcpSession>();
   private readonly assistantStreams = new WeakMap<AcpSession, { key: string; text: string }>();
+  private readonly reasoningStreams = new WeakMap<AcpSession, string>();
   private readonly pending = new Map<string | number, PendingClientRequest>();
   private nextClientRequestId = 1;
   private buffer = '';
@@ -492,6 +493,7 @@ export class AcpServer {
     session.updatedAt = Date.now();
     session.cancelled = false;
     this.assistantStreams.delete(session);
+    this.reasoningStreams.delete(session);
     session.busy = true;
     const taskId = `acp-${crypto.randomUUID()}`;
     const sink = {
@@ -606,7 +608,11 @@ export class AcpServer {
       }
       case 'agent_reasoning': {
         const text = String(event.content ?? '');
-        if (text) this.notify(session.id, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text } });
+        const previous = this.reasoningStreams.get(session) || '';
+        const delta = text.startsWith(previous) ? text.slice(previous.length) : text;
+        if (event.streaming === true) this.reasoningStreams.set(session, text);
+        else this.reasoningStreams.delete(session);
+        if (delta) this.notify(session.id, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: delta } });
         return;
       }
       case 'status':
