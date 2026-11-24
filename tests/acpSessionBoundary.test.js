@@ -299,3 +299,15 @@ test("approval handlers cannot authorize an option added after validation", asyn
   const result = await h.call(PERMISSION, permission());
   assert.deepEqual(result.result.outcome, { outcome: 'cancelled' });
 });
+
+test("late file-read completion cannot expose text to a newer prompt generation", async () => {
+  let release;
+  const h = harness({ fsReadHandler: () => new Promise(resolve => { release = resolve; }) });
+  const pending = h.call(READ, { sessionId: 'active', path: 'a.txt' });
+  assert.equal(typeof release, 'function');
+  h.client.promptGeneration++;
+  release('private file contents');
+  const result = await pending;
+  assert.match(result.error.message, /retired prompt/);
+  assert.equal(result.result, undefined);
+});
