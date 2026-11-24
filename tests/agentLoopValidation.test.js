@@ -48,3 +48,7 @@ describe('validateToolArgs catches missing arguments on the CANONICAL names', ()
     assert.ok(path.isAbsolute(live.path), 'a relative path must be made absolute');
   });
 });
+
+test('terminal command validation refuses non-string, blank and NUL commands', () => {
+  for (const name of ['sysRun', 'sysRunBg']) for (const command of [true, 1, {}, '  ', 'echo\x00bad']) assert.match(validate(name, { command }), /command/);
+});

@@ -61,7 +61,7 @@ export function validateAndNormalizeToolArgs(toolName, args, workspaceRoot = pro
         }
     }
     // 2. Terminal commands must have a command string
-    if ((toolName === 'sysRun' || toolName === 'sysRunBg') && !record.command) {
+    if ((toolName === 'sysRun' || toolName === 'sysRunBg') && (typeof record.command !== 'string' || !record.command.trim() || record.command.includes('\0'))) {
         return 'Missing required "command" argument';
     }
     // 3. File write must have a path AND content
