@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { AgentLoop } from '../agentLoop.js';
 import type { AgentLoopEvent } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
@@ -185,6 +186,7 @@ export class AcpServer {
   private readonly pending = new Map<string | number, PendingClientRequest>();
   private nextClientRequestId = 1;
   private buffer = '';
+  private decoder = new StringDecoder('utf8');
   private closed = false;
   private workspaceRoot: string | null = null;
   private dataListener: ((chunk: Buffer | string) => void) | null = null;
@@ -206,7 +208,7 @@ export class AcpServer {
   start(): void {
     if (!this.input || this.dataListener) return;
     this.dataListener = (chunk: Buffer | string) => {
-      this.buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
       if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
         this.buffer = '';
         this.write({

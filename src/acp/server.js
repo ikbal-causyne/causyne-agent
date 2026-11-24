@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { AgentLoop } from '../agentLoop.js';
 import { createApprovalScope } from '../approvalGrants.js';
 import { createSession, getSession, saveSessionMessages, forkSession } from '../sessionJournal.js';
@@ -98,6 +99,7 @@ export class AcpServer {
     pending = new Map();
     nextClientRequestId = 1;
     buffer = '';
+    decoder = new StringDecoder('utf8');
     closed = false;
     workspaceRoot = null;
     dataListener = null;
@@ -118,7 +120,7 @@ export class AcpServer {
         if (!this.input || this.dataListener)
             return;
         this.dataListener = (chunk) => {
-            this.buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+            this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
             if (this.buffer.length > MAX_JSONRPC_BUFFER_BYTES) {
                 this.buffer = '';
                 this.write({
