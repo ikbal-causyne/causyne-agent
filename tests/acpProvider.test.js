@@ -112,3 +112,10 @@ test('host tool call identifiers remain unique across independent parses', () =>
     assert.notEqual(first[0].id, second[0].id);
   } finally { Date.now = original; }
 });
+
+test('host tool envelopes do not coerce objects or numbers to executable names', () => {
+  const provider = new AcpProvider({ provider: 'acp' });
+  for (const name of [123, true, ['fs_read'], { name: 'fs_read' }]) {
+    assert.deepEqual(provider.extractToolCalls('<tool_call>' + JSON.stringify({ name, arguments: {} }) + '</tool_call>'), []);
+  }
+});

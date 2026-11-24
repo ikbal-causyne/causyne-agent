@@ -280,7 +280,8 @@ export class AcpProvider extends LLMProvider {
       const fnObj = parsed.function && typeof parsed.function === 'object'
         ? (parsed.function as Record<string, unknown>)
         : null;
-      const name = String(parsed.name || parsed.tool || fnObj?.name || '').trim();
+      const rawName = parsed.name || parsed.tool || fnObj?.name;
+      const name = typeof rawName === 'string' ? rawName.trim() : '';
       if (!name) continue;
       const rawArgs = resolveToolCallEnvelopeArguments(parsed);
       calls.push({
