@@ -219,7 +219,7 @@ export class AcpClient {
       this.notifyPendingActivity();
     });
     child.on('error', (error) => this.failAll(new Error(`agent process failed: ${error.message}`)));
-    child.on('exit', (code, exitSignal) => {
+    child.on('close', (code, exitSignal) => {
       const cleanTail = redactProviderSecrets(this.stderrTail).trim();
       const detail = cleanTail || `exit code ${code ?? 'null'}${exitSignal ? ` signal ${exitSignal}` : ''}`;
       this.failAll(new Error(`agent process exited: ${detail}`));
