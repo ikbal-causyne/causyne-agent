@@ -311,3 +311,12 @@ test("late file-read completion cannot expose text to a newer prompt generation"
   assert.match(result.error.message, /retired prompt/);
   assert.equal(result.result, undefined);
 });
+
+test("file read completed after cancellation is not returned as successful", async () => {
+  let release;
+  const h = harness({ fsReadHandler: () => new Promise(resolve => { release = resolve; }) });
+  const pending = h.call(READ, { sessionId: 'active', path: 'a.txt' });
+  h.client.promptActive = null;
+  release('private file contents');
+  assert.match((await pending).error.message, /retired prompt/);
+});
