@@ -101,3 +101,13 @@ test('run() repairs interrupted multi-tool history and never claims it executed'
     cleanup();
   }
 });
+
+test('duplicate approval identifiers cannot replace an existing waiter', async () => {
+  const { loop, cleanup } = newLoop();
+  try {
+    const first = loop.waitForApproval('same-id');
+    assert.equal(await loop.waitForApproval('same-id'), false);
+    loop.handleApprovalResponse('same-id', true);
+    assert.equal(await first, true);
+  } finally { loop.abort(); cleanup(); }
+});
