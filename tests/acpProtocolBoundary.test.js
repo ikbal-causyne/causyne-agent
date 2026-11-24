@@ -47,3 +47,7 @@ test("false, zero and null results remain legitimate responses", () => {
 test("string and zero identifiers remain distinguishable from notifications", () => {
   for (const id of ['0', 0]) assert.deepEqual(classify({ ...request, id }), [true, false, false]);
 });
+
+test("non-finite or boolean identifiers are rejected", () => {
+  for (const id of [Infinity, NaN, true, false]) assert.deepEqual(classify({ ...request, id }), [false, false, false]);
+});
