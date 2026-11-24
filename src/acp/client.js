@@ -107,6 +107,8 @@ export class AcpClient {
     async start(signal) {
         if (signal?.aborted)
             throw createAbortError();
+        if (this.closed)
+            throw new Error('ACP client is closed');
         if (this.child)
             throw new Error('client already started');
         const args = this.options.args ?? [];

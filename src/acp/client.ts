@@ -180,6 +180,7 @@ export class AcpClient {
 
   async start(signal?: AbortSignal): Promise<InitializeResult> {
     if (signal?.aborted) throw createAbortError();
+    if (this.closed) throw new Error('ACP client is closed');
     if (this.child) throw new Error('client already started');
     const args = this.options.args ?? [];
     const childEnv: NodeJS.ProcessEnv = this.options.env ? { ...this.options.env } : { ...process.env };
