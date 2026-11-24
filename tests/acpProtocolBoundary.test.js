@@ -43,3 +43,7 @@ test("error response with null identifier remains valid JSON-RPC", () => {
 test("false, zero and null results remain legitimate responses", () => {
   for (const result of [false, 0, null]) assert.deepEqual(classify({ ...response, result }), [false, true, false]);
 });
+
+test("string and zero identifiers remain distinguishable from notifications", () => {
+  for (const id of ['0', 0]) assert.deepEqual(classify({ ...request, id }), [true, false, false]);
+});
