@@ -807,7 +807,7 @@ export class AcpClient {
 
   inspectPeerDiagnostics(sessionId?: string, sinceEpochMs?: number, terminalOnly = false): string | null {
     if (this.exitError) {
-      return this.exitError.message;
+      return redactProviderSecrets(this.exitError.message);
     }
     if (this.child && this.child.exitCode !== null) {
       const detail = redactProviderSecrets(this.stderrTail).trim() || `exit code ${this.child.exitCode}`;
