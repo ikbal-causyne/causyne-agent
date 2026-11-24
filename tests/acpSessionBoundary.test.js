@@ -256,3 +256,9 @@ test("fallback host writes create nested folders only inside the workspace", asy
   assert.deepEqual(result.result, {});
   assert.equal(await fs.readFile(path.join(directory, 'nested', 'deeper', 'a.txt'), 'utf8'), 'verified');
 });
+
+test("unsupported host RPC methods return structured method-not-found errors", async (t) => {
+  const h = harness();
+  const result = await h.call('unknown/method', { sessionId: 'active' });
+  assert.equal(result.error.code, -32601);
+});
