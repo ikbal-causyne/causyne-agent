@@ -167,3 +167,13 @@ test("direct transport codes are recognized without relying on error message heu
     assert.equal(classifyAgentError(Object.assign(new Error('request interrupted'), { code })), 'network_error');
   }
 });
+
+test("normalized provider failures retain structured recovery metadata", () => {
+  const error = normalizeAgentFailure({ message: 'interrupted', code: 'ACP_PARTIAL_TURN', retryAfterMs: 1500, continuationSafe: false, completedNativeActions: 3, cause: { code: 'UND_ERR_SOCKET' } });
+  assert.equal(error.code, 'ACP_PARTIAL_TURN');
+  assert.equal(error.retryAfterMs, 1500);
+  assert.equal(error.continuationSafe, false);
+  assert.equal(error.completedNativeActions, 3);
+  assert.deepEqual(error.cause, { code: 'UND_ERR_SOCKET' });
+  assert.equal(classifyAgentError(error), 'fatal');
+});
