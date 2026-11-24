@@ -239,3 +239,12 @@ test("fallback host refuses directory reads", async (t) => {
   const result = await h.call(READ, { sessionId: 'active', path: 'sub' });
   assert.match(result.error.message, /non-regular file/);
 });
+
+test("fallback host refuses to overwrite directories", async (t) => {
+  const directory = await temporary(t);
+  await fs.mkdir(path.join(directory, 'sub'));
+  const h = harness({ cwd: directory });
+  const result = await h.call(WRITE, { sessionId: 'active', path: 'sub', content: 'x' });
+  assert.match(result.error.message, /non-regular file/);
+  assert.equal((await fs.stat(path.join(directory, 'sub'))).isDirectory(), true);
+});
