@@ -381,8 +381,11 @@ export class AcpClient {
         sessionId,
         inactivityTimeoutMs
       });
+      if (!response || !['end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'].includes(response.stopReason)) {
+        throw new Error('ACP peer returned an invalid prompt stop reason');
+      }
       return {
-        stopReason: response?.stopReason ?? 'end_turn',
+        stopReason: response.stopReason,
         ...(response?.usage ? { usage: response.usage } : {}),
         text: collected
       };
