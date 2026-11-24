@@ -43,6 +43,14 @@ readline.createInterface({input:process.stdin}).on('line', line => {
       send({id:prompt,result:{}});
     } else if(mode === 'unknown-reason') {
       send({id:prompt,result:{stopReason:'unknown'}});
+    } else if(mode === 'action-status') {
+      update('socket-test',{sessionUpdate:'tool_call',toolCallId:'edit',kind:'edit',title:'Edit',status:'in_progress',rawInput:{path:'index.html'}});
+      update('socket-test',{sessionUpdate:'tool_call_update',toolCallId:'edit',status:'completed'});
+      update('socket-test',{sessionUpdate:'tool_call_update',toolCallId:'edit',status:'in_progress'});
+      update('socket-test',{sessionUpdate:'tool_call',toolCallId:'cancelled',kind:'edit',status:'cancelled',rawInput:{path:'other.html'}});
+      update('socket-test',{sessionUpdate:'tool_call',toolCallId:123,kind:'edit',status:'completed',rawInput:{path:'invalid.html'}});
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Reported results.'}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
     } else if(mode === 'empty') {
       send({id:prompt,result:{stopReason:'end_turn'}});
     } else if(mode === 'malformed-chunk') {
