@@ -416,3 +416,19 @@ test("separate reasoning segments preserve repeated text", async () => {
   const chunks = kind => h.find(message => message.method === 'session/update' && message.params.update.sessionUpdate === kind).map(message => message.params.update.content.text);
   assert.deepEqual(chunks('agent_thought_chunk'), ['Check.', 'Check.']);
 });
+
+test("terminal loop errors are not advertised as successful ACP completion", async () => {
+  const h = makeHarness(({ sink }) => ({
+    setAutonomyMode() {},
+    abort() {},
+    async run() {
+      for (const event of [{"type":"error","message":"Connection ended after partial progress."}]) sink.send(JSON.stringify(event));
+    }
+  }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'test' }] } });
+  const response = await h.waitFor(message => message.id === 2);
+  const chunks = kind => h.find(message => message.method === 'session/update' && message.params.update.sessionUpdate === kind).map(message => message.params.update.content.text);
+  assert.equal(response.result.stopReason, 'refusal');
+  assert.deepEqual(chunks('agent_message_chunk'), ['Connection ended after partial progress.']);
+});
