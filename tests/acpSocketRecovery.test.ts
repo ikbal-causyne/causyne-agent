@@ -24,7 +24,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
   const r = JSON.parse(line);
   if(r.method === 'initialize') send({id:r.id,result:{protocolVersion:1,agentCapabilities:{}}});
   if(r.method === 'session/new') send({id:r.id,result:{sessionId:'socket-test'}});
-  if(r.method === 'session/set_model') send({id:r.id,result:{}});
+  if(r.method === 'session/set_model') {
+    if(mode === 'late-model') setTimeout(() => send({id:r.id,result:{}}), 250);
+    else if(mode !== 'silent-model') send({id:r.id,result:{}});
+  }
   if(r.method === 'session/prompt') {
     prompt = r.id;
     fs.appendFileSync('prompts.txt', 'prompt\\n');
@@ -39,6 +42,11 @@ readline.createInterface({input:process.stdin}).on('line', line => {
       send({jsonrpc:'1.0',method:'session/update',params:{sessionId:'socket-test',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'invalid version'}}}});
       update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Valid after malformed frames.'}});
       send({id:prompt,result:{stopReason:'end_turn'}});
+    } else if(mode === 'silent-model' || mode === 'late-model') {
+      setTimeout(() => {
+        update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Valid after model timeout.'}});
+        send({id:prompt,result:{stopReason:'end_turn'}});
+      }, 350);
     } else if(mode === 'missing-reason') {
       send({id:prompt,result:{}});
     } else if(mode === 'unknown-reason') {
@@ -508,6 +516,37 @@ test("malformed native action ID cannot become an apparent completed action", as
     assert.equal(result.externalActions?.length, 2);
   } finally {
     await provider.close();
+    f.cleanup();
+  }
+});
+
+test("optional model negotiation timeout does not quarantine an otherwise usable peer", async () => {
+  const f = fixture("silent-model");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, promptTimeoutMs: 5000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects((client as any).request('session/set_model', { sessionId: session, modelId: 'test' }, 50), /timed out/);
+    const result = await client.prompt(session, 'test');
+    assert.equal(result.stopReason, 'end_turn');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
+
+test("late optional model response cannot settle a subsequent prompt", async () => {
+  const f = fixture("late-model");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, promptTimeoutMs: 5000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects((client as any).request('session/set_model', { sessionId: session, modelId: 'test' }, 50), /timed out/);
+    const result = await client.prompt(session, 'test');
+    assert.equal(result.stopReason, 'end_turn');
+    assert.equal(result.text, 'Valid after model timeout.');
+  } finally {
+    await client.close();
     f.cleanup();
   }
 });
