@@ -371,3 +371,18 @@ test("oversized peer text is interrupted without replaying the prompt", async ()
     f.cleanup();
   }
 });
+
+test("reasoning accumulation is bounded while valid final text remains available", async () => {
+  const f = fixture("large-reasoning");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const thoughts: string[] = [];
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory, onReasoningChunk: chunk => thoughts.push(chunk) });
+    assert.equal(result.content, 'Done.');
+    assert.equal(result.reasoningContent?.length, 200000);
+    assert.equal(thoughts.join('').length, 200000);
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
