@@ -496,9 +496,10 @@ export class AcpServer {
     this.reasoningStreams.delete(session);
     session.busy = true;
     const taskId = `acp-${crypto.randomUUID()}`;
+    let acceptingEvents = true;
     const sink = {
       readyState: 1,
-      send: (payload: string) => this.onLoopPayload(session, payload)
+      send: (payload: string) => { if (acceptingEvents) this.onLoopPayload(session, payload); }
     };
     const loopOptions = {
       workspaceRoot: session.cwd,
@@ -532,6 +533,7 @@ export class AcpServer {
     } catch {
       stopReason = 'refusal';
     } finally {
+      acceptingEvents = false;
       session.loop = null;
       session.busy = false;
       if (this.sessions.has(session.id)) {
