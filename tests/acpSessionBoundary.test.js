@@ -144,3 +144,11 @@ test("approval settling after prompt completion is cancelled", async () => {
   release({ outcome: 'selected', optionId: 'allow' });
   assert.deepEqual((await pending).result.outcome, { outcome: 'cancelled' });
 });
+
+test("valid host read forwards range options to the registered service", async (t) => {
+  let observed;
+  const h = harness({ fsReadHandler: async (file, options) => { observed = { file, options }; return 'line'; } });
+  const result = await h.call(READ, { sessionId: 'active', path: 'a.txt', line: 2, limit: 1 });
+  assert.deepEqual(observed, { file: 'a.txt', options: { line: 2, limit: 1 } });
+  assert.equal(result.result.content, 'line');
+});
