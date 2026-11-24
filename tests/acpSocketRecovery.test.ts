@@ -486,3 +486,15 @@ test("completed native action remains completed after a stale running update", a
     f.cleanup();
   }
 });
+
+test("cancelled native action is not reported as still running", async () => {
+  const f = fixture('action-status');
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const result = await provider.chat([{ role: 'user', content: 'test' }], { workspaceRoot: f.directory });
+    assert.equal(result.externalActions?.find(action => action.id === 'acp:cancelled')?.status, 'failed');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
