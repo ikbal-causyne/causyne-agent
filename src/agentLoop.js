@@ -1137,7 +1137,7 @@ export class AgentLoop {
                 : { outcome: 'cancelled' };
         };
         const call = request?.toolCall;
-        if (!call || typeof call !== 'object')
+        if (!call || typeof call !== 'object' || typeof call.toolCallId !== 'string' || !call.toolCallId.trim())
             return denyOutcome();
         const raw = call.rawInput && typeof call.rawInput === 'object' && !Array.isArray(call.rawInput)
             ? call.rawInput : {};

@@ -122,3 +122,12 @@ test('abort consumes a rejected asynchronous provider close', async () => {
     assert.equal(closes, 1);
   } finally { cleanup(); }
 });
+
+test('peer permission without a tool-call identifier is cancelled before authorization', async () => {
+  const { loop, cleanup } = newLoop();
+  try {
+    loop.authorizePeerOperation = async () => { assert.fail('unexpected authorization'); };
+    const result = await loop.requestPeerPermission({ toolCall: { title: 'missing ID', kind: 'read' }, options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }] } as any);
+    assert.deepEqual(result, { outcome: 'cancelled' });
+  } finally { cleanup(); }
+});

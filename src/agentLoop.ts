@@ -1269,7 +1269,7 @@ export class AgentLoop {
     };
 
     const call = request?.toolCall;
-    if (!call || typeof call !== 'object') return denyOutcome();
+    if (!call || typeof call !== 'object' || typeof call.toolCallId !== 'string' || !call.toolCallId.trim()) return denyOutcome();
     const raw = call.rawInput && typeof call.rawInput === 'object' && !Array.isArray(call.rawInput)
       ? call.rawInput as Record<string, unknown> : {};
     const args = { ...raw };
