@@ -457,3 +457,12 @@ test("oversized prompt is refused without executing a truncated request", async 
   assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'refusal');
   assert.equal(runs, 0);
 });
+
+test("prompt size accounts for separators between content blocks", async () => {
+  let runs = 0;
+  const h = makeHarness(() => ({ setAutonomyMode() {}, abort() {}, async run() { runs++; } }));
+  const sessionId = (await newSession(h)).result.sessionId;
+  await h.send({ jsonrpc: '2.0', id: 2, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: 'a'.repeat(100000) }, { type: 'text', text: 'b'.repeat(100000) }] } });
+  assert.equal((await h.waitFor(message => message.id === 2)).result.stopReason, 'refusal');
+  assert.equal(runs, 0);
+});
