@@ -34,6 +34,25 @@ readline.createInterface({input:process.stdin}).on('line', line => {
         update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Recovered successfully.'}});
         send({id:prompt,result:{stopReason:'end_turn'}});
       }, 1800);
+    } else if(mode === 'malformed') {
+      process.stdout.write('null\\n[]\\n{}\\nnot-json\\n');
+      send({jsonrpc:'1.0',method:'session/update',params:{sessionId:'socket-test',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'invalid version'}}}});
+      update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Valid after malformed frames.'}});
+      send({id:prompt,result:{stopReason:'end_turn'}});
+    } else if(mode === 'missing-reason') {
+      send({id:prompt,result:{}});
+    } else if(mode === 'unknown-reason') {
+      send({id:prompt,result:{stopReason:'unknown'}});
+    } else if(mode === 'refusal') {
+      send({id:prompt,result:{stopReason:'refusal'}});
+    } else if(mode === 'silent') {
+      // Stay alive until the host cancels or shuts down the peer.
+    } else if(mode === 'fragmented') {
+      const frame = JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'socket-test',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Fragmented response.'}}}})+'\\n';
+      process.stdout.write(frame.slice(0, 22));
+      setTimeout(() => { process.stdout.write(frame.slice(22)); send({id:prompt,result:{stopReason:'end_turn'}}); }, 20);
+    } else if(mode === 'foreign-permission') {
+      send({id:'foreign-permission',method:'session/request_permission',params:{sessionId:'another-session',toolCall:{toolCallId:'foreign',kind:'execute',title:'foreign operation'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
     } else if(mode === 'foreign') {
       update('another-session',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Foreign update'}});
       update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Correct session'}});
@@ -43,6 +62,10 @@ readline.createInterface({input:process.stdin}).on('line', line => {
       update('socket-test',{sessionUpdate:'tool_call',toolCallId:'edit-1',kind:'edit',title:'Edit',status:'completed',rawInput:{path:'index.html'}});
       send({id:prompt,error:{code:-32000,message:error}});
     }
+  }
+  if(r.id === 'foreign-permission' && r.result) {
+    update('socket-test',{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify(r.result.outcome)}});
+    send({id:prompt,result:{stopReason:'end_turn'}});
   }
   if(r.method === 'session/cancel') {
     fs.appendFileSync('cancels.txt','cancel\\n');
