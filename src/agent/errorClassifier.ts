@@ -20,6 +20,7 @@ export type AgentErrorClass =
 
 interface StructuredErrorLike {
   code?: unknown;
+  cause?: { code?: unknown; errno?: unknown };
   name?: unknown;
   status?: unknown;
   message?: unknown;
@@ -94,6 +95,8 @@ export function classifyAgentError(error: unknown): AgentErrorClass {
   if (status === 401 || status === 403) return 'auth_error';
   if (status === 400 || status === 404 || status === 422) return 'invalid_request_error';
   if (status === 408 || status === 529 || (status !== null && status >= 500 && status <= 599)) return 'network_error';
+  const causeCode = errObj?.cause?.code ?? errObj?.cause?.errno;
+  if (typeof causeCode === 'string' && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(causeCode)) return 'network_error';
   if (
     errObj?.name === 'TimeoutError' ||
     errObj?.code === 'ETIMEDOUT' ||

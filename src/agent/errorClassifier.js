@@ -61,6 +61,9 @@ export function classifyAgentError(error) {
         return 'invalid_request_error';
     if (status === 408 || status === 529 || (status !== null && status >= 500 && status <= 599))
         return 'network_error';
+    const causeCode = errObj?.cause?.code ?? errObj?.cause?.errno;
+    if (typeof causeCode === 'string' && ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(causeCode))
+        return 'network_error';
     if (errObj?.name === 'TimeoutError' ||
         errObj?.code === 'ETIMEDOUT' ||
         errObj?.code === 'ECONNREFUSED' ||
