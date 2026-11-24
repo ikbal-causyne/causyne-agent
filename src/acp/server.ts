@@ -729,6 +729,8 @@ export class AcpServer {
         return;
       }
       case 'approval_request': {
+        const requestingLoop = session.loop;
+        if (!requestingLoop) return;
         const toolCallId = String(event.toolCallId ?? '');
         if (!toolCallId) return;
         const args = event.args !== null && typeof event.args === 'object' && !Array.isArray(event.args)
@@ -752,8 +754,8 @@ export class AcpServer {
           toolCall,
           options
         }).then((response) => {
-          if (session.cancelled || !this.sessions.has(session.id)) {
-            session.loop?.handleApprovalResponse(toolCallId, false);
+          if (session.cancelled || session.loop !== requestingLoop || this.sessions.get(session.id) !== session) {
+            requestingLoop.handleApprovalResponse(toolCallId, false);
             return;
           }
           const outcome = response && typeof response.outcome === 'object' && response.outcome !== null
@@ -765,9 +767,9 @@ export class AcpServer {
           const canonicalTool = tool.replace(/\./g, '_');
           if (selected === 'allow_always') session.approvalScope.grantAlways(canonicalTool);
           const approved = selected === 'allow_once' || selected === 'allow_always';
-          session.loop?.handleApprovalResponse(toolCallId, approved);
+          requestingLoop.handleApprovalResponse(toolCallId, approved);
         }).catch(() => {
-          session.loop?.handleApprovalResponse(toolCallId, false);
+          requestingLoop.handleApprovalResponse(toolCallId, false);
         });
         return;
       }
