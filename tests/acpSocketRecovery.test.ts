@@ -413,3 +413,21 @@ test("flushed final response is retained when the peer exits immediately", async
     f.cleanup();
   }
 });
+
+test("inactivity timeout sends cancellation and quarantines the peer", async () => {
+  const f = fixture("silent");
+  const client = new AcpClient({ command: process.execPath, args: [f.script], cwd: f.directory, inactivityTimeoutMs: 200, promptTimeoutMs: 10000 });
+  try {
+    await client.start();
+    const session = await client.newSession(f.directory);
+    await assert.rejects(client.prompt(session, 'test'), /stalled/);
+    const cancelFile = path.join(f.directory, 'cancels.txt');
+    for (let i = 0; i < 50 && !fs.existsSync(cancelFile); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(fs.readFileSync(cancelFile, 'utf8'), 'cancel\n');
+    await assert.rejects(client.prompt(session, 'another prompt'), /stalled; peer must reconnect/);
+    assert.equal(fs.readFileSync(path.join(f.directory, 'prompts.txt'), 'utf8'), 'prompt\n');
+  } finally {
+    await client.close();
+    f.cleanup();
+  }
+});
