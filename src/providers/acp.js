@@ -425,6 +425,8 @@ export class AcpProvider extends LLMProvider {
                 // The write may mutate disk before its promise settles or rejects.
                 this.currentTurnSawAction = true;
                 await this.peerServices.onPeerFileWrite(file, content);
+                if (this.activeClient !== client || !this.peerServices)
+                    throw new Error('ACP peer retired during file write');
                 const hasTrackedWrite = [...this.turnActions.values()].some(a => (a.name === 'fs_write' || a.name === 'fs_edit') && (a.detail === file || a.parameters?.path === file));
                 if (!hasTrackedWrite) {
                     const synthId = `fs_write:${file}`;
