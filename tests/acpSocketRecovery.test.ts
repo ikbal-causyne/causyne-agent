@@ -284,3 +284,16 @@ test("foreign session permissions never invoke host approval", async () => {
     f.cleanup();
   }
 });
+
+test("overlapping provider chats do not overwrite the original turn", async () => {
+  const f = fixture("recover");
+  const provider = new AcpProvider({ provider: 'acp/test-peer', command: process.execPath, args: [f.script] });
+  try {
+    const first = provider.chat([{ role: 'user', content: 'first' }], { workspaceRoot: f.directory });
+    await assert.rejects(provider.chat([{ role: 'user', content: 'second' }], { workspaceRoot: f.directory }), /already has an active chat/);
+    assert.equal((await first).content, 'Recovered successfully.');
+  } finally {
+    await provider.close();
+    f.cleanup();
+  }
+});
