@@ -27,3 +27,7 @@ test("request with error cannot impersonate a failed RPC", () => {
 test("notification containing result is not dispatched as a session update", () => {
   assert.deepEqual(classify({ ...notification, result: {} }), [false, false, false]);
 });
+
+test("notification containing error is not dispatched as a session update", () => {
+  assert.deepEqual(classify({ ...notification, error }), [false, false, false]);
+});
