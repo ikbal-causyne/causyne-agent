@@ -486,8 +486,8 @@ export class AcpServer {
             acceptingEvents = false;
             session.loop = null;
             session.busy = false;
-            this.rejectPendingForSession(session.id, 'turn ended');
-            if (this.sessions.has(session.id)) {
+            if (this.sessions.get(session.id) === session) {
+                this.rejectPendingForSession(session.id, 'turn ended');
                 const record = getSession(session.memorySessionId);
                 if (record)
                     session.title = safeDisplay(record.title).replace(/\s+/g, ' ').trim() || session.title;
@@ -498,7 +498,7 @@ export class AcpServer {
         return stopReason;
     }
     requestDecision(session, loop, request) {
-        if (this.closed || session.cancelled || session.loop !== loop || !this.sessions.has(session.id))
+        if (this.closed || session.cancelled || session.loop !== loop || this.sessions.get(session.id) !== session)
             return Promise.resolve(null);
         if (request === null || typeof request !== 'object' || Array.isArray(request))
             return Promise.resolve(null);
@@ -532,7 +532,7 @@ export class AcpServer {
             toolCall,
             options: permissionOptions
         }).then((response) => {
-            if (this.closed || session.cancelled || session.loop !== loop || !this.sessions.has(session.id))
+            if (this.closed || session.cancelled || session.loop !== loop || this.sessions.get(session.id) !== session)
                 return null;
             const outcome = response && typeof response.outcome === 'object' && response.outcome !== null
                 ? response.outcome
