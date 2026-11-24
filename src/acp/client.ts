@@ -330,6 +330,8 @@ export class AcpClient {
 
   async prompt(sessionId: string, input: string | ContentBlock[], signal?: AbortSignal): Promise<AcpPromptResult> {
     if (signal?.aborted) throw createAbortError();
+    if (this.promptActive) throw new Error('ACP client already has an active prompt');
+    this.promptActive = true;
     // Diagnostic text from an earlier turn must not cancel this prompt.
     this.stderrTail = '';
     const blocks: ContentBlock[] = typeof input === 'string' ? [{ type: 'text', text: input }] : input;
@@ -387,6 +389,7 @@ export class AcpClient {
     } finally {
       signal?.removeEventListener('abort', onAbort);
       this.updateListeners.delete(listener);
+      this.promptActive = false;
       this.clearOpenToolCalls(sessionId);
     }
   }
@@ -498,6 +501,7 @@ export class AcpClient {
     });
   }
 
+  private promptActive = false;
   private readonly updateListeners = new Set<(sessionId: string, update: SessionUpdate) => void>();
 
   private write(message: JsonRpcRequest<unknown> | JsonRpcResponse | JsonRpcNotification<unknown>): void {
