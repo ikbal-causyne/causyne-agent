@@ -762,14 +762,15 @@ export class AcpProvider extends LLMProvider {
   }
 
   override async chat(messages: any[], options: ChatOptions = {}): Promise<ChatResponse> {
-    this.peerServices = options;
-    this.currentTurnAborted = Boolean(options.signal?.aborted);
-    this.currentTurnSawAction = false;
-    if (this.currentTurnAborted) {
+    if (this.peerServices) throw new Error('ACP provider already has an active chat');
+    if (options.signal?.aborted) {
       const abortErr = new Error('ACP request aborted by user');
       abortErr.name = 'AbortError';
       throw abortErr;
     }
+    this.peerServices = options;
+    this.currentTurnAborted = false;
+    this.currentTurnSawAction = false;
     this.currentTurnChunkHandler = options.onChunk || null;
     this.currentTurnReasoningHandler = options.onReasoningChunk || null;
     this.currentTurnNativeActionHandler = options.onNativeAction || null;
