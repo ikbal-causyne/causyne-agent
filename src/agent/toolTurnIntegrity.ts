@@ -146,6 +146,7 @@ export interface ToolBatchValidation {
  * remote provider might already have associated with the original IDs.
  */
 export function validateToolCallBatch(calls: unknown, maxCalls = 256): ToolBatchValidation {
+  if (!Number.isSafeInteger(maxCalls) || maxCalls < 1) return { valid: false, reason: 'maxCalls must be a positive safe integer' };
   if (calls === undefined || calls === null) return { valid: true, reason: '' };
   if (!Array.isArray(calls)) return { valid: false, reason: 'toolCalls was not an array' };
   if (calls.length > maxCalls) return { valid: false, reason: `toolCalls exceeded the ${maxCalls}-call safety limit` };

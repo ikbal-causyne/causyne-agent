@@ -14,3 +14,7 @@ test('tool batches reject blank and NUL IDs', () => {
 test('tool batches reject blank or NUL function names', () => {
   for (const name of ['', '   ', 'bad\x00tool']) assert.equal(validateToolCallBatch([call('id', name)]).valid, false);
 });
+
+test('tool batch limits cannot be bypassed using NaN or Infinity', () => {
+  for (const limit of [NaN, Infinity, 0, -1, 1.5]) assert.equal(validateToolCallBatch([call('id')], limit).valid, false);
+});

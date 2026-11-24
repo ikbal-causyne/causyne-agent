@@ -115,6 +115,8 @@ export function repairUnansweredToolCalls(history, maxCallsPerTurn = 256) {
  * remote provider might already have associated with the original IDs.
  */
 export function validateToolCallBatch(calls, maxCalls = 256) {
+    if (!Number.isSafeInteger(maxCalls) || maxCalls < 1)
+        return { valid: false, reason: 'maxCalls must be a positive safe integer' };
     if (calls === undefined || calls === null)
         return { valid: true, reason: '' };
     if (!Array.isArray(calls))
