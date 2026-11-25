@@ -389,6 +389,55 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.equal(handToAgent.status, 200);
       assert.equal(JSON.parse(handToAgent.body).controlOwner, 'agent');
 
+      // 13. Native Window mode switch, live input validation & authenticated NDJSON screencast stream
+      const setNative = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/browser/action',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'setMode', visible: true, enginePreference: 'chromium', ensureStarted: false })
+      });
+      assert.equal(setNative.status, 200);
+      const setNativeBody = JSON.parse(setNative.body);
+      assert.equal(setNativeBody.visible, true);
+      assert.equal(setNativeBody.enginePreference, 'chromium');
+      assert.equal(typeof setNativeBody.enginesAvailable?.chromium, 'boolean');
+
+      const resetEmbedded = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/browser/action',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'setMode', visible: false, enginePreference: 'auto', ensureStarted: false })
+      });
+      assert.equal(resetEmbedded.status, 200);
+      assert.equal(JSON.parse(resetEmbedded.body).visible, false);
+
+      const badInput = await rawHttpRequest({
+        port: handle.port,
+        method: 'POST',
+        path: '/api/browser/input',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'unsupported_kind' })
+      });
+      assert.equal(badInput.status, 400);
+
+      const streamAbort = new AbortController();
+      const streamRes = await fetch(`${handle.origin}/api/browser/stream`, {
+        headers: authHeaders,
+        signal: streamAbort.signal
+      });
+      assert.equal(streamRes.status, 200);
+      const streamReader = streamRes.body!.getReader();
+      const firstChunk = await streamReader.read();
+      streamAbort.abort();
+      await streamReader.cancel().catch(() => {});
+      const firstLines = new TextDecoder().decode(firstChunk.value || new Uint8Array()).trim().split('\n');
+      assert.ok(firstLines.length >= 1);
+      const firstEvent = JSON.parse(firstLines[0]!);
+      assert.ok(firstEvent.type === 'meta' || firstEvent.type === 'agent_activity');
+      assert.equal(firstEvent.computerUsePolicy, 'tiered-approval');
+
       assert.equal(parseValidatedCdpPort('9222'), 9222);
       assert.throws(() => parseValidatedCdpPort('80'));
       assert.deepEqual(

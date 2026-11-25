@@ -9,7 +9,13 @@ import {
   ensureCapability,
   loadCapabilityPackage
 } from '../provisioning/capabilityProvisioner.js';
-import { resolveBrowserRuntime, type PreparedBrowserRuntime } from './browserRuntime.js';
+import {
+  inspectAvailableBrowserRuntimes,
+  resolveBrowserRuntime,
+  resolveCamoufoxRuntime,
+  resolveChromiumRuntime,
+  type PreparedBrowserRuntime
+} from './browserRuntime.js';
 import { assertPublicWebUrl, assertBrowserNavigableUrl, isLoopbackHost } from './urlPolicy.js';
 import { ensureSafeWorkspaceInputPath, ensureSafeWorkspaceOutputPath } from './workspacePathSafety.js';
 import { windowSnapshot, type SnapshotWindow } from './snapshotWindow.js';
@@ -400,10 +406,13 @@ interface BrowserPage {
     click?(x: number, y: number, options?: Record<string, unknown>): Promise<void>;
     dblclick?(x: number, y: number, options?: Record<string, unknown>): Promise<void>;
     move?(x: number, y: number): Promise<void>;
-    down?(): Promise<void>;
-    up?(): Promise<void>;
+    down?(options?: { button?: 'left' | 'right' | 'middle' }): Promise<void>;
+    up?(options?: { button?: 'left' | 'right' | 'middle' }): Promise<void>;
   };
 }
+
+export type BrowserEnginePreference = 'auto' | 'chromium' | 'camoufox';
+export type BrowserStreamMode = 'cdp-screencast' | 'adaptive-frames' | 'idle';
 
 export interface BrowserCookieRecord {
   name: string;
@@ -425,6 +434,11 @@ export interface LiveBrowserTabSummary {
 
 export interface LiveBrowserFrame {
   active: boolean;
+  visible: boolean;
+  engine: 'chromium' | 'camoufox' | null;
+  enginePreference: BrowserEnginePreference;
+  streamMode: BrowserStreamMode;
+  enginesAvailable: { camoufox: boolean; chromium: boolean };
   tabId: string | null;
   url: string;
   title: string;
@@ -435,14 +449,42 @@ export interface LiveBrowserFrame {
   mimeType: 'image/jpeg' | 'image/png';
 }
 
+export interface LiveStreamEvent {
+  type: 'frame' | 'meta' | 'closed';
+  active: boolean;
+  visible: boolean;
+  engine: 'chromium' | 'camoufox' | null;
+  enginePreference: BrowserEnginePreference;
+  streamMode: BrowserStreamMode;
+  enginesAvailable: { camoufox: boolean; chromium: boolean };
+  tabId: string | null;
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  tabs: LiveBrowserTabSummary[];
+  imageBase64?: string | null | undefined;
+  mimeType?: 'image/jpeg' | 'image/png' | undefined;
+  fps?: number | undefined;
+}
+
 export interface LiveBrowserInteraction {
-  kind: 'click' | 'dblclick' | 'wheel' | 'type' | 'key';
+  kind: 'click' | 'dblclick' | 'contextmenu' | 'mousedown' | 'mousemove' | 'mouseup' | 'wheel' | 'type' | 'key' | 'paste';
   x?: number | undefined;
   y?: number | undefined;
   deltaX?: number | undefined;
   deltaY?: number | undefined;
   text?: string | undefined;
   key?: string | undefined;
+  button?: 'left' | 'right' | 'middle' | undefined;
+  skipFrame?: boolean | undefined;
+}
+
+interface BrowserCdpSession {
+  send(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  on(event: string, listener: (payload: Record<string, unknown>) => void): void;
+  off?(event: string, listener: (payload: Record<string, unknown>) => void): void;
+  detach(): Promise<void>;
 }
 
 interface BrowserSession {
@@ -454,6 +496,7 @@ interface BrowserSession {
   on?(event: 'page', handler: (page: BrowserPage) => void): void;
   addCookies?(cookies: BrowserCookieRecord[]): Promise<void>;
   cookies?(urls?: string | string[]): Promise<BrowserCookieRecord[]>;
+  newCDPSession?(page: BrowserPage): Promise<BrowserCdpSession>;
 }
 
 interface BrowserEngineModule {
@@ -1002,10 +1045,13 @@ export class CausyneBrowser {
   private readonly ensureBrowserCapability: NonNullable<RuntimeOptions['ensureBrowserCapability']>;
   private readonly loadBrowserEngine: NonNullable<RuntimeOptions['loadBrowserEngine']>;
   private readonly resolveRuntime: NonNullable<RuntimeOptions['resolveRuntime']>;
+  private readonly customResolveRuntime: boolean;
   private profileDirectory: string;
   private readonly pinnedProfileDirectory: boolean;
   private queuedOperations = 0;
-  private readonly visible: boolean;
+  private visible: boolean;
+  private enginePreference: BrowserEnginePreference = 'auto';
+  private activeEngine: 'chromium' | 'camoufox' | null = null;
   private readonly validateUrl: (value: string) => Promise<URL>;
   private session: BrowserSession | null = null;
   private starting: Promise<void> | null = null;
@@ -1020,11 +1066,26 @@ export class CausyneBrowser {
   private approvedLoopbackOrigins = new Set<string>();
   private pendingLocalNavigation: string | null = null;
   private lastTarget: { kind: 'preview'; workspace: string; filePath: string } | { kind: 'url'; url: string } | null = null;
+  private streamListeners = new Set<(event: LiveStreamEvent) => void>();
+  private cdpSession: BrowserCdpSession | null = null;
+  private cdpPage: BrowserPage | null = null;
+  private cdpFrameHandler: ((payload: Record<string, unknown>) => void) | null = null;
+  private streamMode: BrowserStreamMode = 'idle';
+  private adaptiveTimer: NodeJS.Timeout | null = null;
+  private metaSyncTimer: NodeJS.Timeout | null = null;
+  private adaptiveInFlight = false;
+  private recentFrameTimestamps: number[] = [];
+  private cachedTabSummaries: LiveBrowserTabSummary[] = [];
+  private cachedUrl = '';
+  private cachedTitle = '';
+  private cachedWidth = 1280;
+  private cachedHeight = 800;
 
   constructor(options: RuntimeOptions = {}) {
     this.workspace = path.resolve(options.workspace ?? process.cwd());
     this.ensureBrowserCapability = options.ensureBrowserCapability ?? (() => ensureCapability('browser'));
     this.loadBrowserEngine = options.loadBrowserEngine ?? (async () => await loadCapabilityPackage('camoufox-js') as BrowserEngineModule);
+    this.customResolveRuntime = options.resolveRuntime !== undefined;
     this.resolveRuntime = options.resolveRuntime ?? resolveBrowserRuntime;
     this.pinnedProfileDirectory = options.profileDirectory !== undefined;
     this.profileDirectory = path.resolve(options.profileDirectory ?? workspaceProfileDirectory(this.workspace));
@@ -1187,8 +1248,10 @@ export class CausyneBrowser {
     this.idleGeneration++;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
+    await this.stopLiveStreamTransport(true);
     const session = this.session;
     this.session = null;
+    this.activeEngine = null;
     this.starting = null;
     this.tabs.clear();
     this.workspacePreview.clear();
@@ -1198,6 +1261,9 @@ export class CausyneBrowser {
     this.pendingLocalNavigation = null;
     this.securedPages = new WeakSet<object>();
     this.pageStates = new WeakMap<object, TabState>();
+    this.cachedTabSummaries = [];
+    this.cachedUrl = '';
+    this.cachedTitle = '';
     if (session) await session.close().catch(() => {});
   }
 
@@ -1205,15 +1271,391 @@ export class CausyneBrowser {
     return this.isSessionHealthy();
   }
 
+  getRuntimeStatus(): {
+    active: boolean;
+    visible: boolean;
+    engine: 'chromium' | 'camoufox' | null;
+    enginePreference: BrowserEnginePreference;
+    streamMode: BrowserStreamMode;
+    enginesAvailable: { camoufox: boolean; chromium: boolean };
+  } {
+    const avail = inspectAvailableBrowserRuntimes();
+    return {
+      active: this.isSessionHealthy(),
+      visible: this.visible,
+      engine: this.activeEngine,
+      enginePreference: this.enginePreference,
+      streamMode: this.streamMode,
+      enginesAvailable: { camoufox: avail.camoufox, chromium: avail.chromium }
+    };
+  }
+
+  async setDisplayMode(options: {
+    visible?: boolean | undefined;
+    enginePreference?: BrowserEnginePreference | undefined;
+    ensureStarted?: boolean | undefined;
+  }): Promise<LiveBrowserFrame> {
+    return this.enqueueOperation(async () => {
+      const nextVisible = typeof options.visible === 'boolean' ? options.visible : this.visible;
+      const nextEngine: BrowserEnginePreference = options.enginePreference === 'camoufox'
+        || options.enginePreference === 'chromium'
+        || options.enginePreference === 'auto'
+        ? options.enginePreference
+        : this.enginePreference;
+      const wasActive = this.isSessionHealthy();
+      const changed = nextVisible !== this.visible || nextEngine !== this.enginePreference;
+
+      const preservedUrls: string[] = [];
+      let activeIdx = 0;
+      if (wasActive && changed) {
+        let idx = 0;
+        for (const tab of this.tabs.values()) {
+          if (tab.page.isClosed() || tab.crashed) continue;
+          const u = tab.page.url();
+          if (u && u !== 'about:blank') {
+            if (tab.id === this.activeTabId) activeIdx = preservedUrls.length;
+            preservedUrls.push(u);
+          }
+          idx += 1;
+        }
+        void idx;
+        await this.close();
+      }
+
+      this.visible = nextVisible;
+      this.enginePreference = nextEngine;
+
+      if (wasActive || options.ensureStarted) {
+        await this.start();
+        if (preservedUrls.length > 0) {
+          let activeState: TabState | null = null;
+          for (let i = 0; i < preservedUrls.length; i += 1) {
+            const targetUrl = preservedUrls[i]!;
+            const tabState = i === 0 ? await this.activeTab() : await this.createTab();
+            try {
+              await this.navigate(tabState, targetUrl);
+            } catch {
+              // Keep best-effort restoration across mode switches.
+            }
+            if (i === activeIdx) activeState = tabState;
+          }
+          if (activeState) this.activeTabId = activeState.id;
+        }
+        if (this.streamListeners.size > 0) {
+          void this.syncLiveStreamAttachment().catch(() => {});
+        }
+      }
+      return this.captureLiveFrameUnlocked({ ensureStarted: Boolean(options.ensureStarted || wasActive) });
+    });
+  }
+
+  subscribeLiveStream(listener: (event: LiveStreamEvent) => void): () => void {
+    this.streamListeners.add(listener);
+    if (this.isSessionHealthy()) {
+      void this.syncLiveStreamAttachment().catch(() => {});
+    } else {
+      const status = this.getRuntimeStatus();
+      listener({
+        type: 'meta',
+        active: false,
+        visible: status.visible,
+        engine: status.engine,
+        enginePreference: status.enginePreference,
+        streamMode: 'idle',
+        enginesAvailable: status.enginesAvailable,
+        tabId: null,
+        url: '',
+        title: '',
+        width: this.cachedWidth,
+        height: this.cachedHeight,
+        tabs: []
+      });
+    }
+    return () => {
+      this.streamListeners.delete(listener);
+      if (this.streamListeners.size === 0) {
+        void this.stopLiveStreamTransport(false).catch(() => {});
+      }
+    };
+  }
+
+  private emitLiveStreamEvent(event: LiveStreamEvent): void {
+    for (const listener of this.streamListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Isolate subscriber errors.
+      }
+    }
+  }
+
+  private computeLiveFps(): number {
+    const now = Date.now();
+    this.recentFrameTimestamps.push(now);
+    while (this.recentFrameTimestamps.length > 0 && now - this.recentFrameTimestamps[0]! > 1000) {
+      this.recentFrameTimestamps.shift();
+    }
+    return this.recentFrameTimestamps.length;
+  }
+
+  private async stopLiveStreamTransport(notifyClosed: boolean): Promise<void> {
+    if (this.adaptiveTimer) {
+      clearInterval(this.adaptiveTimer);
+      this.adaptiveTimer = null;
+    }
+    if (this.metaSyncTimer) {
+      clearInterval(this.metaSyncTimer);
+      this.metaSyncTimer = null;
+    }
+    this.adaptiveInFlight = false;
+    this.recentFrameTimestamps = [];
+    const cdp = this.cdpSession;
+    const handler = this.cdpFrameHandler;
+    this.cdpSession = null;
+    this.cdpPage = null;
+    this.cdpFrameHandler = null;
+    this.streamMode = 'idle';
+    if (cdp) {
+      if (handler && typeof cdp.off === 'function') {
+        try { cdp.off('Page.screencastFrame', handler); } catch { /* ignore */ }
+      }
+      await cdp.send('Page.stopScreencast').catch(() => {});
+      await cdp.detach().catch(() => {});
+    }
+    if (notifyClosed && this.streamListeners.size > 0) {
+      const status = this.getRuntimeStatus();
+      this.emitLiveStreamEvent({
+        type: 'closed',
+        active: false,
+        visible: status.visible,
+        engine: null,
+        enginePreference: status.enginePreference,
+        streamMode: 'idle',
+        enginesAvailable: status.enginesAvailable,
+        tabId: null,
+        url: '',
+        title: '',
+        width: this.cachedWidth,
+        height: this.cachedHeight,
+        tabs: []
+      });
+    }
+  }
+
+  private async refreshCachedTabMetadata(): Promise<boolean> {
+    if (!this.isSessionHealthy()) return false;
+    const active = this.activeTabId ? this.tabs.get(this.activeTabId) : [...this.tabs.values()].find(t => !t.page.isClosed() && !t.crashed);
+    if (!active || active.page.isClosed() || active.crashed) return false;
+    const vp = typeof active.page.viewportSize === 'function' ? active.page.viewportSize() : null;
+    const width = vp?.width ?? 1280;
+    const height = vp?.height ?? 800;
+    const tabs: LiveBrowserTabSummary[] = [];
+    for (const tab of this.tabs.values()) {
+      if (tab.page.isClosed() || tab.crashed) continue;
+      tabs.push({
+        tabId: tab.id,
+        url: tab.page.url(),
+        title: await this.safePageTitle(tab.page),
+        active: tab.id === active.id
+      });
+    }
+    const url = active.page.url();
+    const title = await this.safePageTitle(active.page);
+    const sigPrev = JSON.stringify([this.cachedUrl, this.cachedTitle, this.cachedWidth, this.cachedHeight, this.cachedTabSummaries]);
+    const sigNext = JSON.stringify([url, title, width, height, tabs]);
+    this.cachedUrl = url;
+    this.cachedTitle = title;
+    this.cachedWidth = width;
+    this.cachedHeight = height;
+    this.cachedTabSummaries = tabs;
+    return sigPrev !== sigNext;
+  }
+
+  private async pushSingleAdaptiveFrame(): Promise<void> {
+    if (this.adaptiveInFlight || this.queuedOperations > 0 || !this.isSessionHealthy() || this.streamListeners.size === 0) {
+      return;
+    }
+    const active = this.activeTabId ? this.tabs.get(this.activeTabId) : [...this.tabs.values()].find(t => !t.page.isClosed() && !t.crashed);
+    if (!active || active.page.isClosed() || active.crashed) return;
+    this.adaptiveInFlight = true;
+    try {
+      await this.refreshCachedTabMetadata();
+      const buf = await active.page.screenshot({ type: 'jpeg', quality: 68, timeout: 3000 });
+      const status = this.getRuntimeStatus();
+      this.emitLiveStreamEvent({
+        type: 'frame',
+        active: true,
+        visible: status.visible,
+        engine: status.engine,
+        enginePreference: status.enginePreference,
+        streamMode: this.streamMode,
+        enginesAvailable: status.enginesAvailable,
+        tabId: active.id,
+        url: this.cachedUrl,
+        title: this.cachedTitle,
+        width: this.cachedWidth,
+        height: this.cachedHeight,
+        tabs: this.cachedTabSummaries,
+        imageBase64: buf.toString('base64'),
+        mimeType: 'image/jpeg',
+        fps: this.computeLiveFps()
+      });
+    } catch {
+      // Skip transient frame capture errors while page navigates.
+    } finally {
+      this.adaptiveInFlight = false;
+    }
+  }
+
+  private async syncLiveStreamAttachment(): Promise<void> {
+    if (this.streamListeners.size === 0 || !this.isSessionHealthy() || !this.session) {
+      await this.stopLiveStreamTransport(false);
+      return;
+    }
+    const active = this.activeTabId
+      ? this.tabs.get(this.activeTabId)
+      : [...this.tabs.values()].find(t => !t.page.isClosed() && !t.crashed);
+    if (!active || active.page.isClosed() || active.crashed) return;
+
+    await this.refreshCachedTabMetadata();
+
+    if (!this.metaSyncTimer) {
+      this.metaSyncTimer = setInterval(() => {
+        if (this.streamListeners.size === 0 || !this.isSessionHealthy()) return;
+        const cur = this.activeTabId ? this.tabs.get(this.activeTabId) : undefined;
+        if (cur && this.cdpPage && cur.page !== this.cdpPage) {
+          void this.syncLiveStreamAttachment().catch(() => {});
+          return;
+        }
+        void this.refreshCachedTabMetadata().then((changed) => {
+          if (!changed || this.streamListeners.size === 0) return;
+          const status = this.getRuntimeStatus();
+          this.emitLiveStreamEvent({
+            type: 'meta',
+            active: true,
+            visible: status.visible,
+            engine: status.engine,
+            enginePreference: status.enginePreference,
+            streamMode: this.streamMode,
+            enginesAvailable: status.enginesAvailable,
+            tabId: this.activeTabId,
+            url: this.cachedUrl,
+            title: this.cachedTitle,
+            width: this.cachedWidth,
+            height: this.cachedHeight,
+            tabs: this.cachedTabSummaries
+          });
+        }).catch(() => {});
+      }, 1200);
+      this.metaSyncTimer.unref?.();
+    }
+
+    if (typeof this.session.newCDPSession === 'function' && this.activeEngine === 'chromium') {
+      if (this.cdpSession && this.cdpPage === active.page && this.streamMode === 'cdp-screencast') {
+        return;
+      }
+      if (this.adaptiveTimer) {
+        clearInterval(this.adaptiveTimer);
+        this.adaptiveTimer = null;
+      }
+      if (this.cdpSession) {
+        const prev = this.cdpSession;
+        const prevHandler = this.cdpFrameHandler;
+        this.cdpSession = null;
+        this.cdpPage = null;
+        this.cdpFrameHandler = null;
+        if (prevHandler && typeof prev.off === 'function') {
+          try { prev.off('Page.screencastFrame', prevHandler); } catch { /* ignore */ }
+        }
+        await prev.send('Page.stopScreencast').catch(() => {});
+        await prev.detach().catch(() => {});
+      }
+      try {
+        const cdp = await this.session.newCDPSession(active.page);
+        const handler = (payload: Record<string, unknown>) => {
+          const sessionId = payload.sessionId;
+          if (typeof sessionId === 'number') {
+            void cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+          }
+          const data = typeof payload.data === 'string' ? payload.data : '';
+          if (!data || this.streamListeners.size === 0) return;
+          const meta = payload.metadata && typeof payload.metadata === 'object'
+            ? (payload.metadata as { deviceWidth?: number; deviceHeight?: number })
+            : null;
+          if (typeof meta?.deviceWidth === 'number' && meta.deviceWidth > 0) this.cachedWidth = meta.deviceWidth;
+          if (typeof meta?.deviceHeight === 'number' && meta.deviceHeight > 0) this.cachedHeight = meta.deviceHeight;
+          const liveUrl = active.page.url();
+          if (liveUrl && liveUrl !== this.cachedUrl) {
+            this.cachedUrl = liveUrl;
+            this.cachedTabSummaries = this.cachedTabSummaries.map((t) =>
+              t.tabId === active.id ? { ...t, url: liveUrl } : t
+            );
+            void this.refreshCachedTabMetadata().catch(() => {});
+          }
+          const status = this.getRuntimeStatus();
+          this.emitLiveStreamEvent({
+            type: 'frame',
+            active: true,
+            visible: status.visible,
+            engine: status.engine,
+            enginePreference: status.enginePreference,
+            streamMode: 'cdp-screencast',
+            enginesAvailable: status.enginesAvailable,
+            tabId: this.activeTabId,
+            url: liveUrl || this.cachedUrl,
+            title: this.cachedTitle,
+            width: this.cachedWidth,
+            height: this.cachedHeight,
+            tabs: this.cachedTabSummaries,
+            imageBase64: data,
+            mimeType: 'image/jpeg',
+            fps: this.computeLiveFps()
+          });
+        };
+        cdp.on('Page.screencastFrame', handler);
+        await cdp.send('Page.startScreencast', {
+          format: 'jpeg',
+          quality: 68,
+          maxWidth: Math.min(1440, Math.max(320, this.cachedWidth)),
+          maxHeight: Math.min(960, Math.max(240, this.cachedHeight)),
+          everyNthFrame: 1
+        });
+        this.cdpSession = cdp;
+        this.cdpPage = active.page;
+        this.cdpFrameHandler = handler;
+        this.streamMode = 'cdp-screencast';
+        void this.pushSingleAdaptiveFrame().catch(() => {});
+        return;
+      } catch {
+        // Fall through cleanly to adaptive frame streaming if CDP screencast is unavailable.
+      }
+    }
+
+    this.streamMode = 'adaptive-frames';
+    if (!this.adaptiveTimer) {
+      this.adaptiveTimer = setInterval(() => {
+        void this.pushSingleAdaptiveFrame().catch(() => {});
+      }, 240);
+      this.adaptiveTimer.unref?.();
+    }
+    void this.pushSingleAdaptiveFrame().catch(() => {});
+  }
+
   async captureLiveFrame(options: { ensureStarted?: boolean | undefined } = {}): Promise<LiveBrowserFrame> {
     return this.enqueueOperation(() => this.captureLiveFrameUnlocked(options));
   }
 
   private async captureLiveFrameUnlocked(options: { ensureStarted?: boolean | undefined } = {}): Promise<LiveBrowserFrame> {
+    const status = this.getRuntimeStatus();
     if (!this.isSessionHealthy()) {
       if (!options.ensureStarted) {
         return {
           active: false,
+          visible: status.visible,
+          engine: status.engine,
+          enginePreference: status.enginePreference,
+          streamMode: this.streamMode,
+          enginesAvailable: status.enginesAvailable,
           tabId: null,
           url: '',
           title: '',
@@ -1254,12 +1696,42 @@ export class CausyneBrowser {
         imageBase64 = null;
       }
     }
+    this.cachedUrl = state.page.url();
+    this.cachedTitle = await this.safePageTitle(state.page);
+    this.cachedWidth = width;
+    this.cachedHeight = height;
+    this.cachedTabSummaries = tabs;
+    if (this.streamListeners.size > 0) {
+      void this.syncLiveStreamAttachment().catch(() => {});
+      const latestStatus = this.getRuntimeStatus();
+      this.emitLiveStreamEvent({
+        type: 'meta',
+        active: true,
+        visible: latestStatus.visible,
+        engine: latestStatus.engine,
+        enginePreference: latestStatus.enginePreference,
+        streamMode: this.streamMode,
+        enginesAvailable: latestStatus.enginesAvailable,
+        tabId: state.id,
+        url: this.cachedUrl,
+        title: this.cachedTitle,
+        width,
+        height,
+        tabs
+      });
+    }
+    const updatedStatus = this.getRuntimeStatus();
     this.touch();
     return {
       active: true,
+      visible: updatedStatus.visible,
+      engine: updatedStatus.engine,
+      enginePreference: updatedStatus.enginePreference,
+      streamMode: this.streamMode,
+      enginesAvailable: updatedStatus.enginesAvailable,
       tabId: state.id,
-      url: state.page.url(),
-      title: await this.safePageTitle(state.page),
+      url: this.cachedUrl,
+      title: this.cachedTitle,
       width,
       height,
       tabs,
@@ -1268,52 +1740,94 @@ export class CausyneBrowser {
     };
   }
 
+  private async dispatchInputOnPage(state: TabState, input: LiveBrowserInteraction): Promise<void> {
+    const vp = typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
+    const maxW = vp?.width ?? 1280;
+    const maxH = vp?.height ?? 800;
+    const clamp = (val: unknown, lo: number, hi: number): number => {
+      const n = typeof val === 'number' && Number.isFinite(val) ? val : 0;
+      return Math.max(lo, Math.min(hi, Math.round(n)));
+    };
+    const btn: 'left' | 'right' | 'middle' = input.button === 'right' || input.button === 'middle' ? input.button : 'left';
+
+    if (input.kind === 'mousemove') {
+      const x = clamp(input.x, 0, maxW);
+      const y = clamp(input.y, 0, maxH);
+      if (typeof state.page.mouse.move === 'function') {
+        await state.page.mouse.move(x, y);
+      }
+    } else if (input.kind === 'mousedown') {
+      const x = clamp(input.x, 0, maxW);
+      const y = clamp(input.y, 0, maxH);
+      if (typeof state.page.mouse.move === 'function') await state.page.mouse.move(x, y);
+      if (typeof state.page.mouse.down === 'function') await state.page.mouse.down({ button: btn });
+    } else if (input.kind === 'mouseup') {
+      const x = clamp(input.x, 0, maxW);
+      const y = clamp(input.y, 0, maxH);
+      if (typeof state.page.mouse.move === 'function') await state.page.mouse.move(x, y);
+      if (typeof state.page.mouse.up === 'function') await state.page.mouse.up({ button: btn });
+    } else if (input.kind === 'click' || input.kind === 'dblclick' || input.kind === 'contextmenu') {
+      const x = clamp(input.x, 0, maxW);
+      const y = clamp(input.y, 0, maxH);
+      const clickBtn = input.kind === 'contextmenu' ? 'right' : btn;
+      if (input.kind === 'dblclick' && typeof state.page.mouse.dblclick === 'function') {
+        await state.page.mouse.dblclick(x, y, { button: clickBtn });
+      } else if (typeof state.page.mouse.click === 'function') {
+        await state.page.mouse.click(x, y, { button: clickBtn });
+      } else if (state.page.mouse.move && state.page.mouse.down && state.page.mouse.up) {
+        await state.page.mouse.move(x, y);
+        await state.page.mouse.down({ button: clickBtn });
+        await state.page.mouse.up({ button: clickBtn });
+      }
+      if (!input.skipFrame) await state.page.waitForTimeout(140);
+    } else if (input.kind === 'wheel') {
+      const dx = clamp(input.deltaX, -1200, 1200);
+      const dy = clamp(input.deltaY, -1600, 1600);
+      await state.page.mouse.wheel(dx, dy);
+      if (!input.skipFrame) await state.page.waitForTimeout(90);
+    } else if (input.kind === 'type' || input.kind === 'paste') {
+      const text = typeof input.text === 'string' ? input.text.slice(0, 4000) : '';
+      if (text) {
+        if (typeof state.page.keyboard.insertText === 'function') {
+          await state.page.keyboard.insertText(text);
+        } else if (typeof state.page.keyboard.type === 'function') {
+          await state.page.keyboard.type(text, { delay: 10 });
+        }
+        if (!input.skipFrame) await state.page.waitForTimeout(80);
+      }
+    } else if (input.kind === 'key') {
+      const key = normalizeBrowserKey(String(input.key || 'Enter'));
+      await state.page.keyboard.press(key);
+      if (!input.skipFrame) await state.page.waitForTimeout(100);
+    }
+    state.refs.clear();
+  }
+
+  /** Ultra-low-latency direct input dispatch when real-time live stream is active. */
+  async dispatchLiveInput(input: LiveBrowserInteraction): Promise<{ ok: boolean }> {
+    if (!this.isSessionHealthy()) {
+      await this.interactAt(input);
+      return { ok: true };
+    }
+    const active = this.activeTabId
+      ? this.tabs.get(this.activeTabId)
+      : [...this.tabs.values()].find(t => !t.page.isClosed() && !t.crashed);
+    if (!active || active.page.isClosed() || active.crashed) {
+      return { ok: false };
+    }
+    await this.dispatchInputOnPage(active, { ...input, skipFrame: true });
+    this.touch();
+    if (this.streamMode === 'adaptive-frames') {
+      void this.pushSingleAdaptiveFrame().catch(() => {});
+    }
+    return { ok: true };
+  }
+
   async interactAt(input: LiveBrowserInteraction): Promise<LiveBrowserFrame> {
     return this.enqueueOperation(async () => {
       await this.start();
       const state = await this.activeTab();
-      const vp = typeof state.page.viewportSize === 'function' ? state.page.viewportSize() : null;
-      const maxW = vp?.width ?? 1280;
-      const maxH = vp?.height ?? 800;
-      const clamp = (val: unknown, lo: number, hi: number): number => {
-        const n = typeof val === 'number' && Number.isFinite(val) ? val : 0;
-        return Math.max(lo, Math.min(hi, Math.round(n)));
-      };
-
-      if (input.kind === 'click' || input.kind === 'dblclick') {
-        const x = clamp(input.x, 0, maxW);
-        const y = clamp(input.y, 0, maxH);
-        if (input.kind === 'dblclick' && typeof state.page.mouse.dblclick === 'function') {
-          await state.page.mouse.dblclick(x, y);
-        } else if (typeof state.page.mouse.click === 'function') {
-          await state.page.mouse.click(x, y);
-        } else if (state.page.mouse.move && state.page.mouse.down && state.page.mouse.up) {
-          await state.page.mouse.move(x, y);
-          await state.page.mouse.down();
-          await state.page.mouse.up();
-        }
-        await state.page.waitForTimeout(180);
-      } else if (input.kind === 'wheel') {
-        const dx = clamp(input.deltaX, -1200, 1200);
-        const dy = clamp(input.deltaY, -1600, 1600);
-        await state.page.mouse.wheel(dx, dy);
-        await state.page.waitForTimeout(120);
-      } else if (input.kind === 'type') {
-        const text = typeof input.text === 'string' ? input.text.slice(0, 2000) : '';
-        if (text) {
-          if (typeof state.page.keyboard.insertText === 'function') {
-            await state.page.keyboard.insertText(text);
-          } else if (typeof state.page.keyboard.type === 'function') {
-            await state.page.keyboard.type(text, { delay: 12 });
-          }
-          await state.page.waitForTimeout(100);
-        }
-      } else if (input.kind === 'key') {
-        const key = normalizeBrowserKey(String(input.key || 'Enter'));
-        await state.page.keyboard.press(key);
-        await state.page.waitForTimeout(140);
-      }
-      state.refs.clear();
+      await this.dispatchInputOnPage(state, input);
       return this.captureLiveFrameUnlocked({ ensureStarted: true });
     });
   }
@@ -1378,6 +1892,24 @@ export class CausyneBrowser {
     }
   }
 
+  private resolvePreferredRuntime(): PreparedBrowserRuntime {
+    if (this.customResolveRuntime || this.enginePreference === 'auto') {
+      return this.resolveRuntime();
+    }
+    if (this.enginePreference === 'camoufox') {
+      const cf = resolveCamoufoxRuntime();
+      if (!cf) {
+        throw new Error('Camoufox runtime is not installed locally. Install Camoufox and set CAMOUFOX_EXECUTABLE_PATH, or switch engine to Chromium.');
+      }
+      return cf;
+    }
+    const ch = resolveChromiumRuntime();
+    if (!ch) {
+      throw new Error('Chromium/Chrome runtime was not found locally. Switch engine to Auto or Camoufox.');
+    }
+    return ch;
+  }
+
   private async start(): Promise<void> {
     if (this.session) {
       if (this.isSessionHealthy()) return;
@@ -1387,8 +1919,9 @@ export class CausyneBrowser {
     this.starting = (async () => {
       const verdict = await this.ensureBrowserCapability();
       if (!verdict.ok) throw new BrowserCapabilityError(verdict.reason ?? 'Browser capability is unavailable', verdict.requiresConsent);
-      const runtime = this.resolveRuntime();
+      const runtime = this.resolvePreferredRuntime();
       if (runtime.engine === 'chromium') {
+        this.activeEngine = 'chromium';
         const engine = await loadCapabilityPackage('playwright-core') as { chromium: { launchPersistentContext(profile: string, options: Record<string, unknown>): Promise<BrowserSession> } };
         const profile = path.join(this.profileDirectory, 'chromium');
         const chromiumArgs = [
@@ -1396,33 +1929,41 @@ export class CausyneBrowser {
           '--use-gl=angle',
           ...(process.platform === 'darwin' ? ['--use-angle=metal'] : ['--use-gl=swiftshader']),
           '--ignore-gpu-blocklist',
-          '--enable-gpu-rasterization'
+          '--enable-gpu-rasterization',
+          ...(this.visible ? ['--window-size=1300,880'] : [])
         ];
         this.session = await engine.chromium.launchPersistentContext(profile, {
-          executablePath: runtime.executablePath, headless: !this.visible, serviceWorkers: 'block', chromiumSandbox: true,
+          executablePath: runtime.executablePath,
+          headless: !this.visible,
+          viewport: { width: 1280, height: 800 },
+          serviceWorkers: 'block',
+          chromiumSandbox: true,
           args: chromiumArgs,
-          handleSIGTERM: false, handleSIGINT: false, handleSIGHUP: false
+          handleSIGTERM: false,
+          handleSIGINT: false,
+          handleSIGHUP: false
         });
       } else {
-      process.env.CAMOUFOX_INSTALL_DIR = runtime.installDirectory;
-      await fs.mkdir(this.profileDirectory, { recursive: true, mode: 0o700 });
-      const module = await this.loadBrowserEngine();
-      if (!module || typeof module.Camoufox !== 'function') throw new Error('Causyne Browser has no usable launcher');
-      this.session = await module.Camoufox({
-        headless: !this.visible,
-        user_data_dir: this.profileDirectory,
-        humanize: 0.35,
-        block_webrtc: true,
-        geoip: false,
-        enable_cache: true,
-        ...(runtime.executablePath ? { executable_path: runtime.executablePath } : {}),
-        firefox_user_prefs: {
-          'Security.OCSP.enabled': 0
-        },
-        handleSIGTERM: false,
-        handleSIGINT: false,
-        handleSIGHUP: false
-      });
+        this.activeEngine = 'camoufox';
+        process.env.CAMOUFOX_INSTALL_DIR = runtime.installDirectory;
+        await fs.mkdir(this.profileDirectory, { recursive: true, mode: 0o700 });
+        const module = await this.loadBrowserEngine();
+        if (!module || typeof module.Camoufox !== 'function') throw new Error('Causyne Browser has no usable launcher');
+        this.session = await module.Camoufox({
+          headless: !this.visible,
+          user_data_dir: this.profileDirectory,
+          humanize: 0.35,
+          block_webrtc: true,
+          geoip: false,
+          enable_cache: true,
+          ...(runtime.executablePath ? { executable_path: runtime.executablePath } : {}),
+          firefox_user_prefs: {
+            'Security.OCSP.enabled': 0
+          },
+          handleSIGTERM: false,
+          handleSIGINT: false,
+          handleSIGHUP: false
+        });
       }
       if (typeof this.session.route === 'function') {
         await this.session.route('**/*', route => this.guardRoute(route));
@@ -1432,6 +1973,9 @@ export class CausyneBrowser {
       const existing = this.session.pages().find(page => !page.isClosed());
       if (existing) await this.registerPage(existing);
       else await this.createTab();
+      if (this.streamListeners.size > 0) {
+        void this.syncLiveStreamAttachment().catch(() => {});
+      }
     })();
     try {
       await this.starting;

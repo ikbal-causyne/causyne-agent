@@ -367,6 +367,23 @@ export async function startSkybridgeServer(options = {}) {
     let activeLoop = null;
     let taskCounter = 0;
     let browserControlOwner = 'human';
+    let browserAgentActivity = {
+        active: false,
+        tool: '',
+        detail: '',
+        updatedAt: 0
+    };
+    const browserStreamClients = new Set();
+    const broadcastBrowserNotice = (payload) => {
+        for (const send of browserStreamClients) {
+            try {
+                send(payload);
+            }
+            catch {
+                // Isolate individual stream clients.
+            }
+        }
+    };
     const server = http.createServer(async (req, res) => {
         const hostHeader = req.headers.host;
         if (!isAllowedSkybridgeHost(hostHeader, boundPort)) {
@@ -859,24 +876,127 @@ export async function startSkybridgeServer(options = {}) {
                 sendJson(res, 200, {
                     ok: true,
                     controlOwner: browserControlOwner,
+                    agentActivity: browserAgentActivity,
+                    computerUsePolicy: 'tiered-approval',
                     ...frame
                 });
+                return;
+            }
+            if (req.method === 'GET' && pathname === '/api/browser/stream') {
+                const browser = causyneBrowser({ workspace: workspaceRoot });
+                res.statusCode = 200;
+                res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+                res.setHeader('Transfer-Encoding', 'chunked');
+                res.setHeader('X-Accel-Buffering', 'no');
+                const writeStreamLine = (payload) => {
+                    if (res.writableEnded || res.destroyed)
+                        return;
+                    try {
+                        res.write(`${JSON.stringify(payload)}\n`);
+                    }
+                    catch {
+                        // Stream closed mid-write.
+                    }
+                };
+                const unsub = browser.subscribeLiveStream((ev) => {
+                    writeStreamLine({
+                        ...ev,
+                        controlOwner: browserControlOwner,
+                        agentActivity: browserAgentActivity,
+                        computerUsePolicy: 'tiered-approval'
+                    });
+                });
+                browserStreamClients.add(writeStreamLine);
+                writeStreamLine({
+                    type: 'agent_activity',
+                    controlOwner: browserControlOwner,
+                    agentActivity: browserAgentActivity,
+                    computerUsePolicy: 'tiered-approval'
+                });
+                const keepAlive = setInterval(() => {
+                    writeStreamLine({ type: 'ping', ts: Date.now() });
+                }, 15_000);
+                keepAlive.unref?.();
+                const cleanup = () => {
+                    clearInterval(keepAlive);
+                    browserStreamClients.delete(writeStreamLine);
+                    unsub();
+                };
+                req.on('close', cleanup);
+                res.on('close', cleanup);
+                return;
+            }
+            if (req.method === 'POST' && pathname === '/api/browser/input') {
+                const body = await readJsonBody(req);
+                const kind = typeof body.kind === 'string' ? body.kind.trim() : '';
+                const allowedKinds = new Set([
+                    'click', 'dblclick', 'contextmenu', 'mousedown', 'mousemove', 'mouseup', 'wheel', 'type', 'key', 'paste'
+                ]);
+                if (!allowedKinds.has(kind)) {
+                    sendJson(res, 400, { error: 'Unsupported live browser input kind.' });
+                    return;
+                }
+                browserControlOwner = 'human';
+                const browser = causyneBrowser({ workspace: workspaceRoot });
+                const result = await browser.dispatchLiveInput({
+                    kind: kind,
+                    x: typeof body.x === 'number' ? body.x : undefined,
+                    y: typeof body.y === 'number' ? body.y : undefined,
+                    deltaX: typeof body.deltaX === 'number' ? body.deltaX : undefined,
+                    deltaY: typeof body.deltaY === 'number' ? body.deltaY : undefined,
+                    text: typeof body.text === 'string' ? body.text : undefined,
+                    key: typeof body.key === 'string' ? body.key : undefined,
+                    button: body.button === 'right' || body.button === 'middle' ? body.button : 'left',
+                    skipFrame: true
+                });
+                sendJson(res, 200, { ok: result.ok, controlOwner: browserControlOwner });
                 return;
             }
             if (req.method === 'POST' && pathname === '/api/browser/action') {
                 const body = await readJsonBody(req);
                 const action = typeof body.action === 'string' ? body.action.trim() : '';
                 const browser = causyneBrowser({ workspace: workspaceRoot });
+                if (action === 'setMode') {
+                    browserControlOwner = 'human';
+                    const rawPref = typeof body.enginePreference === 'string' ? body.enginePreference.trim() : '';
+                    const enginePreference = rawPref === 'camoufox'
+                        || rawPref === 'chromium'
+                        || rawPref === 'auto'
+                        ? rawPref
+                        : undefined;
+                    const frame = await browser.setDisplayMode({
+                        visible: typeof body.visible === 'boolean' ? body.visible : undefined,
+                        enginePreference,
+                        ensureStarted: body.ensureStarted === true
+                    });
+                    auditLog.log({
+                        event: 'skybridge_browser_mode_switch',
+                        visible: frame.visible,
+                        engine: frame.engine,
+                        enginePreference: frame.enginePreference
+                    });
+                    broadcastBrowserNotice({
+                        type: 'meta',
+                        controlOwner: browserControlOwner,
+                        agentActivity: browserAgentActivity,
+                        ...frame
+                    });
+                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, agentActivity: browserAgentActivity, ...frame });
+                    return;
+                }
                 if (action === 'takeControl') {
                     browserControlOwner = 'human';
+                    browserAgentActivity = { active: false, tool: '', detail: '', updatedAt: Date.now() };
                     const frame = await browser.captureLiveFrame({ ensureStarted: false });
-                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+                    broadcastBrowserNotice({ type: 'agent_activity', controlOwner: browserControlOwner, agentActivity: browserAgentActivity });
+                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, agentActivity: browserAgentActivity, ...frame });
                     return;
                 }
                 if (action === 'handToAgent') {
                     browserControlOwner = 'agent';
                     const frame = await browser.captureLiveFrame({ ensureStarted: false });
-                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+                    broadcastBrowserNotice({ type: 'agent_activity', controlOwner: browserControlOwner, agentActivity: browserAgentActivity });
+                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, agentActivity: browserAgentActivity, ...frame });
                     return;
                 }
                 if (action === 'start') {
@@ -949,7 +1069,16 @@ export async function startSkybridgeServer(options = {}) {
                     });
                     return;
                 }
-                if (action === 'click' || action === 'dblclick' || action === 'wheel' || action === 'type' || action === 'key') {
+                if (action === 'click'
+                    || action === 'dblclick'
+                    || action === 'contextmenu'
+                    || action === 'mousedown'
+                    || action === 'mousemove'
+                    || action === 'mouseup'
+                    || action === 'wheel'
+                    || action === 'type'
+                    || action === 'key'
+                    || action === 'paste') {
                     browserControlOwner = 'human';
                     const frame = await browser.interactAt({
                         kind: action,
@@ -958,9 +1087,10 @@ export async function startSkybridgeServer(options = {}) {
                         deltaX: typeof body.deltaX === 'number' ? body.deltaX : undefined,
                         deltaY: typeof body.deltaY === 'number' ? body.deltaY : undefined,
                         text: typeof body.text === 'string' ? body.text : undefined,
-                        key: typeof body.key === 'string' ? body.key : undefined
+                        key: typeof body.key === 'string' ? body.key : undefined,
+                        button: body.button === 'right' || body.button === 'middle' ? body.button : 'left'
                     });
-                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, ...frame });
+                    sendJson(res, 200, { ok: true, controlOwner: browserControlOwner, agentActivity: browserAgentActivity, ...frame });
                     return;
                 }
                 sendJson(res, 400, { error: 'Unsupported shared browser action.' });
@@ -1116,10 +1246,35 @@ export async function startSkybridgeServer(options = {}) {
                     send: (raw) => {
                         try {
                             const parsed = JSON.parse(raw);
-                            if ((parsed.type === 'step_start' || parsed.type === 'tool_start')
-                                && typeof parsed.tool === 'string'
-                                && parsed.tool.toLowerCase().includes('browser')) {
-                                browserControlOwner = 'agent';
+                            const toolLower = typeof parsed.tool === 'string' ? parsed.tool.toLowerCase() : '';
+                            const isBrowserTool = toolLower.includes('browser');
+                            const isComputerTool = toolLower.includes('computer_use') || toolLower.includes('desktop_act');
+                            if ((parsed.type === 'step_start' || parsed.type === 'tool_start') && (isBrowserTool || isComputerTool)) {
+                                if (isBrowserTool)
+                                    browserControlOwner = 'agent';
+                                const detail = isBrowserTool && Array.isArray(parsed.args?.actions) && parsed.args.actions[0]
+                                    ? String(parsed.args.actions[0].type || 'browser.act')
+                                    : String(parsed.args?.action || parsed.tool || '');
+                                browserAgentActivity = {
+                                    active: true,
+                                    tool: parsed.tool || 'browser.act',
+                                    detail: detail.slice(0, 80),
+                                    updatedAt: Date.now()
+                                };
+                                broadcastBrowserNotice({
+                                    type: 'agent_activity',
+                                    controlOwner: browserControlOwner,
+                                    agentActivity: browserAgentActivity
+                                });
+                            }
+                            else if ((parsed.type === 'step_complete' || parsed.type === 'step_error' || parsed.type === 'tool_complete')
+                                && (isBrowserTool || isComputerTool)) {
+                                browserAgentActivity = { active: false, tool: '', detail: '', updatedAt: Date.now() };
+                                broadcastBrowserNotice({
+                                    type: 'agent_activity',
+                                    controlOwner: browserControlOwner,
+                                    agentActivity: browserAgentActivity
+                                });
                             }
                         }
                         catch { /* ignore */ }

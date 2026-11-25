@@ -317,6 +317,58 @@ export function resolveBrowserRuntime() {
         source: configured ? 'environment' : 'system'
     };
 }
+/** Discover an installed Camoufox runtime without falling back to Chromium. */
+export function resolveCamoufoxRuntime() {
+    try {
+        const configured = process.env.CAUSYNE_BROWSER_EXECUTABLE?.trim()
+            || process.env.CAMOUFOX_EXECUTABLE_PATH?.trim();
+        const resolvedConfigured = configured ? path.resolve(configured) : undefined;
+        if (resolvedConfigured && isChromiumExecutablePath(resolvedConfigured)) {
+            return null;
+        }
+        const candidates = resolvedConfigured
+            ? [resolveCandidateExecutablePath(resolvedConfigured)]
+            : candidateExecutables().map(resolveCandidateExecutablePath);
+        const executablePath = candidates.find(existsSync);
+        if (!executablePath)
+            return null;
+        assertExecutable(executablePath);
+        const resolvedExecutable = realpathSync(executablePath);
+        const resourceDirectory = findResourceDirectory(executablePath, resolvedExecutable);
+        if (!resourceDirectory)
+            return null;
+        let installDirectory = findInstallDirectory(resolvedExecutable);
+        if (!installDirectory) {
+            const versionFile = findVersionFile(resolvedExecutable, resourceDirectory);
+            installDirectory = ensureExternalBundleInstallDirectory(resolvedExecutable, resourceDirectory, versionFile);
+        }
+        if (!installDirectory)
+            return null;
+        let launchExecutable = resolvedExecutable;
+        try {
+            launchExecutable = ensureLaunchShim(resolvedExecutable, resourceDirectory);
+        }
+        catch {
+            launchExecutable = resolvedExecutable;
+        }
+        return {
+            installDirectory,
+            resourceDirectory,
+            executablePath: launchExecutable,
+            source: configured ? 'environment' : 'system'
+        };
+    }
+    catch {
+        return null;
+    }
+}
+/** Synchronously reports which local browser engines are installed (never downloads binaries). */
+export function inspectAvailableBrowserRuntimes() {
+    const camoufox = resolveCamoufoxRuntime() !== null;
+    const chromium = resolveChromiumRuntime() !== null;
+    const preferred = camoufox ? 'camoufox' : chromium ? 'chromium' : null;
+    return { camoufox, chromium, preferred };
+}
 /**
  * Synchronously checks if a valid Causyne / Camoufox browser executable exists.
  */
