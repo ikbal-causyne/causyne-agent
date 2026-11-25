@@ -709,7 +709,7 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
     }
   });
 
-  test('Skybridge supports detached background runs, stream rejoin, decision resolution, targeted stop, and committed session git diffs', async () => {
+  test('Skybridge supports detached background runs, stream rejoin, decision resolution, targeted stop, and committed session git diffs', { timeout: 20_000 }, async () => {
     const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'causyne-skybridge-resumable-'));
     // Initialize a real git repo with a committed file modification to verify last-commit diff fallback.
     execFileSync('git', ['init', '-q'], { cwd: tmpWs, stdio: 'ignore' });
@@ -722,9 +722,28 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
     execFileSync('git', ['add', 'demo.ts'], { cwd: tmpWs, stdio: 'ignore' });
     execFileSync('git', ['commit', '-q', '-m', 'update'], { cwd: tmpWs, stdio: 'ignore' });
 
-    const releaseBySession = new Map<string, () => void>();
+    const releaseByPrompt = new Map<string, () => void>();
+    const readyPrompts = new Set<string>();
+    const readyWaiters = new Map<string, Array<() => void>>();
+    const markPromptReady = (key: string): void => {
+      readyPrompts.add(key);
+      const waiters = readyWaiters.get(key);
+      if (waiters) {
+        readyWaiters.delete(key);
+        for (const fn of waiters) fn();
+      }
+    };
+    const waitForPromptReady = (key: string): Promise<void> => {
+      if (readyPrompts.has(key)) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        const list = readyWaiters.get(key) ?? [];
+        list.push(resolve);
+        readyWaiters.set(key, list);
+      });
+    };
+
     const decisionsReceived: Array<{ sessionId: string; requestId: string; label: string }> = [];
-    let abortedSessions: string[] = [];
+    const abortedSessions: string[] = [];
 
     const handle = await startSkybridgeServer({
       workspaceRoot: tmpWs,
@@ -747,6 +766,7 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
               }));
               const ans = await new Promise<{ optionId: string | null; label: string; custom: boolean } | null>((resolve) => {
                 decisionResolve = resolve;
+                markPromptReady(prompt);
               });
               if (ans) {
                 decisionsReceived.push({ sessionId: sid, requestId: 'dec-1', label: ans.label });
@@ -755,7 +775,8 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
               return;
             }
             await new Promise<void>((resolve) => {
-              releaseBySession.set(sid, resolve);
+              releaseByPrompt.set(prompt, resolve);
+              markPromptReady(prompt);
             });
             if (!aborted) {
               sink.send(JSON.stringify({ type: 'agent_chunk', delta: 'Finished!' }));
@@ -765,7 +786,7 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
             aborted = true;
             abortedSessions.push(sid);
             decisionResolve?.(null);
-            releaseBySession.get(sid)?.();
+            releaseByPrompt.get(prompt)?.();
           },
           resolveDecision: (_reqId, answer) => {
             decisionResolve?.(answer);
@@ -799,11 +820,12 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
         signal: detachCtrl.signal
       });
       assert.equal(chatRes.status, 200);
+      await waitForPromptReady('BG_TASK');
       const firstReader = chatRes.body!.getReader();
       const firstChunk = await firstReader.read();
       assert.ok(!firstChunk.done);
+      await firstReader.cancel().catch(() => {});
       detachCtrl.abort();
-      await new Promise((r) => setTimeout(r, 60));
 
       // Verify s1 is STILL running in the background and NOT aborted!
       assert.equal(abortedSessions.length, 0);
@@ -812,13 +834,24 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       const s1Row = (listData.sessions || []).find((x: any) => x.id === s1.id);
       assert.equal(s1Row?.running, true);
 
-      // Re-attach via GET /api/sessions/:id/stream -> replays buffered frames and completes cleanly!
-      const rejoinPromise = fetch(`${handle.origin}/api/sessions/${encodeURIComponent(s1.id)}/stream`, {
+      // Re-attach via GET /api/sessions/:id/stream -> verify replay chunk arrives BEFORE releasing!
+      const rejoinRes = await fetch(`${handle.origin}/api/sessions/${encodeURIComponent(s1.id)}/stream`, {
         headers: authHeaders
-      }).then((r) => r.text());
-      await new Promise((r) => setTimeout(r, 40));
-      releaseBySession.get(s1.id)?.();
-      const rejoinBody = await rejoinPromise;
+      });
+      assert.equal(rejoinRes.status, 200);
+      const rejoinReader = rejoinRes.body!.getReader();
+      const dec = new TextDecoder();
+      let rejoinBody = '';
+      const firstReplay = await rejoinReader.read();
+      assert.ok(!firstReplay.done);
+      rejoinBody += dec.decode(firstReplay.value, { stream: true });
+      releaseByPrompt.get('BG_TASK')?.();
+      while (true) {
+        const next = await rejoinReader.read();
+        if (next.done) break;
+        rejoinBody += dec.decode(next.value, { stream: true });
+      }
+      rejoinBody += dec.decode();
       assert.match(rejoinBody, /"type":"session_bound"/);
       assert.match(rejoinBody, /Start\(BG_TASK\): /);
       assert.match(rejoinBody, /Finished!/);
@@ -836,7 +869,7 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: 'DECIDE', sessionId: s2.id })
       }).then((r) => r.text());
-      await new Promise((r) => setTimeout(r, 60));
+      await waitForPromptReady('DECIDE');
       const detailMid = await fetch(`${handle.origin}/api/sessions/${encodeURIComponent(s2.id)}`, {
         headers: authHeaders
       }).then((r) => r.json()) as any;
@@ -864,7 +897,7 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: 'STOP_ME', sessionId: s2.id })
       }).then((r) => r.text());
-      await new Promise((r) => setTimeout(r, 60));
+      await Promise.all([waitForPromptReady('KEEP_ALIVE'), waitForPromptReady('STOP_ME')]);
 
       const stopRes = await fetch(`${handle.origin}/api/stop`, {
         method: 'POST',
@@ -877,7 +910,7 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.match(s2StoppedText, /"userStopped":true/);
       assert.deepEqual(abortedSessions, [s2.id]);
 
-      releaseBySession.get(s1.id)?.();
+      releaseByPrompt.get('KEEP_ALIVE')?.();
       const s1DoneText = await s1RunPromise;
       assert.match(s1DoneText, /"type":"done"/);
 
@@ -900,6 +933,9 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.equal(demoFile.deletions, 1);
       assert.equal(demoFile.status, 'modified');
     } finally {
+      for (const rel of releaseByPrompt.values()) {
+        try { rel(); } catch { /* ignore */ }
+      }
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });
     }
