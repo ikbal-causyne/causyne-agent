@@ -618,16 +618,16 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       const extractedAcpFiles = extractSessionTouchedFiles([
         {
           role: 'assistant',
-          content: `Created [apple](file://${encodeURI(tmpWs)}/blender_apple/red_apple.blend#L1-L20) and [script](file://${encodeURI(tmpWs)}/blender_apple/create_apple.py)`,
+          content: `Created [apple](file:///${tmpWs.replace(/\\/g, '/').replace(/^\/+/, '')}/blender_apple/red_apple.blend#L1-L20) and [script](file:///${tmpWs.replace(/\\/g, '/').replace(/^\/+/, '')}/blender_apple/create_apple.py)`,
           external_actions: [
             { name: 'fs_write', detail: 'alpha.txt', parameters: { path: 'alpha.txt' } },
             { name: 'fs_edit', detail: '', parameters: { filePath: 'beta.txt' } },
-            { name: 'sysRun', detail: `cd "${tmpWs}/.wallpapers" && curl -sL https://example.com/a.jpg -o calm.jpg` }
+            { name: 'sysRun', detail: `cd "${tmpWs.replace(/\\/g, '/')}/.wallpapers" && curl -sL https://example.com/a.jpg -o calm.jpg` }
           ]
         },
         {
           role: 'tool',
-          content: JSON.stringify({ success: true, output: `Atomically wrote 4096 bytes to ${tmpWs}/src/demo.ts` })
+          content: JSON.stringify({ success: true, output: `Atomically wrote 4096 bytes to ${path.join(tmpWs, 'src', 'demo.ts')}` })
         }
       ], tmpWs);
       assert.deepEqual(extractedAcpFiles, [

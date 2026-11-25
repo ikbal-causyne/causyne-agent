@@ -276,12 +276,18 @@ function normalizeWorkspaceRelCandidate(workspaceRoot, raw, baseDir) {
         catch {
             // Keep raw decoded string if percent encoding is malformed.
         }
+        if (/^\/[A-Za-z]:[\\/]/.test(trimmed)) {
+            trimmed = trimmed.slice(1);
+        }
     }
     else {
         const lineAnchor = trimmed.match(/^(.+?\.[a-zA-Z0-9]{1,8})#L\d+(?:-L?\d+)?$/);
         if (lineAnchor?.[1])
             trimmed = lineAnchor[1];
     }
+    const escNl = trimmed.indexOf('\\n');
+    if (escNl >= 0)
+        trimmed = trimmed.slice(0, escNl);
     trimmed = trimmed.replace(/[),.;:]+$/g, '').trim();
     if (!trimmed || trimmed === '.' || trimmed === '/')
         return null;
@@ -604,13 +610,13 @@ export function extractSessionFileEvidence(messages, workspaceRoot) {
             catch {
                 // Keep raw plain text tool output.
             }
-            for (const m of toolText.matchAll(/Atomically wrote (\d+) bytes to ([^\r\n"'}\\]+)/g)) {
+            for (const m of toolText.matchAll(/Atomically wrote (\d+) bytes to ([^\r\n"'}]+)/g)) {
                 recordFile(m[2], { status: 'added', bytesWritten: Number(m[1]) || undefined });
             }
-            for (const m of toolText.matchAll(/Saved (\d+)-byte screenshot to ([^\r\n"'}\\]+)/g)) {
+            for (const m of toolText.matchAll(/Saved (\d+)-byte screenshot to ([^\r\n"'}]+)/g)) {
                 recordFile(m[2], { status: 'added', bytesWritten: Number(m[1]) || undefined });
             }
-            for (const m of toolText.matchAll(/(?:Successfully edited|Successfully wrote|Created file|Patched)\s+([^\r\n"'}\\]+)/g)) {
+            for (const m of toolText.matchAll(/(?:Successfully edited|Successfully wrote|Created file|Patched)\s+([^\r\n"'}]+)/g)) {
                 recordFile(m[1], { status: 'modified' });
             }
         }
