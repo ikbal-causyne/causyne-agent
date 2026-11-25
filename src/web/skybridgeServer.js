@@ -284,8 +284,9 @@ export function extractSessionTouchedFiles(messages, workspaceRoot) {
             touched.add(norm);
     };
     for (const msg of messages) {
-        const toolCalls = Array.isArray(msg.tool_calls)
-            ? msg.tool_calls
+        const rec = msg;
+        const toolCalls = Array.isArray(rec.tool_calls)
+            ? rec.tool_calls
             : [];
         for (const tc of toolCalls) {
             const fn = (tc.function && typeof tc.function === 'object' ? tc.function : tc);
@@ -322,14 +323,69 @@ export function extractSessionTouchedFiles(messages, workspaceRoot) {
                 }
             }
         }
+        const extActions = Array.isArray(rec.external_actions)
+            ? rec.external_actions
+            : [];
+        for (const act of extActions) {
+            const name = typeof act.name === 'string' ? act.name.trim().toLowerCase() : '';
+            if (!name || !MUTATING_FILE_TOOLS.has(name))
+                continue;
+            addCandidate(act.detail);
+            const params = act.parameters && typeof act.parameters === 'object'
+                ? act.parameters
+                : null;
+            if (params) {
+                for (const key of ['path', 'filePath', 'file_path', 'targetFile', 'filename', 'file', 'destination']) {
+                    addCandidate(params[key]);
+                }
+            }
+        }
     }
     return [...touched].sort();
 }
+function summarizeArgsTarget(args) {
+    if (!args)
+        return '';
+    for (const key of ['path', 'filePath', 'file_path', 'file', 'command', 'query', 'url', 'skill_id']) {
+        if (typeof args[key] === 'string' && String(args[key]).trim()) {
+            return String(args[key]).trim().slice(0, 100);
+        }
+    }
+    return '';
+}
 function extractSessionDisplayMessages(messages) {
+    const toolOutputsById = new Map();
+    for (const msg of messages) {
+        if (msg.role !== 'tool')
+            continue;
+        const rec = msg;
+        const id = typeof rec.tool_call_id === 'string' ? rec.tool_call_id : '';
+        if (!id)
+            continue;
+        const raw = typeof msg.content === 'string' ? msg.content : '';
+        let failed = false;
+        let summary = raw.trim().slice(0, 360);
+        try {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+                if (parsed.success === false || typeof parsed.error === 'string')
+                    failed = true;
+                if (typeof parsed.error === 'string')
+                    summary = parsed.error.slice(0, 360);
+                else if (typeof parsed.output === 'string')
+                    summary = parsed.output.slice(0, 360);
+            }
+        }
+        catch {
+            // plain text tool output
+        }
+        toolOutputsById.set(id, { output: summary, failed });
+    }
     const out = [];
     for (const msg of messages) {
         if (msg.role !== 'user' && msg.role !== 'assistant')
             continue;
+        const rec = msg;
         let text = '';
         if (typeof msg.content === 'string') {
             text = msg.content;
@@ -344,9 +400,79 @@ function extractSessionDisplayMessages(messages) {
             text = parts.join('\n');
         }
         const trimmed = text.trim();
-        if (!trimmed)
+        if (msg.role === 'user') {
+            if (!trimmed)
+                continue;
+            out.push({ role: 'user', content: trimmed });
             continue;
-        out.push({ role: msg.role, content: trimmed });
+        }
+        const steps = [];
+        const extActions = Array.isArray(rec.external_actions)
+            ? rec.external_actions
+            : [];
+        for (const act of extActions) {
+            const rawName = typeof act.name === 'string' ? act.name.trim() : '';
+            const rawDetail = typeof act.detail === 'string' ? act.detail.trim() : '';
+            if (!rawName || rawName === 'true' || rawName === ':' || rawDetail === 'true' || rawDetail === ':')
+                continue;
+            steps.push({
+                tool: rawName.replace(/^causyne[-_]browser[_:]/i, ''),
+                target: rawDetail.slice(0, 100),
+                status: act.status === 'failed' ? 'failed' : 'done'
+            });
+        }
+        const toolCalls = Array.isArray(rec.tool_calls)
+            ? rec.tool_calls
+            : [];
+        for (const tc of toolCalls) {
+            const fn = (tc.function && typeof tc.function === 'object' ? tc.function : tc);
+            const name = typeof fn.name === 'string' ? fn.name.trim() : '';
+            if (!name || name === 'true' || name === ':')
+                continue;
+            let args = null;
+            if (typeof fn.arguments === 'string') {
+                try {
+                    const parsed = JSON.parse(fn.arguments);
+                    if (parsed && typeof parsed === 'object')
+                        args = parsed;
+                }
+                catch {
+                    args = null;
+                }
+            }
+            else if (fn.arguments && typeof fn.arguments === 'object') {
+                args = fn.arguments;
+            }
+            const tcId = typeof tc.id === 'string' ? tc.id : '';
+            const matchedOut = tcId ? toolOutputsById.get(tcId) : undefined;
+            steps.push({
+                tool: name,
+                target: summarizeArgsTarget(args),
+                status: matchedOut?.failed ? 'failed' : 'done',
+                ...(matchedOut?.output ? { output: matchedOut.output } : {})
+            });
+        }
+        const rawReasoning = typeof rec.reasoning_content === 'string' ? rec.reasoning_content.trim() : '';
+        const reasoning = rawReasoning ? rawReasoning.slice(0, 8000) : undefined;
+        if (!trimmed && steps.length === 0 && !reasoning)
+            continue;
+        // Merge consecutive tool-only assistant turns into one cohesive assistant turn
+        const prev = out.length > 0 ? out[out.length - 1] : null;
+        if (prev && prev.role === 'assistant' && !prev.content && (steps.length > 0 || trimmed)) {
+            if (steps.length > 0)
+                prev.steps = [...(prev.steps || []), ...steps];
+            if (reasoning)
+                prev.reasoning = prev.reasoning ? `${prev.reasoning}\n\n${reasoning}`.slice(0, 8000) : reasoning;
+            if (trimmed)
+                prev.content = trimmed;
+            continue;
+        }
+        out.push({
+            role: 'assistant',
+            content: trimmed,
+            ...(reasoning ? { reasoning } : {}),
+            ...(steps.length > 0 ? { steps } : {})
+        });
     }
     return out;
 }
@@ -525,6 +651,11 @@ export async function startSkybridgeServer(options = {}) {
         }
         const parsedUrl = new URL(req.url || '/', `http://127.0.0.1:${boundPort}`);
         const pathname = parsedUrl.pathname;
+        if (req.method === 'GET' && pathname === '/favicon.ico') {
+            res.statusCode = 204;
+            res.end();
+            return;
+        }
         if (req.method === 'GET' && pathname === '/') {
             const cspNonce = crypto.randomBytes(16).toString('base64url');
             res.statusCode = 200;

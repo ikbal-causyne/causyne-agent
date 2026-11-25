@@ -14,6 +14,7 @@ import {
   isAllowedCheckoutHost
 } from '../src/licensing/policy.js';
 import {
+  extractSessionTouchedFiles,
   isAllowedSkybridgeHost,
   isAllowedSkybridgeOrigin,
   startSkybridgeServer
@@ -610,6 +611,24 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       assert.equal(diffBRes.status, 200);
       const diffB = await diffBRes.json() as any;
       assert.deepEqual((diffB.files || []).map((f: any) => f.path), ['beta.txt']);
+
+      // Verify /favicon.ico returns 204 cleanly (zero 404 noise) and ACP external_actions touched-file extraction works
+      const favRes = await fetch(`${handle.origin}/favicon.ico`);
+      assert.equal(favRes.status, 204);
+      const extractedAcpFiles = extractSessionTouchedFiles([
+        {
+          role: 'assistant',
+          content: '',
+          external_actions: [
+            { name: 'fs_write', detail: 'alpha.txt', parameters: { path: 'alpha.txt' } },
+            { name: 'fs_edit', detail: '', parameters: { filePath: 'beta.txt' } }
+          ]
+        }
+      ], tmpWs);
+      assert.deepEqual(extractedAcpFiles, ['alpha.txt', 'beta.txt']);
+      assert.match(htmlSource, /TOKEN_STORE_KEY/);
+      assert.match(htmlSource, /syncExpandedStudioWidth/);
+      assert.match(htmlSource, /startInlineSessionRename/);
     } finally {
       await handle.close();
       fs.rmSync(tmpWs, { recursive: true, force: true });
