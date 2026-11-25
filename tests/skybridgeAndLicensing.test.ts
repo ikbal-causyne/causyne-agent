@@ -640,6 +640,10 @@ describe('Paddle/Dodo Checkout Allowlist, Local Skybridge Security & $0 BYOK Pro
       ]);
       assert.match(htmlSource, /TOKEN_STORE_KEY/);
       assert.match(htmlSource, /syncExpandedStudioWidth/);
+      assert.match(htmlSource, /createStreamSmoother/);
+      assert.match(htmlSource, /createCollapsibleCard/);
+      assert.match(htmlSource, /createInlineFileChip/);
+      assert.match(htmlSource, /summarizeTimelineSteps/);
       assert.match(htmlSource, /startInlineSessionRename/);
     } finally {
       await handle.close();

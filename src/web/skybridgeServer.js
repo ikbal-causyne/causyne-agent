@@ -766,22 +766,45 @@ function extractSessionDisplayMessages(messages) {
         const reasoning = rawReasoning ? rawReasoning.slice(0, 8000) : undefined;
         if (!trimmed && steps.length === 0 && !reasoning)
             continue;
-        // Merge consecutive tool-only assistant turns into one cohesive assistant turn
+        const msgBlocks = [];
+        if (reasoning)
+            msgBlocks.push({ kind: 'reasoning', content: reasoning });
+        if (steps.length > 0)
+            msgBlocks.push({ kind: 'steps', steps });
+        if (trimmed)
+            msgBlocks.push({ kind: 'text', content: trimmed });
+        // Merge consecutive assistant messages between user turns into one cohesive Claude-style turn
+        // while preserving exact chronological interleaved blocks (reasoning -> steps -> text -> steps -> text).
         const prev = out.length > 0 ? out[out.length - 1] : null;
-        if (prev && prev.role === 'assistant' && !prev.content && (steps.length > 0 || trimmed)) {
+        if (prev && prev.role === 'assistant') {
+            const prevBlocks = prev.blocks ? [...prev.blocks] : [];
+            for (const blk of msgBlocks) {
+                const lastBlk = prevBlocks.length > 0 ? prevBlocks[prevBlocks.length - 1] : null;
+                if (blk.kind === 'steps' && lastBlk && lastBlk.kind === 'steps') {
+                    lastBlk.steps = [...lastBlk.steps, ...blk.steps];
+                }
+                else if (blk.kind === 'reasoning' && lastBlk && lastBlk.kind === 'reasoning') {
+                    lastBlk.content = `${lastBlk.content}\n\n${blk.content}`.slice(0, 8000);
+                }
+                else {
+                    prevBlocks.push(blk);
+                }
+            }
+            prev.blocks = prevBlocks;
             if (steps.length > 0)
                 prev.steps = [...(prev.steps || []), ...steps];
             if (reasoning)
                 prev.reasoning = prev.reasoning ? `${prev.reasoning}\n\n${reasoning}`.slice(0, 8000) : reasoning;
             if (trimmed)
-                prev.content = trimmed;
+                prev.content = prev.content ? `${prev.content}\n\n${trimmed}` : trimmed;
             continue;
         }
         out.push({
             role: 'assistant',
             content: trimmed,
             ...(reasoning ? { reasoning } : {}),
-            ...(steps.length > 0 ? { steps } : {})
+            ...(steps.length > 0 ? { steps } : {}),
+            blocks: msgBlocks
         });
     }
     return out;
